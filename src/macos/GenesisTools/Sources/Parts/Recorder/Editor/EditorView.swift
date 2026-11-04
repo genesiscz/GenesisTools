@@ -463,6 +463,17 @@ private struct CursorInspector: View {
                 }
             }))
             .accessibilityIdentifier("recorder.style.clicks")
+            if model.cursor != nil {
+                SwitchRow("Click sound", isOn: Binding(get: { clicks?.sound == true }, set: { on in
+                    model.setLooks { project in
+                        var next = project.clicks ?? EditProject.Clicks()
+                        next.sound = on ? true : nil
+                        project.clicks = next
+                    }
+                }))
+                .instantTooltip("A soft tick at each click in the movie's sound; off by default")
+                .accessibilityIdentifier("recorder.style.clickSound")
+            }
             if model.cursor == nil {
                 Text("This recording has no cursor track, so there are no clicks to draw.")
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)

@@ -52,6 +52,8 @@ export const clicksSchema = z.object({
     /** The disc's largest radius, as a fraction of the output height. */
     radius: z.number().min(0.005).max(0.2).default(0.03),
     durationMs: z.number().int().min(100).max(3000).default(450),
+    /** A soft tick at each recorded click in the sound; absent is off. */
+    sound: z.boolean().optional(),
 });
 
 /**
@@ -968,6 +970,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             color: hexColor.optional(),
             radius: z.number().min(0.005).max(0.2).optional(),
             durationMs: z.number().int().min(100).max(3000).optional(),
+            /** A soft tick at each click in the sound (off). */
+            sound: z.boolean().optional(),
         })
         .strict(),
     z

@@ -210,6 +210,92 @@ final class ZoomState: @unchecked Sendable {
     }
 }
 
+/// A soft tick at each recorded click, on its own track of the composition: one audio file as long as the movie, with
+/// a 45 ms decaying 2.4 kHz tone and a little noise at each click, inserted in one piece as the music is. The file is
+/// kept in the temporary folder under a digest of the click times, so a rebuild with the same clicks reads it again.
+enum ClickSound {
+    static let lengthUs: Int64 = 45_000
+    static let rate = 48_000.0
+
+    /// The output times of the clicks that play, at least one tick apart, in order.
+    static func times(clicks: [Int64], project: EditProject) -> [Int64] {
+        var times: [Int64] = []
+        for us in clicks.compactMap({ TimelineMap.outputTime(ofSource: $0, in: project) }).sorted()
+        where times.last.map({ us - $0 >= lengthUs }) ?? true {
+            times.append(us)
+        }
+        return times
+    }
+
+    static func add(to composition: AVMutableComposition, project: EditProject) async throws -> AVMutableAudioMixInputParameters? {
+        let clicks = (CursorTrack.load(project.source.cursor)?.clicks ?? []).map { Int64(($0.ms * 1000).rounded()) }
+        let times = times(clicks: clicks, project: project)
+        let movieUs = project.outputDurationUs
+        guard !times.isEmpty, let url = try trackFile(times: times, lengthUs: movieUs) else { return nil }
+        // The asset is held for the whole insert: a track of an asset that was already freed made the insert throw
+        // AVFoundation -11800 (OSStatus -12780).
+        let asset = AVURLAsset(url: url)
+        guard let source = try await asset.loadTracks(withMediaType: .audio).first,
+              let out = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { return nil }
+        let available = try await source.load(.timeRange)
+        try out.insertTimeRange(CMTimeRange(start: available.start, duration: CMTimeMinimum(available.duration, EditRenderer.us(movieUs))),
+                                of: source, at: .zero)
+        let parameters = AVMutableAudioMixInputParameters(track: out)
+        parameters.setVolume(0.3, at: .zero)
+        HubPerf.log("recorder.clickSound: \(times.count) ticks in \(asset.url.lastPathComponent)")
+        return parameters
+    }
+
+    /// The tick's samples, written once into a buffer per file.
+    static func tick() -> [Float] {
+        var noise: UInt32 = 0x9E37_79B9
+        return (0..<Int(Double(lengthUs) / 1_000_000 * rate)).map { index in
+            let t = Double(index) / rate
+            noise = noise &* 1_664_525 &+ 1_013_904_223
+            let hiss = Double(Int32(bitPattern: noise)) / Double(Int32.max) * 0.25
+            let envelope = exp(-t * 110) * min(1, t * 4000)
+            return Float((sin(2 * .pi * 2400 * t) + hiss) * envelope * 0.8)
+        }
+    }
+
+    private static func trackFile(times: [Int64], lengthUs: Int64) throws -> URL? {
+        // A stable digest of the length and the times (Swift's Hasher is seeded per process).
+        let key = times.reduce(UInt64(truncatingIfNeeded: lengthUs)) { ($0 &* 1_099_511_628_211) ^ UInt64(truncatingIfNeeded: $1) }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("genesis-recorder-ticks-\(String(key, radix: 16)).m4a")
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1) else { return nil }
+        let settings: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: rate, AVNumberOfChannelsKey: 1,
+                                       AVEncoderBitRateKey: 64_000]
+        let partial = url.deletingPathExtension().appendingPathExtension("partial.m4a")
+        let total = Int((Double(lengthUs) / 1_000_000 * rate).rounded(.up))
+        let starts = times.map { Int(Double($0) / 1_000_000 * rate) }
+        let sound = tick()
+        let chunk = 48_000
+        do {
+            let file = try AVAudioFile(forWriting: partial, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+            var from = 0
+            while from < total {
+                let count = min(chunk, total - from)
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(count)),
+                      let samples = buffer.floatChannelData?[0] else { return nil }
+                buffer.frameLength = AVAudioFrameCount(count)
+                for index in 0..<count { samples[index] = 0 }
+                for start in starts where start < from + count && start + sound.count > from {
+                    for offset in max(0, from - start)..<min(sound.count, from + count - start) {
+                        samples[start + offset - from] += sound[offset]
+                    }
+                }
+                try file.write(from: buffer)
+                from += count
+            }
+        }
+        // Renamed once the file is closed, so a crash mid-write never leaves half a track for the next run.
+        try? FileManager.default.removeItem(at: url)
+        try FileManager.default.moveItem(at: partial, to: url)
+        return url
+    }
+}
+
 /// Short volume dips at the cuts, so a join between two places of the sound does not click.
 enum Declick {
     static let halfUs: Int64 = 25_000
@@ -522,6 +608,9 @@ struct EditRenderer {
             return parameters
         }
         if let music = project.audio.music, let parameters = try await MusicMix.add(music, to: composition, lengthUs: Int64((cursor.seconds * 1_000_000).rounded()), project: project) {
+            inputs.append(parameters)
+        }
+        if project.clicks?.sound == true, let parameters = try await ClickSound.add(to: composition, project: project) {
             inputs.append(parameters)
         }
         var audioMix: AVAudioMix?

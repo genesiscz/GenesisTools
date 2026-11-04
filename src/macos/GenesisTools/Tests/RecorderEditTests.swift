@@ -448,6 +448,14 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertGreaterThan(gray(fading, 100, 80), gray(one, 100, 80), "half way into its fade it dims less")
     }
 
+    func testClickTicksPlayAtTheirOutputTimesOneTickApart() {
+        var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 100, height: 100, cursor: nil, recording: nil)
+        project.clips = [EditProject.Clip(id: "a", fromUs: 0, toUs: 4_000_000), EditProject.Clip(id: "b", fromUs: 6_000_000, toUs: 10_000_000)]
+        let times = ClickSound.times(clicks: [1_000_000, 1_020_000, 5_000_000, 7_000_000], project: project)
+        XCTAssertEqual(times, [1_000_000, 5_000_000], "a click 20 ms after another, and one in the cut, play no tick")
+        XCTAssertEqual(ClickSound.tick().count, 2160, "45 ms at 48 kHz")
+    }
+
     func testACopiedRecordingFolderReadsItsOwnMovie() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("copied-\(UUID().uuidString)")
         let original = root.appendingPathComponent("original"), copy = root.appendingPathComponent("copy")

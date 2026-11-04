@@ -334,9 +334,10 @@ const movieMethods = [
                 color: hexColor.optional(),
                 radius: z.number().min(0.005).max(0.2).optional(),
                 durationMs: z.number().int().min(100).max(3000).optional(),
+                sound: z.boolean().optional(),
             })
             .strict(),
-        'Draws each recorded click as a disc that grows and fades: highlight, color "#RRGGBB", radius (a fraction of the height, 0.03), durationMs (450).'
+        'Draws each recorded click as a disc that grows and fades: highlight, color "#RRGGBB", radius (a fraction of the height, 0.03), durationMs (450); sound: true adds a soft tick at each click to the sound (off by default).'
     ),
     edit(
         "keys",

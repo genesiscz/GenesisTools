@@ -113,6 +113,8 @@ struct EditProject: Codable, Equatable {
         /// The disc's largest radius, as a fraction of the picture's height.
         var radius = 0.03
         var durationMs = 450
+        /// A soft tick at each click in the sound; nil is off.
+        var sound: Bool?
     }
 
     struct Cursor: Codable, Equatable {

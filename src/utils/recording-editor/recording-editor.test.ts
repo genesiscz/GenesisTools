@@ -679,6 +679,7 @@ describe("edit project (edit.json)", () => {
         // Motion blur is 0.5 until set, and an op merges into what is there.
         expect(describeProject(project, "/p/edit.json").motion).toEqual({ blur: 0.5 });
         expect(applyOp(project, { op: "motion", blur: 0 }).motion).toEqual({ blur: 0 });
+        expect(applyOp(project, { op: "clicks", sound: true }).clicks).toMatchObject({ highlight: true, sound: true });
         expect(() => applyOp(project, { op: "motion", blur: 2 })).toThrow();
         // A text sits in the canvas with its defaults, follows source time, and goes with untext.
         const titled = applyOp(project, { op: "text", from: 1, to: 2.5, text: "  Step 1: sign in " });
