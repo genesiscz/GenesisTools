@@ -101,14 +101,14 @@ package func runRecorder(_ args: [String]) -> Never {
         recorderInstance.serve { forwarded in
             let next = RecorderRequest.parse(forwarded)
             MainActor.assumeIsolated {
-                if let edit = next.edit { EditorWindows.shared.open(path: edit, focus: next.focus) }
+                if let edit = next.edit { EditorWindows.shared.open(path: edit, focus: next.focus, atSeconds: next.atSeconds, tab: next.tab) }
                 if next.library { LibraryWindow.shared.show(focus: next.focus) }
             }
         }
         RecorderMenu.shared.install()
         // The live recordings' item and floating controls; the hub defers to this face while it runs.
         LiveRecordingsStatusItem.shared.start(preferred: true)
-        if let edit = request.edit { EditorWindows.shared.open(path: edit, focus: request.focus) }
+        if let edit = request.edit { EditorWindows.shared.open(path: edit, focus: request.focus, atSeconds: request.atSeconds, tab: request.tab) }
         if request.library { LibraryWindow.shared.show(focus: request.focus) }
         app.run()
     }
@@ -121,18 +121,34 @@ package func runRecorder(_ args: [String]) -> Never {
 final class EditorWindows: NSObject, NSWindowDelegate {
     static let shared = EditorWindows()
     private var open: [ObjectIdentifier: (NSWindow, EditorModel, Any?)] = [:]
+    /// Where a window that is still opening goes once its model exists.
+    private var pendingPlacement: [String: (EditorModel) -> Void] = [:]
 
-    func open(path: String, focus wanted: Bool = true) {
+    /// Opens (or brings back) the editor of `path`; `atSeconds` (output time) and `tab` place it, so an agent can show
+    /// a moment (`movie.show({ at, tab })`, `tools recorder edit --at --tab`).
+    func open(path: String, focus wanted: Bool = true, atSeconds: Double? = nil, tab: InspectorTab? = nil) {
+        let place = { (model: EditorModel) in
+            if let tab { model.tab = tab }
+            if let atSeconds { model.seek(Int64((atSeconds * 1_000_000).rounded())) }
+        }
         if let existing = open.values.first(where: { $0.1.store.url.deletingLastPathComponent().path == URL(fileURLWithPath: path).deletingLastPathComponent().path || $0.1.project.source.video == path }) {
+            place(existing.1)
             if wanted { focus(existing.0) }
             return
         }
+        pendingPlacement[path] = place
         Task {
             do {
                 let span = HubPerf.begin("recorder.editor.open", path)
                 let (store, project) = try await ProjectStore.open(path: path)
                 span.end()
-                show(EditorModel(project: project, store: store), focus: wanted)
+                let model = EditorModel(project: project, store: store)
+                show(model, focus: wanted)
+                // The player item lands in the background; seek after it, as the snapshot face does.
+                if let place = pendingPlacement.removeValue(forKey: path) {
+                    try? await Task.sleep(for: .milliseconds(400))
+                    place(model)
+                }
             } catch {
                 HubPerf.log("recorder.editor: \(path) did not open: \(error.localizedDescription)")
                 let alert = NSAlert()

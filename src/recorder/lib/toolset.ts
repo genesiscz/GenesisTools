@@ -38,7 +38,7 @@ import {
     undoDepth,
     undoEdit,
 } from "./edit";
-import { ensureRecorderPart, listLibrary, openEditor, stillOfEdit } from "./library";
+import { EDITOR_TABS, type EditorTab, ensureRecorderPart, listLibrary, openEditor, stillOfEdit } from "./library";
 import { chaptersOf, markersOf, recordingFolderOf, searchLibrary } from "./moments";
 
 const { log } = logger.scoped("recorder-toolset");
@@ -351,9 +351,15 @@ const movieMethods = [
     }),
     defineMethod({
         name: "show",
-        params: z.object({ focus: z.boolean().optional() }).strict(),
+        params: z
+            .object({
+                focus: z.boolean().optional(),
+                at: z.number().nonnegative().optional(),
+                tab: z.enum(EDITOR_TABS).optional(),
+            })
+            .strict(),
         result: z.unknown(),
-        doc: "Opens the edit in the recorder window (behind the front window unless focus: true).",
+        doc: 'Opens the edit in the recorder window (behind the front window unless focus: true), at OUTPUT seconds `at` and on the inspector `tab` ("zoom", "clip", "hide", "text", "style", "cursor", "captions", "audio", "export"), so you can show the user a moment.',
         effect: "reversible",
     }),
 ];
@@ -790,7 +796,7 @@ export class Movie {
         return chaptersOf(markersOf(await openProject(this.recording)), options);
     }
 
-    async show(options: { focus?: boolean } = {}) {
+    async show(options: { focus?: boolean; at?: number; tab?: EditorTab } = {}) {
         const opened = await openProject(this.recording);
 
         if (opened.fresh) {
@@ -798,8 +804,12 @@ export class Movie {
         }
 
         await ensureRecorderPart();
-        openEditor(opened.path, { focus: options.focus === true });
-        return { opened: opened.path };
+        openEditor(opened.path, { focus: options.focus === true, atSeconds: options.at, tab: options.tab });
+        return {
+            opened: opened.path,
+            ...(options.at === undefined ? {} : { at: options.at }),
+            ...(options.tab ? { tab: options.tab } : {}),
+        };
     }
 }
 

@@ -110,11 +110,27 @@ export async function ensureRecorderPart(onStep?: (line: string) => void): Promi
 }
 
 /** Opens the editor through Launch Services; a running recorder takes the request. */
-export function openEditor(path: string, { focus = true }: { focus?: boolean } = {}): void {
+/** The editor window's inspector tabs, as `--tab` takes them. */
+export const EDITOR_TABS = ["zoom", "clip", "hide", "text", "style", "cursor", "captions", "audio", "export"] as const;
+export type EditorTab = (typeof EDITOR_TABS)[number];
+
+/** Opens the editor window on `path`; `atSeconds` (output time) and `tab` place it at a moment and a panel. */
+export function openEditor(
+    path: string,
+    { focus = true, atSeconds, tab }: { focus?: boolean; atSeconds?: number; tab?: EditorTab } = {}
+): void {
     const args = ["-n", ...(focus ? [] : ["-g"]), genesisAppBundlePath(), "--args", "--recorder", "--edit", path];
 
     if (!focus) {
         args.push("--no-focus");
+    }
+
+    if (atSeconds !== undefined) {
+        args.push("--at", String(atSeconds));
+    }
+
+    if (tab) {
+        args.push("--tab", tab);
     }
 
     log.debug({ args }, "recorder: open the editor");

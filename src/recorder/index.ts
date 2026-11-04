@@ -1,5 +1,5 @@
 import { defaultRecordingTarget, listRecordingTargets, type RecordingTarget } from "@app/control/lib/recording-targets";
-import { runTool } from "@genesiscz/utils/cli";
+import { runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
@@ -10,7 +10,15 @@ import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { Command } from "commander";
 
 import { EXPORT_FORMATS, type ExportFormat, editProject, exportAs, openProject, undoEdit } from "./lib/edit";
-import { ensureRecorderPart, listLibrary, movieOf, openEditor, resolveRecording } from "./lib/library";
+import {
+    EDITOR_TABS,
+    type EditorTab,
+    ensureRecorderPart,
+    listLibrary,
+    movieOf,
+    openEditor,
+    resolveRecording,
+} from "./lib/library";
 import { chaptersOf, markersOf, searchLibrary } from "./lib/moments";
 import { makeProxy } from "./lib/proxy";
 import { recordVideo, VIDEO_RECORDING_MAX_SECONDS } from "./lib/video-recording";
@@ -45,6 +53,12 @@ function parseTime(raw: string, flag: string): TimeValue {
     }
 
     return parsed.data;
+}
+
+/** A `--tab` value: the tab, or null when it is missing or not one of EDITOR_TABS. */
+function editorTab(raw: string | boolean): EditorTab | null {
+    const found = EDITOR_TABS.find((tab) => tab === raw);
+    return found ?? null;
 }
 
 function parseAudio(raw: string | undefined): AudioSource[] | undefined {
@@ -382,8 +396,23 @@ program
     .description("Open a recording or a movie in the recorder's editor window")
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .option("--no-focus", "open it behind the front window without activating the app")
-    .action(async (value: string, flags: { focus?: boolean }) => {
+    .option("--at <time>", "put the playhead at this OUTPUT time (seconds or m:ss)")
+    .option("--tab [name]", `open this inspector tab: ${EDITOR_TABS.join(", ")}`)
+    .action(async (value: string, flags: { focus?: boolean; at?: string; tab?: string | boolean }) => {
         try {
+            const tab = flags.tab === undefined ? undefined : editorTab(flags.tab);
+
+            if (tab === null) {
+                out.printlnErr(
+                    suggestEnumFlag("tools recorder", "--tab", EDITOR_TABS, {
+                        given: typeof flags.tab === "string" ? flags.tab : undefined,
+                    })
+                );
+                process.exitCode = 1;
+                return;
+            }
+
+            const atSeconds = flags.at === undefined ? undefined : timeToUs(parseTime(flags.at, "--at")) / 1_000_000;
             const path = resolveRecording(value);
 
             if (!value.endsWith(".mp4") && !value.endsWith(".mov") && !value.endsWith(".json") && !movieOf(path)) {
@@ -392,7 +421,7 @@ program
             }
 
             await ensureRecorderPart((line) => out.printlnErr(line));
-            openEditor(path, { focus: flags.focus !== false });
+            openEditor(path, { focus: flags.focus !== false, atSeconds, tab });
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;

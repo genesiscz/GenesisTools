@@ -16,7 +16,9 @@ tools recorder rename <recording> <title>        # a new title for the library, 
 tools recorder undo <recording>                  # back one step of apply or the REPL (30 steps in <edit>.undo.json)
 tools recorder search <text> [--json]            # titles, marker labels and cached transcript lines across the library
 tools recorder list [--live] [--limit N] [--json]
-tools recorder edit <recording> [--no-focus]     # the editor window; --no-focus opens it behind the front window
+tools recorder edit <recording> [--no-focus] [--at T] [--tab NAME]  # the editor window; --at puts the playhead at an
+                                                 # OUTPUT time, --tab opens an inspector tab (zoom, clip, hide, text,
+                                                 # style, cursor, captions, audio, export)
 tools recorder project <recording>               # the edit as JSON (source seconds)
 tools recorder apply <recording> '<op or [ops]>' # change the edit; - reads the ops from stdin
 tools recorder export <recording> [--format mp4|gif|webm] [--from T] [--to T] [--out FILE] [--json]
@@ -116,6 +118,7 @@ await m.cut(line.from, line.to);
 await m.zoom({ from: 3, to: 6, scale: 1.8, follow: true });
 await m.frame({ padding: 0.08 });
 await m.still(2.5);                         // shows the frame as it will export
+await m.show({ at: 2.5, tab: "text" });     // opens the editor window there, behind the front window
 await m.export({ format: "gif" });
 await m.polish();                           // removeIdle, autoZoom, normalize, a frame; steps: [{ step, done, note }]
 const r = await movies.record({ maxSeconds: 30, audio: ["system"] }); /* … */ const movie = await r.stop();
