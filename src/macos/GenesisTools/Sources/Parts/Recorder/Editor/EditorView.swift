@@ -322,7 +322,7 @@ private struct StyleInspector: View {
                 }
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(38), spacing: 8), count: 6), spacing: 8) {
                     ForEach(Self.backgrounds, id: \.name) { preset in
-                        let selected = frame.background.colors == preset.colors
+                        let selected = frame.background.kind != .image && frame.background.colors == preset.colors
                         Button {
                             model.setLooks {
                                 $0.frame?.background = EditProject.Background(kind: preset.colors.count > 1 ? .gradient : .color,
@@ -339,6 +339,22 @@ private struct StyleInspector: View {
                         .instantTooltip(preset.name)
                         .accessibilityLabel("\(preset.name) background")
                     }
+                }
+                HStack(spacing: 8) {
+                    GhostButton("Desktop Picture", symbol: "photo", tooltip: "The picture of the main display's desktop",
+                                identifier: "recorder.style.desktopPicture") { model.useDesktopPicture() }
+                    GhostButton("Choose Image…", symbol: "folder", tooltip: "A picture file for the frame's background",
+                                identifier: "recorder.style.chooseImage") { model.chooseBackgroundImage() }
+                }
+                if frame.background.kind == .image {
+                    if let image = frame.background.image {
+                        PathLabel(path: image)
+                    }
+                    SectionLabel(text: "Picture blur", value: "\(Int(((frame.background.blur ?? 0) * 100).rounded()))%")
+                    Slider(value: Binding(get: { frame.background.blur ?? 0 }, set: { value in
+                        model.setLooks { $0.frame?.background.blur = (value * 20).rounded() / 20 }
+                    }), in: 0...1)
+                        .accessibilityIdentifier("recorder.style.pictureBlur")
                 }
                 SectionLabel(text: "Padding", value: "\(Int((frame.padding * 100).rounded()))%")
                 Slider(value: Binding(get: { frame.padding }, set: { value in model.setLooks { $0.frame?.padding = (value * 200).rounded() / 200 } }),

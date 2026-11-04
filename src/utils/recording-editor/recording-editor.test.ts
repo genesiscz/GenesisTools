@@ -482,6 +482,24 @@ describe("edit project (edit.json)", () => {
         expect(() => partOf(project, 9_000_000, 9_500_000)).toThrow("inside the 8 s edit");
     });
 
+    test("a picture background needs a file that exists and sets the kind by itself", () => {
+        const dir = workspace();
+        const picture = join(dir, "wall.png");
+        writeFileSync(picture, "not decoded here");
+        const project = wholeProject(source);
+        const framed = applyOp(project, { op: "frame", background: { image: picture, blur: 0.2 } });
+        expect(framed.frame?.background).toMatchObject({ kind: "image", image: picture, blur: 0.2 });
+        expect(() => applyOp(project, { op: "frame", background: { image: join(dir, "gone.png") } })).toThrow(
+            "does not exist"
+        );
+        expect(() => applyOp(project, { op: "frame", background: { kind: "image" } })).toThrow(
+            "needs background.image"
+        );
+        expect(applyOp(framed, { op: "frame", background: { kind: "gradient" } }).frame?.background.kind).toBe(
+            "gradient"
+        );
+    });
+
     test("a redaction hides a rectangle inside the picture for a time and is removed by its id", () => {
         const project = wholeProject(source);
         const hidden = applyOp(project, {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
-import { basename, dirname, extname, join } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -59,6 +60,8 @@ export const clicksSchema = z.object({
  */
 export const CANVAS_ASPECTS = ["source", "16:9", "4:3", "1:1", "9:16"] as const;
 
+export const BACKGROUND_KINDS = ["none", "color", "gradient", "image"] as const;
+
 /** The movie on a background, scaled in by `padding`, with rounded corners and a shadow. Absent is the plain movie. */
 export const frameSchema = z.object({
     aspect: z.enum(CANVAS_ASPECTS).optional(),
@@ -66,8 +69,11 @@ export const frameSchema = z.object({
     fit: z.enum(["contain", "cover"]).optional(),
     background: z
         .object({
-            kind: z.enum(["none", "color", "gradient"]).default("gradient"),
+            kind: z.enum(BACKGROUND_KINDS).default("gradient"),
             colors: z.array(hexColor).min(1).max(2).default(["#4F46E5", "#DB2777"]),
+            /** kind "image": the picture, absolute, scaled to cover the canvas; `blur` softens it (0 to 1). */
+            image: z.string().optional(),
+            blur: z.number().min(0).max(1).optional(),
         })
         .default({ kind: "gradient", colors: ["#4F46E5", "#DB2777"] }),
     /** The margin on every side, as a fraction of the output height. */
@@ -654,8 +660,10 @@ export const editOpSchema = z.discriminatedUnion("op", [
             fit: z.enum(["contain", "cover"]).optional(),
             background: z
                 .object({
-                    kind: z.enum(["none", "color", "gradient"]).optional(),
+                    kind: z.enum(BACKGROUND_KINDS).optional(),
                     colors: z.array(hexColor).min(1).max(2).optional(),
+                    image: z.string().min(1).optional(),
+                    blur: z.number().min(0).max(1).optional(),
                 })
                 .strict()
                 .optional(),
@@ -866,6 +874,21 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
             }
 
             const current = project.frame ?? frameSchema.parse({});
+            const background = { ...current.background, ...op.background };
+
+            if (op.background?.image) {
+                background.image = resolve(op.background.image.replace(/^~(?=[/\\])/, homedir()));
+                background.kind = op.background.kind ?? "image";
+            }
+
+            if (background.kind === "image" && (!background.image || !existsSync(background.image))) {
+                throw new Error(
+                    background.image
+                        ? `the background image ${background.image} does not exist`
+                        : 'a background of kind "image" needs background.image, a picture file'
+                );
+            }
+
             return {
                 ...project,
                 frame: frameSchema.parse({
@@ -875,7 +898,7 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
                     ...(op.padding === undefined ? {} : { padding: op.padding }),
                     ...(op.cornerRadius === undefined ? {} : { cornerRadius: op.cornerRadius }),
                     ...(op.shadow === undefined ? {} : { shadow: op.shadow }),
-                    background: { ...current.background, ...op.background },
+                    background,
                 }),
             };
         }

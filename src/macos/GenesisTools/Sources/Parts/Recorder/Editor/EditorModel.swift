@@ -350,6 +350,49 @@ final class EditorModel {
         apply(next, rebuildMovie: false)
     }
 
+    /// The frame on a picture: the file must decode as an image, or the frame keeps its background.
+    func setBackgroundImage(_ url: URL) {
+        guard CIImage(contentsOf: url) != nil else {
+            show("\(url.lastPathComponent) is not a picture this Mac can read.", error: true)
+            return
+        }
+        setLooks { project in
+            var frame = project.frame ?? EditProject.Frame()
+            frame.background.kind = .image
+            frame.background.image = url.path
+            project.frame = frame
+        }
+    }
+
+    func useDesktopPicture() {
+        guard let screen = NSScreen.main, let url = NSWorkspace.shared.desktopImageURL(for: screen) else {
+            show("The desktop picture is not available.", error: true)
+            return
+        }
+        // A dynamic desktop can be a folder; its first picture stands in for it.
+        var isFolder: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder), isFolder.boolValue {
+            let pictures = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
+            guard let first = pictures.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+                .first(where: { ["heic", "jpg", "jpeg", "png"].contains($0.pathExtension.lowercased()) }) else {
+                show("The desktop picture is a folder without pictures.", error: true)
+                return
+            }
+            setBackgroundImage(first)
+            return
+        }
+        setBackgroundImage(url)
+    }
+
+    func chooseBackgroundImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.canChooseDirectories = false
+        panel.message = "A picture for the frame's background"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        setBackgroundImage(url)
+    }
+
     /// The drawn cursor's settings; a project without them starts from the defaults.
     func setCursor(_ change: (inout EditProject.Cursor) -> Void) {
         setLooks { project in

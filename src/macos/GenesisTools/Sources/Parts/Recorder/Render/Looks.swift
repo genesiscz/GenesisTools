@@ -164,6 +164,19 @@ enum Looks {
             return CIImage(color: .black).cropped(to: bounds)
         case .color:
             return CIImage(color: colors.first ?? .black).cropped(to: bounds)
+        case .image:
+            guard let path = background.image, let picture = BackgroundPictures.shared.image(path) else {
+                return CIImage(color: colors.first ?? .black).cropped(to: bounds)
+            }
+            // Scaled to cover the canvas and centred; a blur reads the picture clamped, so its edges stay full.
+            let scale = max(size.width / picture.extent.width, size.height / picture.extent.height)
+            var placed = picture.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            placed = placed.transformed(by: CGAffineTransform(translationX: (size.width - placed.extent.width) / 2 - placed.extent.minX,
+                                                              y: (size.height - placed.extent.height) / 2 - placed.extent.minY))
+            if let blur = background.blur, blur > 0.001 {
+                placed = placed.clampedToExtent().applyingGaussianBlur(sigma: blur * min(size.width, size.height) * 0.03)
+            }
+            return placed.cropped(to: bounds)
         case .gradient:
             let gradient = CIFilter.linearGradient()
             // Top left to bottom right; Core Image counts y from the bottom.
@@ -172,6 +185,22 @@ enum Looks {
             gradient.color0 = colors.first ?? .black
             gradient.color1 = colors.count > 1 ? colors[1] : (colors.first ?? .black)
             return (gradient.outputImage ?? CIImage(color: .black)).cropped(to: bounds)
+        }
+    }
+
+    /// Every background picture, decoded once per path: each frame draws it.
+    final class BackgroundPictures: @unchecked Sendable {
+        static let shared = BackgroundPictures()
+        private let lock = NSLock()
+        private var images: [String: CIImage] = [:]
+
+        func image(_ path: String) -> CIImage? {
+            lock.lock()
+            defer { lock.unlock() }
+            if let cached = images[path] { return cached }
+            guard let image = CIImage(contentsOf: URL(fileURLWithPath: path), options: [.applyOrientationProperty: true]) else { return nil }
+            images[path] = image
+            return image
         }
     }
 

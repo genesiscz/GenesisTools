@@ -43,7 +43,8 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
 - `audio`: `include`, `volume` 0 to 2, `mutedTracks`.
 - `export`: `codec` h264 or hevc, `maxHeight` (0 = source), `output`, `format` (absent = mp4).
 - `clicks` (optional): a disc that grows and fades on each recorded click.
-- `frame` (optional): the movie on a background (`none`, `color`, `gradient`), with `padding`, `cornerRadius` and a
+- `frame` (optional): the movie on a background (`none`, `color`, `gradient`, or `image` with `image` a picture file
+  and `blur` 0 to 1; the Style tab has Desktop Picture and Choose Image…), with `padding`, `cornerRadius` and a
   `shadow`, on a canvas of its own `aspect` (`16:9`, `4:3`, `1:1`, `9:16`; absent is the movie's shape). The canvas's
   short side is the movie's height; sizes are fractions of it. `fit: "cover"` crops the movie to fill the canvas, the
   crop following the cursor (averaged over ±0.7 s); `contain` (absent) shows all of it.

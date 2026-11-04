@@ -139,13 +139,17 @@ struct EditProject: Codable, Equatable {
     }
 
     enum BackgroundKind: String, Codable, CaseIterable {
-        case none, color, gradient
+        case none, color, gradient, image
     }
 
     struct Background: Codable, Equatable {
         var kind: BackgroundKind = .gradient
         /// One color for `color`, two (top left to bottom right) for `gradient`.
         var colors = ["#4F46E5", "#DB2777"]
+        /// `image`: the picture, absolute, scaled to cover the canvas.
+        var image: String?
+        /// `image`: 0 (sharp) to 1 (very soft).
+        var blur: Double?
     }
 
     /// The shape of the exported picture around the movie. The canvas's short side is the movie's height, so a

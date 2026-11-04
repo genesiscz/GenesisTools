@@ -7,6 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
+    BACKGROUND_KINDS,
     CANVAS_ASPECTS,
     describeProject,
     type EditOp,
@@ -183,8 +184,10 @@ const movieMethods = [
                 fit: z.enum(["contain", "cover"]).optional(),
                 background: z
                     .object({
-                        kind: z.enum(["none", "color", "gradient"]).optional(),
+                        kind: z.enum(BACKGROUND_KINDS).optional(),
                         colors: z.array(hexColor).min(1).max(2).optional(),
+                        image: z.string().min(1).optional(),
+                        blur: z.number().min(0).max(1).optional(),
                     })
                     .strict()
                     .optional(),
@@ -193,7 +196,7 @@ const movieMethods = [
                 shadow: z.boolean().optional(),
             })
             .strict(),
-        'Puts the movie on a background: aspect (the canvas: "16:9", "4:3", "1:1", "9:16" or "source"; its short side is the movie height), fit ("contain" the whole movie, or "cover": cropped to fill the room inside the padding, following the cursor; padding 0 for edge to edge), padding (0.06 of the short side), cornerRadius (0.012), shadow, background { kind: "gradient" | "color" | "none", colors }; enabled: false removes it.'
+        'Puts the movie on a background: aspect (the canvas: "16:9", "4:3", "1:1", "9:16" or "source"; its short side is the movie height), fit ("contain" the whole movie, or "cover": cropped to fill the room inside the padding, following the cursor; padding 0 for edge to edge), padding (0.06 of the short side), cornerRadius (0.012), shadow, background { kind: "gradient" | "color" | "image" | "none", colors, image (a picture file; kind image), blur (0–1) }; enabled: false removes it.'
     ),
     edit(
         "removeIdle",
