@@ -48,7 +48,8 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
 - `redactions` (optional): rectangles of the source picture (`x`, `y`, `width`, `height` 0 to 1 from the top left)
   hidden from `startUs` to `endUs` by `blur`, `pixelate` or `black`, or shown by a `spotlight` (the rest of the picture
   dims, to point at it); drawn before the zoom, so they move with it. An
-  optional `label` names what it hides ("API token"). In the editor a hidden part is drawn, moved and sized on the
+  optional `label` names what it hides ("API token"); `follow: true` moves it with the drawn cursor, centred on it
+  (a spotlight on the pointer). In the editor a hidden part is drawn, moved and sized on the
   preview itself (Hide tab), and moved or trimmed on its own timeline lane.
 - `transcript` (optional): `fixes`, the corrected words of a transcript line by its start in source milliseconds
   (`"1800": "the right words"`, `""` hides the line). Kept in the edit, so a new transcription keeps them; captions,

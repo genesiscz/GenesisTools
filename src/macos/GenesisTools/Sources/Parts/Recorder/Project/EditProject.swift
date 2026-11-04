@@ -140,6 +140,8 @@ struct EditProject: Codable, Equatable {
         var style: RedactionStyle = .blur
         /// What it hides ("API token"), for the lists; absent shows the style.
         var label: String?
+        /// Moves with the drawn cursor, centred on it, keeping its size; nil is still.
+        var follow: Bool?
     }
 
     /// The fixed words of a transcript line by its start in source milliseconds; an empty text hides the line.

@@ -35,6 +35,24 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(TimelineMap.split(edit, atOutput: 0))
     }
 
+    func testAFollowingPartCentresOnTheCursorInsideThePicture() {
+        let track = CursorTrack(samples: [
+            CursorTrack.Sample(ms: 0, x: 0.5, y: 0.5),
+            CursorTrack.Sample(ms: 1000, x: 0.5, y: 0.5),
+            CursorTrack.Sample(ms: 2000, x: 0.98, y: 0.02),
+            CursorTrack.Sample(ms: 3000, x: 0.98, y: 0.02),
+        ])
+        var part = EditProject.Redaction(id: "s", startUs: 0, endUs: 3_000_000, x: 0, y: 0, width: 0.2, height: 0.2, style: .spotlight)
+        XCTAssertEqual(ZoomState.placed(part, atSourceUs: 500_000, track: track).x, 0, "not following: it stays")
+        part.follow = true
+        let centred = ZoomState.placed(part, atSourceUs: 500_000, track: track)
+        XCTAssertEqual(centred.x, 0.4, accuracy: 0.001)
+        XCTAssertEqual(centred.y, 0.4, accuracy: 0.001)
+        let corner = ZoomState.placed(part, atSourceUs: 2_800_000, track: track)
+        XCTAssertEqual(corner.x, 0.8, accuracy: 0.001, "kept inside the picture")
+        XCTAssertEqual(corner.y, 0, accuracy: 0.001)
+    }
+
     func testSnapPicksTheNearestTargetInsideTheTolerance() {
         XCTAssertEqual(TimelineMap.snap(1_040_000, to: [0, 1_000_000, 1_100_000], toleranceUs: 70_000), 1_000_000)
         XCTAssertEqual(TimelineMap.snap(1_060_000, to: [1_000_000, 1_100_000], toleranceUs: 70_000), 1_100_000)

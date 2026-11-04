@@ -121,6 +121,8 @@ export const redactionSchema = z.object({
     style: z.enum(REDACTION_STYLES).default("blur"),
     /** What it hides ("API token"), for the editor's lists; absent shows the style. */
     label: z.string().max(60).optional(),
+    /** The rectangle keeps its size and moves with the drawn cursor (centred on it, inside the picture). */
+    follow: z.boolean().optional(),
 });
 export type EditRedaction = z.infer<typeof redactionSchema>;
 
@@ -470,6 +472,7 @@ export function addRedaction(
         rect: z.infer<typeof rectSchema>;
         style: EditRedaction["style"];
         label?: string;
+        follow?: boolean;
     }
 ): EditProject {
     checkRange(project, options.fromUs, options.toUs);
@@ -491,6 +494,7 @@ export function addRedaction(
         height,
         style: options.style,
         ...(options.label?.trim() ? { label: options.label.trim() } : {}),
+        ...(options.follow ? { follow: true } : {}),
     };
     return { ...project, redactions: [...(project.redactions ?? []), redaction] };
 }
@@ -653,6 +657,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             style: z.enum(REDACTION_STYLES).optional(),
             /** What it hides ("API token"), shown in the editor's lists. */
             label: z.string().max(60).optional(),
+            /** Moves with the drawn cursor, centred on it; rect gives its size. */
+            follow: z.boolean().optional(),
         })
         .strict(),
     z.object({ op: z.literal("unredact"), id: z.string() }).strict(),
@@ -916,6 +922,7 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
                 rect: op.rect,
                 style: op.style ?? "blur",
                 label: op.label,
+                follow: op.follow,
             });
         case "unredact": {
             const list = project.redactions ?? [];

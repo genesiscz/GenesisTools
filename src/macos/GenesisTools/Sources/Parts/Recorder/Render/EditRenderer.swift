@@ -129,7 +129,8 @@ final class ZoomState: @unchecked Sendable {
                              guard settings.show, let shown = cursor?.key(atMs: Double(sourceUs) / 1000, durationMs: settings.durationMs) else { return nil }
                              return KeyMark(label: shown.label, opacity: shown.opacity, settings: settings)
                          },
-                         redactions: (project.redactions ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs },
+                         redactions: (project.redactions ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
+                             .map { Self.placed($0, atSourceUs: sourceUs, track: cursor) },
                          texts: Self.texts(atSourceUs: sourceUs, project: project))
         look.previousView = previousView
         look.motionBlur = motionBlur
@@ -138,6 +139,17 @@ final class ZoomState: @unchecked Sendable {
 
     /// One output frame at 60 fps.
     static let frameUs: Int64 = 16_667
+
+    /// A redaction that follows the cursor, centred on it (averaged over ±150 ms, so it glides) and kept inside the
+    /// picture; any other one as it is.
+    static func placed(_ redaction: EditProject.Redaction, atSourceUs us: Int64, track: CursorTrack?) -> EditProject.Redaction {
+        guard redaction.follow == true, let track,
+              let point = track.averagedPoint(atMs: Double(us) / 1000, halfMs: 150) else { return redaction }
+        var moved = redaction
+        moved.x = min(max(0, point.x - redaction.width / 2), 1 - redaction.width)
+        moved.y = min(max(0, point.y - redaction.height / 2), 1 - redaction.height)
+        return moved
+    }
 
     /// The texts showing at a source time, each fading in and out over 0.2 s (less for a short one).
     static func texts(atSourceUs us: Int64, project: EditProject) -> [(note: EditProject.TextNote, opacity: Double)] {

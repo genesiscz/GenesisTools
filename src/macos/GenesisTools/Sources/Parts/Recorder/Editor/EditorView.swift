@@ -851,6 +851,13 @@ private struct RedactionEditor: View {
             GenSegmentedTabs("Style", items: EditProject.RedactionStyle.allCases.map { .init($0, $0.rawValue.capitalized) },
                              selection: Binding(get: { redaction.style }, set: { value in model.updateRedaction(id) { $0.style = value } }),
                              minSegmentWidth: 70, identifier: "recorder.hide.style", fillsWidth: true)
+            if model.cursor != nil {
+                SwitchRow("Follow the cursor", isOn: Binding(get: { redaction.follow == true }, set: { on in
+                    model.updateRedaction(id) { $0.follow = on ? true : nil }
+                }))
+                .accessibilityIdentifier("recorder.hide.follow")
+                .instantTooltip("The part keeps its size and moves with the pointer, so a spotlight lights where you point")
+            }
             SectionLabel(text: "Width", value: "\(Int((redaction.width * 100).rounded()))%")
             Slider(value: Binding(get: { redaction.width }, set: { value in model.updateRedaction(id) { $0.width = (value * 200).rounded() / 200 } }), in: 0.02...1)
                 .accessibilityLabel("Hidden part width")

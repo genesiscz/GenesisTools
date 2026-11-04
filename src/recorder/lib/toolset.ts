@@ -133,9 +133,10 @@ const movieMethods = [
                     .strict(),
                 style: z.enum(REDACTION_STYLES).optional(),
                 label: z.string().max(60).optional(),
+                follow: z.boolean().optional(),
             })
             .strict(),
-        'Hides a rectangle of the SOURCE picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } as 0...1 of the picture from its top left, style "blur" (default) | "pixelate" | "black" | "spotlight" (the rectangle stays sharp and the rest of the picture dims, to point at something), label (what it hides, "API token"). It moves with a zoom. The result lists redactions with their ids.'
+        'Hides a rectangle of the SOURCE picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } as 0...1 of the picture from its top left, style "blur" (default) | "pixelate" | "black" | "spotlight" (the rectangle stays sharp and the rest of the picture dims, to point at something), label (what it hides, "API token"), follow: true (it moves with the drawn cursor, centred on it; rect gives its size). It moves with a zoom. The result lists redactions with their ids.'
     ),
     edit("unredact", z.object({ id: z.string() }), "Removes a redaction by its id.", ["id"]),
     edit(
@@ -197,9 +198,10 @@ const movieMethods = [
                     })
                     .strict(),
                 label: z.string().max(60).optional(),
+                follow: z.boolean().optional(),
             })
             .strict(),
-        'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims. The same as redact with style "spotlight"; unredact(id) removes it.'
+        'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims; follow: true moves it with the cursor (a light on the pointer). The same as redact with style "spotlight"; unredact(id) removes it.'
     ),
     edit("reset", z.object({}), "Starts over: the whole movie, no zooms, default audio and export."),
     edit(

@@ -517,6 +517,17 @@ describe("edit project (edit.json)", () => {
         ).toThrow("leaves the picture");
         expect(applyOp(hidden, { op: "unredact", id: redaction?.id ?? "" }).redactions).toEqual([]);
         expect(() => applyOp(hidden, { op: "unredact", id: "nope" })).toThrow(`redactions: ${redaction?.id}`);
+        // follow is kept only when asked for.
+        const following = applyOp(project, {
+            op: "redact",
+            from: 1,
+            to: 3,
+            rect: { x: 0, y: 0, width: 0.2, height: 0.2 },
+            style: "spotlight",
+            follow: true,
+        });
+        expect(following.redactions?.[0]).toMatchObject({ style: "spotlight", follow: true });
+        expect(redaction).not.toHaveProperty("follow");
         // A cut keeps it in source time.
         expect(applyOp(hidden, { op: "cut", from: 0, to: 0.5 }).redactions?.[0]?.startUs).toBe(1_000_000);
         // Motion blur is 0.5 until set, and an op merges into what is there.
