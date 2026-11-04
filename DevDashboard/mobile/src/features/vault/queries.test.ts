@@ -12,7 +12,12 @@ describe("send to my vault", () => {
     });
 
     it("words a Q→A answer as a note section and files it under its project", () => {
-        const text = qaNoteText({ question: "Why the cache?\nmore", answerMd: "Because.", project: "shop", ts: "2026-10-01" });
+        const text = qaNoteText({
+            question: "Why the cache?\nmore",
+            answerMd: "Because.",
+            project: "shop",
+            ts: new Date(2026, 9, 1, 14, 30).getTime(),
+        });
 
         expect(text).toBe("## Why the cache?\n\nshop · 2026-10-01\n\nBecause.\n");
         expect(qaNoteTarget("shop")).toEqual({ folder: "Inbox/shop", name: "Answers" });
