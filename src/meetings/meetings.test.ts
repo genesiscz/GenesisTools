@@ -2772,6 +2772,12 @@ describe("showText", () => {
             ].join("\n")
         );
     });
+
+    test("a record with labels lists them after its project", () => {
+        const labelled = meetingRecordSchema.parse({ ...record, project: "shop", labels: ["Checkout", "Q4 plan"] });
+
+        expect(showText(labelled).split("\n").slice(4, 6)).toEqual(["- project: shop", "- labels: Checkout, Q4 plan"]);
+    });
 });
 
 describe("screen boxes", () => {

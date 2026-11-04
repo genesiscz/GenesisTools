@@ -15,6 +15,7 @@ export function showText(record: MeetingRecord): string {
         record.project
             ? `project: ${record.project}`
             : `project: none (set it: ${TOOL} set ${record.id} --project <name>)`,
+        ...(record.labels.length > 0 ? [`labels: ${record.labels.join(", ")}`] : []),
         ...Object.entries(record.sources).map(
             ([source, block]) => `${source}: ${truncateDisplay(SafeJSON.stringify(block), 140)}`
         ),
