@@ -98,6 +98,7 @@ await m.zoom({ from: 3, to: 6, scale: 1.8, follow: true });
 await m.frame({ padding: 0.08 });
 await m.still(2.5);                         // shows the frame as it will export
 await m.export({ format: "gif" });
+await m.polish();                           // removeIdle, autoZoom, normalize, a frame; steps: [{ step, done, note }]
 const r = await movies.record({ maxSeconds: 30, audio: ["system"] }); /* … */ const movie = await r.stop();
 ```
 

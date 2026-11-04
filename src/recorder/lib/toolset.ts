@@ -205,6 +205,21 @@ const movieMethods = [
             .strict(),
         "Cuts every stretch where the picture does not change AND nothing is heard for minSeconds (default 2), keeping keepSeconds (0.3) at each end; a still picture under speech stays. The result adds removed: [[from, to], …] in source seconds."
     ),
+    defineMethod({
+        name: "polish",
+        params: z
+            .object({
+                removeIdle: z.boolean().optional(),
+                autoZoom: z.boolean().optional(),
+                normalize: z.boolean().optional(),
+                frame: z.boolean().optional(),
+            })
+            .strict(),
+        result: z.unknown(),
+        resultName: "{ …info(), steps: { step, done, note }[] }",
+        doc: "The usual clean-up in one call: removeIdle, autoZoom on the clicks, normalize to -16 LUFS and a gradient frame (pass false to skip one). A step that cannot run (no clicks, no audio) is reported in steps and the rest still run; one undo() puts it all back.",
+        effect: "reversible",
+    }),
     edit(
         "normalize",
         z.object({ targetLufs: z.number().min(-30).max(-8).optional() }).strict(),
@@ -432,6 +447,57 @@ export class Movie {
 
     async frame(options: Omit<Extract<EditOp, { op: "frame" }>, "op"> = {}) {
         return this.change([{ op: "frame", ...options }]);
+    }
+
+    /**
+     * The usual clean-up in one call, each step on its own so one that cannot run (no clicks, no audio) is reported
+     * and the rest still run; one undo() puts the whole polish back.
+     */
+    async polish(options: { removeIdle?: boolean; autoZoom?: boolean; normalize?: boolean; frame?: boolean } = {}) {
+        const before = await openProject(this.recording);
+        const plan: Array<[string, EditOp[]]> = [];
+
+        if (options.removeIdle !== false) {
+            plan.push(["removeIdle", [{ op: "removeIdle", minSeconds: 2, keepSeconds: 0.3 }]]);
+        }
+
+        if (options.autoZoom !== false) {
+            plan.push(["autoZoom", [{ op: "autoZoom" }]]);
+        }
+
+        if (options.normalize !== false) {
+            plan.push(["normalize", [{ op: "normalize", targetLufs: -16 }]]);
+        }
+
+        if (options.frame !== false && !before.project.frame) {
+            plan.push(["frame", [{ op: "frame" }]]);
+        }
+
+        const steps: Array<{ step: string; done: boolean; note: string }> = [];
+
+        for (const [step, ops] of plan) {
+            try {
+                const edited = await editProject(this.recording, ops);
+                const seconds = (us: number) => Math.round(us / 1000) / 1000;
+                const note =
+                    step === "removeIdle"
+                        ? `${edited.removedIdleUs?.length ?? 0} still part(s) cut, ${seconds(outputDurationUs(edited.project))} s left`
+                        : step === "autoZoom"
+                          ? `${edited.project.zooms.filter((zoom) => zoom.mode === "follow").length} zoom(s) on the clicks`
+                          : step === "normalize"
+                            ? `volume ${Math.round(edited.project.audio.volume * 100)} % (measured ${edited.loudness?.measuredLufs} LUFS)`
+                            : "gradient frame with padding and a shadow";
+                steps.push({ step, done: true, note });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                log.debug({ error, step }, "polish step skipped");
+                steps.push({ step, done: false, note: message.replace(/^\w+ refused, nothing was saved: /, "") });
+            }
+        }
+
+        this.history.push(before.project);
+        const opened = await openProject(this.recording);
+        return { ...describeProject(opened.project, opened.path), steps };
     }
 
     async removeIdle(options: { minSeconds?: number; keepSeconds?: number } = {}) {
