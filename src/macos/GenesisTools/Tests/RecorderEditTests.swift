@@ -177,6 +177,25 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(right.minY, 0, accuracy: 0.5)
     }
 
+    func testCaptionsReadTheTranscriptCacheAndFindTheLineSpokenAtASourceTime() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("captions-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let video = folder.appendingPathComponent("screen.mp4").path
+        let json = #"{"text":"","segments":[{"text":" Hello there. ","start":0.5,"end":1.5},{"text":"  ","start":2,"end":3},{"text":"Second line","start":3,"end":4.25}]}"#
+        try Data(json.utf8).write(to: CaptionTrack.cacheURL(video: video))
+        let track = try XCTUnwrap(CaptionTrack.load(video: video))
+
+        XCTAssertEqual(track.lines.count, 2)
+        XCTAssertEqual(track.line(atSourceUs: 1_000_000)?.text, "Hello there.")
+        XCTAssertNil(track.line(atSourceUs: 2_000_000))
+        XCTAssertEqual(track.line(atSourceUs: 4_000_000)?.text, "Second line")
+        XCTAssertNil(track.line(atSourceUs: 4_300_000))
+        let plate = try XCTUnwrap(track.image(for: track.lines[0], fontSize: 40, maxWidth: 800))
+        XCTAssertGreaterThan(plate.extent.width, 100)
+        XCTAssertLessThan(plate.extent.width, 800)
+    }
+
     func testRenderSizeIsEvenAndCapped() {
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 4112, height: 2570), maxHeight: 1080), CGSize(width: 1728, height: 1080))
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 1919, height: 1200), maxHeight: 720), CGSize(width: 1150, height: 720))

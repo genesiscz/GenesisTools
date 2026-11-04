@@ -20,6 +20,8 @@ struct EditProject: Codable, Equatable {
     var frame: Frame?
     /// The drawn cursor, for a movie recorded without the system cursor; nil is `Cursor()` (shown, smoothed).
     var cursor: Cursor?
+    /// The spoken lines drawn over the picture, from the movie's cached transcript; nil is off.
+    var captions: Captions?
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
@@ -93,6 +95,17 @@ struct EditProject: Codable, Equatable {
         var smoothing = 0.5
         /// Fades the cursor out after it stood still this long; nil or 0 keeps it. Optional, so an older file decodes.
         var hideAfterMs: Int?
+    }
+
+    enum CaptionPosition: String, Codable, CaseIterable {
+        case bottom, top
+    }
+
+    struct Captions: Codable, Equatable {
+        var show = true
+        /// The text height, as a fraction of the output's short side.
+        var size = 0.038
+        var position: CaptionPosition = .bottom
     }
 
     enum BackgroundKind: String, Codable, CaseIterable {

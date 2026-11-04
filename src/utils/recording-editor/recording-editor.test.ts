@@ -451,6 +451,18 @@ describe("edit project (edit.json)", () => {
         expect(() => parseEditOps({ op: "clicks", color: "yellow" })).toThrow("a color is #RRGGBB");
     });
 
+    test("captions need the movie's cached transcript and merge on change", () => {
+        const dir = workspace();
+        const video = join(dir, "screen.mp4");
+        const project = wholeProject({ ...source, video });
+        expect(() => applyOp(project, { op: "captions" })).toThrow("no transcript yet");
+
+        writeFileSync(join(dir, "screen.transcript.json"), '{"text":"","segments":[]}');
+        const on = applyOp(project, { op: "captions", position: "top" });
+        expect(on.captions).toEqual({ show: true, size: 0.038, position: "top" });
+        expect(applyOp(on, { op: "captions", show: false }).captions?.position).toBe("top");
+    });
+
     test("the drawn cursor changes only for a movie recorded without the system cursor", () => {
         const dir = workspace();
         const system = join(dir, "system.jsonl");

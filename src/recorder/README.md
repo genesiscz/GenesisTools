@@ -43,6 +43,9 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   `shadow`, on a canvas of its own `aspect` (`16:9`, `4:3`, `1:1`, `9:16`; absent is the movie's shape). The canvas's
   short side is the movie's height; sizes are fractions of it. `fit: "cover"` crops the movie to fill the canvas, the
   crop following the cursor (averaged over ±0.7 s); `contain` (absent) shows all of it.
+- `captions` (optional): the spoken lines from `<movie>.transcript.json` (made by `movie.transcript()` or the Style
+  tab's Transcribe) on a dark plate, `show`, `size` (text height, 0.038 of the short side), `position` bottom or top.
+  Their times are source times, so they follow every cut.
 - `cursor` (optional, a movie without the system cursor): `show`, `size` 0.5 to 3, `smoothing` 0 to 1 (the path
   averaged over up to ±120 ms, narrower near a click so the cursor sits on it), `hideAfterMs` (fade out after
   standing still this long; 0 never). Absent is shown, 1, 0.5, 0.
@@ -56,7 +59,7 @@ process's save as it lands, and keeps the previous version one ⌘Z away.
 `unzoom {id}`, `autoZoom {scale?}` (one zoom per group of clicks under 3 s apart; manual zooms stay), `removeIdle
 {minSeconds? 2, keepSeconds? 0.3}` (cuts what is still AND silent: ffmpeg's freezedetect, frame gaps and
 silencedetect), `volume`, `mute {track,muted?}`, `audio {include}`, `clicks {…}`, `frame {…, enabled?}`, `cursor {…}`,
-`exportSettings {codec?,maxHeight?,output?,format?}`, `reset`. Times are source seconds or `"mm:ss"`. Ops apply in
+`captions {show?,size?,position?}`, `exportSettings {codec?,maxHeight?,output?,format?}`, `reset`. Times are source seconds or `"mm:ss"`. Ops apply in
 order to the file as it is now and save once; one failing op saves nothing and names itself.
 
 ## Export

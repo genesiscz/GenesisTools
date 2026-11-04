@@ -91,6 +91,19 @@ export const cursorSchema = z.object({
     hideAfterMs: z.number().int().min(0).max(30_000).default(0),
 });
 
+/** The movie's spoken lines drawn over the picture, from its cached transcript. Absent is off. */
+export const captionsSchema = z.object({
+    show: z.boolean().default(true),
+    /** The text height, as a fraction of the output's short side. */
+    size: z.number().min(0.02).max(0.1).default(0.038),
+    position: z.enum(["bottom", "top"]).default("bottom"),
+});
+
+/** `<movie stem>.transcript.json` beside the movie: the raw transcription the REPL and the window share. */
+export function transcriptCachePath(video: string): string {
+    return join(dirname(video), `${basename(video, extname(video))}.transcript.json`);
+}
+
 export const editProjectSchema = z.object({
     version: z.number().int().default(EDIT_PROJECT_VERSION),
     source: z.object({
@@ -122,6 +135,7 @@ export const editProjectSchema = z.object({
     clicks: clicksSchema.optional(),
     frame: frameSchema.optional(),
     cursor: cursorSchema.optional(),
+    captions: captionsSchema.optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
 });
@@ -469,6 +483,14 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .strict(),
     z
         .object({
+            op: z.literal("captions"),
+            show: z.boolean().optional(),
+            size: z.number().min(0.02).max(0.1).optional(),
+            position: z.enum(["bottom", "top"]).optional(),
+        })
+        .strict(),
+    z
+        .object({
             op: z.literal("cursor"),
             show: z.boolean().optional(),
             size: z.number().min(0.5).max(3).optional(),
@@ -617,6 +639,16 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
             const { op: _op, ...change } = op;
             return { ...project, clicks: clicksSchema.parse({ ...project.clicks, ...change }) };
         }
+        case "captions": {
+            if (!existsSync(transcriptCachePath(project.source.video))) {
+                throw new Error(
+                    "this movie has no transcript yet; run movie.transcript() (or the Style tab's Transcribe) first, then turn captions on"
+                );
+            }
+
+            const { op: _op, ...change } = op;
+            return { ...project, captions: captionsSchema.parse({ ...project.captions, ...change }) };
+        }
         case "cursor": {
             if (!trackDrawsCursor(project.source.cursor)) {
                 throw new Error(
@@ -680,6 +712,7 @@ export function describeProject(project: EditProject, path: string) {
         frame: project.frame ?? null,
         /** null: the system cursor is in the picture, so there is nothing to change. */
         cursor: trackDrawsCursor(project.source.cursor) ? cursorSchema.parse(project.cursor ?? {}) : null,
+        captions: project.captions ?? null,
     };
 }
 

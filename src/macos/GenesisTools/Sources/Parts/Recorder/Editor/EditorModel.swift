@@ -71,6 +71,10 @@ final class EditorModel {
     var noticeIsError = false
     /// A `tools recorder apply` step runs (Remove Still Parts); its button shows progress and does not start another.
     private(set) var isRemovingIdle = false
+    /// `tools transcribe` runs for the captions.
+    private(set) var isTranscribing = false
+    /// The movie has a cached transcript, so captions can be drawn.
+    private(set) var hasTranscript = false
     /// Pixels of the timeline per second; the transport's slider sets it.
     var pointsPerSecond: Double = 0
 
@@ -79,6 +83,7 @@ final class EditorModel {
         self.store = store
         cursor = CursorTrack.load(project.source.cursor)
         zoom = ZoomState(project: project, cursor: cursor)
+        hasTranscript = zoom.hasCaptions
         asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
         player.actionAtItemEnd = .pause
         let interval = CMTime(value: 1, timescale: 30)
@@ -368,6 +373,8 @@ final class EditorModel {
         let rebuildMovie = next.clips != project.clips || next.audio != project.audio
         project = next
         zoom.update(next)
+        // An agent that transcribed the movie and turned captions on: read the transcript it cached.
+        if next.captions != nil, !hasTranscript { hasTranscript = zoom.reloadCaptions() }
         canUndo = true
         canRedo = false
         if rebuildMovie { rebuild() } else { refreshFrame() }
@@ -376,6 +383,27 @@ final class EditorModel {
 
     /// Cuts every still and silent stretch with `tools recorder apply … removeIdle` (ffmpeg's freeze and silence
     /// detection run there); the file watcher brings the result in, one ⌘Z away like any agent edit.
+    /// Transcribes the movie once into `<stem>.transcript.json` (the cache the REPL's transcript() reads too) and
+    /// turns the captions on. The first run may ask for the AI vault key in this app.
+    func transcribe() {
+        guard !isTranscribing else { return }
+        isTranscribing = true
+        show("Transcribing the movie…", error: false)
+        let cache = CaptionTrack.cacheURL(video: project.source.video).path
+        ToolsRunner.run(["transcribe", project.source.video, "--format", "json", "-o", cache]) { [weak self] status, _, stderr in
+            guard let self else { return }
+            self.isTranscribing = false
+            guard status == 0, self.zoom.reloadCaptions() else {
+                let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
+                self.show("The transcription failed: \(reason)", error: true)
+                return
+            }
+            self.hasTranscript = true
+            self.setLooks { $0.captions = $0.captions ?? EditProject.Captions() }
+            self.show("Captions are on.", error: false)
+        }
+    }
+
     func removeIdle() {
         guard !isRemovingIdle else { return }
         saveTask?.cancel()

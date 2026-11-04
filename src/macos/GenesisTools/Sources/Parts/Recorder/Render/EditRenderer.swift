@@ -8,16 +8,41 @@ final class ZoomState: @unchecked Sendable {
     private let lock = NSLock()
     private var project: EditProject
     private var cursor: CursorTrack?
+    private var captions: CaptionTrack?
 
     init(project: EditProject, cursor: CursorTrack?) {
         self.project = project
         self.cursor = cursor
+        captions = CaptionTrack.load(video: project.source.video)
     }
 
     func update(_ project: EditProject) {
         lock.lock()
         self.project = project
         lock.unlock()
+    }
+
+    /// Reads the transcript cache again (after a transcription); true when the movie now has captions.
+    @discardableResult
+    func reloadCaptions() -> Bool {
+        let track = CaptionTrack.load(video: project.source.video)
+        lock.lock()
+        captions = track
+        lock.unlock()
+        return track != nil
+    }
+
+    var hasCaptions: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return captions != nil
+    }
+
+    /// One caption to draw over the output.
+    struct CaptionMark {
+        var line: CaptionTrack.Line
+        var track: CaptionTrack
+        var settings: EditProject.Captions
     }
 
 
@@ -30,12 +55,14 @@ final class ZoomState: @unchecked Sendable {
         /// Where a `cover` crop centres, 0...1 of the picture after the zoom.
         var coverFocus: CGPoint
         var frame: EditProject.Frame?
+        var caption: CaptionMark?
     }
 
     func look(atOutput outUs: Int64) -> FrameLook {
         lock.lock()
         let project = project
         let cursor = cursor
+        let captions = captions
         lock.unlock()
         let sourceUs = TimelineMap.sourceTime(atOutput: outUs, in: project)
         var marks: [Looks.ClickMark] = []
@@ -48,7 +75,11 @@ final class ZoomState: @unchecked Sendable {
                          cursor: Self.cursorMark(atSourceUs: sourceUs, track: cursor, settings: project.cursor ?? .init(),
                                                  videoWidth: Double(project.source.width)),
                          coverFocus: Self.coverFocus(atSourceUs: sourceUs, project: project, track: cursor, view: view),
-                         frame: project.frame)
+                         frame: project.frame,
+                         caption: project.captions.flatMap { settings in
+                             guard settings.show, let captions, let line = captions.line(atSourceUs: sourceUs) else { return nil }
+                             return CaptionMark(line: line, track: captions, settings: settings)
+                         })
     }
 
     /// The cursor, averaged over ±0.7 s and moved into the zoomed view; the centre without a track or a cover fit.
@@ -203,6 +234,10 @@ struct EditRenderer {
             result = result.cropped(to: CGRect(origin: .zero, size: picture))
             if let frame = look.frame {
                 result = Looks.applyFrame(frame, to: result, picture: picture, canvas: size, focus: look.coverFocus)
+            }
+            if let caption = look.caption {
+                result = Looks.drawCaption(caption.line, track: caption.track, settings: caption.settings, on: result, size: size)
+                    .cropped(to: CGRect(origin: .zero, size: size))
             }
             request.finish(with: result, context: nil)
         }

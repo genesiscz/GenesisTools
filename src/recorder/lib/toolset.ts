@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, extname, join } from "node:path";
+import { join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -16,6 +16,7 @@ import {
     hexColor,
     outputDurationUs,
     type TranscriptLine,
+    transcriptCachePath,
     transcriptLines,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
@@ -63,7 +64,7 @@ const recordSchema = z
     .strict();
 
 const movieDoc =
-    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, audio, export, clicks, frame, cursor }";
+    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, audio, export, clicks, frame, cursor, captions }";
 const edit = (name: string, params: z.ZodType, doc: string, positional?: string[]) =>
     defineMethod({ name, params, positional, result: z.unknown(), resultName: movieDoc, doc, effect: "reversible" });
 
@@ -115,6 +116,17 @@ const movieMethods = [
             })
             .strict(),
         'Draws each recorded click as a disc that grows and fades: highlight, color "#RRGGBB", radius (a fraction of the height, 0.03), durationMs (450).'
+    ),
+    edit(
+        "captions",
+        z
+            .object({
+                show: z.boolean().optional(),
+                size: z.number().min(0.02).max(0.1).optional(),
+                position: z.enum(["bottom", "top"]).optional(),
+            })
+            .strict(),
+        'Draws the spoken lines over the picture from the cached transcript (call transcript() first): show, size (text height, a fraction of the short side, 0.038), position "bottom" | "top". Captions follow every cut.'
     ),
     edit(
         "cursor",
@@ -347,6 +359,10 @@ export class Movie {
         return this.change([{ op: "clicks", ...options }]);
     }
 
+    async captions(options: Omit<Extract<EditOp, { op: "captions" }>, "op"> = {}) {
+        return this.change([{ op: "captions", ...options }]);
+    }
+
     async cursor(options: Omit<Extract<EditOp, { op: "cursor" }>, "op"> = {}) {
         return this.change([{ op: "cursor", ...options }]);
     }
@@ -402,7 +418,7 @@ export class Movie {
     async transcript(options: { provider?: string; lang?: string; refresh?: boolean } = {}): Promise<TranscriptLine[]> {
         const opened = await openProject(this.recording);
         const video = opened.project.source.video;
-        const cache = join(dirname(video), `${basename(video, extname(video))}.transcript.json`);
+        const cache = transcriptCachePath(video);
 
         if (!options.refresh && existsSync(cache)) {
             return transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project);

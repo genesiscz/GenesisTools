@@ -418,6 +418,38 @@ private struct StyleInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        VStack(alignment: .leading, spacing: 10) {
+            let captions = model.project.captions
+            if model.hasTranscript {
+                SwitchRow("Captions", isOn: Binding(get: { captions?.show == true }, set: { on in
+                    model.setLooks { project in
+                        var next = project.captions ?? EditProject.Captions()
+                        next.show = on
+                        project.captions = next
+                    }
+                }))
+                .accessibilityIdentifier("recorder.style.captions")
+                if let captions, captions.show {
+                    GenSegmentedTabs("Captions position", items: EditProject.CaptionPosition.allCases.map { .init($0, $0.rawValue.capitalized) },
+                                     selection: Binding(get: { captions.position }, set: { value in model.setLooks { $0.captions?.position = value } }),
+                                     minSegmentWidth: 60, identifier: "recorder.style.captionsPosition")
+                    SectionLabel(text: "Text size", value: String(format: "%.1f%%", captions.size * 100))
+                    Slider(value: Binding(get: { captions.size }, set: { value in model.setLooks { $0.captions?.size = (value * 1000).rounded() / 1000 } }),
+                           in: 0.025...0.08)
+                        .accessibilityIdentifier("recorder.style.captionsSize")
+                }
+            } else {
+                HStack {
+                    Text("Captions").font(.system(size: 13))
+                    Spacer()
+                    Button(model.isTranscribing ? "Transcribing…" : "Transcribe") { model.transcribe() }
+                        .buttonStyle(.genHoverPlain())
+                        .disabled(model.isTranscribing)
+                        .instantTooltip("Runs tools transcribe once; the spoken lines become captions that follow every cut")
+                        .accessibilityIdentifier("recorder.style.transcribe")
+                }
+            }
+        }
     }
 
     private static func swiftColor(_ hex: String) -> Color {
