@@ -6,6 +6,8 @@ interface Prefs {
     "dd.theme": "system" | "light" | "dark";
     "dd.terminalDriver": TerminalDriverId;
     "dd.lastSessionId": string;
+    /** The text the session view's Nudge button puts in the composer (F19). */
+    "dd.nudgePrompt": string;
 }
 
 export async function getPref<K extends keyof Prefs>(key: K): Promise<Prefs[K] | null> {

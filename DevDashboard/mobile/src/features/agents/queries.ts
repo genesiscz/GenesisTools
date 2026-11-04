@@ -1,6 +1,9 @@
 import {
     type AgentBoardPhaseRow,
     type AgentBoardSession,
+    type AgentInterruptReceiptDto,
+    type AgentSendInput,
+    type AgentSendReceiptDto,
     type AgentStopInput,
     type AgentStopReceiptDto,
     type AgentsBoardDto,
@@ -111,6 +114,23 @@ export function stopSession(
 ): Promise<AgentStopReceiptDto> {
     const { idempotencyKey, ...body } = input;
     return client.call(ENDPOINTS.agentsStop, body, { idempotencyKey });
+}
+
+/** One message into a live session (F10); the key makes a retried offline draft one delivery on the Mac. */
+export function sendToSession(
+    client: DashboardClient,
+    input: AgentSendInput & { idempotencyKey: string }
+): Promise<AgentSendReceiptDto> {
+    const { idempotencyKey, ...body } = input;
+    return client.call(ENDPOINTS.agentsSend, body, { idempotencyKey });
+}
+
+/** Ends a session's running turn with its TUI's Esc key (F19). */
+export function interruptSession(
+    client: DashboardClient,
+    input: { key: string; idempotencyKey: string }
+): Promise<AgentInterruptReceiptDto> {
+    return client.call(ENDPOINTS.agentsInterrupt, { key: input.key }, { idempotencyKey: input.idempotencyKey });
 }
 
 /** A `phase` frame merged into the board; undefined when the board does not hold that session (refetch it). */

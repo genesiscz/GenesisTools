@@ -1,10 +1,11 @@
 import type { AgentBoardSession, AgentStopReceiptDto, AgentTranscriptTurnDto } from "@dd/contract";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { memo, useCallback, useRef, useState } from "react";
-import { ActivityIndicator, Alert, FlatList, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, Text, View } from "react-native";
 import { PhaseBadge } from "@/features/agents/components/PhaseBadge";
 import { ago } from "@/features/agents/components/SessionCard";
-import { useAgentTranscript, useBoardSession, useStopSession } from "@/features/agents/hooks";
+import { SteerComposer } from "@/features/agents/components/SteerComposer";
+import { useAgentsBoard, useAgentTranscript, useBoardSession, useStopSession } from "@/features/agents/hooks";
 import { idempotencyKey } from "@/features/answer-queue/units";
 import { Empty } from "@/ui/Empty";
 import { useThemeColors } from "@/theme/colors";
@@ -183,23 +184,30 @@ function Transcript({ session }: { session: AgentBoardSession }) {
 }
 
 /**
- * One live session (F9, F19): its phase and stuck verdict from the live board, a Stop action that ends its process
- * tree after a confirmation, and its newest turns as a chat that tails while the screen is on top. Esc and a nudge
- * prompt wait for the steer route (M5, F10).
+ * One live session (F9, F10, F19): its phase and stuck verdict from the live board, a Stop action that ends its
+ * process tree after a confirmation, its newest turns as a chat that tails while the screen is on top, and the steer
+ * composer with Esc and Nudge (`SteerComposer`, through the Mac's one session-send module). `?text=` starts the
+ * composer with a message (a saved prompt, a transcribed clip).
  */
 export default function AgentSessionScreen() {
-    const { key } = useLocalSearchParams<{ key?: string }>();
+    const { key, text } = useLocalSearchParams<{ key?: string; text?: string }>();
     const session = useBoardSession(key ?? "");
+    const timings = useAgentsBoard().data?.sendTimings;
 
     return (
         <>
             <Stack.Screen options={{ title: session?.project ?? "Session" }} />
             <View testID="screen-agent-session" accessibilityLabel="screen-agent-session" className="flex-1 bg-dd-bg-base">
                 {session ? (
-                    <>
+                    <KeyboardAvoidingView
+                        className="flex-1"
+                        behavior={Platform.OS === "ios" ? "padding" : undefined}
+                        keyboardVerticalOffset={96}
+                    >
                         <SessionHeader session={session} />
                         <Transcript session={session} />
-                    </>
+                        <SteerComposer session={session} timings={timings?.[session.provider]} initialText={text} />
+                    </KeyboardAvoidingView>
                 ) : (
                     <Empty testID="session-gone" title="Session not live" hint="It ended, or the board has not loaded it." />
                 )}
