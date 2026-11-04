@@ -4,13 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
+    CLAIM_STALE_MS,
+    claimDraft,
+    decideDraft,
     listProposals,
     listProposalsFor,
     ProposalError,
+    type ProposalIntentDeps,
     parseProposal,
     proposalFor,
     proposalKey,
     proposalMarkdown,
+    reconcileProposal,
+    recordDraftSent,
+    releaseDraftClaim,
     saveProposal,
 } from "./proposal";
 
@@ -361,5 +368,65 @@ describe("review proposal", () => {
 
         await saveProposal(parseProposal(input({ repoPath: join(checkout, "gone"), threads })), base);
         expect(proposalFor(ref, base)?.repoPath).toBeNull();
+    });
+});
+
+describe("proposal intents (M11)", () => {
+    const at = (ms: number) => new Date(Date.parse("2026-11-04T10:00:00.000Z") + ms);
+    const deps = (ms: number, alive = true): ProposalIntentDeps => ({ now: () => at(ms), alive: () => alive });
+
+    async function stored() {
+        const base = mkdtempSync(join(tmpdir(), "gt-proposal-intents-"));
+        const proposal = parseProposal(input());
+        await saveProposal(proposal, base);
+        return { base, ref: proposal, path: join(base, "proposals", `${proposalKey(proposal)}.json`) };
+    }
+
+    const draftOf = (path: string) => SafeJSON.parse(readFileSync(path, "utf8")).drafts[0];
+
+    test("decide, claim, record the provider draft, then a publish reconciles it to posted", async () => {
+        const { base, ref, path } = await stored();
+
+        await decideDraft(
+            { ref, draftId: "d1", decision: "edited", editedBody: "Reset after the POST.", base },
+            deps(0)
+        );
+        const claimed = await claimDraft({ ref, draftId: "d1", pid: 4242, base }, deps(1_000));
+        expect(claimed.body).toBe("Reset after the POST.");
+        await expect(claimDraft({ ref, draftId: "d1", pid: 4343, base }, deps(2_000))).rejects.toThrow(/being sent/);
+
+        await recordDraftSent({ ref, draftId: "d1", status: "drafted", providerId: "PRRC_1", base }, deps(3_000));
+        expect(draftOf(path)).toMatchObject({ status: "drafted", providerId: "PRRC_1" });
+        expect(draftOf(path).claim).toBeUndefined();
+
+        const reconciled = await reconcileProposal({ ref, submittedIds: ["PRRC_1"], base }, deps(4_000));
+        expect(reconciled).toEqual({ posted: ["d1"], staleClaims: [] });
+        expect(draftOf(path)).toMatchObject({ status: "posted", decidedAt: at(4_000).toISOString() });
+        await expect(decideDraft({ ref, draftId: "d1", decision: "rejected", base }, deps(5_000))).rejects.toThrow(
+            /already posted/
+        );
+    });
+
+    test("a push keeps the decision and its time; a crashed claim is cleared and reported", async () => {
+        const { base, ref, path } = await stored();
+        await decideDraft({ ref, draftId: "d1", decision: "accepted", base }, deps(0));
+        await claimDraft({ ref, draftId: "d1", pid: 4242, base }, deps(0));
+
+        await saveProposal(parseProposal(input()), base);
+        expect(draftOf(path)).toMatchObject({
+            status: "accepted",
+            decidedAt: at(0).toISOString(),
+            claim: { pid: 4242 },
+        });
+
+        const gone = await reconcileProposal({ ref, submittedIds: [], base }, deps(1_000, false));
+        expect(gone.staleClaims).toEqual(["d1"]);
+        expect(draftOf(path).claim).toBeUndefined();
+
+        await claimDraft({ ref, draftId: "d1", pid: 4242, base }, deps(0));
+        await expect(claimDraft({ ref, draftId: "d1", base }, deps(CLAIM_STALE_MS + 1))).resolves.toBeDefined();
+        await releaseDraftClaim({ ref, draftId: "d1", base });
+        expect(draftOf(path)).toMatchObject({ status: "accepted" });
+        expect(draftOf(path).claim).toBeUndefined();
     });
 });

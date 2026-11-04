@@ -62,6 +62,19 @@ export interface ProposalDraft {
     editedBody?: string;
     /** Provider id once promoted to a review draft or posted. */
     providerId?: string;
+    /** When the last decision on it was made (the window writes it too); a push never moves it. */
+    decidedAt?: string;
+    /**
+     * A send in flight: set before the provider post, which runs outside the lock (`withFileLock` gives up after 5 s),
+     * and removed by `recordDraftSent` or `releaseDraftClaim`. A claim whose process is gone, or older than
+     * `CLAIM_STALE_MS`, is stale: the post may or may not have landed, so `reconcileProposal` clears it and reports it.
+     */
+    claim?: ProposalClaim;
+}
+
+export interface ProposalClaim {
+    pid: number;
+    at: string;
 }
 
 /**
@@ -498,7 +511,14 @@ function mergeProposal(
         }
 
         kept += 1;
-        return { ...draft, status: before.status, editedBody: before.editedBody, providerId: before.providerId };
+        return {
+            ...draft,
+            status: before.status,
+            editedBody: before.editedBody,
+            providerId: before.providerId,
+            ...(before.decidedAt ? { decidedAt: before.decidedAt } : {}),
+            ...(before.claim ? { claim: before.claim } : {}),
+        };
     });
 
     const threads = incoming.threads?.map((thread) => {
@@ -648,4 +668,216 @@ export function hubStatus(): { available: boolean; bundlePath: string; reason?: 
     }
 
     return { available: true, bundlePath };
+}
+
+// M11: the review proposal owns its decisions in TS. The window's clicks, `hub pr publish` and the phone decide,
+// claim, record a send and reconcile through these intents, under the same `<file>.lock` the window's
+// `ProposalDocument.update` takes, so a CLI publish reconciles drafts the way the window does.
+
+/** A claim older than this is stale even when its pid is alive (a reused pid). */
+export const CLAIM_STALE_MS = 10 * 60_000;
+
+/** The statuses that mean the draft left the window; it is never decided again (the window's already-sent rule). */
+export const SENT_STATUSES: ReadonlySet<ProposalDraftStatus> = new Set(["sent", "drafted", "posted"]);
+
+/** The decisions a person makes on a draft; `proposed` takes a decision back. */
+export type DraftDecision = Extract<ProposalDraftStatus, "proposed" | "accepted" | "edited" | "rejected">;
+
+type ProposalRef = Pick<ReviewProposal, "provider" | "host" | "project" | "number">;
+
+export interface ProposalIntentDeps {
+    now(): Date;
+    /** Whether a claim's process still runs. */
+    alive(pid: number): boolean;
+}
+
+export const realProposalIntentDeps: ProposalIntentDeps = {
+    now: () => new Date(),
+    alive: (pid) => {
+        try {
+            process.kill(pid, 0);
+            return true;
+        } catch (err) {
+            // EPERM: the process exists under another user; anything else means it is gone.
+            return err instanceof Error && "code" in err && err.code === "EPERM";
+        }
+    },
+};
+
+export function isStaleClaim(claim: ProposalClaim, deps: ProposalIntentDeps): boolean {
+    return !deps.alive(claim.pid) || deps.now().getTime() - Date.parse(claim.at) > CLAIM_STALE_MS;
+}
+
+function proposalPath(ref: ProposalRef, base?: string): string {
+    return join(proposalsDir(base), `${proposalKey(ref)}.json`);
+}
+
+/** One draft changed under the lock; `change` throws a ProposalError to refuse and returns the result. */
+async function updateDraft<T>(
+    input: { ref: ProposalRef; draftId: string; base?: string },
+    change: (draft: ProposalDraft) => T
+): Promise<T> {
+    const path = proposalPath(input.ref, input.base);
+
+    if (!existsSync(path)) {
+        throw new ProposalError(`no proposal is stored for ${proposalKey(input.ref)}`);
+    }
+
+    return storedProposalDocument(path).update((stored) => {
+        const draft = stored?.drafts.find((entry) => entry.id === input.draftId);
+
+        if (!stored || !draft) {
+            throw new ProposalError(`no draft ${input.draftId} in ${proposalKey(input.ref)}`);
+        }
+
+        const result = change(draft);
+        return { write: stored, result };
+    });
+}
+
+/** Accept, edit, reject or take back one draft. A draft that left the window, or one being sent, is refused. */
+export async function decideDraft(
+    input: {
+        ref: ProposalRef;
+        draftId: string;
+        decision: DraftDecision;
+        editedBody?: string;
+        base?: string;
+    },
+    deps: ProposalIntentDeps = realProposalIntentDeps
+): Promise<ProposalDraft> {
+    return updateDraft(input, (draft) => {
+        if (SENT_STATUSES.has(draft.status)) {
+            throw new ProposalError(`draft ${draft.id} is already ${draft.status}; it cannot be decided again`);
+        }
+
+        if (draft.claim && !isStaleClaim(draft.claim, deps)) {
+            throw new ProposalError(`draft ${draft.id} is being sent by pid ${draft.claim.pid}`);
+        }
+
+        if (input.decision === "edited" && !input.editedBody?.trim()) {
+            throw new ProposalError("an edited decision needs the edited text");
+        }
+
+        draft.status = input.decision;
+        draft.decidedAt = deps.now().toISOString();
+        delete draft.claim;
+
+        if (input.decision === "edited") {
+            draft.editedBody = input.editedBody;
+        } else if (input.decision === "proposed") {
+            delete draft.editedBody;
+        }
+
+        return { ...draft };
+    });
+}
+
+/**
+ * Claims an accepted or edited draft before its provider post, and returns the text to post. The post runs outside
+ * the lock; the caller then calls `recordDraftSent` with the provider's id, or `releaseDraftClaim` when it failed.
+ */
+export async function claimDraft(
+    input: { ref: ProposalRef; draftId: string; pid?: number; base?: string },
+    deps: ProposalIntentDeps = realProposalIntentDeps
+): Promise<{ draft: ProposalDraft; body: string }> {
+    return updateDraft(input, (draft) => {
+        if (draft.status !== "accepted" && draft.status !== "edited") {
+            throw new ProposalError(`draft ${draft.id} is ${draft.status}; only an accepted or edited draft is sent`);
+        }
+
+        if (draft.claim && !isStaleClaim(draft.claim, deps)) {
+            throw new ProposalError(`draft ${draft.id} is already being sent by pid ${draft.claim.pid}`);
+        }
+
+        draft.claim = { pid: input.pid ?? process.pid, at: deps.now().toISOString() };
+        return {
+            draft: { ...draft },
+            body: draft.status === "edited" && draft.editedBody ? draft.editedBody : draft.body,
+        };
+    });
+}
+
+/** Records where a claimed draft went: a provider review draft (`drafted`), the agent (`sent`) or posted. */
+export async function recordDraftSent(
+    input: {
+        ref: ProposalRef;
+        draftId: string;
+        status: Extract<ProposalDraftStatus, "sent" | "drafted" | "posted">;
+        providerId?: string;
+        base?: string;
+    },
+    deps: ProposalIntentDeps = realProposalIntentDeps
+): Promise<ProposalDraft> {
+    return updateDraft(input, (draft) => {
+        draft.status = input.status;
+        draft.decidedAt = deps.now().toISOString();
+        delete draft.claim;
+
+        if (input.providerId) {
+            draft.providerId = input.providerId;
+        }
+
+        return { ...draft };
+    });
+}
+
+/** Drops a claim after a failed post; the draft keeps its decision and can be sent again. */
+export async function releaseDraftClaim(input: { ref: ProposalRef; draftId: string; base?: string }): Promise<void> {
+    await updateDraft(input, (draft) => {
+        delete draft.claim;
+    });
+}
+
+export interface ReconcileResult {
+    /** Drafts whose provider draft went out with the submitted review: now `posted`. */
+    posted: string[];
+    /** Claims of a process that is gone (or too old): cleared; the post may have landed, so check the PR. */
+    staleClaims: string[];
+}
+
+/**
+ * After a review was submitted (the window's Submit, `hub pr publish`): every draft or thread reply whose provider id
+ * went out with it is `posted` (the window's `reconcileSubmitted`), and stale claims are cleared and reported. A PR
+ * without a stored proposal answers nothing.
+ */
+export async function reconcileProposal(
+    input: { ref: ProposalRef; submittedIds: readonly string[]; base?: string },
+    deps: ProposalIntentDeps = realProposalIntentDeps
+): Promise<ReconcileResult> {
+    const path = proposalPath(input.ref, input.base);
+    const result: ReconcileResult = { posted: [], staleClaims: [] };
+
+    if (!existsSync(path)) {
+        return result;
+    }
+
+    const submitted = new Set(input.submittedIds);
+    const now = deps.now().toISOString();
+    await storedProposalDocument(path).update((stored) => {
+        for (const draft of stored?.drafts ?? []) {
+            if (draft.providerId && submitted.has(draft.providerId) && draft.status === "drafted") {
+                draft.status = "posted";
+                draft.decidedAt = now;
+                result.posted.push(draft.id);
+            }
+
+            if (draft.claim && isStaleClaim(draft.claim, deps)) {
+                delete draft.claim;
+                result.staleClaims.push(draft.id);
+            }
+        }
+
+        for (const thread of stored?.threads ?? []) {
+            if (thread.providerId && submitted.has(thread.providerId) && thread.replyStatus === "drafted") {
+                thread.replyStatus = "posted";
+                result.posted.push(thread.threadId);
+            }
+        }
+
+        return { write: stored, result: undefined };
+    });
+
+    logger.debug({ path, ...result }, "review proposal reconciled");
+    return result;
 }

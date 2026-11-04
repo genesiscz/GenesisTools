@@ -65,6 +65,7 @@ import {
     proposalKey,
     proposalListRows,
     proposalMarkdown,
+    reconcileProposal,
     saveProposal,
 } from "./lib/proposal";
 import { hubPr, hubPrProjects, hubPrs, PrRefError } from "./lib/prs";
@@ -1307,10 +1308,20 @@ pr.command("publish")
                           ? "REQUEST_CHANGES"
                           : "COMMENT";
                     const body = opts.bodyFile ? await readBody(opts.bodyFile) : undefined;
-                    return prWrite(opts, (backend) => backend.publish({ event, body }));
+                    const published = await prWrite(opts, (backend) => backend.publish({ event, body }));
+                    // M11: the stored proposal learns what went out, as the window's Submit does.
+                    const reconciled =
+                        published.pr && published.submittedIds
+                            ? await reconcileProposal({ ref: published.pr, submittedIds: published.submittedIds })
+                            : null;
+                    return { ...published, reconciled };
                 },
                 human: (result) =>
-                    `Published ${result.published} drafts as ${result.event}${result.url ? `: ${result.url}` : ""}`,
+                    `Published ${result.published} drafts as ${result.event}${result.url ? `: ${result.url}` : ""}${
+                        result.reconciled?.staleClaims.length
+                            ? `; ${result.reconciled.staleClaims.length} interrupted send(s) cleared, check the PR for duplicates`
+                            : ""
+                    }`,
             });
         }
     );
