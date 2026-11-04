@@ -829,12 +829,132 @@ private struct PreviewView: View {
             }
             .aspectRatio(aspect, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .onTapGesture { model.togglePlay() }
+            .overlay {
+                if model.tab == .hide && !model.isPlaying {
+                    HiddenPartHandles(model: model, clock: model.clock)
+                }
+            }
             .shadow(color: .black.opacity(0.5), radius: 18, y: 6)
             .padding(28)
-            .onTapGesture { model.togglePlay() }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityLabel("Preview")
+    }
+}
+
+/// The Hide tab on the preview itself: every hidden part showing at the playhead is outlined where it lands (through
+/// the zoom and the frame); the selected one has a dashed frame to drag and corner handles to size it. With none
+/// selected, a drag on the picture draws a new hidden part from the playhead.
+private struct HiddenPartHandles: View {
+    @Bindable var model: EditorModel
+    let clock: PlayheadClock
+    @State private var drawing: CGRect?
+    @State private var grabbed: CGRect?
+
+    private enum Grip: CaseIterable { case topLeft, topRight, bottomLeft, bottomRight }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let map = model.sourceToCanvas(atOutput: clock.outUs)
+            let sourceUs = TimelineMap.sourceTime(atOutput: clock.outUs, in: model.project)
+            let showing = (model.project.redactions ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
+            let toView = { (rect: CGRect) in CGRect(x: rect.minX * size.width, y: rect.minY * size.height,
+                                                    width: rect.width * size.width, height: rect.height * size.height) }
+            ZStack(alignment: .topLeading) {
+                // The surface that draws a new part; a tap on it still plays and pauses.
+                Color.clear.contentShape(Rectangle())
+                    .onTapGesture { model.togglePlay() }
+                    .gesture(DragGesture(minimumDistance: 6).onChanged { value in
+                        drawing = CGRect(x: min(value.startLocation.x, value.location.x), y: min(value.startLocation.y, value.location.y),
+                                         width: abs(value.location.x - value.startLocation.x), height: abs(value.location.y - value.startLocation.y))
+                    }.onEnded { _ in
+                        defer { drawing = nil }
+                        guard let drawn = drawing, drawn.width > 8, drawn.height > 8 else { return }
+                        let canvas = CGRect(x: drawn.minX / size.width, y: drawn.minY / size.height,
+                                            width: drawn.width / size.width, height: drawn.height / size.height)
+                        model.addRedaction(rect: map.sourceRect(ofCanvas: canvas))
+                    })
+                    .accessibilityLabel("Draw a part to hide")
+                ForEach(showing) { redaction in
+                    // Only the part the picture shows: a zoom or a cover crop can put the rest outside it.
+                    let mapped = map.rect(CGRect(x: redaction.x, y: redaction.y, width: redaction.width, height: redaction.height))
+                    let rect = toView(mapped.intersection(map.shown).isNull ? .zero : mapped.intersection(map.shown))
+                    let selected = model.selectedRedaction == redaction.id
+                    Rectangle()
+                        .strokeBorder(Color.white.opacity(selected ? 1 : 0.6), style: StrokeStyle(lineWidth: selected ? 1.5 : 1, dash: [5, 3]))
+                        .background(Color.white.opacity(selected ? 0.06 : 0.001))
+                        .frame(width: rect.width, height: rect.height)
+                        .contentShape(Rectangle())
+                        .offset(x: rect.minX, y: rect.minY)
+                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                            model.selectedRedaction = redaction.id
+                            let start = grabbed ?? rect
+                            grabbed = start
+                            move(redaction.id, to: start.offsetBy(dx: value.translation.width, dy: value.translation.height), size: size, map: map)
+                        }.onEnded { _ in grabbed = nil })
+                        .instantTooltip("\(redaction.style.rawValue.capitalized): drag to move")
+                        .accessibilityLabel("Hidden part, \(redaction.style.rawValue)")
+                    if selected {
+                        ForEach(Grip.allCases, id: \.self) { grip in
+                            let corner = Self.corner(grip, of: rect)
+                            RoundedRectangle(cornerRadius: 2).fill(Color.white)
+                                .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(Color.black.opacity(0.4), lineWidth: 1))
+                                .frame(width: 10, height: 10)
+                                .contentShape(Rectangle().inset(by: -5))
+                                .offset(x: corner.x - 5, y: corner.y - 5)
+                                .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                                    let start = grabbed ?? rect
+                                    grabbed = start
+                                    move(redaction.id, to: Self.resized(start, grip: grip, by: value.translation), size: size, map: map)
+                                }.onEnded { _ in grabbed = nil })
+                                .accessibilityHidden(true)
+                        }
+                    }
+                }
+                if let drawing {
+                    Rectangle().strokeBorder(Color.white, style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                        .background(Color.black.opacity(0.35))
+                        .frame(width: drawing.width, height: drawing.height)
+                        .offset(x: drawing.minX, y: drawing.minY)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
+    }
+
+    private func move(_ id: String, to rect: CGRect, size: CGSize, map: Looks.SourceToCanvas) {
+        let canvas = CGRect(x: rect.minX / size.width, y: rect.minY / size.height,
+                            width: max(4, rect.width) / size.width, height: max(4, rect.height) / size.height)
+        let source = map.sourceRect(ofCanvas: canvas)
+        model.updateRedaction(id) {
+            $0.x = source.minX
+            $0.y = source.minY
+            $0.width = source.width
+            $0.height = source.height
+        }
+    }
+
+    private static func corner(_ grip: Grip, of rect: CGRect) -> CGPoint {
+        switch grip {
+        case .topLeft: CGPoint(x: rect.minX, y: rect.minY)
+        case .topRight: CGPoint(x: rect.maxX, y: rect.minY)
+        case .bottomLeft: CGPoint(x: rect.minX, y: rect.maxY)
+        case .bottomRight: CGPoint(x: rect.maxX, y: rect.maxY)
+        }
+    }
+
+    /// The rectangle with one corner moved; the opposite corner stays where it is.
+    private static func resized(_ rect: CGRect, grip: Grip, by delta: CGSize) -> CGRect {
+        var minX = rect.minX, minY = rect.minY, maxX = rect.maxX, maxY = rect.maxY
+        switch grip {
+        case .topLeft: minX += delta.width; minY += delta.height
+        case .topRight: maxX += delta.width; minY += delta.height
+        case .bottomLeft: minX += delta.width; maxY += delta.height
+        case .bottomRight: maxX += delta.width; maxY += delta.height
+        }
+        return CGRect(x: min(minX, maxX - 4), y: min(minY, maxY - 4), width: max(4, abs(maxX - minX)), height: max(4, abs(maxY - minY)))
     }
 }
 

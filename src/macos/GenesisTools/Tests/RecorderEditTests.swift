@@ -196,6 +196,55 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(right.minY, 0, accuracy: 0.5)
     }
 
+    func testTheSourceToCanvasMapFollowsTheZoomAndTheFrameAndMatchesWhatTheFrameDraws() throws {
+        let picture = CGSize(width: 160, height: 100), square = CGSize(width: 100, height: 100)
+        let whole = Looks.sourceToCanvas(view: .whole, frame: nil, picture: picture, canvas: picture)
+        XCTAssertEqual(whole, Looks.SourceToCanvas())
+        let zoomed = Looks.sourceToCanvas(view: ZoomCurve.View(scale: 2, centerX: 0.5, centerY: 0.5), frame: nil, picture: picture, canvas: picture)
+        XCTAssertEqual(zoomed.point(CGPoint(x: 0.25, y: 0.25)).x, 0, accuracy: 1e-9)
+        XCTAssertEqual(zoomed.point(CGPoint(x: 0.75, y: 0.75)).y, 1, accuracy: 1e-9)
+
+        var frame = EditProject.Frame()
+        frame.padding = 0.1
+        frame.cornerRadius = 0
+        frame.shadow = false
+        let map = Looks.sourceToCanvas(view: .whole, frame: frame, picture: picture, canvas: square)
+        let rect = CGRect(x: 0.2, y: 0.3, width: 0.4, height: 0.5)
+        let back = map.sourceRect(ofCanvas: map.rect(rect))
+        XCTAssertEqual(back.minX, rect.minX, accuracy: 1e-9)
+        XCTAssertEqual(back.height, rect.height, accuracy: 1e-9)
+
+        // A white picture framed on a black background: the map's edges are where the white starts and stops.
+        let white = CIImage(color: .white).cropped(to: CGRect(origin: .zero, size: picture))
+        frame.background = EditProject.Background(kind: .color, colors: ["#000000"])
+        let drawn = Looks.applyFrame(frame, to: white, picture: picture, canvas: square)
+        let shown = map.rect(CGRect(x: 0, y: 0, width: 1, height: 1))
+        XCTAssertEqual(map.shown.minX, shown.minX, accuracy: 1e-9)
+        XCTAssertEqual(map.shown.maxY, shown.maxY, accuracy: 1e-9)
+        var pixels = [UInt8](repeating: 0, count: 100 * 100 * 4)
+        CIContext().render(drawn, toBitmap: &pixels, rowBytes: 400, bounds: CGRect(origin: .zero, size: square), format: .RGBA8, colorSpace: nil)
+        // The bitmap's first row is the canvas's top; probe just inside and just outside each edge of the map.
+        func lum(_ x: Double, _ y: Double) -> UInt8 { pixels[(Int(y * 100) * 100 + Int(x * 100)) * 4] }
+        XCTAssertGreaterThan(lum(shown.minX + 0.02, shown.midY), 200)
+        XCTAssertLessThan(lum(shown.minX - 0.02, shown.midY), 50)
+        XCTAssertGreaterThan(lum(shown.midX, shown.minY + 0.02), 200)
+        XCTAssertLessThan(lum(shown.midX, shown.minY - 0.02), 50)
+        XCTAssertGreaterThan(lum(shown.midX, shown.maxY - 0.02), 200)
+        XCTAssertLessThan(lum(shown.midX, shown.maxY + 0.02), 50)
+
+        // A cover crop off centre: the picture's left half is white, so x 0.5 of the source must land where it turns.
+        frame.fit = .cover
+        let focus = CGPoint(x: 0.35, y: 0.5)
+        let cover = Looks.sourceToCanvas(view: .whole, frame: frame, picture: picture, canvas: square, coverFocus: focus)
+        let half = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 80, height: 100))
+            .composited(over: CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: picture)))
+        let covered = Looks.applyFrame(frame, to: half, picture: picture, canvas: square, focus: focus)
+        CIContext().render(covered, toBitmap: &pixels, rowBytes: 400, bounds: CGRect(origin: .zero, size: square), format: .RGBA8, colorSpace: nil)
+        let turn = cover.point(CGPoint(x: 0.5, y: 0.5))
+        XCTAssertGreaterThan(lum(turn.x - 0.03, turn.y), 200)
+        XCTAssertLessThan(lum(turn.x + 0.03, turn.y), 50)
+    }
+
     func testCaptionsReadTheTranscriptCacheAndFindTheLineSpokenAtASourceTime() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("captions-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

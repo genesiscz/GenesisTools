@@ -253,6 +253,17 @@ final class EditorModel {
     /// The redaction the Hide tab edits.
     var selectedRedaction: String?
 
+    /// How the source picture maps onto the canvas at the playhead: the zoom there and the frame (for the preview's
+    /// hidden-part handles).
+    func sourceToCanvas(atOutput outUs: Int64) -> Looks.SourceToCanvas {
+        let sourceUs = TimelineMap.sourceTime(atOutput: outUs, in: project)
+        let view = ZoomCurve.view(atSource: sourceUs, zooms: project.zooms, cursor: cursor)
+        let sizes = EditRenderer.outputSizes(source: CGSize(width: project.source.width, height: project.source.height),
+                                             maxHeight: 0, aspect: project.frame?.aspect)
+        let focus = ZoomState.coverFocus(atSourceUs: sourceUs, project: project, track: cursor, view: view)
+        return Looks.sourceToCanvas(view: view, frame: project.frame, picture: sizes.picture, canvas: sizes.canvas, coverFocus: focus)
+    }
+
     /// The moments marked while it recorded (`recording.json` settings.markers), at source microseconds.
     private(set) var markers: [(us: Int64, label: String)] = []
 
@@ -296,8 +307,9 @@ final class EditorModel {
         partOutUs = nil
     }
 
-    /// Hides the middle of the picture for 3 s from the playhead; the Hide tab then moves and sizes it.
-    func addRedaction() {
+    /// Hides a part of the picture (the middle, or a rectangle drawn on the preview, 0...1 of the source) for 3 s from
+    /// the playhead; the Hide tab then moves and sizes it.
+    func addRedaction(rect: CGRect = CGRect(x: 0.35, y: 0.42, width: 0.3, height: 0.16)) {
         let start = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
         let end = min(project.source.durationUs, start + 3_000_000)
         guard end - start >= 100_000 else {
@@ -306,8 +318,10 @@ final class EditorModel {
         }
         let id = "r" + UUID().uuidString.prefix(8).lowercased()
         var next = project
-        next.redactions = (next.redactions ?? []) + [EditProject.Redaction(id: id, startUs: start, endUs: end, x: 0.35, y: 0.42,
-                                                                           width: 0.3, height: 0.16)]
+        let clamped = rect.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !clamped.isNull, clamped.width >= 0.01, clamped.height >= 0.01 else { return }
+        next.redactions = (next.redactions ?? []) + [EditProject.Redaction(id: id, startUs: start, endUs: end, x: clamped.minX, y: clamped.minY,
+                                                                           width: clamped.width, height: clamped.height)]
         selectedRedaction = id
         tab = .hide
         apply(next, rebuildMovie: false)

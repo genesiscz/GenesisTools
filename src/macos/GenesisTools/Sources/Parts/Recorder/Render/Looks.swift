@@ -106,6 +106,49 @@ enum Looks {
         return cursor
     }
 
+    /// Where a point of the source picture (0...1 from the top left) lands on the canvas (0...1 from the top left) in
+    /// one frame: through the zoom's view, then the frame's placement. Per axis it is a scale and an offset, so the
+    /// preview can draw a source rectangle where it shows and turn a drag on the canvas back into source fractions.
+    struct SourceToCanvas: Equatable {
+        var scaleX = 1.0, offsetX = 0.0, scaleY = 1.0, offsetY = 0.0
+        /// The part of the canvas the picture shows in (0...1): a hidden part is drawn only inside it.
+        var shown = CGRect(x: 0, y: 0, width: 1, height: 1)
+
+        func point(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * scaleX + offsetX, y: p.y * scaleY + offsetY) }
+        func rect(_ r: CGRect) -> CGRect {
+            CGRect(x: r.minX * scaleX + offsetX, y: r.minY * scaleY + offsetY, width: r.width * scaleX, height: r.height * scaleY)
+        }
+        func sourcePoint(ofCanvas p: CGPoint) -> CGPoint {
+            CGPoint(x: (p.x - offsetX) / max(1e-9, scaleX), y: (p.y - offsetY) / max(1e-9, scaleY))
+        }
+        func sourceRect(ofCanvas r: CGRect) -> CGRect {
+            let origin = sourcePoint(ofCanvas: r.origin)
+            return CGRect(x: origin.x, y: origin.y, width: r.width / max(1e-9, scaleX), height: r.height / max(1e-9, scaleY))
+        }
+    }
+
+    static func sourceToCanvas(view: ZoomCurve.View, frame: EditProject.Frame?, picture: CGSize, canvas: CGSize,
+                               coverFocus: CGPoint = CGPoint(x: 0.5, y: 0.5)) -> SourceToCanvas {
+        let shown = view.rect
+        var map = SourceToCanvas(scaleX: 1 / shown.width, offsetX: -shown.minX / shown.width,
+                                 scaleY: 1 / shown.height, offsetY: -shown.minY / shown.height)
+        guard let frame else { return map }
+
+        let placement = framePlacement(frame, picture: picture, canvas: canvas, focus: coverFocus)
+        let crop = placement.crop ?? .zero
+        let s = placement.scale
+        // Core Image counts y from the bottom: the picture's top (y 0) is at height H before the crop.
+        let ax = picture.width * s / canvas.width, bx = (placement.inner.minX - crop.minX * s) / canvas.width
+        let ay = picture.height * s / canvas.height
+        let by = 1 - (picture.height * s - crop.minY * s + placement.inner.minY) / canvas.height
+        let inner = placement.inner
+        map = SourceToCanvas(scaleX: map.scaleX * ax, offsetX: map.offsetX * ax + bx,
+                             scaleY: map.scaleY * ay, offsetY: map.offsetY * ay + by,
+                             shown: CGRect(x: inner.minX / canvas.width, y: 1 - inner.maxY / canvas.height,
+                                           width: inner.width / canvas.width, height: inner.height / canvas.height))
+        return map
+    }
+
     /// Where the frame puts the picture: an optional cover crop (Core Image coordinates of the picture), then a scale
     /// and the rectangle it lands in on the canvas.
     struct FramePlacement {
