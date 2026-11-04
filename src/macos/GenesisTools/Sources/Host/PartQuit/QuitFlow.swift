@@ -95,7 +95,10 @@ extension PartQuit {
             face: face, probe: LiveRunningPartsProbe(), presenter: AlertQuitDialog(), terminator: FaceQuitSignal(),
             store: DefaultsQuitBehaviorStore(defaults: .standard),
             quitThis: { NSApplication.shared.terminate(nil) },
-            log: { PerfLog.mark($0) }
+            log: { text in
+                PerfLog.mark(text)
+                FaceLifecycle.note("quit-request", detail: text)
+            }
         ).run()
     }
 }
@@ -218,11 +221,14 @@ private final class PanelKeyReturn {
 struct FaceQuitSignal: FaceTerminating {
     static let name = Notification.Name(NativePreview.namespace + ".face.quit")
     static let pidsKey = "pids"
+    /// The pid of the face whose "Quit All" sent it, so the quit face's lifecycle log names who closed it.
+    static let senderKey = "from"
 
     func quit(pids: [Int32]) {
         guard !pids.isEmpty else { return }
         DistributedNotificationCenter.default().postNotificationName(
-            Self.name, object: nil, userInfo: [Self.pidsKey: pids.map { NSNumber(value: $0) }],
+            Self.name, object: nil,
+            userInfo: [Self.pidsKey: pids.map { NSNumber(value: $0) }, Self.senderKey: NSNumber(value: getpid())],
             deliverImmediately: true)
     }
 
@@ -243,6 +249,9 @@ struct FaceQuitSignal: FaceTerminating {
             MainActor.assumeIsolated {
                 guard targets(note.userInfo, pid: own) else { return }
                 PerfLog.mark("quit: another GenesisTools part asked this face to quit")
+                let sender = (note.userInfo?[senderKey] as? NSNumber)?.int32Value
+                FaceLifecycle.note(
+                    "quit-request", detail: "\"Quit All\" from another GenesisTools part (pid \(sender.map(String.init) ?? "unknown"))")
                 NSApplication.shared.terminate(nil)
             }
         }

@@ -51,6 +51,16 @@ so the sha alone does not name the code. A build from before 2026-10-06 shows "u
 checkouts you build from is the only lead. `built … (stale: sources
 changed)` compares file contents of THIS checkout with the install, so a stale flag from another worktree's build is expected.
 
+**How did a face end? Read `~/.genesis-tools/app/lifecycle.jsonl`** (since 2026-11-04,
+`Sources/Host/App/FaceLifecycle.swift`). Every long-lived face (the window faces, every part face, the link relay)
+writes one JSON line per `start`, `exit`, `terminate` (with the quit Apple Event's sender), `signal`, `crash`,
+`exception`, `window-close` and `quit-request` ("Quit All" names the pid that sent it). A face that left no line at all
+(SIGKILL, a jetsam kill, a power loss) is reported as `vanished` by the next face that starts, from its marker in
+`app/lifecycle-alive/<pid>`. `t` is epoch seconds: `jq -r '"\(.t | strftime("%m-%d %H:%M:%S")) \(.pid) \(.face) \(.event) \(.detail // "")"'`
+prints it in UTC. The widget stayed off for two days from 2026-11-02 with no trace of how it ended; this log is why
+the next stop has one. Every window face other than the widget also starts the widget while "Show the widget" is on
+(`WidgetLaunch.ensureRunningIfShown`), so quitting the hub with "Quit All" and opening it again brings the widget back.
+
 **Before believing an app-face bug report, check what is actually running:**
 `ps -Ao pid,lstart,command | rg "MacOS/GenesisTools" | rg -v "gt-cc|gt-claude|bun "`. A bare entry
 with no program argument is a window instance, and its start time tells you which build it is.
