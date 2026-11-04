@@ -751,6 +751,7 @@ private struct HiddenSegment: View {
                 .accessibilityAddTraits(.isButton)
                 .accessibilityIdentifier("recorder.hidden.\(redaction.id)")
                 .accessibilityAction { select() }
+                .liveRow(selected: selected)
         }
     }
 

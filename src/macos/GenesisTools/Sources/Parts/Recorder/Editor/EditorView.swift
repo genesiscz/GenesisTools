@@ -146,6 +146,7 @@ private struct WideButton: View {
     let action: () -> Void
 
     var body: some View {
+        // lint-rules-ignore: a wide action button; the only ForEach of them is the four fixed export presets
         Button(role: role, action: action) {
             HStack(spacing: 6) {
                 if let systemImage { Image(systemName: systemImage) }
@@ -1693,6 +1694,7 @@ private struct ShapeRow: View {
                     .accessibilityLabel("\(name) length in seconds")
             }
         }
+        .liveRow(selected: selected)
     }
 }
 
