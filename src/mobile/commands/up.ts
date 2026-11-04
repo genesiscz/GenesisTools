@@ -1,12 +1,13 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
+import { iosApp } from "@genesiscz/utils/mobile/project";
 import type { Command } from "commander";
-import { mobileApp } from "../apps";
 import { defaultDerivedData } from "../lib/build";
+import { loadProject, type ProjectOptions, withConfig } from "../lib/project";
 import { BUILD_POLICIES, type BuildPolicy, bringUp } from "../lib/up";
 
-interface UpOptions {
+interface UpOptions extends ProjectOptions {
     udid?: string;
     name?: string;
     width?: string;
@@ -20,22 +21,24 @@ interface UpOptions {
 }
 
 export function registerUp(program: Command): void {
-    program
-        .command("up <app>")
-        .description(
-            "Boot (or create) a simulator sized for a width, build when stale, install, start Metro and launch the app"
-        )
+    withConfig(
+        program
+            .command("up")
+            .description(
+                "Boot (or create) a simulator sized for a width, build when stale, install, start Metro and launch the app"
+            )
+    )
         .option("--udid <udid>", "use this simulator instead of finding one by name")
         .option("--name <name>", "the simulator's name; created when missing (default gt-w<width>)")
-        .option("--width <points>", "the phone width in points (default: the app's)")
+        .option("--width <points>", "the phone width in points (default: platforms.ios.defaultWidth)")
         .option("--os <version>", "the iOS runtime for a new simulator, e.g. 26.5 (default: the newest)")
         .option("--release", "run the Release build (JavaScript inside the app, no Metro)")
         .option("--derived-data <dir>", "the DerivedData folder (default <app>/ios/build; give each session its own)")
         .option("--build <when>", `${BUILD_POLICIES.join(" | ")}: auto builds only when a build input changed`, "auto")
-        .option("--metro-port <port>", "the Metro port for a Debug build (default: the app's)")
+        .option("--metro-port <port>", "the Metro port for a Debug build (default: the project's)")
         .option("--launch-timeout <s>", "how long to wait for the app to fetch its bundle", "180")
         .option("--json", "print the report as JSON")
-        .action(async (id: string, options: UpOptions) => {
+        .action(async (options: UpOptions) => {
             const build = BUILD_POLICIES.find((policy) => policy === options.build);
 
             if (!build) {
@@ -44,17 +47,23 @@ export function registerUp(program: Command): void {
                 return;
             }
 
-            const app = mobileApp(id);
-            const appDir = app.locate();
+            const project = await loadProject(options);
+            const width = options.width ? Number(options.width) : iosApp(project).defaultWidth;
+
+            if (!width) {
+                ui.err(`pass --width <points>, or set platforms.ios.defaultWidth in ${project.configPath}`);
+                process.exitCode = 1;
+                return;
+            }
+
             const report = await bringUp({
-                app,
-                appDir,
+                project,
                 udid: options.udid,
                 name: options.name,
-                width: options.width ? Number(options.width) : app.defaultWidth,
+                width,
                 os: options.os,
-                configuration: options.release || !app.metro ? "Release" : "Debug",
-                derivedData: options.derivedData ?? defaultDerivedData(appDir),
+                configuration: options.release || !project.config.metro ? "Release" : "Debug",
+                derivedData: options.derivedData ?? defaultDerivedData(project.appDir),
                 build: build satisfies BuildPolicy,
                 metroPort: options.metroPort ? Number(options.metroPort) : undefined,
                 launchTimeoutMs: Number(options.launchTimeout) * 1000,
@@ -88,8 +97,8 @@ export function registerUp(program: Command): void {
 
                 const udid = report.device.udid;
                 ui.dim(`appium :${report.appiumPort} · wda :${report.wdaPort}`);
-                ui.dim(`next: ${toolCommand("mobile open", app.id, "<route>", "--udid", udid)}`);
-                ui.dim(`      ${toolCommand("mobile e2e suite", app.id, "flows", "--udid", udid)}`);
+                ui.dim(`next: ${toolCommand("mobile open", "<route>", "--udid", udid)}`);
+                ui.dim(`      ${toolCommand("mobile capture", "<route>", "--udid", udid)}`);
             }
 
             if (report.fatal.length > 0 || report.appRan === false) {

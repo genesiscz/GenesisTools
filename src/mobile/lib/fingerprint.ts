@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import type { IosBuild, MobileApp } from "./types";
+import type { BuildInputs, IosConfiguration } from "@genesiscz/utils/mobile/project";
 
 const log = logger.child({ component: "mobile.fingerprint" });
 
@@ -17,12 +17,13 @@ export interface Staleness {
 }
 
 /** The inputs that go into a build of this configuration: the native ones, plus the JavaScript for Release. */
-export function fingerprintBuild(
-    app: MobileApp,
-    appDir: string,
-    configuration: IosBuild["configuration"]
-): BuildFingerprint {
-    const globs = [...app.buildInputs.native, ...(configuration === "Release" ? app.buildInputs.js : [])];
+export function fingerprintBuild(options: {
+    inputs: BuildInputs;
+    appDir: string;
+    configuration: IosConfiguration;
+}): BuildFingerprint {
+    const { inputs, appDir, configuration } = options;
+    const globs = [...inputs.native, ...(configuration === "Release" ? inputs.js : [])];
     const found: BuildFingerprint = {};
 
     for (const pattern of globs) {
@@ -35,13 +36,13 @@ export function fingerprintBuild(
     return found;
 }
 
-function recordPath(derivedData: string, configuration: IosBuild["configuration"]): string {
+function recordPath(derivedData: string, configuration: IosConfiguration): string {
     return join(derivedData, `gt-fingerprint-${configuration}.json`);
 }
 
 export function saveFingerprint(options: {
     derivedData: string;
-    configuration: IosBuild["configuration"];
+    configuration: IosConfiguration;
     fingerprint: BuildFingerprint;
 }): void {
     writeFileSync(
@@ -57,10 +58,10 @@ export function compareFingerprints(built: BuildFingerprint, now: BuildFingerpri
 
 /** Whether the build in `derivedData` is older than its inputs, and why. */
 export function buildStaleness(options: {
-    app: MobileApp;
+    inputs: BuildInputs;
     appDir: string;
     derivedData: string;
-    configuration: IosBuild["configuration"];
+    configuration: IosConfiguration;
     appPath: string;
 }): Staleness {
     if (!existsSync(options.appPath)) {
@@ -74,7 +75,7 @@ export function buildStaleness(options: {
     }
 
     const built = SafeJSON.parse(readFileSync(path, "utf8")) as BuildFingerprint;
-    const changed = compareFingerprints(built, fingerprintBuild(options.app, options.appDir, options.configuration));
+    const changed = compareFingerprints(built, fingerprintBuild(options));
     log.debug({ path, changed: changed.length }, "fingerprint compared");
 
     if (changed.length === 0) {

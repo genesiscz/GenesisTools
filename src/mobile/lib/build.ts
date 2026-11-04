@@ -1,9 +1,9 @@
 import { createWriteStream, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { type IosApp, type IosConfiguration, iosApp, type MobileProject } from "@genesiscz/utils/mobile/project";
 import { installApp } from "@genesiscz/utils/mobile/simulator";
 import { fingerprintBuild, saveFingerprint } from "./fingerprint";
-import type { IosBuild, MobileApp } from "./types";
 
 const log = logger.child({ component: "mobile.build" });
 
@@ -12,8 +12,8 @@ export function defaultDerivedData(appDir: string): string {
 }
 
 /** Where xcodebuild leaves the simulator `.app` for one configuration. */
-export function builtAppPath(app: MobileApp, derivedData: string, configuration: IosBuild["configuration"]): string {
-    return join(derivedData, "Build", "Products", `${configuration}-iphonesimulator`, `${app.ios.productName}.app`);
+export function builtAppPath(ios: Pick<IosApp, "build">, derivedData: string, configuration: IosConfiguration): string {
+    return join(derivedData, "Build", "Products", `${configuration}-iphonesimulator`, `${ios.build.productName}.app`);
 }
 
 export interface BuildResult {
@@ -23,35 +23,36 @@ export interface BuildResult {
 }
 
 /**
- * Builds the app for one simulator with `xcodebuild` and installs it with `simctl`. This is the path that still works
- * on Xcode 27, where Expo's `run:ios` stops at "Can't determine id of Simulator app" because DeviceHub replaced it.
- * The whole xcodebuild output goes to a log file; only its last error lines are raised.
+ * Builds the project's iOS app for one simulator with `xcodebuild` and installs it with `simctl`. This is the path
+ * that still works on Xcode 27, where Expo's `run:ios` stops at "Can't determine id of Simulator app" because
+ * DeviceHub replaced it. The whole xcodebuild output goes to a log file; only its last error lines are raised.
  */
 export async function buildAndInstall(options: {
-    app: MobileApp;
-    appDir: string;
+    project: MobileProject;
     udid: string;
     logDir: string;
     install?: boolean;
     /** The DerivedData folder; default `<app>/ios/build`. Give each session its own, so two builds never share one. */
     derivedData?: string;
-    /** Overrides the adapter's configuration (`up` builds Debug, which loads its JS from Metro). */
-    configuration?: IosBuild["configuration"];
+    /** Overrides the project's configuration (`up` builds Debug, which loads its JS from Metro). */
+    configuration?: IosConfiguration;
 }): Promise<BuildResult> {
-    const { app, appDir, udid, logDir, install = true } = options;
-    const ios = { ...app.ios, configuration: options.configuration ?? app.ios.configuration };
+    const { project, udid, logDir, install = true } = options;
+    const { appDir } = project;
+    const ios = iosApp(project);
+    const configuration = options.configuration ?? ios.build.configuration;
     const derivedData = options.derivedData ?? defaultDerivedData(appDir);
     // Taken before the build: a file saved while xcodebuild runs must make the next `up` build again.
-    const fingerprint = fingerprintBuild(app, appDir, ios.configuration);
-    const settings = Object.entries(ios.buildSettings ?? {}).map(([key, value]) => `${key}=${value}`);
+    const fingerprint = fingerprintBuild({ inputs: ios.buildInputs, appDir, configuration });
+    const settings = Object.entries(ios.build.buildSettings ?? {}).map(([key, value]) => `${key}=${value}`);
     const command = [
         "xcodebuild",
         "-workspace",
-        join(appDir, ios.workspace),
+        join(appDir, ios.build.workspace),
         "-scheme",
-        ios.scheme,
+        ios.build.scheme,
         "-configuration",
-        ios.configuration,
+        configuration,
         "-sdk",
         "iphonesimulator",
         "-destination",
@@ -62,7 +63,7 @@ export async function buildAndInstall(options: {
     ];
 
     mkdirSync(logDir, { recursive: true });
-    const logPath = join(logDir, `xcodebuild-${app.id}-${ios.configuration}.log`);
+    const logPath = join(logDir, `xcodebuild-${project.config.id}-${configuration}.log`);
     const started = performance.now();
     log.debug({ command: command.join(" "), logPath }, "xcodebuild start");
 
@@ -93,13 +94,15 @@ export async function buildAndInstall(options: {
         throw new Error(`xcodebuild failed after ${seconds} s (log ${logPath}):\n${tail}`);
     }
 
-    const appPath = builtAppPath(app, derivedData, ios.configuration);
+    const appPath = builtAppPath(ios, derivedData, configuration);
 
     if (!existsSync(appPath)) {
-        throw new Error(`xcodebuild succeeded but ${appPath} is missing; check productName in the ${app.id} adapter`);
+        throw new Error(
+            `xcodebuild succeeded but ${appPath} is missing; check platforms.ios.build.productName in ${project.configPath}`
+        );
     }
 
-    saveFingerprint({ derivedData, configuration: ios.configuration, fingerprint });
+    saveFingerprint({ derivedData, configuration, fingerprint });
 
     if (install) {
         await installApp(udid, appPath);

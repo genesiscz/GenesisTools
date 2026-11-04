@@ -1,8 +1,8 @@
 import { createWriteStream, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
-import type { MobileApp } from "./types";
+import { iosApp, type MobileProject, type ReleaseCommand } from "@genesiscz/utils/mobile/project";
 
 const log = logger.child({ component: "mobile.release" });
 
@@ -16,8 +16,7 @@ export interface AscApiKey {
 }
 
 export interface ReleaseInput {
-    app: MobileApp;
-    appDir: string;
+    project: MobileProject;
     /** The Apple Developer team id. */
     team?: string;
     apiKey?: Partial<AscApiKey>;
@@ -82,13 +81,19 @@ export function exportOptionsPlist({ team, exportOnly }: { team: string; exportO
 `;
 }
 
+function prepareStep(appDir: string, step: ReleaseCommand): ReleaseStep {
+    return { title: step.title, command: step.command, cwd: resolve(appDir, step.cwd ?? "."), env: step.env };
+}
+
 /**
- * The steps from source to TestFlight: a fresh native project with the production push environment and the build
- * number, the pods, a signed device archive, then an export that uploads to App Store Connect. Pure, so `--dry-run`
+ * The steps from source to TestFlight: the project's own preparation (`platforms.ios.release.prepare`, given the build
+ * number), the pods, a signed device archive, then an export that uploads to App Store Connect. Pure, so `--dry-run`
  * prints exactly what a run would do.
  */
 export function releasePlan(input: ReleaseInput): ReleasePlan {
-    const { app, appDir, team, apiKey, buildNumber, outDir, exportOnly } = input;
+    const { project, team, apiKey, buildNumber, outDir, exportOnly } = input;
+    const { appDir } = project;
+    const ios = iosApp(project);
     const missing = [
         ...(team ? [] : [NEEDS.team]),
         ...(apiKey?.path ? [] : [NEEDS.keyPath]),
@@ -96,10 +101,12 @@ export function releasePlan(input: ReleaseInput): ReleasePlan {
         ...(apiKey?.issuer ? [] : [NEEDS.issuer]),
     ];
     const teamId = team ?? "<TEAM_ID>";
-    const archivePath = join(outDir, `${app.ios.productName}.xcarchive`);
+    const archivePath = join(outDir, `${ios.build.productName}.xcarchive`);
     const exportOptionsPath = join(outDir, "ExportOptions.plist");
     const auth = authFlags(apiKey);
-    const settings = Object.entries(app.ios.buildSettings ?? {}).map(([key, value]) => `${key}=${value}`);
+    const settings = Object.entries(ios.build.buildSettings ?? {}).map(([key, value]) => `${key}=${value}`);
+    const prepare = (ios.release?.prepare?.({ buildNumber }) ?? []).map((step) => prepareStep(appDir, step));
+    const pods = ios.release?.pods ?? existsSync(join(appDir, "ios", "Podfile"));
 
     return {
         archivePath,
@@ -107,22 +114,17 @@ export function releasePlan(input: ReleaseInput): ReleasePlan {
         exportOptions: exportOptionsPlist({ team: teamId, exportOnly }),
         missing,
         steps: [
-            {
-                title: "native project (production push environment, build number)",
-                command: ["bunx", "expo", "prebuild", "--platform", "ios", "--no-install"],
-                cwd: appDir,
-                env: { GT_APS_ENVIRONMENT: "production", GT_BUILD_NUMBER: buildNumber },
-            },
-            { title: "pods", command: ["pod", "install"], cwd: join(appDir, "ios") },
+            ...prepare,
+            ...(pods ? [{ title: "pods", command: ["pod", "install"], cwd: join(appDir, "ios") }] : []),
             {
                 title: "signed device archive",
                 command: [
                     "xcodebuild",
                     "archive",
                     "-workspace",
-                    join(appDir, app.ios.workspace),
+                    join(appDir, ios.build.workspace),
                     "-scheme",
-                    app.ios.scheme,
+                    ios.build.scheme,
                     "-configuration",
                     "Release",
                     "-destination",

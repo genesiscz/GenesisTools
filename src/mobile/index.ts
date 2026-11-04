@@ -1,30 +1,29 @@
 #!/usr/bin/env bun
 
 import { runTool } from "@genesiscz/utils/cli";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
+import { IOS_CONFIGURATIONS, type IosConfiguration, projectRoutes } from "@genesiscz/utils/mobile/project";
+import { pickSimulator } from "@genesiscz/utils/mobile/session";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Command } from "commander";
-import { MOBILE_APPS, mobileApp } from "./apps";
-import { registerDevice } from "./commands/device";
-import { registerE2e } from "./commands/e2e";
+import { registerAppCommands } from "./commands/app";
+import { registerDevices } from "./commands/devices";
 import { registerRelease } from "./commands/release";
 import { registerScreens } from "./commands/screens";
+import { registerServices } from "./commands/services";
 import { registerUp } from "./commands/up";
 import { buildAndInstall } from "./lib/build";
-import { pickSimulator } from "./lib/device";
 import { mobileDoctor } from "./lib/doctor";
-import { stamp } from "./lib/paths";
-import { SCREEN_DRIVERS } from "./lib/screen-driver";
-import { runTour } from "./lib/tour";
-import { IOS_CONFIGURATIONS, type IosBuild } from "./lib/types";
+import { loadProject, type ProjectOptions, withConfig } from "./lib/project";
 
 const program = new Command()
     .name("mobile")
-    .description("Build, install and screenshot the mobile apps of this repo on an iOS simulator (Xcode 27 aware)");
+    .description(
+        "Drive a project's app on iOS simulators (build, install, open and capture screens; Xcode 27 aware) and on Android emulators and devices. The app comes from the project's mobile.config.ts"
+    );
 
-function parseConfiguration(value: string | undefined): IosBuild["configuration"] | undefined {
+function parseConfiguration(value: string | undefined): IosConfiguration | undefined {
     if (value === undefined) {
         return undefined;
     }
@@ -71,39 +70,42 @@ program
         }
     });
 
-program
-    .command("apps")
-    .description("List the apps this tool knows")
+withConfig(program.command("config").description("Show the project config this folder resolves to"))
     .option("--json", "print as JSON")
-    .action((options: { json?: boolean }) => {
-        const apps = Object.values(MOBILE_APPS).map((app) => ({
-            id: app.id,
-            title: app.title,
-            dir: app.locate(),
-            routes: app.routes(app.locate()).length,
-        }));
+    .action(async (options: ProjectOptions & { json?: boolean }) => {
+        const project = await loadProject(options);
+        const summary = {
+            configPath: project.configPath,
+            id: project.config.id,
+            title: project.config.title ?? project.config.id,
+            appDir: project.appDir,
+            platforms: Object.keys(project.config.platforms),
+            routes: projectRoutes(project).length,
+        };
 
         if (options.json) {
-            out.result(apps);
+            out.result(summary);
             return;
         }
 
-        for (const app of apps) {
-            ui.info(`${app.id}: ${app.title} · ${app.routes} screens · ${app.dir}`);
-        }
+        ui.info(`${summary.title} (${summary.id}) · ${summary.configPath}`);
+        ui.dim(
+            `app folder ${summary.appDir} · platforms ${summary.platforms.join(", ") || "none"} · ${summary.routes} screens`
+        );
     });
 
-program
-    .command("routes <app>")
-    .description("List an app's screens and the deep link that opens each")
+withConfig(program.command("routes").description("List the project's screens and the deep link that opens each"))
     .option("--json", "print as JSON")
-    .action((id: string, options: { json?: boolean }) => {
-        const app = mobileApp(id);
-        const routes = app.routes(app.locate());
+    .action(async (options: ProjectOptions & { json?: boolean }) => {
+        const routes = projectRoutes(await loadProject(options));
 
         if (options.json) {
             out.result(routes);
             return;
+        }
+
+        if (routes.length === 0) {
+            ui.warn("the project names no routes (routes in its mobile.config.ts)");
         }
 
         for (const [index, route] of routes.entries()) {
@@ -111,24 +113,31 @@ program
         }
     });
 
-program
-    .command("build <app>")
-    .description("Build the app with xcodebuild for one simulator and install it (Expo run:ios fails on DeviceHub)")
+withConfig(
+    program
+        .command("build")
+        .description(
+            "Build the iOS app with xcodebuild for one simulator and install it (Expo run:ios fails on DeviceHub)"
+        )
+)
     .option("--udid <udid>", "the simulator; default: the only booted one")
     .option("--no-install", "build only")
     .option("--derived-data <dir>", "the DerivedData folder; default <app>/ios/build (give each session its own)")
-    .option("--configuration <name>", "Debug (loads JS from Metro) or Release (JS inside the app); default: the app's")
+    .option(
+        "--configuration <name>",
+        "Debug (loads JS from Metro) or Release (JS inside the app); default: the project's"
+    )
     .action(
         async (
-            id: string,
-            options: { udid?: string; install: boolean; derivedData?: string; configuration?: string }
+            options: ProjectOptions & { udid?: string; install: boolean; derivedData?: string; configuration?: string }
         ) => {
-            const app = mobileApp(id);
+            const project = await loadProject(options);
             const device = await pickSimulator(options.udid, { booted: options.install });
-            ui.info(`building ${app.title} for ${device.name} (${device.udid}); this takes minutes`);
+            ui.info(
+                `building ${project.config.title ?? project.config.id} for ${device.name} (${device.udid}); this takes minutes`
+            );
             const result = await buildAndInstall({
-                app,
-                appDir: app.locate(),
+                project,
                 udid: device.udid,
                 logDir: toolDataDir("mobile", "builds"),
                 install: options.install,
@@ -140,79 +149,11 @@ program
         }
     );
 
-program
-    .command("tour <app>")
-    .description("Open every screen by its deep link and save one screenshot per screen")
-    .option("--udid <udid>", "the simulator; default: the only booted one")
-    .option("--out <dir>", "the folder for the PNGs; default: ~/.genesis-tools/mobile/tours/<app>/<time>")
-    .option("--settle <ms>", "the pause after each link before the screenshot, in milliseconds", "2500")
-    .option(
-        "--driver <driver>",
-        `how to open each screen: ${SCREEN_DRIVERS.join(" or ")} (simctl shows an "Open in" alert)`,
-        "appium"
-    )
-    .option(
-        "--appium-port <port>",
-        "the Appium server for --driver appium (default: the simulator's own, started when missing)"
-    )
-    .option("--only <names...>", `only these route names (see: ${toolCommand("mobile routes <app>")})`)
-    .option("--json", "print the shots as JSON")
-    .action(
-        async (
-            id: string,
-            options: {
-                udid?: string;
-                out?: string;
-                settle: string;
-                driver: string;
-                appiumPort?: string;
-                only?: string[];
-                json?: boolean;
-            }
-        ) => {
-            const driver = SCREEN_DRIVERS.find((kind) => kind === options.driver);
-
-            if (!driver) {
-                ui.err(`--driver must be ${SCREEN_DRIVERS.join(" or ")}, not "${options.driver}"`);
-                process.exitCode = 1;
-                return;
-            }
-
-            const app = mobileApp(id);
-            const device = await pickSimulator(options.udid);
-            const outDir = options.out ?? toolDataDir("mobile", "tours", app.id, stamp());
-            const shots = await runTour({
-                app,
-                appDir: app.locate(),
-                udid: device.udid,
-                outDir,
-                settleMs: Number(options.settle),
-                driver,
-                appiumPort: options.appiumPort ? Number(options.appiumPort) : undefined,
-                only: options.only,
-                onShot: (shot, index, total) => {
-                    const label = `${index + 1}/${total} ${shot.route.name}`;
-                    shot.file ? ui.ok(label) : ui.err(`${label}: ${shot.error}`);
-                },
-            });
-
-            if (options.json) {
-                out.result({ outDir, shots });
-            } else {
-                ui.info(`${shots.filter((shot) => shot.file).length} of ${shots.length} screens saved in ${outDir}`);
-                ui.dim(`open ${outDir}`);
-            }
-
-            if (shots.some((shot) => shot.error)) {
-                process.exitCode = 1;
-            }
-        }
-    );
-
 registerUp(program);
-registerRelease(program);
 registerScreens(program);
-registerDevice(program);
-registerE2e(program);
+registerAppCommands(program);
+registerServices(program);
+registerDevices(program);
+registerRelease(program);
 
 await runTool(program, { tool: "mobile" });

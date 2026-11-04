@@ -8,17 +8,15 @@ import {
     AlertWatcher,
     alertBackendFor,
 } from "@genesiscz/utils/mobile/alerts";
-import { appiumPortFor, appiumStatus, startAppium, stopAppium } from "@genesiscz/utils/mobile/appium";
-import { metroStatus, readMetroLogFile, stopMetro } from "@genesiscz/utils/mobile/metro";
+import { readMetroLogFile } from "@genesiscz/utils/mobile/metro";
+import { iosApp } from "@genesiscz/utils/mobile/project";
+import { attachSession, ensureAppium, pickSimulator, requireAppInstalled } from "@genesiscz/utils/mobile/session";
 import { installedAppInfo, launchApp, terminateApp, wdaPortsFor } from "@genesiscz/utils/mobile/simulator";
 import type { Command } from "commander";
-import { mobileApp } from "../apps";
 import { builtAppPath, defaultDerivedData } from "../lib/build";
-import { pickSimulator } from "../lib/device";
 import { freshInstall, preseedFirstRun } from "../lib/first-run";
 import { LOGBOX_CLEAR_MODES, readLogBoxEntries } from "../lib/logbox";
-import { attachSession, ensureAppium, usesDeviceHub } from "../lib/session";
-import { requireInstalled } from "../lib/tour";
+import { loadProject, withConfig } from "../lib/project";
 
 function parseBackends(value: string | undefined): AlertBackendKind[] | undefined {
     if (!value) {
@@ -34,9 +32,8 @@ function parseBackends(value: string | undefined): AlertBackendKind[] | undefine
     return [kind];
 }
 
-export function registerDevice(program: Command): void {
-    program
-        .command("alerts <app>")
+export function registerAppCommands(program: Command): void {
+    withConfig(program.command("alerts"))
         .description(
             "Answer the system alerts on a simulator (Open in, notifications, permissions); app alerts are left alone"
         )
@@ -46,13 +43,18 @@ export function registerDevice(program: Command): void {
         .option("--backend <kind>", `${ALERT_BACKEND_KINDS.join(" or ")} (default: WDA when it runs, else idb)`)
         .option("--json", "print the answers as JSON")
         .action(
-            async (
-                id: string,
-                options: { udid?: string; watch?: boolean; timeout: string; backend?: string; json?: boolean }
-            ) => {
-                const app = mobileApp(id);
+            async (options: {
+                config?: string;
+                udid?: string;
+                watch?: boolean;
+                timeout: string;
+                backend?: string;
+                json?: boolean;
+            }) => {
+                const project = await loadProject(options);
+                const ios = iosApp(project);
                 const device = await pickSimulator(options.udid);
-                const bundleId = app.bundleId(app.locate());
+                const bundleId = ios.bundleId;
                 const backend = await alertBackendFor({
                     udid: device.udid,
                     wdaPort: wdaPortsFor(device.udid).wda,
@@ -61,9 +63,7 @@ export function registerDevice(program: Command): void {
 
                 if (!backend) {
                     ui.err("no way to read alerts: WDA is not running (start a session) and idb is not installed");
-                    ui.dim(
-                        `fix: brew install idb-companion, or ${toolCommand("mobile open", app.id, "<route>")} first`
-                    );
+                    ui.dim(`fix: brew install idb-companion, or ${toolCommand("mobile open", "<route>")} first`);
                     process.exitCode = 1;
                     return;
                 }
@@ -101,8 +101,7 @@ export function registerDevice(program: Command): void {
             }
         );
 
-    program
-        .command("logbox <app>")
+    withConfig(program.command("logbox"))
         .description("Read React Native's LogBox (Debug builds) and Metro's errors, then minimize or clear the LogBox")
         .option("--udid <udid>", "the simulator; default: the only booted one")
         .option("--clear <mode>", `after reading: ${LOGBOX_CLEAR_MODES.join(" or ")}`, "minimize")
@@ -110,10 +109,14 @@ export function registerDevice(program: Command): void {
         .option("--appium-port <port>", "the Appium server (default: the simulator's own, started when missing)")
         .option("--json", "print as JSON")
         .action(
-            async (
-                id: string,
-                options: { udid?: string; clear: string; metroPort?: string; appiumPort?: string; json?: boolean }
-            ) => {
+            async (options: {
+                config?: string;
+                udid?: string;
+                clear: string;
+                metroPort?: string;
+                appiumPort?: string;
+                json?: boolean;
+            }) => {
                 const clear = LOGBOX_CLEAR_MODES.find((mode) => mode === options.clear);
 
                 if (!clear) {
@@ -122,17 +125,18 @@ export function registerDevice(program: Command): void {
                     return;
                 }
 
-                const app = mobileApp(id);
+                const project = await loadProject(options);
+                const ios = iosApp(project);
                 const device = await pickSimulator(options.udid);
-                const bundleId = app.bundleId(app.locate());
-                await requireInstalled(app, device.udid, bundleId);
+                const bundleId = ios.bundleId;
+                await requireAppInstalled(device.udid, bundleId);
                 const port = await ensureAppium({
                     udid: device.udid,
                     port: options.appiumPort ? Number(options.appiumPort) : undefined,
                 });
                 const session = await attachSession({ udid: device.udid, bundleId, appiumPort: port, launch: false });
                 const logbox = await readLogBoxEntries(session, { clear }).finally(() => session.close());
-                const metroPort = options.metroPort ? Number(options.metroPort) : app.metro?.defaultPort;
+                const metroPort = options.metroPort ? Number(options.metroPort) : project.config.metro?.defaultPort;
                 const metro = metroPort ? { port: metroPort, ...readMetroLogFile(metroPort) } : null;
 
                 if (options.json) {
@@ -165,94 +169,7 @@ export function registerDevice(program: Command): void {
             }
         );
 
-    const appium = program.command("appium").description("Run this tool's own Appium server, one port per simulator");
-    const portOf = async (options: { udid?: string; port?: string }) =>
-        options.port ? Number(options.port) : appiumPortFor((await pickSimulator(options.udid)).udid);
-
-    appium
-        .command("start")
-        .description("Start Appium on the simulator's port (4900 to 4999 by udid) unless one answers there")
-        .option("--udid <udid>", "the simulator whose port to use")
-        .option("--port <port>", "an explicit port")
-        .action(async (options: { udid?: string; port?: string }) => {
-            const port = await portOf(options);
-            const status = await startAppium({ port, usesDeviceHub: await usesDeviceHub() });
-            ui.ok(
-                `appium ${status.version ?? "?"} on :${port}${status.pid ? ` (pid ${status.pid})` : " (not started by this tool)"}`
-            );
-            ui.dim(`log: ${status.log}`);
-        });
-
-    appium
-        .command("stop")
-        .description("Stop the Appium server this tool started on the port; another process's server is left running")
-        .option("--udid <udid>", "the simulator whose port to use")
-        .option("--port <port>", "an explicit port")
-        .action(async (options: { udid?: string; port?: string }) => {
-            const port = await portOf(options);
-            (await stopAppium(port)) ? ui.ok(`stopped appium :${port}`) : ui.dim(`no appium of this tool on :${port}`);
-        });
-
-    appium
-        .command("status")
-        .description("Whether Appium answers on the port, its version, and whether this tool started it")
-        .option("--udid <udid>", "the simulator whose port to use")
-        .option("--port <port>", "an explicit port")
-        .option("--json", "print as JSON")
-        .action(async (options: { udid?: string; port?: string; json?: boolean }) => {
-            const status = await appiumStatus(await portOf(options));
-
-            if (options.json) {
-                out.result(status);
-                return;
-            }
-
-            status.answers
-                ? ui.ok(`appium ${status.version ?? "?"} answers on :${status.port}`)
-                : ui.err(`no appium on :${status.port}`);
-            ui.dim(
-                `owned by this tool: ${status.owned}${status.pid ? ` (pid ${status.pid})` : ""} · log ${status.log}`
-            );
-
-            if (!status.answers) {
-                process.exitCode = 1;
-            }
-        });
-
-    const metro = program.command("metro").description("The Metro servers `up` started");
-
-    metro
-        .command("status <port>")
-        .description("Whether Metro answers on the port, and the errors it printed since its newest bundle")
-        .option("--json", "print as JSON")
-        .action(async (port: string, options: { json?: boolean }) => {
-            const status = await metroStatus(Number(port));
-            const report = readMetroLogFile(Number(port));
-
-            if (options.json) {
-                out.result({ ...status, ...report });
-                return;
-            }
-
-            status.running ? ui.ok(`metro answers on :${port}`) : ui.err(`no metro on :${port}`);
-            ui.dim(`owned by this tool: ${status.owned} · log ${status.log}`);
-
-            for (const line of report.fatal) {
-                ui.err(line);
-            }
-        });
-
-    metro
-        .command("stop <port>")
-        .description("Stop the Metro this tool started on the port")
-        .action(async (port: string) => {
-            (await stopMetro(Number(port)))
-                ? ui.ok(`stopped metro :${port}`)
-                : ui.dim(`no metro of this tool on :${port}`);
-        });
-
-    program
-        .command("first-run <app>")
+    withConfig(program.command("first-run"))
         .description(
             "Put the app into its fresh-install state: reinstall, grant permissions, then launch and answer the first prompts"
         )
@@ -265,33 +182,31 @@ export function registerDevice(program: Command): void {
         .option("--answer <s>", "how long to answer prompts after the launch", "15")
         .option("--json", "print the report as JSON")
         .action(
-            async (
-                id: string,
-                options: {
-                    udid?: string;
-                    appPath?: string;
-                    derivedData?: string;
-                    configuration: string;
-                    keepInstall?: boolean;
-                    resetKeychain?: boolean;
-                    answer: string;
-                    json?: boolean;
-                }
-            ) => {
-                const app = mobileApp(id);
-                const appDir = app.locate();
+            async (options: {
+                config?: string;
+                udid?: string;
+                appPath?: string;
+                derivedData?: string;
+                configuration: string;
+                keepInstall?: boolean;
+                resetKeychain?: boolean;
+                answer: string;
+                json?: boolean;
+            }) => {
+                const project = await loadProject(options);
+                const ios = iosApp(project);
                 const device = await pickSimulator(options.udid);
-                const bundleId = app.bundleId(appDir);
+                const bundleId = ios.bundleId;
                 const configuration = options.configuration === "Debug" ? "Debug" : "Release";
                 const appPath =
                     options.appPath ??
-                    builtAppPath(app, options.derivedData ?? defaultDerivedData(appDir), configuration);
+                    builtAppPath(ios, options.derivedData ?? defaultDerivedData(project.appDir), configuration);
 
                 if (!options.keepInstall) {
                     await freshInstall({ udid: device.udid, bundleId, appPath, resetKeychain: options.resetKeychain });
                 }
 
-                const preseed = await preseedFirstRun({ app, udid: device.udid, bundleId });
+                const preseed = await preseedFirstRun({ firstRun: ios.firstRun, udid: device.udid, bundleId });
                 await terminateApp(device.udid, bundleId);
                 await launchApp(device.udid, bundleId);
                 const backend = await alertBackendFor({ udid: device.udid, wdaPort: wdaPortsFor(device.udid).wda });

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { idbApprove, idbAvailable } from "@genesiscz/utils/mobile/idb";
+import type { IosApp } from "@genesiscz/utils/mobile/project";
 import {
     appInstalled,
     installApp,
@@ -11,7 +12,6 @@ import {
     writeAppDefault,
 } from "@genesiscz/utils/mobile/simulator";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
-import type { MobileApp } from "./types";
 
 const log = logger.child({ component: "mobile.first-run" });
 
@@ -37,15 +37,15 @@ function privacyHangMarker(udid: string): string {
  * Each step is best-effort; what failed is in the report, never a thrown error.
  */
 export async function preseedFirstRun(options: {
-    app: MobileApp;
+    firstRun: IosApp["firstRun"];
     udid: string;
     bundleId: string;
 }): Promise<PreseedReport> {
-    const { app, udid, bundleId } = options;
+    const { firstRun, udid, bundleId } = options;
     const report: PreseedReport = { granted: [], approved: [], defaults: [], skipped: [] };
     const marker = privacyHangMarker(udid);
 
-    for (const service of app.firstRun.privacy) {
+    for (const service of firstRun.privacy) {
         if (existsSync(marker)) {
             report.skipped.push(`privacy ${service}: an earlier grant hung on this simulator (${marker})`);
             continue;
@@ -60,9 +60,9 @@ export async function preseedFirstRun(options: {
         }
     }
 
-    const approvals = [...app.firstRun.idbApprove];
+    const approvals = [...firstRun.idbApprove];
 
-    if (approvals.length > 0 || app.firstRun.scheme) {
+    if (approvals.length > 0 || firstRun.scheme) {
         if (!idbAvailable()) {
             report.skipped.push(
                 `idb approve ${approvals.join(", ")}: idb is not installed (brew install idb-companion)`
@@ -74,15 +74,15 @@ export async function preseedFirstRun(options: {
                     : report.skipped.push(`idb approve ${service}: idb refused it`);
             }
 
-            if (app.firstRun.scheme) {
-                (await idbApprove({ udid, bundleId, services: ["url"], scheme: app.firstRun.scheme }))
-                    ? report.approved.push(`url ${app.firstRun.scheme}`)
-                    : report.skipped.push(`idb approve url ${app.firstRun.scheme}: idb refused it`);
+            if (firstRun.scheme) {
+                (await idbApprove({ udid, bundleId, services: ["url"], scheme: firstRun.scheme }))
+                    ? report.approved.push(`url ${firstRun.scheme}`)
+                    : report.skipped.push(`idb approve url ${firstRun.scheme}: idb refused it`);
             }
         }
     }
 
-    for (const entry of app.firstRun.defaults) {
+    for (const entry of firstRun.defaults) {
         try {
             await writeAppDefault({ udid, bundleId, key: entry.key, value: entry.value });
             report.defaults.push(entry.key);

@@ -1,132 +1,196 @@
 # tools mobile
 
-Builds, installs, drives and tests this repo's mobile apps on an iOS simulator. It knows the Xcode 27 rules: DeviceHub.app
-replaced Simulator.app, so Expo's `run:ios` fails, and an Appium XCUITest driver older than 12.13 reboots the simulator.
+Builds, installs and drives a project's mobile app on an iOS simulator. It knows the Xcode 27 rules: DeviceHub.app
+replaced Simulator.app, so Expo's `run:ios` fails, and an Appium XCUITest driver older than 12.13 reboots the
+simulator. The tool knows no app by itself: the project describes its app in a `mobile.config.ts`.
 
 ```bash
-tools mobile doctor                             # Xcode, DeviceHub, the XCUITest driver, Appium, booted simulators
-tools mobile apps                               # the apps it knows
-tools mobile routes dev-dashboard               # every screen and its deep link
-
-tools mobile up dev-dashboard --name gt-mine --metro-port 8091 --derived-data /tmp/cc/<you>/dd
-tools mobile build dev-dashboard --udid <udid> --configuration Release --derived-data <dir>
-tools mobile open dev-dashboard agents --udid <udid>            # a route name, name?query, or a URL
-tools mobile capture dev-dashboard agent-session?key=<key> --udid <udid>
-tools mobile tour dev-dashboard --udid <udid>   # one PNG per screen
-tools mobile alerts dev-dashboard --udid <udid> --watch
-tools mobile logbox dev-dashboard --udid <udid> --clear dismiss
-tools mobile first-run dev-dashboard --udid <udid> --reset-keychain
-tools mobile appium start|stop|status --udid <udid>
-tools mobile metro status|stop <port>
-
-tools mobile e2e specs dev-dashboard
-tools mobile e2e suite dev-dashboard flows --udid <udid> --agent http://127.0.0.1:3143
-tools mobile e2e run dev-dashboard agents.flow --udid <udid> --agent http://127.0.0.1:3143
-tools mobile e2e screen dev-dashboard agents --udid <udid> --expect screen-agents agents-live
+tools mobile doctor                 # Xcode, DeviceHub, the XCUITest driver, Appium, booted simulators
+tools mobile config                 # the project config this folder resolves to
+tools mobile routes                 # the project's screens and their deep links
+tools mobile build --udid <udid> --configuration Release --derived-data <dir>
 ```
 
 Without `--udid` a command uses the only booted simulator and refuses when several are booted, so it never drives
 another session's. Nothing here opens a simulator UI: an open DeviceHub changes `isHeadless` for every Appium session
 on the Mac.
 
-## Ports, one set per simulator
+## The project config
+
+Every command that works on an app reads `--config <file>`, or else the nearest `mobile.config.ts` or
+`e2e/mobile.config.ts` at or above the working folder. The file default-exports a `MobileProjectConfig`
+(`@genesiscz/utils/mobile/project`); paths in it are relative to the file.
+
+```ts
+import type { MobileProjectConfig } from "@genesiscz/utils/mobile/project";
+
+export default {
+    id: "shop",
+    appDir: "..",
+    routes: [{ name: "home", url: "shop:///", rootId: "screen-home" }],
+    platforms: {
+        ios: {
+            bundleId: "com.example.shop",
+            build: { workspace: "ios/Shop.xcworkspace", scheme: "Shop", configuration: "Release", productName: "Shop" },
+            buildInputs: { native: ["ios/Podfile.lock", "app.json"], js: ["src/**/*.{ts,tsx}"] },
+        },
+    },
+} satisfies MobileProjectConfig;
+```
+
+- `id` names the build log, the install records and the run folders.
+- `routes` is a list, or a function of the app folder that reads the screens from the app's own tree.
+- `platforms` holds one entry per platform. `bundleId` may be a function of the app folder (an Expo app reads its
+  `app.json`).
+- `buildInputs` decides when a build is stale: `native` globs go into every build, `js` globs only into a Release
+  build. Without it a build counts as current until `--build always`.
+
+## build
+
+`xcodebuild -workspace … -scheme … -sdk iphonesimulator -destination id=<udid>`, with the whole output in
+`~/.genesis-tools/mobile/builds/xcodebuild-<id>-<configuration>.log`, then `simctl install`. A build writes
+`gt-fingerprint-<configuration>.json` into its DerivedData (the size and modification time of every build input). Give
+each session its own `--derived-data`.
+
+The generic pieces are in `@genesiscz/utils/mobile/`: `project` (the config contract and loader), `simulator` (simctl,
+device types and screens, privacy, user defaults, WDA ports), `appium` (the driver check, the per-simulator port) and
+`webdriver` (a minimal W3C client over `fetch`).
+
+## Ports and owned servers, one set per simulator
 
 Each simulator gets its own ports from an FNV-1a hash of its udid (`udidSlot` in `@genesiscz/utils/mobile/simulator`):
 WebDriverAgent 18100 to 18999 (MJPEG 1000 above), Appium 4900 to 4999. XCUITest kills every WDA on its port that
-belongs to another simulator, so a shared port makes two agents kill each other's sessions. A command that needs
-Appium starts this tool's own server on the simulator's port when none answers (`appium start` does it by hand), from
-`/tmp`, with its pidfile and log in `~/.genesis-tools/mobile/appium/<port>.{pid,log}`. `appium stop` stops only a server
-this tool started (the pidfile records the process start time). A start refuses an XCUITest driver that predates
-DeviceHub.
+belongs to another simulator, so a shared port makes two agents kill each other's sessions.
+
+```bash
+tools mobile appium start|stop|status --udid <udid>
+tools mobile metro status|stop <port>
+```
+
+`appium start` runs this tool's own server on the simulator's port from `/tmp`, with its pidfile and log in
+`~/.genesis-tools/mobile/appium/<port>.{pid,log}`, and refuses an XCUITest driver that predates DeviceHub. `stop` stops
+only a server this tool started (the pidfile records the process start time, so a reused pid is never signalled).
+Metro (`bunx expo start` from the app folder, `CI` removed so it rebuilds) keeps the same record in
+`~/.genesis-tools/mobile/metro/<port>.{pid,log}`.
+
+More shared pieces: `service` (a detached server with a pidfile), `wda` (WebDriverAgent's session-less routes, so a
+second actor can read the screen while a run holds the only Appium session), `alerts` (a rule table that answers known
+system alerts for the app under test through WDA or idb and leaves every other alert alone), `idb` and `a11y` (the
+XCUITest tree parser, the readable tree, the LogBox reader). `session` picks the simulator, starts the per-simulator
+Appium and attaches an XCUITest session to the installed app; `screen-driver` and `capture` open a screen and save it.
+Another tool (`tools e2e`) drives the same simulator through these.
 
 ## up
 
-`up <app>` takes `--udid`, or the simulator named `--name` (default `gt-w<width>`), and creates it when missing: the
-iPhone type whose screen is `--width` points wide (default the app's; read from each device type's
+```bash
+tools mobile up --name gt-mine --metro-port 8091 --derived-data /tmp/cc/<you>/build
+```
+
+`up` takes `--udid`, or the simulator named `--name` (default `gt-w<width>`), and creates it when missing: the iPhone
+type whose screen is `--width` points wide (default `platforms.ios.defaultWidth`; read from each device type's
 `capabilities.plist`, or `profile.plist` before Xcode 27), the newest iOS runtime that runs it (`--os` pins one). It
 boots it with `simctl bootstatus -b`. It only ever picks a simulator by its exact name or udid.
 
-- **Build when stale.** A build writes `gt-fingerprint-<configuration>.json` into its DerivedData: the size and
-  modification time of every build input (the adapter's `buildInputs`: native files, plus the JavaScript for Release).
-  `--build auto` (the default) builds when an input changed, `always` and `never` force it. Give each session its own
-  `--derived-data`.
+- **Build when stale** (`--build auto`, the default; `always` and `never` force it), from the fingerprint above.
 - **Install** when it built, when the app is missing, or when the installed build is not the one in DerivedData (a
-  record per simulator in `~/.genesis-tools/mobile/installs/`).
-- **First run**: the grants in the adapter's `firstRun` (below).
-- **Metro** (Debug, the default for a React Native app; `--release` skips it): `bunx expo start --port <port>` from the
-  app folder with `CI` removed (Metro with `CI` set never rebuilds), log in `~/.genesis-tools/mobile/metro/<port>.log`.
-  The app is pointed at the port by the `RCT_jsLocation` user default, which React Native's bundle URL provider reads
-  before its built-in 8081.
+  record per simulator and project in `~/.genesis-tools/mobile/installs/`).
+- **First run**: the grants in `platforms.ios.firstRun` (below).
+- **Metro** (Debug, the default when the project sets `metro`; `--release` skips it), pointed at by the
+  `RCT_jsLocation` user default, which React Native's bundle URL provider reads before its built-in 8081.
 - **Launch**, answer the system alerts the launch raises, and wait (`--launch-timeout`) until Metro's log shows the
   app fetched its bundle. Fatal Metro lines after the launch (a failed bundle, an uncaught error) fail the command.
 
 ## open, capture, tour: the screen drivers
 
-All three go through one table (`src/mobile/lib/screen-driver.ts`):
+```bash
+tools mobile open agents --udid <udid>               # a route name, name?query, or a URL
+tools mobile capture order?id=a1 --udid <udid>
+tools mobile tour --udid <udid> --only home order
+```
+
+All three go through one table (`@genesiscz/utils/mobile/screen-driver`):
 
 - `appium` (the default) opens a link with `mobile: deepLink`, so iOS shows no "Open in <app>?" alert, and waits up to
-  15 s for the screen's root element (its React Native `testID`). The session attaches to the installed app (`noReset`,
+  15 s for the screen's root element (its `rootId`). The session attaches to the installed app (`noReset`,
   `shouldTerminateApp: false`), so closing it leaves the app on screen.
-- `simctl` needs no Appium session: `simctl openurl`, then the alert watcher answers "Open in" for our app.
+- `simctl` needs no Appium session: `simctl openurl`, then the alert watcher answers "Open in" for the app.
 
 `capture` saves `<name>.png`, the raw tree `<name>.xml`, `<name>.tree.txt` (one line per element with a testID, words or
 a tap target, anonymous containers folded) and `<name>.json` (testIDs, visible words, tap targets, open alerts,
-whether a LogBox shows) into `~/.genesis-tools/mobile/captures/<time>/` (or `--out`).
+whether a LogBox shows) into `~/.genesis-tools/mobile/captures/<id>/<time>/` (or `--out`). `tour` saves
+`<NN>-<route>.png` per route into `~/.genesis-tools/mobile/tours/<id>/<time>/`; a root that never shows is saved as
+`<NN>-<route>.MISSING.png` and the run exits 1.
 
-`tour` saves `<NN>-<route>.png` per route (`~/.genesis-tools/mobile/tours/<app>/<time>`); a root that never shows is
-saved as `<NN>-<route>.MISSING.png` and the run exits 1.
+## alerts, logbox, first-run
 
-## alerts
+- `alerts [--watch]` answers the known system alerts for the app (Open in, notifications, local network, location,
+  tracking, access asks, Save Password) through WDA's session-less routes when WDA runs, else `idb ui describe-all`.
+  An alert of another app, and any alert no rule knows (the app's own `Alert.alert`), is left alone. An idb tap
+  re-reads the label under the point first, so it never lands on the app behind an alert someone else answered.
+- `logbox [--clear minimize|dismiss]` reads every entry of React Native's LogBox (Debug builds) from the tree, then
+  minimizes or dismisses it, and reads the project's Metro log from the newest bundle on. Exit 1 when either has one.
+- `first-run [--keep-install] [--reset-keychain]` reinstalls the build (an uninstall keeps an app's keychain items, so
+  `--reset-keychain` empties the simulator's keychain too), grants `firstRun.privacy` with `simctl privacy`, runs
+  `idb approve` for `firstRun.idbApprove` and the `firstRun.scheme` URL where idb is installed, writes
+  `firstRun.defaults`, then launches and answers the first prompts. A `simctl privacy` grant that times out leaves a
+  marker (`~/.genesis-tools/mobile/privacy-hangs/<udid>`): on some iOS 26.5 simulators one grant wedges installd, and
+  later runs skip grants there.
 
-The watcher (`@genesiscz/utils/mobile/alerts`) reads alerts through WebDriverAgent's session-less routes when WDA runs
-(a wdio run holds the one Appium session a simulator allows, so a second session is not an option), or through
-`idb ui describe-all` when idb is installed. A rule table decides: "Open in" gets Open for our app and Cancel for
-another build; notifications, local network, location, tracking and access asks get their allow button for our app;
-"Save Password" gets Not Now. An alert of another app, and any alert no rule knows (the app's own `Alert.alert`, such
-as a destructive confirmation a spec asserts on), is left alone. An idb tap re-reads the label under the point first,
-so it never lands on the app behind an alert someone else answered.
+## Devices on every platform
 
-## logbox
+```bash
+tools mobile devices [--platform ios|android]
+tools mobile boot <udid | AVD name> [--platform android]
+tools mobile install [artifact] --device <udid | serial>
+tools mobile launch | terminate | uninstall --device <id>
+tools mobile url <route | URL> --device <id>
+tools mobile screenshot <file.png> --device <id>
+tools mobile shutdown --device <id>
+```
 
-Reads React Native's LogBox from the tree: it opens the collapsed toast, walks back to `Log 1 of N` with the header's
-unnamed arrows (tapped by position), reads each entry's heading and message, then minimizes it (`--clear dismiss`
-dismisses every entry). It also reads Metro's log for the app's port from the newest bundle on. Exit 1 when either has
-an entry.
+These commands go through one table (`PLATFORMS` in `src/mobile/lib/platforms/`), one `MobilePlatform` per
+platform: `ios` (simulators through simctl) and `android` (emulators and devices through adb, AVDs through the SDK's
+`emulator`). A project names its Android app beside its iOS one:
 
-## first-run
+```ts
+platforms: {
+    android: { packageName: "com.example.shop", activity: ".MainActivity", apk: "android/app/build/outputs/apk/debug/app-debug.apk" },
+}
+```
 
-Uninstalls and reinstalls the build (`--keep-install` skips it; `--reset-keychain` also empties the simulator's
-keychain, since an uninstall keeps an app's keychain items), grants the adapter's `simctl privacy` services, runs
-`idb approve` for camera, notifications and the URL scheme where idb is installed, writes the adapter's user defaults,
-then launches and answers the first prompts. A `simctl privacy` grant that times out leaves a marker
-(`~/.genesis-tools/mobile/privacy-hangs/<udid>`): on some iOS 26.5 simulators one grant wedges installd, and later runs
-skip grants there.
+`--platform` defaults to the project's only platform. `--device` defaults to the only booted device of that platform,
+so a command never drives another session's. Android:
 
-## e2e
+- `devices` lists what adb sees (an emulator under its AVD name) and every AVD that does not run as `avd:<name>`.
+- `boot <AVD>` starts the emulator as a server this tool owns (`-no-snapshot-save -no-boot-anim -gpu host -noaudio`, on
+  the first free console port, log and pidfile in `~/.genesis-tools/mobile/emulator/<avd>.{log,pid}`) and waits until
+  adb answers and `sys.boot_completed` is 1. An emulator that stays `offline` has USB debugging off in the guest; boot
+  reports it instead of waiting.
+- `launch` starts `activity`, else the package's launcher activity; `url` sends a VIEW intent to the package.
+- The Android SDK root is `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then `~/Library/Android/sdk`.
 
-`e2e run <app> <specs...>` and `e2e suite <app> [name]` (`all`, or a suite the adapter names) run each spec file in
-its own `bunx wdio run <config> --spec <file>` from the app folder. The adapter's `e2e.env()` maps the run (udid,
-device, iOS version, Appium and WDA ports, bundle id, the spec's run folder, `--agent`) to the runner's environment.
-The run folder (`~/.genesis-tools/mobile/runs/<time>/`, or `--out`) holds:
+`build`, `up`, `open`, `capture`, `tour`, `alerts`, `logbox` and `first-run` are iOS only for now: they rest on
+xcodebuild, the XCUITest tree and WebDriverAgent.
 
-- `<spec>/wdio.log`, `<spec>/results.jsonl` (one line per test, written by the runner's `afterTest`), `<spec>/shots/`
-  (a screenshot per failed test), `<spec>/wdio-logs/`;
-- `alerts.jsonl` (every alert the watcher answered or left), `device.log` (the app's process log during the run),
-  `appium.log` (the server's lines during the run);
-- `summary.json` and `summary.md`. A spec fails when its runner exits non-zero, a test fails, or it reported no test.
+## release
 
-`e2e screen <app> <route>` opens one screen, captures it, and fails when its root never shows, a `--expect` testID is
-missing, a LogBox covers it or an alert is open.
+```bash
+tools mobile release --dry-run
+tools mobile release --team <id> --api-key AuthKey_X.p8 --api-key-id <id> --api-issuer <id> [--export-only]
+```
 
-## Adding an app
+From source to TestFlight: the project's own preparation, then `pod install` (when `ios/Podfile` exists, or as
+`release.pods` says), a signed device archive (`xcodebuild archive`, automatic signing, the project's
+`buildSettings`), and an export that uploads to App Store Connect (`--export-only` keeps the `.ipa`). The build number
+is the UTC clock to the minute unless `--build-number` names one; it reaches the build through the preparation:
 
-One folder, `src/mobile/apps/<id>/adapter.ts`, exporting a `MobileApp` (`src/mobile/lib/types.ts`): where the app
-lives, its bundle id, its xcodebuild workspace and scheme, its routes, its default width, `metro` for a React Native
-app, `buildInputs`, `firstRun`, and `e2e` when it has a wdio suite. Then one line in `src/mobile/apps/index.ts`.
-The DevDashboard adapter reads its routes from the expo-router tree (`src/app/(tabs)` in tab bar order, then
-`src/app/(more)`), so a new screen file is in the tour, `open` and `capture` without an edit.
+```ts
+release: {
+    prepare: ({ buildNumber }) => [
+        { title: "native project", command: ["bunx", "expo", "prebuild", "--platform", "ios", "--no-install"], env: { BUILD_NUMBER: buildNumber } },
+    ],
+},
+```
 
-The generic pieces are in `@genesiscz/utils/mobile/`: `simulator` (simctl, device types and screens, privacy, user
-defaults, WDA ports), `appium` (the driver check, the server), `metro`, `service` (a detached server with a pidfile),
-`webdriver` (a minimal W3C client over `fetch`), `wda` (WebDriverAgent's session-less routes), `alerts`, `idb` and
-`a11y` (the tree parser, the readable tree, the LogBox reader).
+`--dry-run` prints every step and what is still missing, and builds nothing. Each step logs to
+`~/.genesis-tools/mobile/releases/<id>/<time>/<NN>-<program>.log`.

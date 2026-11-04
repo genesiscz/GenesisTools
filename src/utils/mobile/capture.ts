@@ -1,16 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import {
-    formatTree,
-    type LogBoxView,
-    parseSource,
-    readLogBox,
-    type ScreenSummary,
-    summarize,
-} from "@genesiscz/utils/mobile/a11y";
+import { formatTree, type LogBoxView, parseSource, readLogBox, type ScreenSummary, summarize } from "./a11y";
+import type { MobileRoute } from "./project";
 import type { ScreenDriver } from "./screen-driver";
-import type { MobileRoute } from "./types";
 
 export interface CaptureFiles {
     png: string;

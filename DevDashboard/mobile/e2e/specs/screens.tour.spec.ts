@@ -3,17 +3,23 @@ import path from "node:path";
 import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { connectPage } from "@e2e/pages/ConnectPage.page";
 import { pairingUri } from "@e2e/pages/testAgent";
+import { e2eRun } from "@e2e/run";
 
 /**
  * A screenshot of every screen, one per route, numbered in the order a user meets them: the connect gate (when the app
  * is not paired yet), the five tabs, then every (more) screen. Each screen is opened by its expo-router deep link (the
  * native tab bar is not reachable through XCUITest, see app.page.ts), waited on by its `screen-*` root, given a moment
- * to load its data, and saved under `e2e/screenshots/tour/<NN>-<route>.png` (DD_TOUR_DIR overrides the folder).
+ * to load its data, and saved as `<NN>-<route>.png` in `tour/` of the spec's run folder under `tools e2e`, else in
+ * `e2e/screenshots/tour/` (DD_TOUR_DIR overrides both).
  *
- * Run it alone: `bun run e2e -- --spec e2e/specs/screens.tour.spec.ts`. A screen whose root never shows is saved as
- * `<NN>-<route>.MISSING.png`, so the tour always covers every route and says which ones failed.
+ * Run it alone: `tools e2e run screens.tour`, or `bun run e2e -- --spec e2e/specs/screens.tour.spec.ts`. A screen
+ * whose root never shows is saved as `<NN>-<route>.MISSING.png`, so the tour always covers every route and says which
+ * ones failed.
  */
-const TOUR_DIR = process.env.DD_TOUR_DIR ?? path.join(import.meta.dirname, "..", "screenshots", "tour");
+// Under `tools e2e` the tour goes into the spec's run folder.
+const TOUR_DIR =
+    process.env.DD_TOUR_DIR ??
+    (e2eRun.runDir ? path.join(e2eRun.runDir, "tour") : path.join(import.meta.dirname, "..", "screenshots", "tour"));
 const SETTLE_MS = Number(process.env.DD_TOUR_SETTLE_MS ?? "2500");
 
 // The link forms the page objects use: `devdashboard:///<tab>` for a tab, `devdashboard://<route>` for a (more) screen.

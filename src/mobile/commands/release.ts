@@ -3,11 +3,11 @@ import { out } from "@genesiscz/utils/logger";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import type { Command } from "commander";
-import { mobileApp } from "../apps";
 import { stamp } from "../lib/paths";
+import { loadProject, type ProjectOptions, withConfig } from "../lib/project";
 import { clockBuildNumber, releasePlan, runRelease } from "../lib/release";
 
-interface ReleaseOptions {
+interface ReleaseOptions extends ProjectOptions {
     team?: string;
     apiKey?: string;
     apiKeyId?: string;
@@ -19,12 +19,11 @@ interface ReleaseOptions {
 }
 
 /**
- * `tools mobile release <app>`: prebuild with the production push environment, a signed device archive, and an export
- * that uploads to App Store Connect for TestFlight. `--dry-run` prints the steps and what is still missing.
+ * `tools mobile release`: the project's preparation steps, a signed device archive, and an export that uploads to App
+ * Store Connect for TestFlight. `--dry-run` prints the steps and what is still missing.
  */
 export function registerRelease(program: Command): void {
-    program
-        .command("release <app>")
+    withConfig(program.command("release"))
         .description("Archive a signed device build and upload it to App Store Connect (TestFlight)")
         .option("--team <id>", "the Apple Developer team id")
         .option("--api-key <file>", "the App Store Connect API key (AuthKey_XXXX.p8)")
@@ -34,12 +33,11 @@ export function registerRelease(program: Command): void {
         .option("--export-only", "export the .ipa and do not upload")
         .option("--dry-run", "print the steps and what is missing; build nothing")
         .option("--json", "print the plan as JSON (with --dry-run)")
-        .action(async (id: string, options: ReleaseOptions) => {
-            const app = mobileApp(id);
-            const outDir = toolDataDir("mobile", "releases", app.id, stamp());
+        .action(async (options: ReleaseOptions) => {
+            const project = await loadProject(options);
+            const outDir = toolDataDir("mobile", "releases", project.config.id, stamp());
             const plan = releasePlan({
-                app,
-                appDir: app.locate(),
+                project,
                 team: options.team,
                 apiKey: { path: options.apiKey, id: options.apiKeyId, issuer: options.apiIssuer },
                 buildNumber: options.buildNumber ?? clockBuildNumber(),

@@ -144,3 +144,18 @@ export function sayCommand(): string {
 export function sayElevenLabsVoiceCommand(): string {
     return `${toolCommand("say")} <text> --provider elevenlabs --voice <voice_id>`;
 }
+
+/** Starts this tool's own Appium server on one simulator's port. */
+export function mobileAppiumStartCommand(udid: string): string {
+    return toolCommand("mobile appium start", "--udid", udid);
+}
+
+/** Builds the project's iOS app and installs it on a simulator. */
+export function mobileBuildCommand(): string {
+    return toolCommand("mobile build");
+}
+
+/** Lists a mobile project's screens and their deep links. */
+export function mobileRoutesCommand(): string {
+    return toolCommand("mobile routes");
+}

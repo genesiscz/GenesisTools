@@ -5,6 +5,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { type AlertAnswer, AlertWatcher, alertBackendFor } from "@genesiscz/utils/mobile/alerts";
 import { appiumPortFor } from "@genesiscz/utils/mobile/appium";
 import { type MetroStatus, metroLogPath, readMetroLog, startMetro } from "@genesiscz/utils/mobile/metro";
+import { type IosConfiguration, iosApp, type MobileProject } from "@genesiscz/utils/mobile/project";
 import {
     appInstalled,
     installApp,
@@ -20,7 +21,6 @@ import { buildAndInstall, builtAppPath } from "./build";
 import { buildStaleness, type Staleness } from "./fingerprint";
 import { type PreseedReport, preseedFirstRun } from "./first-run";
 import { resolveSimulator } from "./simulator-fit";
-import type { IosBuild, MobileApp } from "./types";
 
 const log = logger.child({ component: "mobile.up" });
 
@@ -31,7 +31,7 @@ export interface UpReport {
     device: SimDevice;
     created: boolean;
     booted: boolean;
-    configuration: IosBuild["configuration"];
+    configuration: IosConfiguration;
     staleness: Staleness;
     built: boolean;
     buildSeconds?: number;
@@ -50,13 +50,13 @@ export interface UpReport {
 
 interface InstallRecord {
     appPath: string;
-    configuration: IosBuild["configuration"];
+    configuration: IosConfiguration;
     /** The modification time of the build's Info.plist when it was installed. */
     builtAt: number;
 }
 
-function installRecordPath(udid: string, appId: string): string {
-    return toolDataDir("mobile", "installs", `${udid}-${appId}.json`);
+function installRecordPath(udid: string, projectId: string): string {
+    return toolDataDir("mobile", "installs", `${udid}-${projectId}.json`);
 }
 
 function buildStamp(appPath: string): number {
@@ -64,8 +64,8 @@ function buildStamp(appPath: string): number {
 }
 
 /** Whether the simulator already runs this exact build, by the record `up` wrote at its last install. */
-function installCurrent(options: { udid: string; app: MobileApp; appPath: string }): boolean {
-    const path = installRecordPath(options.udid, options.app.id);
+function installCurrent(options: { udid: string; projectId: string; appPath: string }): boolean {
+    const path = installRecordPath(options.udid, options.projectId);
 
     if (!existsSync(path)) {
         return false;
@@ -77,11 +77,11 @@ function installCurrent(options: { udid: string; app: MobileApp; appPath: string
 
 function saveInstallRecord(options: {
     udid: string;
-    app: MobileApp;
+    projectId: string;
     appPath: string;
-    configuration: IosBuild["configuration"];
+    configuration: IosConfiguration;
 }): void {
-    const path = installRecordPath(options.udid, options.app.id);
+    const path = installRecordPath(options.udid, options.projectId);
     mkdirSync(dirname(path), { recursive: true });
     const record: InstallRecord = {
         appPath: options.appPath,
@@ -106,25 +106,27 @@ function readSince(path: string, offset: number): string {
  * build and point the app at its port, launch, and answer the system alerts the launch raises.
  */
 export async function bringUp(options: {
-    app: MobileApp;
-    appDir: string;
+    project: MobileProject;
     udid?: string;
     name?: string;
     width: number;
     os?: string;
-    configuration: IosBuild["configuration"];
+    configuration: IosConfiguration;
     derivedData: string;
     build: BuildPolicy;
     metroPort?: number;
     launchTimeoutMs: number;
     onStep?: (message: string) => void;
 }): Promise<UpReport> {
-    const { app, appDir, configuration, derivedData } = options;
+    const { project, configuration, derivedData } = options;
+    const { appDir } = project;
+    const ios = iosApp(project);
+    const projectId = project.config.id;
     const step = (message: string) => {
-        log.info({ app: app.id }, message);
+        log.info({ project: projectId }, message);
         options.onStep?.(message);
     };
-    const bundleId = app.bundleId(appDir);
+    const { bundleId } = ios;
     const sim = await resolveSimulator({
         udid: options.udid,
         name: options.name,
@@ -136,8 +138,8 @@ export async function bringUp(options: {
         `${sim.created ? "created" : "using"} ${device.name} (${device.udid}, iOS ${device.osVersion})${sim.booted ? ", booted it" : ""}`
     );
 
-    const appPath = builtAppPath(app, derivedData, configuration);
-    const staleness = buildStaleness({ app, appDir, derivedData, configuration, appPath });
+    const appPath = builtAppPath(ios, derivedData, configuration);
+    const staleness = buildStaleness({ inputs: ios.buildInputs, appDir, derivedData, configuration, appPath });
     const mustBuild = options.build === "always" || (options.build === "auto" && staleness.stale);
     let buildSeconds: number | undefined;
 
@@ -150,8 +152,7 @@ export async function bringUp(options: {
             `building ${configuration} (${staleness.stale ? staleness.reason : "--build always"}); this takes minutes`
         );
         const result = await buildAndInstall({
-            app,
-            appDir,
+            project,
             udid: device.udid,
             logDir: toolDataDir("mobile", "builds"),
             install: false,
@@ -167,20 +168,20 @@ export async function bringUp(options: {
     const installed =
         mustBuild ||
         !(await appInstalled(device.udid, bundleId)) ||
-        !installCurrent({ udid: device.udid, app, appPath });
+        !installCurrent({ udid: device.udid, projectId, appPath });
 
     if (installed) {
         await installApp(device.udid, appPath);
-        saveInstallRecord({ udid: device.udid, app, appPath, configuration });
+        saveInstallRecord({ udid: device.udid, projectId, appPath, configuration });
         step(`installed ${appPath}`);
     }
 
-    const preseed = await preseedFirstRun({ app, udid: device.udid, bundleId });
+    const preseed = await preseedFirstRun({ firstRun: ios.firstRun, udid: device.udid, bundleId });
     let metro: MetroStatus | undefined;
     let logOffset = 0;
 
-    if (configuration === "Debug" && app.metro) {
-        const port = options.metroPort ?? app.metro.defaultPort;
+    if (configuration === "Debug" && project.config.metro) {
+        const port = options.metroPort ?? project.config.metro.defaultPort;
         metro = await startMetro({ port, appDir });
         step(`metro answers on :${port} (log ${metro.log})`);
         // React Native's bundle URL provider reads the packager address from this default before its built-in port.

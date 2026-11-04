@@ -1,7 +1,13 @@
-import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { getDevDashboardBundleId } from "./bundle-id";
+import { e2eRun } from "./run";
+import {
+    failureScreenshotPath,
+    recordTestResult,
+    wdioTestResult,
+    xcuitestCapabilities,
+} from "../../../src/utils/e2e/spec-env";
 
 // ── App under test ───────────────────────────────────────────────────────────
 // Two modes:
@@ -14,58 +20,15 @@ const APP_PATH = process.env.DD_APP_PATH ?? "";
 const BUNDLE_ID = getDevDashboardBundleId();
 
 // ── iOS Simulator capabilities (default) ─────────────────────────────────────
-const IOS_DEVICE = process.env.DD_SIM_DEVICE ?? "iPhone 17 Pro Max";
-const IOS_OS = process.env.DD_SIM_OS ?? "26.5";
-// DD_SIM_UDID pins one simulator, so a run never picks (or reboots) one another session is using.
-const IOS_UDID = process.env.DD_SIM_UDID?.trim() || undefined;
-
-/**
- * Xcode 27 rules (learned on another app's e2e rig, 2026-11):
- * - XCUITest kills every WebDriverAgent on its `wdaLocalPort` that belongs to ANOTHER simulator, and the default 8100
- *   is shared, so two agents on two simulators kill each other. The port comes from the udid (one of 900 slots).
- * - `isHeadless` must match whether a simulator UI (Simulator.app, or DeviceHub.app on macOS 27) is open; a wrong value
- *   makes the driver reboot the simulator to show it, or kill the open UI.
- */
-function wdaPortFor(udid: string | undefined): number {
-    if (process.env.DD_WDA_PORT) {
-        return Number(process.env.DD_WDA_PORT);
-    }
-
-    if (!udid) {
-        return 8100;
-    }
-
-    let hash = 0x811c9dc5;
-    for (const char of udid) {
-        hash = Math.imul(hash ^ char.charCodeAt(0), 0x01000193) >>> 0;
-    }
-
-    return 18100 + (hash % 900);
-}
-
-function simulatorUiRunning(): boolean {
-    try {
-        execFileSync("pgrep", ["-f", "(Simulator|DeviceHub)\\.app/Contents/MacOS/"], { stdio: "ignore" });
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-const iosCap: WebdriverIO.Capabilities = {
-    platformName: "iOS",
-    "appium:automationName": "XCUITest",
-    "appium:deviceName": IOS_DEVICE,
-    "appium:platformVersion": IOS_OS,
-    // Reinstall mode pins `app`; attach mode pins `bundleId` + noReset (no uninstall, keep Metro bind).
-    ...(APP_PATH ? { "appium:app": APP_PATH } : { "appium:bundleId": BUNDLE_ID, "appium:noReset": true }),
-    ...(IOS_UDID ? { "appium:udid": IOS_UDID } : {}),
-    "appium:wdaLocalPort": wdaPortFor(IOS_UDID),
-    "appium:isHeadless": !simulatorUiRunning(),
-    // New-Arch (D3) dev-client cold-launch can be slow; give WDA room.
-    "appium:newCommandTimeout": 240,
-    "appium:wdaLaunchTimeout": 120_000,
-};
+// Under `tools e2e` the simulator, its Appium, its own WebDriverAgent and MJPEG ports and `isHeadless` come from the
+// run (`E2E_*`, see e2e/README.md): XCUITest kills every WDA on its port that belongs to another simulator, and a wrong
+// `isHeadless` reboots the simulator on Xcode 27. A plain `bun run e2e` falls back to the device below.
+const iosCap: WebdriverIO.Capabilities = xcuitestCapabilities(e2eRun, {
+    bundleId: BUNDLE_ID,
+    app: APP_PATH || undefined,
+    deviceName: process.env.DD_SIM_DEVICE ?? "iPhone 17 Pro Max",
+    platformVersion: process.env.DD_SIM_OS ?? "26.5",
+});
 
 // ── Android Emulator capabilities (opt-in via DD_PLATFORM=android) ────────────
 // NOTE (D20): running on Android additionally needs the `appium-uiautomator2-driver`
@@ -90,26 +53,18 @@ const androidCap: WebdriverIO.Capabilities = {
 
 const platform = process.env.DD_PLATFORM === "android" ? "android" : "ios";
 
-// `tools mobile e2e` sets DD_RUN_DIR to this spec's run folder: screenshots, the runner's logs and one JSON line per test
-// (`results.jsonl`, which the tool reads into its summary) go there. Without it a run writes to e2e/screenshots.
-const RUN_DIR = process.env.DD_RUN_DIR?.trim() || undefined;
-const SHOTS_DIR = RUN_DIR ? path.join(RUN_DIR, "shots") : path.join(import.meta.dirname, "screenshots");
-const RESULTS_FILE = RUN_DIR ? path.join(RUN_DIR, "results.jsonl") : undefined;
-
-function recordResult(line: Record<string, unknown>): void {
-    if (RESULTS_FILE) {
-        appendFileSync(RESULTS_FILE, `${JSON.stringify(line)}\n`);
-    }
-}
+// Under `tools e2e` screenshots, the runner's logs and one JSON line per test go into the spec's run folder, which the
+// tool reads into its summary. A plain `bun run e2e` writes screenshots to e2e/screenshots and records no results.
+const SHOTS_DIR = e2eRun.shotsDir ?? path.join(import.meta.dirname, "screenshots");
 
 export const config: WebdriverIO.Config = {
     runner: "local",
 
     // Point the runner at the out-of-band Appium server explicitly. Without hostname/port/path,
     // WDIO v9's session bootstrap builds an invalid connection URL ("TypeError: Invalid URL" at
-    // newSession). Override host/port via env when Appium runs elsewhere.
+    // newSession). `tools e2e` passes the simulator's own Appium port.
     hostname: process.env.DD_APPIUM_HOST ?? "127.0.0.1",
-    port: Number(process.env.DD_APPIUM_PORT ?? "4723"),
+    port: e2eRun.appiumPort ?? Number(process.env.DD_APPIUM_PORT ?? "4723"),
     path: "/",
 
     // Resolve the e2e tsconfig relative to THIS file, not process.cwd() — `bun run e2e` runs
@@ -123,16 +78,15 @@ export const config: WebdriverIO.Config = {
     capabilities: [platform === "android" ? androidCap : iosCap],
 
     logLevel: "info",
-    ...(RUN_DIR ? { outputDir: path.join(RUN_DIR, "wdio-logs") } : {}),
+    ...(e2eRun.runDir ? { outputDir: path.join(e2eRun.runDir, "wdio-logs") } : {}),
     bail: 0,
     waitforTimeout: 10_000,
     // The first session builds WebDriverAgent with xcodebuild, which can take minutes.
     connectionRetryTimeout: 600_000,
     connectionRetryCount: 3,
 
-    // The local Appium server is started/managed out-of-band: run `bun run e2e:appium` in a
-    // separate shell (default port 4723), then `bun run e2e`. To auto-manage it, add
-    // `@wdio/appium-service` to `services` later (kept empty so the runner has no extra deps).
+    // The Appium server runs out-of-band: `tools e2e` starts the simulator's own when none answers; for a plain run
+    // start one with `bun run e2e:appium` (default port 4723).
     services: [],
 
     framework: "mocha",
@@ -163,12 +117,11 @@ export const config: WebdriverIO.Config = {
         // Give boot-restore time to rehydrate + the splash to hand off to the tabs/connect.
         await browser.pause(4000);
 
-        // Force-repoint to a side-port Agent when DD_TEST_AGENT is set. Boot-restore reconnects to
-        // the LAST-SAVED connection (e.g. the user's real :3042), so a spec's `if (connectPage.isShown())`
-        // pairing guard is false and never re-points — the app keeps talking to the stored Agent. The
-        // `pair` deep-link applies UNCONDITIONALLY (upserts + marks active), so injecting it here once
-        // per suite pins EVERY spec to the side Agent regardless of stored state. No-op when unset, so
-        // default runs are unchanged.
+        // Force-repoint to a side-port Agent when DD_TEST_AGENT is set (`tools e2e … --env DD_TEST_AGENT=<url>`).
+        // Boot-restore reconnects to the LAST-SAVED connection (e.g. the user's real :3042), so a spec's
+        // `if (connectPage.isShown())` pairing guard is false and never re-points — the app keeps talking to the stored
+        // Agent. The `pair` deep-link applies UNCONDITIONALLY (upserts + marks active), so injecting it here once per
+        // suite pins EVERY spec to the side Agent regardless of stored state. No-op when unset.
         const testAgent = process.env.DD_TEST_AGENT;
         if (testAgent) {
             const uri = `devdashboard://pair?tier=cloudflared-self&baseUrl=${encodeURIComponent(testAgent)}&username=e2e`;
@@ -185,30 +138,22 @@ export const config: WebdriverIO.Config = {
         }
     },
 
-    // Screenshot every genuinely FAILING test — a captured artifact for each failed assertion, not
-    // just a console trace. A skipped/pending test reports `passed === false` too, so it must be
-    // excluded (`result.retries.attempts === -1` marks a pending test that never ran); otherwise an
-    // all-green run still litters FAIL_*.png for the data-gated `this.skip()` cases. Filename =
-    // sanitized "<suite> <test>".
+    // One result line per test for `tools e2e`, and a screenshot of every genuinely FAILING test. A skipped/pending
+    // test reports `passed === false` too (`result.retries.attempts === -1`); `wdioTestResult` records it as a skip
+    // and takes no screenshot, so an all-green run never litters FAIL_*.png for the data-gated `this.skip()` cases.
     async afterTest(test, _context, result) {
-        const wasSkipped = result.retries != null && result.retries.attempts === -1;
-        const base = { suite: test.parent, title: test.title, durationMs: result.duration };
+        let line = wdioTestResult({ test, result });
+        const screenshot = line.state === "failed" ? failureScreenshotPath({ shotsDir: SHOTS_DIR }, test) : undefined;
 
-        if (result.passed || wasSkipped) {
-            recordResult({ ...base, state: result.passed ? "passed" : "skipped" });
-            return;
+        if (screenshot) {
+            try {
+                await browser.saveScreenshot(screenshot);
+                line = { ...line, screenshot };
+            } catch {
+                // A session that already crashed can't screenshot; the spec error itself is the signal.
+            }
         }
 
-        const safe = `${test.parent} ${test.title}`.replace(/[^a-z0-9]+/gi, "_").slice(0, 120);
-        const screenshot = path.join(SHOTS_DIR, `FAIL_${safe}.png`);
-        let saved: string | undefined = screenshot;
-        try {
-            await browser.saveScreenshot(screenshot);
-        } catch {
-            // A session that already crashed can't screenshot; the spec error itself is the signal.
-            saved = undefined;
-        }
-
-        recordResult({ ...base, state: "failed", error: result.error?.message ?? String(result.error ?? ""), screenshot: saved });
+        recordTestResult(e2eRun, line);
     },
 };

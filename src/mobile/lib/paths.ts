@@ -6,7 +6,7 @@ export function stamp(date = new Date()): string {
     return local.toISOString().replace(/[:.]/g, "-").slice(0, 19);
 }
 
-/** `~/.genesis-tools/mobile/runs/<time>`: one folder per e2e run, capture or screen read. */
-export function runDirFor(kind: "runs" | "captures", date = new Date()): string {
-    return toolDataDir("mobile", kind, stamp(date));
+/** `~/.genesis-tools/mobile/<kind>/<project>/<time>`: one folder per capture or tour. */
+export function runDirFor(kind: "captures" | "tours", projectId: string, date = new Date()): string {
+    return toolDataDir("mobile", kind, projectId, stamp(date));
 }
