@@ -574,6 +574,17 @@ function canAutopick(account: ScoredAccount): boolean {
 }
 
 /**
+ * The account an automatic pick launches: the first that can serve and whose 5h window will not stall it. The
+ * grouped order puts a surplus week that resets soon on top, so on 2026-11-04 an account with 6% of its 5h window
+ * left topped the list and won the launch. A starved account wins only when every account that can serve is starved.
+ */
+export function autopickBest(scored: ScoredAccount[]): ScoredAccount {
+    const eligible = scored.filter(canAutopick);
+
+    return eligible.find((s) => s.tier !== "session-starved") ?? eligible[0] ?? scored[0];
+}
+
+/**
  * The account a resumed session last ran on, while it can still serve: its week is open and its 5h window is not
  * nearly spent. The prompt cache does not cross accounts, so a thread that moves pays its whole context again, and
  * T3 Code relaunches a thread's claude often (2026-11-01: session 4c749d15 moved accounts on a resume).
@@ -661,7 +672,7 @@ async function pickAccount(
 
         // The interactive table still SHOWS the accounts that cannot serve; only the automatic choice skips them.
         const eligible = scored.filter(canAutopick);
-        const best = eligible[0] ?? scored[0];
+        const best = autopickBest(scored);
 
         if (eligible.length === 0) {
             out.printlnErr(pc.yellow("No account has usable headroom; picking the best of a bad set."));
@@ -673,7 +684,7 @@ async function pickAccount(
 
         out.printlnErr(`${TIER_BADGE[best.tier]} ${pc.cyan(best.accountName)} — ${scoredHint(best)}`);
 
-        const runnerUp = scored[1];
+        const runnerUp = scored.find((s) => s !== best);
         if (runnerUp) {
             out.printlnErr(pc.dim(`  vs ${runnerUp.accountName} — ${runnerUp.why}`));
         }

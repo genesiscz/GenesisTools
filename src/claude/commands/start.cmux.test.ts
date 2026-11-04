@@ -9,6 +9,7 @@ import { rewriteSteerLine, runClaudeBinaryDirect } from "../lib/direct-run";
 import { claudeEmbedAccountName } from "../lib/embed";
 import { isHostProbe, readEmbedLastPick, writeEmbedLastPick } from "../lib/embed-pick";
 import {
+    autopickBest,
     buildLaunchArgs,
     cmuxPermissionArgs,
     passthroughHandlesSession,
@@ -383,6 +384,24 @@ describe("stickyResumePick", () => {
         ).toBeNull();
         expect(stickyResumePick([account("work")], "personal")).toBeNull();
         expect(stickyResumePick([account("work")], null)).toBeNull();
+    });
+
+    test("an automatic pick passes over an account whose 5h window would stall the launch", () => {
+        const starved = account("work", { tier: "session-starved", surplus: true, bindingResetHours: 4 });
+        const scored = [starved, account("personal", { surplus: true, bindingResetHours: 74 }), account("side")];
+
+        expect(autopickBest(scored).accountName).toBe("personal");
+    });
+
+    test("an automatic pick takes a starved account only when every account that can serve is starved", () => {
+        const scored = [
+            account("work", { tier: "session-starved" }),
+            account("personal", { tier: "session-starved" }),
+            account("side", { group: "dead" }),
+        ];
+
+        expect(autopickBest(scored).accountName).toBe("work");
+        expect(autopickBest([account("side", { group: "dead" })]).accountName).toBe("side");
     });
 });
 
