@@ -111,6 +111,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     // name that is also a label ("Alice Example") is not moved again by that label's ranges. A join that names the
     // voice settles its line.
     const sourceLabel = new Map(lines.map((line) => [line, line.speaker]));
+    const attributionTime = new Map(lines.map((line) => [line, line.startSec]));
     const voiced = new Set<TranscriptEntry>();
 
     for (const join of corrections.joins ?? []) {
@@ -130,6 +131,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         before.text = `${before.text.trimEnd()}${between}${word}`;
         before.speaker = join.speaker ?? line.speaker;
         sourceLabel.set(before, sourceLabel.get(line) ?? line.speaker);
+        attributionTime.set(before, attributionTime.get(line));
 
         if (join.speaker) {
             voiced.add(before);
@@ -146,9 +148,9 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
             const inside =
                 !voiced.has(line) &&
                 sourceLabel.get(line) === range.label &&
-                line.startSec !== undefined &&
-                line.startSec >= range.fromSec &&
-                line.startSec <= range.toSec;
+                attributionTime.get(line) !== undefined &&
+                attributionTime.get(line)! >= range.fromSec &&
+                attributionTime.get(line)! <= range.toSec;
 
             if (inside) {
                 line.speaker = range.speaker;

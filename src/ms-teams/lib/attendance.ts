@@ -81,25 +81,28 @@ interface Observer {
     leftAt: number | null;
 }
 
-export function observerFromEvents(events: CallLogEvent[]): Observer {
-    let joinedAt: number | null = null;
-    let leftAt: number | null = null;
-
+function observerSessions(events: CallLogEvent[]): Observer[] {
+    const sessions: Observer[] = [];
+    let current: Observer | undefined;
     for (const event of events) {
         if (event.kind !== "self-state") {
             continue;
         }
-
-        if (event.state === "Connected" && joinedAt === null) {
-            joinedAt = event.at;
+        if (event.state === "Connected" && !current) {
+            current = { joinedAt: event.at, leftAt: null };
+            sessions.push(current);
         }
-
-        if ((event.state === "Disconnected" || event.state === "Disconnecting") && leftAt === null) {
-            leftAt = event.at;
+        if ((event.state === "Disconnected" || event.state === "Disconnecting") && current) {
+            current.leftAt = event.at;
+            current = undefined;
         }
     }
+    return sessions;
+}
 
-    return { joinedAt, leftAt };
+export function observerFromEvents(events: CallLogEvent[]): Observer {
+    const sessions = observerSessions(events);
+    return { joinedAt: sessions[0]?.joinedAt ?? null, leftAt: sessions.at(-1)?.leftAt ?? null };
 }
 
 /** Presence intervals of remote participants, from the observer's participant added and removed events. */
@@ -198,27 +201,39 @@ function attendanceForCall(args: {
     };
     const rows: AttendanceRow[] = [];
 
-    if (selfMri && observer.joinedAt !== null) {
-        rows.push({
-            ...person(selfMri),
-            joinedAt: formatLocalIso(observer.joinedAt),
-            leftAt: observer.leftAt === null ? null : formatLocalIso(observer.leftAt),
-            joinedAtExact: true,
-            leftAtExact: observer.leftAt !== null,
-            source: "ms-teams:web-client-log",
-        });
+    const sessions = observerSessions(events);
+    for (const observer of sessions) {
+        if (selfMri && observer.joinedAt !== null) {
+            rows.push({
+                ...person(selfMri),
+                joinedAt: formatLocalIso(observer.joinedAt),
+                leftAt: observer.leftAt === null ? null : formatLocalIso(observer.leftAt),
+                joinedAtExact: true,
+                leftAtExact: observer.leftAt !== null,
+                source: "ms-teams:web-client-log",
+            });
+        }
     }
 
-    for (const interval of intervalsFromEvents(events, observer)) {
-        const leftAt = interval.leftAt ?? observer.leftAt;
-        rows.push({
-            ...person(interval.mri),
-            joinedAt: formatLocalIso(interval.joinedAt),
-            leftAt: leftAt === null ? null : formatLocalIso(leftAt),
-            joinedAtExact: interval.joinedAtExact,
-            leftAtExact: interval.leftAt !== null,
-            source: "ms-teams:web-client-log",
-        });
+    for (const [index, session] of (sessions.length ? sessions : [observer]).entries()) {
+        const previousEnd = sessions[index - 1]?.leftAt;
+        const sessionEvents = events.filter(
+            (event) =>
+                (previousEnd == null || event.at > previousEnd) &&
+                (session.joinedAt === null || event.at >= session.joinedAt - PRESENT_AT_JOIN_MS) &&
+                (session.leftAt === null || event.at <= session.leftAt)
+        );
+        for (const interval of intervalsFromEvents(sessionEvents, session)) {
+            const leftAt = interval.leftAt ?? session.leftAt;
+            rows.push({
+                ...person(interval.mri),
+                joinedAt: formatLocalIso(interval.joinedAt),
+                leftAt: leftAt === null ? null : formatLocalIso(leftAt),
+                joinedAtExact: interval.joinedAtExact,
+                leftAtExact: interval.leftAt !== null,
+                source: "ms-teams:web-client-log",
+            });
+        }
     }
 
     const seen = new Set(rows.map((r) => r.id));

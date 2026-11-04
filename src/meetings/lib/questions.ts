@@ -415,6 +415,7 @@ export function answerQuestion(
                 meeting: record.id,
                 project: record.project,
                 kind: "term",
+                scope: item.scope ?? "everywhere",
                 heard: item.heard,
                 fixed: answer,
                 item: item.id,

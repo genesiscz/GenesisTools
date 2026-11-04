@@ -340,11 +340,6 @@ export class MeetingStore {
     ): Promise<MeetingRecord> {
         const base = meetingId(fields.start, fields.title);
         let id = base;
-
-        for (let n = 2; existsSync(this.folder(id)); n += 1) {
-            id = `${base}-${n}`;
-        }
-
         const now = new Date().toISOString();
         const record = meetingRecordSchema.parse({
             ...fields,
@@ -353,7 +348,21 @@ export class MeetingStore {
             history: [{ at: now, command: change.command, change: change.change }],
         });
 
-        mkdirSync(this.folder(id), { recursive: true });
+        mkdirSync(this.root, { recursive: true });
+        for (let n = 2; ; n += 1) {
+            try {
+                mkdirSync(this.folder(id));
+                break;
+            } catch (err) {
+                if (!(err instanceof Error) || !("code" in err) || err.code !== "EEXIST") {
+                    throw err;
+                }
+                id = `${base}-${n}`;
+            }
+        }
+
+        record.id = id;
+
         await this.storage.withFileLock({ file: this.path(id), fn: async () => this.write(record) });
         log.debug({ id, createdBy: record.createdBy }, "meeting created");
         return record;

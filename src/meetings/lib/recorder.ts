@@ -326,6 +326,23 @@ export async function runRecorder(options: {
         renameSync(files.state, join(folder, "recorder-last.json"));
         log.info({ meetingId, frames: state.frames, bytes: state.bytes }, "recording stopped");
         return state;
+    } catch (err) {
+        const warning = err instanceof Error ? err.message : String(err);
+        const state = readRecorderState(store).state;
+        await store.update(meetingId, { command: "record stop", change: `failed: ${warning}` }, (current) => {
+            current.recording = {
+                ...current.recording,
+                status: "failed",
+                stoppedAt: new Date().toISOString(),
+                frames: state?.frames ?? 0,
+                bytes: state?.bytes ?? 0,
+                warning,
+            };
+        });
+        if (existsSync(files.state)) {
+            renameSync(files.state, join(folder, "recorder-last.json"));
+        }
+        throw err;
     } finally {
         clearPidFile(files.pid);
     }

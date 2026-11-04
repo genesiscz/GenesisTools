@@ -182,6 +182,7 @@ describe("suggestDictionary", () => {
             at: "t",
             meeting: "m",
             kind: "term" as const,
+            scope: "everywhere" as const,
             heard: "Zushtent",
             fixed: "Zustand",
             item: "i1",
@@ -202,6 +203,7 @@ describe("suggestDictionary", () => {
             at: "t",
             meeting: "m",
             kind: "term" as const,
+            scope: "everywhere" as const,
             heard: "Zushtent",
             fixed: "Zustand",
             item: "i1",
@@ -1739,4 +1741,110 @@ test("a stale recorder claim is recovered and an initialization failure releases
         runRecorder({ store, meetingId: record.id, display: 1, capture: meetingsConfigSchema.parse({}).global.capture })
     ).rejects.toThrow();
     expect(existsSync(files.pid)).toBe(false);
+});
+
+test("dictionary promotion requires explicit everywhere scope", () => {
+    const correction = {
+        at: "t",
+        meeting: "m1",
+        kind: "term" as const,
+        heard: "Zushtent",
+        fixed: "Zustand",
+        item: "i1",
+    };
+    for (const scope of [undefined, "line"] as const) {
+        expect(
+            suggestDictionary({
+                dictionary: { abbrExpansion: "every", entries: [] },
+                sourceId: "wisprflow",
+                sourceWords: [],
+                ignore: [],
+                corrections: [
+                    { ...correction, scope },
+                    { ...correction, meeting: "m2", scope },
+                ],
+            })
+        ).toEqual([]);
+    }
+});
+
+test("Teams attendance without an end message uses the observer join", () => {
+    const raw = SafeJSON.stringify([
+        {
+            meeting: { startedAt: null },
+            observer: { joinedAt: meeting.start },
+            attendance: [{ name: "Alice Example", joinedAt: meeting.start }],
+        },
+    ]);
+    expect(teamsAttendanceFromJson(raw, { title: "Planning", start: meeting.start }, "fixture")?.presence).toHaveLength(
+        1
+    );
+});
+
+test("an implicit join inherits the following line's ranged voice", () => {
+    const result = applyCorrections([line("Before", 10, "dot"), line("After", 20, "ahnu zbytek")], {
+        joins: [{ atSec: 20 }],
+        ranges: [{ label: "After", fromSec: 20, toSec: 20, speaker: "Alice Example" }],
+    });
+    expect(result.entries.map((entry) => entry.speaker)).toEqual(["Alice Example", "Alice Example"]);
+});
+
+test("arrival attribution honors calibrated energy over coarse segment channels", () => {
+    const base = {
+        record,
+        meeting: { ...meeting, transcript: [line("Other", 20, "O co jsem přišel?")] },
+        rules: ["evidence" as const],
+        dictionary: { abbrExpansion: "every" as const, entries: [] },
+        sourceWords: [],
+        presence: [{ name: "Newcomer", fromSec: 15, toSec: 100 }],
+        now: "2026-11-02T15:00:00.000Z",
+    };
+    for (const [channel, energy, confidence] of [
+        ["mic", 0, 0.65],
+        ["system", 1, 0.35],
+    ] as const) {
+        const items = suggestItems({
+            ...base,
+            energyMicShare: () => energy,
+            evidence: { selfName: "Self", segments: [{ startSec: 20, endSec: 40, channel }], speaking: [], files: [] },
+        });
+        expect(items.find((item) => item.kind === "speaker-range" && item.speaker === "Newcomer")?.confidence).toBe(
+            confidence
+        );
+    }
+});
+
+test("a watcher reclaims a dead owner but refuses a second live claim", async () => {
+    const { claimWatcher, watcherPidPath } = await import("./commands/watch");
+    const store = new MeetingStore(new Storage("watcher-claim-regression"));
+    writePidFile(watcherPidPath(store), { pid: 99999999 });
+    await claimWatcher(store);
+    await expect(claimWatcher(store)).rejects.toThrow();
+    const { clearPidFile } = await import("@genesiscz/utils/process/pidfile");
+    clearPidFile(watcherPidPath(store));
+});
+
+test("recorder failure persists a terminal state before releasing ownership", async () => {
+    const store = new MeetingStore(new Storage("recorder-failed-state"));
+    const record = await store.create(
+        { title: "Failure fixture", start: meeting.start, createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const update = store.update.bind(store);
+    let calls = 0;
+    store.update = async (...args: Parameters<typeof update>) => {
+        if (++calls === 1) {
+            throw new Error("injected recording failure");
+        }
+        return update(...args);
+    };
+    await expect(
+        runRecorder({ store, meetingId: record.id, display: 1, capture: meetingsConfigSchema.parse({}).global.capture })
+    ).rejects.toThrow("injected recording failure");
+    expect(store.read(record.id)?.recording).toMatchObject({
+        status: "failed",
+        warning: expect.stringContaining("injected recording failure"),
+    });
+    expect(existsSync(recorderFiles(store).state)).toBe(false);
+    expect(existsSync(recorderFiles(store).pid)).toBe(false);
 });

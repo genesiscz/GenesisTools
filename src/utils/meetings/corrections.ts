@@ -17,6 +17,7 @@ const correctionSchema = z.object({
     heard: z.string(),
     fixed: z.string(),
     item: z.string(),
+    scope: z.enum(["line", "everywhere"]).optional(),
 });
 export type Correction = z.infer<typeof correctionSchema>;
 

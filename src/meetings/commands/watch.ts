@@ -1,10 +1,11 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
-import { clearPidFile, inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
+import { attemptStaleTakeover, clearPidFile, inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import type { Command } from "commander";
 import { errorText, fail, resolveEnum } from "../lib/shared";
 import { watchLoop, watchOnce } from "../lib/watch";
@@ -28,8 +29,26 @@ export async function ensureWatcher(): Promise<"started" | "running" | "disabled
     }
 
     const pid = spawnToolDetached(["meetings", "watch"]);
+    const deadline = Date.now() + 15_000;
+    while (inspectPidFile(watcherPidPath(new MeetingStore())).status !== "live") {
+        if (Date.now() >= deadline) {
+            throw new Error("The meetings watcher did not claim its pidfile within 15 seconds.");
+        }
+        await Bun.sleep(Math.min(500, deadline - Date.now()));
+    }
     log.info({ pid }, "meetings watcher started in the background");
     return "started";
+}
+
+export async function claimWatcher(store: MeetingStore): Promise<void> {
+    const file = watcherPidPath(store);
+    const owner = inspectPidFile(file);
+    if (owner.status === "dead" || owner.status === "foreign") {
+        if (await attemptStaleTakeover(file, readFileSync(file, "utf8"))) {
+            return;
+        }
+    }
+    writePidFile(file, { exclusive: true });
 }
 
 async function watch(opts: { once?: boolean }): Promise<void> {
@@ -41,7 +60,7 @@ async function watch(opts: { once?: boolean }): Promise<void> {
             return;
         }
 
-        writePidFile(watcherPidPath(store), { exclusive: true });
+        await claimWatcher(store);
 
         try {
             await watchLoop(store);

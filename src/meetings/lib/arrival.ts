@@ -55,7 +55,10 @@ export function arrivalItems(options: {
                 continue;
             }
 
-            const micSaysUser = line.winner === SELF && (line.micShare ?? 0) >= 0.9;
+            const micSaysUser =
+                line.energyMic !== undefined
+                    ? line.energyMic >= 0.9
+                    : line.winner === SELF && (line.micShare ?? 0) >= 0.9;
             const shownOthers = Object.keys(line.speaking).filter((name) => !sameName(name, stay.name));
             const joinerShown = Object.keys(line.speaking).some((name) => sameName(name, stay.name));
             const overruled = micSaysUser || (shownOthers.length > 0 && !joinerShown);

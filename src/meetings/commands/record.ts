@@ -174,6 +174,11 @@ async function stop(): Promise<void> {
     const recording = record?.recording;
     const frames = typeof recording?.frames === "number" ? recording.frames : 0;
     const bytes = typeof recording?.bytes === "number" ? recording.bytes : 0;
+    if (recording?.status === "failed") {
+        fail(`Recording failed: ${recording.warning ?? "unknown recording error"}`);
+        return;
+    }
+
     ui.ok(`Stopped ${record?.id ?? ""}: ${frames} frames, ${formatBytes(bytes)}.`);
 
     if (typeof recording?.warning === "string") {

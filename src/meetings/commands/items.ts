@@ -496,6 +496,7 @@ async function decide(
                             meeting: current.id,
                             project: current.project,
                             kind: "term",
+                            scope: item.scope ?? "everywhere",
                             heard: item.heard,
                             fixed,
                             item: item.id,

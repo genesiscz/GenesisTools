@@ -16,6 +16,7 @@ const TEAMS_TIMEOUT_MS = 60_000;
 const attendanceSchema = z.array(
     z.object({
         meeting: z.object({ title: z.string().nullish(), startedAt: z.string().nullish() }),
+        observer: z.object({ joinedAt: z.string().nullish() }).optional(),
         attendance: z.array(
             z.object({
                 name: z.string(),
@@ -31,7 +32,10 @@ type AttendanceCall = z.infer<typeof attendanceSchema>[number];
 /** The call that started closest to the meeting, if one is close enough to be the same call. */
 function closestCall(calls: AttendanceCall[], startMs: number): AttendanceCall | undefined {
     const timed = calls
-        .map((call) => ({ call, gap: Math.abs(Date.parse(call.meeting.startedAt ?? "") - startMs) }))
+        .map((call) => ({
+            call,
+            gap: Math.abs(Date.parse(call.meeting.startedAt ?? call.observer?.joinedAt ?? "") - startMs),
+        }))
         .filter((entry) => Number.isFinite(entry.gap))
         .sort((a, b) => a.gap - b.gap);
 
