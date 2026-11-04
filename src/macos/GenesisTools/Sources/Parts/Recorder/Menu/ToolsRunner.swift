@@ -42,3 +42,45 @@ enum ToolsRunner {
         try process.run()
     }
 }
+
+extension ToolsRunner {
+    /// Runs a short `tools` command with its output captured, and calls `done` on the main thread with the exit
+    /// status, stdout and stderr. For a step the window waits on (an edit op that needs ffmpeg), not a recording.
+    static func run(_ argv: [String], done: @escaping @MainActor (Int32, String, String) -> Void) {
+        let plan = ToolsBridge.launchPlan(binaryPath: ToolsBridge.defaultBinaryPath(), argv: argv)
+        let process = Process()
+        process.executableURL = plan.executable
+        process.arguments = plan.arguments
+        process.currentDirectoryURL = plan.workingDirectory
+        process.environment = ToolsBridge.scrubbedEnvironment()
+        process.standardInput = FileHandle.nullDevice
+        let out = Pipe()
+        let err = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+        HubPerf.log("recorder: run tools \(argv.joined(separator: " "))")
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try process.run()
+            } catch {
+                DispatchQueue.main.async { MainActor.assumeIsolated { done(-1, "", error.localizedDescription) } }
+                return
+            }
+            // Both pipes are read at once and before the wait, so neither fills and blocks the child.
+            var stderrData = Data()
+            let reading = DispatchGroup()
+            reading.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                stderrData = err.fileHandleForReading.readDataToEndOfFile()
+                reading.leave()
+            }
+            let stdout = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            reading.wait()
+            let stderr = String(decoding: stderrData, as: UTF8.self)
+            process.waitUntilExit()
+            let status = process.terminationStatus
+            if status != 0 { HubPerf.log("recorder: tools \(argv.first ?? "") exited \(status): \(stderr.suffix(300))") }
+            DispatchQueue.main.async { MainActor.assumeIsolated { done(status, stdout, stderr) } }
+        }
+    }
+}

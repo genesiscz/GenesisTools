@@ -67,6 +67,8 @@ final class EditorModel {
     var exportProgress: Double?
     var notice: String?
     var noticeIsError = false
+    /// A `tools recorder apply` step runs (Remove Still Parts); its button shows progress and does not start another.
+    private(set) var isRemovingIdle = false
     /// Pixels of the timeline per second; the transport's slider sets it.
     var pointsPerSecond: Double = 0
 
@@ -352,6 +354,31 @@ final class EditorModel {
         canRedo = false
         if rebuildMovie { rebuild() } else { refreshFrame() }
         show("The edit changed on disk (\(next.updatedBy ?? "another process")); ⌘Z brings this version back.", error: false)
+    }
+
+    /// Cuts every still and silent stretch with `tools recorder apply … removeIdle` (ffmpeg's freeze and silence
+    /// detection run there); the file watcher brings the result in, one ⌘Z away like any agent edit.
+    func removeIdle() {
+        guard !isRemovingIdle else { return }
+        saveTask?.cancel()
+        saveNow()
+        isRemovingIdle = true
+        show("Looking for parts where nothing moves and nothing is heard…", error: false)
+        let before = durationUs
+        ToolsRunner.run(["recorder", "apply", store.url.path, #"{"op":"removeIdle"}"#]) { [weak self] status, _, stderr in
+            guard let self else { return }
+            self.isRemovingIdle = false
+            guard status == 0 else {
+                let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
+                self.show("Nothing was cut: \(reason)", error: true)
+                return
+            }
+            // The watcher may not have delivered the file yet; read it now so the message has the new length.
+            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data) { self.adoptExternal(next) }
+            let saved = before - self.durationUs
+            self.show(saved > 0 ? "Removed \(formatClock(saved, tenths: true)) of still, silent parts; ⌘Z brings them back."
+                                : "No still, silent part of 2 s or more was found.", error: false)
+        }
     }
 
     // MARK: - Export

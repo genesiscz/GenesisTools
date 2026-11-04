@@ -253,6 +253,11 @@ private struct ClipInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
                 SectionLabel(text: Plural.count(placed.count, "clip"), value: formatClock(model.durationUs, tenths: true))
                 WideButton(title: "Split at Playhead", systemImage: "scissors") { model.splitAtPlayhead() }
+                WideButton(title: model.isRemovingIdle ? "Looking for Still Parts…" : "Remove Still Parts", systemImage: "wand.and.stars") {
+                    model.removeIdle()
+                }
+                .disabled(model.isRemovingIdle)
+                .instantTooltip("Cuts every stretch of 2 s or more where the picture does not change and nothing is heard")
             }
         }
     }
