@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { voiceRuns } from "@genesiscz/utils/meetings/energy";
@@ -6,6 +8,7 @@ import { MEETING_PLATFORM_IDS } from "@genesiscz/utils/meetings/platform";
 import { MeetingStore, meetingItemSchema, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
+import { writePidFile } from "@genesiscz/utils/process/pidfile";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -25,6 +28,7 @@ import {
     splitQuestion,
 } from "./lib/questions";
 import { rawMeeting } from "./lib/raw";
+import { recorderFiles, runRecorder } from "./lib/recorder";
 import { suggestItems } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
 import { type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
@@ -1669,4 +1673,19 @@ describe("evidence --raw", () => {
             ["Bob Example", "Dobře."],
         ]);
     });
+});
+
+test("a stale recorder claim is recovered and an initialization failure releases it", async () => {
+    const store = new MeetingStore(new Storage("recorder-claim-regression"));
+    const record = await store.create(
+        { title: "Claim fixture", start: meeting.start, createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const files = recorderFiles(store);
+    writePidFile(files.pid, { pid: 99999999 });
+    writeFileSync(join(store.folder(record.id), "frames"), "blocks the frames directory");
+    await expect(
+        runRecorder({ store, meetingId: record.id, display: 1, capture: meetingsConfigSchema.parse({}).global.capture })
+    ).rejects.toThrow();
+    expect(existsSync(files.pid)).toBe(false);
 });

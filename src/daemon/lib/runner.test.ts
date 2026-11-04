@@ -128,7 +128,8 @@ describe("taskArgv", () => {
             // PRI 4 is darwin background; an unthrottled process sits at the default 31.
             expect(await priorityOf("low")).toBe(4);
             expect(await priorityOf("high")).toBeGreaterThan(4);
-        }
+        },
+        20_000
     );
 });
 

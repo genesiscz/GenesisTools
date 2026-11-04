@@ -222,6 +222,8 @@ if (workerLog) {
  * Targeted runs (explicit paths) are untouched.
  */
 const LOAD_SENSITIVE_FILES = [
+    // CPU sampling compares recent and lifetime usage and needs an uncontended measurement window.
+    "src/utils/process/processes.test.ts",
     // Native background QoS and Chrome shutdown stall under parallel process pressure.
     "src/daemon/lib/runner.test.ts",
     "src/chrome-devtools/lib/headless.test.ts",

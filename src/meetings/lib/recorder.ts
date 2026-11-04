@@ -16,8 +16,15 @@ import { logger } from "@genesiscz/utils/logger";
 import { recognizeText } from "@genesiscz/utils/macos/ocr";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
-import { clearPidFile, inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import {
+    attemptStaleTakeover,
+    classifyPidRecord,
+    clearPidFile,
+    inspectPidFile,
+    parsePidRecord,
+    writePidFile,
+} from "@genesiscz/utils/process/pidfile";
+import { atomicWriteFileSync, readFileIfExistsSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
 import { meetingSource } from "./sources";
 
@@ -172,141 +179,154 @@ export async function runRecorder(options: {
     const pieceDir = join(folder, ".piece");
     const ocrPath = join(folder, "ocr.jsonl");
 
-    writePidFile(files.pid, { exclusive: true });
-    mkdirSync(framesDir, { recursive: true });
-    mkdirSync(pieceDir, { recursive: true });
+    const previous = readFileIfExistsSync(files.pid);
+    const content = previous ? Buffer.from(previous).toString("utf8") : undefined;
+    const owner = content ? parsePidRecord(content) : null;
+    const status = owner ? classifyPidRecord(owner).status : undefined;
+    const reclaimed =
+        content && (status === "dead" || status === "foreign") ? await attemptStaleTakeover(files.pid, content) : false;
 
-    if (existsSync(files.stop)) {
-        unlinkSync(files.stop);
+    if (!reclaimed) {
+        writePidFile(files.pid, { exclusive: true });
     }
-
-    const state: RecorderState = {
-        meetingId,
-        pid: process.pid,
-        startedAt: new Date().toISOString(),
-        display: options.display,
-        frames: 0,
-        bytes: 0,
-    };
-    const saveState = () => atomicWriteFileSync(files.state, SafeJSON.stringify(state, null, 2));
-    saveState();
-    await store.update(meetingId, { command: "record start", change: `display ${options.display}` }, (record) => {
-        record.recording = {
-            startedAt: state.startedAt,
-            display: options.display,
-            framesDir: "frames",
-            ocr: "ocr.jsonl",
-            status: "recording",
-        };
-    });
-
-    let failures = 0;
-    let stopRequested = false;
-    const onSignal = () => {
-        stopRequested = true;
-    };
-    process.on("SIGTERM", onSignal);
-    process.on("SIGINT", onSignal);
 
     try {
-        while (!stopRequested && !existsSync(files.stop)) {
-            let piece: Awaited<ReturnType<typeof capturePiece>>;
+        mkdirSync(framesDir, { recursive: true });
+        mkdirSync(pieceDir, { recursive: true });
 
-            try {
-                piece = await capturePiece({ dir: pieceDir, display: options.display, capture });
-                failures = 0;
-            } catch (err) {
-                failures += 1;
-                log.warn({ err, failures }, "capture piece failed");
-
-                if (failures >= MAX_FAILURES) {
-                    state.warning = `capture failed ${failures} times in a row: ${err instanceof Error ? err.message : String(err)}`;
-                    break;
-                }
-
-                await Bun.sleep(5_000);
-                continue;
-            }
-
-            for (const frame of piece.frames) {
-                const at = new Date(piece.startedAt + frame.timestampMs);
-                const name = frameName(at);
-                const jpg = join(framesDir, name);
-                await toJpeg(frame.path, jpg, capture.jpegQuality);
-                const ocr = await recognizeText(jpg, { languages: OCR_LANGUAGES }).catch((err: unknown) => {
-                    log.warn({ err, jpg }, "OCR failed for a frame");
-                    return { text: "", blocks: [] };
-                });
-
-                if (state.frames === 0 && ocr.text.trim().length < EMPTY_FRAME_CHARS) {
-                    state.warning = `The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check ${toolCommand("control", "doctor")}), or the text is too small for capture.resolutionCap.`;
-                }
-
-                appendFileSync(
-                    ocrPath,
-                    `${SafeJSON.stringify({
-                        file: `frames/${name}`,
-                        at: at.toISOString(),
-                        text: ocr.text,
-                        blocks: ocr.blocks.map((block) => ({
-                            text: block.text,
-                            confidence: block.confidence,
-                            bounds: block.bounds,
-                        })),
-                    })}\n`
-                );
-                state.frames += 1;
-                state.bytes += statSync(jpg).size;
-                state.lastFrameAt = at.toISOString();
-            }
-
-            emptyPieceFolder(pieceDir);
-            saveState();
+        if (existsSync(files.stop)) {
+            unlinkSync(files.stop);
         }
-    } finally {
-        process.off("SIGTERM", onSignal);
-        process.off("SIGINT", onSignal);
-        emptyPieceFolder(pieceDir);
-        rmdirSync(pieceDir);
-    }
 
-    const stoppedAt = new Date().toISOString();
-    const record = store.read(meetingId);
-    const linked = Object.entries(record?.sources ?? {}).find(([, block]) => typeof block.meetingId === "string");
-    let clock: { source: string; startedAt: string } | undefined;
-
-    if (linked && typeof linked[1].meetingId === "string") {
-        const source = await meetingSource(linked[0]);
-        const sourceClock = await source.recordingClock(linked[1].meetingId).catch((err: unknown) => {
-            log.warn({ err }, "recording clock unavailable");
-            return null;
-        });
-        clock = sourceClock ? { source: source.id, startedAt: sourceClock.startedAt } : undefined;
-    }
-
-    await store.update(
-        meetingId,
-        { command: "record stop", change: `${state.frames} frames, ${Math.round(state.bytes / 1_000_000)} MB` },
-        (current) => {
-            current.recording = {
-                ...current.recording,
+        const state: RecorderState = {
+            meetingId,
+            pid: process.pid,
+            startedAt: new Date().toISOString(),
+            display: options.display,
+            frames: 0,
+            bytes: 0,
+        };
+        const saveState = () => atomicWriteFileSync(files.state, SafeJSON.stringify(state, null, 2));
+        saveState();
+        await store.update(meetingId, { command: "record start", change: `display ${options.display}` }, (record) => {
+            record.recording = {
                 startedAt: state.startedAt,
-                stoppedAt,
-                frames: state.frames,
-                bytes: state.bytes,
-                status: "stopped",
-                ...(clock ? { clock } : {}),
-                ...(state.warning ? { warning: state.warning } : {}),
+                display: options.display,
+                framesDir: "frames",
+                ocr: "ocr.jsonl",
+                status: "recording",
             };
+        });
+
+        let failures = 0;
+        let stopRequested = false;
+        const onSignal = () => {
+            stopRequested = true;
+        };
+        process.on("SIGTERM", onSignal);
+        process.on("SIGINT", onSignal);
+
+        try {
+            while (!stopRequested && !existsSync(files.stop)) {
+                let piece: Awaited<ReturnType<typeof capturePiece>>;
+
+                try {
+                    piece = await capturePiece({ dir: pieceDir, display: options.display, capture });
+                    failures = 0;
+                } catch (err) {
+                    failures += 1;
+                    log.warn({ err, failures }, "capture piece failed");
+
+                    if (failures >= MAX_FAILURES) {
+                        state.warning = `capture failed ${failures} times in a row: ${err instanceof Error ? err.message : String(err)}`;
+                        break;
+                    }
+
+                    await Bun.sleep(5_000);
+                    continue;
+                }
+
+                for (const frame of piece.frames) {
+                    const at = new Date(piece.startedAt + frame.timestampMs);
+                    const name = frameName(at);
+                    const jpg = join(framesDir, name);
+                    await toJpeg(frame.path, jpg, capture.jpegQuality);
+                    const ocr = await recognizeText(jpg, { languages: OCR_LANGUAGES }).catch((err: unknown) => {
+                        log.warn({ err, jpg }, "OCR failed for a frame");
+                        return { text: "", blocks: [] };
+                    });
+
+                    if (state.frames === 0 && ocr.text.trim().length < EMPTY_FRAME_CHARS) {
+                        state.warning = `The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check ${toolCommand("control", "doctor")}), or the text is too small for capture.resolutionCap.`;
+                    }
+
+                    appendFileSync(
+                        ocrPath,
+                        `${SafeJSON.stringify({
+                            file: `frames/${name}`,
+                            at: at.toISOString(),
+                            text: ocr.text,
+                            blocks: ocr.blocks.map((block) => ({
+                                text: block.text,
+                                confidence: block.confidence,
+                                bounds: block.bounds,
+                            })),
+                        })}\n`
+                    );
+                    state.frames += 1;
+                    state.bytes += statSync(jpg).size;
+                    state.lastFrameAt = at.toISOString();
+                }
+
+                emptyPieceFolder(pieceDir);
+                saveState();
+            }
+        } finally {
+            process.off("SIGTERM", onSignal);
+            process.off("SIGINT", onSignal);
+            emptyPieceFolder(pieceDir);
+            rmdirSync(pieceDir);
         }
-    );
 
-    if (existsSync(files.stop)) {
-        unlinkSync(files.stop);
+        const stoppedAt = new Date().toISOString();
+        const record = store.read(meetingId);
+        const linked = Object.entries(record?.sources ?? {}).find(([, block]) => typeof block.meetingId === "string");
+        let clock: { source: string; startedAt: string } | undefined;
+
+        if (linked && typeof linked[1].meetingId === "string") {
+            const source = await meetingSource(linked[0]);
+            const sourceClock = await source.recordingClock(linked[1].meetingId).catch((err: unknown) => {
+                log.warn({ err }, "recording clock unavailable");
+                return null;
+            });
+            clock = sourceClock ? { source: source.id, startedAt: sourceClock.startedAt } : undefined;
+        }
+
+        await store.update(
+            meetingId,
+            { command: "record stop", change: `${state.frames} frames, ${Math.round(state.bytes / 1_000_000)} MB` },
+            (current) => {
+                current.recording = {
+                    ...current.recording,
+                    startedAt: state.startedAt,
+                    stoppedAt,
+                    frames: state.frames,
+                    bytes: state.bytes,
+                    status: "stopped",
+                    ...(clock ? { clock } : {}),
+                    ...(state.warning ? { warning: state.warning } : {}),
+                };
+            }
+        );
+
+        if (existsSync(files.stop)) {
+            unlinkSync(files.stop);
+        }
+
+        renameSync(files.state, join(folder, "recorder-last.json"));
+        log.info({ meetingId, frames: state.frames, bytes: state.bytes }, "recording stopped");
+        return state;
+    } finally {
+        clearPidFile(files.pid);
     }
-
-    renameSync(files.state, join(folder, "recorder-last.json"));
-    clearPidFile(files.pid);
-    log.info({ meetingId, frames: state.frames, bytes: state.bytes }, "recording stopped");
-    return state;
 }
