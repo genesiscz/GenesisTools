@@ -118,41 +118,38 @@ export function registerBoardCommand(program: Command): void {
         .option("--timing <timing>", `when it should arrive: ${SEND_TIMINGS.join(", ")}`, timingArg, "now")
         .option("--idempotency-key <key>", "reuse on a retry, so a retried send is one delivery")
         .option("--json", "machine-readable output")
-        .action(
-            async (
-                key: string,
-                words: string[],
-                opts: { timing: SendTiming; idempotencyKey?: string; json?: boolean }
-            ) => {
-                const receipt = await sendToBoardSession({
-                    key,
-                    text: words.join(" "),
-                    timing: opts.timing,
-                    idempotencyKey: opts.idempotencyKey,
-                });
-                process.exitCode = receipt.outcome === "refused" || receipt.outcome === "unknown" ? 1 : 0;
+        .action(async (key: string, words: string[], _opts: unknown, command: Command) => {
+            // `--json` is also an option of `tools hub` itself, so read it with the globals.
+            const opts = command.optsWithGlobals<{ timing: SendTiming; idempotencyKey?: string; json?: boolean }>();
+            const receipt = await sendToBoardSession({
+                key,
+                text: words.join(" "),
+                timing: opts.timing,
+                idempotencyKey: opts.idempotencyKey,
+            });
+            process.exitCode = receipt.outcome === "refused" || receipt.outcome === "unknown" ? 1 : 0;
 
-                if (opts.json) {
-                    out.result(receipt);
-                    return;
-                }
-
-                const line = `${receipt.outcome} via ${receipt.route}: ${receipt.detail}`;
-
-                if (process.exitCode === 0) {
-                    out.log.success(line);
-                    return;
-                }
-
-                out.log.error(line);
+            if (opts.json) {
+                out.result(receipt);
+                return;
             }
-        );
+
+            const line = `${receipt.outcome} via ${receipt.route}: ${receipt.detail}`;
+
+            if (process.exitCode === 0) {
+                out.log.success(line);
+                return;
+            }
+
+            out.log.error(line);
+        });
 
     board
         .command("esc <key>")
         .description("End a live session's running turn with its TUI's Esc key (refused while a dialog is open)")
         .option("--json", "machine-readable output")
-        .action(async (key: string, opts: { json?: boolean }) => {
+        .action(async (key: string, _opts: unknown, command: Command) => {
+            const opts = command.optsWithGlobals<{ json?: boolean }>();
             const receipt = await interruptBoardSession({ key });
             process.exitCode = receipt.outcome === "sent" ? 0 : 1;
 
