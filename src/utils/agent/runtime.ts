@@ -26,7 +26,7 @@ export interface AgentCaller {
     sourceMessage?: AgentRuntimeContext["sourceMessage"];
     agent: AgentRuntimeContext["agent"];
     sessionId: string | null;
-    /** The caller's live cwd. Null leaves the process's own answer in place. */
+    /** The caller's live cwd. Null means the caller has none: its stamps get no cwd and no git facts, never this server's. */
     cwd: string | null;
 }
 

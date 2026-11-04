@@ -8,7 +8,7 @@ import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readT3ThreadDetails } from "@genesiscz/utils/t3code/caller-enricher";
-import { type CallerSource, clearGitFactsCache, readPeerCaller, whoIsCalling } from "./index";
+import { type CallerSource, clearGitFactsCache, readPeerCaller, toRuntimeContext, whoIsCalling } from "./index";
 
 const local = (env: NodeJS.ProcessEnv) => ({ origin: "local" as const, env });
 
@@ -156,6 +156,29 @@ describe("whoIsCalling: a remote caller", () => {
             ).cwd
         ).toBe("/a");
         expect(whoIsCalling(local({}), { fallbackCwd: "/fallback", overrides: { cwd: "/given" } }).cwd).toBe("/given");
+    });
+
+    it("a remote caller with no cwd gets no cwd and no git facts, never the gateway's own; a blank fallback is none", () => {
+        const unnamed = {
+            origin: "remote" as const,
+            caller: { agent: "unknown" as const, sessionId: null, cwd: null },
+        };
+        const spawn = spyOn(Bun, "spawnSync");
+
+        try {
+            for (const options of [{}, { fallbackCwd: "" }, { fallbackCwd: "  " }]) {
+                const identity = whoIsCalling(unnamed, { ...options, facets: ["cwd", "git", "title"] });
+
+                expect(identity.cwd).toBeUndefined();
+                expect(identity.branch).toBeUndefined();
+                expect(identity.repoRoot).toBeUndefined();
+                expect(toRuntimeContext(identity)).toMatchObject({ cwd: "", repoRoot: "", branch: null });
+            }
+
+            expect(spawn).not.toHaveBeenCalled();
+        } finally {
+            spawn.mockRestore();
+        }
     });
 
     it("a peer with no owner is an unknown caller", () => {
