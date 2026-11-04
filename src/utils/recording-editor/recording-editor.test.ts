@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OverwriteInputError } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { checkProject } from "@genesiscz/utils/recording-editor/check";
+import { checkProject, fixOps } from "@genesiscz/utils/recording-editor/check";
 import { idleRanges } from "@genesiscz/utils/recording-editor/idle";
 import {
     annotateClicks,
@@ -422,6 +422,13 @@ describe("edit project (edit.json)", () => {
             label: "Move After",
             ops: [{ op: "retime", id: stepTwo?.id ?? "", at: 5 }],
         });
+        // Two 0.3 s titles in one place: lengthening both makes them meet again, so fixOps runs the check again.
+        let blinks = applyOp(wholeProject(source), { op: "text", from: 0.5, to: 0.8, text: "Welcome" });
+        blinks = applyOp(blinks, { op: "text", from: 0.6, to: 0.9, text: "Step 1" });
+        const all = fixOps(blinks, facts);
+        const fixedEdit = all.ops.reduce((next, op) => applyOp(next, op), blinks);
+        expect(checkProject(fixedEdit, facts).filter((issue) => issue.action)).toEqual([]);
+        expect(all.fixed.length).toBeGreaterThan(2);
         const apart = (issues[1]?.action?.ops ?? []).reduce((next, op) => applyOp(next, op), project);
         expect(checkProject(apart, facts).some((issue) => issue.message.includes("same time"))).toBe(false);
         expect(issues[2]?.message).toContain("too short to read");

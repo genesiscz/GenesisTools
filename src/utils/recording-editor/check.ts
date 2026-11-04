@@ -1,4 +1,4 @@
-import type { EditOp, EditProject } from "./project";
+import { applyOp, type EditOp, type EditProject } from "./project";
 
 /** "fix": the export will be wrong or something never shows; "check": it works but may not be what was meant. */
 export type EditIssueSeverity = "fix" | "check";
@@ -185,4 +185,33 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
 
     const rank = (issue: EditIssue) => (issue.severity === "fix" ? 0 : 1);
     return issues.sort((a, b) => rank(a) - rank(b) || (a.at ?? -1) - (b.at ?? -1));
+}
+/**
+ * Every fix the check offers, gathered until none is left: a fix can make a new issue (two lengthened titles meet
+ * again), so the check runs again on the fixed edit, at most `passes` times. The ops apply in order to the edit as it
+ * is, so one save and one undo step take them all.
+ */
+export function fixOps(project: EditProject, facts: EditFacts, passes = 4): { ops: EditOp[]; fixed: string[] } {
+    const ops: EditOp[] = [];
+    const fixed: string[] = [];
+    let current = project;
+
+    for (let pass = 0; pass < passes; pass++) {
+        const fixable = checkProject(current, facts).filter((issue) => issue.action);
+
+        if (fixable.length === 0) {
+            break;
+        }
+
+        for (const issue of fixable) {
+            for (const op of issue.action?.ops ?? []) {
+                current = applyOp(current, op);
+                ops.push(op);
+            }
+
+            fixed.push(issue.message);
+        }
+    }
+
+    return { ops, fixed };
 }

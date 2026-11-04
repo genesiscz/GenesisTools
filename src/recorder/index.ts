@@ -410,6 +410,19 @@ program
                 out.printlnErr(warning);
             }
 
+            const seen = [
+                answer.zoom ? `zoom ${answer.zoom.scale}× (${answer.zoom.id})` : undefined,
+                ...answer.redactions.map(
+                    (part) => `${part.style === "spotlight" ? "spotlight" : "hidden part"} ${part.id}`
+                ),
+                ...answer.texts.map((note) => `text "${note.text}" (${note.id})`),
+                ...answer.shapes.map((shape) => `${shape.kind} ${shape.id}`),
+                answer.caption ? `caption "${answer.caption}"` : undefined,
+            ].filter(Boolean);
+            out.printlnErr(
+                `at ${answer.output} s (source ${answer.source} s): ${seen.length ? seen.join(", ") : "nothing over the picture"}`
+            );
+
             out.result(answer);
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));

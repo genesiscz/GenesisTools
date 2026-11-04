@@ -1419,8 +1419,7 @@ final class EditorModel {
     func fixAll() {
         saveTask?.cancel()
         saveNow()
-        let count = issues.filter { $0.actionOps != nil }.count
-        ToolsRunner.run(["recorder", "fix", store.url.path]) { [weak self] status, _, stderr in
+        ToolsRunner.run(["recorder", "fix", store.url.path]) { [weak self] status, stdout, stderr in
             guard let self else { return }
             guard status == 0 else {
                 let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
@@ -1430,7 +1429,10 @@ final class EditorModel {
             if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data, at: self.store.url) {
                 self.adoptExternal(next)
             }
-            self.show("Fixed \(Plural.count(count, "thing")). ⌘Z undoes them all.", error: false)
+            // The answer counts what it fixed, a fix that made a new issue and its fix included.
+            struct Answer: Decodable { let fixed: [String] }
+            let count = stdout.split(separator: "\n").last.flatMap { try? JSONDecoder().decode(Answer.self, from: Data($0.utf8)) }?.fixed.count
+            self.show(count.map { "Fixed \(Plural.count($0, "thing")). ⌘Z undoes them all." } ?? "Fixed. ⌘Z undoes it.", error: false)
         }
     }
 

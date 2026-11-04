@@ -5,7 +5,7 @@ import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { checkProject } from "@genesiscz/utils/recording-editor/check";
+import { checkProject, type EditFacts, fixOps } from "@genesiscz/utils/recording-editor/check";
 import { timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
     BACKGROUND_KINDS,
@@ -707,6 +707,15 @@ function summarize(project: EditProject, title: string | undefined): string {
     return `${title ? `"${title}": ` : ""}${parts.join(", ")}`;
 }
 
+/** What check() cannot read from the edit itself, looked up on the disk. */
+function facts(project: EditProject): EditFacts {
+    return {
+        hasTranscript: existsSync(transcriptCachePath(project.source.video)),
+        hasCursorTrack: Boolean(project.source.cursor && existsSync(project.source.cursor)),
+        musicFileExists: project.audio.music ? existsSync(project.audio.music.file) : true,
+    };
+}
+
 export class Movie {
     /** `ctx`: the worker's scratch folder and `show`, for still(); absent outside a REPL. */
     constructor(
@@ -728,26 +737,22 @@ export class Movie {
 
     async check() {
         const { project } = await openProject(this.recording);
-        const issues = checkProject(project, {
-            hasTranscript: existsSync(transcriptCachePath(project.source.video)),
-            hasCursorTrack: Boolean(project.source.cursor && existsSync(project.source.cursor)),
-            musicFileExists: project.audio.music ? existsSync(project.audio.music.file) : true,
-        });
+        const issues = checkProject(project, facts(project));
         log.debug({ recording: this.recording, issues: issues.length }, "edit checked");
         return { ok: !issues.some((issue) => issue.severity === "fix"), issues };
     }
 
     async fix() {
-        const { issues } = await this.check();
-        const fixable = issues.filter((issue) => issue.action);
+        const { project } = await openProject(this.recording);
+        const { ops, fixed } = fixOps(project, facts(project));
 
-        if (fixable.length === 0) {
+        if (ops.length === 0) {
             return { ...(await this.info()), fixed: [], warnings: ["check() found nothing that fix() can fix"] };
         }
 
-        log.debug({ recording: this.recording, fixes: fixable.length }, "fixing what check found");
-        const edited = await this.change(fixable.flatMap((issue) => issue.action?.ops ?? []));
-        return { ...edited, fixed: fixable.map((issue) => issue.message) };
+        log.debug({ recording: this.recording, ops: ops.length, fixed: fixed.length }, "fixing what check found");
+        const edited = await this.change(ops);
+        return { ...edited, fixed };
     }
 
     private async change(ops: EditOp[]) {
