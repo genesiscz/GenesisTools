@@ -9,6 +9,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ClientProvider } from "@/api/client-provider";
 import { wireAppStateFocus } from "@/lib/query";
 import { LiveCacheProvider } from "@/live/provider";
+import { GlanceBadge } from "@/features/glance/GlanceBadge";
 import { registerForPush, startPush } from "@/push/push";
 import { createConnectionQueryClient } from "@/lib/query-client";
 import { useConnectionStore } from "@/state/connection-store";
@@ -92,7 +93,10 @@ function ConnectionSession({ children }: { children: ReactNode }) {
     return (
         <QueryClientProvider client={queryClient}>
             <ClientProvider>
-                <LiveCacheProvider>{children}</LiveCacheProvider>
+                <LiveCacheProvider>
+                    <GlanceBadge />
+                    {children}
+                </LiveCacheProvider>
             </ClientProvider>
         </QueryClientProvider>
     );

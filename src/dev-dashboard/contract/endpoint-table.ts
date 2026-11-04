@@ -22,7 +22,7 @@ import type {
 } from "@app/dev-dashboard/contract/approvals";
 import type { MorningBriefDto } from "@app/dev-dashboard/contract/brief";
 import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/contract/gates";
-import type { GlanceDto } from "@app/dev-dashboard/contract/glance";
+import type { ForecastDto, GlanceDto } from "@app/dev-dashboard/contract/glance";
 import type { AgentNewInput, AgentNewReceiptDto, LaunchOptionsDto } from "@app/dev-dashboard/contract/launch";
 import type { PushDeviceReceipt, PushDeviceRegistration } from "@app/dev-dashboard/contract/push";
 import type { HealthDto, WakeRelayDto } from "@app/dev-dashboard/contract/wake";
@@ -331,7 +331,7 @@ export const ENDPOINTS = {
     gatewayTranscript: row<GatewayInput, unknown>("GET", "/api/gateway/transcript", "read", "slow"),
     gatewayProcs: row<GatewayInput, unknown>("GET", "/api/gateway/procs", "read", "slow"),
     gatewayStuck: row<GatewayInput, unknown>("GET", "/api/gateway/stuck", "read"),
-    gatewayForecast: row<GatewayInput, unknown>("GET", "/api/gateway/forecast", "read"),
+    gatewayForecast: row<GatewayInput, ForecastDto>("GET", "/api/gateway/forecast", "read"),
     gatewayPrompts: row<GatewayInput, unknown>("GET", "/api/gateway/prompts", "read"),
     /** PR triage (F20): the open PRs with readiness, and one PR's checks with the failing step's log tail. */
     gatewayPrs: row<GatewayInput, PrTriageDto>("GET", "/api/gateway/prs", "read", "slow"),

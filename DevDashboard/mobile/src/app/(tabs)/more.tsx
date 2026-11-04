@@ -62,6 +62,7 @@ const MORE_GROUPS: MoreGroup[] = [
         links: [
             { title: "Morning brief", route: "/brief", testID: "more-link-brief", icon: "sunrise" },
             { title: "Reminders", route: "/reminders-todos", testID: "more-link-reminders-todos", icon: "check-square" },
+            { title: "Timesheet", route: "/timesheet", testID: "more-link-timesheet", icon: "clock" },
         ],
     },
     {
@@ -74,6 +75,7 @@ const MORE_GROUPS: MoreGroup[] = [
         heading: "Insights",
         links: [
             { title: "Activity", route: "/activity-timeline", testID: "more-link-activity-timeline", icon: "activity" },
+            { title: "Accounts", route: "/accounts", testID: "more-link-accounts", icon: "pie-chart" },
             { title: "Claude Usage", route: "/claude-usage", testID: "more-link-claude-usage", icon: "bar-chart-2" },
         ],
     },

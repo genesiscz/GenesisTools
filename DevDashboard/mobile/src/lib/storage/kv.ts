@@ -8,6 +8,8 @@ interface Prefs {
     "dd.lastSessionId": string;
     /** The text the session view's Nudge button puts in the composer (F19). */
     "dd.nudgePrompt": string;
+    /** What the app icon's badge shows (F18): the waiting count, or nothing. Default `waiting`. */
+    "dd.iconBadge": "waiting" | "off";
 }
 
 export async function getPref<K extends keyof Prefs>(key: K): Promise<Prefs[K] | null> {

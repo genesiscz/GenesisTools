@@ -64,3 +64,39 @@ export interface GlanceDto {
 
 /** How many decisions the inbox widget lists (the large family fits three rows). */
 export const GLANCE_INBOX_SIZE = 3;
+
+/** One limit window of an account (`buildForecast`, F16). */
+export interface ForecastWindowDto {
+    bucket: string;
+    kind: "session" | "weekly" | "scoped";
+    label: string;
+    /** Percent used, 0 to 100. */
+    utilization: number;
+    resetsAt: string | null;
+    lastSampleAt: string;
+    ratePctPerHour: number | null;
+    /** When it runs out at the current pace; null when the pace never reaches the cap. */
+    exhaustAt: string | null;
+    minutesToExhaust: number | null;
+    /** True when it runs out before its reset. */
+    beforeReset: boolean;
+    projectedAtReset: number | null;
+    resetSinceSample: boolean;
+    stale: boolean;
+}
+
+export interface ForecastAccountDto {
+    provider: string;
+    account: string;
+    windows: ForecastWindowDto[];
+    absentWindows?: string[];
+    warning: string | null;
+}
+
+/** `GET /api/gateway/forecast`: every Claude, Codex and Grok account's windows, from stored readings only. */
+export interface ForecastDto {
+    generatedAt: string;
+    source: string | null;
+    accounts: ForecastAccountDto[];
+    elapsedMs: number;
+}
