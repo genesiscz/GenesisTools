@@ -70,11 +70,11 @@ import {
 } from "@genesiscz/utils/screen-recorder/frame-output";
 import { liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
+import { PieceCaptures, type PieceCapturesOptions } from "@genesiscz/utils/screen-recorder/session";
 import { startRecording } from "@genesiscz/utils/screen-recorder/start";
 import { displayTarget, type PieceTarget, pieceTargets } from "@genesiscz/utils/screen-recorder/targets";
 import {
     CaptureError,
-    type CaptureHooks,
     type CaptureResult,
     type DisplayInfo,
     type FrameRecorder,
@@ -163,18 +163,6 @@ export function framesOnDisk(framesDir: string): { frames: number; bytes: number
 
 /** The displays of a piece: moved to the shared capture session (`@genesiscz/utils/screen-recorder/targets`). */
 export { pieceTargets };
-
-interface RunningCapture {
-    target: PieceTarget;
-    controller: AbortController;
-    /** Commands to the running capture without a restart, when the recorder offers them. */
-    live?: LiveCapture;
-    /** Frames that landed and were counted live, not converted yet. */
-    streamed: number;
-    /** This capture records the sound of the recording. */
-    audio: boolean;
-    done: Promise<void>;
-}
 
 /** What the meetings recorder does for each RecorderControl method; the closures of one `runRecorder` call. */
 interface MeetingControlOps {
@@ -402,16 +390,31 @@ export async function runRecorder(options: {
         let paused = false;
         let pausedAt: string | undefined;
         let stopRequested = false;
-        /** The captures of the running piece, by the display each records. */
-        const running = new Map<number, RunningCapture>();
-        const pendingCaptures = new Set<RunningCapture>();
-        let inPiece = false;
         let wake: (() => void) | undefined;
-        const abortAll = () => {
-            for (const capture of running.values()) {
-                capture.controller.abort();
-            }
-        };
+        /** The captures of the running piece (shared capture coordination); its hooks are set below. */
+        const pieceHooks: PieceCapturesOptions["hooks"] = {};
+        const captures = new PieceCaptures({
+            capture: (request, signal) => session.capture(request, signal),
+            pieceDir,
+            request: () => ({
+                durationSec: deps.pieceSec,
+                activeFps: settings.activeFps,
+                idleFps: settings.idleFps,
+                thresholdPercent: settings.threshold,
+                maxLongSidePx: settings.maxLongSide,
+                ...nativeKeys,
+                heartbeatSec: settings.heartbeatSec,
+            }),
+            // One capture records the sound: two would write the same microphone twice.
+            audio: () =>
+                deps.recorder.supports.audio && audio.sources.length > 0
+                    ? { sources: audio.sources, ...(audio.micDevice ? { micDeviceId: audio.micDevice } : {}) }
+                    : undefined,
+            audioOwnership: "single",
+            hooks: pieceHooks,
+        });
+        const running = captures.running;
+        const abortAll = () => captures.abortAll();
         const stopping = new AbortController();
         const saveState = () => atomicWriteFileSync(files.state, SafeJSON.stringify(state, null, 2));
         const connected = async (displayId: number): Promise<DisplayInfo> => {
@@ -647,7 +650,7 @@ export async function runRecorder(options: {
 
                         chosen = [...new Set([...currentIds(), display.id])];
 
-                        if (!inPiece || paused || running.has(display.id)) {
+                        if (!captures.inPiece || paused || running.has(display.id)) {
                             return answer("next-piece");
                         }
 
@@ -793,114 +796,57 @@ export async function runRecorder(options: {
             }));
             live.update({ displays: state.displays });
         };
-        let pieceOutcome: { recorded: boolean; lastError?: unknown; count: number } = { recorded: false, count: 0 };
-        let captureSeq = 0;
+        pieceHooks.onStart = () => syncDisplays();
+        pieceHooks.onFrame = (entry, frame) => {
+            entry.streamed += 1;
+            live.update({ frames: liveFrames(), lastFrameAt: new Date().toISOString() });
+            live.emit("frame", {
+                displayId: frame.displayId ?? entry.target.displayId,
+                at: new Date().toISOString(),
+                file: frame.path,
+            });
+        };
+        pieceHooks.onLive = (entry, channel) => {
+            if (paused) {
+                channel.pause();
+            }
 
+            for (const source of entry.audio ? audio.sources : []) {
+                if (audio.muted[source]) {
+                    void channel.mute?.(source, true).catch((err: unknown) => log.warn({ err }, "mute failed"));
+                }
+            }
+        };
+        pieceHooks.onResult = async (entry, result) => {
+            keepTracks(result, entry.target);
+            await jobs.task("ocr", (ctx) =>
+                keepFrames(result, entry.target, entry.streamed > 0, (done) =>
+                    ctx.progress({ done, total: result.frames.length, unit: "frames" })
+                )
+            ).done;
+            entry.streamed = 0;
+
+            if (result.endedEarly === "display-removed") {
+                log.info({ display: entry.target.label }, "a display left during a piece");
+            }
+
+            return undefined;
+        };
+        pieceHooks.onError = (entry, err, outcome) => {
+            if (err instanceof CaptureError && err.kind === "display-missing") {
+                log.info({ display: entry.target.label }, "a display left before its capture");
+                return;
+            }
+
+            log.warn({ err, display: entry.target.label }, "a capture failed");
+
+            if (outcome.count > 1) {
+                note(`${entry.target.label}: ${errorText(err)}`);
+            }
+        };
+        pieceHooks.onSettled = (entry) => rmSync(entry.outDir, { recursive: true, force: true });
         const startCapture = (target: PieceTarget): void => {
-            const outDir = join(pieceDir, `d${target.displayId}-${++captureSeq}`);
-            mkdirSync(outDir, { recursive: true });
-            // One capture records the sound: two would write the same microphone twice.
-            const withAudio =
-                audio.sources.length > 0 &&
-                deps.recorder.supports.audio &&
-                ![...running.values()].some((one) => one.audio);
-            const entry: RunningCapture = {
-                target,
-                controller: new AbortController(),
-                streamed: 0,
-                audio: withAudio,
-                done: Promise.resolve(),
-            };
-            running.set(target.displayId, entry);
-            pendingCaptures.add(entry);
-            pieceOutcome.count += 1;
-            syncDisplays();
-            const hooks: CaptureHooks = {
-                onFrame: (frame) => {
-                    entry.streamed += 1;
-                    live.update({ frames: liveFrames(), lastFrameAt: new Date().toISOString() });
-                    live.emit("frame", {
-                        displayId: frame.displayId ?? entry.target.displayId,
-                        at: new Date().toISOString(),
-                        file: frame.path,
-                    });
-                },
-                onLive: (channel) => {
-                    entry.live = channel;
-
-                    if (paused) {
-                        channel.pause();
-                    }
-
-                    for (const source of withAudio ? audio.sources : []) {
-                        if (audio.muted[source]) {
-                            void channel.mute?.(source, true).catch((err: unknown) => log.warn({ err }, "mute failed"));
-                        }
-                    }
-                },
-            };
-            entry.done = session
-                .capture(
-                    {
-                        target: target.target,
-                        durationSec: deps.pieceSec,
-                        activeFps: settings.activeFps,
-                        idleFps: settings.idleFps,
-                        thresholdPercent: settings.threshold,
-                        maxLongSidePx: settings.maxLongSide,
-                        ...nativeKeys,
-                        heartbeatSec: settings.heartbeatSec,
-                        ...(withAudio
-                            ? {
-                                  audio: {
-                                      sources: audio.sources,
-                                      ...(audio.micDevice ? { micDeviceId: audio.micDevice } : {}),
-                                  },
-                              }
-                            : {}),
-                        outDir,
-                        hooks,
-                    },
-                    entry.controller.signal
-                )
-                .then(
-                    async (result) => {
-                        pieceOutcome.recorded = true;
-                        keepTracks(result, entry.target);
-                        await jobs.task("ocr", (ctx) =>
-                            keepFrames(result, entry.target, entry.streamed > 0, (done) =>
-                                ctx.progress({ done, total: result.frames.length, unit: "frames" })
-                            )
-                        ).done;
-                        entry.streamed = 0;
-
-                        if (result.endedEarly === "display-removed") {
-                            log.info({ display: entry.target.label }, "a display left during a piece");
-                        }
-                    },
-                    (err: unknown) => {
-                        pieceOutcome.lastError = err;
-
-                        if (err instanceof CaptureError && err.kind === "display-missing") {
-                            log.info({ display: entry.target.label }, "a display left before its capture");
-                            return;
-                        }
-
-                        log.warn({ err, display: entry.target.label }, "a capture failed");
-
-                        if (pieceOutcome.count > 1) {
-                            note(`${entry.target.label}: ${errorText(err)}`);
-                        }
-                    }
-                )
-                .finally(() => {
-                    if (running.get(entry.target.displayId) === entry) {
-                        running.delete(entry.target.displayId);
-                    }
-
-                    pendingCaptures.delete(entry);
-                    rmSync(outDir, { recursive: true, force: true });
-                });
+            captures.start(target);
         };
 
         let failures = 0;
@@ -1014,25 +960,8 @@ export async function runRecorder(options: {
                 return false;
             }
 
-            pieceOutcome = { recorded: false, count: 0 };
-            inPiece = true;
-
-            try {
-                for (const target of targets) {
-                    startCapture(target);
-                }
-
-                // A display added over the socket joins this piece, so wait until every capture has ended.
-                while (pendingCaptures.size > 0) {
-                    await Promise.race([...pendingCaptures].map((one) => one.done));
-                }
-            } catch (err) {
-                abortAll();
-                await Promise.allSettled([...pendingCaptures].map((one) => one.done));
-                throw err;
-            } finally {
-                inPiece = false;
-            }
+            // A display added over the socket joins this piece, so it ends when every capture has ended.
+            const pieceOutcome = await captures.runPiece(targets);
 
             if (!pieceOutcome.recorded && !paused && !stopRequested && pieceOutcome.lastError !== undefined) {
                 throw pieceOutcome.lastError;
