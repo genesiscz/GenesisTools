@@ -19,6 +19,7 @@ const FILES = [
     "e2e-request.ts",
     "box-types.ts",
     "session-resume.ts",
+    "live.ts",
 ];
 
 describe("contract purity", () => {

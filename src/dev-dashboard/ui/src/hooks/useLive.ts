@@ -131,18 +131,6 @@ export function openLiveConnection(
                 qc.setQueryData(["qa", "live-entry"], frame.payload);
                 // Let QA page listeners also invalidate list
                 void qc.invalidateQueries({ queryKey: ["qa"] });
-                return;
-            }
-
-            if (typeof frame.channel === "string" && frame.channel.startsWith("boards:") && frame.type === "event") {
-                const slug = frame.channel.slice("boards:".length);
-                void qc.invalidateQueries({ queryKey: ["board", slug] });
-                void qc.invalidateQueries({ queryKey: ["board-sections", slug] });
-                return;
-            }
-
-            if (typeof frame.channel === "string" && frame.channel.startsWith("daemon:") && frame.type === "log") {
-                qc.setQueryData(["daemon", "live-log", frame.channel], frame.payload);
             }
         } catch {
             // ignore malformed

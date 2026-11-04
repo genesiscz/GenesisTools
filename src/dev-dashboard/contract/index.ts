@@ -6,4 +6,5 @@ export * from "@app/dev-dashboard/contract/e2e-envelope";
 export * from "@app/dev-dashboard/contract/e2e-request";
 export * from "@app/dev-dashboard/contract/endpoint-table";
 export * from "@app/dev-dashboard/contract/endpoints";
+export * from "@app/dev-dashboard/contract/live";
 export * from "@app/dev-dashboard/contract/pairing";
