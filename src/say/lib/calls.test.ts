@@ -603,3 +603,54 @@ test("the on-disk say call row stores caller fields and JSON argv and ancestry",
         reopened.close();
     }
 });
+
+describe("characterization: blank labels and terminal ids in say callers", () => {
+    test("empty label, account and terminal values are recorded as empty strings", async () => {
+        const caller = await captureWith({
+            CODEX_THREAD_ID: "thread-1",
+            AI_AGENT: "",
+            TOOLS_CLAUDE_ACCOUNT: "",
+            CMUX_SURFACE_ID: "",
+            CMUX_WORKSPACE_ID: "",
+            CMUX_TAB_ID: "",
+            TMUX_PANE: "",
+            TERM_PROGRAM: "",
+        });
+        expect(caller).toMatchObject({
+            agent: "codex",
+            sessionId: "thread-1",
+            aiAgent: "",
+            account: "",
+            surfaceId: "",
+            workspaceId: "",
+            tabId: "",
+            tmuxPane: "",
+            termProgram: "",
+        });
+    });
+
+    test("whitespace label, account and terminal values are recorded without trimming", async () => {
+        const value = " \t ";
+        const caller = await captureWith({
+            GROK_SESSION_ID: " g1 ",
+            AI_AGENT: value,
+            TOOLS_CLAUDE_ACCOUNT: value,
+            CMUX_SURFACE_ID: value,
+            CMUX_WORKSPACE_ID: value,
+            CMUX_TAB_ID: value,
+            TMUX_PANE: value,
+            TERM_PROGRAM: value,
+        });
+        expect(caller).toMatchObject({
+            agent: "grok",
+            sessionId: "g1",
+            aiAgent: value,
+            account: value,
+            surfaceId: value,
+            workspaceId: value,
+            tabId: value,
+            tmuxPane: value,
+            termProgram: value,
+        });
+    });
+});

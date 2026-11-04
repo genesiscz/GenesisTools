@@ -224,6 +224,38 @@ describe("characterization: who the gateway says the caller is", () => {
         expect(resolveCallerFromPeer({ ...PEER })).toEqual(nobody);
     });
 
+    it("a Claude peer keeps an empty, whitespace-only or punctuated session id verbatim", () => {
+        peer({ pid: 4801, name: "claude", cwd: null });
+
+        for (const sessionId of ["", " \t\n ", "thread:child%3Amcp/part\\leaf ?#ž"]) {
+            const dir = sessionsDir({ "4801.json": { pid: 4801, sessionId, startedAt: START_SEC * 1000 } });
+            expect(resolveCallerFromPeer({ ...PEER, claudeSessionsDir: dir })).toMatchObject({
+                agent: "claude-code",
+                sessionId,
+                cwd: null,
+                pid: 4801,
+            });
+        }
+    });
+
+    it("with several harness owners the first socket owner wins, even if it cannot name a session", () => {
+        const id = "01a0f4fc-171d-7c30-9679-ee00633dee2d";
+        fakeProcesses = [
+            { pid: 4802, name: "grok", startSec: START_SEC, openFiles: [], cwd: "/fixture/outer" },
+            {
+                pid: 4803,
+                name: "codex",
+                startSec: START_SEC,
+                cwd: "/fixture/inner",
+                openFiles: [`/fixture/sessions/2026/11/04/rollout-x-${id}.jsonl`],
+            },
+        ];
+        loopbackOwners = [4802, 4803];
+        expect(resolveCallerFromPeer(PEER)).toMatchObject({ agent: "grok", sessionId: null, pid: 4802 });
+        loopbackOwners = [4803, 4802];
+        expect(resolveCallerFromPeer(PEER)).toMatchObject({ agent: "codex", sessionId: id, pid: 4803 });
+    });
+
     it("the gateway can name the session of a Claude or Codex caller only", () => {
         expect(callerSessionReadable("claude-code")).toBe(true);
         expect(callerSessionReadable("codex")).toBe(true);
@@ -231,4 +263,28 @@ describe("characterization: who the gateway says the caller is", () => {
         expect(callerSessionReadable("copilot")).toBe(false);
         expect(callerSessionReadable("unknown")).toBe(false);
     });
+});
+
+describe("characterization: rollout path edge cases at the gateway", () => {
+    const id = "01a0f4fc-171d-7c30-9679-ee00633dee2d";
+    const file = `/fixture/sessions/2026/11/04/rollout-x-${id}.jsonl`;
+
+    it("duplicate files for the same thread are one candidate, with UUID case folded", () => {
+        expect(codexThreadIdFromOpenFiles([file.toUpperCase()])).toBe(id);
+        expect(codexThreadIdFromOpenFiles([file, file, file.toUpperCase()])).toBe(id);
+    });
+
+    it("compressed rollouts do not name a peer session today", () => {
+        expect(codexThreadIdFromOpenFiles([`${file}.zst`])).toBeNull();
+        expect(codexThreadIdFromOpenFiles([`${file}.zst`, file])).toBe(id);
+    });
+
+    it("Windows separators and non-UUID session strings are not matched today", () => {
+        expect(codexThreadIdFromOpenFiles([file.replaceAll("/", "\\")])).toBeNull();
+        expect(
+            codexThreadIdFromOpenFiles(["/fixture/sessions/2026/11/04/rollout-x-thread:child%3Amcp.jsonl"])
+        ).toBeNull();
+    });
+
+    it.todo("a peer with only a compressed Codex rollout can still identify its thread", () => {});
 });

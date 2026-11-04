@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -542,5 +542,201 @@ describe("characterization: the session title comes from the history cache", () 
             expect(getAgentRuntimeContext({}, { COPILOT_AGENT_SESSION_ID: "p1" }).sessionTitle).toBeNull();
             expect(getAgentRuntimeContext({}, { CLAUDE_CODE_SESSION_ID: "no-index" }).sessionTitle).toBeNull();
         });
+    });
+});
+
+describe("characterization: nested caller scopes restore their parent", () => {
+    const facts = {
+        project: "FixtureRepo",
+        repoRoot: "/fixture/repo",
+        isWorktree: false,
+        worktreePath: null,
+        branch: null,
+        commitSha: null,
+        commitMessage: null,
+        sessionTitle: "Fixture title",
+    };
+    const vars = { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "ambient-session", AI_AGENT: "ambient-label" };
+
+    it("restores two enclosing scopes after an awaited inner caller with a null session and cwd", async () => {
+        const outer = {
+            agent: "claude-code" as const,
+            sessionId: "outer",
+            cwd: "/fixture/outer",
+            sourceMessage: { messageId: "outer-message" },
+        };
+        const middle = { agent: "grok" as const, sessionId: "middle", cwd: "/fixture/middle" };
+        const inner = { agent: "codex" as const, sessionId: null, cwd: null };
+        expect(currentCaller()).toBeUndefined();
+
+        await runAsCaller(outer, async () => {
+            await runAsCaller(middle, async () => {
+                await runAsCaller(inner, async () => {
+                    await Promise.resolve();
+                    expect(currentCaller()).toBe(inner);
+                    expect(callerCwd()).toBe(process.cwd());
+                    expect(getAgentRuntimeContext({ ...facts, cwd: "/fixture/resolved" }, vars)).toMatchObject({
+                        agent: "codex",
+                        sessionId: null,
+                        isInAgent: true,
+                        aiAgent: null,
+                        sourceMessage: undefined,
+                        cwd: "/fixture/resolved",
+                    });
+                });
+                expect(currentCaller()).toBe(middle);
+                expect(callerCwd()).toBe("/fixture/middle");
+                expect(getAgentRuntimeContext(facts, vars)).toMatchObject({
+                    agent: "grok",
+                    sessionId: "middle",
+                    cwd: "/fixture/middle",
+                    sourceMessage: undefined,
+                });
+            });
+            expect(currentCaller()).toBe(outer);
+            expect(callerCwd()).toBe("/fixture/outer");
+            expect(getAgentRuntimeContext(facts, vars)).toMatchObject({
+                agent: "claude-code",
+                sessionId: "outer",
+                sourceMessage: { messageId: "outer-message" },
+            });
+        });
+        expect(currentCaller()).toBeUndefined();
+        expect(callerCwd()).toBe(process.cwd());
+        const outside = getAgentRuntimeContext({ ...facts, cwd: "/fixture/resolved" }, vars);
+        expect(outside).toMatchObject({
+            agent: "claude-code",
+            sessionId: "ambient-session",
+            aiAgent: "ambient-label",
+        });
+        expect(outside).not.toHaveProperty("sourceMessage");
+    });
+
+    it("restores the outer caller after both a synchronous throw and an async rejection", async () => {
+        const outer = { agent: "grok" as const, sessionId: "outer", cwd: "/fixture/outer" };
+        const inner = { agent: "unknown" as const, sessionId: null, cwd: "/fixture/inner" };
+        const failure = new Error("fixture failure");
+
+        await runAsCaller(outer, async () => {
+            expect(() =>
+                runAsCaller(inner, () => {
+                    expect(currentCaller()).toBe(inner);
+                    throw failure;
+                })
+            ).toThrow(failure);
+            expect(currentCaller()).toBe(outer);
+
+            await expect(
+                runAsCaller(inner, async () => {
+                    await Promise.resolve();
+                    expect(currentCaller()).toBe(inner);
+                    throw failure;
+                })
+            ).rejects.toThrow(failure);
+            expect(currentCaller()).toBe(outer);
+            expect(getAgentRuntimeContext(facts, vars)).toMatchObject({ agent: "grok", sessionId: "outer" });
+        });
+        expect(currentCaller()).toBeUndefined();
+    });
+
+    it("an empty scoped cwd stays empty, while a null cwd falls back to the process", () => {
+        runAsCaller({ agent: "copilot", sessionId: "", cwd: "" }, () => {
+            expect(callerCwd()).toBe("");
+            expect(getAgentRuntimeContext(facts, vars)).toMatchObject({
+                agent: "copilot",
+                sessionId: "",
+                cwd: "",
+                isInAgent: true,
+            });
+        });
+        expect(runAsCaller({ agent: "copilot", sessionId: null, cwd: null }, callerCwd)).toBe(process.cwd());
+    });
+});
+
+describe("characterization: unusual git layouts and cwd spellings", () => {
+    let fixture: ReturnType<typeof makeRepo>;
+    let bare: string;
+    let unborn: string;
+    let alias: string;
+
+    beforeAll(() => {
+        fixture = makeRepo();
+        git(["checkout", "-q", "--detach"], fixture.worktree);
+        bare = join(fixture.main, "..", "bare.git");
+        git(["clone", "-q", "--bare", fixture.main, bare], fixture.main);
+        unborn = join(fixture.main, "..", "UnbornRepo");
+        mkdirSync(unborn);
+        git(["init", "-q", "-b", "main"], unborn);
+        alias = join(fixture.main, "..", "AliasWorktree");
+        symlinkSync(fixture.worktree, alias);
+        mkdirSync(join(fixture.worktree, "nested"));
+    });
+
+    it("a detached linked worktree reports branch HEAD and keeps its commit and main repo identity", () => {
+        const ctx = getAgentRuntimeContext({ cwd: fixture.worktree }, {});
+        expect(ctx).toMatchObject({
+            branch: "HEAD",
+            commitMessage: "init",
+            repoRoot: fixture.main,
+            project: "MainRepo",
+            isWorktree: true,
+            worktreePath: fixture.worktree,
+        });
+        expect(ctx.commitSha).toMatch(/^[0-9a-f]{7,}$/);
+    });
+
+    it("a repository without commits has a repo identity but no branch, sha or subject", () => {
+        const ctx = getAgentRuntimeContext({ cwd: unborn }, {});
+        expect(ctx).toMatchObject({
+            cwd: unborn,
+            repoRoot: unborn,
+            project: "UnbornRepo",
+            isWorktree: false,
+            worktreePath: null,
+            branch: null,
+            commitSha: null,
+            commitMessage: null,
+        });
+        expect(gitCommonRoot(unborn)).toBe(join(unborn, ".git"));
+    });
+
+    it("a bare repo uses its directory as the root and still reads HEAD commit facts", () => {
+        expect(getAgentRuntimeContext({ cwd: bare }, {})).toMatchObject({
+            cwd: bare,
+            repoRoot: bare,
+            project: "bare.git",
+            isWorktree: false,
+            worktreePath: null,
+            branch: "main",
+            commitMessage: "init",
+        });
+        expect(gitCommonRoot(bare)).toBe(realpathSync(bare));
+    });
+
+    it("a symlinked cwd below a worktree .git file stays lexical while git roots are canonical", () => {
+        const cwd = join(alias, "nested");
+        expect(getAgentRuntimeContext({ cwd }, {})).toMatchObject({
+            cwd,
+            repoRoot: fixture.main,
+            project: "MainRepo",
+            isWorktree: true,
+            worktreePath: fixture.worktree,
+            branch: "HEAD",
+        });
+    });
+
+    it("a nonexistent cwd inside a real repo does not inherit that repo's git identity", () => {
+        const cwd = join(fixture.main, "missing-child");
+        expect(getAgentRuntimeContext({ cwd }, {})).toMatchObject({
+            cwd,
+            repoRoot: cwd,
+            project: "missing-child",
+            isWorktree: false,
+            worktreePath: null,
+            branch: null,
+            commitSha: null,
+            commitMessage: null,
+        });
+        expect(gitCommonRoot(cwd)).toBeNull();
     });
 });

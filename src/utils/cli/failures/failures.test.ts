@@ -620,6 +620,24 @@ describe("characterization: the caller a failure record names", () => {
             expect(transcriptOf({ context: ctx, processEnv: { CLAUDE_CONFIG_DIR: "  " }, home })).toBe(file);
         });
 
+        it("encodes Windows cwd separators and keeps punctuation in the session filename", () => {
+            const config = scratch();
+            const ctx = context({ cwd: "C:\\work\\My App.v2", sessionId: "thread:child%3Amcp ?#ž" });
+            expect(claudeProjectFolder(ctx.cwd)).toBe("C--work-My-App-v2");
+            expect(claudeProjectFolder("C:/work/My App.v2")).toBe("C--work-My-App-v2");
+            const file = put(join(config, "projects", "C--work-My-App-v2", `${ctx.sessionId}.jsonl`));
+            expect(transcriptOf({ context: ctx, processEnv: { CLAUDE_CONFIG_DIR: config } })).toBe(file);
+        });
+
+        it("a whitespace session id is a literal filename, while an empty id stops the lookup", () => {
+            const config = scratch();
+            const ctx = context({ sessionId: " \t " });
+            const file = put(join(config, "projects", claudeProjectFolder(ctx.cwd), " \t .jsonl"));
+            const processEnv = { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_SESSION_ID: "env-session" };
+            expect(transcriptOf({ context: ctx, processEnv })).toBe(file);
+            expect(transcriptOf({ context: context({ sessionId: "" }), processEnv })).toBeNull();
+        });
+
         it("is null for a caller with no session id", () => {
             const config = scratch();
             expect(
@@ -667,6 +685,13 @@ describe("characterization: the caller a failure record names", () => {
             const sixBack = rollout(home, new Date(NOW.getTime() - 6 * 86_400_000));
             expect(old).not.toBe(sixBack);
             expect(transcriptOf({ context: ctx, processEnv: { CODEX_HOME: home }, now: NOW })).toBe(sixBack);
+        });
+
+        it("a CODEX_HOME list of only blank entries falls back to the injected home", () => {
+            const home = scratch();
+            const ctx = context({ agent: "codex", sessionId: THREAD });
+            const file = rollout(join(home, ".codex"), NOW);
+            expect(transcriptOf({ context: ctx, processEnv: { CODEX_HOME: " , \t , " }, now: NOW, home })).toBe(file);
         });
 
         it("takes a compressed rollout too, and reads ~/.codex of the given home when CODEX_HOME is unset", () => {
@@ -782,6 +807,17 @@ describe("characterization: the caller a failure record names", () => {
             expect(
                 failureCaller({ context: context({ agent: "codex" }), processEnv: { CLAUDE_EFFORT: "low" } }).effort
             ).toBe("low");
+        });
+
+        it("an empty or whitespace context label blocks the nonblank AI_AGENT fallback", () => {
+            for (const aiAgent of ["", " \t "]) {
+                const caller = failureCaller({
+                    context: context({ agent: "unknown", sessionId: null, aiAgent }),
+                    processEnv: { AI_AGENT: "fallback-label" },
+                });
+                expect(caller.aiAgent).toBe(aiAgent);
+                expect(caller.model).toBeNull();
+            }
         });
 
         it("copies the agent, session and checkout from the context, and the label from the context before AI_AGENT", () => {

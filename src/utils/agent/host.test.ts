@@ -236,3 +236,100 @@ describe("not built yet: enrichers that the gatherer unification adds", () => {
     it.todo("the model of a Codex caller, read from its rollout, is part of the one agent context", () => {});
     it.todo("the model of a Grok caller, read from its summary.json, is part of the one agent context", () => {});
 });
+
+describe("characterization: nested hosts inside T3 Code", () => {
+    it.each([
+        ["CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "claude-code"],
+        ["CLAUDE_CODE_SESSION_ID", "GROK_SESSION_ID", "claude-code"],
+        ["CLAUDE_CODE_SESSION_ID", "COPILOT_AGENT_SESSION_ID", "claude-code"],
+        ["CODEX_THREAD_ID", "GROK_SESSION_ID", "codex"],
+        ["CODEX_THREAD_ID", "COPILOT_AGENT_SESSION_ID", "codex"],
+        ["GROK_SESSION_ID", "COPILOT_AGENT_SESSION_ID", "grok"],
+    ] as const)("%s with %s keeps fixed precedence in either nesting order under T3", (firstKey, secondKey, agent) => {
+        const t3 = { T3CODE_THREAD_ID: "thread:delegated-task:command%3Amcp%3Afixture" };
+        expect(resolveAgentHost({ ...t3, [firstKey]: "outer-session", [secondKey]: "inner-session" })).toMatchObject({
+            agent,
+            sessionId: "outer-session",
+        });
+        expect(resolveAgentHost({ [secondKey]: "outer-session", [firstKey]: "inner-session", ...t3 })).toMatchObject({
+            agent,
+            sessionId: "inner-session",
+        });
+    });
+
+    it.each([
+        ["CLAUDE_CODE_SESSION_ID", "claude-code", false],
+        ["CODEX_THREAD_ID", "codex", true],
+        ["GROK_SESSION_ID", "grok", true],
+        ["COPILOT_AGENT_SESSION_ID", "copilot", true],
+    ] as const)("%s preserves punctuation and interior whitespace in an opaque session id", (key, agent, isInAgent) => {
+        const id = "thread:child%3Amcp/part\\leaf ?#ž\tend";
+        expect(resolveAgentHost({ [key]: id })).toMatchObject({ agent, sessionId: id, isInAgent });
+        expect(agentSessionIds({ [key]: ` ${id} ` })).toEqual([{ agent, key, id }]);
+    });
+});
+
+describe("characterization: blank host values in a nested environment", () => {
+    it.each([
+        ["CLAUDE_CODE_SESSION_ID", "", "CODEX_THREAD_ID", "codex", "fallback", true],
+        ["CLAUDE_CODE_SESSION_ID", " \t\n ", "CODEX_THREAD_ID", "claude-code", " \t\n ", false],
+        ["CLAUDECODE", "", "CODEX_THREAD_ID", "codex", "fallback", true],
+        ["CLAUDECODE", " \t\n ", "CODEX_THREAD_ID", "claude-code", null, true],
+        ["CODEX_THREAD_ID", "", "GROK_SESSION_ID", "grok", "fallback", true],
+        ["CODEX_THREAD_ID", " \t\n ", "GROK_SESSION_ID", "codex", " \t\n ", true],
+        ["CODEX_CI", "", "GROK_SESSION_ID", "grok", "fallback", true],
+        ["CODEX_CI", " \t\n ", "GROK_SESSION_ID", "grok", "fallback", true],
+        ["CODEX_CI", " 1 ", "GROK_SESSION_ID", "grok", "fallback", true],
+        ["GROK_SESSION_ID", "", "COPILOT_AGENT_SESSION_ID", "copilot", "fallback", true],
+        ["GROK_SESSION_ID", " \t\n ", "COPILOT_AGENT_SESSION_ID", "copilot", "fallback", true],
+    ] as const)("%s=%j with %s resolves to %s", (key, value, fallbackKey, agent, sessionId, isInAgent) => {
+        expect(resolveAgentHost({ [key]: value, [fallbackKey]: "fallback" })).toMatchObject({
+            agent,
+            sessionId,
+            isInAgent,
+        });
+        expect(agentSessionIds({ [key]: value, [fallbackKey]: "fallback" })).toEqual([
+            {
+                agent:
+                    fallbackKey === "CODEX_THREAD_ID"
+                        ? "codex"
+                        : fallbackKey === "GROK_SESSION_ID"
+                          ? "grok"
+                          : "copilot",
+                key: fallbackKey,
+                id: "fallback",
+            },
+        ]);
+    });
+
+    it.each(["", " \t\n "])("a blank Copilot id %j and T3 thread alone name no harness", (value) => {
+        expect(resolveAgentHost({ COPILOT_AGENT_SESSION_ID: value, T3CODE_THREAD_ID: "t3-parent" })).toEqual({
+            agent: "unknown",
+            sessionId: null,
+            isInAgent: false,
+        });
+        expect(agentSessionIds({ COPILOT_AGENT_SESSION_ID: value })).toEqual([]);
+    });
+
+    it.each(["", " \t\n "])("AI_AGENT=%j is retained verbatim except by Codex", (aiAgent) => {
+        for (const host of [{ CLAUDECODE: "1" }, { GROK_SESSION_ID: "g1" }, { COPILOT_AGENT_SESSION_ID: "p1" }]) {
+            expect(resolveAgentHost({ ...host, AI_AGENT: aiAgent }).aiAgent).toBe(aiAgent);
+        }
+
+        expect(resolveAgentHost({ CODEX_THREAD_ID: "x1", AI_AGENT: aiAgent }).aiAgent).toBeNull();
+    });
+
+    it.each(["", " \t\n "])("blank assigned keys %j do not hide a harness session", (value) => {
+        const vars = { GENESIS_AGENTS_SESSION: value, GT_RENDEZVOUS_SESSION: value, CODEX_THREAD_ID: "thread-1" };
+        expect(assignedSessionId(vars)).toBeNull();
+        expect(resolveAgentHost(vars)).toMatchObject({ agent: "codex", sessionId: "thread-1" });
+    });
+
+    it("assigned and harness ids remain independent when both are set", () => {
+        const vars = { GENESIS_AGENTS_SESSION: " swarm:parent/child ", CLAUDECODE: "1", CODEX_THREAD_ID: "inner" };
+        expect(assignedSessionId(vars)).toBe("swarm:parent/child");
+        expect(resolveAgentHost(vars)).toMatchObject({ agent: "claude-code", sessionId: null, isInAgent: true });
+    });
+
+    it.todo("the T3 Code enricher keeps its host thread distinct from both nested harness session ids", () => {});
+});
