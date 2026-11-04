@@ -54,7 +54,8 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
 - `transcript` (optional): `fixes`, the corrected words of a transcript line by its start in source milliseconds
   (`"1800": "the right words"`, `""` hides the line). Kept in the edit, so a new transcription keeps them; captions,
   `transcript()`, `find()` and `movies.search()` read the fixed words. Ops `fixLine` (`from` the line's start) and
-  `unfixLine`; `movie.fixLine(at, text)` takes any time inside the line; the editor's Captions tab lists the lines.
+  `unfixLine`; `movie.fixLine(at, text)` takes any time inside the line, `movie.fixLines([{ at, text }])` many in one
+  save and one undo; the editor's Captions tab lists the lines.
 - `texts` (optional): lines of text over the picture (a title, a step's name) from `startUs` to `endUs`: `text`,
   `x`/`y` its centre as 0 to 1 of the CANVAS (so it stays put through a zoom; 0.5, 0.12 by default), `size` 0.02 to
   0.15 of the short side (0.055), `style` `plate` or `plain`. Each fades in and out over 0.2 s. Ops `text` and

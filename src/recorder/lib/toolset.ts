@@ -162,6 +162,14 @@ const movieMethods = [
         ["from", "text"]
     ),
     edit(
+        "fixLines",
+        z
+            .array(z.object({ at: timeSchema, text: z.string().max(300) }).strict())
+            .min(1)
+            .max(500),
+        "Corrects many transcript lines at once, saved once and undone with one undo(): [{ at, text }] where at is any source time inside the line (a line's from from transcript()). Use it to polish a whole transcript: read transcript(), then send only the lines whose words change. A time where nobody speaks is refused with the nearest lines, and nothing is saved."
+    ),
+    edit(
         "unfixLine",
         z.object({ from: timeSchema }).strict(),
         "Drops the correction of the line that starts at `from`.",
@@ -617,6 +625,10 @@ export class Movie {
 
     /** Fixes the line spoken at `at` (any time inside it, so a time from find() or a still works). */
     async fixLine(at: number | string, text: string) {
+        return this.fixLines([{ at, text }]);
+    }
+
+    async fixLines(fixes: Array<{ at: number | string; text: string }>) {
         const opened = await openProject(this.recording);
         const cache = transcriptCachePath(opened.project.source.video);
 
@@ -627,18 +639,23 @@ export class Movie {
         const raw = z
             .object({ segments: z.array(z.object({ text: z.string(), start: z.number(), end: z.number() })) })
             .parse(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }));
-        const seconds = timeToUs(at) / 1_000_000;
-        const line = raw.segments.find((segment) => segment.start <= seconds + 0.0005 && seconds < segment.end);
+        const ops = fixes.map(({ at, text }): EditOp => {
+            const seconds = timeToUs(at) / 1_000_000;
+            const line = raw.segments.find((segment) => segment.start <= seconds + 0.0005 && seconds < segment.end);
 
-        if (!line) {
-            const near = raw.segments
-                .map((segment) => segment.start)
-                .sort((a, b) => Math.abs(a - seconds) - Math.abs(b - seconds))
-                .slice(0, 3);
-            throw new Error(`no line is spoken at ${seconds} s; the nearest lines start at ${near.join(", ")} s`);
-        }
+            if (!line) {
+                const near = raw.segments
+                    .map((segment) => segment.start)
+                    .sort((a, b) => Math.abs(a - seconds) - Math.abs(b - seconds))
+                    .slice(0, 3);
+                throw new Error(
+                    `no line is spoken at ${seconds} s, nothing was saved; the nearest lines start at ${near.join(", ")} s`
+                );
+            }
 
-        return this.change([{ op: "fixLine", from: line.start, text }]);
+            return { op: "fixLine", from: line.start, text };
+        });
+        return this.change(ops);
     }
 
     async unfixLine(from: number | string) {
