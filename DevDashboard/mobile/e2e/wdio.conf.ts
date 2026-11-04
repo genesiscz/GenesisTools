@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { getDevDashboardBundleId } from "./bundle-id";
@@ -15,6 +16,41 @@ const BUNDLE_ID = getDevDashboardBundleId();
 // ── iOS Simulator capabilities (default) ─────────────────────────────────────
 const IOS_DEVICE = process.env.DD_SIM_DEVICE ?? "iPhone 17 Pro Max";
 const IOS_OS = process.env.DD_SIM_OS ?? "26.5";
+// DD_SIM_UDID pins one simulator, so a run never picks (or reboots) one another session is using.
+const IOS_UDID = process.env.DD_SIM_UDID?.trim() || undefined;
+
+/**
+ * Xcode 27 rules (learned on another app's e2e rig, 2026-11):
+ * - XCUITest kills every WebDriverAgent on its `wdaLocalPort` that belongs to ANOTHER simulator, and the default 8100
+ *   is shared, so two agents on two simulators kill each other. The port comes from the udid (one of 900 slots).
+ * - `isHeadless` must match whether a simulator UI (Simulator.app, or DeviceHub.app on macOS 27) is open; a wrong value
+ *   makes the driver reboot the simulator to show it, or kill the open UI.
+ */
+function wdaPortFor(udid: string | undefined): number {
+    if (process.env.DD_WDA_PORT) {
+        return Number(process.env.DD_WDA_PORT);
+    }
+
+    if (!udid) {
+        return 8100;
+    }
+
+    let hash = 0x811c9dc5;
+    for (const char of udid) {
+        hash = Math.imul(hash ^ char.charCodeAt(0), 0x01000193) >>> 0;
+    }
+
+    return 18100 + (hash % 900);
+}
+
+function simulatorUiRunning(): boolean {
+    try {
+        execFileSync("pgrep", ["-f", "(Simulator|DeviceHub)\\.app/Contents/MacOS/"], { stdio: "ignore" });
+        return true;
+    } catch {
+        return false;
+    }
+}
 
 const iosCap: WebdriverIO.Capabilities = {
     platformName: "iOS",
@@ -23,6 +59,9 @@ const iosCap: WebdriverIO.Capabilities = {
     "appium:platformVersion": IOS_OS,
     // Reinstall mode pins `app`; attach mode pins `bundleId` + noReset (no uninstall, keep Metro bind).
     ...(APP_PATH ? { "appium:app": APP_PATH } : { "appium:bundleId": BUNDLE_ID, "appium:noReset": true }),
+    ...(IOS_UDID ? { "appium:udid": IOS_UDID } : {}),
+    "appium:wdaLocalPort": wdaPortFor(IOS_UDID),
+    "appium:isHeadless": !simulatorUiRunning(),
     // New-Arch (D3) dev-client cold-launch can be slow; give WDA room.
     "appium:newCommandTimeout": 240,
     "appium:wdaLaunchTimeout": 120_000,
@@ -76,7 +115,8 @@ export const config: WebdriverIO.Config = {
     logLevel: "info",
     bail: 0,
     waitforTimeout: 10_000,
-    connectionRetryTimeout: 120_000,
+    // The first session builds WebDriverAgent with xcodebuild, which can take minutes.
+    connectionRetryTimeout: 600_000,
     connectionRetryCount: 3,
 
     // The local Appium server is started/managed out-of-band: run `bun run e2e:appium` in a
