@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { hasMembers, toolParts } from "@genesiscz/utils/harness/tool-parts";
@@ -160,6 +160,37 @@ export function nativeSessionRoots(kind: NativeSessionProvider, home = homedir()
  */
 export function nativeSessionRootsForHome(kind: NativeSessionProvider, home: string): string[] {
     return HOME_LAYOUTS.of(kind).sessionRootsForHome(home);
+}
+
+/**
+ * The provider home a transcript belongs to: the nearest folder above it whose session roots (`sessionRootsForHome`)
+ * hold the file, so a legacy or worker home answers as itself. Null when no folder above it is such a home. The
+ * durable session queue (`message-queue.ts`) keys a session by this home.
+ */
+export function sessionSourceHome(kind: NativeSessionProvider, transcriptPath: string): string | null {
+    const file = resolve(transcriptPath);
+    let dir = dirname(file);
+
+    for (let depth = 0; depth < 12; depth++) {
+        const holds = nativeSessionRootsForHome(kind, dir).some((root) => {
+            const rel = relative(resolve(root), file);
+            return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+        });
+
+        if (holds) {
+            return dir;
+        }
+
+        const parent = dirname(dir);
+
+        if (parent === dir) {
+            break;
+        }
+
+        dir = parent;
+    }
+
+    return null;
 }
 
 /**

@@ -3,8 +3,36 @@ import type { AgentsBoardDto, AgentTranscriptTurnDto } from "@dd/contract";
 // Invented sessions for the mock agent and the tests: ids, projects, accounts and prompts are made up.
 const NOW = Date.parse("2026-10-01T12:00:00Z");
 
+const SAVED = { supported: true, meaning: "saved for this exact session until its consumer acknowledges it" } as const;
+
+/** The Mac's per-harness timings (`src/hub/lib/send/senders`), as the board sends them. */
+export const MOCK_SEND_TIMINGS: AgentsBoardDto["sendTimings"] = {
+    claude: {
+        now: { supported: true, meaning: "into the running session; a busy session reads it between tool calls" },
+        "next-turn": {
+            supported: false,
+            reason: "Claude Code has no channel that holds a message until the turn ends: a message sent now is read between tool calls. Send it now, or later.",
+        },
+        later: SAVED,
+    },
+    codex: {
+        now: { supported: true, meaning: "steered into the running turn through the session's worker" },
+        "next-turn": { supported: true, meaning: "queued on the shared app-server; it runs after the current turn" },
+        later: SAVED,
+    },
+    grok: {
+        now: { supported: true, meaning: "into the running session through its worker or leader, else its cmux pane" },
+        "next-turn": {
+            supported: false,
+            reason: "Grok has no measured channel that holds a message until the turn ends. Send it now, or later.",
+        },
+        later: SAVED,
+    },
+};
+
 export const MOCK_BOARD: AgentsBoardDto = {
     generatedAt: new Date(NOW).toISOString(),
+    sendTimings: MOCK_SEND_TIMINGS,
     sessions: [
         {
             key: "claude:aaaaaaaa-0000-4000-8000-000000000001",

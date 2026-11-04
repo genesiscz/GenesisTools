@@ -14,6 +14,7 @@ import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/ser
 import { type BoardStopDeps, stopAgentSession } from "@app/hub/lib/board/stop";
 import { CapabilityRefusedError, type HubCapabilityName, runCapability } from "@app/hub/lib/capabilities/index";
 import { type GateRaiseDeps, raiseGate } from "@app/hub/lib/gates/index";
+import { type BoardSendDeps, interruptBoardSession, SEND_TIMINGS, sendToBoardSession } from "@app/hub/lib/send/index";
 import { type ActDeps, act, realActDeps } from "@app/question/lib/act/act";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
@@ -61,6 +62,8 @@ export interface GatewayDeps {
     run?: typeof runCapability;
     /** The stop route's fleet and signals; tests pass a fake process tree, so no real process is signalled. */
     stop?: BoardStopDeps;
+    /** The send and interrupt routes' fleet and transports; tests pass fakes, so no session is reached. */
+    send?: BoardSendDeps;
     /** The raise route's ledger and window openers; tests pass fakes, so no window opens. */
     gates?: GateRaiseDeps;
 }
@@ -107,6 +110,25 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
             input: z.object({ key: z.string().min(1), pid: z.number().int().positive() }),
             invalid: "expected { key, pid }",
             run: (input) => stopAgentSession(input, deps.stop),
+        }),
+        // The idempotency key is the durable queue's key too, so a replayed send is the same delivery.
+        bindEndpoint(ENDPOINTS.agentsSend, {
+            input: z.object({
+                key: z.string().min(1),
+                text: z
+                    .string()
+                    .min(1)
+                    .max(64 * 1024),
+                timing: z.enum(SEND_TIMINGS),
+            }),
+            invalid: "expected { key, text, timing }",
+            run: (input, ctx: RouteContext) =>
+                sendToBoardSession({ ...input, idempotencyKey: ctx.headers[IDEMPOTENCY_HEADER] }, deps.send),
+        }),
+        bindEndpoint(ENDPOINTS.agentsInterrupt, {
+            input: z.object({ key: z.string().min(1) }),
+            invalid: "expected { key }",
+            run: (input) => interruptBoardSession(input, deps.send),
         }),
         // A keyed write: a raise opens a window on the Mac, so a replay must not open a second one.
         bindEndpoint(ENDPOINTS.gatesRaise, {
