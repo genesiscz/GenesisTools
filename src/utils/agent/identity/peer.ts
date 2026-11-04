@@ -42,7 +42,7 @@ function peerSessionOf(info: ProcessInfo, agent: CallerAgent, query: PeerQuery):
         return null;
     }
 
-    return part.sessionOf(info, query.registryDirs?.[harness]);
+    return part.sessionOf(info, query.registryDirOf?.(harness));
 }
 
 /** Whether the gateway can name the session of a calling process of this runtime agent, so its MCP client may use HTTP. */

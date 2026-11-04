@@ -159,8 +159,8 @@ export interface ScopedCaller {
 export interface PeerQuery {
     clientPort: number;
     serverPort: number;
-    /** Each harness's own session registry folder (Claude's `~/.claude/sessions`), replaced by a fixture in a test. */
-    registryDirs?: Partial<Record<HarnessId, string>>;
+    /** The folder that replaces a harness's own session registry (Claude's `~/.claude/sessions`) in a test. */
+    registryDirOf?: (harness: HarnessId) => string | undefined;
 }
 
 /**

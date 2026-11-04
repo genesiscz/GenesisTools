@@ -87,7 +87,7 @@ describe("characterization: who the gateway says the caller is", () => {
             "4101.json": { pid: 4101, sessionId: "claude-session-1", startedAt: (START_SEC + 30) * 1000 },
         });
 
-        expect(resolveCallerFromPeer({ ...PEER, registryDirs: { claude: dir } })).toEqual({
+        expect(resolveCallerFromPeer({ ...PEER, registryDirOf: () => dir })).toEqual({
             agent: "claude-code",
             sessionId: "claude-session-1",
             cwd: "/fixture/project",
@@ -103,8 +103,8 @@ describe("characterization: who the gateway says the caller is", () => {
         });
         const far = sessionsDir({ "4102.json": { pid: 4102, sessionId: "far", startedAt: (START_SEC - 121) * 1000 } });
 
-        expect(resolveCallerFromPeer({ ...PEER, registryDirs: { claude: near } }).sessionId).toBe("near");
-        expect(resolveCallerFromPeer({ ...PEER, registryDirs: { claude: far } }).sessionId).toBeNull();
+        expect(resolveCallerFromPeer({ ...PEER, registryDirOf: () => near }).sessionId).toBe("near");
+        expect(resolveCallerFromPeer({ ...PEER, registryDirOf: () => far }).sessionId).toBeNull();
     });
 
     it("a Claude peer: a stale sessions file from an earlier process with this pid gives no session", () => {
@@ -113,7 +113,7 @@ describe("characterization: who the gateway says the caller is", () => {
             "4103.json": { pid: 4103, sessionId: "old-process", startedAt: (START_SEC - 86_400) * 1000 },
         });
 
-        const caller = resolveCallerFromPeer({ ...PEER, registryDirs: { claude: dir } });
+        const caller = resolveCallerFromPeer({ ...PEER, registryDirOf: () => dir });
         expect(caller.agent).toBe("claude-code");
         expect(caller.sessionId).toBeNull();
         expect(caller.pid).toBe(4103);
@@ -126,16 +126,16 @@ describe("characterization: who the gateway says the caller is", () => {
         expect(
             resolveCallerFromPeer({
                 ...PEER,
-                registryDirs: { claude: sessionsDir({ "4104.json": { pid: 9999, sessionId: "x", startedAt } }) },
+                registryDirOf: () => sessionsDir({ "4104.json": { pid: 9999, sessionId: "x", startedAt } }),
             }).sessionId
         ).toBeNull();
         expect(
             resolveCallerFromPeer({
                 ...PEER,
-                registryDirs: { claude: sessionsDir({ "4104.json": { pid: 4104, startedAt } }) },
+                registryDirOf: () => sessionsDir({ "4104.json": { pid: 4104, startedAt } }),
             }).sessionId
         ).toBeNull();
-        expect(resolveCallerFromPeer({ ...PEER, registryDirs: { claude: sessionsDir({}) } }).sessionId).toBeNull();
+        expect(resolveCallerFromPeer({ ...PEER, registryDirOf: () => sessionsDir({}) }).sessionId).toBeNull();
     });
 
     it("a Codex peer: the session is the one rollout file it holds open", () => {
@@ -232,7 +232,7 @@ describe("characterization: who the gateway says the caller is", () => {
 
         for (const sessionId of ["", " \t\n ", "thread:child%3Amcp/part\\leaf ?#ž"]) {
             const dir = sessionsDir({ "4801.json": { pid: 4801, sessionId, startedAt: START_SEC * 1000 } });
-            expect(resolveCallerFromPeer({ ...PEER, registryDirs: { claude: dir } })).toMatchObject({
+            expect(resolveCallerFromPeer({ ...PEER, registryDirOf: () => dir })).toMatchObject({
                 agent: "claude-code",
                 sessionId,
                 cwd: null,

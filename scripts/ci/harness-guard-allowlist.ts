@@ -79,10 +79,6 @@ export const HARNESS_GUARD_ALLOWLIST: Readonly<Record<string, HarnessGuardCounts
         table: 1,
         why: "the MCP-client axis (Gemini and Cursor too), not the harness set: each client's stored default config home",
     },
-    "src/utils/agent/identity/peer.ts": {
-        table: 1,
-        why: "SESSION_ID_OF, keyed by the gateway's runtime-agent caller axis (with copilot and unknown); its readers spawn lsof and read the session registry, which the hook-path drivers must not load (moved from src/genesis-tools-mcp/lib/http-caller.ts)",
-    },
     "src/utils/env/envVariables.ts": {
         table: 1,
         why: "the env accessor namespaces (x, grok, codex, copilot, aiProxy, …): variables grouped by the tool or service that reads them, a wider set than the harnesses",
