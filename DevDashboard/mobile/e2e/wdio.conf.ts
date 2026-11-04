@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { getDevDashboardBundleId } from "./bundle-id";
 
@@ -90,7 +90,17 @@ const androidCap: WebdriverIO.Capabilities = {
 
 const platform = process.env.DD_PLATFORM === "android" ? "android" : "ios";
 
-const SHOTS_DIR = path.join(import.meta.dirname, "screenshots");
+// `tools mobile e2e` sets DD_RUN_DIR to this spec's run folder: screenshots, the runner's logs and one JSON line per test
+// (`results.jsonl`, which the tool reads into its summary) go there. Without it a run writes to e2e/screenshots.
+const RUN_DIR = process.env.DD_RUN_DIR?.trim() || undefined;
+const SHOTS_DIR = RUN_DIR ? path.join(RUN_DIR, "shots") : path.join(import.meta.dirname, "screenshots");
+const RESULTS_FILE = RUN_DIR ? path.join(RUN_DIR, "results.jsonl") : undefined;
+
+function recordResult(line: Record<string, unknown>): void {
+    if (RESULTS_FILE) {
+        appendFileSync(RESULTS_FILE, `${JSON.stringify(line)}\n`);
+    }
+}
 
 export const config: WebdriverIO.Config = {
     runner: "local",
@@ -113,6 +123,7 @@ export const config: WebdriverIO.Config = {
     capabilities: [platform === "android" ? androidCap : iosCap],
 
     logLevel: "info",
+    ...(RUN_DIR ? { outputDir: path.join(RUN_DIR, "wdio-logs") } : {}),
     bail: 0,
     waitforTimeout: 10_000,
     // The first session builds WebDriverAgent with xcodebuild, which can take minutes.
@@ -160,7 +171,7 @@ export const config: WebdriverIO.Config = {
         // default runs are unchanged.
         const testAgent = process.env.DD_TEST_AGENT;
         if (testAgent) {
-            const uri = `devdashboard://pair?tier=cloudflared-self&baseUrl=${encodeURIComponent(testAgent)}&username=martin`;
+            const uri = `devdashboard://pair?tier=cloudflared-self&baseUrl=${encodeURIComponent(testAgent)}&username=e2e`;
             try {
                 await browser.execute("mobile: deepLink", { url: uri, bundleId });
                 // A link never connects by itself: confirm the address on the pair screen.
@@ -181,15 +192,23 @@ export const config: WebdriverIO.Config = {
     // sanitized "<suite> <test>".
     async afterTest(test, _context, result) {
         const wasSkipped = result.retries != null && result.retries.attempts === -1;
+        const base = { suite: test.parent, title: test.title, durationMs: result.duration };
+
         if (result.passed || wasSkipped) {
+            recordResult({ ...base, state: result.passed ? "passed" : "skipped" });
             return;
         }
 
         const safe = `${test.parent} ${test.title}`.replace(/[^a-z0-9]+/gi, "_").slice(0, 120);
+        const screenshot = path.join(SHOTS_DIR, `FAIL_${safe}.png`);
+        let saved: string | undefined = screenshot;
         try {
-            await browser.saveScreenshot(path.join(SHOTS_DIR, `FAIL_${safe}.png`));
+            await browser.saveScreenshot(screenshot);
         } catch {
             // A session that already crashed can't screenshot; the spec error itself is the signal.
+            saved = undefined;
         }
+
+        recordResult({ ...base, state: "failed", error: result.error?.message ?? String(result.error ?? ""), screenshot: saved });
     },
 };

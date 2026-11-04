@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { connectPage } from "@e2e/pages/ConnectPage.page";
@@ -17,29 +17,20 @@ const TOUR_DIR = process.env.DD_TOUR_DIR ?? path.join(import.meta.dirname, "..",
 const SETTLE_MS = Number(process.env.DD_TOUR_SETTLE_MS ?? "2500");
 
 // The link forms the page objects use: `devdashboard:///<tab>` for a tab, `devdashboard://<route>` for a (more) screen.
+// The (more) screens come from the expo-router folder, so a new screen file is in the tour without an edit here.
+const MORE_DIR = path.join(import.meta.dirname, "..", "..", "src", "app", "(more)");
+const MORE_ROUTES = readdirSync(MORE_DIR)
+    .filter((file) => file.endsWith(".tsx") && !file.startsWith("_") && !file.startsWith("+"))
+    .map((file) => file.replace(/\.tsx$/, ""))
+    .sort();
+
 const SCREENS: Array<{ route: string; screen: string; url: string }> = [
     { route: "", screen: "screen-pulse", url: "devdashboard:///" },
     { route: "terminals", screen: "screen-terminals", url: "devdashboard:///terminals" },
     { route: "qa", screen: "screen-qa", url: "devdashboard:///qa" },
     { route: "obsidian", screen: "screen-obsidian", url: "devdashboard:///obsidian" },
     { route: "more", screen: "screen-more", url: "devdashboard:///more" },
-    ...[
-        "connections",
-        "network-status",
-        "claude-usage",
-        "daemon",
-        "containers",
-        "disk-janitor",
-        "port-killer",
-        "process-monitor",
-        "weather",
-        "reminders-todos",
-        "tmux-presets",
-        "quick-commands",
-        "activity-timeline",
-        "build-log-tail",
-        "needs-input-inbox",
-    ].map((route) => ({ route, screen: `screen-${route}`, url: `devdashboard://${route}` })),
+    ...MORE_ROUTES.map((route) => ({ route, screen: `screen-${route}`, url: `devdashboard://${route}` })),
 ];
 
 async function shoot(index: number, name: string, missing = false): Promise<void> {

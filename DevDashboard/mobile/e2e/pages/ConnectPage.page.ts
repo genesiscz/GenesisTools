@@ -102,7 +102,7 @@ class ConnectPage extends BasePage {
      * a feature spec's `before()` to clear the connect gate before driving its own tab — copy this
      * call rather than re-deriving the deep-link string.
      */
-    async pairWithTestAgent({ baseUrl = DEFAULT_TEST_AGENT, username = "martin", tier = "cloudflared-self" }: { baseUrl?: string; username?: string; tier?: Tier } = {}): Promise<void> {
+    async pairWithTestAgent({ baseUrl = DEFAULT_TEST_AGENT, username = "e2e", tier = "cloudflared-self" }: { baseUrl?: string; username?: string; tier?: Tier } = {}): Promise<void> {
         await this.selectTier(tier);
         const uri = `devdashboard://pair?tier=${tier}&baseUrl=${encodeURIComponent(baseUrl)}&username=${encodeURIComponent(username)}`;
         await this.injectPairing(uri);
