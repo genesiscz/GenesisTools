@@ -85,6 +85,8 @@ enum EditorMenu {
         let view = NSMenu(title: "View")
         let scrub = view.addItem(withTitle: "Scrub Library Cards on Hover", action: #selector(EditorMenuTarget.toggleHoverScrub(_:)), keyEquivalent: "")
         scrub.target = EditorMenuTarget.shared
+        let snap = view.addItem(withTitle: "Snap While Dragging", action: #selector(EditorMenuTarget.toggleSnap(_:)), keyEquivalent: "")
+        snap.target = EditorMenuTarget.shared
         bar.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = view
 
         let window = NSMenu(title: "Window")
@@ -204,6 +206,12 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
         UserDefaults.standard.set(!on, forKey: LibraryModel.hoverScrubKey)
     }
 
+    /// Snapping on the timeline (on by default), a View menu item with a check mark.
+    @objc func toggleSnap(_ sender: Any?) {
+        let on = UserDefaults.standard.object(forKey: EditorModel.snapKey) as? Bool ?? true
+        UserDefaults.standard.set(!on, forKey: EditorModel.snapKey)
+    }
+
     @objc func showLibrary(_ sender: Any?) {
         LibraryWindow.shared.show(focus: true)
     }
@@ -213,6 +221,10 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(toggleSnap(_:)) {
+            item.state = (UserDefaults.standard.object(forKey: EditorModel.snapKey) as? Bool ?? true) ? .on : .off
+            return true
+        }
         if item.action == #selector(toggleHoverScrub(_:)) {
             item.state = (UserDefaults.standard.object(forKey: LibraryModel.hoverScrubKey) as? Bool ?? true) ? .on : .off
             return true

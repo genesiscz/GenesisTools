@@ -119,6 +119,14 @@ enum TimelineMap {
         return next
     }
 
+    /// The target closest to `us` within `toleranceUs`, or nil when none is that close (the drag goes where the
+    /// pointer is).
+    static func snap(_ us: Int64, to targets: [Int64], toleranceUs: Int64) -> Int64? {
+        let nearest = targets.min { abs($0 - us) < abs($1 - us) }
+        guard let nearest, abs(nearest - us) <= toleranceUs else { return nil }
+        return nearest
+    }
+
     /// Removes a clip (cuts its part of the source); the last clip cannot go.
     static func delete(_ project: EditProject, clip id: String) -> EditProject? {
         guard project.clips.count > 1, let index = project.clips.firstIndex(where: { $0.id == id }) else { return nil }

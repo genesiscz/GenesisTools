@@ -62,6 +62,13 @@ struct TimelineView: View {
                     .offset(y: Self.rulerHeight + 10)
                 ClipLaneView(model: model, scale: scale)
                     .offset(y: Self.clipLaneTop)
+                if let guide = model.snapGuideUs, let out = TimelineMap.outputTime(ofSource: guide, in: model.project) {
+                    Rectangle().fill(Color.yellow.opacity(0.9))
+                        .frame(width: 1, height: layout.lanesBottom - Self.rulerHeight)
+                        .offset(x: scale.x(out), y: Self.rulerHeight)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
                 if layout.marks {
                     MarksLaneView(model: model, scale: scale)
                         .offset(y: layout.marksTop)
@@ -267,9 +274,10 @@ private struct ZoomSegment: View {
             .gesture(DragGesture(minimumDistance: 3).onChanged { value in
                 if moveFrom == nil { moveFrom = (zoom.startUs, zoom.endUs); model.selection = .zoom(zoom.id) }
                 guard let (start, end) = moveFrom else { return }
-                let delta = Int64(Double(value.translation.width) / scale.pointsPerSecond * 1_000_000)
+                let raw = Int64(Double(value.translation.width) / scale.pointsPerSecond * 1_000_000)
+                let delta = raw + model.snappedMove(start: start + raw, end: end + raw, excluding: zoom.id)
                 model.moveZoom(zoom.id, startUs: start + delta, endUs: end + delta)
-            }.onEnded { _ in moveFrom = nil })
+            }.onEnded { _ in moveFrom = nil; model.endSnap() })
             .accessibilityElement()
             .accessibilityLabel("Zoom \(Int((zoom.scale * 100).rounded())) percent")
             .accessibilityAddTraits(.isButton)
@@ -312,11 +320,11 @@ private struct ZoomSegment: View {
                 guard let (start, end) = moveFrom else { return }
                 let delta = Int64(Double(value.translation.width) / scale.pointsPerSecond * 1_000_000)
                 if leading {
-                    model.moveZoom(zoom.id, startUs: start + delta, endUs: end)
+                    model.moveZoom(zoom.id, startUs: model.snapped(start + delta, excluding: zoom.id), endUs: end)
                 } else {
-                    model.moveZoom(zoom.id, startUs: start, endUs: end + delta)
+                    model.moveZoom(zoom.id, startUs: start, endUs: model.snapped(end + delta, excluding: zoom.id))
                 }
-            }.onEnded { _ in moveFrom = nil })
+            }.onEnded { _ in moveFrom = nil; model.endSnap() })
     }
 }
 
@@ -402,11 +410,11 @@ private struct ClipView: View {
                 guard let (from, to) = trimFrom else { return }
                 let delta = Int64(Double(value.translation.width) / scale.pointsPerSecond * 1_000_000 * placed.clip.speed)
                 if leading {
-                    model.trimClip(placed.clip.id, fromUs: from + delta)
+                    model.trimClip(placed.clip.id, fromUs: model.snapped(from + delta, excluding: placed.clip.id))
                 } else {
-                    model.trimClip(placed.clip.id, toUs: to + delta)
+                    model.trimClip(placed.clip.id, toUs: model.snapped(to + delta, excluding: placed.clip.id))
                 }
-            }.onEnded { _ in trimFrom = nil })
+            }.onEnded { _ in trimFrom = nil; model.endSnap() })
     }
 }
 
@@ -638,12 +646,13 @@ private struct HiddenSegment: View {
                 .gesture(DragGesture(minimumDistance: 3).onChanged { value in
                     if moveFrom == nil { moveFrom = (redaction.startUs, redaction.endUs); select() }
                     guard let (start, end) = moveFrom else { return }
-                    let delta = shift(value.translation.width, start: start)
+                    let raw = shift(value.translation.width, start: start)
+                    let delta = raw + model.snappedMove(start: start + raw, end: end + raw, excluding: redaction.id)
                     model.updateRedaction(redaction.id) {
                         $0.startUs = start + delta
                         $0.endUs = end + delta
                     }
-                }.onEnded { _ in moveFrom = nil })
+                }.onEnded { _ in moveFrom = nil; model.endSnap() })
                 .instantTooltip("\(redaction.label.map { "\($0) (\(redaction.style.rawValue))" } ?? redaction.style.rawValue.capitalized): drag to move, drag an edge to trim")
                 .accessibilityElement()
                 .accessibilityLabel("Hidden part, \(redaction.style.rawValue), \(editRange(model.project, fromUs: redaction.startUs, toUs: redaction.endUs).edit)")
@@ -677,14 +686,15 @@ private struct HiddenSegment: View {
                 if moveFrom == nil { moveFrom = (redaction.startUs, redaction.endUs); select() }
                 guard let (start, end) = moveFrom else { return }
                 let delta = Int64(Double(value.translation.width) / scale.pointsPerSecond * 1_000_000)
+                let edge = model.snapped(leading ? start + delta : end + delta, excluding: redaction.id)
                 model.updateRedaction(redaction.id) {
                     if leading {
-                        $0.startUs = max(0, min(start + delta, end - 100_000))
+                        $0.startUs = max(0, min(edge, end - 100_000))
                     } else {
-                        $0.endUs = max(start + 100_000, end + delta)
+                        $0.endUs = max(start + 100_000, edge)
                     }
                 }
-            }.onEnded { _ in moveFrom = nil })
+            }.onEnded { _ in moveFrom = nil; model.endSnap() })
     }
 }
 

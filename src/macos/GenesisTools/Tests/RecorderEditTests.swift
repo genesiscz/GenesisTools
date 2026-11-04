@@ -35,6 +35,13 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(TimelineMap.split(edit, atOutput: 0))
     }
 
+    func testSnapPicksTheNearestTargetInsideTheTolerance() {
+        XCTAssertEqual(TimelineMap.snap(1_040_000, to: [0, 1_000_000, 1_100_000], toleranceUs: 70_000), 1_000_000)
+        XCTAssertEqual(TimelineMap.snap(1_060_000, to: [1_000_000, 1_100_000], toleranceUs: 70_000), 1_100_000)
+        XCTAssertNil(TimelineMap.snap(1_500_000, to: [1_000_000], toleranceUs: 70_000), "too far: the drag stays under the pointer")
+        XCTAssertNil(TimelineMap.snap(0, to: [], toleranceUs: 70_000))
+    }
+
     func testCuttingAPartSplitsTheClipItFallsInAndKeepsSpeeds() throws {
         let edit = project([.init(id: "a", fromUs: 0, toUs: 4_000_000), .init(id: "b", fromUs: 6_000_000, toUs: 10_000_000, speed: 2)])
         // 1 s to 5 s of output: the end of a (1-4 s) and the first second of b (source 6-8 s at 2x).

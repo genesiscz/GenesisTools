@@ -110,7 +110,9 @@ clipboard when done (off by default) and show it in Finder (on).
 recent recordings, the drawn cursor and shortcut toggles) and the editor and library windows. Headless: `--export P [--out F] --json`, `--still P --at S
 --out PNG`, `--sheet P --times S,S,… --out PNG` (frames in rows of three, each labelled), `--snapshot PNG` with `--edit P [--tab T] [--at S]` or `--library`. The editor: an icon rail (Zoom, Clip,
 Hide, Style, Audio, Export), the preview, the transport, and a timeline with the zoom lane, a filmstrip, the waveform and the
-playhead's split button. Keys: Space, S (split), [ and ] (trim the clip's start or end to the playhead), ⇧⌫ (cut the I to O part), Z (zoom), I and O (the export part), ⌘Z, ⇧⌘Z, ⌘S, ⌘E, Delete, the arrows, Home, End, Esc.
+playhead's split button. Keys: Space, S (split), [ and ] (trim the clip's start or end to the playhead), ⇧⌫ (cut the I to O part), Z (zoom). A dragged zoom, hidden part or clip edge snaps to the playhead, clip edges,
+markers and other items within 7 pt, with a yellow guide (View → Snap While Dragging, `recorder.timeline.snap`, on).
+Keys also: I and O (the export part), ⌘Z, ⇧⌘Z, ⌘S, ⌘E, Delete, the arrows, Home, End, Esc.
 
 ## Agents: the `movies` REPL toolset
 

@@ -571,6 +571,47 @@ final class EditorModel {
         apply(next, rebuildMovie: false)
     }
 
+    /// On by default: a dragged zoom, hidden part, text or clip edge snaps to the playhead, the clip edges, the
+    /// markers and the other items' edges within `snapPoints`. View → Snap While Dragging turns it off.
+    static let snapKey = "recorder.timeline.snap"
+    static let snapPoints = 7.0
+
+    /// Where the last drag snapped, in source microseconds, for the guide line; nil while nothing snaps.
+    var snapGuideUs: Int64?
+
+    /// Every source time a drag can snap to, but the dragged item's own edges.
+    private func snapTargets(excluding id: String?) -> [Int64] {
+        var targets = [TimelineMap.sourceTime(atOutput: clock.outUs, in: project)]
+        targets += project.clips.filter { $0.id != id }.flatMap { [$0.fromUs, $0.toUs] }
+        targets += markers.map(\.us)
+        targets += project.zooms.filter { $0.id != id }.flatMap { [$0.startUs, $0.endUs] }
+        targets += (project.redactions ?? []).filter { $0.id != id }.flatMap { [$0.startUs, $0.endUs] }
+        targets += (project.texts ?? []).filter { $0.id != id }.flatMap { [$0.startUs, $0.endUs] }
+        return targets
+    }
+
+    /// A dragged edge at `us` (source), moved onto a target close enough on screen; the guide shows where.
+    func snapped(_ us: Int64, excluding id: String?) -> Int64 {
+        guard UserDefaults.standard.object(forKey: Self.snapKey) as? Bool ?? true else { return us }
+        let pointsPerSecond = pointsPerSecond > 0 ? pointsPerSecond : fittedPointsPerSecond
+        let tolerance = Int64(Self.snapPoints / max(1, pointsPerSecond) * 1_000_000)
+        let target = TimelineMap.snap(us, to: snapTargets(excluding: id), toleranceUs: tolerance)
+        snapGuideUs = target
+        return target ?? us
+    }
+
+    /// A dragged item from `start` to `end` (source), moved so the edge nearer a target lands on it.
+    func snappedMove(start: Int64, end: Int64, excluding id: String?) -> Int64 {
+        let movedStart = snapped(start, excluding: id)
+        if movedStart != start { return movedStart - start }
+        let movedEnd = snapped(end, excluding: id)
+        return movedEnd - end
+    }
+
+    func endSnap() {
+        snapGuideUs = nil
+    }
+
     func trimClip(_ id: String, fromUs: Int64? = nil, toUs: Int64? = nil) {
         guard let next = TimelineMap.trim(project, clip: id, fromUs: fromUs, toUs: toUs) else { return }
         apply(next, rebuildMovie: true)
