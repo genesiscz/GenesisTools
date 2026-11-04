@@ -277,11 +277,16 @@ describe("a failed peekaboo capture", () => {
         expect(err.kind).toBe("display-missing");
     });
 
-    test("another error is no missing display, and output without JSON keeps the log", () => {
+    test("another error is no missing display, and output without JSON names the real error line, never the log", () => {
         const denied = SafeJSON.stringify({ success: false, error: { message: "Screen Recording permission denied" } });
 
         expect(peekabooCaptureError(1, denied, stderr).kind).toBe("no-permission");
-        expect(peekabooCaptureError(1, "", stderr).message).toBe(`peekaboo exited 1: ${stderr}`);
+        expect(peekabooCaptureError(1, "", `${stderr}\nError: No space left on device`).message).toBe(
+            "peekaboo exited 1: Error: No space left on device"
+        );
+        expect(peekabooCaptureError(1, "", stderr).message).toBe(
+            "peekaboo exited 1: peekaboo printed no reason (only its log lines; the day log has its whole output)"
+        );
     });
 });
 

@@ -48,10 +48,30 @@ function parseOutput(stdout: string): unknown {
     }
 }
 
+/** Peekaboo's own log lines ("[Visualizer][INFO] …"): never the reason a capture failed. */
+const PEEKABOO_LOG_LINE = /^\[[^\]]+\]\[(?:INFO|DEBUG|TRACE)\]/;
+
+/** Why peekaboo failed when it printed no JSON error: stderr without its log lines, else stdout, else a plain note. */
+function plainReason(stdout: string, stderr: string): string {
+    const lines = (text: string) =>
+        text
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => line && !PEEKABOO_LOG_LINE.test(line));
+    const said = [...lines(stderr), ...lines(stdout)].join(" ").slice(-300);
+
+    if (said) {
+        return said;
+    }
+
+    log.warn({ stdout: stdout.slice(-2000), stderr: stderr.slice(-2000) }, "peekaboo failed without saying why");
+    return "peekaboo printed no reason (only its log lines; the day log has its whole output)";
+}
+
 /** A failed peekaboo run as a CaptureError: peekaboo prints its own error as JSON on stdout; stderr holds its log. */
 export function peekabooCaptureError(exitCode: number | null, stdout: string, stderr: string): CaptureError {
     const parsed = peekabooError.safeParse(parseOutput(stdout));
-    const reason = parsed.success ? parsed.data.error.message : stderr.trim().slice(-300);
+    const reason = parsed.success ? parsed.data.error.message : plainReason(stdout, stderr);
     const kind = parsed.success && /screen index \d+ not found/i.test(reason) ? "display-missing" : "failed";
     return new CaptureError(
         /permission|not authori[sz]ed/i.test(reason) ? "no-permission" : kind,

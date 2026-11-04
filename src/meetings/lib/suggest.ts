@@ -895,6 +895,7 @@ function microphoneVoices(lines: LineEvidence[], selfName: string, platformLabel
             .map(([label]) => label)
     );
 
+    log.debug({ sureMicLines: Object.fromEntries(ranked), ownerLeads, others: [...others] }, "microphone voices");
     return { ...(top ? { owner: top[0] } : {}), ownerLeads, others };
 }
 
