@@ -101,8 +101,11 @@ process's save as it lands, and keeps the previous version one ⌘Z away.
 {minSeconds? 2, keepSeconds? 0.3}` (cuts what is still AND silent: ffmpeg's freezedetect, frame gaps and
 silencedetect), `volume`, `mute {track,muted?}`, `audio {include}`, `clicks {…}`, `frame {…, enabled?}`, `cursor {…}`,
 `normalize {targetLufs? -16}` (measures the unmuted tracks' EBU R128 loudness and sets the volume, at most 200 %),
-`motion {blur?}`, `captions {show?,size?,position?}`, `keys {show?,size?,position?,durationMs?}`, `exportSettings {codec?,maxHeight?,output?,format?}`, `reset`. Times are source seconds or `"mm:ss"`. Ops apply in
+`motion {blur?}`, `captions {show?,size?,position?}`, `keys {show?,size?,position?,durationMs?}`, `exportSettings {codec?,maxHeight?,output?,format?}`, `retime {id, by? | from?, to?}` (moves a zoom, hidden part, text or shape `by` seconds with its length kept, or sets its start or end; a zoom may not meet another zoom), `reset`. Times are source seconds or `"mm:ss"`. Ops apply in
 order to the file as it is now and save once; one failing op saves nothing and names itself.
+
+In the editor, texts and shapes are segments on the marks lane (a drag moves one in time, an edge trims it), and
+⌥← / ⌥→ move the selected zoom, hidden part, text or shape by 0.1 s (⇧ for a second).
 
 ## Export
 
