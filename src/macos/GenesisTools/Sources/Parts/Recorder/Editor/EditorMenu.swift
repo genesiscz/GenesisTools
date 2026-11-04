@@ -20,6 +20,7 @@ enum EditorMenu {
     static let file: [EditorCommand] = [
         EditorCommand(title: "Export…", key: "e", modifiers: .command, label: "⌘E") { $0.tab = .export; $0.export() },
         EditorCommand(title: "Save", key: "s", modifiers: .command, label: "⌘S") { $0.saveNow() },
+        EditorCommand(title: "Save Frame as Picture…", key: "s", modifiers: [.command, .option], label: "⌥⌘S") { $0.saveFrame() },
     ]
 
     static let edit: [EditorCommand] = [

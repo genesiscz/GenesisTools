@@ -781,6 +781,34 @@ final class EditorModel {
         }
     }
 
+    /// ⌥⌘S: the frame at the playhead at the export's full size, every look drawn, as a PNG (a thumbnail, a README
+    /// picture). The same frame `movie.poster()` and `--still --full` write.
+    func saveFrame() {
+        let at = clock.outUs
+        let panel = NSSavePanel()
+        panel.title = "Save Frame as Picture"
+        panel.allowedContentTypes = [.png]
+        panel.nameFieldStringValue = "\(EditExporter.defaultName(for: project))-\(formatClock(at).replacingOccurrences(of: ":", with: "."))-poster.png"
+        panel.directoryURL = URL(fileURLWithPath: project.source.video).deletingLastPathComponent()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let snapshot = project
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let image = try await stillFrame(project: snapshot, atOutput: at, zoom: self.zoom, maxHeight: snapshot.export.maxHeight)
+                guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+                    throw NSError(domain: "recorder", code: 70, userInfo: [NSLocalizedDescriptionKey: "the frame could not be encoded"])
+                }
+                try png.write(to: url)
+                HubPerf.log("recorder.frame: \(url.path) \(image.width)×\(image.height)")
+                self.show("Saved \(url.lastPathComponent) (\(image.width) × \(image.height)).", error: false)
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } catch {
+                self.show("The frame could not be saved: \(error.localizedDescription)", error: true)
+            }
+        }
+    }
+
     /// A save panel for the export's file, starting at the current one; the choice goes into `export.output`.
     func chooseExportFile() {
         let format = project.export.format ?? .mp4

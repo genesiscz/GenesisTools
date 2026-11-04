@@ -987,7 +987,7 @@ export class Movie {
         const out = options.out ? resolve(options.out) : join(dirname(video), `${defaultExportName(video)}-poster.png`);
 
         if (existsSync(out)) {
-            throw new Error(`${out} exists already; poster() never overwrites a file (pass out)`);
+            throw new Error(`${out} exists already; poster() never overwrites a file, so pass another out`);
         }
 
         await ensureRecorderPart();
