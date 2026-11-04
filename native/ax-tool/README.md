@@ -14,7 +14,7 @@ Actions: get, press, click, move, drag, set, perform, focus, scroll, type, key, 
 
 This detects changes in observable state, not replacement of otherwise indistinguishable anonymous controls. It cannot lock the desktop against concurrent changes. The full workflow and examples are in `src/control/README.md` and the macos-control skill. Legacy commands retain their existing targeting; mouse/focus `snapshot`/`restore` is a separate API.
 
-`menu-see --app APP` lists an open context menu when one is present, otherwise the menu bar. Inventory callers can use `menu-see --app APP --menu-bar-only` to list menu-bar titles even while a context menu is open. `--menu TITLE` reads one exact menu-bar subtree. Each context-menu read has its own 3-second budget shared by discovery and hydration, including the fresh read before a menu action.
+`menu-see --app APP` lists an open context menu when one is present, otherwise the menu bar. Inventory callers can use `menu-see --app APP --menu-bar-only` to list menu-bar titles even while a context menu is open. `--menu TITLE` reads one exact menu-bar subtree. `menu-see --app APP --extras` lists the app's status items (its `AXExtrasMenuBar`, the right side of the menu bar); `menu-act` presses one without bringing the app to the front, and the menu it opens is then read with a plain `menu-see`. `statusitems [--app A] [--query T]` lists every running app's status items with the owner, pid and element index, left to right. Each context-menu read has its own 3-second budget shared by discovery and hydration, including the fresh read before a menu action.
 
 ## Background coordinate clicks
 

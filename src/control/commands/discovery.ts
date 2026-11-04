@@ -59,6 +59,35 @@ export function registerDiscoveryCommands(program: Command): void {
         });
 
     program
+        .command("statusitems")
+        .description(
+            "Every running app's menu bar STATUS ITEMS (the right side of the bar), left to right: owner app, bundle id, pid, element, title, description, frame. Press one with `see --app <owner> --scope extras`, then `act --snapshot <that> --element <element> --action press`; the menu it opens is read with the same see."
+        )
+        .option("--app <name>", "only this app (name or bundle id)")
+        .option("--query <text>", "only items whose title, description, identifier or owner contains this text")
+        .option("--pretty", "indent JSON output (default compact)")
+        .action((opts: { app?: string; query?: string; pretty?: boolean }) => {
+            const args = ["statusitems"];
+
+            if (opts.app !== undefined) {
+                args.push("--app", opts.app);
+            }
+
+            if (opts.query !== undefined) {
+                args.push("--query", opts.query);
+            }
+
+            const result = runAx(args);
+
+            if (!result.ok) {
+                logger.error(String(result.error));
+                process.exit(1);
+            }
+
+            out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
+        });
+
+    program
         .command("dump")
         .description(
             "APP-WIDE: windows + every on-screen element with scroll-clip visibility (measurement JSON). Takes --app only; there is no window or element targeting."

@@ -349,11 +349,11 @@ final class MenuInventorySurfaceTests: XCTestCase {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("Sources/MenuControl.swift"), encoding: .utf8)
 
-        XCTAssertTrue(source.contains("if command == \"menu-see\", input[index] == \"--menu-bar-only\""))
-        XCTAssertTrue(source.contains("parsed[\"--menu-bar-only\"] = \"true\""))
+        XCTAssertTrue(source.contains("if command == \"menu-see\", [\"--menu-bar-only\", \"--extras\"].contains(input[index])"))
+        XCTAssertTrue(source.contains("parsed[input[index]] = \"true\""))
         XCTAssertTrue(source.contains("let contextMenu: Bool? = input[\"--menu-bar-only\"] == \"true\" ? false : token.map { $0.contextMenu == true }"))
         XCTAssertTrue(source.contains("if rootTitle == nil, contextMenu != false"))
-        XCTAssertTrue(source.contains("contextMenu: contextMenu, source: menuReadSource()"))
+        XCTAssertTrue(source.contains("contextMenu: contextMenu, extras: extras, source: menuReadSource()"))
     }
 }
 
@@ -431,6 +431,27 @@ final class ContextMenuTokenTests: XCTestCase {
         let pressed = try dispatchMenuAction(token: token, pid: 4, launch: 1, digest: "d", element: 0, count: 2, now: 2,
                                              frontmost: false, enabled: true, action: { true })
         XCTAssertTrue(pressed)
+    }
+
+    // A status item's menu opens while another app stays in front, like a context menu.
+    func testAStatusItemTokenRoundTripsAndNeedsNothingInFront() throws {
+        let token = MenuSnapshotToken(pid: 4, launch: 1, depth: 40, digest: "d", created: 1, extras: true)
+        let decoded = try JSONDecoder().decode(MenuSnapshotToken.self, from: JSONEncoder().encode(token))
+
+        XCTAssertEqual(decoded.extras, true)
+        XCTAssertNil(decoded.contextMenu)
+        XCTAssertTrue(decoded.needsNoFrontmost)
+        let pressed = try dispatchMenuAction(token: decoded, pid: 4, launch: 1, digest: "d", element: 1, count: 3, now: 2,
+                                             frontmost: false, enabled: true, action: { true })
+        XCTAssertTrue(pressed)
+    }
+
+    func testAnOlderTokenIsNoStatusItemToken() throws {
+        let json = #"{"version":1,"surface":"menu","pid":4,"launch":1,"depth":40,"digest":"d","created":1}"#
+        let decoded = try JSONDecoder().decode(MenuSnapshotToken.self, from: Data(json.utf8))
+
+        XCTAssertNil(decoded.extras)
+        XCTAssertFalse(decoded.needsNoFrontmost)
     }
 
     func testAMenuBarPressStillNeedsTheAppInFront() {

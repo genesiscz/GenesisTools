@@ -42,6 +42,7 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                         (elements truncated 15/role; --wanted elements:<Role> = full one role)
       ax-tool apps [--all]                                    List running apps (valid --app values)
       ax-tool front                                           On-screen windows front to back with owner pid/app (no --app)
+      ax-tool statusitems [--app A] [--query T]               Every app's menu bar status items (AXExtrasMenuBar), left to right (no --app needed)
       ax-tool permissions                                     Live Accessibility + Screen Recording state of THIS process (never prompts)
       ax-tool request-permission --grant accessibility|screen-recording   Ask macOS (shows the dialog only while never decided)
       ax-tool audit [--all]                                   Which running apps carry AXManualAccessibility / AXEnhancedUserInterface
@@ -235,6 +236,11 @@ if command == "audio-devices" {
 }
 if command == "capture" {
     cmdCaptureScreen()
+    exit(0)
+}
+// `statusitems` lists every app's menu bar status items, so `--app` only narrows it.
+if command == "statusitems" {
+    cmdStatusItems()
     exit(0)
 }
 // `front` lists every on-screen window, so it takes no app either.

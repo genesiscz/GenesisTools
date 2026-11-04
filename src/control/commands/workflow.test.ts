@@ -99,6 +99,21 @@ test("see refuses --truncate with --scope menu instead of ignoring it", async ()
     expect(result.stderr).not.toContain("real machine");
 });
 
+// Status items (bug 9 of 2026-11-04): the extras surface takes neither --menu nor --truncate, and the help names it
+test("see offers --scope extras for status items and refuses --menu and --truncate with it", async () => {
+    const help = await control(["see", "--help"]);
+    expect(help.stdout).toContain("or extras (the app's menu");
+    expect(help.stdout).toContain("statusitems");
+
+    const withMenu = await control(["see", "--app", "Finder", "--scope", "extras", "--menu", "File"]);
+    expect(withMenu.status).toBe(1);
+    expect(withMenu.stderr).toContain("--menu names a top-level menu and only applies to --scope menu");
+
+    const withTruncate = await control(["see", "--app", "Finder", "--scope", "extras", "--truncate"]);
+    expect(withTruncate.status).toBe(1);
+    expect(withTruncate.stderr).toContain("--truncate does not apply");
+});
+
 test("action help exposes native drag selection and paste options", async () => {
     const result = await control(["act", "--help"]);
     expect(result.status).toBe(0);
