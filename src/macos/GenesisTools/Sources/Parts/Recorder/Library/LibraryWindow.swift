@@ -219,6 +219,7 @@ final class LibraryModel {
 struct LibraryView: View {
     @Bindable var model: LibraryModel
     @AppStorage(LibraryModel.hoverScrubKey) private var hoverScrub = true
+    @FocusState private var searchFocused: Bool
     // Top-aligned, so a card with a search hit under its title keeps its picture in line with the others.
     private let columns = [GridItem(.adaptive(minimum: 248, maximum: 320), spacing: 18, alignment: .top)]
 
@@ -237,8 +238,16 @@ struct LibraryView: View {
                     Image(systemName: "magnifyingglass").foregroundStyle(RecorderPalette.dim).font(.system(size: 12))
                     TextField("Search titles, speech and markers", text: $model.filter)
                         .textFieldStyle(.plain)
+                        .focused($searchFocused)
                         .onExitCommand { model.filter = "" }
                         .accessibilityIdentifier("recorder.library.filter")
+                        .background {
+                            // ⌘F puts the keyboard in the search field, as in Finder and Photos.
+                            Button("Find") { searchFocused = true }
+                                .keyboardShortcut("f", modifiers: .command)
+                                .opacity(0).frame(width: 0, height: 0)
+                                .accessibilityHidden(true)
+                        }
                     if model.searching {
                         ProgressView().controlSize(.small).accessibilityLabel("Searching what was said")
                     } else if !model.filter.isEmpty {

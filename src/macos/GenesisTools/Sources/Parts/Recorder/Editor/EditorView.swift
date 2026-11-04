@@ -1701,6 +1701,7 @@ private struct ShapeHandles: View {
                             .foregroundStyle(Color.black.opacity(0.7)))
                         .frame(width: 20, height: 20)
                         .contentShape(Circle().inset(by: -6))
+                        .onHover { inside in if inside { NSCursor.openHand.push() } else { NSCursor.pop() } }
                         .offset(x: middle.x - 10, y: middle.y - 10)
                         .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                             let start = grabbed ?? (shape.x1, shape.y1, shape.x2, shape.y2)
