@@ -142,6 +142,25 @@ enum EditorMenu {
         let single = view.addItem(withTitle: "Single-Key Shortcuts", action: #selector(EditorMenuTarget.toggleSingleKeys(_:)), keyEquivalent: "")
         single.target = EditorMenuTarget.shared
         single.toolTip = "S, Z, T, A, B, C, I, O, J, K, L and Space without ⌘; off, only the ⌘ keys work"
+        view.addItem(.separator())
+        let outside = NSMenu(title: "Edits From Outside the Window")
+        for (title, key, tip) in [
+            ("Show a Banner of What Changed", EditorModel.agentEditBannerKey, "The time, who wrote it, and one line per change, on the preview"),
+            ("Flash the Changed Items", EditorModel.agentEditFlashKey, "The timeline segments it touched; the preview for the frame, cursor, captions or clicks"),
+            ("Move the Playhead to the Change", EditorModel.agentEditSeekKey, "Not while the movie plays"),
+        ] {
+            let item = outside.addItem(withTitle: title, action: #selector(EditorMenuTarget.toggleAgentEditSetting(_:)), keyEquivalent: "")
+            item.target = EditorMenuTarget.shared
+            item.representedObject = key
+            item.toolTip = tip
+        }
+        outside.addItem(.separator())
+        for seconds in EditorModel.agentEditSecondsChoices {
+            let item = outside.addItem(withTitle: "Keep the Banner \(Int(seconds)) s", action: #selector(EditorMenuTarget.setAgentEditSeconds(_:)), keyEquivalent: "")
+            item.target = EditorMenuTarget.shared
+            item.representedObject = seconds
+        }
+        view.addItem(withTitle: "Edits From Outside the Window", action: nil, keyEquivalent: "").submenu = outside
         bar.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = view
 
         let window = NSMenu(title: "Window")
@@ -283,6 +302,17 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
         UserDefaults.standard.set(!on, forKey: EditorModel.snapHapticKey)
     }
 
+    /// One of the "Edits From Outside the Window" toggles; the item carries its defaults key.
+    @objc func toggleAgentEditSetting(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(!EditorModel.agentEditSetting(key), forKey: key)
+    }
+
+    @objc func setAgentEditSeconds(_ sender: NSMenuItem) {
+        guard let seconds = sender.representedObject as? Double else { return }
+        UserDefaults.standard.set(seconds, forKey: EditorModel.agentEditSecondsKey)
+    }
+
     @objc func showLibrary(_ sender: Any?) {
         LibraryWindow.shared.show(focus: true)
     }
@@ -292,6 +322,14 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(toggleAgentEditSetting(_:)), let key = item.representedObject as? String {
+            item.state = EditorModel.agentEditSetting(key) ? .on : .off
+            return true
+        }
+        if item.action == #selector(setAgentEditSeconds(_:)), let seconds = item.representedObject as? Double {
+            item.state = seconds == EditorModel.agentEditSeconds ? .on : .off
+            return true
+        }
         if item.action == #selector(toggleSnap(_:)) {
             item.state = (UserDefaults.standard.object(forKey: EditorModel.snapKey) as? Bool ?? true) ? .on : .off
             return true

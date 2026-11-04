@@ -20,6 +20,9 @@ struct EditorView: View {
                     Divider().overlay(RecorderPalette.hairline)
                     VStack(spacing: 0) {
                         PreviewView(model: model, still: stillPreview)
+                            .attentionPulse(trigger: model.previewFlash,
+                                            style: Self.pulse(cornerRadius: 4))
+                            .overlay(alignment: .topTrailing) { ChangeBanners(model: model) }
                             // On the preview's bottom edge: over the transport bar it covered the play buttons.
                             .overlay(alignment: .bottom) {
                                 if let notice = model.notice {
@@ -42,6 +45,13 @@ struct EditorView: View {
             .background(RecorderPalette.window)
         }
         .preferredColorScheme(.dark)
+    }
+
+    /// The flash an outside edit plays on what it changed: the border flash, as long as the banner stays.
+    static func pulse(cornerRadius: CGFloat) -> AttentionPulseStyle {
+        var style = AttentionPulseStyle.borderFlash(color: RecorderPalette.zoom, cornerRadius: cornerRadius)
+        style.duration = EditorModel.agentEditSeconds
+        return style
     }
 }
 

@@ -298,6 +298,7 @@ private struct ZoomSegment: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .strokeBorder(Color.white.opacity(selected ? 0.9 : 0), lineWidth: 1.5)
+                    .attentionPulse(trigger: model.flashToken(zoom.id), style: EditorView.pulse(cornerRadius: 7))
             }
             .overlay {
                 Text(verbatim: width > 70 ? "Zoom \(Int((zoom.scale * 100).rounded()))%" : "\(Int((zoom.scale * 100).rounded()))%")
@@ -665,6 +666,7 @@ private struct MarkSegment: View {
                 .overlay {
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
                         .strokeBorder(Color.white.opacity(selected ? 0.95 : 0), lineWidth: 1.25)
+                        .attentionPulse(trigger: model.flashToken(id), style: EditorView.pulse(cornerRadius: 3))
                 }
                 .overlay(alignment: .leading) { edgeHandle(leading: true, width: min(6, width / 3)) }
                 .overlay(alignment: .trailing) { edgeHandle(leading: false, width: min(6, width / 3)) }
@@ -846,6 +848,7 @@ private struct HiddenSegment: View {
                 .overlay {
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .strokeBorder(Color.white.opacity(selected ? 0.9 : 0), lineWidth: 1.5)
+                        .attentionPulse(trigger: model.flashToken(redaction.id), style: EditorView.pulse(cornerRadius: 5))
                 }
                 .overlay {
                     if width > 46 {

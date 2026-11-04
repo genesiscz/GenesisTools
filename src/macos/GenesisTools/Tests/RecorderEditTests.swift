@@ -548,6 +548,32 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(EditorModel.issues(fromCheck: Data("not json".utf8)))
     }
 
+    func testAnOutsideEditIsSaidInWordsWithWhatToFlashAndWhere() throws {
+        let before = project([.init(id: "c", fromUs: 0, toUs: 10_000_000)])
+        var after = before
+        after.texts = [EditProject.TextNote(id: "t1", startUs: 200_000, endUs: 3_200_000, text: "Hello")]
+        after.frame = EditProject.Frame()
+        after.revision = 7
+        after.updatedBy = "agent"
+
+        let added = try XCTUnwrap(EditDiff.describe(old: before, new: after, by: "agent", at: Date()))
+        XCTAssertEqual(added.lines.map(\.text), ["Added the text “Hello”, 00:00.2 to 00:03.2", "Turned the frame on (gradient)"])
+        XCTAssertEqual(added.itemIDs, ["t1"])
+        XCTAssertEqual(added.startUs, 200_000)
+        XCTAssertTrue(added.touchesPicture)
+
+        var moved = after
+        moved.texts = [EditProject.TextNote(id: "t1", startUs: 1_200_000, endUs: 4_200_000, text: "Hello")]
+        let move = try XCTUnwrap(EditDiff.describe(old: after, new: moved, by: "agent", at: Date()))
+        XCTAssertEqual(move.lines.map(\.text), ["Moved the text “Hello” to 00:01.2 to 00:04.2"])
+        XCTAssertFalse(move.touchesPicture)
+
+        var removed = moved
+        removed.texts = []
+        XCTAssertEqual(EditDiff.describe(old: moved, new: removed, by: "agent", at: Date())?.lines.map(\.text), ["Removed the text “Hello”"])
+        XCTAssertNil(EditDiff.describe(old: removed, new: removed, by: "agent", at: Date()))
+    }
+
     func testSelectNextAndPreviousWalkTheItemsInTimeOrder() {
         let items: [EditorModel.TimelineItem] = [
             .init(selection: .zoom("z1"), startUs: 1_000_000),

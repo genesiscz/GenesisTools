@@ -82,6 +82,12 @@ final class EditorModel {
     @ObservationIgnored let cursor: CursorTrack?
 
     var selection: EditorSelection = .none
+    /// The banners of the last edits written from outside the window (EditorChangeFeed.swift).
+    var changes: [EditChange] = []
+    /// A counter per zoom, hidden part, text or shape id: its timeline segment flashes each time it rises.
+    var flashes: [String: Int] = [:]
+    /// Rises when an outside edit changed the whole picture, so the preview flashes.
+    var previewFlash = 0
     var tab: InspectorTab = .zoom
     private(set) var isPlaying = false
     private(set) var canUndo = false
@@ -1237,7 +1243,10 @@ final class EditorModel {
         canUndo = true
         canRedo = false
         if rebuildMovie { rebuild() } else { refreshFrame() }
-        show("The edit changed on disk (\(next.updatedBy ?? "another process")); ⌘Z brings this version back.", error: false)
+        let previous = undoStack.last ?? next
+        if !announceExternal(old: previous, new: next) {
+            show("The edit changed on disk (\(next.updatedBy ?? "another process")); ⌘Z brings this version back.", error: false)
+        }
     }
 
     /// Cuts every still and silent stretch with `tools recorder apply … removeIdle` (ffmpeg's freeze and silence
