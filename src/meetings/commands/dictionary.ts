@@ -75,7 +75,7 @@ function scopeOf(project: string | undefined): DictionaryScope {
 async function add(
     value: string,
     substitution: string | undefined,
-    opts: { type?: string | boolean; project?: string; spoken?: string[]; meaning?: string }
+    opts: { type?: string | boolean; project?: string; spoken?: string[]; meaning?: string; caseSensitive?: boolean }
 ): Promise<void> {
     const type = await resolveEnum({
         value: opts.type,
@@ -89,16 +89,18 @@ async function add(
     }
 
     const candidate =
-        type === "fix" || type === "abbr"
-            ? { type, value, substitution }
-            : type === "term"
-              ? {
-                    type,
-                    value,
-                    ...(opts.spoken?.length ? { spoken: opts.spoken } : {}),
-                    ...(opts.meaning ? { meaning: opts.meaning } : {}),
-                }
-              : { type, value };
+        type === "fix"
+            ? { type, value, substitution, ...(opts.caseSensitive ? { caseSensitive: true } : {}) }
+            : type === "abbr"
+              ? { type, value, substitution }
+              : type === "term"
+                ? {
+                      type,
+                      value,
+                      ...(opts.spoken?.length ? { spoken: opts.spoken } : {}),
+                      ...(opts.meaning ? { meaning: opts.meaning } : {}),
+                  }
+                : { type, value };
     const parsed = dictionaryEntrySchema.safeParse(candidate);
 
     if (!parsed.success) {
@@ -276,6 +278,7 @@ export function registerDictionaryCommand(program: Command): void {
         )
         .option("--spoken <form>", "term: how people say it (repeatable)", collect)
         .option("--meaning <text>", "term: what it means, shown after its first mention in Markdown")
+        .option("--case-sensitive", "fix: match only the exact letter case (default: any case)")
         .action(add);
 
     dictionary

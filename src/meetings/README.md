@@ -43,7 +43,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `projects list` | The known projects, with their dictionary size and match rules (`--json`) |
 | `projects add <name>` | Add a known project |
 | `dictionary show [--project <name>]` | The merged dictionary: global, then the project (`--json`) |
-| `dictionary add <value> [substitution] --type fix\|abbr\|term\|keep [--project <name>]` | Add or replace an entry; a new project name is added to the known projects |
+| `dictionary add <value> [substitution] --type fix\|abbr\|term\|keep [--case-sensitive] [--project <name>]` | Add or replace an entry; a new project name is added to the known projects |
 | `dictionary suggest [--project <name>] [--apply 1,3\|all]` | Entries proposed from the source's own dictionary (Wispr Flow) and from corrections confirmed twice |
 | `dictionary expansion every\|first\|off [--project <name>]` | How abbreviations expand |
 | `dictionary remove <value> [--project <name>]` | Remove an entry |
@@ -261,7 +261,8 @@ bound to its line (`atSec`), so it never changes the same words elsewhere.
 
 ## The dictionary
 
-- `fix`: a misheard spelling, replaced at every whole-word match (`DTLčko` becomes `DTOčko`).
+- `fix`: a misheard spelling, replaced at every whole-word match in any letter case (`DTLčko` becomes `DTOčko`, and so
+  does `dtlčko`). `--case-sensitive` (config `caseSensitive: true`) keeps the exact-case match.
 - `abbr`: an abbreviation. Its substitution must contain the abbreviation itself, so the original stays:
   `MOP` becomes `MOP (Obchodní partner podnikatel)`. A substitution without it is refused.
 - `term`: a correct spelling the misheard-term check should know; `--spoken` lists how people say it.

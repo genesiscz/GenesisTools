@@ -12,14 +12,15 @@ const value = z.string().trim().min(1);
 
 /**
  * One dictionary entry:
- * - `fix`: a misheard spelling; every whole-word match becomes `substitution`.
+ * - `fix`: a misheard spelling; every whole-word match in any letter case becomes `substitution`. `caseSensitive: true`
+ *   keeps the exact-case match.
  * - `abbr`: an abbreviation; expanded as `abbrExpansion` says. Its substitution must contain the value itself
  *   ("MOP" becomes "MOP (Obchodní partner podnikatel)"), so the original is never lost.
  * - `term`: a correct spelling the misheard-term check should know; `spoken` lists how people say it.
  * - `keep`: a word the misheard-term check must never flag in this scope.
  */
 export const dictionaryEntrySchema = z.discriminatedUnion("type", [
-    z.object({ type: z.literal("fix"), value, substitution: value }),
+    z.object({ type: z.literal("fix"), value, substitution: value, caseSensitive: z.boolean().optional() }),
     z.object({ type: z.literal("abbr"), value, substitution: value }),
     z.object({
         type: z.literal("term"),
@@ -237,7 +238,7 @@ export function applyDictionary(
         let text = line.text;
 
         for (const fix of fixes) {
-            text = text.replace(wholeWord(fix.value), () => {
+            text = text.replace(wholeWord(fix.value, fix.caseSensitive ? "gu" : "giu"), () => {
                 fixCount += 1;
                 return fix.substitution;
             });

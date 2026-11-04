@@ -271,6 +271,53 @@ describe("dictionary", () => {
         expect(applied).toMatchObject({ fixes: 1, expansions: 2 });
     });
 
+    test("a fix matches any letter case by default: ZAZA also fixes the spoken Zaza", () => {
+        const spokenLines = [
+            line("Alice Example", 0, "Zaza je ok, ZAZA taky, zaza také, ZaZa už je dobře, Zazaza ne."),
+        ];
+        const applied = applyDictionary(spokenLines, {
+            abbrExpansion: "every",
+            entries: [{ type: "fix", value: "ZAZA", substitution: "ZaZa" }],
+        });
+
+        expect(applied.entries[0]!.text).toBe("ZaZa je ok, ZaZa taky, ZaZa také, ZaZa už je dobře, Zazaza ne.");
+        expect(applied.fixes).toBe(4);
+    });
+
+    test("a fix with caseSensitive keeps the exact-case match", () => {
+        const spokenLines = [line("Alice Example", 0, "Zaza je ok, ZAZA taky.")];
+        const applied = applyDictionary(spokenLines, {
+            abbrExpansion: "every",
+            entries: [{ type: "fix", value: "ZAZA", substitution: "ZaZa", caseSensitive: true }],
+        });
+
+        expect(applied.entries[0]!.text).toBe("Zaza je ok, ZaZa taky.");
+        expect(applied.fixes).toBe(1);
+    });
+
+    test("a fix is whole-word in any case with Czech diacritics, and caseSensitive is an optional entry field", () => {
+        const spokenLines = [line("Alice Example", 0, "Úřad, úřad a ÚŘAD, ale ne úřadu ani xúřad.")];
+        const applied = applyDictionary(spokenLines, {
+            abbrExpansion: "every",
+            entries: [{ type: "fix", value: "ÚŘAD", substitution: "Úřad" }],
+        });
+
+        expect(applied.entries[0]!.text).toBe("Úřad, Úřad a Úřad, ale ne úřadu ani xúřad.");
+        expect(applied.fixes).toBe(3);
+        expect(
+            dictionaryLevelSchema.parse({ entries: [{ type: "fix", value: "a", substitution: "b" }] }).entries[0]
+        ).toEqual({
+            type: "fix",
+            value: "a",
+            substitution: "b",
+        });
+        expect(
+            dictionaryLevelSchema.parse({
+                entries: [{ type: "fix", value: "a", substitution: "b", caseSensitive: true }],
+            }).entries[0]
+        ).toEqual({ type: "fix", value: "a", substitution: "b", caseSensitive: true });
+    });
+
     test("first mention only, and off", () => {
         const first = applyDictionary(lines, { abbrExpansion: "first", entries: [mop] });
         const off = applyDictionary(lines, { abbrExpansion: "off", entries: [mop] });
