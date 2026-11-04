@@ -256,6 +256,24 @@ describe("movie chapters", () => {
         expect(chaptersOf([])).toEqual([]);
     });
 
+    test("an edit that hides an item warns, and an edit that changes nothing saves nothing", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-rec-warn-"));
+        const path = join(root, "talk.edit.json");
+        writeProject(
+            path,
+            wholeProject({ video: join(root, "talk.mp4"), durationUs: 10_000_000, width: 100, height: 100 })
+        );
+        await editProject(path, [{ op: "text", from: 4, to: 5, text: "Bonus" }]);
+        const cut = await editProject(path, [{ op: "cut", from: 3.5, to: 5.5 }]);
+        expect(cut.warnings?.[0]).toContain('The text "Bonus" (4 to 5 s) never shows');
+        const revision = readProject(path).revision;
+        const depth = undoDepth(path);
+        const same = await editProject(path, [{ op: "volume", volume: 1 }]);
+        expect(same.warnings).toEqual(["nothing changed, so nothing was saved"]);
+        expect(readProject(path).revision).toBe(revision);
+        expect(undoDepth(path)).toBe(depth);
+    });
+
     test("undo outlives one process: it steps back through the saved steps, collapses, and refuses after another save", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-rec-undo-"));
         const path = join(root, "talk.edit.json");
