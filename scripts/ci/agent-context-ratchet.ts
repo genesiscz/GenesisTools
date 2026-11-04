@@ -9,49 +9,23 @@
  */
 
 export const RAW_AGENT_ENV_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/agents/lib/thread-owner.ts", // CODEX_THREAD_ID, until the agent-context unification (spec 2026-11-04)
     "src/claude/lib/worker/worker.ts", // CLAUDECODE, CLAUDE_CODE_SESSION_ID, until the agent-context unification (spec 2026-11-04)
-    "src/say/lib/caller.ts", // AI_AGENT, until the agent-context unification (spec 2026-11-04)
     "src/utils/ai/active-processes.ts", // T3CODE_CLI_PATH, T3CODE_THREAD_ID, until the agent-context unification (spec 2026-11-04)
     "src/utils/bun/preload-test-sandbox.ts", // AI_AGENT, CLAUDECODE, CLAUDE_EFFORT (and more), until the agent-context unification (spec 2026-11-04)
     "src/utils/claude/peer-sender.ts", // CLAUDE_CODE_SESSION_ID, until the agent-context unification (spec 2026-11-04)
-    "src/utils/cli/failures/caller.ts", // AI_AGENT, CLAUDE_EFFORT, until the agent-context unification (spec 2026-11-04)
     "src/utils/tmux/sessions.ts", // AI_AGENT, CLAUDECODE, CLAUDE_CODE_SESSION_ID (and more), until the agent-context unification (spec 2026-11-04)
 ]);
 
 export const RAW_TERMINAL_ENV_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/claude/lib/teams/launch.ts", // TMUX (and more), until the agent-context unification (spec 2026-11-04)
     "src/claude/lib/teams/ui.ts", // TMUX, until the agent-context unification (spec 2026-11-04)
-    "src/claude/lib/tmux-launch.ts", // TMUX, until the agent-context unification (spec 2026-11-04)
-    "src/cmux/commands/send-self.ts", // CMUX_SURFACE_ID, CMUX_WORKSPACE_ID, TMUX_PANE (and more), until the agent-context unification (spec 2026-11-04)
-    "src/cmux/lib/offline-snapshot.ts", // CMUX_SURFACE_ID, until the agent-context unification (spec 2026-11-04)
-    "src/cmux/lib/send-self-preflight.ts", // CMUX_SURFACE_ID, TMUX_PANE, until the agent-context unification (spec 2026-11-04)
-    "src/cmux/lib/session-new.ts", // CMUX_PANEL_ID, CMUX_SURFACE_ID, CMUX_WORKSPACE_ID (and more), until the agent-context unification (spec 2026-11-04)
-    "src/control/lib/runner.ts", // ITERM_SESSION_ID, TERM_SESSION_ID, TMUX_PANE (and more), until the agent-context unification (spec 2026-11-04)
-    "src/question/lib/decisions/store.ts", // CMUX_SURFACE_ID, until the agent-context unification (spec 2026-11-04)
     "src/say/lib/caller.ts", // CMUX_SURFACE_ID, CMUX_TAB_ID, CMUX_WORKSPACE_ID (and more), until the agent-context unification (spec 2026-11-04)
     "src/utils/bun/preload-test-sandbox.ts", // TERM_PROGRAM, TMUX, TMUX_PANE (and more), until the agent-context unification (spec 2026-11-04)
     "src/utils/bun/preload-test-tmpdir.ts", // TMUX, until the agent-context unification (spec 2026-11-04)
 ]);
 
-export const HARDCODED_ACCOUNT_ENV_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/claude/commands/doctor-impl.ts", // TOOLS_CLAUDE_ACCOUNT, until the agent-context unification (spec 2026-11-04)
-    "src/claude/commands/run.ts", // TOOLS_CLAUDE_ACCOUNT, until the agent-context unification (spec 2026-11-04)
-    "src/claude/commands/start.ts", // TOOLS_CLAUDE_ACCOUNT, until the agent-context unification (spec 2026-11-04)
-    "src/claude/lib/codex-session/launch.ts", // TOOLS_CLAUDE_ACCOUNT, until the agent-context unification (spec 2026-11-04)
-    "src/claude/lib/doctor.ts", // TOOLS_CLAUDE_ACCOUNT, until the agent-context unification (spec 2026-11-04)
-    "src/claude/lib/launch-env.ts", // TOOLS_CLAUDE_ACCOUNT, until the agent-context unification (spec 2026-11-04)
-    "src/claude/lib/teammate-wrapper.ts", // TOOLS_CLAUDE_ACCOUNT, until the agent-context unification (spec 2026-11-04)
-    "src/claude/lib/teams/ui.ts", // TOOLS_CLAUDE_ACCOUNT, until the agent-context unification (spec 2026-11-04)
-    "src/say/lib/caller.ts", // TOOLS_CLAUDE_ACCOUNT, until the agent-context unification (spec 2026-11-04)
-    "src/utils/ai/active-processes.ts", // a built TOOLS_<provider>_ACCOUNT, until the agent-context unification (spec 2026-11-04)
-    "src/utils/ai/openai/account-launch-options.ts", // TOOLS_CODEX_ACCOUNT, until the agent-context unification (spec 2026-11-04)
-    "src/utils/ai/providers/plugins/anthropic-sub/statusline.ts", // TOOLS_CLAUDE_ACCOUNT, until the agent-context unification (spec 2026-11-04)
-    "src/utils/tmux/sessions.ts", // TOOLS_CLAUDE_ACCOUNT, until the agent-context unification (spec 2026-11-04)
-]);
+export const HARDCODED_ACCOUNT_ENV_RATCHET: ReadonlySet<string> = new Set<string>([]);
 
 export const AGENT_BINARY_TABLE_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/cmux/lib/restore-after-restart.ts", // an agent-name regex over a command line, until the agent-context unification (spec 2026-11-04)
     "src/utils/cmux/tmux-host.ts", // an agent-name regex over a command line, until the agent-context unification (spec 2026-11-04)
     "src/utils/services/inventory.ts", // an agent-name regex over a command line, until the agent-context unification (spec 2026-11-04)
 ]);
@@ -61,11 +35,6 @@ export const PARENT_WALK_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/codex/lib/agents-bridge.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
     "src/doctor/lib/processes.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
     "src/mcp-manager/lib/gateway/hosted-child.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
-    "src/say/lib/caller.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
-    "src/say/lib/calls.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
-    "src/utils/ai/providers/plugins/anthropic-sub/statusline.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
     "src/utils/bun/orphan-worker-guard.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
     "src/utils/bun/preload-orphan-watchdog.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
-    "src/utils/cli/failures/watch.ts", // process.ppid, until the agent-context unification (spec 2026-11-04)
-    "src/utils/cmux/tmux-host.ts", // a `ppid` ps column, until the agent-context unification (spec 2026-11-04)
 ]);
