@@ -66,7 +66,7 @@ describe("meetings config", () => {
                 suggest: { questionCap: 7 },
                 capture: { retentionDays: 9 },
             },
-            projects: { work: { match: { calendar: { titles: ["Wiki"] } } } },
+            projects: { work: { match: { title: { words: ["Wiki"] } } } },
             languages: { cs: { render: { unclearLabel: "unclear" } } },
             sources: { wisprflow: { match: { work: { folders: ["Work"] } } } },
         });
@@ -80,6 +80,90 @@ describe("meetings config", () => {
         });
         expect(config.global.suggest.questionCap).toBe(7);
         expect(sourceFolders(config, "work")).toEqual([{ source: "wisprflow", folder: "Work" }]);
+    });
+
+    test("a version 2 file moves calendar.titles to title.words; a current file round-trips; a newer one reads", () => {
+        const v2 = {
+            version: 2,
+            projects: {
+                work: {
+                    match: { calendar: { calendars: ["Work"], titles: ["Wiki", "Sync"] }, title: { words: ["Sync"] } },
+                },
+                side: { match: { calendar: { titles: ["Side"] } } },
+            },
+        };
+        const raw: Record<string, unknown> = structuredClone(v2);
+
+        expect(migrateMeetingsConfig(raw)).toBe(true);
+        expect(raw).toEqual({
+            version: 3,
+            projects: {
+                work: { match: { calendar: { calendars: ["Work"] }, title: { words: ["Sync", "Wiki"] } } },
+                side: { match: { title: { words: ["Side"] } } },
+            },
+        });
+
+        const again = structuredClone(raw);
+        expect(migrateMeetingsConfig(again)).toBe(false);
+        expect(again).toEqual(raw);
+
+        const config = meetingsConfigSchema.parse(v2);
+        expect(config.projects.work?.match?.title?.words).toEqual(["Sync", "Wiki"]);
+        expect(config.projects.work?.labels).toEqual([]);
+        expect(config.projects.work?.match?.people).toEqual([]);
+        expect(config.global.assign).toEqual({ ask: true, lookbackHours: 48, maxProposals: 5, calendarSlackMin: 15 });
+        expect(matchProjects(config, { title: "Side quest" })).toEqual(["side"]);
+        expect(meetingsConfigSchema.parse({ version: 4, future: { key: 1 } }).version).toBe(4);
+    });
+
+    test("labels and people pairings: many projects per person, unpairing an entry keeps other sources", async () => {
+        const config = store();
+        const entry = (entryId: string) => ({
+            kind: "calendar" as const,
+            from: "wisprflow",
+            entryId,
+            title: "Planning",
+            at: "2026-11-04T10:00:00.000Z",
+        });
+        const alice = { name: "Alice Novak", email: "alice@example.com" };
+        const bob = { name: "Bob Smith" };
+
+        expect(await config.setProjectLabels("work", { add: ["Offers 2.0", "offers 2.0", "Wiki"] })).toEqual([
+            "Offers 2.0",
+            "Wiki",
+        ]);
+        expect(await config.setProjectLabels("work", { remove: ["wiki"] })).toEqual(["Offers 2.0"]);
+
+        await config.pairPeople({ project: "work", people: [alice, bob, { name: "Me", self: true }], by: entry("e1") });
+        await config.pairPeople({ project: "work", people: [{ name: "alice.novak" }], by: entry("e2") });
+        await config.pairPeople({ project: "side", people: [alice], by: entry("e1") });
+        await config.pairPeople({
+            project: "side",
+            people: [bob],
+            by: { kind: "manual", at: "2026-11-04T11:00:00.000Z" },
+        });
+        let read = await config.read();
+
+        expect(read.projects.work?.match?.people.map((person) => [person.name, person.pairedBy.length])).toEqual([
+            ["Alice Novak", 2],
+            ["Bob Smith", 1],
+        ]);
+        expect(read.projects.side?.match?.people.map((person) => person.name)).toEqual(["Alice Novak", "Bob Smith"]);
+
+        const removed = await config.unpairEntry("e1");
+        read = await config.read();
+
+        expect(removed).toEqual([
+            { project: "work", name: "Alice Novak", email: "alice@example.com", left: false },
+            { project: "work", name: "Bob Smith", left: true },
+            { project: "side", name: "Alice Novak", email: "alice@example.com", left: true },
+        ]);
+        expect(read.projects.work?.match?.people.map((person) => person.name)).toEqual(["Alice Novak"]);
+        expect(read.projects.side?.match?.people.map((person) => person.name)).toEqual(["Bob Smith"]);
+        expect(await config.unpairPerson("side", { name: "Smith Bob" })).toBe(true);
+        expect(await config.addSourceFolder("wisprflow", "work", "Work")).toBe(true);
+        expect(await config.addSourceFolder("wisprflow", "work", "work")).toBe(false);
+        expect(sourceFolders(await config.read(), "work")).toEqual([{ source: "wisprflow", folder: "Work" }]);
     });
 
     test("a version 1 file on disk is rewritten once, and a later change keeps the new shape", async () => {
@@ -150,7 +234,7 @@ describe("meetings config", () => {
     test("projects match by a source's folder, calendar name or a title word", () => {
         const config = meetingsConfigSchema.parse({
             projects: {
-                work: { match: { wisprflow: { folders: ["Work"] }, calendar: { titles: ["Wiki"] } } },
+                work: { match: { wisprflow: { folders: ["Work"] }, title: { words: ["Wiki"] } } },
                 side: { match: { calendar: { calendars: ["Side"] } } },
                 bare: {},
             },

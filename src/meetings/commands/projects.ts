@@ -13,7 +13,8 @@ function matchSummary(config: MeetingsConfig, name: string): string {
     const parts = [
         ...sourceFolders(config, name).map(({ source, folder }) => `${source} folder ${folder}`),
         ...(project?.match?.calendar?.calendars ?? []).map((calendar) => `calendar ${calendar}`),
-        ...(project?.match?.calendar?.titles ?? []).map((word) => `title "${word}"`),
+        ...(project?.match?.title?.words ?? []).map((word) => `title "${word}"`),
+        ...((project?.match?.people.length ?? 0) > 0 ? [`${project?.match?.people.length} people`] : []),
     ];
     return parts.join(", ") || "—";
 }

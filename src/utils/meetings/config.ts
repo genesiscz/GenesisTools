@@ -11,6 +11,14 @@ import {
     type ResolvedDictionary,
 } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
+import {
+    addPairings,
+    type PairedBy,
+    type PersonRef,
+    pairedPersonSchema,
+    removeEntryPairings,
+    samePerson,
+} from "./people";
 import { MEETING_SOURCE_IDS, type MeetingSourceId } from "./sources";
 
 const { log } = logger.scoped("meetings-config");
@@ -25,17 +33,27 @@ export const projectNameSchema = z
 
 const strings = z.array(z.string().trim().min(1)).default([]);
 
-/** The config shape this code writes. Version 1 files are migrated on the first read (`migrateMeetingsConfig`). */
-export const MEETINGS_CONFIG_VERSION = 2;
+/** The config shape this code writes. Older files are migrated on the first read (`migrateMeetingsConfig`). */
+export const MEETINGS_CONFIG_VERSION = 3;
 
-/** How a meeting finds its project from the calendar. A source's own facts (Wispr folders) sit in `sources.<id>.match`. */
+/**
+ * How a meeting finds its project, by the facts every meeting has: its calendar entry, its title and its people. A
+ * source's own facts (Wispr folders) sit in `sources.<id>.match`.
+ */
 const projectMatchSchema = z.object({
-    calendar: z.object({ calendars: strings, titles: strings }).optional(),
+    /** Apple Calendar names: an entry in one of them puts the meeting in this project. */
+    calendar: z.object({ calendars: strings }).optional(),
+    /** Words of the meeting title (version 2 kept them as `calendar.titles`). */
+    title: z.object({ words: strings }).optional(),
+    /** People paired with this project, each with the sources that paired them. One person can be in several projects. */
+    people: z.array(pairedPersonSchema).default([]),
 });
 
 const projectSchema = z.object({
     dictionary: dictionaryLevelSchema.optional(),
     match: projectMatchSchema.optional(),
+    /** Labels a meeting of this project can carry, to group meetings finer than a project (shop: "Checkout 2.0"). */
+    labels: strings,
 });
 
 export const DISPLAY_POLICIES = ["all", "follow-focus", "main"] as const;
@@ -208,9 +226,22 @@ const languagesSchema = z
 
 export type LanguageSettings = z.infer<typeof customLanguageSchema>;
 
+/** How a meeting without a project gets one. */
+const assignSchema = z.object({
+    /** Ask in the decision inbox once for each meeting that has no project when its sources have linked. */
+    ask: z.boolean().default(true),
+    /** The watcher asks about meetings that started this recently; an older one is asked with `meetings assign ask`. */
+    lookbackHours: z.number().int().positive().default(48),
+    /** The most ranked project proposals one question lists. */
+    maxProposals: z.number().int().min(1).max(20).default(5),
+    /** A calendar entry counts as the meeting's when it overlaps it, or starts this many minutes before or after it. */
+    calendarSlackMin: z.number().int().min(0).max(120).default(15),
+});
+
 const storedConfigSchema = z
     .object({
-        version: z.literal(MEETINGS_CONFIG_VERSION).default(MEETINGS_CONFIG_VERSION),
+        /** A newer version than this code writes still reads: its keys this code knows, the rest stay in the file. */
+        version: z.number().int().min(MEETINGS_CONFIG_VERSION).default(MEETINGS_CONFIG_VERSION),
         global: z
             .object({
                 dictionary: dictionaryLevelSchema.prefault({}),
@@ -231,6 +262,7 @@ const storedConfigSchema = z
                         restatedIdentifiers: z.enum(["skip", "mark"]).default("skip"),
                     })
                     .prefault({}),
+                assign: assignSchema.prefault({}),
             })
             .prefault({}),
         /** The known projects. `--project` with a new name adds one here. */
@@ -256,16 +288,11 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Moves a version 1 config to the version 2 places, in place: `global.render` to `languages.<language>.render`,
- * `global.playback.listen.budget` to `global.suggest.questionCap` and `global.playback.listen.roundCap`, and
- * `projects.<p>.match.wisprflow.folders` to `sources.wisprflow.match.<p>.folders`. A key already in its new place
- * wins. Returns whether anything changed; a version 2 config is left alone.
+ * Version 1 to 2: `global.render` to `languages.<language>.render`, `global.playback.listen.budget` to
+ * `global.suggest.questionCap` and `global.playback.listen.roundCap`, and `projects.<p>.match.wisprflow.folders` to
+ * `sources.wisprflow.match.<p>.folders`. A key already in its new place wins.
  */
-export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
-    if (typeof raw.version === "number" && raw.version >= MEETINGS_CONFIG_VERSION) {
-        return false;
-    }
-
+function migrateToV2(raw: Record<string, unknown>): void {
     const global = isObject(raw.global) ? raw.global : undefined;
 
     if (global && isObject(global.render)) {
@@ -300,7 +327,48 @@ export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
             delete settings.match;
         }
     }
+}
 
+/**
+ * Version 2 to 3: `projects.<p>.match.calendar.titles` to `projects.<p>.match.title.words`, since the words test the
+ * meeting title from any source, not the calendar. Words already in the new place stay first; the old ones fill in.
+ */
+function migrateToV3(raw: Record<string, unknown>): void {
+    for (const settings of Object.values(isObject(raw.projects) ? raw.projects : {})) {
+        const match = isObject(settings) && isObject(settings.match) ? settings.match : undefined;
+        const calendar = match && isObject(match.calendar) ? match.calendar : undefined;
+
+        if (!match || !calendar || !Array.isArray(calendar.titles)) {
+            continue;
+        }
+
+        const title = objectAt(match, "title");
+        const words = Array.isArray(title.words) ? title.words : [];
+        title.words = [...new Set([...words, ...calendar.titles])];
+        delete calendar.titles;
+
+        if (Object.keys(calendar).length === 0) {
+            delete match.calendar;
+        }
+    }
+}
+
+/**
+ * Moves an older config to the current places, in place, one version step at a time. A file without a version is
+ * version 1. Returns whether anything changed; a current config is left alone, so a second run changes nothing.
+ */
+export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
+    const version = typeof raw.version === "number" ? raw.version : 1;
+
+    if (version >= MEETINGS_CONFIG_VERSION) {
+        return false;
+    }
+
+    if (version < 2) {
+        migrateToV2(raw);
+    }
+
+    migrateToV3(raw);
     raw.version = MEETINGS_CONFIG_VERSION;
     return true;
 }
@@ -372,7 +440,7 @@ export function matchProjects(config: MeetingsConfig, facts: ProjectMatchFacts):
                 calendar !== undefined &&
                 (match?.calendar?.calendars ?? []).some((one) => one.toLowerCase() === calendar);
             const byTitle =
-                title !== "" && (match?.calendar?.titles ?? []).some((word) => title.includes(word.toLowerCase()));
+                title !== "" && (match?.title?.words ?? []).some((word) => title.includes(word.toLowerCase()));
 
             return byFolder || byCalendar || byTitle;
         })
@@ -410,7 +478,7 @@ export class MeetingsConfigStore {
 
     /**
      * The config with every default filled in. A missing file is the defaults; an invalid one throws with each issue.
-     * A version 1 file is rewritten in the version 2 shape once, under the lock.
+     * An older file is rewritten in the current shape once, under the lock.
      */
     async read(): Promise<MeetingsConfig> {
         let raw = (await this.storage.getConfig<Record<string, unknown>>()) ?? {};
@@ -526,6 +594,116 @@ export class MeetingsConfigStore {
 
         return removed;
     }
+
+    /** Adds and removes known labels of a project; the project joins the known ones. Returns its labels. */
+    async setProjectLabels(project: string, change: { add?: string[]; remove?: string[] }): Promise<string[]> {
+        projectNameSchema.parse(project);
+        const config = await this.update((raw) => {
+            const settings = objectAt(objectAt(raw, "projects"), project);
+            const remove = new Set((change.remove ?? []).map((label) => label.trim().toLowerCase()));
+            const current = stringList(settings.labels).filter((label) => !remove.has(label.toLowerCase()));
+            const added = (change.add ?? []).map((label) => label.trim()).filter((label) => label.length > 0);
+            settings.labels = mergeLabels(current, added);
+        });
+
+        return config.projects[project]?.labels ?? [];
+    }
+
+    /** Pairs people with a project through one source (a calendar entry or a manual pairing). */
+    async pairPeople(options: { project: string; people: PersonRef[]; by: PairedBy }): Promise<MeetingsConfig> {
+        projectNameSchema.parse(options.project);
+
+        return this.update((raw) => {
+            const match = objectAt(objectAt(objectAt(raw, "projects"), options.project), "match");
+            match.people = addPairings(rawPeople(match.people), options.people, options.by);
+        });
+    }
+
+    /** Removes the pairings one calendar entry made, in every project; a person another source pairs stays. */
+    async unpairEntry(
+        entryId: string
+    ): Promise<Array<{ project: string; name: string; email?: string; left: boolean }>> {
+        const removed: Array<{ project: string; name: string; email?: string; left: boolean }> = [];
+
+        await this.update((raw) => {
+            for (const [project, settings] of Object.entries(objectAt(raw, "projects"))) {
+                const match = isObject(settings) && isObject(settings.match) ? settings.match : undefined;
+
+                if (!match || match.people === undefined) {
+                    continue;
+                }
+
+                const result = removeEntryPairings(rawPeople(match.people), entryId);
+                match.people = result.people;
+                removed.push(...result.removed.map((person) => ({ project, ...person })));
+            }
+        });
+
+        log.debug({ entryId, removed: removed.length }, "calendar entry unpaired");
+        return removed;
+    }
+
+    /** Removes a person from a project, whatever paired them. Returns false when they were not paired with it. */
+    async unpairPerson(project: string, person: PersonRef): Promise<boolean> {
+        let removed = false;
+
+        await this.update((raw) => {
+            const settings = objectAt(raw, "projects")[project];
+            const match = isObject(settings) && isObject(settings.match) ? settings.match : undefined;
+
+            if (!match) {
+                return;
+            }
+
+            const people = rawPeople(match.people);
+            const kept = people.filter((existing) => !samePerson(existing, person));
+            removed = kept.length !== people.length;
+            match.people = kept;
+        });
+
+        return removed;
+    }
+
+    /** Pairs a source's folder with a project: a meeting in it then goes to the project. False when it was paired. */
+    async addSourceFolder(source: MeetingSourceId, project: string, folder: string): Promise<boolean> {
+        projectNameSchema.parse(project);
+        let added = false;
+
+        await this.update((raw) => {
+            objectAt(objectAt(raw, "projects"), project);
+            const match = objectAt(objectAt(objectAt(objectAt(raw, "sources"), source), "match"), project);
+            const folders = stringList(match.folders);
+            added = !folders.some((known) => known.toLowerCase() === folder.toLowerCase());
+            match.folders = added ? [...folders, folder] : folders;
+        });
+
+        return added;
+    }
+}
+
+function stringList(value: unknown): string[] {
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+/** Labels in their first spelling, compared without case. */
+export function mergeLabels(current: string[], added: string[]): string[] {
+    const merged = [...current];
+
+    for (const label of added) {
+        if (!merged.some((known) => known.toLowerCase() === label.toLowerCase())) {
+            merged.push(label);
+        }
+    }
+
+    return merged;
+}
+
+function rawPeople(value: unknown): z.infer<typeof pairedPersonSchema>[] {
+    if (value === undefined) {
+        return [];
+    }
+
+    return z.array(pairedPersonSchema).parse(value);
 }
 
 function objectAt(parent: Record<string, unknown>, key: string): Record<string, unknown> {

@@ -7,6 +7,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { dictionaryLevelSchema } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
+import { calendarEntrySchema, calendarPersonSchema } from "./calendar-entry";
 import { projectNameSchema } from "./config";
 import { CHANNEL_LAYOUTS } from "./energy";
 import { MEETING_PLATFORM_IDS } from "./platform";
@@ -37,6 +38,8 @@ const calendarSchema = z.object({
     start: isoTime.optional(),
     end: isoTime.optional(),
     attendees: z.array(z.string()).default([]),
+    /** The attendees with their emails, when the calendar gives them. `attendees` keeps the names for older readers. */
+    people: z.array(calendarPersonSchema).optional(),
     conferenceUrl: z.string().optional(),
 });
 
@@ -193,11 +196,52 @@ export type RecordingBlock = z.infer<typeof recordingBlockSchema>;
 
 const historySchema = z.object({ at: isoTime, command: z.string(), change: z.string() });
 
+/** The states of one question in the decision inbox. */
+export const ASK_OUTCOMES = ["pending", "applied", "cancelled", "timeout", "superseded"] as const;
+
+/**
+ * How the meeting got its project: the one question asked for it in the decision inbox, with what it offered, and the
+ * Wispr folder step after the answer. Only `src/meetings/lib/assign.ts` writes it.
+ */
+const assignSchema = z.object({
+    ask: z
+        .object({
+            formId: z.string().min(1),
+            askedAt: isoTime,
+            outcome: z.enum(ASK_OUTCOMES).default("pending"),
+            answeredAt: isoTime.optional(),
+            /** The ranked proposals the question listed, each with its reasons as text. */
+            proposals: z.array(z.object({ project: z.string(), score: z.number(), reasons: z.array(z.string()) })),
+            /** The calendar entries that overlapped the meeting; the answer picks one by its place here. */
+            calendars: z.array(calendarEntrySchema).default([]),
+            /** The source folder the meeting was in that no project had; the answer may pair it. */
+            folder: z.object({ source: z.string(), folder: z.string() }).optional(),
+        })
+        .optional(),
+    /**
+     * The meeting's project has a folder in the source and the meeting is in none: the owner moves it by hand (no
+     * source can be changed from here), and the next sync that sees it in a folder asks to pair that folder.
+     */
+    folder: z
+        .object({
+            source: z.string(),
+            project: z.string(),
+            state: z.enum(["waiting", "asked", "paired", "declined"]),
+            since: isoTime,
+            folder: z.string().optional(),
+            formId: z.string().optional(),
+        })
+        .optional(),
+});
+export type MeetingAssign = z.infer<typeof assignSchema>;
+
 export const meetingRecordSchema = z.object({
     version: z.literal(1).default(1),
     id: z.string().min(1),
     title: z.string(),
     project: projectNameSchema.optional(),
+    /** Labels inside the project ("Checkout 2.0"): a meeting has one project and any labels. */
+    labels: z.array(z.string().trim().min(1)).default([]),
     start: isoTime,
     end: isoTime.optional(),
     createdAt: isoTime,
@@ -247,6 +291,7 @@ export const meetingRecordSchema = z.object({
         })
         .optional(),
     recording: recordingBlockSchema.optional(),
+    assign: assignSchema.optional(),
     /** One line per command that changed the record. Never rewritten. */
     history: z.array(historySchema).default([]),
 });
