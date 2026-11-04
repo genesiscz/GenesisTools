@@ -61,7 +61,7 @@ program
     .command("run [code]")
     .description("Run one turn and print its output; reads code from --file or stdin when omitted")
     .option("--file <path>", "read the code from a file")
-    .option("--timeout <ms>", "wall-clock budget", "30000")
+    .option("--timeout <ms>", "wall-clock budget in milliseconds (30000 is 30 s)", "30000")
     .option("--toolset [list]", `comma-separated toolsets to preload: ${REPL_TOOLSET_IDS.join(", ")}`)
     .addHelpText(
         "after",
@@ -84,6 +84,13 @@ program
             logger.error(`--timeout must be a positive number of milliseconds, got "${opts.timeout}"`);
             process.exitCode = 1;
             return;
+        }
+
+        // A value under a second is almost always meant as seconds ("--timeout 120"): say so, but run as asked.
+        if (timeout < 1000) {
+            logger.warn(
+                `--timeout is in milliseconds: ${timeout} is ${timeout / 1000} s (for ${timeout} s, pass ${timeout * 1000})`
+            );
         }
 
         const toolsets = toolsetsOption(opts.toolset, "run");

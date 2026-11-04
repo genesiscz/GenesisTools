@@ -154,6 +154,11 @@ export abstract class ReplToolset {
                     return this.bindMethods({ target: value, methods, owner, prefix: `${name}.` });
                 }
 
+                // `movies.help()` and `movie.help()` are the first guesses of a model: the same docs as help("movies").
+                if (property === "help" && value === undefined && !("help" in object)) {
+                    return () => this.docs();
+                }
+
                 // A misspelled or guessed method would be `undefined`, and the call "x is not a function"; name the
                 // real ones instead. Only a plain name the object lacks throws, so inspection and `await` still work.
                 if (
