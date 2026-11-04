@@ -30,7 +30,7 @@ import {
 import { formatSubtitles, type SubtitleFormat, subtitleCues } from "@genesiscz/utils/recording-editor/subtitles";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
-import { probeVideo } from "@genesiscz/utils/video/probe";
+import { probeVideo, type VideoProbeLimits } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 import { type ExportAnswer, exportEdit, movieOf, resolveRecording } from "./library";
@@ -73,6 +73,13 @@ function movieFor(path: string): string {
 }
 
 /** Opens a recording's edit (a library id, `last`, a folder, a movie or an edit file), or a new one of the whole movie. */
+/** A recording the editor opens may be a whole meeting: up to 12 h and 64 GiB, not the evidence pipeline's 10 minutes. */
+const EDITOR_VIDEO_LIMITS: VideoProbeLimits = {
+    maxBytes: 64 * 1024 ** 3,
+    maxDurationUs: 12 * 3600 * 1_000_000,
+    maxPixels: 48_000_000,
+};
+
 export async function openProject(value: string): Promise<OpenedProject> {
     const resolved = resolveRecording(value);
     const path = resolved.endsWith(".json") ? resolved : projectPathFor(movieFor(resolved));
@@ -82,7 +89,7 @@ export async function openProject(value: string): Promise<OpenedProject> {
     }
 
     const video = movieFor(resolved);
-    const info = await probeVideo({ input: video });
+    const info = await probeVideo({ input: video, limits: EDITOR_VIDEO_LIMITS });
     const folder = dirname(video);
     const manifest = readRecordingManifest(folder);
     const cursor = join(folder, "cursor.jsonl");
@@ -447,7 +454,7 @@ export async function embedChapters({
         return 0;
     }
 
-    const info = await probeVideo({ input: movie });
+    const info = await probeVideo({ input: movie, limits: EDITOR_VIDEO_LIMITS });
     const scratch = await mkdtemp(join(tmpdir(), "recorder-chapters-"));
 
     try {

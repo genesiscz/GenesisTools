@@ -23,11 +23,23 @@ const probeSchema = z.object({
     format: z.object({ duration: z.string().optional() }).optional(),
 });
 
-export async function probeVideo({ input, signal }: { input: string; signal?: AbortSignal }): Promise<VideoInfo> {
+/** The evidence pipeline's limits; the recording editor passes its own (a meeting runs an hour). */
+export const VIDEO_PROBE_LIMITS = { maxBytes: 1024 * 1024 * 1024, maxDurationUs: 600_000_000, maxPixels: 48_000_000 };
+export type VideoProbeLimits = typeof VIDEO_PROBE_LIMITS;
+
+export async function probeVideo({
+    input,
+    signal,
+    limits = VIDEO_PROBE_LIMITS,
+}: {
+    input: string;
+    signal?: AbortSignal;
+    limits?: VideoProbeLimits;
+}): Promise<VideoInfo> {
     const path = resolve(input);
     const file = await stat(path);
-    if (!file.isFile() || file.size <= 0 || file.size > 1024 * 1024 * 1024) {
-        throw new Error("Choose a local video file up to 1 GiB");
+    if (!file.isFile() || file.size <= 0 || file.size > limits.maxBytes) {
+        throw new Error(`Choose a local video file up to ${Math.round(limits.maxBytes / 1024 ** 3)} GiB`);
     }
 
     const raw = await runVideoCommand({
@@ -49,8 +61,10 @@ export async function probeVideo({ input, signal }: { input: string; signal?: Ab
     const data = probeSchema.parse(SafeJSON.parse(raw, { strict: true }));
     const video = data.streams[0];
     const durationUs = secondsToMicroseconds(video.duration ?? data.format?.duration ?? "");
-    if (durationUs <= 0 || durationUs > 600_000_000 || video.width * video.height > 48_000_000) {
-        throw new Error("Video exceeds the 10-minute or 48-megapixel limit");
+    if (durationUs <= 0 || durationUs > limits.maxDurationUs || video.width * video.height > limits.maxPixels) {
+        throw new Error(
+            `Video exceeds the ${Math.round(limits.maxDurationUs / 60_000_000)}-minute or ${Math.round(limits.maxPixels / 1_000_000)}-megapixel limit`
+        );
     }
 
     if (video.color_transfer === "smpte2084" || video.color_transfer === "arib-std-b67") {
