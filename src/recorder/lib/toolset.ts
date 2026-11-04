@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -16,7 +16,6 @@ import {
     findInTranscript,
     hexColor,
     outputDurationUs,
-    outputTimeOf,
     REDACTION_STYLES,
     shortcutsOf,
     type TranscriptLine,
@@ -31,6 +30,7 @@ import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
 import { EXPORT_FORMATS, type ExportFormat, editProject, exportAs, openProject } from "./edit";
 import { ensureRecorderPart, listLibrary, openEditor, stillOfEdit } from "./library";
+import { markersOf, searchLibrary } from "./moments";
 
 const { log } = logger.scoped("recorder-toolset");
 
@@ -673,23 +673,8 @@ export class Movie {
     }
 
     /** The moments marked while it recorded (`recording.mark()`, `tools recorder mark`), with where each plays. */
-    async markers(): Promise<Array<{ at: number; plays: number | null; label: string }>> {
-        const { project } = await openProject(this.recording);
-        const manifest = readRecordingManifest(dirname(project.source.video));
-        const parsed = z
-            .array(z.object({ atMs: z.number(), label: z.string() }))
-            .safeParse(manifest?.settings.markers ?? []);
-
-        if (!parsed.success) {
-            log.debug({ issues: parsed.error.issues }, "the manifest's markers do not read");
-            return [];
-        }
-
-        const round = (us: number) => Math.round(us / 1000) / 1000;
-        return parsed.data.map((marker) => {
-            const plays = outputTimeOf(project, marker.atMs * 1000);
-            return { at: marker.atMs / 1000, plays: plays === undefined ? null : round(plays), label: marker.label };
-        });
+    async markers() {
+        return markersOf((await openProject(this.recording)).project);
     }
 
     async show(options: { focus?: boolean } = {}) {
@@ -703,70 +688,6 @@ export class Movie {
         openEditor(opened.path, { focus: options.focus === true });
         return { opened: opened.path };
     }
-}
-
-/** Case and accents ignored, as find() does. */
-function folded(text: string): string {
-    return text
-        .normalize("NFD")
-        .replace(/\p{Diacritic}/gu, "")
-        .toLowerCase();
-}
-
-/** A moment across the library: titles, marker labels and the lines of transcripts already cached. */
-function searchLibrary(text: string) {
-    const query = folded(text);
-    const hits: Array<{
-        recording: string;
-        title: string;
-        folder: string;
-        kind: "title" | "marker" | "line";
-        at: number;
-        to?: number;
-        text: string;
-    }> = [];
-
-    for (const row of listLibrary()) {
-        const base = { recording: row.id, title: row.title, folder: row.folder };
-
-        if (folded(row.title).includes(query)) {
-            hits.push({ ...base, kind: "title", at: 0, text: row.title });
-        }
-
-        const markers = z
-            .array(z.object({ atMs: z.number(), label: z.string() }))
-            .safeParse(readRecordingManifest(row.folder)?.settings.markers ?? []);
-
-        for (const marker of markers.success ? markers.data : []) {
-            if (folded(marker.label).includes(query)) {
-                hits.push({ ...base, kind: "marker", at: marker.atMs / 1000, text: marker.label });
-            }
-        }
-
-        const cache = row.movie ? transcriptCachePath(row.movie) : undefined;
-
-        if (!cache || !existsSync(cache)) {
-            continue;
-        }
-
-        try {
-            const raw = SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true });
-            const segments = z
-                .object({ segments: z.array(z.object({ text: z.string(), start: z.number(), end: z.number() })) })
-                .safeParse(raw);
-
-            for (const segment of segments.success ? segments.data.segments : []) {
-                if (folded(segment.text).includes(query)) {
-                    hits.push({ ...base, kind: "line", at: segment.start, to: segment.end, text: segment.text.trim() });
-                }
-            }
-        } catch (error) {
-            log.debug({ error, cache }, "a cached transcript does not read; search skips it");
-        }
-    }
-
-    log.debug({ text, hits: hits.length }, "library searched");
-    return hits;
 }
 
 export class MovieRecording {

@@ -10,6 +10,7 @@ import { Command } from "commander";
 
 import { EXPORT_FORMATS, type ExportFormat, editProject, exportAs, openProject } from "./lib/edit";
 import { ensureRecorderPart, listLibrary, movieOf, openEditor, resolveRecording } from "./lib/library";
+import { markersOf, searchLibrary } from "./lib/moments";
 import { makeProxy } from "./lib/proxy";
 import { recordVideo, VIDEO_RECORDING_MAX_SECONDS } from "./lib/video-recording";
 
@@ -248,6 +249,47 @@ program
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
         }
+    });
+
+program
+    .command("markers")
+    .description("The moments marked while a recording ran, with where each plays in its edit (null when cut)")
+    .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+    .action(async (value: string) => {
+        try {
+            out.result(markersOf((await openProject(value)).project));
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("search")
+    .description(
+        "Find a moment across the library: titles, marker labels and cached transcript lines (case and accents ignored)"
+    )
+    .argument("<text>", "what to look for")
+    .option("--json", "JSON on stdout")
+    .action((text: string, flags: { json?: boolean }) => {
+        const hits = searchLibrary(text);
+
+        if (flags.json) {
+            out.result(hits);
+            return;
+        }
+
+        if (!hits.length) {
+            out.println(`Nothing in the library matches "${text}".`);
+            return;
+        }
+
+        const table = createBoxTable(["RECORDING", "KIND", "AT", "TEXT"]);
+        for (const hit of hits) {
+            table.push([hit.recording, hit.kind, `${hit.at.toFixed(1)} s`, hit.text.slice(0, 80)]);
+        }
+
+        out.println(table.toString());
     });
 
 program
