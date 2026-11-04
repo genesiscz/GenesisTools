@@ -60,9 +60,14 @@ struct TimelineView: View {
                     .frame(width: contentWidth, height: Self.rulerHeight)
                     .contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0).onChanged { value in model.seek(scale.us(value.location.x)) })
+                // Each lane is a named group for VoiceOver, so "Zooms, 3 items" says which lane the cursor is in.
                 ZoomLaneView(model: model, scale: scale, width: contentWidth)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Zooms")
                     .offset(y: Self.rulerHeight + 10)
                 ClipLaneView(model: model, scale: scale)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Clips")
                     .offset(y: Self.clipLaneTop)
                 if let guide = model.snapGuideUs, let out = TimelineMap.outputTime(ofSource: guide, in: model.project) {
                     Rectangle().fill(Color.yellow.opacity(0.9))
@@ -77,6 +82,8 @@ struct TimelineView: View {
                 }
                 if layout.hiddenRows > 0 {
                     HiddenLaneView(model: model, scale: scale)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel("Hidden parts and spotlights")
                         .offset(y: layout.hiddenTop)
                 }
                 if layout.audio {
