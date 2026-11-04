@@ -49,6 +49,9 @@ export class SessionRecorderControl extends RecorderControl {
     private state: ControlState = "recording";
     private target: RecordingTarget;
     private warning?: string;
+    private elapsedMs = 0;
+    private limitMs?: number;
+    private segments = 0;
     private readonly jobs: JobRegistry;
     private finishJob?: string;
 
@@ -76,6 +79,14 @@ export class SessionRecorderControl extends RecorderControl {
         if (event.event === "state") {
             this.state = CONTROL_STATE[event.state];
             this.target = event.target;
+            this.elapsedMs = event.elapsedMs;
+            this.limitMs = event.limitMs;
+            this.segments = event.segments;
+        } else if (event.event === "elapsed") {
+            this.elapsedMs = event.elapsedMs;
+            this.limitMs = event.limitMs;
+        } else if (event.event === "segment") {
+            this.segments = Math.max(this.segments, event.index);
         } else if (event.event === "error") {
             this.warning = event.message;
         }
@@ -88,6 +99,9 @@ export class SessionRecorderControl extends RecorderControl {
             state: this.state,
             displays: [],
             frames: 0,
+            elapsedMs: this.elapsedMs,
+            segments: this.segments,
+            ...(this.limitMs === undefined ? {} : { limitMs: this.limitMs }),
             ...(this.warning ? { warning: this.warning } : {}),
         };
     }

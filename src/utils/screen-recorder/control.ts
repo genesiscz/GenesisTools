@@ -64,6 +64,10 @@ export interface RecorderStatus {
     lastFrameAt?: string;
     warning?: string;
     folder?: string;
+    /** A movie recording: the recorded time so far (pauses left out), its limit and the segments written. */
+    elapsedMs?: number;
+    limitMs?: number;
+    segments?: number;
 }
 
 export type DisplayEntry = DisplayInfo & { recorded: boolean };

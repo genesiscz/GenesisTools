@@ -4,7 +4,13 @@ import Foundation
 /// launches it and watches the live folder. Its output goes to `~/.genesis-tools/logs/recorder-start.log`, which a
 /// failed start names.
 enum ToolsRunner {
-    static func detached(_ argv: [String]) throws {
+    /// `onEarlyFailure` runs on the main thread when the command exits non-zero within `earlyWindow` seconds (a
+    /// refused flag, a missing grant), with the end of the log, so a start that never began does not stay silent.
+    static func detached(
+        _ argv: [String],
+        earlyWindow: TimeInterval = 15,
+        onEarlyFailure: ((Int32, String) -> Void)? = nil
+    ) throws {
         let binary = ToolsBridge.defaultBinaryPath()
         let plan = ToolsBridge.launchPlan(binaryPath: binary, argv: argv)
         let process = Process()
@@ -23,10 +29,15 @@ enum ToolsRunner {
         process.standardOutput = handle
         process.standardError = handle
         process.standardInput = FileHandle.nullDevice
+        let started = Date()
         process.terminationHandler = { finished in
-            if finished.terminationStatus != 0 {
-                HubPerf.log("recorder: tools \(argv.joined(separator: " ")) exited \(finished.terminationStatus); see \(log.path)")
-            }
+            let status = finished.terminationStatus
+            guard status != 0 else { return }
+            HubPerf.log("recorder: tools \(argv.joined(separator: " ")) exited \(status); see \(log.path)")
+            guard let onEarlyFailure, Date().timeIntervalSince(started) < earlyWindow else { return }
+            let tail = (try? String(contentsOf: log, encoding: .utf8))
+                .map { $0.split(separator: "\n", omittingEmptySubsequences: true).suffix(6).joined(separator: "\n") } ?? ""
+            DispatchQueue.main.async { onEarlyFailure(status, tail) }
         }
         try process.run()
     }

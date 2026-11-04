@@ -157,14 +157,20 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     @objc private func recordScreen() { startRecording(audio: false) }
     @objc private func recordScreenWithAudio() { startRecording(audio: true) }
 
-    /// Starts `tools recorder start --video` in its own process (it owns the recording and its socket); the live
-    /// recordings' item and floating controls appear when its live entry does.
+    /// Starts `tools recorder start` in its own process (it owns the recording and its socket); the live recordings'
+    /// item and the floating controls (on by default) appear when its live entry does.
     private func startRecording(audio: Bool) {
-        var args = ["recorder", "start", "--video", "--show-controls"]
+        var args = ["recorder", "start"]
         if audio { args += ["--audio", "system,mic"] }
         HubPerf.log("recorder: start \(args.joined(separator: " "))")
         do {
-            try ToolsRunner.detached(args)
+            try ToolsRunner.detached(args) { status, tail in
+                let alert = NSAlert()
+                alert.messageText = "The recording stopped at once (exit \(status))"
+                alert.informativeText = tail.isEmpty ? "See ~/.genesis-tools/logs/recorder-start.log" : tail
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+            }
         } catch {
             let alert = NSAlert()
             alert.messageText = "The recording did not start"
