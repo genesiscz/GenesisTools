@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 
@@ -42,4 +43,33 @@ export function readRecordingManifest(folder: string): RecordingManifest | undef
     }
 
     return recordingManifestSchema.parse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
+}
+
+/**
+ * Gives a recording a new title (what the library, the editor's window and `movies.list()` show). Only the title
+ * changes: every other key of the manifest is written back as it was read.
+ */
+export function renameRecording(folder: string, title: string): RecordingManifest {
+    const name = title.trim();
+
+    if (!name || name.length > 120) {
+        throw new RangeError("a title is 1 to 120 characters");
+    }
+
+    const path = join(folder, RECORDING_MANIFEST);
+
+    if (!existsSync(path)) {
+        throw new Error(`${folder} is not a recording: it has no ${RECORDING_MANIFEST}`);
+    }
+
+    const raw: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+    recordingManifestSchema.parse(raw);
+
+    if (typeof raw !== "object" || raw === null) {
+        throw new Error(`${path} does not hold a manifest object`);
+    }
+
+    const next = { ...raw, title: name };
+    atomicWriteFileSync(path, SafeJSON.stringify(next, null, 2));
+    return recordingManifestSchema.parse(next);
 }

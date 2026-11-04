@@ -15,6 +15,7 @@ import {
     type StopAnswer,
 } from "./control";
 import { outputScaleFor, parseDisplayList } from "./displays";
+import { renameRecording } from "./library";
 import {
     type LiveNotification,
     LiveRecordingServer,
@@ -334,6 +335,30 @@ describe("recording markers", () => {
         await expect((async () => RECORDER_DISPATCH["marker.add"](marking, { label: "  " }))()).rejects.toThrow(
             "1 to 80 characters"
         );
+    });
+});
+
+describe("renaming a recording", () => {
+    test("only the title changes, an unknown key survives, and an empty title or a plain folder is refused", () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-rec-rename-"));
+        const manifest = {
+            version: 1,
+            id: "rec-1",
+            title: "old",
+            startedAt: "2026-11-04T05:00:00.000Z",
+            displays: [],
+            settings: { markers: [{ atMs: 5, label: "a" }] },
+            frames: [],
+            warnings: [],
+            extra: { kept: true },
+        };
+        writeFileSync(join(folder, "recording.json"), SafeJSON.stringify(manifest));
+
+        expect(renameRecording(folder, "  New name ").title).toBe("New name");
+        const saved = SafeJSON.parse(readFileSync(join(folder, "recording.json"), "utf8"), { strict: true });
+        expect(saved).toEqual({ ...manifest, title: "New name" });
+        expect(() => renameRecording(folder, " ")).toThrow("1 to 120 characters");
+        expect(() => renameRecording(mkdtempSync(join(tmpdir(), "gt-rec-plain-")), "x")).toThrow("no recording.json");
     });
 });
 

@@ -147,15 +147,20 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         return list.sorted { $0.started > $1.started }
     }
 
-    /// The first frame of a movie, or a frame image, drawn into `size` points with rounded corners (3× pixels).
-    nonisolated static func thumbnail(_ url: URL, size: NSSize = NSSize(width: 44, height: 28), radius: CGFloat = 4) -> NSImage? {
+    /// A frame of a movie (`atSeconds`, the first by default), or a frame image, drawn into `size` points with rounded
+    /// corners (3× pixels).
+    nonisolated static func thumbnail(_ url: URL, size: NSSize = NSSize(width: 44, height: 28), radius: CGFloat = 4,
+                                      atSeconds: Double = 0) -> NSImage? {
         var cg: CGImage?
         let pixels = max(size.width, size.height) * 3
         if url.pathExtension == "mp4" || url.pathExtension == "mov" {
             let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
             generator.maximumSize = CGSize(width: pixels, height: pixels)
             generator.appliesPreferredTrackTransform = true
-            cg = try? generator.copyCGImage(at: .zero, actualTime: nil)
+            generator.requestedTimeToleranceBefore = CMTime(seconds: 1, preferredTimescale: 600)
+            generator.requestedTimeToleranceAfter = CMTime(seconds: 1, preferredTimescale: 600)
+            cg = try? generator.copyCGImage(at: CMTime(seconds: atSeconds, preferredTimescale: 600), actualTime: nil)
+                ?? generator.copyCGImage(at: .zero, actualTime: nil)
         } else if let source = CGImageSourceCreateWithURL(url as CFURL, nil) {
             cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: pixels,

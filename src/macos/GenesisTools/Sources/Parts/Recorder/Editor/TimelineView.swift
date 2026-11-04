@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The editor's colours, one dark palette like the reference editor: near-black lanes, the blue of a zoom, the red
-/// playhead, the yellow of a selected clip.
+/// playhead, the white frame of a selected clip (as on a selected zoom; yellow read as a warning).
 enum RecorderPalette {
     static let window = Color(white: 0.105)
     static let panel = Color(white: 0.135)
@@ -9,7 +9,7 @@ enum RecorderPalette {
     static let hairline = Color.white.opacity(0.08)
     static let zoom = Color(red: 0.04, green: 0.45, blue: 0.98)
     static let playhead = Color(red: 0.98, green: 0.27, blue: 0.27)
-    static let selected = Color(red: 1, green: 0.8, blue: 0.2)
+    static let selected = Color.white.opacity(0.95)
     static let text = Color.white.opacity(0.88)
     static let dim = Color.white.opacity(0.5)
 }
@@ -33,10 +33,12 @@ struct TimelineView: View {
     static let clipLaneHeight: CGFloat = 64
     static let audioLaneHeight: CGFloat = 30
     static let marksLaneHeight: CGFloat = 16
+    static let hiddenLaneHeight: CGFloat = 18
     static let laneGap: CGFloat = 8
     static var clipLaneTop: CGFloat { rulerHeight + 10 + zoomLaneHeight + laneGap }
     static var marksLaneTop: CGFloat { clipLaneTop + clipLaneHeight + 4 }
-    static var audioLaneTop: CGFloat { marksLaneTop + marksLaneHeight + 4 }
+    static var hiddenLaneTop: CGFloat { marksLaneTop + marksLaneHeight + 2 }
+    static var audioLaneTop: CGFloat { hiddenLaneTop + hiddenLaneHeight + 4 }
     static var totalHeight: CGFloat { audioLaneTop + audioLaneHeight + 40 }
 
     private var scale: TimelineScale {
@@ -60,10 +62,12 @@ struct TimelineView: View {
                     .offset(y: Self.clipLaneTop)
                 MarksLaneView(model: model, scale: scale)
                     .offset(y: Self.marksLaneTop)
+                HiddenLaneView(model: model, scale: scale)
+                    .offset(y: Self.hiddenLaneTop)
                 AudioLaneView(model: model, scale: scale)
                     .offset(y: Self.audioLaneTop)
                 if let part = model.exportPart {
-                    PartBand(fromX: scale.x(part.fromUs), toX: scale.x(part.toUs))
+                    PartBand(model: model, scale: scale, part: part)
                 }
                 PlayheadView(clock: model.clock, scale: scale, model: model)
             }
@@ -284,7 +288,8 @@ private struct ClipView: View {
     var body: some View {
         let clip = placed.clip
         let selected = model.selection == .clip(clip.id)
-        let width = max(6, scale.width(clip.outputDurationUs) - 3)
+        // A 6 pt gap between clips, so a cut reads as a cut at rest.
+        let width = max(6, scale.width(clip.outputDurationUs) - 6)
         FilmstripCanvas(filmstrip: model.filmstrip, clip: clip, width: width)
             .frame(width: width, height: TimelineView.clipLaneHeight)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -305,7 +310,7 @@ private struct ClipView: View {
             }
             .overlay(alignment: .leading) { trimHandle(leading: true, selected: selected) }
             .overlay(alignment: .trailing) { trimHandle(leading: false, selected: selected) }
-            .offset(x: scale.x(placed.outStartUs) + 1.5)
+            .offset(x: scale.x(placed.outStartUs) + 3)
             .contentShape(Rectangle())
             .onTapGesture {
                 model.selection = .clip(clip.id)
@@ -373,20 +378,52 @@ private struct FilmstripCanvas: View {
 // MARK: - Audio lane
 
 /// The part an export writes (I and O): a light band over every lane with an edge at each end.
+/// The part marked with I and O: a wash under the ruler and an edge to drag at each end. Its times, Export and the
+/// clear button sit beside the clock (`PartPill`), clear of the playhead's split button.
 private struct PartBand: View {
-    let fromX: CGFloat
-    let toX: CGFloat
+    @Bindable var model: EditorModel
+    let scale: TimelineScale
+    let part: (fromUs: Int64, toUs: Int64)
 
     var body: some View {
+        let fromX = scale.x(part.fromUs), toX = scale.x(part.toUs)
+        let top = TimelineView.rulerHeight
+        let height = TimelineView.audioLaneTop + TimelineView.audioLaneHeight - top + 2
+        ZStack(alignment: .topLeading) {
+            Rectangle()
+                .fill(Color.accentColor.opacity(0.14))
+                .frame(width: max(2, toX - fromX), height: height)
+                .offset(x: fromX, y: top)
+                .allowsHitTesting(false)
+            edge(at: fromX, top: top, height: height, leading: true)
+            edge(at: toX, top: top, height: height, leading: false)
+        }
+        .coordinateSpace(name: "partBand")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Export part from \(formatClock(part.fromUs, tenths: true)) to \(formatClock(part.toUs, tenths: true))")
+    }
+
+    private func edge(at x: CGFloat, top: CGFloat, height: CGFloat, leading: Bool) -> some View {
         Rectangle()
-            .fill(Color.accentColor.opacity(0.1))
-            .overlay(alignment: .leading) { Rectangle().fill(Color.accentColor).frame(width: 2) }
-            .overlay(alignment: .trailing) { Rectangle().fill(Color.accentColor).frame(width: 2) }
-            .frame(width: max(2, toX - fromX), height: TimelineView.totalHeight - 30)
-            .offset(x: fromX, y: 4)
-            .allowsHitTesting(false)
-            .accessibilityElement()
-            .accessibilityLabel("Export part")
+            .fill(Color.accentColor)
+            .frame(width: 2, height: height)
+            .frame(width: 10, height: height)
+            .contentShape(Rectangle())
+            .offset(x: x - 5, y: top)
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("partBand")).onChanged { value in
+                let us = min(max(0, scale.us(value.location.x)), model.durationUs)
+                if leading {
+                    model.partInUs = min(us, part.toUs - TimelineMap.minimumClipUs)
+                    model.partOutUs = part.toUs
+                } else {
+                    model.partOutUs = max(us, part.fromUs + TimelineMap.minimumClipUs)
+                    model.partInUs = part.fromUs
+                }
+            })
+            .instantTooltip(leading ? "Drag to move where the part starts" : "Drag to move where the part ends")
     }
 }
 
@@ -400,7 +437,7 @@ private struct MarksLaneView: View {
         let project = model.project
         let captions = project.captions?.show == true ? model.zoom.captionLines : []
         let keys = project.keys?.show == true ? (model.cursor?.keys ?? []) : []
-        let redactions = project.redactions ?? []
+
         let markers = model.markers
         Canvas { context, size in
             func bar(_ context: inout GraphicsContext, _ from: Int64, _ to: Int64, row: CGFloat, color: Color) {
@@ -409,10 +446,7 @@ private struct MarksLaneView: View {
                     context.fill(Path(roundedRect: rect, cornerRadius: 2.5), with: .color(color))
                 }
             }
-            for line in captions { bar(&context, line.fromUs, line.toUs, row: 1, color: Color(red: 0.36, green: 0.62, blue: 1).opacity(0.8)) }
-            for redaction in redactions {
-                bar(&context, redaction.startUs, redaction.endUs, row: 9, color: Color(red: 1, green: 0.62, blue: 0.2).opacity(0.85))
-            }
+            for line in captions { bar(&context, line.fromUs, line.toUs, row: 5, color: Color(red: 0.36, green: 0.62, blue: 1).opacity(0.8)) }
             for marker in markers {
                 guard let outUs = TimelineMap.outputTime(ofSource: marker.us, in: project) else { continue }
                 let x = scale.x(outUs)
@@ -440,8 +474,133 @@ private struct MarksLaneView: View {
             }
         }
         .frame(height: TimelineView.marksLaneHeight)
+        .instantTooltip("Markers (purple flags), caption lines (blue) and shortcuts (white lines)")
         .accessibilityElement()
-        .accessibilityLabel("Marks: \(Plural.count(markers.count, "marker")), \(Plural.count(captions.count, "caption line")), \(Plural.count(redactions.count, "hidden part")), \(Plural.count(keys.count, "shortcut"))")
+        .accessibilityLabel("Marks: \(Plural.count(markers.count, "marker")), \(Plural.count(captions.count, "caption line")), \(Plural.count(keys.count, "shortcut"))")
+    }
+}
+
+/// The hidden parts as segments, like the zooms: a click selects one in the Hide tab, a drag moves it, an edge trims it.
+private struct HiddenLaneView: View {
+    @Bindable var model: EditorModel
+    let scale: TimelineScale
+
+    var body: some View {
+        let rows = Self.rows(model.project.redactions ?? [])
+        let count = max(1, (rows.values.max() ?? 0) + 1)
+        // Overlapping parts share the lane in rows; one row keeps the full height and its label.
+        let height = (TimelineView.hiddenLaneHeight - CGFloat(count - 1) * 2) / CGFloat(count)
+        ZStack(alignment: .topLeading) {
+            ForEach(model.project.redactions ?? []) { redaction in
+                HiddenSegment(model: model, redaction: redaction, scale: scale, height: height)
+                    .offset(y: CGFloat(rows[redaction.id] ?? 0) * (height + 2))
+            }
+        }
+        .frame(height: TimelineView.hiddenLaneHeight, alignment: .topLeading)
+    }
+
+    /// A row per hidden part: the first row whose last part ended before this one starts.
+    static func rows(_ list: [EditProject.Redaction]) -> [String: Int] {
+        var ends: [Int64] = []
+        var rows: [String: Int] = [:]
+        for redaction in list.sorted(by: { $0.startUs < $1.startUs }) {
+            if let row = ends.firstIndex(where: { $0 <= redaction.startUs }) {
+                ends[row] = redaction.endUs
+                rows[redaction.id] = row
+            } else {
+                ends.append(redaction.endUs)
+                rows[redaction.id] = ends.count - 1
+            }
+        }
+        return rows
+    }
+}
+
+private struct HiddenSegment: View {
+    @Bindable var model: EditorModel
+    let redaction: EditProject.Redaction
+    let scale: TimelineScale
+    let height: CGFloat
+    @State private var moveFrom: (Int64, Int64)?
+
+    private static let color = Color(red: 1, green: 0.62, blue: 0.2)
+
+    var body: some View {
+        let spans = TimelineMap.outputSpans(fromUs: redaction.startUs, toUs: redaction.endUs, in: model.project)
+        if let first = spans.first, let last = spans.last {
+            let selected = model.selectedRedaction == redaction.id
+            let width = max(8, scale.x(last.toUs) - scale.x(first.fromUs))
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Self.color.opacity(selected ? 0.95 : 0.7))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .strokeBorder(Color.white.opacity(selected ? 0.9 : 0), lineWidth: 1.5)
+                }
+                .overlay {
+                    if width > 46 && height >= 14 {
+                        Text(redaction.style.rawValue.capitalized)
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(Color.black.opacity(0.75))
+                            .lineLimit(1)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .overlay(alignment: .leading) { edgeHandle(leading: true) }
+                .overlay(alignment: .trailing) { edgeHandle(leading: false) }
+                .frame(width: width, height: height)
+                .offset(x: scale.x(first.fromUs))
+                .contentShape(Rectangle())
+                .onTapGesture { select() }
+                .gesture(DragGesture(minimumDistance: 3).onChanged { value in
+                    if moveFrom == nil { moveFrom = (redaction.startUs, redaction.endUs); select() }
+                    guard let (start, end) = moveFrom else { return }
+                    let delta = shift(value.translation.width, start: start)
+                    model.updateRedaction(redaction.id) {
+                        $0.startUs = start + delta
+                        $0.endUs = end + delta
+                    }
+                }.onEnded { _ in moveFrom = nil })
+                .instantTooltip("\(redaction.style.rawValue.capitalized): drag to move, drag an edge to trim")
+                .accessibilityElement()
+                .accessibilityLabel("Hidden part, \(redaction.style.rawValue), \(editRange(model.project, fromUs: redaction.startUs, toUs: redaction.endUs).edit)")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityIdentifier("recorder.hidden.\(redaction.id)")
+                .accessibilityAction { select() }
+        }
+    }
+
+    private func select() {
+        model.selectedRedaction = redaction.id
+        model.tab = .hide
+    }
+
+    /// The source shift of a drag, kept inside the recording.
+    private func shift(_ points: CGFloat, start: Int64) -> Int64 {
+        let delta = Int64(Double(points) / scale.pointsPerSecond * 1_000_000)
+        let length = (moveFrom?.1 ?? redaction.endUs) - start
+        return min(max(delta, -start), model.project.source.durationUs - length - start)
+    }
+
+    private func edgeHandle(leading: Bool) -> some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.001))
+            .frame(width: 7)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(DragGesture(minimumDistance: 1).onChanged { value in
+                if moveFrom == nil { moveFrom = (redaction.startUs, redaction.endUs); select() }
+                guard let (start, end) = moveFrom else { return }
+                let delta = Int64(Double(value.translation.width) / scale.pointsPerSecond * 1_000_000)
+                model.updateRedaction(redaction.id) {
+                    if leading {
+                        $0.startUs = max(0, min(start + delta, end - 100_000))
+                    } else {
+                        $0.endUs = max(start + 100_000, end + delta)
+                    }
+                }
+            }.onEnded { _ in moveFrom = nil })
     }
 }
 
@@ -509,7 +668,7 @@ private struct PlayheadView: View {
                 .frame(width: 30, height: 28)
                 .background(RoundedRectangle(cornerRadius: 7).fill(Color(white: 0.24)))
                 .offset(x: min(max(x, 15), max(15, scale.x(model.durationUs) - 15)) - 15,
-                        y: TimelineView.clipLaneTop + TimelineView.clipLaneHeight + TimelineView.laneGap + TimelineView.audioLaneHeight + 6)
+                        y: TimelineView.audioLaneTop + TimelineView.audioLaneHeight + 6)
                 .accessibilityIdentifier("recorder.split")
             }
         }

@@ -144,7 +144,16 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         }
     }
 
+    /// The model of the editor in front (the key window, else the main one), for the menu bar's commands.
+    func frontModel() -> EditorModel? {
+        for window in [NSApp.keyWindow, NSApp.mainWindow].compactMap({ $0 }) {
+            if let entry = open[ObjectIdentifier(window)] { return entry.1 }
+        }
+        return nil
+    }
+
     private func show(_ model: EditorModel, focus wanted: Bool) {
+        EditorMenu.install()
         let window = Self.makeWindow(model: model, size: NSSize(width: 1440, height: 920))
         Self.rememberFrame(window)
         window.delegate = self
@@ -197,9 +206,11 @@ final class EditorWindows: NSObject, NSWindowDelegate {
     }
 }
 
-/// The title bar's right side: "Edited" while a change is unsaved, and the Export button.
+/// The title bar's right side: "Edited" while a change is unsaved, and the Export button, which opens a summary of
+/// what the export writes (format, size, part, file) with the one Export action, so nothing starts unchecked.
 private struct TitlebarExport: View {
     @Bindable var model: EditorModel
+    @State private var summary = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -209,16 +220,66 @@ private struct TitlebarExport: View {
             if let progress = model.exportProgress {
                 ProgressView(value: progress).frame(width: 80)
             } else {
-                Button("Export") {
-                    model.tab = .export
-                    model.export()
-                }
-                .buttonStyle(.genPrimary())
-                .accessibilityIdentifier("recorder.titlebar.export")
+                Button("Export") { summary = true }
+                    .buttonStyle(.genPrimary())
+                    .instantTooltip("Export (⌘E)")
+                    .accessibilityIdentifier("recorder.titlebar.export")
+                    .popover(isPresented: $summary, arrowEdge: .bottom) {
+                        ExportSummary(model: model) { summary = false }
+                    }
             }
         }
         .padding(.trailing, 10)
         .frame(height: 28)
+    }
+}
+
+private struct ExportSummary: View {
+    @Bindable var model: EditorModel
+    let close: () -> Void
+
+    var body: some View {
+        let settings = model.project.export
+        let format = settings.format ?? .mp4
+        let source = CGSize(width: model.project.source.width, height: model.project.source.height)
+        let size = EditRenderer.outputSizes(source: source, maxHeight: settings.maxHeight, aspect: model.project.frame?.aspect,
+                                            h264Fps: settings.codec == .h264 ? 60 : nil).canvas
+        let part = model.exportPart
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Export").font(.system(size: 14, weight: .semibold))
+            row("Format", format == .mp4 ? "MP4 · \(settings.codec == .h264 ? "H.264" : "HEVC")" : format.rawValue.uppercased())
+            if format != .gif { row("Size", "\(Int(size.width)) × \(Int(size.height))") }
+            row("Part", part.map { "\(formatClock($0.fromUs, tenths: true)) – \(formatClock($0.toUs, tenths: true))" }
+                ?? "Everything (\(formatClock(model.durationUs, tenths: true)))")
+            if format == .mp4 {
+                PathLabel(path: EditExporter.outputURL(for: model.project).path)
+            }
+            HStack {
+                Button("Settings…") { model.tab = .export; close() }
+                    .buttonStyle(.genHoverPlain())
+                Spacer()
+                Button("Export") {
+                    close()
+                    model.tab = .export
+                    model.export()
+                }
+                .buttonStyle(.genPrimary())
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("recorder.summary.export")
+            }
+            .padding(.top, 4)
+        }
+        .padding(14)
+        .frame(width: 300)
+    }
+
+    private func row(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title).foregroundStyle(.secondary)
+            Spacer()
+            Text(verbatim: value).monospacedDigit()
+        }
+        .font(.system(size: 12.5))
     }
 }
 

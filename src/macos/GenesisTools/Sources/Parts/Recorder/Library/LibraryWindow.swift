@@ -32,7 +32,9 @@ final class LibraryModel {
             var images: [URL: NSImage] = [:]
             for item in list {
                 guard let url = item.thumbnail, !known.contains(url) else { continue }
-                if let image = RecorderMenu.thumbnail(url, size: Self.thumbnailSize, radius: 8) { images[url] = image }
+                // The middle of the movie: its first frame is often the same desktop for every recording.
+                let middle = (item.durationMs ?? 0) / 2000
+                if let image = RecorderMenu.thumbnail(url, size: Self.thumbnailSize, radius: 8, atSeconds: middle) { images[url] = image }
             }
             span.end()
             DispatchQueue.main.async {
@@ -64,6 +66,42 @@ final class LibraryModel {
         watch = nil
     }
 
+    /// Asks for a new title and writes it through `tools recorder rename`, the same command the CLI and REPL use.
+    func rename(_ item: RecorderMenu.Recent) {
+        let alert = NSAlert()
+        alert.messageText = "Rename “\(item.title)”"
+        alert.informativeText = "The library, the editor window and movies.list() show this title."
+        let field = NSTextField(string: item.title)
+        field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, title != item.title else { return }
+        ToolsRunner.run(["recorder", "rename", item.folder.path, title]) { [weak self] status, _, stderr in
+            if status != 0 { HubPerf.log("recorder.library: rename \(item.folder.path) failed: \(stderr)") }
+            self?.load()
+        }
+    }
+
+    /// The visible recordings by day: Today, Yesterday, then Earlier, each newest first.
+    var sections: [(title: String, items: [RecorderMenu.Recent])] {
+        let calendar = Calendar.current
+        var today: [RecorderMenu.Recent] = [], yesterday: [RecorderMenu.Recent] = [], earlier: [RecorderMenu.Recent] = []
+        for item in visible {
+            if calendar.isDateInToday(item.started) {
+                today.append(item)
+            } else if calendar.isDateInYesterday(item.started) {
+                yesterday.append(item)
+            } else {
+                earlier.append(item)
+            }
+        }
+        return [("Today", today), ("Yesterday", yesterday), ("Earlier", earlier)].filter { !$0.1.isEmpty }
+    }
+
     func moveToTrash(_ item: RecorderMenu.Recent) {
         let alert = NSAlert()
         alert.messageText = "Move “\(item.title)” to the Trash?"
@@ -88,7 +126,7 @@ struct LibraryView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Text("Recordings").font(.system(size: 17, weight: .semibold))
+                // The window's title already says "Recordings"; the row carries the count and the filter.
                 Text(verbatim: Plural.count(model.items.count, "recording")).font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
                 Spacer()
                 TextField("Filter by title", text: $model.filter)
@@ -110,11 +148,24 @@ struct LibraryView: View {
             } else {
                 ScrollView {
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
-                        ForEach(model.visible, id: \.folder) { item in
-                            LibraryCard(item: item, thumbnail: item.thumbnail.flatMap { model.thumbnails[$0] }) {
-                                EditorWindows.shared.open(path: item.folder.path)
-                            } trash: {
-                                model.moveToTrash(item)
+                        ForEach(model.sections, id: \.title) { section in
+                            Section {
+                                ForEach(section.items, id: \.folder) { item in
+                                    LibraryCard(item: item, thumbnail: item.thumbnail.flatMap { model.thumbnails[$0] }) {
+                                        EditorWindows.shared.open(path: item.folder.path)
+                                    } rename: {
+                                        model.rename(item)
+                                    } trash: {
+                                        model.moveToTrash(item)
+                                    }
+                                }
+                            } header: {
+                                HStack(spacing: 6) {
+                                    Text(section.title).font(.system(size: 13, weight: .semibold))
+                                    Text(verbatim: "\(section.items.count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+                                }
+                                .padding(.top, 4)
+                                .accessibilityAddTraits(.isHeader)
                             }
                         }
                     }
@@ -131,11 +182,12 @@ private struct LibraryCard: View {
     let item: RecorderMenu.Recent
     let thumbnail: NSImage?
     let open: () -> Void
+    let rename: () -> Void
     let trash: () -> Void
 
     var body: some View {
         // Live only under the pointer: a library of 100 cards keeps no 100 responders at rest.
-        LiveButton(tooltip: item.folder.lastPathComponent, pressable: true, action: open) {
+        LiveButton(tooltip: "Open in the editor", pressable: true, action: open) {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .bottomTrailing) {
                     Group {
@@ -170,7 +222,10 @@ private struct LibraryCard: View {
         .accessibilityLabel("\(item.title), \(item.edited ? "edited" : "not edited")")
         .contextMenu {
             Button("Open in Editor", action: open)
+            Button("Rename…", action: rename)
+            Divider()
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.folder]) }
+            Button("Copy Folder Path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(item.folder.path, forType: .string) }
             Divider()
             Button("Move to Trash…", role: .destructive, action: trash)
         }
@@ -187,6 +242,7 @@ final class LibraryWindow: NSObject, NSWindowDelegate {
     let model = LibraryModel()
 
     func show(focus: Bool) {
+        EditorMenu.install()
         let window = window ?? Self.makeWindow(model: model, size: NSSize(width: 1100, height: 720))
         window.delegate = self
         self.window = window

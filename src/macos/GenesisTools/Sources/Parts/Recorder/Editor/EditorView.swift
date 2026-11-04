@@ -981,8 +981,12 @@ private struct TransportBar: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            ClockLabel(clock: model.clock, durationUs: model.durationUs)
-                .frame(width: 130, alignment: .leading)
+            HStack(spacing: 10) {
+                ClockLabel(clock: model.clock, durationUs: model.durationUs)
+                    .fixedSize()
+                if let part = model.exportPart { PartPill(model: model, part: part) }
+            }
+            .frame(width: 250, alignment: .leading)
             Spacer()
             IconButton(systemName: "backward.end.fill", tooltip: "To the start (Home)", size: 15) { model.seek(0) }
             IconButton(systemName: model.isPlaying ? "pause.fill" : "play.fill", tooltip: model.isPlaying ? "Pause (Space)" : "Play (Space)", size: 18) {
@@ -1003,6 +1007,32 @@ private struct TransportBar: View {
         .padding(.horizontal, 18)
         .frame(height: 52)
         .background(RecorderPalette.panel)
+    }
+}
+
+/// The marked part beside the clock: its length (the times in the tooltip), Export Part, and a clear button.
+private struct PartPill: View {
+    @Bindable var model: EditorModel
+    let part: (fromUs: Int64, toUs: Int64)
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(verbatim: "Part \(String(format: "%.1f s", Double(part.toUs - part.fromUs) / 1_000_000))")
+                .font(.system(size: 11.5, weight: .medium).monospacedDigit())
+                .instantTooltip("From \(formatClock(part.fromUs, tenths: true)) to \(formatClock(part.toUs, tenths: true)); drag its edges on the timeline")
+            Button("Export") { model.tab = .export; model.export() }
+                .buttonStyle(.genHoverPlain())
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .instantTooltip("Export only this part")
+                .accessibilityIdentifier("recorder.part.export")
+            IconButton(systemName: "xmark", tooltip: "Clear the part (the export writes everything again)", size: 9) { model.clearPart() }
+                .accessibilityIdentifier("recorder.part.clear")
+        }
+        .padding(.leading, 9).padding(.trailing, 4).padding(.vertical, 3)
+        .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+        .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1))
+        .fixedSize()
     }
 }
 

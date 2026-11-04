@@ -4,6 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import { describeProject, parseEditOps } from "@genesiscz/utils/recording-editor/project";
+import { renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { Command } from "commander";
@@ -245,6 +246,21 @@ program
     .action(async (label: string, id: string | undefined) => {
         try {
             out.result(await callRecorder({ id: liveId(id), method: "marker.add", params: { label } }));
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("rename")
+    .description("Give a recording a new title (the library, the editor window and movies.list() show it)")
+    .argument("<recording>", "a library id, `last` or a recording folder")
+    .argument("<title>", "the new title (1 to 120 characters)")
+    .action((value: string, title: string) => {
+        try {
+            const manifest = renameRecording(resolveRecording(value), title);
+            out.result({ id: manifest.id, title: manifest.title });
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;

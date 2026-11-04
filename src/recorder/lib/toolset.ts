@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -24,7 +24,7 @@ import {
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
 import { ReplToolset, type ToolsetContext } from "@genesiscz/utils/repl/toolset";
-import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { readRecordingManifest, renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
@@ -280,6 +280,15 @@ const movieMethods = [
         resultName: "{ at, plays, label }[]",
         doc: "The moments marked while it recorded (recording.mark(label) or `tools recorder mark`), at source seconds, plays: where each is in the edit (null when cut).",
         effect: "read",
+    }),
+    defineMethod({
+        name: "rename",
+        params: z.object({ title: z.string().min(1).max(120) }),
+        positional: ["title"],
+        result: z.unknown(),
+        resultName: "{ id, title }",
+        doc: "Gives the recording a new title (the library, the editor window and movies.list() show it); only a recording folder has one.",
+        effect: "reversible",
     }),
     defineMethod({
         name: "chapters",
@@ -683,6 +692,12 @@ export class Movie {
     /** The moments marked while it recorded (`recording.mark()`, `tools recorder mark`), with where each plays. */
     async markers() {
         return markersOf((await openProject(this.recording)).project);
+    }
+
+    async rename(title: string) {
+        const { project } = await openProject(this.recording);
+        const manifest = renameRecording(dirname(project.source.video), title);
+        return { id: manifest.id, title: manifest.title };
     }
 
     async chapters(options: { intro?: string; minSeconds?: number } = {}) {
