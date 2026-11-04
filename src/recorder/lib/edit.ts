@@ -5,12 +5,14 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
+import { integratedLoudness } from "@genesiscz/utils/recording-editor/loudness";
 import {
     applyOp,
     type EditOp,
     type EditProject,
     EXPORT_FORMATS,
     type ExportFormat,
+    type OpFacts,
     projectPathFor,
     readProject,
     wholeProject,
@@ -30,6 +32,8 @@ export interface OpenedProject {
     fresh: boolean;
     /** The source stretches a removeIdle op cut, in microseconds. */
     removedIdleUs?: Array<[number, number]>;
+    /** A normalize op: the loudness it measured at volume 1 (null: no audio) and the volume it set. */
+    loudness?: { measuredLufs: number | null; volume: number };
 }
 
 /** The movie a recording argument names: the folder's movie, or the movie an edit file points at. */
@@ -88,22 +92,17 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
     const opened = await openProject(value);
     let next = opened.project;
     const removedIdleUs: Array<[number, number]> = [];
+    let loudness: { measuredLufs: number | null; volume: number } | undefined;
 
     for (const [index, op] of ops.entries()) {
         try {
-            const facts =
-                op.op === "removeIdle"
-                    ? {
-                          idleUs: await findIdle({
-                              video: next.source.video,
-                              durationUs: next.source.durationUs,
-                              minUs: op.minSeconds * 1_000_000,
-                              keepUs: op.keepSeconds * 1_000_000,
-                          }),
-                      }
-                    : {};
+            const facts = await probeFacts(next, op);
             next = applyOp(next, op, facts);
-            removedIdleUs.push(...(facts.idleUs ?? []));
+            removedIdleUs.push(...(facts.idleUs ?? []).map(([from, to]): [number, number] => [from, to]));
+
+            if (facts.loudnessLufs !== undefined) {
+                loudness = { measuredLufs: facts.loudnessLufs, volume: next.audio.volume };
+            }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log.debug({ error, op, index }, "edit op refused");
@@ -114,7 +113,34 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
 
     const saved = writeProject(opened.path, next);
     log.debug({ path: opened.path, ops: ops.map((op) => op.op) }, "edit applied");
-    return { path: opened.path, project: saved, fresh: false, ...(removedIdleUs.length ? { removedIdleUs } : {}) };
+    return {
+        path: opened.path,
+        project: saved,
+        fresh: false,
+        ...(removedIdleUs.length ? { removedIdleUs } : {}),
+        ...(loudness ? { loudness } : {}),
+    };
+}
+
+/** What an op needs measured on the movie before it applies: idle stretches, or the loudness. */
+async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
+    if (op.op === "removeIdle") {
+        return {
+            idleUs: await findIdle({
+                video: project.source.video,
+                durationUs: project.source.durationUs,
+                minUs: op.minSeconds * 1_000_000,
+                keepUs: op.keepSeconds * 1_000_000,
+            }),
+        };
+    }
+
+    if (op.op === "normalize") {
+        const lufs = await integratedLoudness({ video: project.source.video, mutedTracks: project.audio.mutedTracks });
+        return { loudnessLufs: lufs ?? null };
+    }
+
+    return {};
 }
 
 export { EXPORT_FORMATS, type ExportFormat };

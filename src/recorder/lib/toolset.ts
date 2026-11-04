@@ -171,6 +171,11 @@ const movieMethods = [
             .strict(),
         "Cuts every stretch where the picture does not change AND nothing is heard for minSeconds (default 2), keeping keepSeconds (0.3) at each end; a still picture under speech stays. The result adds removed: [[from, to], …] in source seconds."
     ),
+    edit(
+        "normalize",
+        z.object({ targetLufs: z.number().min(-30).max(-8).optional() }).strict(),
+        "Measures the movie's loudness (EBU R128, the unmuted tracks mixed) and sets the volume so the export reaches targetLufs (default -16, speech on the web; -14 music). The volume tops out at 200 % (+6 dB). The result adds loudness: { measuredLufs, volume }."
+    ),
     defineMethod({
         name: "export",
         params: z.object({ out: z.string().optional(), format: z.enum(EXPORT_FORMATS).optional() }).strict(),
@@ -302,9 +307,13 @@ export class Movie {
         this.history.push(before.project);
         const described = describeProject(edited.project, edited.path);
         const seconds = (us: number) => Math.round(us / 1000) / 1000;
-        return edited.removedIdleUs
-            ? { ...described, removed: edited.removedIdleUs.map(([from, to]) => [seconds(from), seconds(to)]) }
-            : described;
+        return {
+            ...described,
+            ...(edited.removedIdleUs
+                ? { removed: edited.removedIdleUs.map(([from, to]) => [seconds(from), seconds(to)]) }
+                : {}),
+            ...(edited.loudness ? { loudness: edited.loudness } : {}),
+        };
     }
 
     async split(at: z.infer<typeof timeSchema>) {
@@ -375,6 +384,10 @@ export class Movie {
         return this.change([
             { op: "removeIdle", minSeconds: options.minSeconds ?? 2, keepSeconds: options.keepSeconds ?? 0.3 },
         ]);
+    }
+
+    async normalize(options: { targetLufs?: number } = {}) {
+        return this.change([{ op: "normalize", targetLufs: options.targetLufs ?? -16 }]);
     }
 
     async undo() {

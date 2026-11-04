@@ -451,6 +451,17 @@ describe("edit project (edit.json)", () => {
         expect(() => parseEditOps({ op: "clicks", color: "yellow" })).toThrow("a color is #RRGGBB");
     });
 
+    test("normalize sets the volume that lifts the measured loudness to the target, up to 200 %", () => {
+        const project = wholeProject(source);
+        expect(applyOp(project, { op: "normalize", targetLufs: -16 }, { loudnessLufs: -22 }).audio.volume).toBe(2);
+        expect(applyOp(project, { op: "normalize", targetLufs: -16 }, { loudnessLufs: -19 }).audio.volume).toBe(1.41);
+        expect(applyOp(project, { op: "normalize", targetLufs: -16 }, { loudnessLufs: -10 }).audio.volume).toBe(0.5);
+        expect(() => applyOp(project, { op: "normalize", targetLufs: -16 }, { loudnessLufs: null })).toThrow(
+            "no unmuted audio"
+        );
+        expect(() => applyOp(project, { op: "normalize", targetLufs: -16 })).toThrow("needs the movie's loudness");
+    });
+
     test("captions need the movie's cached transcript and merge on change", () => {
         const dir = workspace();
         const video = join(dir, "screen.mp4");

@@ -71,6 +71,8 @@ final class EditorModel {
     var noticeIsError = false
     /// A `tools recorder apply` step runs (Remove Still Parts); its button shows progress and does not start another.
     private(set) var isRemovingIdle = false
+    /// `tools recorder apply` measures the loudness (Normalize).
+    private(set) var isNormalizing = false
     /// `tools transcribe` runs for the captions.
     private(set) var isTranscribing = false
     /// The movie has a cached transcript, so captions can be drawn.
@@ -401,6 +403,28 @@ final class EditorModel {
             self.hasTranscript = true
             self.setLooks { $0.captions = $0.captions ?? EditProject.Captions() }
             self.show("Captions are on.", error: false)
+        }
+    }
+
+    /// Sets the volume so the export reaches -16 LUFS, measured by `tools recorder apply {"op":"normalize"}`.
+    func normalizeLoudness() {
+        guard !isNormalizing else { return }
+        saveTask?.cancel()
+        saveNow()
+        isNormalizing = true
+        show("Measuring the loudness…", error: false)
+        ToolsRunner.run(["recorder", "apply", store.url.path, #"{"op":"normalize"}"#]) { [weak self] status, _, stderr in
+            guard let self else { return }
+            self.isNormalizing = false
+            guard status == 0 else {
+                let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
+                self.show("The volume is unchanged: \(reason)", error: true)
+                return
+            }
+            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data) { self.adoptExternal(next) }
+            let volume = Int((self.project.audio.volume * 100).rounded())
+            self.show(volume >= 200 ? "The volume is at its 200 % limit; the movie is still quieter than -16 LUFS."
+                                    : "The volume is \(volume) %, so the export plays at -16 LUFS. ⌘Z undoes it.", error: false)
         }
     }
 

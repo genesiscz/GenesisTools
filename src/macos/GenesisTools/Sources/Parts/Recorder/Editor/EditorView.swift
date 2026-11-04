@@ -475,7 +475,14 @@ private struct AudioInspector: View {
             .padding(12)
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.05)))
             .disabled(!audio.include)
-            if !model.waveform.hasAudio {
+            if model.waveform.hasAudio {
+                WideButton(title: model.isNormalizing ? "Measuring the Loudness…" : "Normalize Loudness", systemImage: "waveform.badge.magnifyingglass") {
+                    model.normalizeLoudness()
+                }
+                .disabled(model.isNormalizing)
+                .instantTooltip("Sets the volume so the export reaches -16 LUFS, the level of speech on the web")
+                .accessibilityIdentifier("recorder.audio.normalize")
+            } else {
                 Text("This movie has no audio track.").font(.system(size: 12)).foregroundStyle(RecorderPalette.dim)
             }
         }

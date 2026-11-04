@@ -59,6 +59,7 @@ process's save as it lands, and keeps the previous version one ⌘Z away.
 `unzoom {id}`, `autoZoom {scale?}` (one zoom per group of clicks under 3 s apart; manual zooms stay), `removeIdle
 {minSeconds? 2, keepSeconds? 0.3}` (cuts what is still AND silent: ffmpeg's freezedetect, frame gaps and
 silencedetect), `volume`, `mute {track,muted?}`, `audio {include}`, `clicks {…}`, `frame {…, enabled?}`, `cursor {…}`,
+`normalize {targetLufs? -16}` (measures the unmuted tracks' EBU R128 loudness and sets the volume, at most 200 %),
 `captions {show?,size?,position?}`, `exportSettings {codec?,maxHeight?,output?,format?}`, `reset`. Times are source seconds or `"mm:ss"`. Ops apply in
 order to the file as it is now and save once; one failing op saves nothing and names itself.
 

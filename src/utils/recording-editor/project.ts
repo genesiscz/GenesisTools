@@ -526,6 +526,13 @@ export const editOpSchema = z.discriminatedUnion("op", [
             keepSeconds: z.number().min(0).max(5).default(0.3),
         })
         .strict(),
+    z
+        .object({
+            op: z.literal("normalize"),
+            /** The integrated loudness the export should reach (EBU R128); -16 suits speech on the web, -14 music. */
+            targetLufs: z.number().min(-30).max(-8).default(-16),
+        })
+        .strict(),
 ]);
 export type EditOp = z.infer<typeof editOpSchema>;
 
@@ -576,7 +583,12 @@ export function parseEditOps(raw: unknown): EditOp[] {
 /** What an op needs from the movie itself, probed by the caller (`removeIdle`: the still and silent stretches). */
 export interface OpFacts {
     idleUs?: ReadonlyArray<readonly [number, number]>;
+    /** The movie's integrated loudness at volume 1; null when it has no unmuted audio. */
+    loudnessLufs?: number | null;
 }
+
+/** The loudest a volume may lift: 200 %, +6 dB. */
+const MAX_VOLUME = 2;
 
 /** Applies one op; throws a RangeError a caller can show as it is. */
 export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): EditProject {
@@ -595,6 +607,19 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
             }
 
             return next;
+        }
+        case "normalize": {
+            if (facts.loudnessLufs === undefined) {
+                throw new Error("normalize needs the movie's loudness; run it through editProject or the CLI");
+            }
+
+            if (facts.loudnessLufs === null || facts.loudnessLufs < -70) {
+                throw new Error("this movie has no unmuted audio to normalize (it is silent or every track is muted)");
+            }
+
+            const gain = 10 ** ((op.targetLufs - facts.loudnessLufs) / 20);
+            const volume = Math.round(Math.min(MAX_VOLUME, gain) * 100) / 100;
+            return { ...project, audio: { ...project.audio, include: true, volume } };
         }
         case "split":
             return splitAt(project, timeToUs(op.at));
