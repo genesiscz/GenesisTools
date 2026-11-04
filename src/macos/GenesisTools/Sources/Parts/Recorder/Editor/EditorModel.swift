@@ -256,6 +256,57 @@ final class EditorModel {
         }
     }
 
+    /// One zoom, hidden part, text or shape on the timeline, for walking them in time order.
+    struct TimelineItem: Equatable {
+        let selection: EditorSelection
+        /// Where it starts in the output, so a part inside a cut sorts where its first shown frame plays.
+        let startUs: Int64
+    }
+
+    /// Every zoom, hidden part, text and shape, ordered by output start (ties keep the lane order, top lane first).
+    var timelineItems: [TimelineItem] {
+        func at(_ sourceUs: Int64) -> Int64 { TimelineMap.outputTime(ofSource: sourceUs, in: project) ?? sourceUs }
+        let items: [TimelineItem] =
+            project.zooms.map { TimelineItem(selection: .zoom($0.id), startUs: at($0.startUs)) }
+            + (project.redactions ?? []).map { TimelineItem(selection: .redaction($0.id), startUs: at($0.startUs)) }
+            + (project.texts ?? []).map { TimelineItem(selection: .text($0.id), startUs: at($0.startUs)) }
+            + (project.shapes ?? []).map { TimelineItem(selection: .shape($0.id), startUs: at($0.startUs)) }
+        return items.enumerated().sorted { ($0.element.startUs, $0.offset) < ($1.element.startUs, $1.offset) }.map(\.element)
+    }
+
+    /// The item after (or before) `current` in `items`; with nothing of the timeline selected, the first item that
+    /// starts at or after the playhead (or the last one that starts before it). Nil at either end, with no wrap.
+    nonisolated static func adjacent(in items: [TimelineItem], current: EditorSelection, playheadUs: Int64, forward: Bool) -> TimelineItem? {
+        if let index = items.firstIndex(where: { $0.selection == current }) {
+            let next = index + (forward ? 1 : -1)
+            return items.indices.contains(next) ? items[next] : nil
+        }
+        return forward ? items.first { $0.startUs >= playheadUs } : items.last { $0.startUs < playheadUs }
+    }
+
+    /// ⌥↓ and ⌥↑: select the next or previous zoom, hidden part, text or shape in time order, open its inspector tab
+    /// and move the playhead to its start, so the keyboard alone can walk every edit.
+    func selectAdjacentItem(forward: Bool) {
+        let items = timelineItems
+        guard !items.isEmpty else {
+            show("There is no zoom, hidden part, text or shape to select.", error: false)
+            return
+        }
+        guard let item = Self.adjacent(in: items, current: selection, playheadUs: clock.outUs, forward: forward) else {
+            show(forward ? "This is the last item on the timeline." : "This is the first item on the timeline.", error: false)
+            return
+        }
+        selection = item.selection
+        switch item.selection {
+        case .zoom: tab = .zoom
+        case .redaction: tab = .hide
+        case .text, .shape: tab = .text
+        case .clip, .none: break
+        }
+        player.pause()
+        seek(item.startUs)
+    }
+
     /// A span moved by `delta` with its length kept, held inside `0…durationUs`.
     nonisolated static func shifted(start: Int64, end: Int64, by delta: Int64, durationUs: Int64) -> (start: Int64, end: Int64) {
         let length = end - start

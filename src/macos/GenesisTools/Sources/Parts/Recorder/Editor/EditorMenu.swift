@@ -73,6 +73,12 @@ enum EditorMenu {
         EditorCommand(title: "Move Selection a Second Later", key: String(UnicodeScalar(NSRightArrowFunctionKey)!), modifiers: [.option, .shift], label: "⌥⇧→") {
             $0.moveSelectionInTime(byUs: 1_000_000)
         },
+        EditorCommand(title: "Select Next Item", key: String(UnicodeScalar(NSDownArrowFunctionKey)!), modifiers: .option, label: "⌥↓") {
+            $0.selectAdjacentItem(forward: true)
+        },
+        EditorCommand(title: "Select Previous Item", key: String(UnicodeScalar(NSUpArrowFunctionKey)!), modifiers: .option, label: "⌥↑") {
+            $0.selectAdjacentItem(forward: false)
+        },
         EditorCommand(title: "Nudge Shape Up", key: String(UnicodeScalar(NSUpArrowFunctionKey)!), label: "↑") { $0.arrowKey(dx: 0, dy: -1, shift: false) },
         EditorCommand(title: "Nudge Shape Down", key: String(UnicodeScalar(NSDownArrowFunctionKey)!), label: "↓") { $0.arrowKey(dx: 0, dy: 1, shift: false) },
         EditorCommand(title: "Nudge Shape Up More", key: String(UnicodeScalar(NSUpArrowFunctionKey)!), modifiers: .shift, label: "⇧↑") {

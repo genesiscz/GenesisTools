@@ -548,6 +548,23 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(EditorModel.issues(fromCheck: Data("not json".utf8)))
     }
 
+    func testSelectNextAndPreviousWalkTheItemsInTimeOrder() {
+        let items: [EditorModel.TimelineItem] = [
+            .init(selection: .zoom("z1"), startUs: 1_000_000),
+            .init(selection: .text("t1"), startUs: 2_000_000),
+            .init(selection: .shape("s1"), startUs: 5_000_000),
+        ]
+        // With nothing selected, forward takes the first item at or after the playhead, back the last one before it.
+        XCTAssertEqual(EditorModel.adjacent(in: items, current: .none, playheadUs: 2_000_000, forward: true)?.selection, .text("t1"))
+        XCTAssertEqual(EditorModel.adjacent(in: items, current: .none, playheadUs: 2_000_000, forward: false)?.selection, .zoom("z1"))
+        XCTAssertEqual(EditorModel.adjacent(in: items, current: .clip("c1"), playheadUs: 6_000_000, forward: true)?.selection, nil)
+        // With an item selected, the keys step through the list and stop at both ends.
+        XCTAssertEqual(EditorModel.adjacent(in: items, current: .text("t1"), playheadUs: 0, forward: true)?.selection, .shape("s1"))
+        XCTAssertEqual(EditorModel.adjacent(in: items, current: .text("t1"), playheadUs: 0, forward: false)?.selection, .zoom("z1"))
+        XCTAssertNil(EditorModel.adjacent(in: items, current: .shape("s1"), playheadUs: 0, forward: true))
+        XCTAssertNil(EditorModel.adjacent(in: items, current: .zoom("z1"), playheadUs: 0, forward: false))
+    }
+
     func testTrimmingASelectionToThePlayheadNeedsThePlayheadInsideIt() {
         XCTAssertEqual(EditorModel.trimmed(start: 1_000_000, end: 4_000_000, at: 2_000_000, side: .start)?.start, 2_000_000)
         XCTAssertEqual(EditorModel.trimmed(start: 1_000_000, end: 4_000_000, at: 2_000_000, side: .end)?.end, 2_000_000)
