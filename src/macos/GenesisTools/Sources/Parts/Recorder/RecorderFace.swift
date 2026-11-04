@@ -331,6 +331,8 @@ enum EditorKeys {
             case ("[", false): model.trimToPlayhead(.start)
             case ("]", false): model.trimToPlayhead(.end)
             case ("z", false): model.addZoom()
+            case ("t", false): model.addText()
+            case ("a", false): model.addShape(.arrow)
             case ("z", true): shift ? model.redo() : model.undo()
             case ("s", true): model.saveNow()
             case ("e", true): model.tab = .export; model.export()
