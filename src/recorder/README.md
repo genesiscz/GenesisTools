@@ -58,6 +58,8 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   `untext`; the editor's Text tab.
 - `zooms`: `startUs`, `endUs`, `scale` 1 to 4, `mode` `manual` (a `focusX`/`focusY` point) or `follow` (the cursor),
   `easeInMs`/`easeOutMs` on a (0.16, 1, 0.3, 1) curve.
+- `motion` (optional): `blur` 0 to 1 (0.5 when absent) smears the picture along a zoom's pan or change of scale, as a
+  camera shutter would (at most 24 px a frame, so text stays readable through a fast ease); 0 keeps every frame sharp. Op `motion {blur}`; the Zoom tab's slider.
 - `audio`: `include`, `volume` 0 to 2, `mutedTracks`.
 - `export`: `codec` h264 or hevc, `maxHeight` (0 = source), `output`, `format` (absent = mp4).
 - `clicks` (optional): a disc that grows and fades on each recorded click.
@@ -85,7 +87,7 @@ process's save as it lands, and keeps the previous version one ⌘Z away.
 {minSeconds? 2, keepSeconds? 0.3}` (cuts what is still AND silent: ffmpeg's freezedetect, frame gaps and
 silencedetect), `volume`, `mute {track,muted?}`, `audio {include}`, `clicks {…}`, `frame {…, enabled?}`, `cursor {…}`,
 `normalize {targetLufs? -16}` (measures the unmuted tracks' EBU R128 loudness and sets the volume, at most 200 %),
-`captions {show?,size?,position?}`, `keys {show?,size?,position?,durationMs?}`, `exportSettings {codec?,maxHeight?,output?,format?}`, `reset`. Times are source seconds or `"mm:ss"`. Ops apply in
+`motion {blur?}`, `captions {show?,size?,position?}`, `keys {show?,size?,position?,durationMs?}`, `exportSettings {codec?,maxHeight?,output?,format?}`, `reset`. Times are source seconds or `"mm:ss"`. Ops apply in
 order to the file as it is now and save once; one failing op saves nothing and names itself.
 
 ## Export

@@ -221,6 +221,14 @@ private struct ZoomInspector: View {
                         .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                let blur = (model.project.motion ?? .init()).blur
+                SectionLabel(text: "Motion blur", value: blur == 0 ? "Off" : "\(Int((blur * 100).rounded()))%")
+                Slider(value: Binding(get: { blur }, set: { value in
+                    model.setLooks { $0.motion = EditProject.Motion(blur: (value * 20).rounded() / 20) }
+                }), in: 0...1)
+                    .accessibilityLabel("Motion blur")
+                    .accessibilityIdentifier("recorder.zoom.motionBlur")
+                    .instantTooltip("Smears the picture while a zoom moves in, out or along with the cursor, as a camera would. 0 keeps every frame sharp.")
             }
         }
     }

@@ -182,6 +182,11 @@ export function transcriptCachePath(video: string): string {
     return join(dirname(video), `${basename(video, extname(video))}.transcript.json`);
 }
 
+/** The look of the zoom's moves: `blur` 0 (sharp) to 1 smears the picture along a pan or a zoom, 0.5 by default. */
+export const motionSchema = z.object({
+    blur: z.number().min(0).max(1).default(0.5),
+});
+
 export const editProjectSchema = z.object({
     version: z.number().int().default(EDIT_PROJECT_VERSION),
     source: z.object({
@@ -221,6 +226,8 @@ export const editProjectSchema = z.object({
     texts: z.array(textNoteSchema).optional(),
     /** Absent is no corrections. */
     transcript: transcriptSettingsSchema.optional(),
+    /** How the picture moves through a zoom; absent is the defaults (motionSchema). */
+    motion: motionSchema.optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
 });
@@ -713,6 +720,13 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .strict(),
     z
         .object({
+            op: z.literal("motion"),
+            /** 0 keeps every frame of a pan or a zoom sharp; 1 is a full-frame shutter. */
+            blur: z.number().min(0).max(1).optional(),
+        })
+        .strict(),
+    z
+        .object({
             op: z.literal("cursor"),
             show: z.boolean().optional(),
             size: z.number().min(0.5).max(3).optional(),
@@ -974,6 +988,10 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
             const { op: _op, ...change } = op;
             return { ...project, captions: captionsSchema.parse({ ...project.captions, ...change }) };
         }
+        case "motion": {
+            const { op: _op, ...change } = op;
+            return { ...project, motion: motionSchema.parse({ ...project.motion, ...change }) };
+        }
         case "cursor": {
             if (!trackDrawsCursor(project.source.cursor)) {
                 throw new Error(
@@ -1063,6 +1081,7 @@ export function describeProject(project: EditProject, path: string) {
         captions: project.captions ?? null,
         keys: project.keys ?? null,
         transcriptFixes: Object.keys(project.transcript?.fixes ?? {}).length,
+        motion: motionSchema.parse(project.motion ?? {}),
         texts: (project.texts ?? []).map((note) => ({
             id: note.id,
             from: seconds(note.startUs),

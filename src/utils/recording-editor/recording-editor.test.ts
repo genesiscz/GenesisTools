@@ -518,6 +518,10 @@ describe("edit project (edit.json)", () => {
         expect(() => applyOp(hidden, { op: "unredact", id: "nope" })).toThrow(`redactions: ${redaction?.id}`);
         // A cut keeps it in source time.
         expect(applyOp(hidden, { op: "cut", from: 0, to: 0.5 }).redactions?.[0]?.startUs).toBe(1_000_000);
+        // Motion blur is 0.5 until set, and an op merges into what is there.
+        expect(describeProject(project, "/p/edit.json").motion).toEqual({ blur: 0.5 });
+        expect(applyOp(project, { op: "motion", blur: 0 }).motion).toEqual({ blur: 0 });
+        expect(() => applyOp(project, { op: "motion", blur: 2 })).toThrow();
         // A text sits in the canvas with its defaults, follows source time, and goes with untext.
         const titled = applyOp(project, { op: "text", from: 1, to: 2.5, text: "  Step 1: sign in " });
         const [note] = titled.texts ?? [];

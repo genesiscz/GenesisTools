@@ -220,6 +220,11 @@ const movieMethods = [
         "The cursor the editor draws (a movie recorded without the system cursor; info() shows cursor: null otherwise): show, size (times the recorded size, 1), smoothing (0 raw path, 1 smoothest, 0.5), hideAfterMs (fade out after standing still this long, 0 never). It still sits on every click."
     ),
     edit(
+        "motion",
+        z.object({ blur: z.number().min(0).max(1).optional() }).strict(),
+        "How the picture moves through a zoom: blur 0 (every frame sharp) to 1 smears it along a pan or a change of scale, as a camera shutter would; 0.5 when never set. A still zoom is never blurred."
+    ),
+    edit(
         "frame",
         z
             .object({
@@ -587,6 +592,10 @@ export class Movie {
 
     async cursor(options: Omit<Extract<EditOp, { op: "cursor" }>, "op"> = {}) {
         return this.change([{ op: "cursor", ...options }]);
+    }
+
+    async motion(options: Omit<Extract<EditOp, { op: "motion" }>, "op"> = {}) {
+        return this.change([{ op: "motion", ...options }]);
     }
 
     async frame(options: Omit<Extract<EditOp, { op: "frame" }>, "op"> = {}) {

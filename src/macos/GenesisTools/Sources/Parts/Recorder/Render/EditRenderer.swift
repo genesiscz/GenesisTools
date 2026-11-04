@@ -77,6 +77,9 @@ final class ZoomState: @unchecked Sendable {
         var redactions: [EditProject.Redaction] = []
         /// The texts showing at the frame's source time, each with its fade.
         var texts: [(note: EditProject.TextNote, opacity: Double)] = []
+        /// The zoom one output frame earlier, for the motion blur; nil at the start and across a cut.
+        var previousView: ZoomCurve.View?
+        var motionBlur = 0.0
     }
 
     /// Every frame the renderer drew; the editor compares it with the frames a playback should have shown.
@@ -101,7 +104,16 @@ final class ZoomState: @unchecked Sendable {
             marks = Looks.marks(atSourceMs: Double(sourceUs) / 1000, clicks: cursor.clicks, durationMs: clicks.durationMs)
         }
         let view = ZoomCurve.view(atSource: sourceUs, zooms: project.zooms, cursor: cursor)
-        return FrameLook(view: view,
+        let motionBlur = (project.motion ?? .init()).blur
+        var previousView: ZoomCurve.View?
+        if motionBlur > 0, outUs >= Self.frameUs, !project.zooms.isEmpty {
+            let previousUs = TimelineMap.sourceTime(atOutput: outUs - Self.frameUs, in: project)
+            // A cut jumps in source time; the frame after it has no move to smear.
+            if sourceUs > previousUs, sourceUs - previousUs <= Self.frameUs * 17 {
+                previousView = ZoomCurve.view(atSource: previousUs, zooms: project.zooms, cursor: cursor)
+            }
+        }
+        var look = FrameLook(view: view,
                          marks: marks, clicks: project.clicks,
                          cursor: Self.cursorMark(atSourceUs: sourceUs, track: cursor, settings: project.cursor ?? .init(),
                                                  videoWidth: Double(project.source.width)),
@@ -119,7 +131,13 @@ final class ZoomState: @unchecked Sendable {
                          },
                          redactions: (project.redactions ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs },
                          texts: Self.texts(atSourceUs: sourceUs, project: project))
+        look.previousView = previousView
+        look.motionBlur = motionBlur
+        return look
     }
+
+    /// One output frame at 60 fps.
+    static let frameUs: Int64 = 16_667
 
     /// The texts showing at a source time, each fading in and out over 0.2 s (less for a short one).
     static func texts(atSourceUs us: Int64, project: EditProject) -> [(note: EditProject.TextNote, opacity: Double)] {
@@ -284,6 +302,9 @@ struct EditRenderer {
                 return image.cropped(to: CGRect(origin: .zero, size: picture))
             }
             result = toPicture(result)
+            if let previous = look.previousView {
+                result = Looks.motionBlur(from: previous, to: view, amount: look.motionBlur, on: result)
+            }
             cursor = cursor.map(toPicture)
             if let frame = look.frame {
                 let placement = Looks.framePlacement(frame, picture: picture, canvas: size, focus: look.coverFocus)

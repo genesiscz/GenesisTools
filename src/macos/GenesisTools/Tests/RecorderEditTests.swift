@@ -302,6 +302,27 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(track.key(atMs: 2700, durationMs: 1200))
     }
 
+    func testMotionBlurSmearsOnlyAMovingZoom() {
+        // A sharp edge: black left half, white right half.
+        let size = CGRect(x: 0, y: 0, width: 200, height: 100)
+        let image = CIImage(color: .white).cropped(to: CGRect(x: 100, y: 0, width: 100, height: 100))
+            .composited(over: CIImage(color: .black).cropped(to: size))
+        let context = CIContext()
+        func gray(_ result: CIImage, _ x: Int) -> UInt8 {
+            var pixel = [UInt8](repeating: 0, count: 4)
+            context.render(result, toBitmap: &pixel, rowBytes: 4, bounds: CGRect(x: x, y: 50, width: 1, height: 1),
+                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+            return pixel[0]
+        }
+        let still = ZoomCurve.View(scale: 2, centerX: 0.5, centerY: 0.5)
+        XCTAssertEqual(gray(Looks.motionBlur(from: still, to: still, amount: 0.5, on: image), 96), 0, "a still zoom stays sharp")
+        let panned = ZoomCurve.View(scale: 2, centerX: 0.55, centerY: 0.5)
+        let blurred = Looks.motionBlur(from: still, to: panned, amount: 0.5, on: image)
+        XCTAssertGreaterThan(gray(blurred, 96), 20, "a pan smears the edge sideways")
+        XCTAssertEqual(blurred.extent, size, "the picture keeps its size")
+        XCTAssertEqual(gray(Looks.motionBlur(from: still, to: panned, amount: 0, on: image), 96), 0, "0 is off")
+    }
+
     func testASpotlightDimsEverythingButItsRectangle() {
         let white = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 100))
         let spot = EditProject.Redaction(id: "s", startUs: 0, endUs: 1, x: 0.25, y: 0, width: 0.5, height: 0.5, style: .spotlight)

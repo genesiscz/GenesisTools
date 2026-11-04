@@ -47,6 +47,40 @@ enum Looks {
         return result
     }
 
+    /// The longest smear a motion blur draws, in output pixels; a faster move is clamped, so a jump stays readable.
+    static let maxMotionBlur = 24.0
+
+    /// Smears the zoomed picture along the move from `previous` to `view` over one frame: a directional blur for a
+    /// pan, a radial one for a change of scale. `amount` is the shutter (0.5: half the move). A move under a pixel
+    /// draws nothing, so a still zoom costs no filter.
+    static func motionBlur(from previous: ZoomCurve.View, to view: ZoomCurve.View, amount: Double, on image: CIImage) -> CIImage {
+        let extent = image.extent
+        let width = view.rect.width
+        guard amount > 0, width > 0, extent.width > 1 else { return image }
+        // The picture moves opposite to the shown rectangle; in output pixels, y up as Core Image counts it.
+        let dx = -(view.centerX - previous.centerX) / width * extent.width
+        let dy = (view.centerY - previous.centerY) / width * extent.height
+        var result = image
+        // Each smear is a length in pixels; the filters' own units were measured against a lit dot (RecorderEditTests):
+        // CIMotionBlur spreads about 5.6 px per unit of radius, CIZoomBlur about 0.0226 px per unit of amount and pixel
+        // of distance from its centre.
+        let pan = min(maxMotionBlur, (dx * dx + dy * dy).squareRoot() * amount)
+        if pan >= 1 {
+            result = result.clampedToExtent()
+                .applyingFilter("CIMotionBlur", parameters: [kCIInputRadiusKey: pan / 5.6, kCIInputAngleKey: atan2(dy, dx)])
+                .cropped(to: extent)
+        }
+        let halfWidth = extent.width / 2
+        let grow = min(maxMotionBlur, abs(view.scale / max(1, previous.scale) - 1) * halfWidth * amount)
+        if grow >= 1 {
+            result = result.clampedToExtent()
+                .applyingFilter("CIZoomBlur", parameters: [kCIInputCenterKey: CIVector(x: extent.midX, y: extent.midY),
+                                                           "inputAmount": grow / (0.0226 * halfWidth)])
+                .cropped(to: extent)
+        }
+        return result
+    }
+
     /// How much black a spotlight lays over the picture around its rectangle (in linear light: 0.7 leaves white at
     /// about 58 % of sRGB white, which reads as clearly dimmed while the picture stays readable).
     static let spotlightDim = 0.7

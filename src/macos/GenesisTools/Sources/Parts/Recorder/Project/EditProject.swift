@@ -30,6 +30,8 @@ struct EditProject: Codable, Equatable {
     var texts: [TextNote]?
     /// Corrections to the cached transcript; nil is none.
     var transcript: TranscriptSettings?
+    /// How the picture moves through a zoom; nil is `Motion()`.
+    var motion: Motion?
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
@@ -103,6 +105,11 @@ struct EditProject: Codable, Equatable {
         var smoothing = 0.5
         /// Fades the cursor out after it stood still this long; nil or 0 keeps it. Optional, so an older file decodes.
         var hideAfterMs: Int?
+    }
+
+    struct Motion: Codable, Equatable {
+        /// 0 keeps each frame of a pan or a zoom sharp; 1 smears it over the whole frame's move (a 360° shutter).
+        var blur = 0.5
     }
 
     enum CaptionPosition: String, Codable, CaseIterable {
