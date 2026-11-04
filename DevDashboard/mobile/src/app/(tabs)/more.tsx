@@ -66,6 +66,7 @@ const MORE_GROUPS: MoreGroup[] = [
             { title: "Timesheet", route: "/timesheet", testID: "more-link-timesheet", icon: "clock" },
             { title: "Send to vault", route: "/vault", testID: "more-link-vault", icon: "book" },
             { title: "Memos", route: "/memos", testID: "more-link-memos", icon: "mic" },
+            { title: "Snap to agent", route: "/snap", testID: "more-link-snap", icon: "camera" },
         ],
     },
     {

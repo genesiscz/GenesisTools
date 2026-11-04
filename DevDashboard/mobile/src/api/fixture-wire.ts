@@ -304,6 +304,13 @@ const ROUTES: FixtureRoute[] = [
         handle: () => ({ filled: false, written: 0, failed: 0, skipped: 0, error: "mock data: no Clarity to fill" }),
     },
 
+    // Snap it to the agent (F24): the attach is refused, since a fixture has no shelf.
+    {
+        method: ENDPOINTS.snap.method,
+        path: ENDPOINTS.snap.path,
+        handle: () => ({ attached: false, draftKey: null, shelfId: null, error: "mock data: no shelf on a Mac" }),
+    },
+
     // Memo to action (F28); an action is refused, since a fixture has no Reminders, vault or session.
     { method: ENDPOINTS.gatewayMemos.method, path: ENDPOINTS.gatewayMemos.path, handle: () => MOCK_MEMOS },
     {

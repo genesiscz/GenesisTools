@@ -17,6 +17,7 @@ export * from "@app/dev-dashboard/contract/memos";
 export * from "@app/dev-dashboard/contract/pairing";
 export * from "@app/dev-dashboard/contract/ping";
 export * from "@app/dev-dashboard/contract/push";
+export * from "@app/dev-dashboard/contract/snap";
 export * from "@app/dev-dashboard/contract/timesheet";
 export * from "@app/dev-dashboard/contract/vault";
 export * from "@app/dev-dashboard/contract/wake";
