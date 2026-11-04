@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OverwriteInputError } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { idleRanges } from "@genesiscz/utils/recording-editor/idle";
 import {
     applyOp,
     autoZoom,
@@ -384,6 +385,36 @@ describe("edit project (edit.json)", () => {
         expect(kept.map((zoom) => zoom.mode)).toEqual(["follow", "manual"]);
         expect(() => autoZoom(manual, [])).toThrow("no cursor track");
         expect(() => autoZoom(manual, [{ ms: 1, x: 0, y: 0 }])).toThrow("no clicks");
+    });
+
+    test("idle stretches are still and silent at once, shortened at both ends", () => {
+        const frames = Array.from({ length: 41 }, (_, index) => index * 100_000);
+        const base = { frameTimesUs: frames, durationUs: 12_000_000, minUs: 2_000_000, keepUs: 300_000 };
+
+        // No frames after 4 s and no audio: everything from 4 s on is idle.
+        expect(idleRanges(base)).toEqual([[4_300_000, 11_700_000]]);
+        // A frozen picture counts as still, and sound keeps its part of the still stretch.
+        expect(
+            idleRanges({
+                ...base,
+                frameTimesUs: [0, 12_000_000],
+                frozenUs: [[4_000_000, 9_000_000]],
+                silentUs: [[0, 6_000_000]],
+            })
+        ).toEqual([[300_000, 5_700_000]]);
+        expect(idleRanges({ ...base, silentUs: [] })).toEqual([]);
+    });
+
+    test("removeIdle cuts the probed stretches and refuses to run without them", () => {
+        const project = wholeProject(source);
+        const op = parseEditOps({ op: "removeIdle" })[0];
+        expect(op).toEqual({ op: "removeIdle", minSeconds: 2, keepSeconds: 0.3 });
+        expect(() => applyOp(project, op)).toThrow("needs the movie's idle stretches");
+        const cut = applyOp(project, op, { idleUs: [[4_300_000, 8_700_000]] });
+        expect(cut.clips.map((clip) => [clip.fromUs, clip.toUs])).toEqual([
+            [0, 4_300_000],
+            [8_700_000, 10_000_000],
+        ]);
     });
 
     test("writes every field the Swift decoder needs and refuses a newer version", () => {

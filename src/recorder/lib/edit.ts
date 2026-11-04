@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import {
     applyOp,
     type EditOp,
@@ -81,7 +82,18 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
 
     for (const [index, op] of ops.entries()) {
         try {
-            next = applyOp(next, op);
+            const facts =
+                op.op === "removeIdle"
+                    ? {
+                          idleUs: await findIdle({
+                              video: next.source.video,
+                              durationUs: next.source.durationUs,
+                              minUs: op.minSeconds * 1_000_000,
+                              keepUs: op.keepSeconds * 1_000_000,
+                          }),
+                      }
+                    : {};
+            next = applyOp(next, op, facts);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             log.debug({ error, op, index }, "edit op refused");

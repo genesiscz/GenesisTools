@@ -286,7 +286,7 @@ program
 program
     .command("apply")
     .description(
-        'Change a recording\'s edit with JSON ops, in order, saved once (the open editor window reloads it). Ops: {"op":"cut","from":4,"to":"0:09"}, split {at}, keep {from,to}, speed {from,to,factor}, zoom {from,to,scale?,focus?:{x,y},follow?}, unzoom {id}, autoZoom {scale?}, volume {volume 0–2}, mute {track,muted?}, audio {include}, exportSettings {codec?,maxHeight?,output?}, reset. Times are source seconds or "mm:ss"'
+        'Change a recording\'s edit with JSON ops, in order, saved once (the open editor window reloads it). Ops: {"op":"cut","from":4,"to":"0:09"}, split {at}, keep {from,to}, speed {from,to,factor}, zoom {from,to,scale?,focus?:{x,y},follow?}, unzoom {id}, autoZoom {scale?}, volume {volume 0–2}, mute {track,muted?}, audio {include}, exportSettings {codec?,maxHeight?,output?}, removeIdle {minSeconds? 2, keepSeconds? 0.3} (cuts still and silent stretches), reset. Times are source seconds or "mm:ss"'
     )
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .argument("<ops>", "one op or an array of ops as JSON, or - to read them from stdin")

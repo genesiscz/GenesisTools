@@ -93,6 +93,16 @@ const movieMethods = [
     edit("apply", z.object({ ops: z.array(editOpSchema).min(1) }), "Several ops at once, saved once.", ["ops"]),
     edit("undo", z.object({}), "Puts back the edit as it was before this handle's last change."),
     edit("reset", z.object({}), "Starts over: the whole movie, no zooms, default audio and export."),
+    edit(
+        "removeIdle",
+        z
+            .object({
+                minSeconds: z.number().min(0.5).max(600).optional(),
+                keepSeconds: z.number().min(0).max(5).optional(),
+            })
+            .strict(),
+        "Cuts every stretch where the picture does not change and nothing is heard for minSeconds (default 2), keeping keepSeconds (0.3) at each end."
+    ),
     defineMethod({
         name: "export",
         params: z.object({ out: z.string().optional() }).strict(),
@@ -239,6 +249,12 @@ export class Movie {
 
     reset() {
         return this.change([{ op: "reset" }]);
+    }
+
+    removeIdle(options: { minSeconds?: number; keepSeconds?: number } = {}) {
+        return this.change([
+            { op: "removeIdle", minSeconds: options.minSeconds ?? 2, keepSeconds: options.keepSeconds ?? 0.3 },
+        ]);
     }
 
     async undo() {

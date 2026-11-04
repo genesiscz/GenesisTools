@@ -379,6 +379,15 @@ export const editOpSchema = z.discriminatedUnion("op", [
         })
         .strict(),
     z.object({ op: z.literal("reset") }).strict(),
+    z
+        .object({
+            op: z.literal("removeIdle"),
+            /** The shortest still and silent stretch that is cut, in seconds. */
+            minSeconds: z.number().min(0.5).max(600).default(2),
+            /** Kept at each end of a cut, so the change before and after it still plays. */
+            keepSeconds: z.number().min(0).max(5).default(0.3),
+        })
+        .strict(),
 ]);
 export type EditOp = z.infer<typeof editOpSchema>;
 
@@ -426,9 +435,29 @@ export function parseEditOps(raw: unknown): EditOp[] {
     return ops;
 }
 
+/** What an op needs from the movie itself, probed by the caller (`removeIdle`: the still and silent stretches). */
+export interface OpFacts {
+    idleUs?: ReadonlyArray<readonly [number, number]>;
+}
+
 /** Applies one op; throws a RangeError a caller can show as it is. */
-export function applyOp(project: EditProject, op: EditOp): EditProject {
+export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): EditProject {
     switch (op.op) {
+        case "removeIdle": {
+            if (!facts.idleUs) {
+                throw new Error("removeIdle needs the movie's idle stretches; run it through editProject or the CLI");
+            }
+
+            let next = project;
+
+            for (const [from, to] of facts.idleUs) {
+                if (to - from >= MINIMUM_CLIP_US) {
+                    next = cutRange(next, from, to);
+                }
+            }
+
+            return next;
+        }
         case "split":
             return splitAt(project, timeToUs(op.at));
         case "cut":
