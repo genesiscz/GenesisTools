@@ -1,6 +1,6 @@
 ---
 name: gt:azure-devops
-description: Azure DevOps work items, queries, dashboards, sprints, wiki pages, comments, history, and parent chains. Use for "get workitem", "fetch task", "show query", "analyze task", or any Azure DevOps URL. For time logging (Timely sync, Clarity fill), invoke the `/gt:timelog` command instead.
+description: Azure DevOps work items, queries, dashboards, sprints, wiki pages, comments, history, parent chains, and Test Plans (plans, suites, test cases with steps, test points and outcomes). Use for "get workitem", "fetch task", "show query", "analyze task", "show the test plan", "add a test case", or any Azure DevOps URL, including `_testPlans` links. For time logging (Timely sync, Clarity fill), invoke the `/gt:timelog` command instead.
 ---
 
 # Azure DevOps Work Item Tool
@@ -105,6 +105,51 @@ Post, edit and delete comments with `comment`, never with a hand-built `az` toke
 text goes as markdown. Keep the draft in a file, post it with `comment add <id> --file draft.md`,
 and apply corrections with `comment edit <id> <commentId> --file draft.md`, so the thread keeps one
 comment instead of a trail of reposts. `comment delete` needs `--yes` when no terminal can ask.
+
+### Test plans
+
+Read and change the Test Plans hub with `testplan`, never with a hand-built `az` token and `curl`.
+Every command takes a plan id or a pasted Test Plans URL (`_testPlans/define?planId=…&suiteId=…`);
+a suite command takes `<plan> <suite>` or one URL with both ids. Reads print markdown (`-f json`
+for data) and save a snapshot under `.claude/azure/testplans/` (`--no-save` skips it).
+
+```bash
+tools azure-devops testplan list --active --owner alice        # plans: id, name, state, owner, iteration, dates
+tools azure-devops testplan show <plan|url>                     # plan details + the suite tree with test case counts
+tools azure-devops testplan search "checkout" --kind suite,case # plans, suites, test cases by name or id (--plan narrows suites)
+tools azure-devops testplan suite show <plan> <suite>           # type, parent, child suites, test cases with points
+tools azure-devops testplan points <plan> <suite>               # the Execute tab: outcome, tester, configuration
+tools azure-devops testplan case show <id|url>                  # fields, numbered steps + expected, shared steps, parameters, suites
+```
+
+Writes print the request they would send and send nothing until `--confirm`:
+
+```bash
+tools azure-devops testplan create --name "Release 5" --start 2026-11-10 --end 2026-11-20 --confirm
+tools azure-devops testplan update <plan> --state Inactive --confirm
+tools azure-devops testplan suite create <plan> --name "Cart" --parent <suite> --confirm   # static by default
+tools azure-devops testplan suite update <plan> <suite> --name "Basket" --parent <suite> --confirm  # rename, move
+tools azure-devops testplan suite add <plan> <suite> --cases 101,102 --confirm   # existing test cases
+tools azure-devops testplan suite remove <plan> <suite> --cases 101 --confirm    # the work items stay
+tools azure-devops testplan case create --title "Pay by card" --steps steps.md --plan <plan> --suite <suite> --confirm
+tools azure-devops testplan case update <id> --steps steps.md --rev 4 --confirm
+tools azure-devops testplan outcome <plan> <suite> --cases 101 --outcome passed --confirm   # or --points; 'active' resets
+```
+
+Steps are a numbered markdown list (the same form `case show` prints) or JSON
+(`[{"action":"…","expected":"…"},{"sharedStepsId":123}]`):
+
+```md
+1. Open the sign-in page
+   Expected: The form shows a user name field
+2. Shared steps #12345
+3. Press **Sign in**
+```
+
+Know before you delete: `testplan delete` and `suite delete` keep the plan or suite 14 days in the
+recycle bin; `case delete` deletes the test case for good, with its points and results. The counts
+in `show` come from the preview `testplan/Count` route, then the 5.0 `test` area route; the line
+"no test case counts" means neither answered.
 
 ### Sprint backlog
 
