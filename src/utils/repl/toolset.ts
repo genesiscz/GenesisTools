@@ -95,7 +95,25 @@ export abstract class ReplToolset {
                             : args[0] === undefined
                               ? {}
                               : args[0];
-                        const parsed = method.params.safeParse(input);
+                        let parsed = method.params.safeParse(input);
+                        // cut({ from, to }) for cut(from, to): one plain object whose keys are all parameter names is
+                        // taken as the named arguments, when the positional reading of it fails.
+                        const named = args[0];
+                        if (
+                            !parsed.success &&
+                            method.positional &&
+                            args.length === 1 &&
+                            named !== null &&
+                            typeof named === "object" &&
+                            !Array.isArray(named) &&
+                            Object.keys(named).length > 0 &&
+                            Object.keys(named).every((key) => method.positional?.includes(key))
+                        ) {
+                            const again = method.params.safeParse(named);
+                            if (again.success) {
+                                parsed = again;
+                            }
+                        }
                         if (!parsed.success || args.length > (method.positional?.length ?? 1)) {
                             const problems = parsed.success
                                 ? [`too many arguments (${args.length})`]

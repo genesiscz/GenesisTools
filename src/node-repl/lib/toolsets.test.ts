@@ -158,6 +158,18 @@ describe("toolset method names", () => {
         // A bad argument of an async method rejects, so `.catch()` sees it, with one line per problem.
         const clicks = Reflect.get(movie, "clicks") as (options: unknown) => Promise<unknown>;
         await expect(clicks({ color: "red" })).rejects.toThrow("  - color: a color is #RRGGBB");
+
+        // cut({ from, to }) works like cut(from, to); an object with another key is still refused.
+        const folder = mkdtempSync(join(tmpdir(), "named-args-"));
+        const path = join(folder, "edit.json");
+        writeProject(
+            path,
+            wholeProject({ video: join(folder, "screen.mp4"), durationUs: 10_000_000, width: 100, height: 100 })
+        );
+        const opened = movies.open(path);
+        const cut = Reflect.get(opened, "cut") as (...args: unknown[]) => Promise<{ clips: unknown[] }>;
+        expect((await cut({ from: 1, to: 2 })).clips).toHaveLength(2);
+        await expect(cut({ start: 1, to: 2 })).rejects.toThrow("Invalid arguments for movies.Movie.cut");
     });
 });
 
