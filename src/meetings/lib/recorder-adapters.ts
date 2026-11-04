@@ -8,14 +8,8 @@ import type {
     RecordingSpan,
     RecordingStopReason,
 } from "@genesiscz/utils/meetings/record";
-import {
-    attemptStaleTakeover,
-    classifyPidRecord,
-    clearPidFile,
-    parsePidRecord,
-    writePidFile,
-} from "@genesiscz/utils/process/pidfile";
-import { atomicWriteFileSync, readFileIfExistsSync } from "@genesiscz/utils/storage/atomic-file";
+import { claimPidFile, clearPidFile } from "@genesiscz/utils/process/pidfile";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 /**
  * What the meetings recorder keeps that the shared capture session does not know about: the one recorder of a store
@@ -26,19 +20,17 @@ import { atomicWriteFileSync, readFileIfExistsSync } from "@genesiscz/utils/stor
 const { log } = logger.scoped("meetings-recorder");
 
 /**
- * Claims the store's one recorder: the pid file is written exclusively, and a claim whose owner is dead (or a reused
- * pid of another program) is taken over first. A live recorder's claim is left as it is and the write throws.
+ * Claims the store's one recorder. Only a claim whose owner is dead (or a reused pid of another program) is taken
+ * over; a live recorder's claim, this process's own and an unreadable file are left as they are, and the start fails.
  */
 export async function claimRecorderPid(path: string): Promise<{ release: () => void }> {
-    const previous = readFileIfExistsSync(path);
-    const content = previous ? Buffer.from(previous).toString("utf8") : undefined;
-    const owner = content ? parsePidRecord(content) : null;
-    const status = owner ? classifyPidRecord(owner).status : undefined;
-    const reclaimed =
-        content && (status === "dead" || status === "foreign") ? await attemptStaleTakeover(path, content) : false;
+    const claim = await claimPidFile(path, {
+        reclaimable: (state) => state.status === "dead" || state.status === "foreign",
+    });
 
-    if (!reclaimed) {
-        writePidFile(path, { exclusive: true });
+    if (claim.status !== "claimed") {
+        const owner = claim.status === "held" && "pid" in claim.state ? ` (pid ${claim.state.pid})` : "";
+        throw new Error(`another recorder holds ${path}${owner}`);
     }
 
     return { release: () => clearPidFile(path) };
