@@ -571,9 +571,10 @@ const movieMethods = [
                 enabled: z.boolean().optional(),
                 reductionDb: z.number().min(1).max(40).optional(),
                 tracks: z.array(z.number().int().nonnegative()).optional(),
+                trackReductionDb: z.record(z.string().regex(/^\d+$/), z.number().min(1).max(40)).optional(),
             })
             .strict(),
-        "Turns the room and fan noise of the sound down on export (ffmpeg afftdn): reductionDb 12 by default (8 is gentle, 20+ starts to blur words), on every audio track or only tracks (0 is the first; a screen recording's microphone is its last). The export renders from a cleaned copy of the movie, made once per setting under .denoise/ beside it. enabled: false takes it away."
+        "Turns the room and fan noise of the sound down on export (ffmpeg afftdn): reductionDb 12 by default (8 is gentle, 20+ starts to blur words), on every audio track or only tracks (0 is the first; a screen recording's microphone is its last); trackReductionDb { 1: 20 } gives a track (here the second) its own strength (merged with earlier ones). The export renders from a cleaned copy of the movie, made once per setting under .denoise/ beside it. enabled: false takes it away."
     ),
     edit(
         "normalize",
@@ -1246,7 +1247,14 @@ export class Movie {
         return dryRun ? cutsOut(await previewTranscriptCuts(this.recording, op)) : this.change([op]);
     }
 
-    async denoise(options: { enabled?: boolean; reductionDb?: number; tracks?: number[] } = {}) {
+    async denoise(
+        options: {
+            enabled?: boolean;
+            reductionDb?: number;
+            tracks?: number[];
+            trackReductionDb?: Record<string, number>;
+        } = {}
+    ) {
         return this.change([{ op: "denoise", ...options }]);
     }
 

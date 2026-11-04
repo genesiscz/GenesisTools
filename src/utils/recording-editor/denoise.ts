@@ -24,16 +24,19 @@ export const denoiseSchema = z.object({
     reductionDb: z.number().min(1).max(40).default(12),
     /** The audio tracks to clean (0 is the first); absent is every track. A screen recording's mic is its last track. */
     tracks: z.array(z.number().int().nonnegative()).optional(),
+    /** A strength per track ("1": 20) where it differs from `reductionDb`; absent tracks use `reductionDb`. */
+    trackReductionDb: z.record(z.string().regex(/^\d+$/), z.number().min(1).max(40)).optional(),
 });
 export type DenoiseSettings = z.infer<typeof denoiseSchema>;
 
-const DENOISE_FILTERS: Record<DenoiseMethod, (settings: DenoiseSettings) => string> = {
+const DENOISE_FILTERS: Record<DenoiseMethod, (reductionDb: number) => string> = {
     // nf: the noise floor it starts from (dB); tn: it keeps tracking the noise, which suits a room that changes.
-    afftdn: (settings) => `afftdn=nr=${settings.reductionDb}:nf=-50:tn=1`,
+    afftdn: (reductionDb) => `afftdn=nr=${reductionDb}:nf=-50:tn=1`,
 };
 
-export function denoiseFilter(settings: DenoiseSettings): string {
-    return DENOISE_FILTERS[settings.method](settings);
+/** The filter for one audio track: its own strength when it has one, else the settings' `reductionDb`. */
+export function denoiseFilter(settings: DenoiseSettings, track: number): string {
+    return DENOISE_FILTERS[settings.method](settings.trackReductionDb?.[String(track)] ?? settings.reductionDb);
 }
 
 /** The ffmpeg command that copies the picture and cleans the chosen audio tracks (the others are copied). */
@@ -47,7 +50,7 @@ export function denoisedSourceArgv(options: {
     const cleaned = new Set(settings.tracks ?? [...Array(audioTracks).keys()]);
     const perTrack = [...Array(audioTracks).keys()].flatMap((track) =>
         cleaned.has(track)
-            ? [`-filter:a:${track}`, denoiseFilter(settings), `-c:a:${track}`, "aac", `-b:a:${track}`, "192k"]
+            ? [`-filter:a:${track}`, denoiseFilter(settings, track), `-c:a:${track}`, "aac", `-b:a:${track}`, "192k"]
             : [`-c:a:${track}`, "copy"]
     );
     return [

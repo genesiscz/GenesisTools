@@ -105,6 +105,12 @@ struct EditProject: Codable, Equatable {
         var reductionDb = 12.0
         /// nil cleans every audio track.
         var tracks: [Int]?
+        /// A strength per track ("1": 20) where it differs from `reductionDb`.
+        var trackReductionDb: [String: Double]?
+
+        func strength(ofTrack track: Int) -> Double { trackReductionDb?[String(track)] ?? reductionDb }
+
+        func cleans(track: Int) -> Bool { tracks?.contains(track) ?? true }
     }
 
     /// Music looped under the movie, fading in and out, and quieter (`duck`) while a transcript line plays.

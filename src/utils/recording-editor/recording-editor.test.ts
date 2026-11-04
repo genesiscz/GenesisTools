@@ -1014,6 +1014,22 @@ describe("noise reduction on export", () => {
         expect(argv.at(-1)).toBe("/rec/.denoise/screen-x.mp4");
     });
 
+    test("a track can have its own strength: the op merges it and the copy filters that track at it", () => {
+        let project = applyOp(wholeProject(source), { op: "denoise", reductionDb: 10, trackReductionDb: { "1": 20 } });
+        project = applyOp(project, { op: "denoise", trackReductionDb: { "0": 6 } });
+        expect(project.audio.denoise?.trackReductionDb).toEqual({ "0": 6, "1": 20 });
+        const argv = denoisedSourceArgv({
+            source: "/rec/screen.mp4",
+            output: "/rec/.denoise/screen-x.mp4",
+            audioTracks: 3,
+            settings: denoiseSchema.parse({ ...project.audio.denoise, tracks: [0, 2] }),
+        }).join(" ");
+        expect(argv).toContain("-filter:a:0 afftdn=nr=6:nf=-50:tn=1");
+        expect(argv).toContain("-c:a:1 copy");
+        expect(argv).toContain("-filter:a:2 afftdn=nr=10:nf=-50:tn=1");
+        expect(() => applyOp(project, { op: "denoise", trackReductionDb: { "0": 60 } })).toThrow();
+    });
+
     test("the copy's name changes with the settings and the source, so a stale copy is never reused", () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-denoise-"));
         const movie = join(dir, "screen.mp4");

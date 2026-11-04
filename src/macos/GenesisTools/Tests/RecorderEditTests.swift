@@ -243,6 +243,35 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertTrue(last.contains("\"deleted\":true") && last.contains("\"toUs\":2000000"), String(last))
     }
 
+    func testNoiseReductionTurnsOnPerTrackAndKeepsAStrengthPerTrackAsTheDenoiseOpDoes() throws {
+        var audio = EditProject.AudioSettings()
+        audio.include = false
+        let on = EditorModel.denoised(audio, enabled: true)
+        XCTAssertEqual(on.denoise, EditProject.Denoise(), "on: 12 dB on every track, as the op with no fields")
+        XCTAssertTrue(on.include, "the op turns the sound on")
+        XCTAssertNil(EditorModel.denoised(on, enabled: false).denoise)
+
+        // Two tracks: the first off leaves only the second; both off is no noise reduction at all.
+        let secondOnly = EditorModel.denoised(on, track: 0, on: false, trackCount: 2)
+        XCTAssertEqual(secondOnly.denoise?.tracks, [1])
+        XCTAssertNil(EditorModel.denoised(secondOnly, track: 0, on: true, trackCount: 2).denoise?.tracks, "every track again is nil")
+        XCTAssertNil(EditorModel.denoised(secondOnly, track: 1, on: false, trackCount: 2).denoise)
+
+        let stronger = EditorModel.denoised(on, track: 1, reductionDb: 20.4, trackCount: 2)
+        XCTAssertEqual(stronger.denoise?.trackReductionDb, ["1": 20])
+        XCTAssertEqual(stronger.denoise?.strength(ofTrack: 0), 12)
+        XCTAssertEqual(stronger.denoise?.strength(ofTrack: 1), 20)
+        XCTAssertEqual(EditorModel.denoised(on, track: 0, reductionDb: 8, trackCount: 1).denoise?.reductionDb, 8,
+                       "one track: its strength is the setting's own")
+
+        // The CLI's per-track map reads and writes back unchanged.
+        let json = #"{"include":true,"volume":1,"mutedTracks":[],"denoise":{"method":"afftdn","reductionDb":10,"trackReductionDb":{"1":20}}}"#
+        let decoded = try JSONDecoder().decode(EditProject.AudioSettings.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.denoise?.trackReductionDb, ["1": 20])
+        let written = try XCTUnwrap(String(data: JSONEncoder().encode(decoded), encoding: .utf8))
+        XCTAssertTrue(written.contains(#""trackReductionDb":{"1":20}"#), written)
+    }
+
     func testZoomsNeverOverlap() throws {
         let edit = project([.init(id: "a", fromUs: 0, toUs: 10_000_000)])
         let (first, firstID) = try XCTUnwrap(TimelineMap.addZoom(edit, startUs: 1_000_000, endUs: 3_000_000, scale: 2))

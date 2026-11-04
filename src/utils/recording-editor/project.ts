@@ -1126,6 +1126,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             method: z.enum(DENOISE_METHODS).optional(),
             reductionDb: z.number().min(1).max(40).optional(),
             tracks: z.array(z.number().int().nonnegative()).optional(),
+            /** A strength per track ("1": 20), merged into the ones set before. */
+            trackReductionDb: z.record(z.string().regex(/^\d+$/), z.number().min(1).max(40)).optional(),
         })
         .strict(),
     z
@@ -1604,6 +1606,9 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 ...(op.method === undefined ? {} : { method: op.method }),
                 ...(op.reductionDb === undefined ? {} : { reductionDb: op.reductionDb }),
                 ...(op.tracks === undefined ? {} : { tracks: op.tracks }),
+                ...(op.trackReductionDb === undefined
+                    ? {}
+                    : { trackReductionDb: { ...project.audio.denoise?.trackReductionDb, ...op.trackReductionDb } }),
             });
             return { ...project, audio: { ...project.audio, include: true, denoise } };
         }
