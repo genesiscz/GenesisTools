@@ -666,7 +666,7 @@ function summarize(project: EditProject, title: string | undefined): string {
         `captions ${project.captions?.show ? "on" : "off"}`,
         `frame ${project.frame ? (project.frame.aspect ?? "on") : "off"}`,
         `music ${project.audio.music ? `${project.audio.music.file.split(/[/\\]/).pop()}${project.audio.music.loop === false ? " once" : ""}` : "none"}`,
-        `click rings ${project.clicks?.highlight === false ? "off" : "on"}${project.clicks?.sound ? ", click sound" : ""}`,
+        `click rings ${project.clicks?.highlight ? "on" : "off"}${project.clicks?.sound ? ", click sound" : ""}`,
         count(Object.keys(project.transcript?.fixes ?? {}).length, "edited caption line"),
     ];
     return `${title ? `"${title}": ` : ""}${parts.join(", ")}`;
