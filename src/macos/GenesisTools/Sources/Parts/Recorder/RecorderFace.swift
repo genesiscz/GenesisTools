@@ -338,6 +338,7 @@ enum EditorKeys {
             case ("o", false): model.markOut()
             default:
                 switch event.keyCode {
+                case 51 where shift: model.cutPart()
                 case 51, 117: model.deleteSelection()
                 case 123: model.step(frames: shift ? -60 : -1)
                 case 124: model.step(frames: shift ? 60 : 1)

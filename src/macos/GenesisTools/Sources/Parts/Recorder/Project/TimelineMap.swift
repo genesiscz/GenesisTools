@@ -86,6 +86,39 @@ enum TimelineMap {
         return next
     }
 
+    /// Cuts what plays from `fromOut` to `toOut` (output microseconds) out of the edit: each clip keeps its pieces
+    /// before and after the range, at its speed, and a clip the range falls inside becomes two. Nil when nothing plays
+    /// there, or when nothing would be left.
+    static func cut(_ project: EditProject, fromOut: Int64, toOut: Int64) -> EditProject? {
+        guard toOut > fromOut else { return nil }
+        var clips: [EditProject.Clip] = []
+        var removed = false
+        for placed in placed(project) {
+            let clip = placed.clip
+            guard fromOut < placed.outEndUs, toOut > placed.outStartUs else {
+                clips.append(clip)
+                continue
+            }
+            removed = true
+            let source = { (outUs: Int64) in clip.fromUs + Int64((Double(outUs - placed.outStartUs) * clip.speed).rounded()) }
+            if fromOut > placed.outStartUs {
+                var before = clip
+                before.toUs = min(clip.toUs, source(fromOut))
+                if before.toUs - before.fromUs >= minimumClipUs { clips.append(before) }
+            }
+            if toOut < placed.outEndUs {
+                var after = clip
+                after.fromUs = max(clip.fromUs, source(toOut))
+                if clips.contains(where: { $0.id == after.id }) { after.id = EditProject.newID("c") }
+                if after.toUs - after.fromUs >= minimumClipUs { clips.append(after) }
+            }
+        }
+        guard removed, !clips.isEmpty else { return nil }
+        var next = project
+        next.clips = clips
+        return next
+    }
+
     /// Removes a clip (cuts its part of the source); the last clip cannot go.
     static func delete(_ project: EditProject, clip id: String) -> EditProject? {
         guard project.clips.count > 1, let index = project.clips.firstIndex(where: { $0.id == id }) else { return nil }

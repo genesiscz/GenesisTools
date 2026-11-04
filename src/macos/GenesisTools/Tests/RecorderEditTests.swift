@@ -35,6 +35,20 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(TimelineMap.split(edit, atOutput: 0))
     }
 
+    func testCuttingAPartSplitsTheClipItFallsInAndKeepsSpeeds() throws {
+        let edit = project([.init(id: "a", fromUs: 0, toUs: 4_000_000), .init(id: "b", fromUs: 6_000_000, toUs: 10_000_000, speed: 2)])
+        // 1 s to 5 s of output: the end of a (1-4 s) and the first second of b (source 6-8 s at 2x).
+        let cut = try XCTUnwrap(TimelineMap.cut(edit, fromOut: 1_000_000, toOut: 5_000_000))
+        XCTAssertEqual(cut.clips.map(\.fromUs), [0, 8_000_000])
+        XCTAssertEqual(cut.clips.map(\.toUs), [1_000_000, 10_000_000])
+        XCTAssertEqual(cut.clips.map(\.speed), [1, 2])
+        XCTAssertEqual(cut.outputDurationUs, edit.outputDurationUs - 4_000_000)
+        let inside = try XCTUnwrap(TimelineMap.cut(edit, fromOut: 1_000_000, toOut: 2_000_000))
+        XCTAssertEqual(inside.clips.count, 3, "a part inside a clip makes it two")
+        XCTAssertEqual(Set(inside.clips.map(\.id)).count, 3, "the new piece has its own id")
+        XCTAssertNil(TimelineMap.cut(edit, fromOut: 0, toOut: edit.outputDurationUs), "something has to stay")
+    }
+
     func testTrimToPlayheadCutsOneSideAndKeepsTheFrame() throws {
         let edit = project([.init(id: "a", fromUs: 0, toUs: 2_000_000), .init(id: "b", fromUs: 4_000_000, toUs: 8_000_000, speed: 2)])
         let (start, startPlayhead) = try XCTUnwrap(TimelineMap.trimToPlayhead(edit, atOutput: 3_000_000, side: .start))

@@ -42,6 +42,8 @@ enum EditorMenu {
         EditorCommand(title: "Set Part In", key: "i", label: "I") { $0.markIn() },
         EditorCommand(title: "Set Part Out", key: "o", label: "O") { $0.markOut() },
         EditorCommand(title: "Clear Part", key: "", label: "") { $0.clearPart() },
+        EditorCommand(title: "Cut the Part", key: "\u{8}", modifiers: .shift, label: "⇧⌫") { $0.cutPart() },
+        EditorCommand(title: "Keep Only the Part", key: "", label: "") { $0.keepPart() },
         EditorCommand(title: "Back One Frame", key: String(UnicodeScalar(NSLeftArrowFunctionKey)!), label: "←") { $0.step(frames: -1) },
         EditorCommand(title: "Forward One Frame", key: String(UnicodeScalar(NSRightArrowFunctionKey)!), label: "→") { $0.step(frames: 1) },
         EditorCommand(title: "Back One Second", key: String(UnicodeScalar(NSLeftArrowFunctionKey)!), modifiers: .shift, label: "⇧←") { $0.step(frames: -60) },
@@ -224,7 +226,7 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
         case "Redo": return model.canRedo
         case "Delete Selection", "Deselect": return model.selection != .none
         case "Duplicate": return model.selection != .none
-        case "Clear Part": return model.exportPart != nil
+        case "Clear Part", "Cut the Part", "Keep Only the Part": return model.exportPart != nil
         default: return true
         }
     }

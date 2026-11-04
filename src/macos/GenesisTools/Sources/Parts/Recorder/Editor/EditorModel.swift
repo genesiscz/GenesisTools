@@ -481,6 +481,33 @@ final class EditorModel {
         partOutUs = nil
     }
 
+    /// ⇧⌫: cuts the part between I and O out of the edit and puts the playhead where it was.
+    func cutPart() {
+        guard let part = exportPart else {
+            show("Set a part with I and O first; ⇧⌫ cuts what plays between them.", error: false)
+            return
+        }
+        guard let next = TimelineMap.cut(project, fromOut: part.fromUs, toOut: part.toUs) else {
+            show("The part is the whole edit; at least one frame has to stay.", error: false)
+            return
+        }
+        clearPart()
+        clock.outUs = part.fromUs
+        apply(next, rebuildMovie: true)
+        show("Cut \(formatClock(part.toUs - part.fromUs, tenths: true)); ⌘Z puts it back.", error: false)
+    }
+
+    /// Keeps only what plays between I and O.
+    func keepPart() {
+        guard let part = exportPart, let next = TimelineMap.part(project, fromOut: part.fromUs, toOut: part.toUs) else {
+            show("Set a part with I and O first.", error: false)
+            return
+        }
+        clearPart()
+        clock.outUs = 0
+        apply(next, rebuildMovie: true)
+    }
+
     /// Hides a part of the picture (the middle, or a rectangle drawn on the preview, 0...1 of the source) for 3 s from
     /// the playhead; the Hide tab then moves and sizes it.
     func addRedaction(rect: CGRect = CGRect(x: 0.35, y: 0.42, width: 0.3, height: 0.16)) {
