@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
+import { checkImageDimensions } from "@genesiscz/utils/image/dimensions";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { voiceRuns } from "@genesiscz/utils/meetings/energy";
@@ -23,6 +24,7 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
 import { groupTurns } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { createCanvas } from "@napi-rs/canvas";
 import { CallTimeline } from "./lib/call-timeline";
 import { suggestDictionary } from "./lib/dictionary-suggest";
 import { findingItems, findingProblems, findingsFileSchema } from "./lib/findings";
@@ -42,6 +44,7 @@ import {
 import { rawMeeting } from "./lib/raw";
 import { meetingLiveId, pieceTargets, type RecorderNote, recorderFiles, runRecorder } from "./lib/recorder";
 import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from "./lib/screen";
+import { framesMatching, ocrRowSchema, renderScreenBoxes } from "./lib/screen-boxes";
 import { showText } from "./lib/show-text";
 import { suggestItems } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
@@ -2767,5 +2770,86 @@ describe("showText", () => {
                 "",
             ].join("\n")
         );
+    });
+});
+
+describe("screen boxes", () => {
+    test("draws what changed since the display's earlier frame, or what matches, and crops each box", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "meeting-boxes-"));
+        mkdirSync(join(folder, "frames"));
+        const canvas = createCanvas(400, 200);
+        canvas.getContext("2d").fillRect(0, 0, 400, 200);
+
+        for (const name of ["a-d1.png", "b-d1.png"]) {
+            writeFileSync(join(folder, "frames", name), canvas.toBuffer("image/png"));
+        }
+
+        const block = (text: string, x: number, y: number) => ({
+            text,
+            confidence: 1,
+            bounds: { x: String(x), y: String(y), width: "0.25", height: "0.1" },
+        });
+        const rows = [
+            {
+                file: "frames/a-d1.png",
+                at: "2026-11-04T15:00:00.000Z",
+                displayId: 1,
+                text: "Quick views",
+                blocks: [block("Quick views", 0.1, 0.8)],
+            },
+            {
+                file: "frames/b-d1.png",
+                at: "2026-11-04T15:00:05.000Z",
+                displayId: 1,
+                text: "OuIck VewS\nTask 3",
+                blocks: [block("OuIck VewS", 0.1, 0.8), block("Task 3", 0.6, 0.2)],
+            },
+        ];
+        const outDir = join(folder, "out");
+        const changed = await renderScreenBoxes({ folder, rows, files: ["frames/b-d1.png"], level: "line", outDir });
+
+        expect(changed).toEqual([
+            {
+                file: "frames/b-d1.png",
+                at: "2026-11-04T15:00:05.000Z",
+                displayId: 1,
+                selection: "changed",
+                width: 400,
+                height: 200,
+                boxes: [{ text: "Task 3", confidence: 1, x: 240, y: 140, width: 100, height: 20 }],
+                annotated: join(outDir, "b-d1.boxes.png"),
+                crops: [join(outDir, "b-d1.1.png")],
+            },
+        ]);
+        const crop = SafeJSON.stringify(
+            checkImageDimensions({ data: readFileSync(changed[0].crops[0]), maxPixels: 1e6 })
+        );
+        expect(crop).toBe(SafeJSON.stringify({ width: 124, height: 44 }));
+
+        const matched = await renderScreenBoxes({
+            folder,
+            rows,
+            files: ["frames/b-d1.png"],
+            match: "quick",
+            level: "block",
+            outDir,
+        });
+        expect(matched[0]?.boxes.map((box) => box.text)).toEqual([]);
+        const exact = await renderScreenBoxes({
+            folder,
+            rows,
+            files: ["frames/a-d1.png"],
+            match: "QUICK",
+            level: "block",
+            outDir,
+        });
+        expect(exact[0]?.boxes.map((box) => box.text)).toEqual(["Quick views"]);
+        expect(
+            framesMatching(
+                rows.map((row) => ocrRowSchema.parse(row)),
+                "task",
+                5
+            ).map((row) => row.file)
+        ).toEqual(["frames/b-d1.png"]);
     });
 });

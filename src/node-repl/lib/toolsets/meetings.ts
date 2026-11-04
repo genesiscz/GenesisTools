@@ -5,12 +5,14 @@ import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { resolveProject } from "@app/meetings/lib/project";
 import { questionLabel } from "@app/meetings/lib/questions";
 import { meetingLiveId } from "@app/meetings/lib/recorder";
+import { meetingScreen } from "@app/meetings/lib/screen-boxes";
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { runSuggest } from "@app/meetings/lib/suggest-run";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
+import { OCR_BOX_LEVELS } from "@genesiscz/utils/macos/ocr-boxes";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { ITEM_STATUSES, type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
@@ -21,6 +23,7 @@ import {
     settingsPatchOf,
 } from "@genesiscz/utils/repl/toolsets/recorder";
 import { callRecorder, readLiveRecording } from "@genesiscz/utils/screen-recorder/live";
+import { parseClock } from "@genesiscz/utils/transcribe/render";
 import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { z } from "zod";
 
@@ -168,6 +171,32 @@ const setRecordingSettings = defineMethod({
     effect: "reversible",
     doc: `${RECORDER_SET_SETTINGS_DOC} Only while this meeting is being recorded.`,
 });
+const screen = defineMethod({
+    name: "screen",
+    params: z
+        .object({
+            /** A transcript time: seconds, or "1:23:50" / "23:50". */
+            at: z.union([z.number().nonnegative(), z.string().min(1)]).optional(),
+            windowSec: z.number().positive().optional(),
+            match: z.string().min(1).optional(),
+            limit: z.number().int().positive().optional(),
+            boxes: z
+                .object({
+                    level: z.enum(OCR_BOX_LEVELS).optional(),
+                    outDir: z.string().min(1),
+                    pad: z.number().int().nonnegative().optional(),
+                    maxCrops: z.number().int().positive().optional(),
+                })
+                .strict()
+                .optional(),
+        })
+        .strict(),
+    result: z.unknown(),
+    resultName:
+        "{ zeroMs, recorded, frames: { file, at, displayId, text, meetingSec }[], boxes?: { file, selection, boxes: { text, x, y, width, height }[], annotated, crops }[] }",
+    effect: "read",
+    doc: 'The screen frames at a transcript time (at, windowSec) or that show a text (match, limit), from the recording\'s ocr.jsonl. With boxes: { outDir }, each frame\'s OCR boxes in frame pixels (level "block" default, or "line"): the ones holding match, or without match the ones that changed since the display\'s earlier frame, drawn numbered on the frame plus one PNG crop each in outDir.',
+});
 
 /** The meeting as an agent reads it: the record's facts, the item counts and a one-line summary. */
 function describe(record: MeetingRecord) {
@@ -225,6 +254,7 @@ export class MeetingsToolset extends ReplToolset {
                     set,
                     recordingSettings,
                     setRecordingSettings,
+                    screen,
                 ],
             },
         ],
@@ -410,6 +440,29 @@ export class MeetingsToolset extends ReplToolset {
                     }
                 );
                 return describe(record);
+            },
+            screen: async (input: z.input<typeof screen.params>) => {
+                const options = screen.params.parse(input);
+                const atSec = typeof options.at === "string" ? parseClock(options.at) : options.at;
+
+                if (typeof options.at === "string" && atSec === undefined) {
+                    throw new Error(`at "${options.at}" is no transcript time: use seconds, 1:23:50 or 23:50`);
+                }
+
+                const {
+                    displays: _displays,
+                    spans: _spans,
+                    ...result
+                } = await meetingScreen({
+                    store,
+                    record: current(),
+                    ...(atSec !== undefined ? { atSec } : {}),
+                    ...(options.windowSec !== undefined ? { windowSec: options.windowSec } : {}),
+                    ...(options.match ? { match: options.match } : {}),
+                    ...(options.limit !== undefined ? { limit: options.limit } : {}),
+                    ...(options.boxes ? { boxes: options.boxes } : {}),
+                });
+                return result;
             },
         };
     }

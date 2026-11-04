@@ -1,11 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { spawnToolDetached } from "@genesiscz/utils/cli";
+import { spawnToolDetached, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes, parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { OCR_BOX_LEVELS, type OcrBoxLevel } from "@genesiscz/utils/macos/ocr-boxes";
 import { calendarAround } from "@genesiscz/utils/meetings/calendar";
 import {
     DISPLAY_POLICIES,
@@ -23,7 +24,6 @@ import {
 import { callRecorder, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import { formatClock, localTime, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
-import { CallTimeline } from "../lib/call-timeline";
 import { collectAndReport } from "../lib/collect";
 import { ensureScreenRecording } from "../lib/grants";
 import { linkSource } from "../lib/link";
@@ -36,7 +36,7 @@ import {
     runRecorder,
     stateDisplays,
 } from "../lib/recorder";
-import { framesAtPerDisplay, type OcrLine, ocrLineSchema, recordedSpans } from "../lib/screen";
+import { meetingScreen, type ScreenBoxFrame } from "../lib/screen-boxes";
 import { errorText, fail, TOOL } from "../lib/shared";
 
 const { log } = logger.scoped("meetings-record-cmd");
@@ -487,7 +487,18 @@ async function runCommand(id: string, opts: { display?: string; audio?: string }
     }
 }
 
-async function screen(ref: string, opts: { at?: string; window?: string; json?: boolean }): Promise<void> {
+interface ScreenOptions {
+    at?: string;
+    window?: string;
+    json?: boolean;
+    boxes?: boolean;
+    match?: string;
+    level?: string;
+    out?: string;
+    limit?: string;
+}
+
+async function screen(ref: string, opts: ScreenOptions): Promise<void> {
     const store = new MeetingStore();
     const record = store.resolve(ref);
 
@@ -499,37 +510,61 @@ async function screen(ref: string, opts: { at?: string; window?: string; json?: 
     const atSec = opts.at ? parseClock(opts.at) : undefined;
     const windowSec = parseDuration(opts.window ?? "30s") / 1000;
 
-    if (atSec === undefined) {
-        fail(`--at needs a transcript time: 1:23:50, 23:50 or 90 (seconds).`);
+    if (atSec === undefined && !opts.match) {
+        fail(`--at needs a transcript time: 1:23:50, 23:50 or 90 (seconds), or give --match <text>.`);
         return;
     }
 
-    const ocrPath = join(store.folder(record.id), "ocr.jsonl");
+    if (opts.boxes && !opts.out) {
+        fail("--boxes needs --out <dir>: the drawn frames and the crops go there.");
+        return;
+    }
 
-    if (!existsSync(ocrPath)) {
+    if (opts.level !== undefined && !OCR_BOX_LEVELS.includes(opts.level as OcrBoxLevel)) {
+        out.println(suggestEnumFlag(`${TOOL} screen ${ref}`, "--level", OCR_BOX_LEVELS));
+        process.exitCode = 1;
+        return;
+    }
+
+    if (!existsSync(join(store.folder(record.id), "ocr.jsonl"))) {
         fail(`${record.id} has no screen recording. Record one: ${TOOL} record start --meeting ${record.id}`);
         return;
     }
 
-    const zero = (await CallTimeline.forRecord(record)).zeroMs;
-    const target = zero + atSec * 1000;
-    const lines: OcrLine[] = readFileSync(ocrPath, "utf8")
-        .split("\n")
-        .filter((row) => row.trim())
-        .map((row) => ocrLineSchema.parse(SafeJSON.parse(row, { strict: true })));
-    const spans = recordedSpans(record);
-    const { displays, recorded } = framesAtPerDisplay({ lines, spans, targetMs: target, windowMs: windowSec * 1000 });
-    const frames = displays.flatMap((display) => display.frames);
-    const clockOf = (ms: number): string => formatClock(Math.max(0, (ms - zero) / 1000));
+    const result = await meetingScreen({
+        store,
+        record,
+        ...(atSec !== undefined ? { atSec } : {}),
+        windowSec,
+        ...(opts.match ? { match: opts.match } : {}),
+        limit: Number(opts.limit ?? 5),
+        ...(opts.boxes && opts.out
+            ? { boxes: { level: (opts.level as OcrBoxLevel | undefined) ?? "block", outDir: opts.out } }
+            : {}),
+    });
+    const { spans, recorded, displays, frames } = result;
+    const clockOf = (ms: number): string => formatClock(Math.max(0, (ms - result.zeroMs) / 1000));
+
+    if (result.boxes) {
+        printScreenBoxes(result.boxes, opts, clockOf);
+        return;
+    }
 
     if (opts.json) {
-        out.result(
-            SafeJSON.stringify(
-                frames.map((line) => ({ ...line, meetingSec: (Date.parse(line.at) - zero) / 1000 })),
-                null,
-                2
-            )
-        );
+        out.result(SafeJSON.stringify(frames, null, 2));
+        return;
+    }
+
+    if (atSec === undefined) {
+        for (const line of frames) {
+            out.println(`── ${clockOf(Date.parse(line.at))}  ${join(store.folder(record.id), line.file)}`);
+            out.println(line.text.trim());
+        }
+
+        if (frames.length === 0) {
+            ui.warn(`No frame of ${record.id} shows "${opts.match}".`);
+        }
+
         return;
     }
 
@@ -554,6 +589,34 @@ async function screen(ref: string, opts: { at?: string; window?: string; json?: 
             out.println(`── ${clockOf(Date.parse(line.at))}${since}  ${join(store.folder(record.id), line.file)}`);
             out.println(line.text.trim() || "(no text)");
         }
+    }
+}
+
+/** `screen --boxes`: each frame's matching or changed boxes, the drawn frame and the crop of each box. */
+function printScreenBoxes(results: ScreenBoxFrame[], opts: ScreenOptions, clockOf: (ms: number) => string): void {
+    if (opts.json) {
+        out.result(SafeJSON.stringify(results, null, 2));
+        return;
+    }
+
+    for (const frame of results) {
+        const what = frame.selection === "match" ? `matching "${opts.match}"` : "changed since the frame before";
+        out.println(`── ${clockOf(Date.parse(frame.at))}  ${frame.file}: ${frame.boxes.length} boxes ${what}`);
+
+        if (frame.annotated) {
+            out.println(`   drawn: ${frame.annotated}`);
+        }
+
+        for (const [index, box] of frame.boxes.entries()) {
+            const crop = frame.crops.find((path) => path.endsWith(`.${index + 1}.png`));
+            out.println(
+                `   ${index + 1}. ${box.x},${box.y} ${box.width}x${box.height}  ${box.text.split("\n")[0]}${crop ? `  ${crop}` : ""}`
+            );
+        }
+    }
+
+    if (results.length === 0) {
+        ui.warn("No frame to draw boxes on.");
     }
 }
 
@@ -645,9 +708,14 @@ export function registerRecordCommands(program: Command): void {
     program
         .command("screen")
         .argument("<meeting>", "meeting id, a unique prefix, last, or wisprflow:<id>")
-        .description("The OCR text of the screen around a transcript time")
-        .requiredOption("--at <time>", "transcript time: 1:23:50, 23:50 or seconds")
+        .description("The OCR text of the screen around a transcript time, or the frames that show a text")
+        .option("--at <time>", "transcript time: 1:23:50, 23:50 or seconds")
         .option("--window <duration>", "how wide a window around it", "30s")
+        .option("--match <text>", "only boxes (with --boxes) or frames (without --at) that hold this text")
+        .option("--limit <n>", "with --match and no --at: at most this many frames", "5")
+        .option("--boxes", "draw the matching or changed OCR boxes on each frame and write a crop of each")
+        .option("--level [level]", `box size: ${OCR_BOX_LEVELS.join(" or ")} (default block)`)
+        .option("--out <dir>", "where --boxes writes the drawn frames and crops")
         .option("--json", "print JSON")
         .action(screen);
 }
