@@ -18,6 +18,9 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         var edited = false
         /// The movie's length from `recording.json` (video recordings write it when they end).
         var durationMs: Double?
+        /// The screen recording of a meeting (`~/.genesis-tools/meetings/<id>/`): the folder is the meeting's, so the
+        /// library never moves it to the Trash.
+        var isMeeting = false
     }
 
     private var item: NSStatusItem?
@@ -27,6 +30,38 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
 
     static var libraryFolder: URL {
         URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/recordings/library", isDirectory: true)
+    }
+
+    /// The meetings, each a folder; one with a screen recording holds the `recording.json` its recorder writes.
+    nonisolated static var meetingsFolder: URL {
+        URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/meetings", isDirectory: true)
+    }
+
+    /// Every folder whose recordings the menu and the library list.
+    static var recordingFolders: [URL] { [libraryFolder, meetingsFolder] }
+
+    /// Opens a recording in the editor. A frames-only one (a meeting's screen, say) goes through
+    /// `tools recorder open`, which makes its proxy movie first and then opens the editor.
+    static func open(_ recent: Recent, atSourceSeconds: Double? = nil) {
+        if recent.hasMovie {
+            EditorWindows.shared.open(path: recent.folder.path, atSourceSeconds: atSourceSeconds)
+            return
+        }
+        HubPerf.log("recorder: open frames-only \(recent.folder.path) through tools recorder open")
+        do {
+            try ToolsRunner.detached(["recorder", "open", recent.folder.path]) { status, tail in
+                let alert = NSAlert()
+                alert.messageText = "The recording did not open (exit \(status))"
+                alert.informativeText = tail.isEmpty ? "tools recorder open \(recent.folder.path)" : tail
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+            }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "The recording did not open"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
     }
 
     func install() {
@@ -83,6 +118,7 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
                 let row = NSMenuItem(title: recent.title, action: #selector(openRecent(_:)), keyEquivalent: "")
                 row.target = self
                 row.representedObject = recent.folder.path
+                if recent.isMeeting { row.title = "\(recent.title) (meeting)" }
                 row.image = recent.thumbnail.flatMap { thumbnails[$0] } ?? NSImage(systemSymbolName: "video", accessibilityDescription: nil)
                 row.toolTip = "\(recent.folder.lastPathComponent)\(recent.hasMovie ? "" : " (frames only)")"
                 row.isEnabled = true
@@ -105,9 +141,9 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     private func refresh() {
         guard !reading else { return }
         reading = true
-        let folder = Self.libraryFolder
+        let folders = Self.recordingFolders
         DispatchQueue.global(qos: .userInitiated).async {
-            let list = Self.readRecents(folder)
+            let list = Self.readRecents(folders)
             var images: [URL: NSImage] = [:]
             for recent in list.prefix(6) {
                 if let url = recent.thumbnail, let image = Self.thumbnail(url) { images[url] = image }
@@ -124,7 +160,12 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         }
     }
 
-    nonisolated static func readRecents(_ folder: URL) -> [Recent] {
+    nonisolated static func readRecents(_ folders: [URL]) -> [Recent] {
+        folders.flatMap { readRecents($0, isMeeting: $0.standardizedFileURL == meetingsFolder.standardizedFileURL) }
+            .sorted { $0.started > $1.started }
+    }
+
+    nonisolated static func readRecents(_ folder: URL, isMeeting: Bool = false) -> [Recent] {
         let manager = FileManager.default
         let names = (try? manager.contentsOfDirectory(atPath: folder.path)) ?? []
         var list: [Recent] = []
@@ -135,14 +176,16 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
                   let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             let started = (root["startedAt"] as? String).flatMap { ISO8601DateFormatter.withFraction.date(from: $0) }
                 ?? ((try? manager.attributesOfItem(atPath: manifest.path)[.modificationDate]) as? Date) ?? .distantPast
-            let movie = dir.appendingPathComponent("screen.mp4")
+            // The recorder's movie, else the proxy `tools recorder proxy` made of the frames (the editor opens both).
+            let movie = ["screen.mp4", "proxy.mp4"].map { dir.appendingPathComponent($0) }
+                .first { manager.fileExists(atPath: $0.path) } ?? dir.appendingPathComponent("screen.mp4")
             let hasMovie = manager.fileExists(atPath: movie.path)
             let firstFrame = ((root["frames"] as? [[String: Any]])?.first?["file"] as? String).map { dir.appendingPathComponent($0) }
             let video = (root["settings"] as? [String: Any])?["video"] as? [String: Any]
             list.append(Recent(folder: dir, title: (root["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? name,
                                started: started, thumbnail: hasMovie ? movie : firstFrame, hasMovie: hasMovie,
                                edited: manager.fileExists(atPath: dir.appendingPathComponent("edit.json").path),
-                               durationMs: (video?["durationMs"] as? NSNumber)?.doubleValue))
+                               durationMs: (video?["durationMs"] as? NSNumber)?.doubleValue, isMeeting: isMeeting))
         }
         return list.sorted { $0.started > $1.started }
     }
@@ -252,8 +295,8 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     }
 
     @objc private func openRecent(_ sender: NSMenuItem) {
-        guard let path = sender.representedObject as? String else { return }
-        EditorWindows.shared.open(path: path)
+        guard let path = sender.representedObject as? String, let recent = recents.first(where: { $0.folder.path == path }) else { return }
+        Self.open(recent)
     }
 
     @objc private func openLibrary() {

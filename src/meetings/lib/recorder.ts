@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { ensureBinaryAsync } from "@app/control/lib/runner";
+import { writeMeetingRecordingManifest } from "@app/meetings/lib/recording-manifest";
 import { abortableSleep } from "@genesiscz/utils/async";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type JobInfo, JobRegistry } from "@genesiscz/utils/jobs";
@@ -1264,6 +1265,18 @@ export async function runRecorder(options: {
                         run: async (ctx) => {
                             await finishRecording();
                             ctx.progress({ done: 1, total: 1, unit: "steps", message: `${state.frames} frames` });
+                            return ctx.state;
+                        },
+                    },
+                    {
+                        name: "manifest",
+                        run: async (ctx) => {
+                            const current = store.read(meetingId);
+
+                            if (current) {
+                                writeMeetingRecordingManifest(folder, current);
+                            }
+
                             return ctx.state;
                         },
                     },

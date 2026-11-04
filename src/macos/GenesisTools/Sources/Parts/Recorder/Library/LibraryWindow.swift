@@ -99,11 +99,11 @@ final class LibraryModel {
     func load() {
         guard !reading else { return }
         reading = true
-        let folder = RecorderMenu.libraryFolder
+        let folders = RecorderMenu.recordingFolders
         let known = Set(thumbnails.keys)
         DispatchQueue.global(qos: .userInitiated).async {
-            let span = HubPerf.begin("recorder.library.read", folder.path)
-            let list = RecorderMenu.readRecents(folder)
+            let span = HubPerf.begin("recorder.library.read", folders.map(\.path).joined(separator: ", "))
+            let list = RecorderMenu.readRecents(folders)
             var images: [URL: NSImage] = [:]
             for item in list {
                 guard let url = item.thumbnail, !known.contains(url) else { continue }
@@ -215,6 +215,10 @@ final class LibraryModel {
 
     /// As Finder does: no question, the Trash is the undo; the strip under the header puts it back (⌘Z too).
     func moveToTrash(_ item: RecorderMenu.Recent) {
+        guard !item.isMeeting else {
+            failure = "“\(item.title)” is a meeting's screen recording; its folder holds the whole meeting, so it stays. Remove the meeting with tools meetings."
+            return
+        }
         NSWorkspace.shared.recycle([item.folder]) { [weak self] moved, error in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -350,7 +354,7 @@ struct LibraryView: View {
                                                 wantFrames: hoverScrub ? { model.loadScrub(item) } : nil,
                                                 selected: model.selected == item.folder) {
                                         // A search hit opens at the moment it found.
-                                        EditorWindows.shared.open(path: item.folder.path, atSourceSeconds: model.spoken[item.folder]?.at)
+                                        RecorderMenu.open(item, atSourceSeconds: model.spoken[item.folder]?.at)
                                     } select: {
                                         model.selected = item.folder
                                     } rename: {
@@ -380,7 +384,7 @@ struct LibraryView: View {
                 .onKeyPress(.downArrow) { model.moveSelection(perRow); return .handled }
                 .onKeyPress(.return) {
                     guard let item = model.selectedItem else { return .ignored }
-                    EditorWindows.shared.open(path: item.folder.path, atSourceSeconds: model.spoken[item.folder]?.at)
+                    RecorderMenu.open(item, atSourceSeconds: model.spoken[item.folder]?.at)
                     return .handled
                 }
                 .onKeyPress(.delete, phases: .down) { press in
