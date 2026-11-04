@@ -35,6 +35,8 @@ struct RecorderRequest {
     var selectClip: Int?
     /// `--library`: the recordings library window (with `--snapshot`, a picture of it).
     var library = false
+    /// `--still <edit> --at <s> --out <png>`: one frame of the edit, printed as JSON.
+    var still: String?
 
     static func parse(_ args: [String]) -> RecorderRequest {
         var request = RecorderRequest()
@@ -59,6 +61,7 @@ struct RecorderRequest {
             case "--select-zoom": request.selectZoom = value().flatMap(Int.init)
             case "--select-clip": request.selectClip = value().flatMap(Int.init)
             case "--library": request.library = true
+            case "--still": request.still = value().map(absolute)
             default: break
             }
             index += 1
@@ -75,6 +78,9 @@ package func runRecorder(_ args: [String]) -> Never {
     let request = RecorderRequest.parse(args)
     if let export = request.export {
         runHeadlessExport(source: export, out: request.out, json: request.json)
+    }
+    if let still = request.still {
+        runHeadlessStill(source: still, atSeconds: request.atSeconds ?? 0, out: request.out)
     }
     if let snapshot = request.snapshot {
         runSnapshot(request, to: snapshot)
@@ -238,6 +244,44 @@ enum EditorKeys {
 
 // MARK: - Headless export and snapshot
 
+/// One JSON object and a newline; a path or a message with quotes in it stays valid JSON.
+private func jsonLine(_ object: [String: Any]) -> String {
+    guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes]),
+          let text = String(data: data, encoding: .utf8) else { return "{\"ok\":false,\"error\":\"unencodable answer\"}\n" }
+    return text + "\n"
+}
+
+/// `--still <edit> --at <seconds> --out <png>`: one frame of the edited movie as it exports (zoom, clicks, frame
+/// style), for an agent to look at without a window.
+private func runHeadlessStill(source: String, atSeconds: Double, out: String?) -> Never {
+    MainActor.assumeIsolated {
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.prohibited)
+        Task {
+            do {
+                let (_, project) = try await ProjectStore.open(path: source)
+                let zoom = ZoomState(project: project, cursor: CursorTrack.load(project.source.cursor))
+                let at = Int64((atSeconds * 1_000_000).rounded())
+                let image = try await stillFrame(project: project, atOutput: at, zoom: zoom)
+                let url = URL(fileURLWithPath: out ?? NSTemporaryDirectory() + "recorder-still-\(UUID().uuidString.prefix(8)).png")
+                let rep = NSBitmapImageRep(cgImage: image)
+                guard let png = rep.representation(using: .png, properties: [:]) else {
+                    throw NSError(domain: "recorder", code: 70, userInfo: [NSLocalizedDescriptionKey: "the frame could not be encoded"])
+                }
+                try png.write(to: url)
+                FileHandle.standardOutput.write(Data(jsonLine(["ok": true, "path": url.path, "width": image.width, "height": image.height,
+                                                               "atSeconds": atSeconds]).utf8))
+                exit(0)
+            } catch {
+                FileHandle.standardOutput.write(Data(jsonLine(["ok": false, "error": error.localizedDescription]).utf8))
+                exit(1)
+            }
+        }
+        NSApp.run()
+    }
+    exit(0)
+}
+
 private func runHeadlessExport(source: String, out: String?, json: Bool) -> Never {
     MainActor.assumeIsolated {
         _ = NSApplication.shared
@@ -256,13 +300,13 @@ private func runHeadlessExport(source: String, out: String?, json: Bool) -> Neve
                     }
                 }
                 let line = json
-                    ? "{\"ok\":true,\"path\":\"\(result.url.path)\",\"bytes\":\(result.bytes),\"seconds\":\(String(format: "%.2f", result.seconds))}\n"
+                    ? jsonLine(["ok": true, "path": result.url.path, "bytes": result.bytes, "seconds": (result.seconds * 100).rounded() / 100])
                     : "\(result.url.path) (\(ByteFormat.file(result.bytes)), \(String(format: "%.1f", result.seconds)) s)\n"
                 FileHandle.standardOutput.write(Data(line.utf8))
                 exit(0)
             } catch {
-                let message = error.localizedDescription.replacingOccurrences(of: "\"", with: "'")
-                FileHandle.standardOutput.write(Data((json ? "{\"ok\":false,\"error\":\"\(message)\"}" : "error: \(message)").utf8 + Data("\n".utf8)))
+                let message = error.localizedDescription
+                FileHandle.standardOutput.write(Data((json ? jsonLine(["ok": false, "error": message]) : "error: \(message)\n").utf8))
                 exit(1)
             }
         }

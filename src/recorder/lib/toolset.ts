@@ -1,10 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { timeSchema } from "@genesiscz/utils/recording-editor/plan";
+import { timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
     describeProject,
     type EditOp,
@@ -16,13 +17,13 @@ import {
     transcriptLines,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
-import { ReplToolset } from "@genesiscz/utils/repl/toolset";
+import { ReplToolset, type ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
 import { EXPORT_FORMATS, type ExportFormat, editProject, exportAs, openProject } from "./edit";
-import { ensureRecorderPart, listLibrary, openEditor } from "./library";
+import { ensureRecorderPart, listLibrary, openEditor, stillOfEdit } from "./library";
 
 const { log } = logger.scoped("recorder-toolset");
 
@@ -161,6 +162,15 @@ const movieMethods = [
         effect: "read",
     }),
     defineMethod({
+        name: "still",
+        params: z.object({ at: timeSchema.optional() }),
+        positional: ["at"],
+        result: z.unknown(),
+        resultName: "{ path, width, height }",
+        doc: "Shows one frame of the edit as it exports (zoom, clicks, frame style) at OUTPUT seconds (what plays), so you can look at a change.",
+        effect: "read",
+    }),
+    defineMethod({
         name: "find",
         params: z.object({ text: z.string().min(1) }),
         positional: ["text"],
@@ -247,7 +257,11 @@ export const moviesApi = defineApi({
 export class Movie {
     private readonly history: EditProject[] = [];
 
-    constructor(readonly recording: string) {}
+    /** `ctx`: the worker's scratch folder and `show`, for still(); absent outside a REPL. */
+    constructor(
+        readonly recording: string,
+        private readonly ctx?: ToolsetContext
+    ) {}
 
     async info() {
         const opened = await openProject(this.recording);
@@ -395,6 +409,26 @@ export class Movie {
         return transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project);
     }
 
+    /** One frame of the edit as it exports, shown to the model; `at` is OUTPUT seconds (what plays). */
+    async still(at: z.infer<typeof timeSchema> = 0) {
+        const opened = await openProject(this.recording);
+
+        if (opened.fresh) {
+            writeProject(opened.path, opened.project);
+        }
+
+        await ensureRecorderPart();
+        const out = join(this.ctx?.scratchDir ?? tmpdir(), `still-${Date.now()}.png`);
+        const answer = await stillOfEdit({ path: opened.path, atSeconds: timeToUs(at) / 1_000_000, out });
+
+        if (!answer.ok || !answer.path) {
+            throw new Error(answer.error ?? "the still failed without a reason");
+        }
+
+        await this.ctx?.show({ path: answer.path });
+        return { path: answer.path, width: answer.width, height: answer.height };
+    }
+
     async find(text: string): Promise<TranscriptLine[]> {
         return findInTranscript(await this.transcript(), text);
     }
@@ -413,7 +447,10 @@ export class Movie {
 }
 
 export class MovieRecording {
-    constructor(readonly entry: LiveEntry) {}
+    constructor(
+        readonly entry: LiveEntry,
+        private readonly ctx?: ToolsetContext
+    ) {}
 
     get id(): string {
         return this.entry.id;
@@ -457,12 +494,12 @@ export class MovieRecording {
             await Bun.sleep(POLL_MS);
         }
 
-        return new Movie(folder);
+        return new Movie(folder, this.ctx);
     }
 }
 
 /** Starts `tools recorder start` in its own process (a REPL reset must not end a recording) and waits for its entry. */
-async function record(options: z.infer<typeof recordSchema>): Promise<MovieRecording> {
+async function record(options: z.infer<typeof recordSchema>, ctx?: ToolsetContext): Promise<MovieRecording> {
     const before = new Set(listLiveRecordings().map((entry) => entry.id));
     const args = ["recorder", "start"];
 
@@ -512,7 +549,7 @@ async function record(options: z.infer<typeof recordSchema>): Promise<MovieRecor
         );
 
         if (started) {
-            return new MovieRecording(started);
+            return new MovieRecording(started, ctx);
         }
 
         await Bun.sleep(POLL_MS);
@@ -526,12 +563,12 @@ async function record(options: z.infer<typeof recordSchema>): Promise<MovieRecor
 export class MoviesToolset extends ReplToolset {
     readonly api = moviesApi;
 
-    async bootstrap(): Promise<Record<string, unknown>> {
+    async bootstrap(ctx: ToolsetContext): Promise<Record<string, unknown>> {
         return {
             movies: {
                 list: (options: { limit?: number } = {}) => listLibrary().slice(0, options.limit ?? 20),
-                open: (recording: string) => new Movie(recording),
-                record: (options: z.infer<typeof recordSchema> = {}) => record(options),
+                open: (recording: string) => new Movie(recording, ctx),
+                record: (options: z.infer<typeof recordSchema> = {}) => record(options, ctx),
             },
         };
     }

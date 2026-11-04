@@ -6,6 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { readRecordingManifest, recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
+import { z } from "zod";
 
 const { log } = logger.scoped("recorder-library");
 
@@ -124,22 +125,39 @@ export function openEditor(path: string, { focus = true }: { focus?: boolean } =
     }
 }
 
-export interface ExportAnswer {
-    ok: boolean;
-    path?: string;
-    bytes?: number;
-    seconds?: number;
-    error?: string;
-}
+const stillAnswerSchema = z.object({
+    ok: z.boolean(),
+    path: z.string().optional(),
+    width: z.number().optional(),
+    height: z.number().optional(),
+    error: z.string().optional(),
+});
+export type StillAnswer = z.infer<typeof stillAnswerSchema>;
+
+const exportAnswerSchema = z.object({
+    ok: z.boolean(),
+    path: z.string().optional(),
+    bytes: z.number().optional(),
+    seconds: z.number().optional(),
+    error: z.string().optional(),
+});
+export type ExportAnswer = z.infer<typeof exportAnswerSchema>;
 
 /**
- * Renders an edit with the editor's own renderer (AVFoundation, hardware encoder) in a headless run of the app's
- * recorder face, so an agent's export is the movie the window would export.
+ * Runs a headless step of the app's recorder face (`--export`, `--still`) and reads the one JSON line it prints
+ * last; an exit without one becomes `{ ok: false }` with the end of its output.
  */
-export async function exportEdit(path: string, out?: string): Promise<ExportAnswer> {
+async function runRecorderFace<T extends { ok: boolean; error?: string }>({
+    argv,
+    schema,
+    what,
+}: {
+    argv: string[];
+    schema: z.ZodType<T>;
+    what: string;
+}): Promise<T | { ok: false; error: string }> {
     const binary = join(genesisAppBundlePath(), "Contents/MacOS/GenesisTools");
-    const argv = ["--recorder", "--export", path, "--json", ...(out ? ["--out", resolve(out)] : [])];
-    log.debug({ binary, argv }, "recorder: headless export");
+    log.debug({ binary, argv }, `recorder: headless ${what}`);
     const child = spawn(binary, argv, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
@@ -151,13 +169,43 @@ export async function exportEdit(path: string, out?: string): Promise<ExportAnsw
     });
     const code = await new Promise<number>((done) => child.on("close", (status) => done(status ?? 1)));
     const line = stdout.trim().split("\n").at(-1) ?? "";
+    const parsed = schema.safeParse(parseOrUndefined(line));
 
-    try {
-        const answer = SafeJSON.parse(line, { strict: true }) as ExportAnswer;
-        log.debug({ code, answer }, "recorder: export finished");
-        return answer;
-    } catch (error) {
-        log.warn({ error, code, stdout, stderr }, "recorder: export printed no answer");
-        return { ok: false, error: `the export exited ${code}: ${(stderr || stdout).trim().slice(-400)}` };
+    if (parsed.success) {
+        log.debug({ code, answer: parsed.data }, `recorder: ${what} finished`);
+        return parsed.data;
     }
+
+    log.warn({ code, stdout, stderr }, `recorder: ${what} printed no answer`);
+    return { ok: false, error: `the ${what} exited ${code}: ${(stderr || stdout).trim().slice(-400)}` };
+}
+
+function parseOrUndefined(line: string): unknown {
+    try {
+        return SafeJSON.parse(line, { strict: true });
+    } catch (error) {
+        log.debug({ error, line }, "recorder: not a JSON line");
+        return undefined;
+    }
+}
+
+/** One frame of the edit as it exports (zoom, clicks, frame style), from a headless run of the recorder face. */
+export function stillOfEdit({ path, atSeconds, out }: { path: string; atSeconds: number; out: string }) {
+    return runRecorderFace({
+        argv: ["--recorder", "--still", path, "--at", String(atSeconds), "--out", resolve(out)],
+        schema: stillAnswerSchema,
+        what: "still",
+    });
+}
+
+/**
+ * Renders an edit with the editor's own renderer (AVFoundation, hardware encoder) in a headless run of the app's
+ * recorder face, so an agent's export is the movie the window would export.
+ */
+export function exportEdit(path: string, out?: string): Promise<ExportAnswer> {
+    return runRecorderFace({
+        argv: ["--recorder", "--export", path, "--json", ...(out ? ["--out", resolve(out)] : [])],
+        schema: exportAnswerSchema,
+        what: "export",
+    });
 }
