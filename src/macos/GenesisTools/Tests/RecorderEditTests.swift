@@ -12,6 +12,16 @@ final class RecorderEditTests: XCTestCase {
         return project
     }
 
+    func testTheExportsNoiseReductionSurvivesADecodeAndEncode() throws {
+        let json = #"{"include":true,"volume":1,"mutedTracks":[],"denoise":{"method":"afftdn","reductionDb":20,"tracks":[1]}}"#
+        let audio = try JSONDecoder().decode(EditProject.AudioSettings.self, from: Data(json.utf8))
+        XCTAssertEqual(audio.denoise, EditProject.Denoise(method: "afftdn", reductionDb: 20, tracks: [1]))
+        let again = try JSONDecoder().decode(EditProject.AudioSettings.self, from: JSONEncoder().encode(audio))
+        XCTAssertEqual(again, audio, "a save from the editor keeps the setting")
+        let older = try JSONDecoder().decode(EditProject.AudioSettings.self, from: Data(#"{"include":true,"volume":1,"mutedTracks":[]}"#.utf8))
+        XCTAssertNil(older.denoise)
+    }
+
     func testOutputAndSourceTimesMapThroughACutAndASpeedUp() {
         let edit = project([
             .init(id: "a", fromUs: 0, toUs: 3_000_000),

@@ -1,11 +1,12 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { copyFile, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { checkProject } from "@genesiscz/utils/recording-editor/check";
+import { ensureDenoisedSource } from "@genesiscz/utils/recording-editor/denoise";
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { integratedLoudness } from "@genesiscz/utils/recording-editor/loudness";
@@ -540,6 +541,43 @@ export async function finishExport({
     return { ...answer, ...extras, ...(warnings.length ? { warnings } : {}) };
 }
 
+/**
+ * Runs `render` on the edit as it should export: the edit itself, or with `audio.denoise` a copy in a scratch folder
+ * whose source is the cleaned movie (`ensureDenoisedSource`, cached beside the source) and which has no denoise left.
+ * The transcript cache goes beside the cleaned movie too, so captions and ducking still find it.
+ */
+async function withDenoisedSource<T>(opened: OpenedProject, render: (editPath: string) => Promise<T>): Promise<T> {
+    const settings = opened.project.audio.denoise;
+
+    if (!settings) {
+        return render(opened.path);
+    }
+
+    const source = opened.project.source.video;
+    const started = performance.now();
+    const cleaned = await ensureDenoisedSource({ source, settings });
+    log.info(
+        { source, cleaned: cleaned.path, made: cleaned.made, ms: Math.round(performance.now() - started) },
+        "the export renders from the cleaned sound"
+    );
+    const transcript = transcriptCachePath(source);
+
+    if (existsSync(transcript) && !existsSync(transcriptCachePath(cleaned.path))) {
+        await copyFile(transcript, transcriptCachePath(cleaned.path));
+    }
+
+    const scratch = await mkdtemp(join(tmpdir(), "recorder-denoise-"));
+
+    try {
+        const copy = join(scratch, "denoised.edit.json");
+        const { denoise: _denoise, ...audio } = opened.project.audio;
+        writeProject(copy, { ...opened.project, source: { ...opened.project.source, video: cleaned.path }, audio });
+        return await render(copy);
+    } finally {
+        await rm(scratch, { recursive: true, force: true });
+    }
+}
+
 export async function exportAs(
     value: string,
     options: {
@@ -582,6 +620,18 @@ export async function exportAs(
     const subtitles = options.subtitles ?? opened.project.export.subtitles;
 
     if (asked === "mp4") {
+        if (opened.project.audio.denoise) {
+            const chosenMp4 = opened.project.export.output;
+            const out = options.out
+                ? resolve(options.out)
+                : chosenMp4 || freeOutput(opened.project.source.video, "mp4");
+            return finishExport({
+                value,
+                answer: await withDenoisedSource(opened, (render) => exportEdit(render, out)),
+                subtitles,
+            });
+        }
+
         return finishExport({ value, answer: await exportEdit(resolveRecording(value), options.out), subtitles });
     }
 
@@ -607,7 +657,7 @@ export async function exportAs(
     const scratch = await mkdtemp(join(tmpdir(), "recorder-export-"));
 
     try {
-        const movie = await exportEdit(opened.path, join(scratch, "render.mp4"));
+        const movie = await withDenoisedSource(opened, (render) => exportEdit(render, join(scratch, "render.mp4")));
 
         if (!movie.ok || !movie.path) {
             return movie;

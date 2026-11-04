@@ -6,6 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
+import { DENOISE_METHODS, denoiseSchema } from "./denoise";
 import { timeSchema, timeToUs } from "./plan";
 
 const { log } = logger.scoped("recording-editor-project");
@@ -292,6 +293,8 @@ export const editProjectSchema = z.object({
             mutedTracks: z.array(z.number().int().nonnegative()).default([]),
             /** A sound file under the movie (looped to its length); absent is none. */
             music: musicSchema.optional(),
+            /** Noise reduction of the sound on export (`denoise.ts`); absent is none. */
+            denoise: denoiseSchema.optional(),
         })
         .default({ include: true, volume: 1, mutedTracks: [] }),
     export: z
@@ -1051,6 +1054,16 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .strict(),
     z
         .object({
+            op: z.literal("denoise"),
+            /** False takes the noise reduction away. */
+            enabled: z.boolean().optional(),
+            method: z.enum(DENOISE_METHODS).optional(),
+            reductionDb: z.number().min(1).max(40).optional(),
+            tracks: z.array(z.number().int().nonnegative()).optional(),
+        })
+        .strict(),
+    z
+        .object({
             op: z.literal("normalize"),
             /** The integrated loudness the export should reach (EBU R128); -16 suits speech on the web, -14 music. */
             targetLufs: z.number().min(-30).max(-8).default(-16),
@@ -1415,6 +1428,20 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
         }
         case "audio":
             return { ...project, audio: { ...project.audio, include: op.include } };
+        case "denoise": {
+            if (op.enabled === false) {
+                const { denoise: _denoise, ...audio } = project.audio;
+                return { ...project, audio };
+            }
+
+            const denoise = denoiseSchema.parse({
+                ...project.audio.denoise,
+                ...(op.method === undefined ? {} : { method: op.method }),
+                ...(op.reductionDb === undefined ? {} : { reductionDb: op.reductionDb }),
+                ...(op.tracks === undefined ? {} : { tracks: op.tracks }),
+            });
+            return { ...project, audio: { ...project.audio, include: true, denoise } };
+        }
         case "music": {
             if (op.enabled === false) {
                 const { music: _music, ...audio } = project.audio;

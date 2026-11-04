@@ -90,6 +90,17 @@ struct EditProject: Codable, Equatable {
         var mutedTracks: [Int] = []
         /// A sound file under the movie; nil is none. Optional, so an older file decodes.
         var music: Music?
+        /// Noise reduction on export, applied by the TypeScript export (src/utils/recording-editor/denoise.ts); kept
+        /// here so a save from the editor does not drop it. nil is none.
+        var denoise: Denoise?
+    }
+
+    /// The export's noise reduction: `afftdn` turns the noise down by `reductionDb` on the chosen audio tracks.
+    struct Denoise: Codable, Equatable {
+        var method = "afftdn"
+        var reductionDb = 12.0
+        /// nil cleans every audio track.
+        var tracks: [Int]?
     }
 
     /// Music looped under the movie, fading in and out, and quieter (`duck`) while a transcript line plays.

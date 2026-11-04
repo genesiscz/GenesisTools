@@ -466,6 +466,17 @@ const movieMethods = [
         effect: "reversible",
     }),
     edit(
+        "denoise",
+        z
+            .object({
+                enabled: z.boolean().optional(),
+                reductionDb: z.number().min(1).max(40).optional(),
+                tracks: z.array(z.number().int().nonnegative()).optional(),
+            })
+            .strict(),
+        "Turns the room and fan noise of the sound down on export (ffmpeg afftdn): reductionDb 12 by default (8 is gentle, 20+ starts to blur words), on every audio track or only tracks (0 is the first; a screen recording's microphone is its last). The export renders from a cleaned copy of the movie, made once per setting under .denoise/ beside it. enabled: false takes it away."
+    ),
+    edit(
         "normalize",
         z.object({ targetLufs: z.number().min(-30).max(-8).optional() }).strict(),
         "Measures the movie's loudness (EBU R128, the unmuted tracks mixed) and sets the volume so the export reaches targetLufs (default -16, speech on the web; -14 music). The volume tops out at 200 % (+6 dB). The result adds loudness: { measuredLufs, volume }."
@@ -1045,6 +1056,10 @@ export class Movie {
                 ...(options.speed ? { speed: options.speed } : {}),
             },
         ]);
+    }
+
+    async denoise(options: { enabled?: boolean; reductionDb?: number; tracks?: number[] } = {}) {
+        return this.change([{ op: "denoise", ...options }]);
     }
 
     async normalize(options: { targetLufs?: number } = {}) {

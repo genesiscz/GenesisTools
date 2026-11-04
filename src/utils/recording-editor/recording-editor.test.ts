@@ -33,6 +33,7 @@ import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { createCanvas } from "@napi-rs/canvas";
 import { ZodError } from "zod";
 import legacyEvidence from "./__fixtures__/legacy-evidence.json";
+import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema } from "./denoise";
 import { RecordingEditor } from "./editor";
 import { atempoChain, concatList } from "./ffmpeg";
 import { parseEditPlan, timeToUs } from "./plan";
@@ -873,5 +874,46 @@ describe("edit project (edit.json)", () => {
         expect(raw).toMatchObject({ audio: { include: true, volume: 1, mutedTracks: [] }, export: { codec: "h264" } });
         writeFileSync(path, SafeJSON.stringify({ ...saved, version: 9 }));
         expect(() => readProject(path)).toThrow("version 9");
+    });
+});
+
+describe("noise reduction on export", () => {
+    const source = { video: "/rec/screen.mp4", durationUs: 10_000_000, width: 100, height: 100 };
+
+    test("the op sets and merges the settings, turns the sound on, and enabled false takes them away", () => {
+        const muted = { ...wholeProject(source), audio: { include: false, volume: 1, mutedTracks: [] } };
+        const once = applyOp(muted, { op: "denoise" });
+        const stronger = applyOp(once, { op: "denoise", reductionDb: 20, tracks: [1] });
+
+        expect(once.audio).toMatchObject({ include: true, denoise: { method: "afftdn", reductionDb: 12 } });
+        expect(stronger.audio.denoise).toEqual({ method: "afftdn", reductionDb: 20, tracks: [1] });
+        expect(applyOp(stronger, { op: "denoise", enabled: false }).audio).not.toHaveProperty("denoise");
+    });
+
+    test("the cleaned copy filters the chosen tracks, copies the others and the picture", () => {
+        const argv = denoisedSourceArgv({
+            source: "/rec/screen.mp4",
+            output: "/rec/.denoise/screen-x.mp4",
+            audioTracks: 2,
+            settings: denoiseSchema.parse({ tracks: [1] }),
+        });
+
+        expect(argv.join(" ")).toContain(
+            "-c:v copy -c:a:0 copy -filter:a:1 afftdn=nr=12:nf=-50:tn=1 -c:a:1 aac -b:a:1 192k"
+        );
+        expect(argv.at(-1)).toBe("/rec/.denoise/screen-x.mp4");
+    });
+
+    test("the copy's name changes with the settings and the source, so a stale copy is never reused", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-denoise-"));
+        const movie = join(dir, "screen.mp4");
+        writeFileSync(movie, "a");
+        const first = denoisedSourcePath(movie, denoiseSchema.parse({}));
+
+        expect(first).toStartWith(join(dir, ".denoise", "screen-"));
+        expect(denoisedSourcePath(movie, denoiseSchema.parse({}))).toBe(first);
+        expect(denoisedSourcePath(movie, denoiseSchema.parse({ reductionDb: 20 }))).not.toBe(first);
+        writeFileSync(movie, "ab");
+        expect(denoisedSourcePath(movie, denoiseSchema.parse({}))).not.toBe(first);
     });
 });
