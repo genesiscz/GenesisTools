@@ -75,8 +75,14 @@ extension ToolsRunner {
                 reading.leave()
             }
             let stdout = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            reading.wait()
-            let stderr = String(decoding: stderrData, as: UTF8.self)
+            // stdout ended, so the child is done; only a grandchild that kept stderr open could hold it longer.
+            let stderr: String
+            if reading.wait(timeout: .now() + 10) == .timedOut {
+                HubPerf.log("recorder: tools \(argv.first ?? "") stdout ended but stderr stayed open 10 s; its stderr is dropped")
+                stderr = ""
+            } else {
+                stderr = String(decoding: stderrData, as: UTF8.self)
+            }
             process.waitUntilExit()
             let status = process.terminationStatus
             if status != 0 { HubPerf.log("recorder: tools \(argv.first ?? "") exited \(status): \(stderr.suffix(300))") }

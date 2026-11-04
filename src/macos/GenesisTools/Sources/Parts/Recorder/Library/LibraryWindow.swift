@@ -134,7 +134,8 @@ private struct LibraryCard: View {
     let trash: () -> Void
 
     var body: some View {
-        Button(action: open) {
+        // Live only under the pointer: a library of 100 cards keeps no 100 responders at rest.
+        LiveButton(tooltip: item.folder.lastPathComponent, pressable: true, action: open) {
             VStack(alignment: .leading, spacing: 8) {
                 ZStack(alignment: .bottomTrailing) {
                     Group {
@@ -166,8 +167,6 @@ private struct LibraryCard: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.genHoverPlain())
-        .instantTooltip(item.folder.lastPathComponent)
         .accessibilityLabel("\(item.title), \(item.edited ? "edited" : "not edited")")
         .contextMenu {
             Button("Open in Editor", action: open)
@@ -175,6 +174,8 @@ private struct LibraryCard: View {
             Divider()
             Button("Move to Trash…", role: .destructive, action: trash)
         }
+        .contentShape(Rectangle())
+        .liveRow()
     }
 }
 
