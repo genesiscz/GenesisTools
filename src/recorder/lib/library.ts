@@ -2,9 +2,11 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import { classifyPid } from "@genesiscz/utils/process-identity";
 import { readRecordingManifest, recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { z } from "zod";
 
@@ -65,15 +67,17 @@ export function listLibrary(root = recordingsLibraryDir()): LibraryRow[] {
  * What a recording argument names: a library id (`library-…`), `last` (the newest), or a path to a movie, a
  * recording folder or an edit file. Throws with the ids it knows when nothing matches.
  */
-export function resolveRecording(value: string): string {
+export function resolveRecording(value: string, { alive }: { alive?: (pid: number) => boolean } = {}): string {
     if (value === "open") {
-        const state = readEditorOpenState();
+        const state = readEditorOpenState({ alive });
         // The window last in front; with one window open, that one even if it never came to the front.
         const front = state?.front ?? (state?.open.length === 1 ? state.open[0] : undefined);
 
         if (!front) {
             throw new Error(
-                "No recording is open in the editor. Pick one with `tools recorder library`, or name one (`last`, an id)."
+                "No recording is open in the editor. Pick one with " +
+                    toolCommand("recorder library") +
+                    ", or name one (`last`, an id)."
             );
         }
 
@@ -84,7 +88,7 @@ export function resolveRecording(value: string): string {
         const newest = listLibrary()[0];
 
         if (!newest) {
-            throw new Error("The recordings library is empty; record one with `tools recorder start`.");
+            throw new Error("The recordings library is empty; record one with " + toolCommand("recorder start") + ".");
         }
 
         return newest.folder;
@@ -140,18 +144,17 @@ export function editorOpenStatePath(): string {
     return join(dirname(recordingsLibraryDir()), "editor-open.json");
 }
 
-function processAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        // EPERM means it exists but belongs to someone else.
-        return error instanceof Error && "code" in error && error.code === "EPERM";
-    }
+/** The editor that wrote the file: alive and still a GenesisTools process, not a recycled pid. */
+function editorAlive(pid: number): boolean {
+    return classifyPid(pid, (command) => command.includes("GenesisTools")).status === "live";
 }
 
 /** Which recordings the editor shows and which one is in front; null when no editor ran since the app was built. */
-export function readEditorOpenState(): EditorOpenState | null {
+export function readEditorOpenState({
+    alive = editorAlive,
+}: {
+    alive?: (pid: number) => boolean;
+} = {}): EditorOpenState | null {
     const path = editorOpenStatePath();
 
     if (!existsSync(path)) {
@@ -166,7 +169,7 @@ export function readEditorOpenState(): EditorOpenState | null {
     }
 
     // The editor that wrote it is gone (a crash, a rebuild's reap): its windows are closed whatever the file says.
-    if (parsed.data.pid !== undefined && !processAlive(parsed.data.pid)) {
+    if (parsed.data.pid !== undefined && !alive(parsed.data.pid)) {
         log.debug({ path, pid: parsed.data.pid }, "recorder: editor-open.json is from a process that is gone");
         return { ...parsed.data, front: undefined, open: [] };
     }

@@ -12,6 +12,8 @@ function writeState(state: Record<string, unknown>): void {
     );
 }
 
+/** The writer is this test, which is no GenesisTools process: the alive cases say so through the injected check. */
+const alive = { alive: () => true };
 const first = { path: "/tmp/recordings/first", title: "First" };
 const second = { path: "/tmp/recordings/second", title: "Second" };
 
@@ -21,19 +23,19 @@ describe("the recording open in the editor", () => {
     it("names the window last in front", () => {
         writeState({ pid: process.pid, open: [first, second], front: second });
 
-        expect(resolveRecording("open")).toBe(second.path);
+        expect(resolveRecording("open", alive)).toBe(second.path);
     });
 
     it("takes the only open window when none came to the front", () => {
         writeState({ pid: process.pid, open: [first] });
 
-        expect(resolveRecording("open")).toBe(first.path);
+        expect(resolveRecording("open", alive)).toBe(first.path);
     });
 
     it("refuses with the library command when several windows are open and none is in front", () => {
         writeState({ pid: process.pid, open: [first, second] });
 
-        expect(() => resolveRecording("open")).toThrow("tools recorder library");
+        expect(() => resolveRecording("open", alive)).toThrow("recorder library");
     });
 
     it("drops the windows of an editor process that is gone", () => {

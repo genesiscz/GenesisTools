@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -285,7 +286,9 @@ export function registerWorkflowCommands(program: Command): void {
         )
         .option(
             "--scope [name]",
-            "window (default), chrome (omit web-area descendants for browser controls), menu (the app's open context menu when one is open, else its MENU BAR; pair with --menu to descend into one top-level menu), or extras (the app's menu bar STATUS ITEMS, or the status menu it has open; `tools control statusitems` lists every app's)"
+            "window (default), chrome (omit web-area descendants for browser controls), menu (the app's open context menu when one is open, else its MENU BAR; pair with --menu to descend into one top-level menu), or extras (the app's menu bar STATUS ITEMS, or the status menu it has open; `" +
+                toolCommand("control statusitems") +
+                "` lists every app's)"
         )
         .option(
             "--menu <title>",

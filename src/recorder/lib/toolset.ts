@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { checkProject, type EditFacts, fixOps } from "@genesiscz/utils/recording-editor/check";
@@ -273,7 +274,9 @@ const movieMethods = [
     edit(
         "undo",
         z.object({ all: z.boolean().optional() }).strict(),
-        'Puts back the edit as it was before its last change made through the REPL or `tools recorder apply` (kept in <edit>.undo.json, so it works across runs; 30 steps); undo({ all: true }) goes back through every saved step. The result names the ops it took back (undone: ["text"]) and stepsLeft, how many more undo() calls there are. The revision number still rises: an undo is a new save of the older content. Refused when the editor window changed it since: undo that with ⌘Z there.'
+        "Puts back the edit as it was before its last change made through the REPL or " +
+            toolCommand("recorder apply") +
+            ' (kept in <edit>.undo.json, so it works across runs; 30 steps); undo({ all: true }) goes back through every saved step. The result names the ops it took back (undone: ["text"]) and stepsLeft, how many more undo() calls there are. The revision number still rises: an undo is a new save of the older content. Refused when the editor window changed it since: undo that with ⌘Z there.'
     ),
     edit(
         "shape",
@@ -491,7 +494,10 @@ const movieMethods = [
             .strict(),
         result: z.unknown(),
         resultName: "{ from, to, plays, text }[]",
-        doc: "The spoken lines in source seconds (plays: where each starts in the edit, null when cut), from tools transcribe; cached beside the movie, refresh: true transcribes again. The first run may ask for the AI vault key.",
+        doc:
+            "The spoken lines in source seconds (plays: where each starts in the edit, null when cut), from " +
+            toolCommand("transcribe") +
+            "; cached beside the movie, refresh: true transcribes again. The first run may ask for the AI vault key.",
         effect: "read",
     }),
     defineMethod({
@@ -550,7 +556,10 @@ const movieMethods = [
         params: z.object({}),
         result: z.unknown(),
         resultName: "{ at, plays, label }[]",
-        doc: "The moments marked while it recorded (recording.mark(label) or `tools recorder mark`), at source seconds, plays: where each is in the edit (null when cut).",
+        doc:
+            "The moments marked while it recorded (recording.mark(label) or " +
+            toolCommand("recorder mark") +
+            "), at source seconds, plays: where each is in the edit (null when cut).",
         effect: "read",
     }),
     defineMethod({
@@ -1331,7 +1340,9 @@ export class Movie {
 
         if (!marks.length) {
             throw new RangeError(
-                "the recording has no marker in the kept movie; mark moments while recording (recording.mark(), tools recorder mark), or add texts with text()"
+                "the recording has no marker in the kept movie; mark moments while recording (recording.mark(), " +
+                    toolCommand("recorder mark") +
+                    "), or add texts with text()"
             );
         }
 
@@ -1514,7 +1525,7 @@ async function record(options: z.infer<typeof recordSchema>, ctx?: ToolsetContex
     }
 
     throw new Error(
-        `the recording did not start within ${START_TIMEOUT_MS / 1000} s; run \`tools genesis-tools logs failures\` or \`tools recorder start\` in a terminal to see why`
+        `the recording did not start within ${START_TIMEOUT_MS / 1000} s; run ${toolCommand("genesis-tools logs failures")} or ${toolCommand("recorder start")} in a terminal to see why`
     );
 }
 

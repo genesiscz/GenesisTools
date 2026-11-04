@@ -593,7 +593,7 @@ async function ensureProviderResolved(opts: TranscribeFlags): Promise<string | u
 
     const choices = available.length > 0 ? available.join("|") : "local-hf|cloud|openai|groq|openrouter|xai";
     out.error(pc.red("No --provider specified, no default transcribe model, and not in an interactive terminal."));
-    out.error(pc.dim("Set a default once: tools ai config default set transcribe <provider or model ref>"));
+    out.error(pc.dim(`Set a default once: ${toolCommand("ai config default set transcribe <provider or model ref>")}`));
     out.error(pc.dim(suggestCommand("tools transcribe", { add: ["--provider", `<${choices}>`] })));
     process.exit(1);
 }

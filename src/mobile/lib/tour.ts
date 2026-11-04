@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { appiumReady } from "@genesiscz/utils/mobile/appium";
 import {
@@ -129,13 +130,17 @@ export async function runTour(options: {
     const bundleId = app.bundleId(appDir);
 
     if (!(await appInstalled(udid, bundleId))) {
-        throw new Error(`${bundleId} is not installed on ${udid}; build it first: tools mobile build ${app.id}`);
+        throw new Error(
+            `${bundleId} is not installed on ${udid}; build it first: ${toolCommand("mobile build", app.id)}`
+        );
     }
 
     const routes = app.routes(appDir).filter((route) => !only?.length || only.includes(route.name));
 
     if (routes.length === 0) {
-        throw new Error(`no route matches ${only?.join(", ")}; list them with: tools mobile routes ${app.id}`);
+        throw new Error(
+            `no route matches ${only?.join(", ")}; list them with: ${toolCommand("mobile routes", app.id)}`
+        );
     }
 
     mkdirSync(outDir, { recursive: true });

@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { defaultRecordingTarget, listRecordingTargets, type RecordingTarget } from "@app/control/lib/recording-targets";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -159,7 +160,7 @@ function liveId(id: string | undefined): string {
     const newest = entries.at(-1);
 
     if (!newest) {
-        throw new Error("No recording is running. Start one with `tools recorder start`.");
+        throw new Error(`No recording is running. Start one with ${toolCommand("recorder start")}.`);
     }
 
     return newest.id;
@@ -210,7 +211,7 @@ const program = new Command()
 program
     .command("start")
     .description(
-        "Record a movie into the recordings library (screen.mp4 with audio tracks, cursor.jsonl, recording.json). Runs until `tools recorder stop`, the menu bar item, the floating controls, Ctrl-C or --max-seconds; pausing leaves the paused time out of the movie"
+        "Record a movie into the recordings library (screen.mp4 with audio tracks, cursor.jsonl, recording.json). Runs until the stop command, the menu bar item, the floating controls, Ctrl-C or --max-seconds; pausing leaves the paused time out of the movie"
     )
     .option("--audio <sources>", "audio tracks: system, mic, or system,mic")
     .option("--mic-device <uid>", "the microphone (an id from `ax-tool audio-devices`; needs --audio mic)")
@@ -291,7 +292,7 @@ for (const method of ["stop", "pause", "resume", "status"] as const) {
                 ? "Print the live recording's state (the newest one, or the id given)"
                 : `${method[0].toUpperCase()}${method.slice(1)} the live recording (the newest one, or the id given)`
         )
-        .argument("[id]", "a live recording id, or its end (`tools recorder list --live`)")
+        .argument("[id]", `a live recording id, or its end (${toolCommand("recorder list --live")})`)
         .action(async (id: string | undefined) => {
             try {
                 const target = liveId(id);
@@ -312,7 +313,7 @@ program
     .command("mark")
     .description("Mark this moment of the live recording with a label; the editor and movie.markers() show it")
     .argument("<label>", "what happened (1 to 80 characters)")
-    .argument("[id]", "a live recording id, or its end (`tools recorder list --live`)")
+    .argument("[id]", `a live recording id, or its end (${toolCommand("recorder list --live")})`)
     .action(async (label: string, id: string | undefined) => {
         try {
             out.result(await callRecorder({ id: liveId(id), method: "marker.add", params: { label } }));
@@ -618,7 +619,7 @@ program
         }
 
         if (!state?.open.length) {
-            out.printlnErr("No recording is open in the editor. Pick one: tools recorder library");
+            out.printlnErr(`No recording is open in the editor. Pick one: ${toolCommand("recorder library")}`);
             return;
         }
 

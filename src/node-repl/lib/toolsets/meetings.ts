@@ -8,6 +8,7 @@ import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { runSuggest } from "@app/meetings/lib/suggest-run";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { ITEM_STATUSES, type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
@@ -108,7 +109,10 @@ const decide = {
 const confirm = defineMethod({
     name: "items.confirm",
     ...decide,
-    doc: 'Confirm items (ids "i3", or a question\'s number "Q2"), or every suggested item at or above minConfidence (0..1). Transcripts apply confirmed items. A range nobody named needs `speaker`, a term with no spelling needs `proposed`; a question is answered by ear (tools meetings listen). Those come back in `skipped` with the reason and what they need.',
+    doc:
+        'Confirm items (ids "i3", or a question\'s number "Q2"), or every suggested item at or above minConfidence (0..1). Transcripts apply confirmed items. A range nobody named needs `speaker`, a term with no spelling needs `proposed`; a question is answered by ear (' +
+        toolCommand("meetings listen") +
+        "). Those come back in `skipped` with the reason and what they need.",
 });
 const reject = defineMethod({
     name: "items.reject",

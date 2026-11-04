@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { checkProject } from "@genesiscz/utils/recording-editor/check";
@@ -61,7 +62,7 @@ function movieFor(path: string): string {
         const movie = movieOf(path);
 
         if (!movie) {
-            throw new Error(`${path} has no movie yet; make one with \`tools recorder proxy ${basename(path)}\``);
+            throw new Error(`${path} has no movie yet; make one with ${toolCommand("recorder proxy", basename(path))}`);
         }
 
         return movie;

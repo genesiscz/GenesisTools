@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -124,7 +125,7 @@ program
         "appium"
     )
     .option("--appium-port <port>", "the Appium server for --driver appium", "4723")
-    .option("--only <names...>", "only these route names (see: tools mobile routes <app>)")
+    .option("--only <names...>", `only these route names (see: ${toolCommand("mobile routes <app>")})`)
     .option("--json", "print the shots as JSON")
     .action(
         async (
