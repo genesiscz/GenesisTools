@@ -295,7 +295,6 @@ export const ENDPOINTS = {
     tmuxSessions: row<{ include?: string }, unknown>("GET", "/api/tmux/sessions", "read", "slow"),
     live: row<Record<string, never>, never>("GET", "/api/live", "read", "stream"),
     daemonRunsTail: row<Record<string, string | undefined>, never>("GET", "/api/daemon/runs/tail", "read", "stream"),
-    portsClassify: row<Record<string, never>, never>("GET", "/api/ports/classify", "read", "stream"),
 
     // The Mac gateway: one row per hub capability (`src/hub/lib/capabilities`), plus the one upload route.
     gatewayAgents: row<GatewayInput, unknown>("GET", "/api/gateway/agents", "read", "slow"),

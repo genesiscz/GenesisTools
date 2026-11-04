@@ -77,7 +77,7 @@ puts on an upstream fetch is a user-visible setting. `upstreamTimeoutMs()` in
 
 | Tier | Deadline | Paths |
 |---|---|---|
-| stream | none | rows with `timeout: "stream"` (`/api/qa/stream`, `/api/live`, `/api/ports/classify`, `/api/daemon/runs/tail`, `/api/qa/pending/:id/wait`), plus `/api/boards/work/wait` and `/api/boards/*/events` |
+| stream | none | rows with `timeout: "stream"` (`/api/qa/stream`, `/api/live`, `/api/daemon/runs/tail`, `/api/qa/pending/:id/wait`), plus `/api/boards/work/wait` and `/api/boards/*/events` |
 | scan | 120s | `/api/ai/spend/totals`, `/api/ai/spend/series`, `/api/claude/usage/totals` |
 | slow | 60s | `/api/ports`, `/api/system/pulse`, `/api/system/pulse/history`, `/api/tmux/sessions`, the slow gateway rows |
 | default | 15s | everything else |
