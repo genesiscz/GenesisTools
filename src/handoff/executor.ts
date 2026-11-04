@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
+import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
+import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
-import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { attachmentFilePath, ingestAttachmentBytes, ingestAttachmentFromPath } from "./attachments";
@@ -84,7 +85,7 @@ function buildBy(deps: HandoffDeps): HandoffEventBy {
         return deps.by;
     }
 
-    const ctx = gatherHarnessPoster(deps.ctx ?? {});
+    const ctx = toRuntimeContext(whoIsCallingHere({ facets: STAMP_FACETS, overrides: deps.ctx }));
     return {
         sessionId: ctx.sessionId,
         sessionTitle: ctx.sessionTitle,

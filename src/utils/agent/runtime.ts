@@ -69,18 +69,3 @@ export function getAgentRuntimeContext(
 }
 
 const RUNTIME_FACETS = ["cwd", "git", "title"] as const;
-
-/**
- * The one poster stamp for anything a harness posts: handoffs, questions, decisions.
- * Callers pass overrides and an env only in tests. Production reads the live process.
- */
-export function gatherHarnessPoster(
-    overrides: Partial<AgentRuntimeContext> = {},
-    processEnv?: NodeJS.ProcessEnv
-): AgentRuntimeContext {
-    if (processEnv === undefined) {
-        return getAgentRuntimeContext(overrides);
-    }
-
-    return getAgentRuntimeContext(overrides, processEnv);
-}

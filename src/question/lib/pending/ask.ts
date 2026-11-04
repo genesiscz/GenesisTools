@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { basename } from "node:path";
-import { type AgentRuntimeContext, currentCaller, gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
+import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
+import type { AgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { createTranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { logger } from "@genesiscz/utils/logger";
 import { isTestProcess } from "@genesiscz/utils/test-process";
@@ -113,8 +115,15 @@ function callerContext(
         return { projectPath: given, sessionHint: input.sessionHint };
     }
 
-    const fallback = currentCaller()?.sessionId === null && given ? { cwd: given } : {};
-    const poster = gatherHarnessPoster({ ...fallback, ...deps.ctx }, deps.env ?? (isTestProcess() ? {} : undefined));
+    // `fallbackCwd` applies only to a request scope whose session is explicitly null (a gateway caller it could not name).
+    const poster = toRuntimeContext(
+        whoIsCallingHere({
+            facets: STAMP_FACETS,
+            fallbackCwd: given,
+            overrides: deps.ctx,
+            env: deps.env ?? (isTestProcess() ? {} : undefined),
+        })
+    );
     const harnessSession = poster.agent !== "unknown" && poster.sessionId ? poster.sessionId : null;
     const sessionHint =
         !isTestProcess() && harnessSession ? harnessSession : (input.sessionHint ?? harnessSession ?? undefined);

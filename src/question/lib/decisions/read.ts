@@ -1,5 +1,5 @@
 import { canonicalAgent, type HandoffAgent } from "@app/handoff/targeting";
-import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { json2md } from "@genesiscz/utils/json2md";
@@ -32,7 +32,7 @@ export function currentHarnessSession(): string | null {
         return null;
     }
 
-    const poster = gatherHarnessPoster();
+    const poster = whoIsCallingHere();
 
     if (poster.agent === "unknown" || !poster.sessionId) {
         return null;

@@ -1,5 +1,5 @@
 import { answerAskForm, getAskForm } from "@app/question/lib/pending/ask";
-import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { listRecentCachedSessions } from "@genesiscz/utils/agent-sessions/cached-title";
 import { readRouterConfig } from "@genesiscz/utils/browser-router/config";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
@@ -123,7 +123,7 @@ async function printLinks(options: DecideFlags & { options: string }): Promise<v
 }
 
 function currentSession(): string | null {
-    const poster = gatherHarnessPoster();
+    const poster = whoIsCallingHere();
     return poster.agent === "claude-code" && poster.sessionId ? poster.sessionId : null;
 }
 

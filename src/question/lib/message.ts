@@ -68,9 +68,9 @@ export interface InboxMessageInput {
 /**
  * The one core behind `inbox_send` and `tools question message`: an agent-to-user message, optionally with
  * screenshots, stored as a Q→A entry tagged `message`. The widget shows it as an unread, expandable card under the
- * posting session (src/hub/lib/widget/snapshot.ts). The session comes from `gatherHarnessPoster` inside
- * `recordAnswer`, the same stamp handoffs and decisions use: CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID or
- * GROK_SESSION_ID in a harness child, or the gateway's resolved caller over HTTP.
+ * posting session (src/hub/lib/widget/snapshot.ts). The session comes from `whoIsCalling` inside `recordAnswer`,
+ * the same identity handoffs and decisions use: the harness that launched this process, or the gateway's resolved
+ * caller over HTTP.
  */
 export async function sendInboxMessage(input: InboxMessageInput, deps: RecordDeps = {}): Promise<RecordResult> {
     const text = input.text?.trim() ?? "";

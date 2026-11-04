@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { postHandoff } from "@app/handoff/executor";
 import { logFilePathForTs } from "@app/handoff/log-store";
 import { freshEnv } from "@app/handoff/test-utils";
-import { agentFromAncestry, captureCallerContext } from "@app/say/lib/caller";
+import { captureCallerContext } from "@app/say/lib/caller";
 import { getAgentRuntimeContext, runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
 import { env } from "@genesiscz/utils/env";
@@ -910,11 +910,15 @@ describe("characterization: the same environment across caller records", () => {
                 const runtime = getAgentRuntimeContext(layout, vars);
                 const say = await captureCallerContext();
                 expect(say).toMatchObject({
-                    agent: row.agent === "unknown" ? agentFromAncestry(say.ancestry) : row.agent,
                     sessionId: row.session,
-                    aiAgent: "label",
+                    aiAgent: row.label,
                     cwd: process.cwd(),
                 });
+
+                // With no agent env, say names the agent from the process ancestry, which this test cannot pin.
+                if (row.agent !== "unknown") {
+                    expect(say.agent).toBe(row.agent);
+                }
                 const formPath = join(scratch, `${row.name}-forms.db`);
                 const formDb = openPendingStore(formPath);
                 const form = await postAskForm(

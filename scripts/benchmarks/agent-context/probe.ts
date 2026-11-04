@@ -8,7 +8,7 @@
 import { writeFileSync } from "node:fs";
 import { captureCallerContext } from "@app/say/lib/caller";
 import { agentSessionIds, assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
-import { gatherHarnessPoster, getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
+import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { agentFailureCaller } from "@genesiscz/utils/cli/failures/agent-caller";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -36,7 +36,6 @@ const probes = [
     await probe("agentSessionIds", () => agentSessionIds(env)),
     await probe("assignedSessionId", () => assignedSessionId(env)),
     await probe("getAgentRuntimeContext", () => getAgentRuntimeContext()),
-    await probe("gatherHarnessPoster", () => gatherHarnessPoster()),
     await probe("agentFailureCaller", () => agentFailureCaller()),
     await probe("captureCallerContext (say)", () => captureCallerContext()),
 ];
