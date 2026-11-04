@@ -1,6 +1,7 @@
 import type { PolicyClass } from "@app/dev-dashboard/contract/endpoint-table";
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import type { TranscriptProvider } from "@genesiscz/utils/ai/transcripts/types";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { hoursArg, limitArg } from "../../commands/agents-args";
 
 /**
@@ -301,6 +302,49 @@ export const HUB_CAPABILITIES = {
             return listPrompts();
         },
     } satisfies HubCapability<Record<string, never>>,
+
+    /**
+     * `hub prompts prepare <name> [--session] [--var k=v]`: one saved prompt rendered for one session, each variable
+     * with its value and source (F23). `vars` is a JSON object of given values.
+     */
+    promptPrepare: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse(input): { name: string; session?: string; vars: Record<string, string> } {
+            const name = text(input, "name");
+
+            if (!name) {
+                throw new CapabilityRefusedError("bad-input", "name: the saved prompt's name");
+            }
+
+            const vars = parsedWith(text(input, "vars"), "vars", (raw) => {
+                const parsed: unknown = SafeJSON.parse(raw, { strict: true });
+
+                if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+                    throw new Error("a JSON object of name to value");
+                }
+
+                return Object.fromEntries(
+                    Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === "string")
+                );
+            });
+            return { name, session: text(input, "session"), vars: vars ?? {} };
+        },
+        async run(input, { signal }) {
+            signal.throwIfAborted();
+            const { HubPromptError, preparePrompt } = await import("../prompts");
+
+            try {
+                return await preparePrompt(input);
+            } catch (err) {
+                if (err instanceof HubPromptError && (err.code === "not-found" || err.code === "ambiguous")) {
+                    throw new CapabilityRefusedError(err.code === "not-found" ? "not-found" : "bad-input", err.message);
+                }
+
+                throw err;
+            }
+        },
+    } satisfies HubCapability<{ name: string; session?: string; vars: Record<string, string> }>,
 
     /** `hub widget snapshot --json [--selected key]`: what the notch widget shows, read once. */
     widgetSnapshot: {

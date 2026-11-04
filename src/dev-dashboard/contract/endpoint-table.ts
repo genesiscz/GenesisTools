@@ -6,6 +6,7 @@ import type {
     AgentStopInput,
     AgentStopReceiptDto,
     AgentsBoardDto,
+    PreparedPromptDto,
 } from "@app/dev-dashboard/contract/agents";
 import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/contract/gates";
 import type { AgentNewInput, AgentNewReceiptDto, LaunchOptionsDto } from "@app/dev-dashboard/contract/launch";
@@ -315,6 +316,8 @@ export const ENDPOINTS = {
     gatewayStuck: row<GatewayInput, unknown>("GET", "/api/gateway/stuck", "read"),
     gatewayForecast: row<GatewayInput, unknown>("GET", "/api/gateway/forecast", "read"),
     gatewayPrompts: row<GatewayInput, unknown>("GET", "/api/gateway/prompts", "read"),
+    /** One saved prompt rendered for one session, each variable with its value and source (F23). */
+    gatewayPromptPrepare: row<GatewayInput, PreparedPromptDto>("GET", "/api/gateway/prompt-prepare", "read", "slow"),
     gatewayWidgetSnapshot: row<GatewayInput, unknown>("GET", "/api/gateway/widget-snapshot", "read", "slow"),
     gatewayUpload: row<Record<string, never>, UploadReceipt>("POST", "/api/gateway/upload", "keyed-write"),
     /** The agents board (F9): every live session with its phase, project, account, model, prompt and sub-agents. */

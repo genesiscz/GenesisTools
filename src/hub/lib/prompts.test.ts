@@ -10,6 +10,7 @@ import {
     HubPromptError,
     listPrompts,
     parseVars,
+    preparePrompt,
     readPrompts,
     removePrompt,
     type SavedPrompt,
@@ -271,5 +272,27 @@ describe("sendPrompt", () => {
         const result = await sendPrompt({ name: "rebase", session: SESSION, path, deps: dry, dryRun: true });
         expect(result).toMatchObject({ sent: false, dryRun: true });
         expect(dry.sent).toEqual([]);
+    });
+});
+
+describe("preparePrompt", () => {
+    test("names each variable's value and source, keeps a missing one as written, and sends nothing", async () => {
+        const path = scratch();
+        const deps = fakeDeps();
+        const prepared = await preparePrompt({ name: "fix-review", session: SESSION, vars: { pr: "7" }, path, deps });
+
+        expect(prepared.variables).toEqual([
+            { name: "pr", value: "7", source: "given" },
+            { name: "branch", value: "feat/cart", source: "session" },
+        ]);
+        expect(prepared.missing).toEqual([]);
+        expect(prepared.text).toContain("PR 7 (feat/cart)");
+
+        const bare = await preparePrompt({ name: "fix-review", path, deps });
+        expect(bare.variables.map((variable) => variable.source)).toEqual(["missing", "missing"]);
+        expect(bare.missing).toEqual(["pr", "branch"]);
+        expect(bare.text).toContain("{{branch}}");
+        expect(deps.sent).toEqual([]);
+        expect(readPrompts(path).prompts.find((prompt) => prompt.name === "fix-review")?.uses).toBe(0);
     });
 });
