@@ -808,4 +808,56 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         const docs = new MeetingsToolset().api.handles?.find((handle) => handle.name === "Meeting")?.methods ?? [];
         expect(docs.map((method) => method.name)).toEqual(expect.arrayContaining(["settings", "setSettings"]));
     });
+
+    test("meetings: labels, people pairings and unpairing by entry through the REPL, each method documented", async () => {
+        const store = new MeetingStore();
+        const record = await store.create(
+            { title: "Offers review", start: "2026-11-03T15:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        type Meeting = { set(input: unknown): Promise<{ project: string | null; labels: string[] }> };
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: {
+                open(ref: string): Meeting;
+                projects: {
+                    labels(input: unknown): Promise<string[]>;
+                    pair(input: unknown): Promise<unknown>;
+                    unpair(input: unknown): Promise<unknown>;
+                    people(input?: unknown): Promise<Array<{ project: string; name: string }>>;
+                };
+            };
+        };
+        const set = await meetings.open(record.id).set({ project: "repl-offers", labels: ["Offers 2.0"] });
+
+        expect(set).toMatchObject({ project: "repl-offers", labels: ["Offers 2.0"] });
+        expect(await meetings.projects.labels({ project: "repl-offers" })).toEqual(["Offers 2.0"]);
+        await meetings.projects.pair({
+            project: "repl-offers",
+            people: [{ name: "Alice Novak", email: "alice@example.com" }],
+        });
+        expect((await meetings.projects.people({ project: "repl-offers" })).map((one) => one.name)).toEqual([
+            "Alice Novak",
+        ]);
+        expect(await meetings.projects.unpair({ entryId: "no-such-entry" })).toEqual([]);
+        expect(
+            await meetings.projects.unpair({
+                project: "repl-offers",
+                person: { name: "alice@example.com", email: "alice@example.com" },
+            })
+        ).toEqual({ removed: true });
+
+        const api = new MeetingsToolset().api;
+        const top = api.methods.map((method) => method.name);
+        const handle = api.handles?.find((one) => one.name === "Meeting")?.methods.map((method) => method.name) ?? [];
+        expect(top).toEqual(
+            expect.arrayContaining([
+                "projects.labels",
+                "projects.pair",
+                "projects.unpair",
+                "projects.people",
+                "assign.sweep",
+            ])
+        );
+        expect(handle).toEqual(expect.arrayContaining(["assign.proposals", "assign.ask", "assign.apply"]));
+    });
 });

@@ -1,3 +1,11 @@
+import {
+    applyAnswer,
+    askMeeting,
+    assignSweep,
+    defaultAssignDeps,
+    skipReason,
+    viewProposals,
+} from "@app/meetings/lib/assign";
 import { decideItems } from "@app/meetings/lib/decide";
 import { meetingEditorSource } from "@app/meetings/lib/editor-project";
 import { findingItems, findingProblems, findingSchema } from "@app/meetings/lib/findings";
@@ -14,7 +22,7 @@ import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { OCR_BOX_LEVELS } from "@genesiscz/utils/macos/ocr-boxes";
-import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { MeetingsConfigStore, mergeLabels } from "@genesiscz/utils/meetings/config";
 import { ITEM_STATUSES, type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import {
@@ -33,7 +41,7 @@ const { log } = logger.scoped("meetings-toolset");
 const ref = z.object({ ref: z.string().min(1) });
 const ids = z.array(z.string().min(1));
 const recordDoc =
-    "{ id, title, start, project, sources, speakers, items: { suggested, confirmed, rejected }, summary }";
+    "{ id, title, start, project, labels, sources, speakers, items: { suggested, confirmed, rejected }, summary }";
 
 const list = defineMethod({
     name: "list",
@@ -149,11 +157,105 @@ const rename = defineMethod({
 });
 const set = defineMethod({
     name: "set",
-    params: z.object({ title: z.string().min(1).optional(), project: z.string().min(1).optional() }).strict(),
+    params: z
+        .object({
+            title: z.string().min(1).optional(),
+            project: z.string().min(1).optional(),
+            labels: z.array(z.string().min(1)).optional(),
+            unlabel: z.array(z.string().min(1)).optional(),
+        })
+        .strict(),
     result: z.unknown(),
     resultName: recordDoc,
     effect: "reversible",
-    doc: "Change the meeting's title and/or project (a new project name is added to the known projects).",
+    doc: "Change the meeting's title, project and labels (a new project name joins the known projects; a new label joins the project's labels). unlabel removes labels.",
+});
+
+const person = z.object({ name: z.string().min(1), email: z.string().min(1).optional() });
+const projectsLabels = defineMethod({
+    name: "projects.labels",
+    params: z
+        .object({
+            project: z.string().min(1),
+            add: z.array(z.string()).optional(),
+            remove: z.array(z.string()).optional(),
+        })
+        .strict(),
+    result: z.unknown(),
+    resultName: "string[]",
+    effect: "reversible",
+    doc: 'A project\'s known labels; add and remove change them. meetings.projects.labels({ project: "shop", add: ["Checkout 2.0"] }).',
+});
+const projectsPair = defineMethod({
+    name: "projects.pair",
+    params: z
+        .object({ project: z.string().min(1), people: z.array(person).min(1), note: z.string().optional() })
+        .strict(),
+    result: z.unknown(),
+    resultName: "{ project, people }",
+    effect: "reversible",
+    doc: "Pair people with a project by hand (pairedBy manual). A later meeting with them proposes the project. One person can be in several projects.",
+});
+const projectsUnpair = defineMethod({
+    name: "projects.unpair",
+    params: z
+        .object({
+            entryId: z.string().min(1).optional(),
+            project: z.string().min(1).optional(),
+            person: person.optional(),
+        })
+        .strict(),
+    result: z.unknown(),
+    resultName: "{ project, name, email?, left }[] | { removed: boolean }",
+    effect: "reversible",
+    doc: "With entryId: remove the pairings that calendar entry made, in every project; a person another source still pairs stays. With project and person: remove that person from the project.",
+});
+const projectsPeople = defineMethod({
+    name: "projects.people",
+    params: z.object({ project: z.string().min(1).optional() }).strict(),
+    result: z.unknown(),
+    resultName: "{ project, name, email?, pairedBy }[]",
+    effect: "read",
+    doc: "The people paired with each project, each with its sources (pairedBy: calendar entries and manual pairings).",
+});
+const assignSweepMethod = defineMethod({
+    name: "assign.sweep",
+    params: z.object({}).strict(),
+    result: z.unknown(),
+    resultName: "{ asked: string[], advanced: { meeting, outcome }[] }",
+    effect: "reversible",
+    doc: 'One "ask each time" pass, as the watcher runs it: read back answers and apply them, then post a decision-inbox question for each recent ended meeting without a project.',
+});
+const assignProposals = defineMethod({
+    name: "assign.proposals",
+    params: z.object({}),
+    result: z.unknown(),
+    resultName: "{ proposals: { projects, labels, calendars, folder }, calendarNotes, skipped }",
+    effect: "read",
+    doc: "The ranked project proposals of this meeting, each with its reasons (folder rule, calendar name, title rule, paired people of an overlapping entry, title words of earlier meetings), the overlapping calendar entries, label proposals and the Wispr folder step. calendarNotes names each calendar that could not be read.",
+});
+const assignAsk = defineMethod({
+    name: "assign.ask",
+    params: z.object({ force: z.boolean().optional() }).strict(),
+    result: z.unknown(),
+    resultName: "{ formId?, skipped? }",
+    effect: "reversible",
+    doc: "Post this meeting's project question to the decision inbox now (once per meeting; force asks again).",
+});
+const assignApply = defineMethod({
+    name: "assign.apply",
+    params: z
+        .object({
+            project: z.string().min(1).nullable(),
+            labels: z.array(z.string().min(1)).optional(),
+            entryId: z.string().min(1).optional(),
+            pairFolder: z.boolean().optional(),
+        })
+        .strict(),
+    result: z.unknown(),
+    resultName: "{ project?, labels, paired, entry?, folderPaired?, waitsForFolder }",
+    effect: "reversible",
+    doc: "Apply an answer without the inbox: the project (null: none), labels, the overlapping calendar entry whose attendees get paired with the project, and whether to pair the source folder the meeting is in.",
 });
 
 const recordingSettings = defineMethod({
@@ -229,6 +331,7 @@ function describe(record: MeetingRecord) {
         title: record.title,
         start: record.start,
         project: record.project ?? null,
+        labels: record.labels,
         sources: Object.keys(record.sources),
         speakers: record.speakers.labels,
         items,
@@ -255,7 +358,7 @@ export class MeetingsToolset extends ReplToolset {
         title: "Meetings",
         summary:
             "List and open meetings; read their corrected transcript, evidence and items; suggest, confirm and reject items; name speakers.",
-        methods: [list, open],
+        methods: [list, open, projectsLabels, projectsPair, projectsUnpair, projectsPeople, assignSweepMethod],
         handles: [
             {
                 name: "Meeting",
@@ -277,6 +380,9 @@ export class MeetingsToolset extends ReplToolset {
                     setRecordingSettings,
                     screen,
                     editorProject,
+                    assignProposals,
+                    assignAsk,
+                    assignApply,
                 ],
             },
         ],
@@ -301,6 +407,60 @@ export class MeetingsToolset extends ReplToolset {
                         }));
                 },
                 open: (refText: string) => this.meeting(store, ref.parse({ ref: refText }).ref),
+                projects: {
+                    labels: async (input: z.input<typeof projectsLabels.params>) => {
+                        const parsed = projectsLabels.params.parse(input);
+                        const config = new MeetingsConfigStore();
+
+                        if (!parsed.add?.length && !parsed.remove?.length) {
+                            return (await config.read()).projects[parsed.project]?.labels ?? [];
+                        }
+
+                        return config.setProjectLabels(parsed.project, parsed);
+                    },
+                    pair: async (input: z.input<typeof projectsPair.params>) => {
+                        const parsed = projectsPair.params.parse(input);
+                        const config = await new MeetingsConfigStore().pairPeople({
+                            project: parsed.project,
+                            people: parsed.people,
+                            by: {
+                                kind: "manual",
+                                at: new Date().toISOString(),
+                                ...(parsed.note ? { note: parsed.note } : {}),
+                            },
+                        });
+                        return {
+                            project: parsed.project,
+                            people: config.projects[parsed.project]?.match?.people ?? [],
+                        };
+                    },
+                    unpair: async (input: z.input<typeof projectsUnpair.params>) => {
+                        const parsed = projectsUnpair.params.parse(input);
+                        const config = new MeetingsConfigStore();
+
+                        if (parsed.entryId) {
+                            return config.unpairEntry(parsed.entryId);
+                        }
+
+                        if (!parsed.project || !parsed.person) {
+                            throw new Error("Give entryId, or project and person");
+                        }
+
+                        return { removed: await config.unpairPerson(parsed.project, parsed.person) };
+                    },
+                    people: async (input: z.input<typeof projectsPeople.params> = {}) => {
+                        const { project } = projectsPeople.params.parse(input);
+                        const config = await new MeetingsConfigStore().read();
+                        return Object.entries(config.projects)
+                            .filter(([name]) => !project || name === project)
+                            .flatMap(([name, settings]) =>
+                                (settings.match?.people ?? []).map((one) => ({ project: name, ...one }))
+                            );
+                    },
+                },
+                assign: {
+                    sweep: async () => assignSweep(store),
+                },
             },
         };
     }
@@ -435,30 +595,90 @@ export class MeetingsToolset extends ReplToolset {
                     return describe(record);
                 },
             },
+            assign: {
+                proposals: async () => {
+                    const deps = defaultAssignDeps();
+                    const record = current();
+                    const view = await viewProposals(store, record, deps);
+                    return {
+                        proposals: view.proposals,
+                        calendarNotes: view.calendarNotes,
+                        skipped: skipReason(record, store, deps.now()) ?? null,
+                    };
+                },
+                ask: async (input: z.input<typeof assignAsk.params> = {}) =>
+                    askMeeting(store, current(), defaultAssignDeps(), assignAsk.params.parse(input)),
+                apply: async (input: z.input<typeof assignApply.params>) => {
+                    const parsed = assignApply.params.parse(input);
+                    const deps = defaultAssignDeps();
+                    const record = current();
+                    const entries =
+                        record.assign?.ask?.calendars ??
+                        (await viewProposals(store, record, deps)).proposals.calendars.map((one) => one.entry);
+                    const calendarIndex = parsed.entryId
+                        ? entries.findIndex((entry) => entry.entryId === parsed.entryId)
+                        : undefined;
+
+                    if (calendarIndex === -1) {
+                        throw new Error(
+                            `No overlapping calendar entry ${parsed.entryId}; assign.proposals() lists them`
+                        );
+                    }
+
+                    return applyAnswer({
+                        store,
+                        record,
+                        deps,
+                        entries,
+                        answer: {
+                            project: parsed.project,
+                            labels: parsed.labels ?? [],
+                            ...(calendarIndex !== undefined ? { calendarIndex } : {}),
+                            ...(parsed.pairFolder !== undefined ? { pairFolder: parsed.pairFolder } : {}),
+                        },
+                    });
+                },
+            },
             settings: async () => callLive("settings.get"),
             setSettings: async (input: z.input<typeof recorderSetSchema>) =>
                 callLive("settings.set", settingsPatchOf(input)),
             set: async (input: z.input<typeof set.params>) => {
-                const { title, project } = set.params.parse(input);
+                const { title, project, labels = [], unlabel = [] } = set.params.parse(input);
 
-                if (!title && !project) {
-                    throw new Error("Nothing to set: give title and/or project");
+                if (!title && !project && labels.length === 0 && unlabel.length === 0) {
+                    throw new Error("Nothing to set: give title, project, labels and/or unlabel");
                 }
 
+                const config = new MeetingsConfigStore();
                 const resolved = project
-                    ? (await resolveProject({ config: new MeetingsConfigStore(), flag: project, quiet: true })).project
+                    ? (await resolveProject({ config, flag: project, quiet: true })).project
                     : undefined;
+                const target = resolved ?? current().project;
+
+                if (target && labels.length > 0) {
+                    await config.setProjectLabels(target, { add: labels });
+                }
+
+                const removed = new Set(unlabel.map((label) => label.toLowerCase()));
                 const record = await store.update(
                     id,
                     {
                         command: "set",
-                        change: [resolved && `project ${resolved}`, title && `title "${title}"`]
+                        change: [
+                            resolved && `project ${resolved}`,
+                            title && `title "${title}"`,
+                            labels.length > 0 && `labels + ${labels.join(", ")}`,
+                            unlabel.length > 0 && `labels - ${unlabel.join(", ")}`,
+                        ]
                             .filter(Boolean)
                             .join(", "),
                     },
-                    (current) => {
-                        current.project = resolved ?? current.project;
-                        current.title = title ?? current.title;
+                    (saved) => {
+                        saved.project = resolved ?? saved.project;
+                        saved.title = title ?? saved.title;
+                        saved.labels = mergeLabels(saved.labels, labels).filter(
+                            (label) => !removed.has(label.toLowerCase())
+                        );
                     }
                 );
                 return describe(record);

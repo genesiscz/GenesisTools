@@ -1,5 +1,6 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
+import { registerAssignCommands } from "./commands/assign";
 import { registerAttendanceCommand } from "./commands/attendance";
 import { registerDictionaryCommand } from "./commands/dictionary";
 import { registerEvidenceCommand } from "./commands/evidence";
@@ -24,6 +25,7 @@ registerPlayCommand(program);
 registerListenCommand(program);
 registerWatchCommands(program);
 registerProjectsCommand(program);
+registerAssignCommands(program);
 registerDictionaryCommand(program);
 
 await runTool(program, { tool: "meetings" });

@@ -447,13 +447,16 @@ export async function applyAnswer(options: {
     answer: AssignAnswer;
     deps: AssignDeps;
     command?: string;
+    /** The entries `answer.calendarIndex` points into; the question's own list by default. */
+    entries?: CalendarEntry[];
 }): Promise<AppliedAnswer> {
     const { store, record, answer, deps } = options;
     const command = options.command ?? "assign apply";
     const at = new Date(deps.now()).toISOString();
     const ask = record.assign?.ask;
     const project = answer.project ?? undefined;
-    const entry = answer.calendarIndex !== undefined ? ask?.calendars[answer.calendarIndex] : undefined;
+    const entries = options.entries ?? ask?.calendars ?? [];
+    const entry = answer.calendarIndex !== undefined ? entries[answer.calendarIndex] : undefined;
     const applied: AppliedAnswer = { labels: answer.labels, paired: [], waitsForFolder: false };
 
     if (project) {
@@ -565,7 +568,7 @@ async function advance(
 async function advanceAsk(store: MeetingStore, record: MeetingRecord, deps: AssignDeps): Promise<string> {
     const ask = record.assign?.ask;
 
-    if (!ask || ask.outcome !== "pending") {
+    if (ask?.outcome !== "pending") {
         setOpen(store, record.id, undefined);
         return "closed";
     }

@@ -4,7 +4,7 @@ import { isInteractive } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { MeetingsConfigStore, mergeLabels } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore, nextId } from "@genesiscz/utils/meetings/record";
 import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
@@ -145,7 +145,10 @@ async function show(ref: string, opts: { json?: boolean }): Promise<void> {
     out.print(showText(record));
 }
 
-async function set(ref: string, opts: { project?: string; title?: string }): Promise<void> {
+async function set(
+    ref: string,
+    opts: { project?: string; title?: string; label?: string[]; unlabel?: string[] }
+): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
 
@@ -153,23 +156,38 @@ async function set(ref: string, opts: { project?: string; title?: string }): Pro
         return;
     }
 
-    if (!opts.project && !opts.title) {
-        fail(`Nothing to set: give --project <name> or --title <text>.`);
+    const labels = opts.label ?? [];
+    const unlabel = opts.unlabel ?? [];
+
+    if (!opts.project && !opts.title && labels.length === 0 && unlabel.length === 0) {
+        fail("Nothing to set: give --project <name>, --title <text>, --label <text> or --unlabel <text>.");
         return;
     }
 
     try {
-        const project = opts.project
-            ? (await resolveProject({ config: new MeetingsConfigStore(), flag: opts.project })).project
-            : undefined;
-        const changes = [project ? `project ${project}` : "", opts.title ? `title "${opts.title}"` : ""].filter(
-            Boolean
-        );
-        await store.update(record.id, { command: "set", change: changes.join(", ") }, (current) => {
+        const config = new MeetingsConfigStore();
+        const project = opts.project ? (await resolveProject({ config, flag: opts.project })).project : undefined;
+        const target = project ?? record.project;
+
+        if (target && labels.length > 0) {
+            await config.setProjectLabels(target, { add: labels });
+        }
+
+        const changes = [
+            project ? `project ${project}` : "",
+            opts.title ? `title "${opts.title}"` : "",
+            labels.length > 0 ? `labels + ${labels.join(", ")}` : "",
+            unlabel.length > 0 ? `labels - ${unlabel.join(", ")}` : "",
+        ].filter(Boolean);
+        const removed = new Set(unlabel.map((label) => label.toLowerCase()));
+        const updated = await store.update(record.id, { command: "set", change: changes.join(", ") }, (current) => {
             current.project = project ?? current.project;
             current.title = opts.title ?? current.title;
+            current.labels = mergeLabels(current.labels, labels).filter((label) => !removed.has(label.toLowerCase()));
         });
-        ui.ok(`${record.id}: ${changes.join(", ")}`);
+        ui.ok(
+            `${record.id}: ${changes.join(", ")}${updated.labels.length > 0 ? ` (labels: ${updated.labels.join(", ")})` : ""}`
+        );
     } catch (err) {
         fail(errorText(err));
     }
@@ -330,9 +348,11 @@ export function registerMeetingCommands(program: Command): void {
     program
         .command("set")
         .argument("<meeting>", MEETING_REF)
-        .description("Change a meeting's project or title")
+        .description("Change a meeting's project, title or labels")
         .option("--project <name>", "its project (a new name joins the known projects)")
         .option("--title <text>", "its title")
+        .option("--label <text...>", "add labels (a new one joins the project's known labels)")
+        .option("--unlabel <text...>", "remove labels from the meeting")
         .action(set);
 
     program

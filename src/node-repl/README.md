@@ -29,7 +29,9 @@ resume and stop) and edits a recording's `edit.json`: `open(id)` returns a Movie
 autoZoom, volume, mute, apply, undo, export and show. Its times are source seconds, and the open recorder window takes
 each save as it lands. The CLI door to the same edits is `tools recorder project` and `tools recorder apply`.
 
-The registry also includes `meetings` (open, evidence, transcript, items.add), `control` (the native control API),
+The registry also includes `meetings` (open, evidence, transcript, items.add; how a meeting finds its project:
+`projects.labels`, `projects.pair`, `projects.unpair`, `projects.people`, `assign.sweep`, and on a meeting
+`assign.proposals`, `assign.ask`, `assign.apply` and `set({ labels })`), `control` (the native control API),
 `browser` (CDP tabs, open, navigate, evaluate), `hub` (prs, pr), and `github` (review threads).
 Each lives in one toolset file and has one registry entry. Browser calls take the browser's CDP `port` explicitly.
 
