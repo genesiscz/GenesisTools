@@ -701,6 +701,8 @@ final class EditorModel {
     /// On by default: a dragged zoom, hidden part, text or clip edge snaps to the playhead, the clip edges, the
     /// markers and the other items' edges within `snapPoints`. View → Snap While Dragging turns it off.
     static let snapKey = "recorder.timeline.snap"
+    /// On by default: the trackpad taps once each time a dragged edge lands on a target. View → Tap When Snapping.
+    static let snapHapticKey = "recorder.timeline.snapHaptic"
     static let snapPoints = 7.0
 
     /// Where the last drag snapped, in source microseconds, for the guide line; nil while nothing snaps.
@@ -719,11 +721,19 @@ final class EditorModel {
     }
 
     /// A dragged edge at `us` (source), moved onto a target close enough on screen; the guide shows where.
+    /// ⌘ held during the drag places the edge freely, as in Final Cut and Keynote.
     func snapped(_ us: Int64, excluding id: String?) -> Int64 {
-        guard UserDefaults.standard.object(forKey: Self.snapKey) as? Bool ?? true else { return us }
+        guard UserDefaults.standard.object(forKey: Self.snapKey) as? Bool ?? true,
+              !NSEvent.modifierFlags.contains(.command) else {
+            snapGuideUs = nil
+            return us
+        }
         let pointsPerSecond = pointsPerSecond > 0 ? pointsPerSecond : fittedPointsPerSecond
         let tolerance = Int64(Self.snapPoints / max(1, pointsPerSecond) * 1_000_000)
         let target = TimelineMap.snap(us, to: snapTargets(excluding: id), toleranceUs: tolerance)
+        if let target, target != snapGuideUs, UserDefaults.standard.object(forKey: Self.snapHapticKey) as? Bool ?? true {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
         snapGuideUs = target
         return target ?? us
     }

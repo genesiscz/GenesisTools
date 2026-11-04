@@ -90,6 +90,9 @@ enum EditorMenu {
         scrub.target = EditorMenuTarget.shared
         let snap = view.addItem(withTitle: "Snap While Dragging", action: #selector(EditorMenuTarget.toggleSnap(_:)), keyEquivalent: "")
         snap.target = EditorMenuTarget.shared
+        snap.toolTip = "Hold ⌘ while dragging to place an edge freely"
+        let tap = view.addItem(withTitle: "Tap When Snapping", action: #selector(EditorMenuTarget.toggleSnapHaptic(_:)), keyEquivalent: "")
+        tap.target = EditorMenuTarget.shared
         bar.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = view
 
         let window = NSMenu(title: "Window")
@@ -159,6 +162,9 @@ private struct ShortcutsSheet: View {
                 }
             }
             .frame(maxHeight: 420)
+            Text("Hold ⌘ while you drag on the timeline to place an edge without snapping.")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Spacer()
                 Button("Done", action: done).keyboardShortcut(.defaultAction)
@@ -215,6 +221,11 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
         UserDefaults.standard.set(!on, forKey: EditorModel.snapKey)
     }
 
+    @objc func toggleSnapHaptic(_ sender: Any?) {
+        let on = UserDefaults.standard.object(forKey: EditorModel.snapHapticKey) as? Bool ?? true
+        UserDefaults.standard.set(!on, forKey: EditorModel.snapHapticKey)
+    }
+
     @objc func showLibrary(_ sender: Any?) {
         LibraryWindow.shared.show(focus: true)
     }
@@ -226,6 +237,10 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(toggleSnap(_:)) {
             item.state = (UserDefaults.standard.object(forKey: EditorModel.snapKey) as? Bool ?? true) ? .on : .off
+            return true
+        }
+        if item.action == #selector(toggleSnapHaptic(_:)) {
+            item.state = (UserDefaults.standard.object(forKey: EditorModel.snapHapticKey) as? Bool ?? true) ? .on : .off
             return true
         }
         if item.action == #selector(toggleHoverScrub(_:)) {
