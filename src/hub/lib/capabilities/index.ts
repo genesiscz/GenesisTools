@@ -224,6 +224,21 @@ export const HUB_CAPABILITIES = {
         },
     } satisfies HubCapability<Record<string, never>>,
 
+    /**
+     * `hub approvals --json`: every tool call that waits for allow or deny, with its exact command, file changes or
+     * plan (the phone's Approvals screen, F8). Read only; the answer is its own keyed-write route.
+     */
+    approvals: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { listPendingApprovals } = await import("../approvals/index");
+            return { pending: await listPendingApprovals() };
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
     /** `hub gates --json`: what waits on the Mac's Touch ID (the phone's waiting card, F22). Read only. */
     gates: {
         policy: "read",

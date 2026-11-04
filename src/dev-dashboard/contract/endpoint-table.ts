@@ -9,6 +9,11 @@ import type {
     AgentVoiceReceiptDto,
     PreparedPromptDto,
 } from "@app/dev-dashboard/contract/agents";
+import type {
+    ApprovalAnswerInput,
+    ApprovalReceiptDto,
+    PendingApprovalsDto,
+} from "@app/dev-dashboard/contract/approvals";
 import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/contract/gates";
 import type { AgentNewInput, AgentNewReceiptDto, LaunchOptionsDto } from "@app/dev-dashboard/contract/launch";
 import type { PushDeviceReceipt, PushDeviceRegistration } from "@app/dev-dashboard/contract/push";
@@ -349,6 +354,18 @@ export const ENDPOINTS = {
     gatewayGates: row<GatewayInput, GateLedgerDto>("GET", "/api/gateway/gates", "read"),
     /** Brings one waiting gate to the Mac's front, or opens the window of an rm request that has none (F22). */
     gatesRaise: row<{ id: string }, GateRaiseReceiptDto>("POST", "/api/gates/raise", "keyed-write"),
+    /** Tool calls that wait for allow or deny (M9, F8): pane permission and plan dialogs, codex worker requests. */
+    gatewayApprovals: row<GatewayInput, PendingApprovalsDto>("GET", "/api/gateway/approvals", "read", "slow"),
+    /**
+     * Allows or denies one waiting tool call (F8). A keyed write behind the full login, not the act scope: an act token
+     * answers one decision letter, and an allow runs a command on the Mac. The phone asks for Face ID before an allow.
+     */
+    approvalsAnswer: row<ApprovalAnswerInput, ApprovalReceiptDto>(
+        "POST",
+        "/api/approvals/answer",
+        "keyed-write",
+        "slow"
+    ),
     /** The New agent sheet (F21): harnesses, accounts ranked by headroom from cached readings, and repos. */
     gatewayLaunch: row<GatewayInput, LaunchOptionsDto>("GET", "/api/gateway/launch", "read"),
     /** Starts an agent in a background cmux workspace (`tools cmux agents new`, F21). */

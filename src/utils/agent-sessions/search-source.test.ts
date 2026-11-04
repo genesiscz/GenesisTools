@@ -103,6 +103,7 @@ function reader(records: HistorySourceRecord[]): NativeSessionReader<string> {
             openPermission: () => null,
             sessionAlive: () => null,
             registryDirectory: () => null,
+            pendingCall: () => null,
         },
         windowTurns: () => [],
         readBackward: noBackwardRead,

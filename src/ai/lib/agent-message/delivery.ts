@@ -534,6 +534,44 @@ export async function pressKeyInSurface(
 export class KeyPressUnknownError extends MessageError {}
 
 /**
+ * Press a dialog's answer keys in the session's cmux surface, in order, after the same guards as `pressKeyInSurface`:
+ * a named key through `cmux send-key`, a character or a line of text through `cmux send`. `--force` on each, because
+ * the open dialog is the target here, so cmux's own dialog check must not stop the press. A press that times out may
+ * have landed, so it throws `KeyPressUnknownError` and the rest are not pressed.
+ */
+export async function pressDialogKeysInSurface(
+    input: {
+        alias: TurnProvider;
+        sessionId: string;
+        presses: readonly ({ key: string } | { text: string })[];
+    } & SurfaceGuardDeps
+): Promise<{ ref: string; title: string | null }> {
+    const target = await guardedSurface({ ...input, doing: "answer the dialog in", nothing: "no key was pressed in" });
+    const run = input.run ?? ((args: string[]) => runCmux(args));
+
+    for (const press of input.presses) {
+        const args =
+            "key" in press
+                ? ["send-key", "--surface", target.surface.id, "--force", press.key]
+                : ["send", "--surface", target.surface.id, "--force", "--", press.text];
+        const result = await run(args);
+        const label = "key" in press ? press.key : `text (${press.text.length} characters)`;
+
+        if (result.timedOut) {
+            throw new KeyPressUnknownError(`cmux ${args[0]} ${label} into ${target.surface.ref} timed out`);
+        }
+
+        if (result.code !== 0) {
+            throw new MessageError(
+                `cmux ${args[0]} ${label} refused (${result.code}): ${result.stderr.trim() || "no detail"}`
+            );
+        }
+    }
+
+    return { ref: target.surface.ref, title: target.surface.title };
+}
+
+/**
  * The message part of each harness: `drivers/<harness id>.ts` exports it as `messagePart` (`toolParts`). Each driver is
  * this tool's code (Claude's peer channel, the Codex thread queue, Grok's leader), which the harness drivers in
  * `src/utils` cannot import. A new harness writes its driver in its own module there and edits no table.

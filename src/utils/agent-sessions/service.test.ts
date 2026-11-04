@@ -48,6 +48,7 @@ function createReader(options: { kind: string; roots: string[] }): NativeSession
             openPermission: () => null,
             sessionAlive: () => null,
             registryDirectory: () => null,
+            pendingCall: () => null,
         },
         scanInsights: () => ({ native: null, defaultModel: null }),
         analysis: noAnalysis,

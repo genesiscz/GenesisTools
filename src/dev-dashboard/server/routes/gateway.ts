@@ -12,6 +12,7 @@ import { ACT_TOKEN_HEADER } from "@app/dev-dashboard/server/auth-guard";
 import { bindEndpoint, IDEMPOTENCY_HEADER } from "@app/dev-dashboard/server/bind";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteContext, RouteDef, RouteResult } from "@app/dev-dashboard/server/types";
+import { type ApprovalSources, answerPendingApproval } from "@app/hub/lib/approvals/index";
 import { type BoardStopDeps, stopAgentSession } from "@app/hub/lib/board/stop";
 import { CapabilityRefusedError, type HubCapabilityName, runCapability } from "@app/hub/lib/capabilities/index";
 import { type GateRaiseDeps, raiseGate } from "@app/hub/lib/gates/index";
@@ -31,6 +32,7 @@ export const GATEWAY_ROWS = {
     agents: ENDPOINTS.gatewayAgents,
     board: ENDPOINTS.gatewayBoard,
     gates: ENDPOINTS.gatewayGates,
+    approvals: ENDPOINTS.gatewayApprovals,
     launch: ENDPOINTS.gatewayLaunch,
     watching: ENDPOINTS.gatewayWatching,
     transcript: ENDPOINTS.gatewayTranscript,
@@ -75,6 +77,8 @@ export interface GatewayDeps {
     voice?: VoiceDeps;
     /** The raise route's ledger and window openers; tests pass fakes, so no window opens. */
     gates?: GateRaiseDeps;
+    /** The approval answer route's sources; tests pass fakes, so no key is pressed and no worker is answered. */
+    approvals?: ApprovalSources;
     /** The new-agent route's runner; tests pass a fake, so no workspace opens. */
     launch?: StartAgentDeps;
     /** The mute route's sources; tests pass fakes, so no Monitor database is written. */
@@ -162,6 +166,16 @@ export function gatewayRoutes(deps: GatewayDeps = {}): RouteDef[] {
             input: z.object({ key: z.string().min(1) }),
             invalid: "expected { key }",
             run: (input) => interruptBoardSession(input, deps.send),
+        }),
+        // A keyed write: a replayed allow must not press the keys of the next dialog.
+        bindEndpoint(ENDPOINTS.approvalsAnswer, {
+            input: z.object({
+                id: z.string().min(1),
+                verdict: z.enum(["allow", "allow-always", "deny"]),
+                reason: z.string().max(2000).optional(),
+            }),
+            invalid: "expected { id, verdict, reason? }",
+            run: (input) => answerPendingApproval(input, deps.approvals),
         }),
         // A keyed write: a raise opens a window on the Mac, so a replay must not open a second one.
         bindEndpoint(ENDPOINTS.gatesRaise, {

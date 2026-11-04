@@ -337,6 +337,36 @@ export interface NativeDialogPermission {
     at: string;
 }
 
+/** One file a pending call would change: its path, and the replaced and new text or the whole new content. */
+export interface PendingCallFileChange {
+    path: string;
+    /** `-` and `+` lines for a replacement; absent for a whole-file write. */
+    diff?: string;
+    /** The whole new content of a write; absent for a replacement. */
+    content?: string;
+}
+
+/**
+ * What a pending tool call would do, normalized from its input: a shell command (with the folder it runs in when the
+ * transcript names one), file changes, a plan to approve, or any other tool's input as one JSON line.
+ */
+export type PendingCallDetail =
+    | { kind: "command"; command: string; cwd?: string; description?: string }
+    | { kind: "file-change"; changes: PendingCallFileChange[] }
+    | { kind: "plan"; plan: string }
+    | { kind: "tool"; input: string };
+
+/** The newest tool call of a transcript that has no result yet (`NativeSessionReader.dialog.pendingCall`). */
+export interface PendingToolCall {
+    /** The harness's own call id (`toolu_…`, `call_…`, `call-…`). */
+    callId: string;
+    /** The tool's name as the harness writes it (`Bash`, `exec`, `run_terminal_command`). */
+    tool: string;
+    /** ISO time the call was written, when the record carries one. */
+    at?: string;
+    detail: PendingCallDetail;
+}
+
 /** The native ids one transcript row carries, for matching a source anchor (a message, a tool call, a turn). */
 /** What a file under a session root is (`NativeSessionReader.classifyPath`). */
 export interface SessionPathRole {
@@ -384,6 +414,12 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
         sessionAlive(transcriptPath: string, sessionId: string): boolean | null;
         /** The registry owning a transcript, when this provider has one. */
         registryDirectory(transcriptPath: string): string | null;
+        /**
+         * The newest tool call in these transcript records (a tail, oldest first) that has no result yet, with its
+         * input normalized (`pending-call.ts`). Paired with an open permission or plan dialog it is what the dialog
+         * asks to allow (M9 pending approvals); on its own it may simply be a tool that is still running.
+         */
+        pendingCall(records: readonly Record<string, unknown>[]): PendingToolCall | null;
     };
     windowTurns(values: Record<string, unknown>[]): TranscriptTurn[];
     /**

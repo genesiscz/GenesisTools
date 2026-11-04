@@ -61,6 +61,7 @@ test("a registered fourth provider supports listing, content, detail and unavail
                 openPermission: () => null,
                 sessionAlive: () => null,
                 registryDirectory: () => null,
+                pendingCall: () => null,
             },
             windowTurns: () => [],
             readBackward: noBackwardRead,

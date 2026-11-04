@@ -1,9 +1,11 @@
 import { basename, dirname, join } from "node:path";
 import type { NativeSessionReader } from "../types";
+import { grokPendingCall } from "./grok-pending-call";
 
 export const grokDialog: NativeSessionReader<"grok">["dialog"] = {
     sessionAlive: () => null,
     registryDirectory: () => null,
+    pendingCall: grokPendingCall,
     eventLogPath(transcriptPath) {
         return basename(transcriptPath) === "updates.jsonl" ? join(dirname(transcriptPath), "events.jsonl") : null;
     },
