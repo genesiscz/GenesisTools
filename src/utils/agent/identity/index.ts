@@ -1,0 +1,383 @@
+import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+import { readCachedHistoryTitle } from "@genesiscz/utils/agent-sessions/cached-title";
+import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
+import { harnessDriver, harnessOfRuntimeAgent, harnessPluginId } from "@genesiscz/utils/ai/providers/harness-index";
+import { logger } from "@genesiscz/utils/logger";
+import { resolveAncestorCwd } from "@genesiscz/utils/process/cwd";
+import { ancestry, readExecutablePath } from "@genesiscz/utils/process/processes";
+import { profiler } from "@genesiscz/utils/profile";
+import { enrichIdentity } from "./enrichers";
+import { type GivenGitFacts, gitCommonRoot, readGitFacts } from "./git";
+import { CALLER_SOURCES } from "./sources";
+import type {
+    AgentIdentity,
+    CallerAgent,
+    CallerInput,
+    CallerReading,
+    CallerSource,
+    FactSource,
+    IdentityFacet,
+    IdentityField,
+    WhoIsCallingOptions,
+} from "./types";
+
+export { hostLabel, resolveEnvHost } from "./env";
+export { clearGitFactsCache, gitCommonRoot } from "./git";
+export { callerSessionReadable, codexThreadIdFromOpenFiles, type PeerCaller, readPeerCaller } from "./peer";
+export { CALLER_SOURCES } from "./sources";
+export type * from "./types";
+
+const prof = profiler.scope("agent-context");
+const { log } = logger.scoped("agent-context");
+
+const MAX_ANCESTRY_DEPTH = 20;
+const MAX_COMMAND_CHARS = 240;
+
+/**
+ * Who is calling, from one input, through one precedence rule (`CALLER_SOURCES`). The env-only path (no facets) reads
+ * the given environment and nothing else: no file, no process, no spawn. Each costly fact is filled only for its
+ * facet. A remote caller (`origin: "remote"`) has no environment here, so none of this process's env, terminal or
+ * account reaches it. `sources` replaces the precedence list in a test.
+ */
+export function whoIsCalling(
+    input: CallerInput,
+    options: WhoIsCallingOptions = {},
+    sources: readonly CallerSource[] = CALLER_SOURCES
+): AgentIdentity {
+    return prof.measure("identity.whoIsCalling", () => compose(input, options, sources));
+}
+
+function readSafely(source: CallerSource, input: CallerInput): CallerReading | undefined {
+    try {
+        return source.read(input);
+    } catch (error) {
+        log.debug({ error, source: source.id }, "agent-context: a caller source failed; the next one answers");
+        return undefined;
+    }
+}
+
+function setFact<F extends IdentityField>(
+    identity: AgentIdentity,
+    field: F,
+    value: AgentIdentity[F],
+    source: FactSource
+): void {
+    identity[field] = value;
+    identity.sources[field] = source;
+}
+
+/** The first reading that names an agent chooses the caller; with none, the first reading that says anything. */
+function selectCaller(readings: { source: FactSource; reading: CallerReading }[]) {
+    return readings.find(({ reading }) => reading.agent !== "unknown") ?? readings[0];
+}
+
+/** A later reading adds facts only when it describes the same caller: the same agent, and no other session. */
+function sameCaller(chosen: CallerReading, other: CallerReading): boolean {
+    if (other.agent !== chosen.agent) {
+        return false;
+    }
+
+    return !chosen.sessionId || !other.sessionId || chosen.sessionId === other.sessionId;
+}
+
+function applyReadings(identity: AgentIdentity, readings: { source: FactSource; reading: CallerReading }[]): void {
+    const chosen = selectCaller(readings);
+
+    if (!chosen) {
+        return;
+    }
+
+    for (const { source, reading } of readings) {
+        if (reading !== chosen.reading && !sameCaller(chosen.reading, reading)) {
+            log.debug({ source, agent: reading.agent }, "agent-context: source names another caller; not used");
+            continue;
+        }
+
+        const added: string[] = [];
+
+        for (const [field, value] of Object.entries(reading) as [IdentityField, AgentIdentity[IdentityField]][]) {
+            const current = identity[field];
+
+            // The chosen reading sets every fact it has; a later one only fills what is still empty.
+            if (value === undefined || (reading !== chosen.reading && current !== undefined && current !== null)) {
+                continue;
+            }
+
+            setFact(identity, field, value, source);
+            added.push(field);
+        }
+
+        log.debug({ source, agent: reading.agent, fields: added }, "agent-context: source");
+    }
+}
+
+/**
+ * The directory the SESSION is in, which is not always ours. `process.cwd()` is fixed at spawn, and an MCP server
+ * keeps its first directory after the session moves (EnterWorktree). The host process does chdir, so the nearest
+ * ancestor with a different cwd is the live answer, accepted only when it shares our `.git`, so a terminal emulator
+ * sitting in `~` can never be mistaken for the session.
+ */
+export function resolveSessionCwd(): string {
+    return prof.measure("runtime.resolveSessionCwd", () => {
+        const own = process.cwd();
+        const candidate = resolveAncestorCwd({ ownCwd: own });
+
+        if (!candidate) {
+            return own;
+        }
+
+        const ownRepo = gitCommonRoot(own);
+
+        if (!ownRepo || ownRepo !== gitCommonRoot(candidate)) {
+            log.debug({ own, candidate }, "agent-runtime: ancestor cwd is a different repo, keeping process.cwd()");
+            return own;
+        }
+
+        log.debug({ own, candidate }, "agent-runtime: adopting the host process cwd");
+        return candidate;
+    });
+}
+
+function chooseCwd(
+    identity: AgentIdentity,
+    input: CallerInput,
+    options: WhoIsCallingOptions,
+    facets: Set<IdentityFacet>
+) {
+    const overrides = options.overrides ?? {};
+    const scopedNull = input.origin === "remote" && input.caller !== undefined && input.caller.sessionId === null;
+
+    if (overrides.cwd !== undefined) {
+        setFact(identity, "cwd", overrides.cwd, "override");
+    } else if (options.fallbackCwd !== undefined && scopedNull) {
+        setFact(identity, "cwd", options.fallbackCwd, "fallback-cwd");
+    } else if (identity.cwd === undefined && facets.has("cwd")) {
+        setFact(identity, "cwd", resolveSessionCwd(), "session-cwd");
+    } else if (identity.cwd === undefined) {
+        setFact(identity, "cwd", process.cwd(), "process-cwd");
+    }
+}
+
+function readGit(identity: AgentIdentity, cwd: string, options: WhoIsCallingOptions): void {
+    const overrides = options.overrides ?? {};
+    const given: GivenGitFacts = {};
+    const fields = [
+        "project",
+        "repoRoot",
+        "isWorktree",
+        "worktreePath",
+        "branch",
+        "commitSha",
+        "commitMessage",
+    ] as const;
+
+    for (const field of fields) {
+        if (Object.hasOwn(overrides, field)) {
+            given[field] = true;
+        }
+    }
+
+    const git = readGitFacts(cwd, given);
+
+    for (const field of fields) {
+        setFact(identity, field, git[field], "git");
+    }
+}
+
+function applyOverrides(identity: AgentIdentity, options: WhoIsCallingOptions): void {
+    for (const [field, value] of Object.entries(options.overrides ?? {}) as [
+        IdentityField,
+        AgentIdentity[IdentityField],
+    ][]) {
+        if (field !== "cwd") {
+            setFact(identity, field, value, "override");
+        }
+    }
+}
+
+function readTitle(identity: AgentIdentity): void {
+    const harness = harnessOfRuntimeAgent(identity.agent);
+    const sessionId = identity.sessionId;
+
+    if (identity.sessionTitle || !harness || !sessionId) {
+        return;
+    }
+
+    try {
+        const meta = prof.measure("runtime.titleLookup", () =>
+            readCachedHistoryTitle({ providerId: harnessPluginId(harness), sessionId })
+        );
+        setFact(identity, "sessionTitle", meta?.customTitle ?? meta?.summary ?? null, "history");
+    } catch (error) {
+        // History index is optional; logged so a missing or corrupt index is diagnosable.
+        log.debug({ error, sessionId }, "agent-runtime: failed to backfill cached session title");
+    }
+}
+
+/** The query of the transcript facet: one session of one caller, from that caller's own env. */
+export interface CallerTranscriptLookup {
+    agent: CallerAgent;
+    sessionId: string | null;
+    /** The caller's environment; a remote caller's is unknown, so `{}` (the default homes). */
+    env: NodeJS.ProcessEnv;
+    cwds: readonly string[];
+    now?: Date;
+    home?: string;
+}
+
+/**
+ * The transcript of a caller's session through its harness's locator (`TranscriptLocator.callerTranscript`, in the
+ * reader's `<harness>-locate.ts`): Claude by its project folder, Codex in the first `CODEX_HOME` entry and the last
+ * seven days, Grok by its cwd folder. Null for a host with no harness (Copilot) and for no session.
+ */
+export function callerTranscriptOf(lookup: CallerTranscriptLookup): string | null {
+    const harness = harnessOfRuntimeAgent(lookup.agent);
+    const sessionId = lookup.sessionId;
+
+    if (!harness || !sessionId) {
+        return null;
+    }
+
+    return prof.measure("failures.transcriptOf", () =>
+        harnessDriver(harness).parts.locate.callerTranscript({
+            sessionId,
+            env: lookup.env,
+            cwds: lookup.cwds.filter((cwd) => cwd),
+            home: lookup.home,
+            now: lookup.now ?? new Date(),
+        })
+    );
+}
+
+/** The model a caller's session runs now, from its transcript, through its harness's model reader. */
+export function callerModelOf(agent: CallerAgent, transcriptPath: string | null): string | null {
+    const harness = harnessOfRuntimeAgent(agent);
+    return transcriptPath && harness ? harnessHooks(harness).currentModel(transcriptPath) : null;
+}
+
+function readTranscriptAndModel(
+    identity: AgentIdentity,
+    input: CallerInput,
+    options: WhoIsCallingOptions,
+    facets: Set<IdentityFacet>
+): void {
+    const needModel = facets.has("model") && !identity.model;
+
+    if ((facets.has("transcript") || needModel) && identity.transcriptPath === undefined) {
+        const path = callerTranscriptOf({
+            agent: identity.agent,
+            sessionId: identity.sessionId,
+            env: input.origin === "local" ? input.env : {},
+            cwds: [identity.cwd ?? "", identity.repoRoot ?? ""],
+            now: options.now,
+            home: options.home,
+        });
+        setFact(identity, "transcriptPath", path, "transcript");
+    }
+
+    if (needModel) {
+        setFact(identity, "model", callerModelOf(identity.agent, identity.transcriptPath ?? null), "transcript");
+    }
+}
+
+function readProcess(identity: AgentIdentity, input: CallerInput): void {
+    const pid = input.origin === "local" ? process.pid : identity.process?.pid;
+
+    if (pid === undefined) {
+        return;
+    }
+
+    try {
+        const chain = prof.measure("identity.process", () =>
+            ancestry(pid, MAX_ANCESTRY_DEPTH)
+                .filter((entry) => entry.pid > 1 && entry.pid !== pid)
+                .map((entry) => ({
+                    pid: entry.pid,
+                    command: (entry.command ?? readExecutablePath(entry.pid) ?? "").slice(0, MAX_COMMAND_CHARS),
+                }))
+        );
+        setFact(identity, "process", { pid, ancestry: chain }, "process");
+    } catch (error) {
+        log.debug({ error, pid }, "agent-context: could not read the caller's process ancestry");
+    }
+}
+
+function compose(input: CallerInput, options: WhoIsCallingOptions, sources: readonly CallerSource[]): AgentIdentity {
+    const facets = new Set(options.facets ?? []);
+    const identity: AgentIdentity = { agent: "unknown", sessionId: null, isInAgent: false, aiAgent: null, sources: {} };
+    const readings = sources.flatMap((source) => {
+        const reading = readSafely(source, input);
+        return reading ? [{ source: source.id, reading }] : [];
+    });
+
+    applyReadings(identity, readings);
+
+    // A request scope always carries its source message slot, set or not, as the runtime context always had it.
+    if (input.origin === "remote" && input.caller && identity.sources.agent === "caller-scope") {
+        identity.sourceMessage = input.caller.sourceMessage;
+    }
+
+    const named = { agent: identity.agent, sessionId: identity.sessionId };
+    chooseCwd(identity, input, options, facets);
+
+    if (facets.has("git")) {
+        readGit(identity, identity.cwd ?? process.cwd(), options);
+    }
+
+    applyOverrides(identity, options);
+
+    // A source message anchors a row of the named session; once an override names another caller it anchors nothing.
+    if (
+        !Object.hasOwn(options.overrides ?? {}, "sourceMessage") &&
+        (identity.agent !== named.agent || identity.sessionId !== named.sessionId)
+    ) {
+        identity.sourceMessage = undefined;
+        delete identity.sources.sourceMessage;
+    }
+
+    if (facets.has("title")) {
+        readTitle(identity);
+    }
+
+    readTranscriptAndModel(identity, input, options, facets);
+
+    if (facets.has("process")) {
+        readProcess(identity, input);
+    }
+
+    if (input.origin === "local") {
+        enrichIdentity(identity, {
+            caller: { agent: identity.agent, sessionId: identity.sessionId },
+            env: input.env,
+            facets,
+        });
+    }
+
+    return identity;
+}
+
+/** The identity as today's `AgentRuntimeContext` (the git and cwd facets filled). */
+export function toRuntimeContext(identity: AgentIdentity): AgentRuntimeContext {
+    const cwd = identity.cwd ?? process.cwd();
+    const context: AgentRuntimeContext = {
+        agent: identity.agent,
+        sessionId: identity.sessionId,
+        isInAgent: identity.isInAgent,
+        aiAgent: identity.aiAgent,
+        sessionTitle: identity.sessionTitle ?? null,
+        project: identity.project ?? "",
+        repoRoot: identity.repoRoot ?? cwd,
+        cwd,
+        isWorktree: identity.isWorktree ?? false,
+        worktreePath: identity.worktreePath ?? null,
+        branch: identity.branch ?? null,
+        commitSha: identity.commitSha ?? null,
+        commitMessage: identity.commitMessage ?? null,
+    };
+
+    if (Object.hasOwn(identity, "sourceMessage")) {
+        context.sourceMessage = identity.sourceMessage;
+    }
+
+    return context;
+}
