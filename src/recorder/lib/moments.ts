@@ -167,3 +167,9 @@ export function searchLibrary(text: string) {
     log.debug({ text, hits: hits.length }, "library searched");
     return hits;
 }
+
+/** `count` moments spread evenly over a range, each at the middle of its share, so none falls on a cut at an end. */
+export function spreadTimes({ fromUs, toUs, count }: { fromUs: number; toUs: number; count: number }): number[] {
+    const step = Math.max(0, toUs - fromUs) / count;
+    return Array.from({ length: count }, (_, index) => Math.round(fromUs + step * (index + 0.5)));
+}

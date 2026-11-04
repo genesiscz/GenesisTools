@@ -214,6 +214,25 @@ export function stillOfEdit({ path, atSeconds, out }: { path: string; atSeconds:
     });
 }
 
+const sheetAnswerSchema = z.object({
+    ok: z.boolean(),
+    path: z.string().optional(),
+    width: z.number().optional(),
+    height: z.number().optional(),
+    times: z.array(z.number()).optional(),
+    error: z.string().optional(),
+});
+export type SheetAnswer = z.infer<typeof sheetAnswerSchema>;
+
+/** Several frames of an edit (OUTPUT seconds) on one picture in rows of three, each labelled with its time. */
+export function sheetOfEdit({ path, times, out }: { path: string; times: number[]; out: string }) {
+    return runRecorderFace({
+        argv: ["--recorder", "--sheet", path, "--times", times.join(","), "--out", resolve(out)],
+        schema: sheetAnswerSchema,
+        what: "sheet",
+    });
+}
+
 /**
  * Renders an edit with the editor's own renderer (AVFoundation, hardware encoder) in a headless run of the app's
  * recorder face, so an agent's export is the movie the window would export.

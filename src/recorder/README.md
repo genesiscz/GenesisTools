@@ -104,7 +104,7 @@ clipboard when done (off by default) and show it in Finder (on).
 
 `GenesisTools --recorder [--edit P] [--library] [--no-focus]` runs the menu bar item (record, open, the library,
 recent recordings, the drawn cursor and shortcut toggles) and the editor and library windows. Headless: `--export P [--out F] --json`, `--still P --at S
---out PNG`, `--snapshot PNG` with `--edit P [--tab T] [--at S]` or `--library`. The editor: an icon rail (Zoom, Clip,
+--out PNG`, `--sheet P --times S,S,… --out PNG` (frames in rows of three, each labelled), `--snapshot PNG` with `--edit P [--tab T] [--at S]` or `--library`. The editor: an icon rail (Zoom, Clip,
 Hide, Style, Audio, Export), the preview, the transport, and a timeline with the zoom lane, a filmstrip, the waveform and the
 playhead's split button. Keys: Space, S (split), [ and ] (trim the clip's start or end to the playhead), Z (zoom), I and O (the export part), ⌘Z, ⇧⌘Z, ⌘S, ⌘E, Delete, the arrows, Home, End, Esc.
 
@@ -121,6 +121,7 @@ await m.cut(line.from, line.to);
 await m.zoom({ from: 3, to: 6, scale: 1.8, follow: true });
 await m.frame({ padding: 0.08 });
 await m.still(2.5);                         // shows the frame as it will export
+await m.sheet({ count: 6 });                // six frames over the whole edit on one picture, each with its time
 await m.show({ at: 2.5, tab: "text" });     // opens the editor window there, behind the front window
 await m.export({ format: "gif" });
 await m.polish();                           // removeIdle, autoZoom, normalize, a frame; steps: [{ step, done, note }]

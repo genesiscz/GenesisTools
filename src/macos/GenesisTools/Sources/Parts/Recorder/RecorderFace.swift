@@ -39,6 +39,9 @@ struct RecorderRequest {
     var library = false
     /// `--still <edit> --at <s> --out <png>`: one frame of the edit, printed as JSON.
     var still: String?
+    /// `--sheet <edit> --times <s,s,…> --out <png>`: those frames of the edit on one picture, each with its time.
+    var sheet: String?
+    var times: [Double] = []
 
     static func parse(_ args: [String]) -> RecorderRequest {
         var request = RecorderRequest()
@@ -67,6 +70,8 @@ struct RecorderRequest {
                 if ends.count == 2 { request.part = (ends[0], ends[1]) }
             case "--library": request.library = true
             case "--still": request.still = value().map(absolute)
+            case "--sheet": request.sheet = value().map(absolute)
+            case "--times": request.times = (value() ?? "").split(separator: ",").compactMap { Double($0) }
             default: break
             }
             index += 1
@@ -86,6 +91,9 @@ package func runRecorder(_ args: [String]) -> Never {
     }
     if let still = request.still {
         runHeadlessStill(source: still, atSeconds: request.atSeconds ?? 0, out: request.out)
+    }
+    if let sheet = request.sheet {
+        runHeadlessSheet(source: sheet, times: request.times, out: request.out)
     }
     if let snapshot = request.snapshot {
         runSnapshot(request, to: snapshot)
@@ -384,6 +392,83 @@ private func runHeadlessStill(source: String, atSeconds: Double, out: String?) -
     exit(0)
 }
 
+/// Frames of the edit as it exports, on one picture in rows of three, each labelled with its output time: one look
+/// at a whole edit for an agent. The movie is built once and every frame comes from the same generator.
+private func runHeadlessSheet(source: String, times: [Double], out: String?) -> Never {
+    MainActor.assumeIsolated {
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.prohibited)
+        Task {
+            do {
+                guard !times.isEmpty else {
+                    throw NSError(domain: "recorder", code: 64, userInfo: [NSLocalizedDescriptionKey: "--sheet needs --times with at least one time"])
+                }
+                let (_, project) = try await ProjectStore.open(path: source)
+                let zoom = ZoomState(project: project, cursor: CursorTrack.load(project.source.cursor))
+                let frames = try await stillFrames(project: project, atOutput: times.map { Int64(($0 * 1_000_000).rounded()) }, zoom: zoom)
+                let sheet = ContactSheet.draw(frames: zip(times, frames).map { ($0, $1) })
+                let url = URL(fileURLWithPath: out ?? NSTemporaryDirectory() + "recorder-sheet-\(UUID().uuidString.prefix(8)).png")
+                guard let png = NSBitmapImageRep(cgImage: sheet).representation(using: .png, properties: [:]) else {
+                    throw NSError(domain: "recorder", code: 70, userInfo: [NSLocalizedDescriptionKey: "the sheet could not be encoded"])
+                }
+                try png.write(to: url)
+                FileHandle.standardOutput.write(Data(jsonLine(["ok": true, "path": url.path, "width": sheet.width, "height": sheet.height,
+                                                               "times": times]).utf8))
+                exit(0)
+            } catch {
+                FileHandle.standardOutput.write(Data(jsonLine(["ok": false, "error": error.localizedDescription]).utf8))
+                exit(1)
+            }
+        }
+        NSApp.run()
+    }
+    exit(0)
+}
+
+/// A grid of frames, each with its output time on a dark plate in its corner.
+enum ContactSheet {
+    static let columns = 3
+    /// Each tile's width; the height follows the movie's shape.
+    static let tileWidth = 640
+    static let gap = 8
+
+    static func draw(frames: [(seconds: Double, image: CGImage)]) -> CGImage {
+        let first = frames[0].image
+        let tileHeight = max(1, Int((Double(tileWidth) * Double(first.height) / Double(max(1, first.width))).rounded()))
+        let columns = min(columns, frames.count)
+        let rows = (frames.count + columns - 1) / columns
+        let width = columns * tileWidth + (columns + 1) * gap
+        let height = rows * tileHeight + (rows + 1) * gap
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.interpolationQuality = .high
+        let previous = NSGraphicsContext.current
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        defer { NSGraphicsContext.current = previous }
+        for (index, frame) in frames.enumerated() {
+            let column = index % columns
+            let row = index / columns
+            // Core Graphics counts y from the bottom; the first row is the top one.
+            let rect = CGRect(x: gap + column * (tileWidth + gap), y: height - (row + 1) * (tileHeight + gap),
+                              width: tileWidth, height: tileHeight)
+            context.draw(frame.image, in: rect)
+            let label = NSAttributedString(string: formatClock(Int64((frame.seconds * 1_000_000).rounded()), tenths: true), attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .semibold),
+                .foregroundColor: NSColor.white,
+            ])
+            let size = label.size()
+            let plate = CGRect(x: rect.minX + 8, y: rect.minY + 8, width: size.width + 14, height: size.height + 6)
+            context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.7))
+            context.addPath(CGPath(roundedRect: plate, cornerWidth: 5, cornerHeight: 5, transform: nil))
+            context.fillPath()
+            label.draw(at: CGPoint(x: plate.minX + 7, y: plate.minY + 3))
+        }
+        return context.makeImage()!
+    }
+}
+
 private func runHeadlessExport(source: String, out: String?, json: Bool) -> Never {
     MainActor.assumeIsolated {
         _ = NSApplication.shared
@@ -484,6 +569,22 @@ private func runSnapshot(_ request: RecorderRequest, to path: String) -> Never {
         NSApp.run()
     }
     exit(0)
+}
+
+/// Several frames of the edit as the export draws them, from one build of the movie.
+@MainActor
+func stillFrames(project: EditProject, atOutput times: [Int64], zoom: ZoomState) async throws -> [CGImage] {
+    let asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
+    let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: 1080)
+    let generator = AVAssetImageGenerator(asset: rendered.composition)
+    generator.videoComposition = rendered.videoComposition
+    generator.requestedTimeToleranceBefore = .zero
+    generator.requestedTimeToleranceAfter = .zero
+    var images: [CGImage] = []
+    for outUs in times {
+        images.append(try await generator.image(at: EditRenderer.us(min(max(0, outUs), max(0, project.outputDurationUs - 20_000)))).image)
+    }
+    return images
 }
 
 /// One frame of the edit as the export draws it, for the snapshot's preview.

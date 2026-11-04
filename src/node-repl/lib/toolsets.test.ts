@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ReplEngine } from "@app/node-repl/lib/engine";
 import { collapseUndo, defaultExportName, editProject, undoDepth, undoEdit } from "@app/recorder/lib/edit";
-import { chaptersOf, recordingFolderOf } from "@app/recorder/lib/moments";
+import { chaptersOf, recordingFolderOf, spreadTimes } from "@app/recorder/lib/moments";
 import { MoviesToolset } from "@app/recorder/lib/toolset";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -158,6 +158,13 @@ describe("toolset method names", () => {
         // A bad argument of an async method rejects, so `.catch()` sees it, with one line per problem.
         const clicks = Reflect.get(movie, "clicks") as (options: unknown) => Promise<unknown>;
         await expect(clicks({ color: "red" })).rejects.toThrow("  - color: a color is #RRGGBB");
+    });
+});
+
+describe("movie sheet times", () => {
+    test("each frame sits in the middle of its share of the range, never on an end", () => {
+        expect(spreadTimes({ fromUs: 0, toUs: 6_000_000, count: 3 })).toEqual([1_000_000, 3_000_000, 5_000_000]);
+        expect(spreadTimes({ fromUs: 2_000_000, toUs: 2_000_000, count: 2 })).toEqual([2_000_000, 2_000_000]);
     });
 });
 

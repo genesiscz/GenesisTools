@@ -38,8 +38,16 @@ import {
     undoDepth,
     undoEdit,
 } from "./edit";
-import { EDITOR_TABS, type EditorTab, ensureRecorderPart, listLibrary, openEditor, stillOfEdit } from "./library";
-import { chaptersOf, markersOf, recordingFolderOf, searchLibrary } from "./moments";
+import {
+    EDITOR_TABS,
+    type EditorTab,
+    ensureRecorderPart,
+    listLibrary,
+    openEditor,
+    sheetOfEdit,
+    stillOfEdit,
+} from "./library";
+import { chaptersOf, markersOf, recordingFolderOf, searchLibrary, spreadTimes } from "./moments";
 
 const { log } = logger.scoped("recorder-toolset");
 
@@ -301,6 +309,21 @@ const movieMethods = [
         result: z.unknown(),
         resultName: "{ from, to, plays, text }[]",
         doc: "The spoken lines in source seconds (plays: where each starts in the edit, null when cut), from tools transcribe; cached beside the movie, refresh: true transcribes again. The first run may ask for the AI vault key.",
+        effect: "read",
+    }),
+    defineMethod({
+        name: "sheet",
+        params: z
+            .object({
+                from: timeSchema.optional(),
+                to: timeSchema.optional(),
+                count: z.number().int().min(1).max(12).optional(),
+                at: z.array(timeSchema).min(1).max(12).optional(),
+            })
+            .strict(),
+        result: z.unknown(),
+        resultName: "{ path, width, height, times }",
+        doc: "One picture of several frames of the edit as it exports, in rows of three, each labelled with its OUTPUT time: count (6) frames spread over from…to (the whole edit), or the times in at. One call to check a whole edit after a change, instead of a still() per moment.",
         effect: "read",
     }),
     defineMethod({
@@ -746,6 +769,48 @@ export class Movie {
     }
 
     /** One frame of the edit as it exports, shown to the model; `at` is OUTPUT seconds (what plays). */
+    async sheet(
+        options: {
+            from?: z.infer<typeof timeSchema>;
+            to?: z.infer<typeof timeSchema>;
+            count?: number;
+            at?: z.infer<typeof timeSchema>[];
+        } = {}
+    ) {
+        const opened = await openProject(this.recording);
+
+        if (opened.fresh) {
+            writeProject(opened.path, opened.project);
+        }
+
+        const lengthUs = outputDurationUs(opened.project);
+        const times = options.at
+            ? options.at.map((time) => timeToUs(time))
+            : spreadTimes({
+                  fromUs: options.from === undefined ? 0 : timeToUs(options.from),
+                  toUs: options.to === undefined ? lengthUs : timeToUs(options.to),
+                  count: options.count ?? 6,
+              });
+        const late = times.find((us) => us > lengthUs);
+
+        if (late !== undefined) {
+            throw new Error(
+                `${late / 1_000_000} s is after the end of the edit (${Math.round(lengthUs / 1000) / 1000} s); sheet() takes OUTPUT seconds`
+            );
+        }
+
+        await ensureRecorderPart();
+        const out = join(this.ctx?.scratchDir ?? tmpdir(), `sheet-${Date.now()}.png`);
+        const answer = await sheetOfEdit({ path: opened.path, times: times.map((us) => us / 1_000_000), out });
+
+        if (!answer.ok || !answer.path) {
+            throw new Error(answer.error ?? "the sheet failed without a reason");
+        }
+
+        await this.ctx?.show({ path: answer.path });
+        return { path: answer.path, width: answer.width, height: answer.height, times: answer.times };
+    }
+
     async still(at: z.infer<typeof timeSchema> = 0) {
         const opened = await openProject(this.recording);
 
