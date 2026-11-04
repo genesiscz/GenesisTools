@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
+import { SIMCTL_PRIVACY_SERVICES, type SimctlPrivacyService } from "./simulator";
 
 const log = logger.child({ component: "mobile.project" });
 
@@ -34,8 +35,15 @@ export interface MobileProjectConfig {
     appDir?: string;
     /** Every screen in the order a user meets them, or a function that reads them from the app's folder. */
     routes?: MobileRoute[] | ((appDir: string) => MobileRoute[]);
+    /** A React Native app whose Debug build loads its JavaScript from Metro (`bunx expo start`); absent without Metro. */
+    metro?: MetroSetup;
     /** One entry per platform the app ships on; a command for a platform the project does not name refuses. */
     platforms: MobilePlatformsConfig;
+}
+
+export interface MetroSetup {
+    /** The port `up` starts Metro on when `--metro-port` is not given. */
+    defaultPort: number;
 }
 
 export interface MobilePlatformsConfig {
@@ -60,6 +68,21 @@ export interface IosAppConfig {
     build: IosBuild;
     /** What decides that a build is out of date; without it a build counts as current until `--build always`. */
     buildInputs?: BuildInputs;
+    /** The phone width in points `up` sizes a simulator for when `--width` is not given. */
+    defaultWidth?: number;
+    /** What a fresh install needs before it runs unattended (`first-run`, `up`). */
+    firstRun?: FirstRunSetup;
+}
+
+export interface FirstRunSetup {
+    /** `simctl privacy grant` services. */
+    privacy?: SimctlPrivacyService[];
+    /** `idb approve` services (camera, notification) that simctl cannot grant; used only where idb is installed. */
+    idbApprove?: string[];
+    /** The URL scheme `idb approve … url` pre-approves, so a plain `simctl openurl` raises no "Open in" alert. */
+    scheme?: string;
+    /** User defaults written into the app's domain, e.g. a dev menu that would open at launch. */
+    defaults?: Array<{ key: string; value: string[] }>;
 }
 
 /** How to build the app for a simulator with `xcodebuild` (Expo's `run:ios` cannot find DeviceHub on Xcode 27). */
@@ -97,6 +120,15 @@ const iosSchema = z.object({
         buildSettings: z.record(z.string(), z.string()).optional(),
     }),
     buildInputs: z.object({ native: z.array(z.string()), js: z.array(z.string()) }).optional(),
+    defaultWidth: z.number().positive().optional(),
+    firstRun: z
+        .object({
+            privacy: z.array(z.enum(SIMCTL_PRIVACY_SERVICES)).optional(),
+            idbApprove: z.array(z.string()).optional(),
+            scheme: z.string().optional(),
+            defaults: z.array(z.object({ key: z.string(), value: z.array(z.string()) })).optional(),
+        })
+        .optional(),
 });
 
 const configSchema: z.ZodType<MobileProjectConfig> = z.object({
@@ -104,6 +136,7 @@ const configSchema: z.ZodType<MobileProjectConfig> = z.object({
     title: z.string().optional(),
     appDir: z.string().optional(),
     routes: z.union([z.array(routeSchema), fn<(appDir: string) => MobileRoute[]>("routes")]).optional(),
+    metro: z.object({ defaultPort: z.number().int().positive() }).optional(),
     platforms: z.object({ ios: iosSchema.optional() }),
 });
 
@@ -194,6 +227,7 @@ export function projectRoutes(project: MobileProject): MobileRoute[] {
 export interface IosApp extends Omit<IosAppConfig, "bundleId"> {
     bundleId: string;
     buildInputs: BuildInputs;
+    firstRun: Required<Omit<FirstRunSetup, "scheme">> & Pick<FirstRunSetup, "scheme">;
 }
 
 export function iosApp(project: MobileProject): IosApp {
@@ -204,5 +238,11 @@ export function iosApp(project: MobileProject): IosApp {
     }
 
     const bundleId = typeof ios.bundleId === "function" ? ios.bundleId(project.appDir) : ios.bundleId;
-    return { ...ios, bundleId, buildInputs: ios.buildInputs ?? { native: [], js: [] } };
+    const firstRun = {
+        privacy: ios.firstRun?.privacy ?? [],
+        idbApprove: ios.firstRun?.idbApprove ?? [],
+        scheme: ios.firstRun?.scheme,
+        defaults: ios.firstRun?.defaults ?? [],
+    };
+    return { ...ios, bundleId, buildInputs: ios.buildInputs ?? { native: [], js: [] }, firstRun };
 }

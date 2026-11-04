@@ -77,3 +77,59 @@ More shared pieces: `service` (a detached server with a pidfile), `wda` (WebDriv
 second actor can read the screen while a run holds the only Appium session), `alerts` (a rule table that answers known
 system alerts for the app under test through WDA or idb and leaves every other alert alone), `idb` and `a11y` (the
 XCUITest tree parser, the readable tree, the LogBox reader).
+
+## up
+
+```bash
+tools mobile up --name gt-mine --metro-port 8091 --derived-data /tmp/cc/<you>/build
+```
+
+`up` takes `--udid`, or the simulator named `--name` (default `gt-w<width>`), and creates it when missing: the iPhone
+type whose screen is `--width` points wide (default `platforms.ios.defaultWidth`; read from each device type's
+`capabilities.plist`, or `profile.plist` before Xcode 27), the newest iOS runtime that runs it (`--os` pins one). It
+boots it with `simctl bootstatus -b`. It only ever picks a simulator by its exact name or udid.
+
+- **Build when stale** (`--build auto`, the default; `always` and `never` force it), from the fingerprint above.
+- **Install** when it built, when the app is missing, or when the installed build is not the one in DerivedData (a
+  record per simulator and project in `~/.genesis-tools/mobile/installs/`).
+- **First run**: the grants in `platforms.ios.firstRun` (below).
+- **Metro** (Debug, the default when the project sets `metro`; `--release` skips it), pointed at by the
+  `RCT_jsLocation` user default, which React Native's bundle URL provider reads before its built-in 8081.
+- **Launch**, answer the system alerts the launch raises, and wait (`--launch-timeout`) until Metro's log shows the
+  app fetched its bundle. Fatal Metro lines after the launch (a failed bundle, an uncaught error) fail the command.
+
+## open, capture, tour: the screen drivers
+
+```bash
+tools mobile open agents --udid <udid>               # a route name, name?query, or a URL
+tools mobile capture order?id=a1 --udid <udid>
+tools mobile tour --udid <udid> --only home order
+```
+
+All three go through one table (`src/mobile/lib/screen-driver.ts`):
+
+- `appium` (the default) opens a link with `mobile: deepLink`, so iOS shows no "Open in <app>?" alert, and waits up to
+  15 s for the screen's root element (its `rootId`). The session attaches to the installed app (`noReset`,
+  `shouldTerminateApp: false`), so closing it leaves the app on screen.
+- `simctl` needs no Appium session: `simctl openurl`, then the alert watcher answers "Open in" for the app.
+
+`capture` saves `<name>.png`, the raw tree `<name>.xml`, `<name>.tree.txt` (one line per element with a testID, words or
+a tap target, anonymous containers folded) and `<name>.json` (testIDs, visible words, tap targets, open alerts,
+whether a LogBox shows) into `~/.genesis-tools/mobile/captures/<id>/<time>/` (or `--out`). `tour` saves
+`<NN>-<route>.png` per route into `~/.genesis-tools/mobile/tours/<id>/<time>/`; a root that never shows is saved as
+`<NN>-<route>.MISSING.png` and the run exits 1.
+
+## alerts, logbox, first-run
+
+- `alerts [--watch]` answers the known system alerts for the app (Open in, notifications, local network, location,
+  tracking, access asks, Save Password) through WDA's session-less routes when WDA runs, else `idb ui describe-all`.
+  An alert of another app, and any alert no rule knows (the app's own `Alert.alert`), is left alone. An idb tap
+  re-reads the label under the point first, so it never lands on the app behind an alert someone else answered.
+- `logbox [--clear minimize|dismiss]` reads every entry of React Native's LogBox (Debug builds) from the tree, then
+  minimizes or dismisses it, and reads the project's Metro log from the newest bundle on. Exit 1 when either has one.
+- `first-run [--keep-install] [--reset-keychain]` reinstalls the build (an uninstall keeps an app's keychain items, so
+  `--reset-keychain` empties the simulator's keychain too), grants `firstRun.privacy` with `simctl privacy`, runs
+  `idb approve` for `firstRun.idbApprove` and the `firstRun.scheme` URL where idb is installed, writes
+  `firstRun.defaults`, then launches and answers the first prompts. A `simctl privacy` grant that times out leaves a
+  marker (`~/.genesis-tools/mobile/privacy-hangs/<udid>`): on some iOS 26.5 simulators one grant wedges installd, and
+  later runs skip grants there.

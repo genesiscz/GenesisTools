@@ -6,7 +6,10 @@ import { out } from "@genesiscz/utils/logger";
 import { IOS_CONFIGURATIONS, type IosConfiguration, projectRoutes } from "@genesiscz/utils/mobile/project";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Command } from "commander";
+import { registerAppCommands } from "./commands/app";
+import { registerScreens } from "./commands/screens";
 import { registerServices } from "./commands/services";
+import { registerUp } from "./commands/up";
 import { buildAndInstall } from "./lib/build";
 import { pickSimulator } from "./lib/device";
 import { mobileDoctor } from "./lib/doctor";
@@ -144,6 +147,9 @@ withConfig(
         }
     );
 
+registerUp(program);
+registerScreens(program);
+registerAppCommands(program);
 registerServices(program);
 
 await runTool(program, { tool: "mobile" });
