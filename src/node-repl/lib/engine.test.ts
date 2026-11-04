@@ -191,6 +191,33 @@ const PNG_1X1 = Buffer.from(
 );
 
 describe("toolsets", () => {
+    it("describe accepts handle names from both help and search", async () => {
+        const engine = new ReplEngine({ toolsets: ["recorder"] });
+        try {
+            expect((await engine.run('help("recorder")')).text).toContain("recording.displays.mode");
+            expect((await engine.run('search("display")')).text).toContain("recorder.Recording.displays.mode");
+            const qualified = await engine.run('describe("recorder.Recording.displays.mode")');
+            const shorthand = await engine.run('describe("recording.displays.mode")');
+            expect(qualified.ok).toBe(true);
+            expect(shorthand.ok).toBe(true);
+            expect(shorthand.text).toBe(qualified.text);
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
+    it("the shared loader validates toolset arguments before invoking their implementation", async () => {
+        const engine = new ReplEngine({ toolsets: ["editor"] });
+        try {
+            const result = await engine.run("editor.open({ recording: 'x' })");
+            expect(result.ok).toBe(false);
+            expect(result.error).toContain("editor.open(source: string)");
+            expect(result.error).not.toContain('The "path" property');
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
     it("preload once per spawn outside the turn timeout, again after a respawn, and dispose on reset", async () => {
         const log = join(mkdtempSync(join(tmpdir(), "node-repl-toolset-")), "dispose.log");
         // The fixture's bootstrap sleeps 200 ms; a 100 ms turn budget still passes because preload has its own.

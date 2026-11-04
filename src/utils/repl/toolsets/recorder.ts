@@ -195,7 +195,7 @@ const recordingMethods = [
     }),
     defineMethod({
         name: "on",
-        params: z.object({ event: z.enum(EVENTS), callback: z.custom<(params: unknown) => void>() }),
+        params: z.object({ event: z.enum([...EVENTS, "*"]), callback: z.custom<(params: unknown) => void>() }),
         positional: ["event", "callback"],
         result: z.unknown(),
         resultName: "() => void",
@@ -372,12 +372,18 @@ export class RecordingHandle {
     }
 
     /** Calls back on each `event` notification (`*` for all); returns the unsubscribe function. */
-    async on(event: (typeof EVENTS)[number] | "*", callback: (params: unknown) => void): Promise<() => void> {
+    on(event: (typeof EVENTS)[number] | "*", callback: (params: unknown) => void): () => void {
         const set = this.listeners.get(event) ?? new Set();
         set.add(callback);
         this.listeners.set(event, set);
-        await this.ensureSubscribed();
-        return () => set.delete(callback);
+        void this.ensureSubscribed().catch((error: unknown) => {
+            set.delete(callback);
+            this.subscribed = undefined;
+            log.warn({ error, id: this.id }, "recording event subscription failed");
+        });
+        return () => {
+            set.delete(callback);
+        };
     }
 
     async waitFor(
@@ -387,9 +393,10 @@ export class RecordingHandle {
         const timeoutMs = options.timeoutMs ?? 60_000;
         const deadline = Date.now() + timeoutMs;
         let wake: (() => void) | undefined;
-        const off = await this.on("*", () => wake?.());
+        const off = this.on("*", () => wake?.());
 
         try {
+            await this.ensureSubscribed();
             while (Date.now() < deadline) {
                 const status = await this.status();
 

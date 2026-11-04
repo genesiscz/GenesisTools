@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OverwriteInputError } from "@genesiscz/utils/jobs";
@@ -11,9 +11,11 @@ import { prepareVideoEvidence } from "@genesiscz/utils/video/evidence";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { createCanvas } from "@napi-rs/canvas";
 import { ZodError } from "zod";
+import legacyEvidence from "./__fixtures__/legacy-evidence.json";
 import { RecordingEditor } from "./editor";
 import { atempoChain, concatList } from "./ffmpeg";
 import { parseEditPlan, timeToUs } from "./plan";
+import { locateSource } from "./source";
 
 function workspace(): string {
     return mkdtempSync(join(tmpdir(), "gt-editor-"));
@@ -22,6 +24,7 @@ function workspace(): string {
 /** A recording folder like startRecording writes: frames of two displays with a recording.json. */
 function recordingFolder(): string {
     const dir = workspace();
+    mkdirSync(join(dir, "frames"));
     const frames: Array<{ file: string; atMs: number; displayId: number }> = [];
 
     for (const [index, shade] of [10, 10, 200, 200, 90].entries()) {
@@ -30,7 +33,7 @@ function recordingFolder(): string {
             const context = canvas.getContext("2d");
             context.fillStyle = `rgb(${shade}, ${displayId * 60}, 40)`;
             context.fillRect(0, 0, 64, 40);
-            const file = `d${displayId}-${index}.png`;
+            const file = `frames/d${displayId}-${index}.png`;
             writeFileSync(join(dir, file), canvas.toBuffer("image/png"));
             frames.push({ file, atMs: index * 1000, displayId });
         }
@@ -150,7 +153,7 @@ describe("the editor on a recording folder", () => {
         await expect(
             editor.run({ source: { file: source }, output: source, steps: [{ kind: "frames" }] }).done
         ).rejects.toThrow(OverwriteInputError);
-        const frame = join(source, "d1-0.png");
+        const frame = join(source, "frames", "d1-0.png");
         const before = sha(frame);
         await expect(
             editor.run({
@@ -160,6 +163,50 @@ describe("the editor on a recording folder", () => {
             }).done
         ).rejects.toThrow(OverwriteInputError);
         expect(sha(frame)).toBe(before);
+    });
+
+    test("receipt fingerprints include nested manifest frames", () => {
+        const source = recordingFolder();
+        const before = locateSource({ file: source }).fingerprint;
+        writeFileSync(join(source, "frames", "d1-0.png"), "changed frame bytes");
+        expect(locateSource({ file: source }).fingerprint).not.toEqual(before);
+    });
+
+    test("layout changes rebuild sheets at the requested location", async () => {
+        const editor = new RecordingEditor();
+        const plan = {
+            source: { file: recordingFolder() },
+            output: workspace(),
+            steps: [{ kind: "frames" as const }, { kind: "grid" as const, perImage: 4 }],
+        };
+        const workspaceResult = await editor.run(plan).done;
+        const flat = await editor.run(plan, { layout: "flat" }).done;
+        expect(flat.sheets[0].path).not.toBe(workspaceResult.sheets[0].path);
+        expect(flat.sheets[0].path).not.toContain("/steps/");
+        expect(existsSync(flat.sheets[0].path)).toBe(true);
+    });
+
+    test("frames are resampled after trim, speed, range and display selection", async () => {
+        for (const transform of [
+            { kind: "trim" as const, from: 1, to: 3 },
+            { kind: "speed" as const, factor: 2 },
+            { kind: "range" as const, from: 1, to: 3 },
+        ]) {
+            const result = await new RecordingEditor().run({
+                source: { file: recordingFolder() },
+                output: workspace(),
+                steps: [
+                    { kind: "frames" },
+                    transform,
+                    { kind: "frames", displays: [1] },
+                    { kind: "grid", perImage: 4 },
+                ],
+            }).done;
+            expect(result.frames.length).toBeGreaterThan(0);
+            expect(result.frames.every((frame) => frame.displayId === 1)).toBe(true);
+            expect(result.sheets.length).toBeGreaterThan(0);
+            expect(result.steps.find((step) => step.name === "frames-2")?.skipped).toBe(false);
+        }
     });
 
     test("an unknown recording id is a clear error", () => {
@@ -219,6 +266,36 @@ describe.skipIf(skip.integration)("the editor on a video, and the frame review o
         );
         expect(direct.frames.map((frame) => sha(frame.path))).toEqual(evidence.frames.map((frame) => sha(frame.path)));
         expect(direct.sheets.map((sheet) => sha(sheet.path))).toEqual(evidence.sheets.map((sheet) => sha(sheet.path)));
+
+        // Frozen from the pre-adapter implementation at 13733a8342 using the same generated video.
+        expect(evidence.frames.map((frame) => sha(frame.path))).toEqual(legacyEvidence[0].frames);
+        expect(evidence.sheets.map((sheet) => sha(sheet.path))).toEqual(legacyEvidence[0].sheets);
+        const ranged = await prepareVideoEvidence({
+            input: source,
+            outputRoot: join(root, "ranged"),
+            settings: { fps: 4, framesPerImage: 4, minimumDifferencePct: 2, startUs: 500_000, endUs: 2_000_000 },
+        });
+        expect(ranged.counts).toEqual(legacyEvidence[1].counts);
+        expect(ranged.frames.map((frame) => sha(frame.path))).toEqual(legacyEvidence[1].frames);
+        expect(ranged.sheets.map((sheet) => sha(sheet.path))).toEqual(legacyEvidence[1].sheets);
+
+        for (const grid of [false, true]) {
+            const plan = {
+                source: { file: source },
+                output: join(root, `repair-${grid}`),
+                steps: [
+                    { kind: "frames" as const, fps: 4, changeOnly: true, threshold: 0 },
+                    ...(grid ? [{ kind: "grid" as const, perImage: 4 }] : []),
+                ],
+            };
+            const editor = new RecordingEditor();
+            const first = await editor.run(plan).done;
+            const expected = sha(first.frames[0].path);
+            unlinkSync(first.frames[0].path);
+            const repaired = await editor.run(plan).done;
+            expect(sha(repaired.frames[0].path)).toBe(expected);
+            expect(repaired.steps.find((step) => step.name === "frames-0")?.skipped).toBe(false);
+        }
 
         const trimmed = await new RecordingEditor().run({
             source: { file: source },

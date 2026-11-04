@@ -8,9 +8,13 @@ import { SafeJSON } from "@genesiscz/utils/json";
 
 function entries(apis: readonly ApiDescriptor[]) {
     return apis.flatMap((api) => [
-        ...api.methods.map((method) => ({ owner: api.global, method })),
+        ...api.methods.map((method) => ({ owner: api.global, alias: api.global, method })),
         ...(api.handles ?? []).flatMap((handle) =>
-            handle.methods.map((method) => ({ owner: `${api.global}.${handle.name}`, method }))
+            handle.methods.map((method) => ({
+                owner: `${api.global}.${handle.name}`,
+                alias: handle.name.charAt(0).toLowerCase() + handle.name.slice(1),
+                method,
+            }))
         ),
     ]);
 }
@@ -42,7 +46,8 @@ export function searchMethods(apis: readonly ApiDescriptor[], query: string): st
 
 export function describeMethod(apis: readonly ApiDescriptor[], name: string): string {
     const matches = entries(apis).filter(
-        ({ owner, method }) => `${owner}.${method.name}` === name || method.name === name
+        ({ owner, alias, method }) =>
+            `${owner}.${method.name}` === name || `${alias}.${method.name}` === name || method.name === name
     );
 
     if (matches.length !== 1) {

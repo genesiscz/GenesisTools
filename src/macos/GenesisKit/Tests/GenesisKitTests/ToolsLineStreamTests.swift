@@ -577,9 +577,18 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
             if let popup = view as? NSPopUpButton { return [popup] }
             return view.subviews.flatMap(menus)
         }
-        let popups = menus(host)
-        XCTAssertFalse(popups.isEmpty, "The recording selector proves the native controls were instantiated")
-        let itemCounts = popups.map { $0.numberOfItems }
+        func editors(_ view: NSView) -> [NSTextView] {
+            if let editor = view as? NSTextView { return [editor] }
+            return view.subviews.flatMap(editors)
+        }
+        let deadline = Date().addingTimeInterval(5)
+        while editors(host).isEmpty, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+            host.layoutSubtreeIfNeeded()
+        }
+        let editor = try XCTUnwrap(editors(host).first, "The transcript proves the native controls were instantiated")
+        XCTAssertEqual(editor.string, store.text)
+        let itemCounts = menus(host).map { $0.numberOfItems }
         XCTAssertLessThanOrEqual(itemCounts.max() ?? 0, 2, "A closed recipient picker must not build the whole roster")
         print("VOICE_RECIPIENT_MENU_COUNTS recipients=800 counts=\(itemCounts)")
     }

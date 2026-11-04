@@ -20,7 +20,12 @@ export interface LocatedSource {
     /** The video file, or the folder holding the frames. */
     path: string;
     /** Changes when the source changes: its size and time, or its frame count and newest time. */
-    fingerprint: { path: string; size: number; mtimeMs: number };
+    fingerprint: {
+        path: string;
+        size: number;
+        mtimeMs: number;
+        frames?: Array<{ path: string; size: number; mtimeMs: number }>;
+    };
     store?: "recordings" | "meetings";
     id?: string;
 }
@@ -43,7 +48,7 @@ function folderFingerprint(path: string): LocatedSource["fingerprint"] {
         mtimeMs = Math.max(mtimeMs, stat.mtimeMs);
     }
 
-    return { path, size, mtimeMs };
+    return { path, size, mtimeMs, frames: readFrameFolder(path).map((frame) => fileFingerprint(frame.path)) };
 }
 
 function fileFingerprint(path: string): LocatedSource["fingerprint"] {

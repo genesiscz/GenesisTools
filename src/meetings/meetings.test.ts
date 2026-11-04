@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { voiceRuns } from "@genesiscz/utils/meetings/energy";
@@ -2013,6 +2014,7 @@ describe("the meetings recorder loop", () => {
         displays: DisplayInfo[][];
         steps: Step[];
         failOnJpeg?: boolean;
+        beforeJpeg?: (png: string) => Promise<void>;
         liveControl?: boolean;
         liveSettings?: boolean;
         audio?: boolean;
@@ -2064,6 +2066,7 @@ describe("the meetings recorder loop", () => {
             deps: {
                 recorder,
                 toJpeg: async (_png, jpg) => {
+                    await options.beforeJpeg?.(_png);
                     if (options.failOnJpeg) {
                         throw new Error("sips failed for keep-0001.png: disk full");
                     }
@@ -2236,6 +2239,39 @@ describe("the meetings recorder loop", () => {
             expect.stringMatching(/-d4\.jpg$/),
             expect.stringMatching(/-d4\.jpg$/),
         ]);
+    });
+
+    test("switching onto a recorded display waits for its displaced capture processing", async () => {
+        const displaced = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang", "hang"],
+            liveControl: true,
+            beforeJpeg: async (png) => {
+                if (png.includes("/d4-")) {
+                    displaced.resolve();
+                    await withTimeout(release.promise, 2_000);
+                    expect(existsSync(png)).toBe(true);
+                }
+            },
+            actions: [
+                async (call) => {
+                    await call("displays.switch", { displayId: 4 });
+                    await withTimeout(displaced.promise, 2_000);
+                    const stopped = call("stop");
+                    try {
+                        expect(
+                            await Promise.race([stopped.then(() => "stopped"), Bun.sleep(100).then(() => "waiting")])
+                        ).toBe("waiting");
+                    } finally {
+                        release.resolve();
+                    }
+                    return stopped;
+                },
+            ],
+        });
+        expect(readdirSync(join(run.folder, "frames"))).toHaveLength(2);
     });
 
     test("removing the audio owner restarts audio on the remaining display", async () => {

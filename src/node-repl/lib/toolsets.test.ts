@@ -1,15 +1,18 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ReplEngine } from "@app/node-repl/lib/engine";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
+import { withTimeout } from "@genesiscz/utils/async";
+import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as ocr from "@genesiscz/utils/macos/ocr";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { type Clip, EditorToolset, editorApi } from "@genesiscz/utils/repl/toolsets/editor";
 import { RecordingHandle, recorderApi } from "@genesiscz/utils/repl/toolsets/recorder";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
-import { RecorderClient } from "@genesiscz/utils/screen-recorder/live";
+import { liveRecordingsDir, RecorderClient, readLiveRecording } from "@genesiscz/utils/screen-recorder/live";
 import { startRecording } from "@genesiscz/utils/screen-recorder/start";
 import {
     type CaptureRequest,
@@ -91,6 +94,39 @@ class FakeRecorder extends FrameRecorder {
     }
 }
 
+class ControlledRecorder extends FakeRecorder {
+    readonly requests: CaptureRequest[] = [];
+    finish: () => void = () => undefined;
+    announce?: (request: CaptureRequest) => void;
+    canMute = true;
+
+    override async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
+        this.requests.push(request);
+        const done = new Promise<void>((resolve) => {
+            this.finish = resolve;
+            signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        request.hooks?.onLive?.({
+            pause: () => undefined,
+            resume: () => undefined,
+            switchDisplay: async () => undefined,
+            ...(this.canMute ? { mute: async () => undefined } : {}),
+        });
+        this.announce?.(request);
+        await done;
+        return { startedAtMs: Date.now(), frames: [] };
+    }
+
+    next(): Promise<CaptureRequest> {
+        return withTimeout(
+            new Promise((resolve) => {
+                this.announce = resolve;
+            }),
+            2_000
+        );
+    }
+}
+
 const shown: string[] = [];
 const ctx: ToolsetContext = {
     scratchDir: tmpdir(),
@@ -101,6 +137,201 @@ const ctx: ToolsetContext = {
 };
 
 describe("recorder and editor toolsets", () => {
+    test("native preparation is excluded from the recording deadline and frame offsets", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-rec-ready-"));
+        const recorder = new FakeRecorder();
+        let readyAt = 0;
+        const preparation = Bun.sleep(150).then(() => {
+            readyAt = Date.now();
+        });
+        recorder.available = async () => {
+            await preparation;
+            return { ok: true };
+        };
+        const recording = await startRecording({
+            recorder,
+            folder: join(root, "rec"),
+            liveDir: join(root, "live"),
+            maxDurationSec: 0.1,
+        });
+        expect(recording.startedAt.getTime()).toBeGreaterThanOrEqual(readyAt);
+        expect(await waitForPath(join(recording.folder, "recording.json"), { timeoutMs: 3_000 })).toBe(true);
+        const manifest = readRecordingManifest(recording.folder)!;
+        expect(manifest.frames.length).toBeGreaterThan(0);
+        expect(manifest.frames[0].atMs).toBeLessThan(150);
+    });
+
+    test("parent startup expires at every async stage and late completion starts no capture", async () => {
+        for (const stage of ["create", "available", "displays"]) {
+            const gate = Promise.withResolvers<void>();
+            const entered = Promise.withResolvers<void>();
+            const recorder = new ControlledRecorder();
+            const wait = async () => {
+                entered.resolve();
+                await gate.promise;
+            };
+            if (stage === "available") {
+                recorder.available = async () => {
+                    await wait();
+                    return { ok: true };
+                };
+            }
+            if (stage === "displays") {
+                const displays = await recorder.displays();
+                recorder.displays = async () => {
+                    await wait();
+                    return displays;
+                };
+            }
+            const engine = new ReplEngine({
+                toolsets: ["recorder"],
+                preloadTimeoutMs: 1_000,
+                recorder: {
+                    create: async () => {
+                        if (stage === "create") {
+                            await wait();
+                        }
+                        return recorder;
+                    },
+                },
+            });
+            try {
+                expect((await engine.run("true")).ok).toBe(true);
+                const turn = engine.run("await recorder.start()", 100);
+                await withTimeout(entered.promise, 2_000);
+                expect((await turn).ok).toBe(false);
+                await withTimeout(engine.reset(), 2_000);
+                gate.resolve();
+                await Bun.sleep(100);
+                expect(recorder.requests).toHaveLength(0);
+            } finally {
+                gate.resolve();
+                await engine.shutdown();
+            }
+        }
+    }, 10_000);
+
+    test("OCR failures preserve frames, audio and the finalized manifest", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-rec-ocr-"));
+        const recorder = new FakeRecorder();
+        const original = recorder.capture.bind(recorder);
+        const captured = Promise.withResolvers<void>();
+        recorder.capture = async (request, signal) => {
+            const result = await original(
+                {
+                    ...request,
+                    hooks: {
+                        ...request.hooks,
+                        onFrame: (frame) => {
+                            request.hooks?.onFrame?.(frame);
+                            captured.resolve();
+                        },
+                    },
+                },
+                signal
+            );
+            const track = join(request.outDir, "mic.m4a");
+            await Bun.write(track, "audio fixture");
+            return { ...result, tracks: [{ source: "mic", path: track, durationMs: 10, mutedSpans: [] }] };
+        };
+        const recognize = spyOn(ocr, "recognizeText").mockRejectedValue(new Error("OCR fixture failure"));
+        const recording = await startRecording({
+            recorder,
+            folder: join(root, "rec"),
+            liveDir: join(root, "live"),
+            ocr: { enabled: true },
+        });
+        try {
+            await withTimeout(captured.promise, 2_000);
+            const answer = await recording.stop();
+            expect(answer.state).toBe("stopped");
+            expect(recognize).toHaveBeenCalled();
+            const manifest = readRecordingManifest(recording.folder)!;
+            expect(manifest.frames.length).toBeGreaterThan(0);
+            expect(manifest.frames.every((frame) => existsSync(join(recording.folder, frame.file)))).toBe(true);
+            expect(manifest.warnings?.some((warning) => warning.includes("OCR fixture failure"))).toBe(true);
+            expect(existsSync(join(recording.folder, "audio"))).toBe(true);
+            expect(existsSync(join(recording.folder, ".pieces"))).toBe(false);
+        } finally {
+            recognize.mockRestore();
+            await recording.stop();
+        }
+    });
+
+    test("duration expiry and three empty captures finalize without an explicit stop", async () => {
+        for (const maxDurationSec of [0, 10]) {
+            const root = mkdtempSync(join(tmpdir(), "gt-rec-end-"));
+            const recorder = new FakeRecorder();
+            recorder.capture = async () => ({ startedAtMs: Date.now(), frames: [] });
+            const recording = await startRecording({
+                recorder,
+                folder: join(root, "rec"),
+                liveDir: join(root, "live"),
+                maxDurationSec,
+            });
+            expect(await waitForPath(join(recording.folder, "recording.json"), { timeoutMs: 2_000 })).toBe(true);
+            expect((await recording.stop()).state).toBe("stopped");
+            expect(existsSync(join(recording.folder, ".pieces"))).toBe(false);
+        }
+    });
+
+    test("a paused piece still reaches the recording deadline", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-rec-pause-"));
+        const recorder = new ControlledRecorder();
+        const recording = await startRecording({
+            recorder,
+            folder: join(root, "rec"),
+            liveDir: join(root, "live"),
+            maxDurationSec: 0.2,
+        });
+        await recording.pause();
+        recorder.finish();
+        expect(await waitForPath(join(recording.folder, "recording.json"), { timeoutMs: 2_000 })).toBe(true);
+        expect((await recording.stop()).state).toBe("stopped");
+    });
+
+    test("muted sources stay excluded across pieces and unsupported live mute is refused", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-rec-mute-"));
+        const recorder = new ControlledRecorder();
+        recorder.supports.audio = true;
+        const firstCapture = recorder.next();
+        const recording = await startRecording({
+            recorder,
+            folder: join(root, "rec"),
+            liveDir: join(root, "live"),
+            audio: { mic: true },
+        });
+        try {
+            await firstCapture;
+            expect(recorder.requests[0].audio?.sources).toEqual(["mic"]);
+            await recording.muteAudio("mic", true);
+            const next = recorder.next();
+            recorder.finish();
+            expect((await next).audio?.sources ?? []).toEqual([]);
+            const resumed = recorder.next();
+            await recording.muteAudio("mic", false);
+            expect((await resumed).audio?.sources).toEqual(["mic"]);
+        } finally {
+            await recording.stop();
+        }
+        const unsupported = new ControlledRecorder();
+        unsupported.supports.audio = true;
+        unsupported.canMute = false;
+        const unsupportedCapture = unsupported.next();
+        const second = await startRecording({
+            recorder: unsupported,
+            folder: join(root, "unsupported"),
+            liveDir: join(root, "live"),
+            audio: { mic: true },
+        });
+        try {
+            await unsupportedCapture;
+            await expect(second.muteAudio("mic", true)).rejects.toThrow("cannot mute");
+            expect((await second.getSettings()).audio.muted.mic).toBe(false);
+        } finally {
+            await second.stop();
+        }
+    });
     test("a parent-owned recording survives a timed-out turn and reset finalizes it", async () => {
         const engine = new ReplEngine({ toolsets: ["recorder"], recorder: { create: async () => new FakeRecorder() } });
         try {
@@ -117,8 +348,11 @@ describe("recorder and editor toolsets", () => {
             );
             expect(attached.ok).toBe(true);
             const folder = await engine.run("attached.folder");
+            const entry = readLiveRecording(id)!;
             await engine.reset();
             expect(readRecordingManifest(folder.text)?.endedAt).toBeDefined();
+            expect(existsSync(join(liveRecordingsDir(), `${id}.json`))).toBe(false);
+            expect(existsSync(entry.socket)).toBe(false);
         } finally {
             await engine.shutdown();
         }
@@ -148,7 +382,14 @@ describe("recorder and editor toolsets", () => {
         });
         const handle = new RecordingHandle(await RecorderClient.connect(recording.id, { dir: liveDir }), recording);
         const progress: unknown[] = [];
-        await handle.on("progress", (event) => progress.push(event));
+        const offProgress = handle.on("progress", (event) => progress.push(event));
+        expect(typeof offProgress).toBe("function");
+        let stateEvents = 0;
+        const offState = handle.on("state", () => {
+            stateEvents += 1;
+        });
+        expect(typeof offState).toBe("function");
+        offState();
 
         const ready = await handle.waitFor((status) => status.frames >= 4, { timeoutMs: 5_000 });
         expect(ready.displays.map((display) => display.id)).toEqual([1, 4]);
@@ -162,8 +403,13 @@ describe("recorder and editor toolsets", () => {
         expect(recorder.calls).toContain("switch 4");
         await Bun.sleep(300);
 
+        const liveEntry = readLiveRecording(recording.id, liveDir)!;
         const stopped = await handle.stop();
         expect(stopped.state).toBe("stopped");
+        expect(existsSync(join(liveDir, `${recording.id}.json`))).toBe(false);
+        expect(existsSync(liveEntry.socket)).toBe(false);
+        expect(stateEvents).toBe(0);
+        offProgress();
         expect(stopped.frames).toBeGreaterThan(4);
         expect(progress.length).toBeGreaterThan(0);
         const manifest = readRecordingManifest(recording.folder);
@@ -171,8 +417,14 @@ describe("recorder and editor toolsets", () => {
         expect(existsSync(join(recording.folder, ".pieces"))).toBe(false);
 
         const toolset = new EditorToolset();
-        const { editor } = (await toolset.bootstrap(ctx)) as { editor: { open(source: string): Clip } };
+        const { editor } = (await toolset.load(ctx)) as { editor: { open(source: string): Clip } };
+        expect(() => Reflect.apply(editor.open, editor, [{ recording: "x" }])).toThrow("editor.open(source: string)");
         const clip = editor.open(recording.folder);
+        expect(() => Reflect.apply(clip.speed, clip, ["fast"])).toThrow("editor.Clip.speed(factor: number)");
+        const trimmedJob = clip.trim({ from: 0, to: 0.1 });
+        const trimmed = await trimmedJob.done;
+        expect(await trimmedJob).toBe(trimmed);
+        expect(() => Reflect.apply(trimmed.speed, trimmed, ["fast"])).toThrow("editor.Clip.speed(factor: number)");
         const framesJob = clip.frames({ changeOnly: true, threshold: 2 });
         const events: string[] = [];
         framesJob.on("progress", (event) => events.push(`${event.step} ${event.done}/${event.total} ${event.unit}`));

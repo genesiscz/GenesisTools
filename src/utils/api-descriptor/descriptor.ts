@@ -4,7 +4,7 @@ import type { z } from "zod";
 export const METHOD_EFFECTS = ["read", "reversible", "destructive"] as const;
 export type MethodEffect = (typeof METHOD_EFFECTS)[number];
 
-/** One callable method, described once: the REPL help, the MCP tool list and CLI help are generated from it. */
+/** One callable method, described once for generated REPL help and MCP tool schemas. */
 export interface MethodDescriptor<P extends z.ZodType = z.ZodType, R extends z.ZodType = z.ZodType> {
     /** `start`, or a dotted name for a nested member: `displays.switch`. */
     name: string;

@@ -2460,12 +2460,17 @@ final class WidgetStagingTests: XCTestCase {
     func testTheSendSettingAnswersAtOnceFromTheInboxOfEverySession() async throws {
         let model = StagingFixture.model()
         defer { model.stop() }
+        let sent = expectation(description: "the staged decision is sent")
         var actions: [WidgetJSON] = []
-        model.actionRunner = { value in actions.append(value); return ["sent": 1, "queued": 0, "failed": 0] }
+        model.actionRunner = { value in
+            actions.append(value)
+            if self.decisionActions([value]) == ["send-staged"] { sent.fulfill() }
+            return ["sent": 1, "queued": 0, "failed": 0]
+        }
         model.receive([try snapshot(draftOption: nil, decisionClick: "send")])
         let item = try XCTUnwrap(model.inboxOverviewItems.first)
         model.choose(item, option: "b")
-        try await Task.sleep(for: .milliseconds(200))
+        await fulfillment(of: [sent], timeout: 2)
         XCTAssertEqual(decisionActions(actions), ["ledger", "send-staged"], "the pick is written, then sent")
         guard case .object(let send) = try XCTUnwrap(actions.last) else { return XCTFail("not an object") }
         XCTAssertEqual(send["ids"], .array(["d1"]))

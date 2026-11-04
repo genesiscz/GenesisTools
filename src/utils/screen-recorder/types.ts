@@ -44,7 +44,7 @@ export interface AudioTrack {
     path?: string;
     durationMs: number;
     peakDbfs?: number;
-    /** `[fromMs, toMs]` on the capture's clock while the source was muted (silence in the file). */
+    /** `[fromMs, toMs]` on the audio file's timeline while the source was muted. */
     mutedSpans: Array<[number, number]>;
 }
 

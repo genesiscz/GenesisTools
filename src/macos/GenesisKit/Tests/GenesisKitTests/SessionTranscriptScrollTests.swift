@@ -181,19 +181,24 @@ final class SessionTranscriptScrollTests: XCTestCase {
         let center = NotificationCenter.default
         center.post(name: NSScrollView.willStartLiveScrollNotification, object: list)
         let start = list.contentView.bounds.origin.y
-        var previous = start
+        let table = try XCTUnwrap(document as? NSTableView)
         var leastUp = CGFloat.greatestFiniteMagnitude
-        for step in 1...40 {
-            list.contentView.scroll(to: NSPoint(x: 0, y: start - CGFloat(step) * 20))
+        for _ in 1...40 {
+            let before = list.contentView.bounds.origin.y
+            let row = table.row(at: NSPoint(x: 1, y: before + 1))
+            let view = try XCTUnwrap(table.rowView(atRow: row, makeIfNecessary: false))
+            let previous = before - table.rect(ofRow: row).minY
+            list.contentView.scroll(to: NSPoint(x: 0, y: before - 20))
             list.reflectScrolledClipView(list.contentView)
             center.post(name: NSScrollView.didLiveScrollNotification, object: list)
             rig.settle(0.016)
-            let now = list.contentView.bounds.origin.y
+            let currentRow = table.row(for: view)
+            XCTAssertGreaterThanOrEqual(currentRow, 0)
+            let now = list.contentView.bounds.origin.y - table.rect(ofRow: currentRow).minY
             leastUp = min(leastUp, previous - now)
-            previous = now
         }
-        // Rows measured above the viewport may shift it a few points (the anchor keeps what is on screen still);
-        // a push back to the anchored row undoes the whole step.
+        // Follow the row currently under the reader: height changes above it can move the document offset.
+        // Restoring the old anchor would still undo this row's movement through the viewport.
         XCTAssertGreaterThan(leastUp, 10, "a step of the reader's live scroll moved only \(leastUp) pt up: the anchor pushed it back")
         center.post(name: NSScrollView.didEndLiveScrollNotification, object: list)
         rig.settle(0.5)

@@ -518,6 +518,7 @@ export async function runRecorder(options: {
         let stopRequested = false;
         /** The captures of the running piece, by the display each records. */
         const running = new Map<number, RunningCapture>();
+        const pendingCaptures = new Set<RunningCapture>();
         let inPiece = false;
         let wake: (() => void) | undefined;
         const abortAll = () => {
@@ -929,6 +930,7 @@ export async function runRecorder(options: {
                 done: Promise.resolve(),
             };
             running.set(target.displayId, entry);
+            pendingCaptures.add(entry);
             pieceOutcome.count += 1;
             syncDisplays();
             const hooks: CaptureHooks = {
@@ -1014,6 +1016,7 @@ export async function runRecorder(options: {
                         running.delete(entry.target.displayId);
                     }
 
+                    pendingCaptures.delete(entry);
                     rmSync(outDir, { recursive: true, force: true });
                 });
         };
@@ -1146,12 +1149,12 @@ export async function runRecorder(options: {
                 }
 
                 // A display added over the socket joins this piece, so wait until every capture has ended.
-                while (running.size > 0) {
-                    await Promise.race([...running.values()].map((one) => one.done));
+                while (pendingCaptures.size > 0) {
+                    await Promise.race([...pendingCaptures].map((one) => one.done));
                 }
             } catch (err) {
                 abortAll();
-                await Promise.allSettled([...running.values()].map((one) => one.done));
+                await Promise.allSettled([...pendingCaptures].map((one) => one.done));
                 throw err;
             } finally {
                 inPiece = false;

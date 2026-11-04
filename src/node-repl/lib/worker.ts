@@ -200,7 +200,7 @@ async function preload(request: PreloadRequest): Promise<string> {
     };
 
     for (const toolset of await createToolsets(request.toolsets)) {
-        Object.assign(globalThis, await toolset.bootstrap(ctx));
+        Object.assign(globalThis, await toolset.load(ctx));
         toolsets.push(toolset);
     }
 

@@ -30,7 +30,8 @@ Each lives in one toolset file and has one registry entry. Browser calls take th
 
 The `js` description gives one summary line per loaded toolset. Inside a turn, `search("display")` finds methods
 by name, description, and parameter schema; `describe("recorder.start")` prints the full method descriptor.
-Handle methods use the qualified names returned by search, such as `recorder.Recording.displays.switch`.
+`describe()` accepts both the qualified handle names from search, such as `recorder.Recording.displays.switch`,
+and the names from help, such as `recording.displays.switch`.
 `help()` lists toolsets and `help("computer")` prints the full API with every signature; `await show(x)` returns
 an image to the model (a path, a Buffer or Uint8Array, `{ path }` or `{ bytes, mimeType }`, or an array of them).
 Recordings started in a turn belong to the parent engine. A turn timeout loses bindings but leaves those

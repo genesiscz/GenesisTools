@@ -299,6 +299,29 @@ final class AudioCommandTests: XCTestCase {
         XCTAssertNil(peakDbfs(0), "digital silence has no dB value")
     }
 
+    func testAudioFileMetadataExcludesPausedAndDroppedSamples() {
+        var timeline = AudioFileTimeline()
+        // 2.55 s audible, a pause with no appended samples, then 3 s of silence and 2.066 s audible.
+        timeline.append(sampleCount: 122_400, sampleRate: 48_000, muted: false)
+        timeline.append(sampleCount: 48_000, sampleRate: 48_000, muted: true)
+        timeline.append(sampleCount: 96_000, sampleRate: 48_000, muted: true)
+        timeline.append(sampleCount: 99_168, sampleRate: 48_000, muted: false)
+        XCTAssertEqual(timeline.durationMs, 7_616)
+        XCTAssertEqual(timeline.mutedSpans, [[2_550, 5_550]])
+        timeline.append(sampleCount: 0, sampleRate: 48_000, muted: true)
+        XCTAssertEqual(timeline.durationMs, 7_616)
+        XCTAssertEqual(timeline.mutedSpans, [[2_550, 5_550]])
+    }
+
+    func testAudioFileMetadataWithoutPausesAndWithSeparateMuteIntervals() {
+        var timeline = AudioFileTimeline()
+        for muted in [false, true, false, true] {
+            timeline.append(sampleCount: 48_000, sampleRate: 48_000, muted: muted)
+        }
+        XCTAssertEqual(timeline.durationMs, 4_000)
+        XCTAssertEqual(timeline.mutedSpans, [[1_000, 2_000], [3_000, 4_000]])
+    }
+
     func testThresholdChangesLive() {
         let dark = signature(width: 16, height: 16) { _, _ in 0 }
         let half = signature(width: 16, height: 16) { x, _ in x < 4 ? 255 : 0 }

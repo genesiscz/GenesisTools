@@ -344,8 +344,15 @@ export class LiveRecordingServer {
 
         // Answers already written go out before the connection ends; `stop(true)` would cut them off.
         for (const client of this.connections) {
-            client.data.outbox.flush();
-            client.end();
+            void client.data.queue
+                .then(() => {
+                    client.data.outbox.flush();
+                    client.end();
+                })
+                .catch((error: unknown) => {
+                    log.debug({ error }, "live recording connection ended during shutdown");
+                    client.end();
+                });
         }
 
         this.listener.stop();

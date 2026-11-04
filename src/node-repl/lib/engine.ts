@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { TemporaryArtifacts } from "@genesiscz/utils/fs/temporary-artifacts";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -134,25 +135,36 @@ export class ReplEngine {
             }
 
             const requestId = message.id;
+            const startup = new AbortController();
             const task = (async () => {
                 try {
-                    const options = recorderStartSchema.parse(message.recordingStart);
-                    const { FRAME_RECORDERS } = await import("@genesiscz/utils/screen-recorder/recorders");
-                    const { ensureBinaryAsync } = await import("@app/control/lib/runner");
-                    const recording = await startRecording({
-                        ...options,
-                        ocr: options.ocr ? { ...options.ocr, enabled: options.ocr.enabled ?? true } : undefined,
-                        recorder: this.options.recorder
-                            ? await this.options.recorder.create()
-                            : FRAME_RECORDERS.native({ axTool: async (input) => [await ensureBinaryAsync(input)] }),
-                    });
+                    const recording = await withTimeout(
+                        (async () => {
+                            const options = recorderStartSchema.parse(message.recordingStart);
+                            const { FRAME_RECORDERS } = await import("@genesiscz/utils/screen-recorder/recorders");
+                            const { ensureBinaryAsync } = await import("@app/control/lib/runner");
+                            const recorder = this.options.recorder
+                                ? await this.options.recorder.create()
+                                : FRAME_RECORDERS.native({ axTool: async (input) => [await ensureBinaryAsync(input)] });
+                            startup.signal.throwIfAborted();
+                            return startRecording({
+                                ...options,
+                                signal: startup.signal,
+                                ocr: options.ocr ? { ...options.ocr, enabled: options.ocr.enabled ?? true } : undefined,
+                                recorder,
+                            });
+                        })(),
+                        this.preloadTimeoutMs,
+                        new Error(`Recording startup exceeded ${this.preloadTimeoutMs} ms`)
+                    );
                     this.recordings.add(recording);
 
-                    if (worker.exitCode === null) {
+                    if (this.worker === worker && worker.exitCode === null) {
                         worker.send({ id: requestId, recordingId: recording.id });
                     }
                 } catch (error) {
-                    if (worker.exitCode === null) {
+                    startup.abort(error);
+                    if (this.worker === worker && worker.exitCode === null) {
                         worker.send({ id: requestId, error: String(error) });
                     }
                 }

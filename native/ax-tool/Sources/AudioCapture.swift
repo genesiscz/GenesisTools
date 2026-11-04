@@ -165,6 +165,7 @@ private final class AudioTrack {
     var failures: [String] = []
     /// Muted stretches as host-clock start and end.
     var mutedSpans: [(start: CMTime, end: CMTime?)] = []
+    var fileTimeline = AudioFileTimeline()
 
     init(source: CaptureAudioSource, movieInput: AVAssetWriterInput?, sidecarURL: URL?) {
         self.source = source
@@ -191,7 +192,14 @@ private final class AudioTrack {
                 return
             }
         }
-        if let sidecarInput, sidecarInput.isReadyForMoreMediaData, !sidecarInput.append(buffer), failures.isEmpty {
+        guard let sidecarInput, sidecarInput.isReadyForMoreMediaData else { return }
+        if sidecarInput.append(buffer) {
+            if let format = CMSampleBufferGetFormatDescription(buffer),
+               let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee {
+                fileTimeline.append(sampleCount: CMSampleBufferGetNumSamples(buffer), sampleRate: description.mSampleRate,
+                                    muted: muted)
+            }
+        } else if failures.isEmpty {
             failures.append("the \(source.rawValue) sidecar refused audio: \(sidecar?.error?.localizedDescription ?? "no error reported")")
         }
     }
@@ -316,7 +324,7 @@ final class NativeAudio: NSObject, SCStreamOutput {
         }
     }
 
-    /// The `tracks` entries of the result; times are relative to `origin`, the first video frame.
+    /// Movie positions are relative to `origin`; a sidecar's duration and mute spans use its own sample timeline.
     func summaries(origin: CMTime?) -> [[String: Any]] {
         queue.sync {
             sources.compactMap { source -> [String: Any]? in
@@ -335,6 +343,8 @@ final class NativeAudio: NSObject, SCStreamOutput {
                 }
                 row["mutedSpans"] = track.mutedSpans.map { [ms($0.start), ms($0.end ?? track.end ?? $0.start)] }
                 if track.sidecarWritten, let url = track.sidecarURL {
+                    row["durationMs"] = track.fileTimeline.durationMs
+                    row["mutedSpans"] = track.fileTimeline.mutedSpans
                     row["file"] = url.lastPathComponent
                     row["path"] = url.path
                 }

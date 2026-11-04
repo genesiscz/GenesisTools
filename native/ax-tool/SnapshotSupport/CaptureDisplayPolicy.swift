@@ -214,6 +214,34 @@ public func parseAudioSources(_ raw: String) -> Result<[CaptureAudioSource], Cap
     return .success(sources)
 }
 
+/// The timeline of samples accepted by an audio file writer, excluding pauses and dropped buffers.
+public struct AudioFileTimeline {
+    public private(set) var seconds: Double = 0
+    private var spans: [(start: Double, end: Double)] = []
+    private var wasMuted = false
+
+    public init() {}
+
+    public mutating func append(sampleCount: Int, sampleRate: Double, muted: Bool) {
+        guard sampleCount > 0, sampleRate.isFinite, sampleRate > 0 else { return }
+        let end = seconds + Double(sampleCount) / sampleRate
+        if muted {
+            if wasMuted, !spans.isEmpty {
+                spans[spans.count - 1].end = end
+            } else {
+                spans.append((seconds, end))
+            }
+        }
+        wasMuted = muted
+        seconds = end
+    }
+
+    public var durationMs: Int { Int((seconds * 1000).rounded()) }
+    public var mutedSpans: [[Int]] {
+        spans.map { [Int(($0.start * 1000).rounded()), Int(($0.end * 1000).rounded())] }
+    }
+}
+
 /// The largest absolute sample of float PCM.
 public func peakAmplitude(float32 samples: UnsafeBufferPointer<Float>) -> Float {
     var peak: Float = 0

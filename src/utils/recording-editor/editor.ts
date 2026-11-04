@@ -542,7 +542,7 @@ function compile(options: {
                 break;
             case "frames": {
                 const sample =
-                    step.fps !== undefined || !plan.steps.slice(0, index).some((one) => one.kind === "frames");
+                    step.fps !== undefined || step.displays !== undefined || plan.steps[index - 1]?.kind !== "frames";
 
                 if (sample) {
                     steps.push({
@@ -591,7 +591,18 @@ function compile(options: {
         }
     }
 
-    return steps;
+    return steps.map((step) => ({
+        ...step,
+        outputs: (state) => [
+            ...new Set([
+                ...(state.video ? [state.video.path] : []),
+                ...(state.stills ?? []).map((frame) => frame.path),
+                ...(state.frames ?? []).map((frame) => frame.path),
+                ...state.sheets.map((sheet) => sheet.path),
+                ...state.exports.map((output) => output.path),
+            ]),
+        ],
+    }));
 }
 
 async function hasAudio(path: string, signal: AbortSignal): Promise<boolean> {
@@ -635,7 +646,7 @@ export class RecordingEditor {
             steps: [
                 {
                     name: "workspace",
-                    key: {},
+                    key: { layout: options.layout ?? "workspace" },
                     run: async (ctx) => {
                         mkdirSync(ctx.claim(outputDir), { recursive: true });
                         return ctx.state;

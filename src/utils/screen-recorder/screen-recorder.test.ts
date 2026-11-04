@@ -320,6 +320,25 @@ class TestControl extends RecorderControl {
 }
 
 describe("live recordings", () => {
+    test("closing inside stop removes discovery immediately and delivers the final answer", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "live-rec-close-"));
+        const control = new TestControl();
+        const server = new LiveRecordingServer({ id: "closing", kind: "meeting", title: "Closing", dir, control });
+        control.stop = async () => {
+            server.close("requested");
+            expect(existsSync(join(dir, "closing.json"))).toBe(false);
+            expect(existsSync(server.current.socket)).toBe(false);
+            return { state: "stopped", outcome: "requested" };
+        };
+        const client = await RecorderClient.connect("closing", { dir });
+        try {
+            expect(await client.stop()).toEqual({ state: "stopped", outcome: "requested" });
+        } finally {
+            client.close();
+            server.close();
+        }
+    });
+
     test("an entry and its socket answer JSON-RPC calls, send events to subscribers, and go when it closes", async () => {
         const dir = mkdtempSync(join(tmpdir(), "live-rec-"));
         const control = new TestControl();
