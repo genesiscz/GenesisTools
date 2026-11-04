@@ -58,6 +58,20 @@ final class ContextMenuWindowTests: XCTestCase {
          kCGWindowLayer as String: NSNumber(value: layer)]
     }
 
+    func testAMenuDigestIgnoresADisabledRowsTickingTextButNotAnEnabledRowsChange() throws {
+        let rows: [[String: Any]] = [["role": "AXMenuItem", "AXEnabled": "0", "AXTitle": "Control session · 0:12"],
+                                     ["role": "AXMenuItem", "AXEnabled": "1", "AXTitle": "Add Marker"]]
+        var ticked = rows
+        ticked[0]["AXTitle"] = "Control session · 0:13"
+        XCTAssertEqual(try menuSnapshotDigest(rows), try menuSnapshotDigest(ticked))
+        var renamed = rows
+        renamed[1]["AXTitle"] = "Delete Recording"
+        XCTAssertNotEqual(try menuSnapshotDigest(rows), try menuSnapshotDigest(renamed))
+        var enabled = rows
+        enabled[0]["AXEnabled"] = "1"
+        XCTAssertNotEqual(try menuSnapshotDigest(rows), try menuSnapshotDigest(enabled))
+    }
+
     func testOnlyTheAppsOwnMenuLayerWindowsCount() {
         let windows = [window(1, pid: 42, layer: 0), window(2, pid: 42, layer: 101), window(3, pid: 7, layer: 101),
                        window(4, pid: 42, layer: 25)]

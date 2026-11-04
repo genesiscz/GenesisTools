@@ -52,6 +52,17 @@ public struct MenuSnapshotToken: Codable {
     }
 }
 
+/// The digest a menu snapshot checks at act time. A disabled row cannot be pressed, so its text may change between
+/// the read and the press: a live recording's menu shows "Control session · 0:12" and ticks every second, which
+/// refused every press of "Add Marker" under it (2026-11-04). Whether a row is enabled, its role, its place and every
+/// enabled row's text stay in the digest, so a row that turns pressable or a renamed item still refuses.
+public func menuSnapshotDigest(_ rows: [[String: Any]]) throws -> String {
+    let changing: Set<String> = ["AXTitle", "AXValue", "AXDescription", "stableKey", "targetKey", "x", "width"]
+    return try snapshotDigest(rows.map { row in
+        row["AXEnabled"] as? String == "0" ? row.filter { !changing.contains($0.key) } : row
+    })
+}
+
 /// AXPress on a menu bar item OPENS a menu, and macOS only tracks an open menu for the active
 /// app, so that one genuinely needs the key window. AXPick selects an item outright and AXCancel
 /// dismisses; neither needs the app in front. Gating all three on frontmost meant every menu

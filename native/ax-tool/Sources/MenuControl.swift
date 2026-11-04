@@ -61,7 +61,9 @@ private func openContextMenu(_ pid: pid_t, source: DeadlineHierarchySource) -> A
 }
 
 /// The menu a status item of this app has open: the AXMenu child of an item of its extras bar, or nil. An item
-/// keeps its AXMenu child while the menu is closed too, so only an on-screen menu window of the app counts as open.
+/// keeps its AXMenu child while the menu is closed too, so only an on-screen menu window of the app counts as open,
+/// and of an app with several status items the open menu is the one with a size (a closed one measures 0 high: the
+/// first item's closed menu was read while the second item's menu was open, 2026-11-04).
 private func openStatusMenu(_ pid: pid_t) -> AXUIElement? {
     guard !menuWindowIDs(in: onScreenWindows(), pid: pid).isEmpty else { return nil }
     let app = AXUIElementCreateApplication(pid)
@@ -70,12 +72,10 @@ private func openStatusMenu(_ pid: pid_t) -> AXUIElement? {
         return nil
     }
     let source = LiveHierarchySource()
-    for item in (try? source.children(of: raw as! AXUIElement)) ?? [] {
-        if let menu = ((try? source.children(of: item)) ?? []).first(where: { axStringAttribute($0, "AXRole") == "AXMenu" }) {
-            return menu
-        }
+    let menus = ((try? source.children(of: raw as! AXUIElement)) ?? []).compactMap { item in
+        ((try? source.children(of: item)) ?? []).first(where: { axStringAttribute($0, "AXRole") == "AXMenu" })
     }
-    return nil
+    return menus.first(where: { (axSizeValue($0, "AXSize")?.height ?? 0) > 1 }) ?? menus.first
 }
 
 /// 🛑 `see --scope menu` listed only the menu bar, so a context menu that `act --button right` had just
@@ -173,7 +173,7 @@ func cmdMenu(_ command: String) {
                                     contextMenu: contextMenu, extras: extras, source: menuReadSource())
         let tree = observed.tree
         if command == "menu-see" {
-            let token = MenuSnapshotToken(pid:pid,launch:launch,depth:40,digest:tree.digest,created:Date().timeIntervalSince1970,
+            let token = MenuSnapshotToken(pid:pid,launch:launch,depth:40,digest:try menuSnapshotDigest(tree.rows),created:Date().timeIntervalSince1970,
                                           rootTitle:rootTitle,contextMenu:observed.contextMenu,extras:extras)
             let raw = try JSONEncoder().encode(token).base64EncodedString()
             var output: [String: Any] = ["ok":true,"app":appName,"pid":pid,"processLaunch":launch,"surface":"menu","snapshot":raw,
@@ -211,7 +211,7 @@ func cmdMenu(_ command: String) {
         }
         let action = input["--action"] ?? "AXPress"
         guard axActionNames(element).contains(action) else { throw SnapshotError.invalid("menu item does not expose the requested AX action") }
-        try dispatchMenuAction(token:token,pid:pid,launch:launch,digest:tree.digest,element:index,count:tree.elements.count,
+        try dispatchMenuAction(token:token,pid:pid,launch:launch,digest:try menuSnapshotDigest(tree.rows),element:index,count:tree.elements.count,
             now:Date().timeIntervalSince1970,frontmost:frontmostPid() == pid,
             enabled:(axAttribute(element,"AXEnabled") as? NSNumber)?.boolValue != false, action: {
             AXUIElementSetMessagingTimeout(element,3)
@@ -223,7 +223,7 @@ func cmdMenu(_ command: String) {
             }
             let fresh = try menuTree(pid, depth: token.depth, rootTitle: rootTitle,
                                      contextMenu: token.contextMenu == true, extras: extras, source: menuReadSource()).tree
-            _ = try token.validate(pid: pid, launch: observedLaunch(pid), digest: fresh.digest,
+            _ = try token.validate(pid: pid, launch: observedLaunch(pid), digest: try menuSnapshotDigest(fresh.rows),
                 element: index, count: fresh.elements.count, now: Date().timeIntervalSince1970)
             // Same rule as the outer guard: a press that must open a tracking menu needs the key
             // window, while AXPick and AXCancel do not, so they must not fail here either.
