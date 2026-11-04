@@ -557,6 +557,17 @@ describe("characterization: the caller a failure record names", () => {
         };
     }
 
+    /** The context a hook or a worker knows about the session, with no label: the host's env gives it. */
+    function contextWithoutLabel(overrides: Partial<AgentRuntimeContext>): Partial<AgentRuntimeContext> {
+        const { aiAgent: _label, ...given } = context(overrides);
+        return given;
+    }
+
+    /** The env of a Claude session whose id the contexts above name: the identity module detects the host from it. */
+    function claudeEnv(extra: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+        return { CLAUDE_CODE_SESSION_ID: context({}).sessionId ?? "", ...extra };
+    }
+
     function scratch(): string {
         return mkdtempSync(join(tmpdir(), "failures-caller-"));
     }
@@ -715,9 +726,11 @@ describe("characterization: the caller a failure record names", () => {
             const caller = failureCaller({ context: ctx, processEnv: { AI_AGENT: "label" }, home: scratch() });
             expect(caller.aiAgent).toBeNull();
             expect(caller.cwd).toBe("/fixture/repo/sub");
+            // A host that takes a label gives it as the harness sets it: the identity module reads it from the env.
             expect(
-                failureCaller({ context: context({ aiAgent: null }), processEnv: { AI_AGENT: " label " } }).aiAgent
-            ).toBe("label");
+                failureCaller({ context: contextWithoutLabel({}), processEnv: claudeEnv({ AI_AGENT: " label " }) })
+                    .aiAgent
+            ).toBe(" label ");
             const dir = scratch();
             const failure: ToolFailure = {
                 v: 1,
@@ -801,15 +814,19 @@ describe("characterization: the caller a failure record names", () => {
             ).toBeNull();
         });
 
-        it("takes the effort from CLAUDE_EFFORT, trimmed, and null when blank or unset, whatever the host", () => {
-            expect(failureCaller({ context: context({}), processEnv: { CLAUDE_EFFORT: " high " } }).effort).toBe(
-                "high"
-            );
-            expect(failureCaller({ context: context({}), processEnv: { CLAUDE_EFFORT: "  " } }).effort).toBeNull();
-            expect(failureCaller({ context: context({}), processEnv: {} }).effort).toBeNull();
+        it("takes the effort from the Claude host's CLAUDE_EFFORT, trimmed, and null when blank or unset", () => {
             expect(
-                failureCaller({ context: context({ agent: "codex" }), processEnv: { CLAUDE_EFFORT: "low" } }).effort
-            ).toBe("low");
+                failureCaller({ context: context({}), processEnv: claudeEnv({ CLAUDE_EFFORT: " high " }) }).effort
+            ).toBe("high");
+            expect(
+                failureCaller({ context: context({}), processEnv: claudeEnv({ CLAUDE_EFFORT: "  " }) }).effort
+            ).toBeNull();
+            expect(failureCaller({ context: context({}), processEnv: claudeEnv({}) }).effort).toBeNull();
+        });
+
+        it("takes no effort from CLAUDE_EFFORT for a host that is not Claude", () => {
+            const codexEnv = { CODEX_THREAD_ID: "01a0f4fc-171d-7c30-9679-ee00633dee2d", CLAUDE_EFFORT: "low" };
+            expect(failureCaller({ context: context({ agent: "codex" }), processEnv: codexEnv }).effort).toBeNull();
         });
 
         it("an empty or whitespace context label blocks the nonblank AI_AGENT fallback", () => {
@@ -823,7 +840,7 @@ describe("characterization: the caller a failure record names", () => {
             }
         });
 
-        it("copies the agent, session and checkout from the context, and the label from the context before AI_AGENT", () => {
+        it("copies the agent, session and checkout from the context, and the label from the context before the env's AI_AGENT", () => {
             const ctx = context({ aiAgent: "from-context" });
             expect(failureCaller({ context: ctx, processEnv: { AI_AGENT: "from-env" } })).toEqual({
                 agent: "claude-code",
@@ -839,10 +856,11 @@ describe("characterization: the caller a failure record names", () => {
                 commitSha: "abc1234",
                 worktreePath: null,
             });
-            expect(failureCaller({ context: context({}), processEnv: { AI_AGENT: " from-env " } }).aiAgent).toBe(
-                "from-env"
-            );
-            expect(failureCaller({ context: context({}), processEnv: {} }).aiAgent).toBeNull();
+            expect(
+                failureCaller({ context: contextWithoutLabel({}), processEnv: claudeEnv({ AI_AGENT: " from-env " }) })
+                    .aiAgent
+            ).toBe(" from-env ");
+            expect(failureCaller({ context: contextWithoutLabel({}), processEnv: claudeEnv({}) }).aiAgent).toBeNull();
         });
     });
 });

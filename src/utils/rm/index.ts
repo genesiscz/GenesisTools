@@ -1,9 +1,8 @@
 import { userInfo } from "node:os";
-import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
+import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
 import { createTranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
-import { failureCaller } from "@genesiscz/utils/cli/failures/caller";
-import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import type { RmConfig } from "./config";
 import { isInside } from "./paths";
@@ -42,21 +41,20 @@ export interface RmPlanItem {
 }
 
 /**
- * The caller, stamped the way the question log stamps an answer (`gatherHarnessPoster`, the one poster stamp for
- * anything a harness posts, plus its transcript anchor): agent, session and title, project, checkout, branch and
- * commit. The model comes from the session's transcript, as the failures log reads it, and the operating-system user
+ * The caller, stamped the way the question log stamps an answer (the agent identity with the stamp facets, plus its
+ * transcript anchor): agent, session and title, project, checkout, branch and commit. The model comes from the
+ * identity's `model` facet, the session's transcript, as the failures log reads it, and the operating-system user
  * names a person. A run outside any agent is a person.
  */
 export function rmCallerFromRuntime(now = Date.now()): RmCaller {
-    const processEnv = env.getProcessEnv();
-    const poster = gatherHarnessPoster({}, processEnv);
-    const details = poster.isInAgent ? failureCaller({ context: poster, processEnv }) : null;
+    const identity = whoIsCallingHere({ facets: [...STAMP_FACETS, "model"] });
+    const poster = toRuntimeContext(identity);
     return {
         agent: poster.agent,
         sessionId: poster.sessionId,
         isInAgent: poster.isInAgent,
         sessionTitle: poster.sessionTitle,
-        model: details?.model ?? null,
+        model: identity.model ?? null,
         project: poster.project,
         user: userInfo().username,
         aiAgent: poster.aiAgent,
