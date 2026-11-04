@@ -41,8 +41,17 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `items add <meeting> --from-file findings.json` | A batch in one write: an array (or `{ "findings": [...] }`) of objects with the flags' names (`kind`, `from`, `to`, `at`, `label`, `speaker`, `heard`, `proposed`, `scope`, `joined`, `question`, `choices`, `decides`, `priority`, `confidence`, `reason`), plus `meaning` or `quote` on a term, and `line` (the line's index, as an `items add` warning names it) on a join or a term when two lines start in one second; times as seconds or "37:43". Kinds: `speaker-range`, `label` (`label`, `from`, `to`, `"meaningless": true`, `reason`: the label tracks no one person in that stretch, so its lines there count as unlabeled for the rules and render as `[nejasné: "<label>"]` unless a range or join gives them a voice), `join`, `term`, `question`. A finding may carry a `ref`, and a question's `decides` may list the refs of its own batch: they become the new ids. A term's `proposed` fixes the words everywhere unless `"scope": "line"`. One bad entry adds nothing. Each join and each term bound to a line is anchored to its line (`evidence.transcriptLine`); a time where no line, or two lines, start is a warning, and so is each new item that would not apply |
 | `evidence <meeting> --raw [--word-check hunspell\|hunspell-cc0\|macos\|off]` | The facts per line as JSON for an agent: label, text, channel, speaking, muted, present, the people, the silent call stretches (`meeting.callSilent`), the term part and the summary; no rule and no confidence. Like suggest, it first collects the platform, attendance and channel layout when the record lacks one, so both modes read the same inputs |
 | `play <meeting> --at 1:23:50 [--before 5]` | Play the meeting's audio from a moment in VLC (`playback.player`, ffplay as fallback), to hear a voice before `confirm` |
-| `projects list` | The known projects, with their dictionary size and match rules (`--json`) |
+| `projects list` | The known projects, with their dictionary size, labels and match rules (`--json`) |
 | `projects add <name>` | Add a known project |
+| `projects labels <name> [--add <label...>] [--remove <label...>]` | The labels a meeting of the project can carry ("Checkout 2.0") |
+| `projects pair <name> --person "Name <email>"...` | Pair people with a project by hand; a later meeting with them proposes it |
+| `projects unpair --entry <id>` / `projects unpair <name> --person <who>` | Remove the pairings one calendar entry made (a person another source pairs stays), or one person from a project |
+| `projects people [name] [--json]` | The paired people of each project, with the sources that paired them |
+| `set <meeting> --label <text...> --unlabel <text...>` | Add or remove a meeting's labels; a new label joins the project's labels |
+| `assign proposals <meeting> [--json]` | The ranked project proposals of a meeting and why, the overlapping calendar entries and the folder step; reads only |
+| `assign ask <meeting> [--force]` | Post the meeting's project question to the decision inbox now |
+| `assign apply <meeting> --project <name>\|--none [--label <text...>] [--entry <id>] [--pair-folder]` | Apply an answer without the inbox |
+| `assign sweep [--json]` | One "ask each time" pass, as the watcher runs it |
 | `dictionary show [--project <name>]` | The merged dictionary: global, then the project (`--json`) |
 | `dictionary add <value> [substitution] --type fix\|abbr\|term\|keep [--case-sensitive] [--project <name>]` | Add or replace an entry; a new project name is added to the known projects |
 | `dictionary suggest [--project <name>] [--apply 1,3\|all]` | Entries proposed from the source's own dictionary (Wispr Flow) and from corrections confirmed twice |
@@ -58,6 +67,34 @@ the record's `history`, and a change that would make the record invalid writes n
 Every command that creates or changes a meeting resolves its project in this order: `--project` (a new name joins
 the known projects), the meeting's own, one matching project (`projects.<name>.match`), a choice in a terminal, and
 without a terminal no project. `show` then says how to set it.
+
+A meeting has one project and any `labels`, so meetings group finer without sub-projects.
+
+### Ask each time
+
+A meeting that ended with no project gets one question in the decision inbox (the widget inbox, the dev-dashboard
+`/qa` page and a notification), once. The watcher asks on each look (`assign sweep`), only about meetings that ended
+after its first sweep, within `global.assign.lookbackHours` (48). The question ranks the known projects, each with
+its reasons, best first (`assign proposals` shows the same):
+
+| Reason | Points |
+|---|---|
+| The source folder the meeting is in is paired with the project (`sources.wisprflow.match.<p>.folders`) | 100 |
+| An overlapping calendar entry is in one of the project's calendars (`match.calendar.calendars`) | 60 |
+| The title has one of the project's words (`match.title.words`) | 40 |
+| People paired with the project are on an overlapping entry, or in the transcript | 15 each, 60 at most |
+| Title words the project's earlier meetings had | 8 each, 24 at most |
+
+It also lists the calendar entries that overlap the meeting (Apple Calendar, which holds the synced Outlook and Teams
+accounts, merged with Wispr Flow's own calendar, which has the attendees' emails), the labels, and the Wispr folder
+step. A calendar that cannot be read says so in the question; an unread calendar is never "no entries". The answer
+applies everything at once: the project (a new name joins the known projects), the labels, the picked entry (its
+attendees are paired with the project, `pairedBy: [{ kind: "calendar", entryId, ... }]`) and the folder pairing.
+A wrong pick is undone with `projects unpair --entry <id>`: it removes only the pairings no other source holds.
+
+The Wispr folder ladder: Wispr Flow cannot be changed from here (its MCP tools only read; its `wispr-flow://` scheme
+only opens pages). A meeting in a folder no project has is offered to pair that folder. A meeting in no folder: the
+question tells you to move it in Wispr Flow, and the next sweep that sees it in a folder asks to pair that folder.
 
 ## Recording
 
@@ -285,18 +322,30 @@ that varies by recorder, source or language sits under that axis:
 
 ```jsonc
 {
-    "version": 2,
+    "version": 3,
     "global": {
         "dictionary": { "abbrExpansion": "every", "entries": [] },
         "language": "cs",
         "capture": { "backend": "native", "activeFps": 1, "retentionDays": 30, "recorders": { "native": { "maxMb": 400 } } },
         "playback": { "listen": { "roundCap": 12 } },
-        "suggest": { "questionCap": 12 }
+        "suggest": { "questionCap": 12 },
+        "assign": { "ask": true, "lookbackHours": 48, "maxProposals": 5, "calendarSlackMin": 15 }
     },
     "projects": {
         "work": {
             "dictionary": { "entries": [{ "type": "abbr", "value": "MOP", "substitution": "MOP (Obchodní partner podnikatel)" }] },
-            "match": { "calendar": { "titles": ["Wiki"] } }
+            "labels": ["Checkout 2.0"],
+            "match": {
+                "calendar": { "calendars": ["Work"] },
+                "title": { "words": ["Wiki"] },
+                "people": [
+                    {
+                        "name": "Alice Novak",
+                        "email": "alice@example.com",
+                        "pairedBy": [{ "kind": "calendar", "from": "wisprflow", "entryId": "e1", "title": "Planning", "meetingId": "…", "at": "…" }]
+                    }
+                ]
+            }
         }
     },
     "sources": { "wisprflow": { "autoRecord": { "enabled": false }, "match": { "work": { "folders": ["Work"] } } } },
@@ -310,7 +359,9 @@ transcript and reads the screen.
 
 A version 1 file is rewritten once on the first read: `global.render` moves to `languages.cs.render`,
 `playback.listen.budget` to both `global.suggest.questionCap` and `playback.listen.roundCap`, and
-`projects.<p>.match.wisprflow.folders` to `sources.wisprflow.match.<p>.folders`. The code reads only the new places.
+`projects.<p>.match.wisprflow.folders` to `sources.wisprflow.match.<p>.folders`. A version 2 file moves
+`projects.<p>.match.calendar.titles` to `projects.<p>.match.title.words`, since the words test the meeting title from
+any source. The code reads only the new places. A file of a newer version still reads (the keys this code knows).
 
 `languages.<code>.wordCheck` names the word check provider of a language (`hunspell`, `hunspell-cc0`, `macos` or
 `off`). Without `--word-check`, suggest and `evidence --raw` check each language's lines with its own provider, and a
