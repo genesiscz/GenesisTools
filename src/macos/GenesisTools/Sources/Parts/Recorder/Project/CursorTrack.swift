@@ -135,8 +135,10 @@ final class CursorTrack: @unchecked Sendable {
         guard half > 1 else { return point(atMs: ms) }
         let sigma = half / 2
         var sumX = 0.0, sumY = 0.0, sumW = 0.0
-        for step in -6...6 {
-            let offset = half * Double(step) / 6
+        // A tap about every 20 ms: coarser taps turned one quick move into visible steps of the view.
+        let taps = max(6, Int(half / 20))
+        for step in -taps...taps {
+            let offset = half * Double(step) / Double(taps)
             guard let p = point(atMs: ms + offset) else { continue }
             let weight = exp(-(offset * offset) / (2 * sigma * sigma))
             sumX += p.x * weight
@@ -190,23 +192,6 @@ final class CursorTrack: @unchecked Sendable {
     }
 
 
-    /// The cursor position averaged over 300 ms around the time, so a followed zoom glides instead of shaking.
-    func smoothedPoint(atUs us: Int64) -> (x: Double, y: Double)? {
-        let ms = Double(us) / 1000
-        let low = firstIndex(atOrAfter: ms - 150)
-        var sumX = 0.0, sumY = 0.0, count = 0.0
-        var index = low
-        while index < samples.count, samples[index].ms <= ms + 150 {
-            sumX += samples[index].x
-            sumY += samples[index].y
-            count += 1
-            index += 1
-        }
-        if count > 0 { return (sumX / count, sumY / count) }
-        // No sample in the window: the nearest one before it holds.
-        let before = low - 1
-        return before >= 0 ? (samples[before].x, samples[before].y) : nil
-    }
 
     private func firstIndex(atOrAfter ms: Double) -> Int {
         var low = 0, high = samples.count

@@ -82,6 +82,25 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(view.centerY, 0.6, accuracy: 0.0001)
     }
 
+    func testAFollowZoomGlidesOverAMoveInsteadOfJumping() {
+        // The pointer stands at 0.2 for 2 s, moves to 0.8 in one sample, then stands again: rows only on a change.
+        let track = CursorTrack(samples: [
+            CursorTrack.Sample(ms: 0, x: 0.2, y: 0.5), CursorTrack.Sample(ms: 500, x: 0.2, y: 0.5),
+            CursorTrack.Sample(ms: 2000, x: 0.8, y: 0.5), CursorTrack.Sample(ms: 2500, x: 0.8, y: 0.5),
+            CursorTrack.Sample(ms: 4000, x: 0.8, y: 0.5),
+        ])
+        let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: 4_000_000, scale: 1.5, mode: .follow, easeInMs: 0, easeOutMs: 0)
+        let centers = stride(from: 1_600_000, through: 2_400_000, by: 100_000).map {
+            ZoomCurve.view(atSource: Int64($0), zooms: [zoom], cursor: track).centerX
+        }
+        // It moves a little every step, never more than a fifth of the way at once.
+        for (a, b) in zip(centers, centers.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(b, a - 0.0001)
+            XCTAssertLessThan(b - a, 0.12)
+        }
+        XCTAssertGreaterThan(centers.last! - centers.first!, 0.2)
+    }
+
     func testTheDrawnCursorHoldsStillThenMovesAndSitsOnAClick() {
         // Rows only on a change: still at 0.2 until one sample before 1000 ms, then at 0.8; a click at 1000 ms.
         let track = CursorTrack(samples: [

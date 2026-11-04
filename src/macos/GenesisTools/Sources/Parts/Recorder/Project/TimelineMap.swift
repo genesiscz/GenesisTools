@@ -172,7 +172,9 @@ enum ZoomCurve {
         let amount = easeOut(min(inProgress, outProgress))
         let scale = 1 + (zoom.scale - 1) * amount
         var focus = (x: zoom.focusX, y: zoom.focusY)
-        if zoom.mode == .follow, let point = cursor?.smoothedPoint(atUs: sourceUs) {
+        // ±600 ms: the view glides after a quick move (about a tenth of the frame per 100 ms at most) instead of
+        // jumping with it.
+        if zoom.mode == .follow, let point = cursor?.averagedPoint(atMs: Double(sourceUs) / 1000, halfMs: 600) {
             focus = point
         }
         let half = 0.5 / scale
