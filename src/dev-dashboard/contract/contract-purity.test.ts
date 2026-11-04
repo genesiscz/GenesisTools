@@ -25,6 +25,7 @@ const FILES = [
     "brief.ts",
     "wake.ts",
     "approvals.ts",
+    "glance.ts",
     "push.ts",
     "launch.ts",
     "watching.ts",

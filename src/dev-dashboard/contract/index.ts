@@ -10,6 +10,7 @@ export * from "@app/dev-dashboard/contract/e2e-request";
 export * from "@app/dev-dashboard/contract/endpoint-table";
 export * from "@app/dev-dashboard/contract/endpoints";
 export * from "@app/dev-dashboard/contract/gates";
+export * from "@app/dev-dashboard/contract/glance";
 export * from "@app/dev-dashboard/contract/launch";
 export * from "@app/dev-dashboard/contract/live";
 export * from "@app/dev-dashboard/contract/pairing";
