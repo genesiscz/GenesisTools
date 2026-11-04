@@ -8,6 +8,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
 import { timeSchema, timeToUs } from "./plan";
+import { cutRanges, FILLER_LEVELS, fillerCuts, fillerList, type TranscriptSegment, wordCuts } from "./transcript-cuts";
 
 const { log } = logger.scoped("recording-editor-project");
 
@@ -1054,6 +1055,29 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .strict(),
     z
         .object({
+            op: z.literal("cutWords"),
+            /** Any source time inside the line (a line's from, from transcript() or find()). */
+            at: timeSchema,
+            /** The word or words (in order) to cut out of that line; every place the line says them. */
+            words: z.string().min(1),
+            /** Kept off the words' edges, so the next word is not clipped. Default 40. */
+            padMs: z.number().int().min(0).max(500).optional(),
+        })
+        .strict(),
+    z
+        .object({
+            op: z.literal("cutFillers"),
+            /** A FILLER_WORDS list (cs, sk, en); absent is all of them. */
+            language: z.string().min(2).max(8).optional(),
+            /** "sounds" (default: ehm, hm, um) or "all" (also the filler words that are real words: jako, like). */
+            level: z.enum(FILLER_LEVELS).optional(),
+            /** Your own list instead of the language's. */
+            words: z.array(z.string().min(1)).optional(),
+            padMs: z.number().int().min(0).max(500).optional(),
+        })
+        .strict(),
+    z
+        .object({
             op: z.literal("denoise"),
             /** False takes the noise reduction away. */
             enabled: z.boolean().optional(),
@@ -1119,6 +1143,8 @@ export function parseEditOps(raw: unknown): EditOp[] {
 /** What an op needs from the movie itself, probed by the caller (`removeIdle`: the still and silent stretches). */
 export interface OpFacts {
     idleUs?: ReadonlyArray<readonly [number, number]>;
+    /** The cached transcript's lines (`cutWords`, `cutFillers`). */
+    transcript?: readonly TranscriptSegment[];
     /** The movie's integrated loudness at volume 1; null when it has no unmuted audio. */
     loudnessLufs?: number | null;
 }
@@ -1428,6 +1454,29 @@ export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): 
         }
         case "audio":
             return { ...project, audio: { ...project.audio, include: op.include } };
+        case "cutWords":
+        case "cutFillers": {
+            if (!facts.transcript) {
+                throw new Error(
+                    `${op.op} needs the transcript; run transcript() first, then edit through editProject or the CLI`
+                );
+            }
+
+            const cuts =
+                op.op === "cutWords"
+                    ? wordCuts({
+                          segments: facts.transcript,
+                          atSec: timeToUs(op.at) / 1_000_000,
+                          words: op.words,
+                          ...(op.padMs !== undefined ? { padMs: op.padMs } : {}),
+                      })
+                    : fillerCuts({
+                          segments: facts.transcript,
+                          fillers: fillerList({ language: op.language, words: op.words, level: op.level }),
+                          ...(op.padMs !== undefined ? { padMs: op.padMs } : {}),
+                      });
+            return cutRanges(cuts).reduce((next, cut) => cutRange(next, cut.fromUs, cut.toUs), project);
+        }
         case "denoise": {
             if (op.enabled === false) {
                 const { denoise: _denoise, ...audio } = project.audio;

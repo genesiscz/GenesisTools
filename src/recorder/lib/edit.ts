@@ -10,6 +10,7 @@ import { ensureDenoisedSource } from "@genesiscz/utils/recording-editor/denoise"
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { integratedLoudness } from "@genesiscz/utils/recording-editor/loudness";
+import { timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
     applyOp,
     type EditOp,
@@ -19,6 +20,7 @@ import {
     editProjectSchema,
     type OpFacts,
     opTimeWarnings,
+    outputTimeOf,
     partOf,
     projectPathFor,
     readProject,
@@ -28,6 +30,14 @@ import {
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
 import { formatSubtitles, type SubtitleFormat, subtitleCues } from "@genesiscz/utils/recording-editor/subtitles";
+import {
+    type CutMatch,
+    fillerCuts,
+    fillerList,
+    type TranscriptSegment,
+    transcriptFileSchema,
+    wordCuts,
+} from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { probeVideo, type VideoProbeLimits } from "@genesiscz/utils/video/probe";
@@ -212,7 +222,44 @@ function neverShown(project: EditProject) {
     );
 }
 
-/** What an op needs measured on the movie before it applies: idle stretches, or the loudness. */
+/** The cached transcript's lines (with word times when the provider gave them); throws when there is none. */
+export function readTranscriptSegments(project: EditProject): TranscriptSegment[] {
+    const cache = transcriptCachePath(project.source.video);
+
+    if (!existsSync(cache)) {
+        throw new Error(
+            "this movie has no transcript yet; transcribe it first with movie.transcript() (the movies REPL toolset)"
+        );
+    }
+
+    return transcriptFileSchema.parse(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true })).segments;
+}
+
+/**
+ * What `cutWords` or `cutFillers` would cut, without saving: each cut with its source range, the line it is in, whether
+ * its time is estimated, and where it plays in the edit now (null when that part is cut already).
+ */
+export async function previewTranscriptCuts(
+    value: string,
+    op: Extract<EditOp, { op: "cutWords" | "cutFillers" }>
+): Promise<Array<CutMatch & { plays: number | null }>> {
+    const { project } = await openProject(value);
+    const segments = readTranscriptSegments(project);
+    const cuts =
+        op.op === "cutWords"
+            ? wordCuts({ segments, atSec: timeToUs(op.at) / 1_000_000, words: op.words, padMs: op.padMs })
+            : fillerCuts({
+                  segments,
+                  fillers: fillerList({ language: op.language, words: op.words, level: op.level }),
+                  padMs: op.padMs,
+              });
+    return cuts.map((cut) => {
+        const plays = outputTimeOf(project, cut.fromUs);
+        return { ...cut, plays: plays === undefined ? null : Math.round(plays / 1000) / 1000 };
+    });
+}
+
+/** What an op needs measured on the movie before it applies: idle stretches, the loudness, or the transcript. */
 async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
     if (op.op === "removeIdle") {
         return {
@@ -228,6 +275,10 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
     if (op.op === "normalize") {
         const lufs = await integratedLoudness({ video: project.source.video, mutedTracks: project.audio.mutedTracks });
         return { loudnessLufs: lufs ?? null };
+    }
+
+    if (op.op === "cutWords" || op.op === "cutFillers") {
+        return { transcript: readTranscriptSegments(project) };
     }
 
     return {};

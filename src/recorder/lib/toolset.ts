@@ -7,7 +7,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { checkProject, type EditFacts, fixOps } from "@genesiscz/utils/recording-editor/check";
-import { timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
+import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
     BACKGROUND_KINDS,
     CANVAS_ASPECTS,
@@ -33,6 +33,7 @@ import {
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
 import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recording-editor/subtitles";
+import { type CutMatch, FILLER_LEVELS, type FillerLevel } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { ReplToolset, type ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import {
     RECORDER_SET_SETTINGS_DOC,
@@ -52,6 +53,7 @@ import {
     editProject,
     exportAs,
     openProject,
+    previewTranscriptCuts,
     undoDepth,
     undoEdit,
     writeSubtitles,
@@ -108,6 +110,18 @@ const movieDoc =
 
 /** What every edit method returns, short: the full field list once, on info(), keeps describe()'s lines readable. */
 const editResult = "Edit (the fields info() lists, plus warnings?)";
+
+/** A transcript cut as an agent reads it: source seconds, not microseconds. */
+function cutsOut(cuts: ReadonlyArray<CutMatch & { plays: number | null }>) {
+    return cuts.map((cut) => ({
+        from: cut.fromUs / 1_000_000,
+        to: cut.toUs / 1_000_000,
+        text: cut.text,
+        line: cut.line,
+        estimated: cut.estimated,
+        plays: cut.plays,
+    }));
+}
 
 const edit = (name: string, params: z.ZodType, doc: string, positional?: string[]) =>
     defineMethod({ name, params, positional, result: z.unknown(), resultName: editResult, doc, effect: "reversible" });
@@ -463,6 +477,37 @@ const movieMethods = [
         result: z.unknown(),
         resultName: "{ …info(), steps: { step, done, note }[] }",
         doc: "The usual clean-up in one call: removeIdle, autoZoom on the clicks, normalize to -16 LUFS and a gradient frame (pass false to skip one). A step that cannot run (no clicks, no audio) is reported in steps and the rest still run; one undo() puts it all back.",
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "cutWords",
+        params: z
+            .object({
+                at: timeSchema,
+                words: z.string().min(1),
+                padMs: z.number().int().min(0).max(500).optional(),
+                dryRun: z.boolean().optional(),
+            })
+            .strict(),
+        result: z.unknown(),
+        resultName: "{ …info() } | { from, to, text, line, estimated, plays }[] (dryRun)",
+        doc: "Cuts words out of the transcript line spoken at `at` (any source time inside it, a line's from from transcript() or find()): words \"you know\" cuts every place the line says them. A word's time comes from the provider's word times, else it is estimated from where its letters sit in the line (estimated: true; check with still() or sheet()). dryRun: true lists the cuts and saves nothing. One undo() puts it back.",
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "cutFillers",
+        params: z
+            .object({
+                language: z.string().min(2).max(8).optional(),
+                level: z.enum(FILLER_LEVELS).optional(),
+                words: z.array(z.string().min(1)).optional(),
+                padMs: z.number().int().min(0).max(500).optional(),
+                dryRun: z.boolean().optional(),
+            })
+            .strict(),
+        result: z.unknown(),
+        resultName: "{ …info() } | { from, to, text, line, estimated, plays }[] (dryRun)",
+        doc: 'Cuts every filler of the transcript in one step: language "cs", "sk" or "en" (absent: all of them), level "sounds" (default: ehm, hm, um, uh, éé) or "all" (also the fillers that are real words: jako, jakože, like, so check with dryRun first), or your own words. A run of fillers is one cut, padMs (40) off its edges. dryRun: true lists what it would cut. One undo() puts it all back.',
         effect: "reversible",
     }),
     edit(
@@ -1056,6 +1101,20 @@ export class Movie {
                 ...(options.speed ? { speed: options.speed } : {}),
             },
         ]);
+    }
+
+    async cutWords(options: { at: TimeValue; words: string; padMs?: number; dryRun?: boolean }) {
+        const { dryRun, ...rest } = options;
+        const op = { op: "cutWords" as const, ...rest };
+        return dryRun ? cutsOut(await previewTranscriptCuts(this.recording, op)) : this.change([op]);
+    }
+
+    async cutFillers(
+        options: { language?: string; level?: FillerLevel; words?: string[]; padMs?: number; dryRun?: boolean } = {}
+    ) {
+        const { dryRun, ...rest } = options;
+        const op = { op: "cutFillers" as const, ...rest };
+        return dryRun ? cutsOut(await previewTranscriptCuts(this.recording, op)) : this.change([op]);
     }
 
     async denoise(options: { enabled?: boolean; reductionDb?: number; tracks?: number[] } = {}) {

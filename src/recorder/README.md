@@ -27,12 +27,21 @@ tools recorder opened [--wait [S]] [--json]      # the recordings the editor sho
 tools recorder project <recording>               # the edit as JSON (source seconds)
 tools recorder apply <recording> '<op or [ops]>' # change the edit; - reads the ops from stdin
 tools recorder export <recording> [--format mp4|gif|webm] [--from T] [--to T] [--out FILE] [--json]
-tools recorder proxy <recording>                 # proxy.mp4 for a frames-only recording
+tools recorder proxy <recording> [--display most-change|ID] [--window S] [--switch FROM-TO=ID]
+                                                 # proxy.mp4 for a frames-only recording or a meeting: per 10 s window
+                                                 # the display that changed most (default; proxy.json is the plan),
+                                                 # or one display; a meeting also gets its transcript as captions
+                                                 # with the speakers' names
+tools recorder find-screen <recording> <text>    # where a text was on the screen (OCR), at source seconds
+tools recorder cut-words <recording> --at T --words "you know" [--dry-run]  # cut words out of the line at T
+tools recorder cut-fillers <recording> [--lang cs|sk|en] [--all] [--words a,b] [--dry-run]  # every ehm, hm, um;
+                                                 # --all also the fillers that are words (jako, like)
 tools recorder subtitles <recording> [--format srt|vtt] [--out F] [--from T --to T]  # the transcript as subtitles
 tools recorder finish <recording> <movie> [--from T --to T]  # subtitles + chapters for a movie exported elsewhere
 ```
 
-`<recording>` is a library id, `last`, a recording folder, a movie or an `edit.json`.
+`<recording>` is a library id, `last`, a meeting id, a recording folder, a movie or an `edit.json`. Noise reduction on
+export is the `denoise` op (`{"op":"denoise","reductionDb":12}`, ffmpeg afftdn on a cached copy under `.denoise/`).
 
 A recording is a folder in `~/.genesis-tools/recordings/library/video-<time>/`: `screen.mp4` (H.264, one audio track
 per source), `cursor.jsonl` (`{"t": ms, "x": 0..1, "y": 0..1, "click"?: "left"}` at 60 Hz) and `recording.json`.

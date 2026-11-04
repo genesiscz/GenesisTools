@@ -39,6 +39,7 @@ import { atempoChain, concatList } from "./ffmpeg";
 import { parseEditPlan, timeToUs } from "./plan";
 import { locateSource } from "./source";
 import { formatSubtitles, subtitleCues } from "./subtitles";
+import { cutRanges, fillerCuts, fillerList, wordCuts, wordSpans } from "./transcript-cuts";
 
 function workspace(): string {
     return mkdtempSync(join(tmpdir(), "gt-editor-"));
@@ -915,5 +916,69 @@ describe("noise reduction on export", () => {
         expect(denoisedSourcePath(movie, denoiseSchema.parse({ reductionDb: 20 }))).not.toBe(first);
         writeFileSync(movie, "ab");
         expect(denoisedSourcePath(movie, denoiseSchema.parse({}))).not.toBe(first);
+    });
+});
+
+describe("cutting by the transcript", () => {
+    const segments = [
+        { text: "Hello, ehm, my name is Ann", start: 10, end: 13 },
+        { text: "Hmm, hmm. We start jako now", start: 20, end: 22 },
+        {
+            text: "you know it",
+            start: 30,
+            end: 32,
+            words: [
+                { word: "you", start: 30, end: 30.2 },
+                { word: "know", start: 30.3, end: 30.6 },
+                { word: "it", start: 31.5, end: 31.8 },
+            ],
+        },
+    ];
+
+    test("a word's time is estimated from its letters, and the provider's word times win when present", () => {
+        expect(wordSpans(segments[0])[1]).toEqual({
+            word: "ehm,",
+            start: 10 + (3 * 7) / 26,
+            end: 10 + (3 * 11) / 26,
+            estimated: true,
+        });
+        expect(wordCuts({ segments, atSec: 31, words: "you know", padMs: 0 })).toEqual([
+            { text: "you know", fromUs: 30_000_000, toUs: 30_600_000, line: 30, estimated: false },
+        ]);
+        expect(() => wordCuts({ segments, atSec: 25, words: "x" })).toThrow("nobody speaks at 25 s");
+        expect(() => wordCuts({ segments, atSec: 11, words: "goodbye" })).toThrow('does not say "goodbye"');
+    });
+
+    test("fillers: sounds by default, the filler words only with level all, a run of fillers as one cut", () => {
+        const sounds = fillerCuts({ segments, fillers: fillerList({ language: "cs" }), padMs: 0 });
+        expect(sounds.map((cut) => cut.text)).toEqual(["ehm,", "Hmm, hmm."]);
+        const all = fillerCuts({ segments, fillers: fillerList({ language: "cs", level: "all" }), padMs: 0 });
+        expect(all.map((cut) => cut.text)).toEqual(["ehm,", "Hmm, hmm.", "jako"]);
+        expect(fillerList({ words: ["Ehm!"] })).toEqual(["ehm"]);
+        expect(() => fillerList({ language: "xx" })).toThrow('no filler list for "xx"');
+    });
+
+    test("touching cuts join, and the op cuts the movie where the words were", () => {
+        expect(
+            cutRanges([
+                { text: "a", fromUs: 5, toUs: 10, line: 0, estimated: true },
+                { text: "b", fromUs: 9, toUs: 12, line: 0, estimated: true },
+                { text: "c", fromUs: 20, toUs: 25, line: 0, estimated: true },
+            ])
+        ).toEqual([
+            { fromUs: 20, toUs: 25 },
+            { fromUs: 5, toUs: 12 },
+        ]);
+        const project = wholeProject({ video: "/rec/screen.mp4", durationUs: 40_000_000, width: 100, height: 100 });
+        const cut = applyOp(project, { op: "cutFillers", language: "cs", padMs: 0 }, { transcript: segments });
+
+        const removed = cutRanges(fillerCuts({ segments, fillers: fillerList({ language: "cs" }), padMs: 0 })).reduce(
+            (sum, range) => sum + range.toUs - range.fromUs,
+            0
+        );
+
+        expect(Math.abs(removed - (461_538 + 666_667))).toBeLessThanOrEqual(1);
+        expect(outputDurationUs(cut)).toBe(40_000_000 - removed);
+        expect(() => applyOp(project, { op: "cutFillers" })).toThrow("needs the transcript");
     });
 });

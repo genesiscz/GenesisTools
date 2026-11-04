@@ -11,6 +11,7 @@ import * as p from "@genesiscz/utils/prompts/p";
 import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import { describeProject, EDIT_OP_NAMES, parseEditOps } from "@genesiscz/utils/recording-editor/project";
 import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recording-editor/subtitles";
+import { FILLER_WORDS } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
@@ -870,6 +871,70 @@ program
             process.exitCode = 1;
         }
     });
+
+program
+    .command("cut-words")
+    .description(
+        "Cut words out of the transcript line spoken at a source time (every place that line says them); one undo"
+    )
+    .argument("<recording>", "a library id, `last`, a meeting id, a recording folder, a movie or an edit.json")
+    .requiredOption("--at <time>", "any source time inside the line (seconds, m:ss or h:mm:ss)")
+    .requiredOption("--words <text>", "the word or words, in order")
+    .option("--pad-ms <ms>", "kept off the words' edges", "40")
+    .option("--dry-run", "list what it would cut, save nothing")
+    .action(async (value: string, flags: { at: string; words: string; padMs?: string; dryRun?: boolean }) => {
+        try {
+            const movie = new Movie(value);
+            out.result(
+                await movie.cutWords({
+                    at: parseTime(flags.at, "--at"),
+                    words: flags.words,
+                    padMs: Number(flags.padMs ?? 40),
+                    dryRun: flags.dryRun,
+                })
+            );
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("cut-fillers")
+    .description(
+        `Cut every filler word of the transcript in one step (${Object.keys(FILLER_WORDS).join(", ")} lists, or --words); one undo`
+    )
+    .argument("<recording>", "a library id, `last`, a meeting id, a recording folder, a movie or an edit.json")
+    .option(
+        "--lang <code>",
+        `the filler list: ${Object.entries(FILLER_WORDS)
+            .map(([code, list]) => `${code} (${list.sounds.join(", ")}; with --all also ${list.words.join(", ")})`)
+            .join("; ")}; default every language`
+    )
+    .option("--all", "also the fillers that are real words (jako, like): check with --dry-run first")
+    .option("--words <list>", "your own filler words, comma-separated")
+    .option("--pad-ms <ms>", "kept off each cut's edges", "40")
+    .option("--dry-run", "list what it would cut, save nothing")
+    .action(
+        async (
+            value: string,
+            flags: { lang?: string; all?: boolean; words?: string; padMs?: string; dryRun?: boolean }
+        ) => {
+            try {
+                const answer = await new Movie(value).cutFillers({
+                    ...(flags.lang ? { language: flags.lang } : {}),
+                    level: flags.all ? "all" : "sounds",
+                    ...(flags.words ? { words: flags.words.split(",").map((word) => word.trim()) } : {}),
+                    padMs: Number(flags.padMs ?? 40),
+                    dryRun: flags.dryRun,
+                });
+                out.result(answer);
+            } catch (error) {
+                out.printlnErr(error instanceof Error ? error.message : String(error));
+                process.exitCode = 1;
+            }
+        }
+    );
 
 program
     .command("subtitles")
