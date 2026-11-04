@@ -181,19 +181,22 @@ final class SessionTranscriptScrollTests: XCTestCase {
         let center = NotificationCenter.default
         center.post(name: NSScrollView.willStartLiveScrollNotification, object: list)
         let start = list.contentView.bounds.origin.y
-        var previous = start
+        let table = try XCTUnwrap(document as? NSTableView)
+        let referenceRow = table.row(at: NSPoint(x: 0, y: start))
+        XCTAssertGreaterThanOrEqual(referenceRow, 0)
+        var previous = start - table.rect(ofRow: referenceRow).minY
         var leastUp = CGFloat.greatestFiniteMagnitude
         for step in 1...40 {
             list.contentView.scroll(to: NSPoint(x: 0, y: start - CGFloat(step) * 20))
             list.reflectScrolledClipView(list.contentView)
             center.post(name: NSScrollView.didLiveScrollNotification, object: list)
             rig.settle(0.016)
-            let now = list.contentView.bounds.origin.y
+            let now = list.contentView.bounds.origin.y - table.rect(ofRow: referenceRow).minY
             leastUp = min(leastUp, previous - now)
             previous = now
         }
-        // Rows measured above the viewport may shift it a few points (the anchor keeps what is on screen still);
-        // a push back to the anchored row undoes the whole step.
+        // Measure against a content row so newly measured heights above it do not count as reader motion.
+        // A push back to the anchored row still undoes the whole step.
         XCTAssertGreaterThan(leastUp, 10, "a step of the reader's live scroll moved only \(leastUp) pt up: the anchor pushed it back")
         center.post(name: NSScrollView.didEndLiveScrollNotification, object: list)
         rig.settle(0.5)

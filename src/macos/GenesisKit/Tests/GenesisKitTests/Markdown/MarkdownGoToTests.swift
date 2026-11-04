@@ -66,9 +66,9 @@ final class MarkdownGoToTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "md-goto-sheet-\(UUID().uuidString)"))
         let model = MarkdownDocumentsModel(defaults: defaults)
         model.configuration = GenesisKitMarkdownConfiguration(defaults: defaults)
-        try "# Old".write(to: root.appendingPathComponent("old.md"), atomically: true, encoding: .utf8)
+        try "# Old".write(to: root.appendingPathComponent("archive.md"), atomically: true, encoding: .utf8)
         try Data([0x89, 0x50]).write(to: root.appendingPathComponent("notes/photo.png"))
-        model.open([root.appendingPathComponent("old.md")])
+        model.open([root.appendingPathComponent("archive.md")])
         // The open note: the sheet starts in its folder and leaves it out of the recent files.
         model.open([root.appendingPathComponent("notes/plan.md")])
 
@@ -102,7 +102,7 @@ final class MarkdownGoToTests: XCTestCase {
             }
             XCTAssertTrue(lines.contains { $0.contains("Go to Location") }, "\(theme.rawValue): \(lines)")
             XCTAssertTrue(lines.contains { $0.contains("Recent") }, "\(theme.rawValue): \(lines)")
-            XCTAssertTrue(lines.contains { $0.contains("old.md") }, "\(theme.rawValue): \(lines)")
+            XCTAssertTrue(lines.contains { $0.contains("archive.md") }, "\(theme.rawValue): \(lines)")
             XCTAssertTrue(lines.contains { $0.contains("daily") }, "\(theme.rawValue): \(lines)")
             XCTAssertTrue(lines.contains { $0.contains("Open") }, "the buttons read in both looks: \(lines)")
             XCTAssertFalse(lines.contains { $0.contains("photo.png") }, "notes only: \(lines)")
