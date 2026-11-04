@@ -122,6 +122,10 @@ public struct RecordingTargetPicker: View {
     private let onCancel: () -> Void
     private let onRetry: () -> Void
     private let onFilterChange: (RecordingPickerTab, String) -> Void
+    /// A host's own section under the list (the recorder's options and its area button); nil for none.
+    private let accessory: AnyView?
+    /// The footer's key hints; nil keeps the picker's own line.
+    private let footerHint: String?
     @State private var tab: RecordingPickerTab
     @State private var query = ""
     @State private var highlighted: String?
@@ -135,7 +139,10 @@ public struct RecordingTargetPicker: View {
     public init(load: Load, title: String = "Choose what to record", initial: RecordingTarget?,
                 onChoose: @escaping (RecordingTarget) -> Void, onCancel: @escaping () -> Void,
                 onRetry: @escaping () -> Void = {}, restoring: (tab: RecordingPickerTab, query: String)? = nil,
-                onFilterChange: @escaping (RecordingPickerTab, String) -> Void = { _, _ in }) {
+                onFilterChange: @escaping (RecordingPickerTab, String) -> Void = { _, _ in },
+                accessory: AnyView? = nil, footerHint: String? = nil) {
+        self.accessory = accessory
+        self.footerHint = footerHint
         self.load = load
         self.title = title
         self.initial = initial
@@ -162,6 +169,10 @@ public struct RecordingTargetPicker: View {
                 .instantTooltip(RecordingPickerTab.allCases.map { "\($0.title) \($0.chord)" }.joined(separator: ", "))
             filterField
             content
+            if let accessory {
+                Divider().opacity(0.5)
+                accessory
+            }
             footer
         }
         .padding(14)
@@ -353,7 +364,7 @@ public struct RecordingTargetPicker: View {
 
     private var footer: some View {
         HStack(spacing: 4) {
-            Text("↑ ↓ to choose · Return records · Esc cancels · ⌘1 ⌘2 ⌘3 switch tabs")
+            Text(footerHint ?? "↑ ↓ to choose · Return records · Esc cancels · ⌘1 ⌘2 ⌘3 switch tabs")
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }

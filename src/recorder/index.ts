@@ -1,5 +1,11 @@
 import { resolve } from "node:path";
-import { defaultRecordingTarget, listRecordingTargets, type RecordingTarget } from "@app/control/lib/recording-targets";
+import {
+    defaultRecordingTarget,
+    listRecordingTargets,
+    parseRegionTarget,
+    parseWindowIdList,
+    type RecordingTarget,
+} from "@app/control/lib/recording-targets";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -53,6 +59,11 @@ interface StartFlags {
     audio?: string;
     micDevice?: string;
     fps?: string;
+    idleFps?: string;
+    threshold?: string;
+    region?: string;
+    excludeWindowIds?: string;
+    camera?: boolean;
     display?: string;
     window?: string;
     app?: string;
@@ -159,6 +170,10 @@ function bounded(raw: string | undefined, name: string, min: number, max: number
 }
 
 async function targetOf(flags: StartFlags): Promise<RecordingTarget> {
+    if (flags.region) {
+        return parseRegionTarget(flags.region);
+    }
+
     if (flags.window) {
         return { kind: "window", windowIds: flags.window.split(",").map(Number) };
     }
@@ -254,12 +269,20 @@ program
     .option("--audio <sources>", "audio tracks: system, mic, or system,mic")
     .option("--mic-device <uid>", "the microphone (an id from `ax-tool audio-devices`; needs --audio mic)")
     .option("--fps <n>", "frames per second while something moves, 1–120", "60")
+    .option("--idle-fps <n>", "frames per second while nothing moves, 0.1–5 (by default the movie keeps --fps)")
+    .option("--threshold <percent>", "how much of the picture must change to leave the idle rate, 0–100 (default 0.5)")
     .option(
         "--display <index>",
         "record only this display (NSScreen order); by default the recording follows the pointer and the focus to whichever screen is in use"
     )
     .option("--window <ids>", "record these windows (CG window ids, comma separated)")
     .option("--app <name>", "record this app's windows (name, bundle id or pid)")
+    .option("--region <x,y,w,h>", "record this area of a display, in screen points from the top-left corner")
+    .option("--exclude-window-ids <ids>", "leave these windows out of the movie (CG window ids, comma separated)")
+    .option(
+        "--camera",
+        "record the camera beside the screen into camera.mov (the recorder face records it; the editor draws the bubble)"
+    )
     .option("--title <text>", "the recording's title in the library and the menu")
     .option("--max-seconds <n>", `stop after this long, 1–${VIDEO_RECORDING_MAX_SECONDS}`)
     .option("--no-indicator", "no red border around what is recorded (never in the movie either way)")
@@ -281,6 +304,10 @@ program
                 target,
                 title: flags.title,
                 fps: bounded(flags.fps, "--fps", 1, 120),
+                idleFps: bounded(flags.idleFps, "--idle-fps", 0.1, 5),
+                threshold: bounded(flags.threshold, "--threshold", 0, 100),
+                excludeWindowIds: parseWindowIdList(flags.excludeWindowIds, "--exclude-window-ids"),
+                camera: flags.camera === true,
                 audio: parseAudio(flags.audio),
                 micDevice: flags.micDevice,
                 maxSeconds: bounded(flags.maxSeconds, "--max-seconds", 1, VIDEO_RECORDING_MAX_SECONDS),

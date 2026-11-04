@@ -47,6 +47,10 @@ export interface NativeRecorderOptions {
     cursorShapes?: string;
     /** Needs cursorTrack: the ⌘/⌃ shortcuts pressed go into the track for the editor's keys overlay. */
     shortcuts?: boolean;
+    /** The recorder's frame rate while nothing moves (0.1–5); by default a movie keeps the active rate. */
+    idleFps?: number;
+    /** The share of the picture that must change, in percent, before the stream leaves the idle rate (0–100). */
+    threshold?: number;
 }
 
 export { cursorTrackPath };
@@ -69,7 +73,8 @@ export function segmentCaptureSpec({
         videoOut: output,
         duration,
         activeFps: options.fps === undefined ? undefined : String(options.fps),
-        threshold: String(SESSION_MOTION_THRESHOLD),
+        idleFps: options.idleFps === undefined ? undefined : String(options.idleFps),
+        threshold: String(options.threshold ?? SESSION_MOTION_THRESHOLD),
     } as const;
     let spec: CaptureSpec;
     if (target.kind === "display") {
@@ -82,7 +87,20 @@ export function segmentCaptureSpec({
             codec: "h264",
             videoOut: output,
             activeFps: options.fps,
-            threshold: SESSION_MOTION_THRESHOLD,
+            idleFps: options.idleFps,
+            threshold: options.threshold ?? SESSION_MOTION_THRESHOLD,
+        };
+    } else if (target.kind === "region") {
+        spec = {
+            mode: "region",
+            backend: "native",
+            region: [target.x, target.y, target.width, target.height].map((value) => Math.round(value)).join(","),
+            duration: Number(duration),
+            codec: "h264",
+            videoOut: output,
+            activeFps: options.fps,
+            idleFps: options.idleFps,
+            threshold: options.threshold ?? SESSION_MOTION_THRESHOLD,
         };
     } else if (target.kind === "window") {
         spec = captureFromFlags({ ...common, windowIds: target.windowIds.join(",") });

@@ -98,6 +98,10 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
 
     private func build(_ menu: NSMenu) {
         menu.removeAllItems()
+        let picker = row("Capture Picker…", symbol: "rectangle.dashed.badge.record", action: #selector(openPicker), key: "")
+        let chord = RecorderShortcutBinding.load(.picker)
+        picker.toolTip = chord.enabled ? "Also \(chord.chord.label) from any app" : "Its shortcut is off (Capture Picker → Shortcuts)"
+        menu.addItem(picker)
         menu.addItem(row("Record Screen", symbol: "record.circle", action: #selector(recordScreen), key: ""))
         menu.addItem(row("Record Screen with Audio", symbol: "mic.circle", action: #selector(recordScreenWithAudio), key: ""))
         let drawn = row("Draw the Cursor in the Editor", symbol: nil, action: #selector(toggleDrawnCursor), key: "")
@@ -300,14 +304,20 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
 
     @objc private func recordScreen() { startRecording(audio: false) }
     @objc private func recordScreenWithAudio() { startRecording(audio: true) }
+    @objc private func openPicker() { CapturePicker.shared.show() }
 
-    /// Starts `tools recorder start` in its own process (it owns the recording and its socket); the live recordings'
-    /// item and the floating controls (on by default) appear when its live entry does.
+    /// The display in use, with the capture picker's saved options; the menu's two rows set the audio themselves.
     func startRecording(audio: Bool) {
-        var args = ["recorder", "start"]
-        if audio { args += ["--audio", "system,mic"] }
-        if !Self.drawsCursor { args.append("--system-cursor") }
-        if !Self.recordsShortcuts { args.append("--no-shortcuts") }
+        var options = CaptureOptions.load()
+        options.systemAudio = audio
+        options.microphone = audio
+        options.camera = false
+        startRecording(arguments: options.startArguments(.followPointer))
+    }
+
+    /// The one start path: `tools recorder start` in its own process (it owns the recording and its socket); the live
+    /// recordings' item and the floating controls (on by default) appear when its live entry does.
+    func startRecording(arguments args: [String]) {
         HubPerf.log("recorder: start \(args.joined(separator: " "))")
         do {
             try ToolsRunner.detached(args) { status, tail in

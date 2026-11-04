@@ -50,6 +50,10 @@ struct RecorderRequest {
     var times: [Double] = []
     /// `--full` with `--still`: the frame at the export's size (a poster), not the 1080 pixel preview.
     var full = false
+    /// `--picker`: the capture picker (with `--snapshot`, a picture of it over made-up targets).
+    var picker = false
+    /// `--shortcuts` with `--picker --snapshot`: the Shortcuts section open.
+    var shortcuts = false
 
     static func parse(_ args: [String]) -> RecorderRequest {
         var request = RecorderRequest()
@@ -85,6 +89,8 @@ struct RecorderRequest {
             case "--still": request.still = value().map(absolute)
             case "--sheet": request.sheet = value().map(absolute)
             case "--full": request.full = true
+            case "--picker": request.picker = true
+            case "--shortcuts": request.shortcuts = true
             case "--times": request.times = (value() ?? "").split(separator: ",").compactMap { Double($0) }
             default: break
             }
@@ -125,13 +131,16 @@ package func runRecorder(_ args: [String]) -> Never {
             MainActor.assumeIsolated {
                 if let edit = next.edit { EditorWindows.shared.open(path: edit, focus: next.focus, atSeconds: next.atSeconds, tab: next.tab) }
                 if next.library { LibraryWindow.shared.show(focus: next.focus) }
+                if next.picker { CapturePicker.shared.show() }
             }
         }
         RecorderMenu.shared.install()
+        RecorderShortcutActions.install()
         // The live recordings' item and floating controls; the hub defers to this face while it runs.
         LiveRecordingsStatusItem.shared.start(preferred: true)
         if let edit = request.edit { EditorWindows.shared.open(path: edit, focus: request.focus, atSeconds: request.atSeconds, tab: request.tab) }
         if request.library { LibraryWindow.shared.show(focus: request.focus) }
+        if request.picker { CapturePicker.shared.show() }
         app.run()
     }
     exit(0)
@@ -627,6 +636,10 @@ private func runSnapshot(_ request: RecorderRequest, to path: String) -> Never {
             do {
                 if request.library {
                     try await snapshotLibrary(request, to: path)
+                    exit(0)
+                }
+                if request.picker {
+                    try await CapturePicker.snapshot(to: path, shortcutsOpen: request.shortcuts)
                     exit(0)
                 }
                 guard let edit = request.edit else { throw NSError(domain: "recorder", code: 64, userInfo: [NSLocalizedDescriptionKey: "--snapshot needs --edit <path> or --library"]) }

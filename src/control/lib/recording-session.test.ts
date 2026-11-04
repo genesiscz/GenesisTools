@@ -9,7 +9,7 @@ import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import * as videoProbe from "@genesiscz/utils/video/probe";
 import * as captureRunner from "./capture-runner";
-import { nativeSegmentRecorder } from "./recording-native";
+import { nativeSegmentRecorder, segmentCaptureSpec } from "./recording-native";
 import {
     concatCopyArgv,
     concatListLine,
@@ -27,8 +27,11 @@ import {
 import { SessionRecorderControl } from "./recording-session-control";
 import {
     defaultRecordingTarget,
+    describeRecordingTarget,
     groupRecordingApps,
     parseRecordingWindows,
+    parseRegionTarget,
+    parseWindowIdList,
     type RecordingTarget,
 } from "./recording-targets";
 
@@ -834,5 +837,62 @@ describe("recording commands and targets", () => {
             title: "a.txt",
             pid: 20,
         });
+    });
+});
+
+describe("segmentCaptureSpec", () => {
+    it("records an area of the screen in region mode, in global points", () => {
+        const spec = segmentCaptureSpec({
+            target: { kind: "region", x: 100, y: 50, width: 640, height: 360 },
+            output: "/tmp/segment.mp4",
+            maxSeconds: 60,
+            options: { fps: 30, cursorTrack: true },
+        });
+        expect(spec.mode).toBe("region");
+        expect(spec.region).toBe("100,50,640,360");
+        expect(spec.activeFps).toBe(30);
+        expect(spec.cursorTrack).toBe("/tmp/segment.mp4.cursor.jsonl");
+        expect(describeRecordingTarget({ kind: "region", x: 100, y: 50, width: 640, height: 360 })).toBe(
+            "area 640×360 at 100,50"
+        );
+    });
+
+    it("passes the idle rate, the change threshold and the windows to leave out", () => {
+        const spec = segmentCaptureSpec({
+            target: { kind: "display", screenIndex: 0 },
+            output: "/tmp/segment.mp4",
+            maxSeconds: 60,
+            options: { fps: 30, idleFps: 2, threshold: 3, excludeWindowIds: [41, 42] },
+        });
+        expect(spec.idleFps).toBe(2);
+        expect(spec.threshold).toBe(3);
+        expect(spec.excludeWindowIds).toEqual([41, 42]);
+    });
+
+    it("keeps the motion threshold the recorder used before when none is given", () => {
+        const spec = segmentCaptureSpec({
+            target: { kind: "window", windowIds: [7] },
+            output: "/tmp/segment.mp4",
+            maxSeconds: 60,
+            options: {},
+        });
+        expect(spec.threshold).toBe(0.5);
+        expect(spec.idleFps).toBeUndefined();
+    });
+});
+
+describe("start flags for a target", () => {
+    it("reads an area as x,y,width,height and refuses a malformed one", () => {
+        expect(parseRegionTarget("10, 20,300,200")).toEqual({ kind: "region", x: 10, y: 20, width: 300, height: 200 });
+        expect(() => parseRegionTarget("10,20,0,200")).toThrow("--region takes x,y,width,height");
+        expect(() => parseRegionTarget("10,20,300")).toThrow("--region takes x,y,width,height");
+    });
+
+    it("reads window ids and refuses anything that is not one", () => {
+        expect(parseWindowIdList(undefined, "--exclude-window-ids")).toBeUndefined();
+        expect(parseWindowIdList("41,42", "--exclude-window-ids")).toEqual([41, 42]);
+        expect(() => parseWindowIdList("41,x", "--exclude-window-ids")).toThrow(
+            "--exclude-window-ids takes CG window ids"
+        );
     });
 });

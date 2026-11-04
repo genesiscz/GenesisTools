@@ -28,6 +28,14 @@ export const recordingTargetSchema = z.discriminatedUnion("kind", [
         /** Follow the pointer and the focus to other displays while recording (the start is the pointer's display). */
         follow: z.boolean().optional(),
     }),
+    z.object({
+        kind: z.literal("region"),
+        /** An area of one display in global screen points, top-left origin (CoreGraphics), as `--region` takes it. */
+        x: z.number(),
+        y: z.number(),
+        width: z.number().positive(),
+        height: z.number().positive(),
+    }),
 ]);
 
 export type RecordingTarget = z.infer<typeof recordingTargetSchema>;
@@ -205,5 +213,33 @@ export function describeRecordingTarget(target: RecordingTarget): string {
             return target.name ?? target.app;
         case "display":
             return target.name ?? `display ${target.screenIndex}`;
+        case "region":
+            return `area ${Math.round(target.width)}×${Math.round(target.height)} at ${Math.round(target.x)},${Math.round(target.y)}`;
     }
+}
+
+/** `--region x,y,width,height` in global screen points (top-left origin), as the capture picker's area gives it. */
+export function parseRegionTarget(raw: string): RecordingTarget {
+    const parts = raw.split(",").map((part) => Number(part.trim()));
+
+    if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part)) || parts[2] <= 0 || parts[3] <= 0) {
+        throw new Error(`--region takes x,y,width,height in screen points (got "${raw}")`);
+    }
+
+    return { kind: "region", x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
+}
+
+/** `--exclude-window-ids 41,42`: CG window ids, positive integers. */
+export function parseWindowIdList(raw: string | undefined, flag: string): number[] | undefined {
+    if (raw === undefined) {
+        return undefined;
+    }
+
+    const ids = raw.split(",").map((part) => Number(part.trim()));
+
+    if (ids.length === 0 || ids.some((id) => !Number.isInteger(id) || id <= 0)) {
+        throw new Error(`${flag} takes CG window ids, comma separated (got "${raw}")`);
+    }
+
+    return ids;
 }

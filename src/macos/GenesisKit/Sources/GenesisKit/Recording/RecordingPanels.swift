@@ -15,9 +15,9 @@ final class RecordingControlsWindow: NSPanel {
 
 /// The target picker's window: takes the keyboard (arrows, Return, Esc, the filter) without activating the app, so
 /// the app the person was in stays active and gets the keyboard back when the picker closes.
-final class RecordingPickerWindow: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
+public final class RecordingPickerWindow: NSPanel {
+    override public var canBecomeKey: Bool { true }
+    override public var canBecomeMain: Bool { false }
 }
 
 /// Where the controls go, in Cocoa screen coordinates. Pure, so the placement rules are tested without a screen.
@@ -301,13 +301,13 @@ enum RecordingPanelChrome {
 }
 
 /// The floating window that holds the target picker. It closes, as a cancel, when it loses the keyboard (a click in
-/// another app or window).
+/// another app or window). Public for a host with its own picker (the recorder's capture picker).
 @MainActor
-final class RecordingPickerPanel: NSObject, NSWindowDelegate {
-    let window: RecordingPickerWindow
+public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
+    public let window: RecordingPickerWindow
     private var onDismiss: (() -> Void)?
 
-    override init() {
+    override public init() {
         window = RecordingPickerWindow(contentRect: CGRect(x: 0, y: 0, width: 400, height: 420),
                                        styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         super.init()
@@ -317,11 +317,11 @@ final class RecordingPickerPanel: NSObject, NSWindowDelegate {
         window.delegate = self
     }
 
-    var isVisible: Bool { window.isVisible }
+    public var isVisible: Bool { window.isVisible }
 
     /// Shows the picker with its top centred under `anchor` (Cocoa screen point), inside that screen, and gives it
     /// the keyboard without activating the app.
-    func present(_ view: some View, near anchor: CGPoint, onDismiss: @escaping () -> Void) {
+    public func present(_ view: some View, near anchor: CGPoint, onDismiss: @escaping () -> Void) {
         self.onDismiss = onDismiss
         // A fresh hosting view each time: a reused one that had been on screen measured 0x0 after a new root view, so
         // the second picker of a session opened invisible and the recorder waited for a choice nobody could see.
@@ -351,12 +351,12 @@ final class RecordingPickerPanel: NSObject, NSWindowDelegate {
                         display: true)
     }
 
-    func dismiss() {
+    public func dismiss() {
         onDismiss = nil
         window.orderOut(nil)
     }
 
-    func windowDidResignKey(_ notification: Notification) {
+    public func windowDidResignKey(_ notification: Notification) {
         guard window.isVisible, let onDismiss else { return }
         PerfLog.mark("recording.picker cancelled: lost the keyboard to \(NSApp.keyWindow?.title ?? "another app")")
         self.onDismiss = nil

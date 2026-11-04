@@ -18,6 +18,9 @@ import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-re
 
 const { log } = logger.scoped("recorder-video");
 
+/** The camera's movie beside `screen.mp4`, written by the recorder face when the recording asked for the camera. */
+export const CAMERA_MOVIE = "camera.mov";
+
 /** The longest video recording `tools recorder start` takes: four hours, in 180 s segments. */
 export const VIDEO_RECORDING_MAX_SECONDS = 4 * 60 * 60;
 
@@ -25,6 +28,14 @@ export interface VideoRecordingOptions {
     target: RecordingTarget;
     title?: string;
     fps?: number;
+    /** Frames per second while nothing moves (0.1–5); by default the movie keeps `fps`. */
+    idleFps?: number;
+    /** The share of the picture, in percent, that must change before the stream leaves the idle rate. */
+    threshold?: number;
+    /** CG window ids no movie may show (the camera bubble's preview, a host's own panel). */
+    excludeWindowIds?: number[];
+    /** The recorder face records the camera beside the screen into `camera.mov` (`settings.camera` asks for it). */
+    camera?: boolean;
     audio?: ("system" | "mic")[];
     micDevice?: string;
     /** Keep the system cursor in the movie; by default it stays out and the editor draws it from the track. */
@@ -90,6 +101,9 @@ export async function recordVideo(options: VideoRecordingOptions): Promise<Video
             kind: "video",
             target: options.target,
             fps: options.fps ?? 60,
+            ...(options.idleFps === undefined ? {} : { idleFps: options.idleFps }),
+            ...(options.threshold === undefined ? {} : { threshold: options.threshold }),
+            ...(options.camera ? { camera: { requested: true, file: CAMERA_MOVIE } } : {}),
             audio: { sources: options.audio ?? [], micDevice: options.micDevice },
             cursor: options.systemCursor ? "system" : "drawn",
             shortcuts: options.shortcuts !== false,
@@ -138,6 +152,9 @@ export async function recordVideo(options: VideoRecordingOptions): Promise<Video
         output: movie,
         recorder: nativeSegmentRecorder({
             fps: options.fps,
+            idleFps: options.idleFps,
+            threshold: options.threshold,
+            excludeWindowIds: options.excludeWindowIds,
             indicator: options.indicator,
             audio: options.audio,
             micDevice: options.micDevice,
