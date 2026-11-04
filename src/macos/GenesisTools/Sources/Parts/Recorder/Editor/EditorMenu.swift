@@ -278,8 +278,12 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
         if box.command.modifiers.isDisjoint(with: [.command, .control]), NSApp.keyWindow?.firstResponder is NSText { return false }
         guard let model = EditorWindows.shared.frontModel() else { return false }
         switch box.command.title {
-        case "Undo": return model.canUndo
-        case "Redo": return model.canRedo
+        case "Undo":
+            item.title = model.undoName.map { "Undo \($0)" } ?? "Undo"
+            return model.canUndo
+        case "Redo":
+            item.title = model.redoName.map { "Redo \($0)" } ?? "Redo"
+            return model.canRedo
         case "Delete Selection", "Deselect": return model.selection != .none
         case "Duplicate": return model.selection != .none
         case "Clear Part", "Delete In to Out", "Keep Only In to Out": return model.exportPart != nil

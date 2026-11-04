@@ -491,6 +491,24 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertGreaterThan(whole.bytes, 0, "the same export, not cancelled, writes the movie")
     }
 
+    func testAChangeIsNamedForTheUndoMenuAndOpensItsTab() {
+        let base = project([EditProject.Clip(id: "a", fromUs: 0, toUs: 10_000_000)])
+        var withText = base
+        withText.texts = [EditProject.TextNote(id: "t1", startUs: 0, endUs: 1_000_000, text: "Hello")]
+        XCTAssertEqual(EditorModel.changeName(from: base, to: withText).name, "Add Text")
+        XCTAssertEqual(EditorModel.changeName(from: withText, to: base).name, "Delete Text")
+        var moved = withText
+        moved.texts?[0].x = 0.3
+        XCTAssertEqual(EditorModel.changeName(from: withText, to: moved).name, "Text Change")
+        XCTAssertEqual(EditorModel.changeName(from: withText, to: moved).tab, .text)
+        var louder = base
+        louder.audio.volume = 1.5
+        XCTAssertEqual(EditorModel.changeName(from: base, to: louder).tab, .audio)
+        var both = louder
+        both.texts = withText.texts
+        XCTAssertEqual(EditorModel.changeName(from: base, to: both).name, "Changes")
+    }
+
     func testClickTicksPlayAtTheirOutputTimesOneTickApart() {
         var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 100, height: 100, cursor: nil, recording: nil)
         project.clips = [EditProject.Clip(id: "a", fromUs: 0, toUs: 4_000_000), EditProject.Clip(id: "b", fromUs: 6_000_000, toUs: 10_000_000)]

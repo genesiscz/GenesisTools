@@ -311,17 +311,62 @@ final class EditorModel {
         scheduleSave()
     }
 
+    /// What ⌘Z would take back ("Move Text", "Delete Zoom"), for the Edit menu and the notice; nil when nothing.
+    var undoName: String? { undoStack.last.map { Self.changeName(from: $0, to: project).name } }
+    var redoName: String? { redoStack.last.map { Self.changeName(from: project, to: $0).name } }
+
+    /// A name for the change from `a` to `b`, and the tab that shows it. An add or a delete says so; several kinds of
+    /// change at once are "Changes".
+    nonisolated static func changeName(from a: EditProject, to b: EditProject) -> (name: String, tab: InspectorTab?) {
+        let parts = changedParts(a, b).filter { $0 != "count" }
+        guard parts.count == 1, let part = parts.first else { return ("Changes", nil) }
+        let counts: (Int, Int)
+        let named: (String, InspectorTab)
+        switch part {
+        case "clips": named = ("Cut", .clip); counts = (a.clips.count, b.clips.count)
+        case "zooms": named = ("Zoom", .zoom); counts = (a.zooms.count, b.zooms.count)
+        case "redactions": named = ("Hidden Part", .hide); counts = (a.redactions?.count ?? 0, b.redactions?.count ?? 0)
+        case "texts": named = ("Text", .text); counts = (a.texts?.count ?? 0, b.texts?.count ?? 0)
+        case "shapes": named = ("Shape", .text); counts = (a.shapes?.count ?? 0, b.shapes?.count ?? 0)
+        case "audio": return ("Sound Change", .audio)
+        case "export": return ("Export Settings", .export)
+        case "clicks": return ("Click Style", .style)
+        case "frame": return ("Background", .style)
+        case "motion": return ("Motion Blur", .zoom)
+        case "cursor": return ("Cursor Style", .cursor)
+        case "captions": return ("Captions", .captions)
+        case "keys": return ("Shortcuts", .captions)
+        case "transcript": return ("Caption Fix", .captions)
+        default: return ("Changes", nil)
+        }
+        if part == "clips" { return (counts.1 > counts.0 ? "Split" : counts.1 < counts.0 ? "Delete Clip" : "Clip Change", .clip) }
+        if counts.1 > counts.0 { return ("Add \(named.0)", named.1) }
+        if counts.1 < counts.0 { return ("Delete \(named.0)", named.1) }
+        return ("\(named.0) Change", named.1)
+    }
+
+    /// An undo or a redo names what it changed and opens the tab that shows it, so a change on a tab that is not
+    /// open is never silent.
+    private func announce(_ verb: String, _ change: (name: String, tab: InspectorTab?)) {
+        if let tab = change.tab, tab != self.tab { self.tab = tab }
+        show("\(verb): \(change.name)", error: false)
+    }
+
     func undo() {
         guard let previous = undoStack.popLast() else { return }
+        let change = Self.changeName(from: previous, to: project)
         lastChange = ([], .distantPast)
         redoStack.append(project)
         commit(previous, rebuildMovie: previous.clips != project.clips || previous.audio != project.audio)
+        announce("Undid", change)
     }
 
     func redo() {
         guard let next = redoStack.popLast() else { return }
+        let change = Self.changeName(from: project, to: next)
         undoStack.append(project)
         commit(next, rebuildMovie: next.clips != project.clips || next.audio != project.audio)
+        announce("Redid", change)
     }
 
     /// The scale at which the whole edit fits the timeline's width; the timeline keeps it current.
