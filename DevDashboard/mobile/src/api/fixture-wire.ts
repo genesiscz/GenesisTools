@@ -10,7 +10,7 @@ import {
     QA_STREAM_PATH,
 } from "@dd/contract";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { MOCK_BOARD, MOCK_TRANSCRIPT_TURNS } from "@/api/fixtures/agents";
+import { MOCK_BOARD, MOCK_PROMPTS, MOCK_TRANSCRIPT_TURNS, mockPreparedPrompt } from "@/api/fixtures/agents";
 import {
     EMPTY_ATTACH,
     MOCK_ATTENTION,
@@ -276,6 +276,14 @@ const ROUTES: FixtureRoute[] = [
             survivors: [],
             reason: "mock data: no process to stop",
         }),
+    },
+
+    // Saved prompts (F23): the list and one prepared for a session.
+    { method: ENDPOINTS.gatewayPrompts.method, path: ENDPOINTS.gatewayPrompts.path, handle: () => MOCK_PROMPTS },
+    {
+        method: ENDPOINTS.gatewayPromptPrepare.method,
+        path: ENDPOINTS.gatewayPromptPrepare.path,
+        handle: ({ query }) => mockPreparedPrompt(query.get("name") ?? "", query.get("session")),
     },
 
     // The steer composer and Esc (F10, F19): refused, since a fixture has no session to reach.

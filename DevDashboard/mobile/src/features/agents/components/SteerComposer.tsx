@@ -5,6 +5,7 @@ import type {
     AgentSendTiming,
     AgentSendTimingSupport,
 } from "@dd/contract";
+import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import { Alert, Pressable, Text, TextInput, View } from "react-native";
 import { type SteerResult, useInterruptSession, useSteerComposer } from "@/features/agents/hooks";
@@ -199,7 +200,18 @@ export function SteerComposer({
     return (
         <View testID="steer-composer" className="gap-2 border-t p-3" style={{ borderColor: c.border }}>
             <RescueRow session={session} onNudge={() => setText(nudge)} />
-            <TimingChips timings={timings} timing={timing} onPick={setTiming} />
+            <View className="flex-row items-center justify-between">
+                <TimingChips timings={timings} timing={timing} onPick={setTiming} />
+                <Pressable
+                    testID="btn-open-prompts"
+                    accessibilityRole="button"
+                    accessibilityLabel="Saved prompts"
+                    onPress={() => router.push({ pathname: "/agent-prompts", params: { key: session.key } })}
+                    className="px-2 py-1.5"
+                >
+                    <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>Prompts</Text>
+                </Pressable>
+            </View>
             <View className="flex-row items-end gap-2">
                 <TextInput
                     testID="steer-input"
