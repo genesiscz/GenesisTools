@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { appendOpenRecord, classifyTarget, type OpenRecord, openArgv, readOpenRecords } from "./opens";
 
 const dir = mkdtempSync(join(tmpdir(), "gt-test-open-"));
@@ -32,6 +33,13 @@ function record(at: string, sessionId: string): OpenRecord {
 }
 
 describe("tools open", () => {
+    it("writes the complete caller context in each JSONL row", () => {
+        const log = join(dir, "caller-shape.jsonl");
+        const row = record("2026-03-01T10:00:00.000Z", "thread-1");
+        appendOpenRecord(row, log);
+        expect(SafeJSON.parse(readFileSync(log, "utf8"), { strict: true })).toEqual(row);
+    });
+
     it("names each target and gives open the absolute path of a file", () => {
         writeFileSync(join(dir, "a.md"), "x");
         const targets = ["a.md", dir, "https://example.org/", "gone.txt"].map((given) => classifyTarget(given, dir));

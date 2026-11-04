@@ -78,7 +78,7 @@ import {
 } from "./mods";
 import { nativeDiffState } from "./native-diff";
 import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
-import { HARNESS_HOOK_FACTS, harnessHookFacts, parseHookPayload } from "./payload";
+import { detectHarness, HARNESS_HOOK_FACTS, harnessHookFacts, parseHookPayload } from "./payload";
 import { rmRequestNotice } from "./rm-requests";
 import { applySetting, SETTABLE_KEYS, setHooksConfig } from "./set-config";
 import {
@@ -110,6 +110,73 @@ describe("DEFAULT_HOOKS_CONFIG", () => {
 });
 
 describe("parseHookPayload", () => {
+    it("retains event-specific turn and subagent fields in raw payloads for each wire shape", () => {
+        const cases = [
+            {
+                raw: {
+                    hook_event_name: "SubagentStop",
+                    session_id: "s1",
+                    agent_id: "a1",
+                    agent_type: "worker",
+                    agent_transcript_path: "/fixture/agent.jsonl",
+                },
+                harness: "claude",
+                event: "SubagentStop",
+                agentId: "a1",
+            },
+            {
+                raw: {
+                    hook_event_name: "Stop",
+                    session_id: "s2",
+                    model: "model-1",
+                    turn_id: "turn-1",
+                    transcript_path: "/fixture/rollout-2026.jsonl",
+                },
+                harness: "codex",
+                event: "Stop",
+                agentId: undefined,
+            },
+            {
+                raw: { hookEventName: "PreToolUse", sessionId: "s3", promptId: "prompt-1", toolUseId: "call-1" },
+                harness: "grok",
+                event: "PreToolUse",
+                agentId: undefined,
+            },
+            {
+                raw: {
+                    hookEventName: "subagentStop",
+                    sessionId: "s4",
+                    agentId: "a4",
+                    agentType: "worker",
+                    parentAgentId: "root",
+                },
+                harness: "grok",
+                event: "subagentStop",
+                agentId: "a4",
+            },
+            {
+                raw: {
+                    hook_event_name: "SubagentStop",
+                    session_id: "s5",
+                    agent_id: "a5",
+                    agent_type: "worker",
+                    parent_agent_id: "root",
+                },
+                harness: "claude",
+                event: "SubagentStop",
+                agentId: "a5",
+            },
+        ] as const;
+
+        for (const { raw, harness, event, agentId } of cases) {
+            const payload = parseHookPayload(SafeJSON.stringify(raw));
+            expect(detectHarness(raw)).toBe(harness);
+            expect(payload).toMatchObject({ harness, event, agentId, raw });
+            expect(payload).not.toHaveProperty("turnId");
+            expect(payload).not.toHaveProperty("parentAgentId");
+        }
+    });
+
     it("reads the snake_case wire shape Claude sends", () => {
         const payload = parseHookPayload(
             SafeJSON.stringify({

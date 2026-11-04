@@ -4,10 +4,86 @@ import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initializeCompactHistorySchema } from "@genesiscz/utils/agent-sessions/migrations";
+import { failureCaller } from "@genesiscz/utils/cli/failures/caller";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
-import { callerCwd, currentCaller, getAgentRuntimeContext, gitCommonRoot, runAsCaller } from "./runtime";
+import { resolveAgentHost } from "./host";
+import {
+    callerCwd,
+    currentCaller,
+    gatherHarnessPoster,
+    getAgentRuntimeContext,
+    gitCommonRoot,
+    runAsCaller,
+} from "./runtime";
+
+describe("characterization: host, runtime, poster and failure caller agree on identity", () => {
+    const layout = {
+        cwd: "/fixture/repo/sub",
+        repoRoot: "/fixture/repo",
+        project: "repo",
+        isWorktree: false,
+        worktreePath: null,
+        branch: null,
+        commitSha: null,
+        commitMessage: null,
+    };
+    const cases = [
+        {
+            name: "Claude",
+            vars: { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "c1", AI_AGENT: "label" },
+            agent: "claude-code",
+            sessionId: "c1",
+            label: "label",
+        },
+        {
+            name: "Codex",
+            vars: { CODEX_CI: "1", CODEX_THREAD_ID: "x1", AI_AGENT: "label" },
+            agent: "codex",
+            sessionId: "x1",
+            label: null,
+        },
+        {
+            name: "Grok",
+            vars: { GROK_SESSION_ID: "g1", AI_AGENT: "label" },
+            agent: "grok",
+            sessionId: "g1",
+            label: "label",
+        },
+        {
+            name: "Copilot",
+            vars: { COPILOT_AGENT_SESSION_ID: "p1", AI_AGENT: "label" },
+            agent: "copilot",
+            sessionId: "p1",
+            label: "label",
+        },
+        { name: "none", vars: { AI_AGENT: "label" }, agent: "unknown", sessionId: null, label: "label" },
+    ] as const;
+    for (const row of cases) {
+        it(`${row.name}: compares the same environment across gatherers`, () => {
+            const runtime = getAgentRuntimeContext(layout, row.vars);
+            const poster = gatherHarnessPoster(layout, row.vars);
+            const failure = failureCaller({ context: runtime, processEnv: row.vars, home: "/fixture/missing" });
+            expect(resolveAgentHost(row.vars)).toMatchObject({ agent: row.agent, sessionId: row.sessionId });
+            expect(runtime).toMatchObject({
+                agent: row.agent,
+                sessionId: row.sessionId,
+                aiAgent: row.label,
+                ...layout,
+            });
+            expect(poster).toEqual(runtime);
+            expect(failure).toMatchObject({
+                agent: row.agent,
+                sessionId: row.sessionId,
+                aiAgent: "label",
+                project: "repo",
+                repoRoot: "/fixture/repo",
+            });
+            expect(failure).not.toHaveProperty("cwd");
+        });
+    }
+});
 
 function git(args: string[], cwd: string): void {
     const r = Bun.spawnSync(["git", "-c", "user.email=t@t.t", "-c", "user.name=t", ...args], {
