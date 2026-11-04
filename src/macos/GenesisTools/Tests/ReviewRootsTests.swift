@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import XCTest
 @testable import GenesisToolsHost
 @testable import GenesisToolsHub
@@ -357,6 +358,55 @@ final class ReviewRootsTests: XCTestCase {
         model.useBranchTarget("lower")
         reload(model)
         XCTAssertEqual(model.commits.map(\.subject), ["upper-2", "upper-1"])
+    }
+
+    /// A watched checkout: an edit and a new file reach the list through a refresh of their paths (no load spinner,
+    /// no full load), and a clone of a listed file, as the agents diff hook makes before each tool call, changes
+    /// nothing (Martin, 2026-11-05: a busy checkout reloaded Uncommitted in full many times a minute).
+    func testAWatchedEditArrivesThroughARefreshAndACloneChangesNothing() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("watched-review-\(UUID())").resolvingSymlinksInPath()
+        let outside = root.deletingLastPathComponent().appendingPathComponent("\(root.lastPathComponent)-clone.txt")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        let file = root.appendingPathComponent("a.txt")
+        try "one\n".write(to: file, atomically: true, encoding: .utf8)
+        try git(root, ["init", "-q", "-b", "main"])
+        try git(root, ["add", "."])
+        try git(root, ["-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "start"])
+        try "edited\n".write(to: file, atomically: true, encoding: .utf8)
+
+        let model = ReviewModel(repo: root, options: DiffViewOptions(), renderer: NullRenderer())
+        func wait(_ seconds: Double, until done: () -> Bool) {
+            let deadline = Date().addingTimeInterval(seconds)
+            while !done() && Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            }
+        }
+        model.start()
+        defer { model.stop() }
+        wait(10) { !model.loading && model.files.map(\.path) == ["a.txt"] }
+        XCTAssertEqual(model.files.map(\.path), ["a.txt"])
+        // FSEvents may still deliver the setup's own writes; let them settle before counting.
+        wait(1.5) { false }
+        var spinners = 0
+        let watch = model.$loading.dropFirst().sink { if $0 { spinners += 1 } }
+        defer { watch.cancel() }
+
+        try "edited again\ntwo\n".write(to: file, atomically: true, encoding: .utf8)
+        try "new\n".write(to: root.appendingPathComponent("b.md"), atomically: true, encoding: .utf8)
+        wait(5) { model.files.map(\.path) == ["a.txt", "b.md"] && model.files.first?.additions == 2 }
+        XCTAssertEqual(model.files.map(\.path), ["a.txt", "b.md"])
+        XCTAssertEqual(model.files.first?.additions, 2)
+        XCTAssertEqual(spinners, 0, "a refresh shows no load")
+
+        let loaded = model.lastLoaded
+        try FileManager.default.copyItem(at: file, to: outside)
+        wait(2) { false }
+        XCTAssertEqual(model.lastLoaded, loaded, "a clone published no answer")
+        XCTAssertEqual(spinners, 0)
     }
 
     /// Reloads `model` and runs the main run loop until its load ends, or for 10 s.
