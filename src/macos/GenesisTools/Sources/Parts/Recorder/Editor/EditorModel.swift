@@ -1086,7 +1086,9 @@ final class EditorModel {
                 self.show("The volume is unchanged: \(reason)", error: true)
                 return
             }
-            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data) { self.adoptExternal(next) }
+            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data, at: self.store.url) {
+                self.adoptExternal(next)
+            }
             let volume = Int((self.project.audio.volume * 100).rounded())
             self.show(volume >= 200 ? "The volume is at its 200 % limit; the movie is still quieter than -16 LUFS."
                                     : "The volume is \(volume) %, so the export plays at -16 LUFS. ⌘Z undoes it.", error: false)
@@ -1111,7 +1113,9 @@ final class EditorModel {
                 return
             }
             // The watcher may not have delivered the file yet; read it now so the message has the new length.
-            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data) { self.adoptExternal(next) }
+            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data, at: self.store.url) {
+                self.adoptExternal(next)
+            }
             let saved = before - self.durationUs
             let verb = speed.map { "Sped up the still, silent parts \($0)×, saving" } ?? "Removed"
             self.show(saved > 0 ? "\(verb) \(formatClock(saved, tenths: true)) of still, silent parts; ⌘Z brings them back."

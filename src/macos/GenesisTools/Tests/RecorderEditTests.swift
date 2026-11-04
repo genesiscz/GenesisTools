@@ -448,6 +448,25 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertGreaterThan(gray(fading, 100, 80), gray(one, 100, 80), "half way into its fade it dims less")
     }
 
+    func testACopiedRecordingFolderReadsItsOwnMovie() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("copied-\(UUID().uuidString)")
+        let original = root.appendingPathComponent("original"), copy = root.appendingPathComponent("copy")
+        for folder in [original, copy] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data("movie bytes".utf8).write(to: folder.appendingPathComponent("screen.mp4"))
+            try Data("{}\n".utf8).write(to: folder.appendingPathComponent("cursor.jsonl"))
+        }
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = EditProject.whole(video: original.appendingPathComponent("screen.mp4").path, durationUs: 1_000_000, width: 100, height: 100,
+                                         cursor: original.appendingPathComponent("cursor.jsonl").path, recording: nil)
+        let moved = project.inItsFolder(copy)
+        XCTAssertEqual(moved.source.video, copy.appendingPathComponent("screen.mp4").path)
+        XCTAssertEqual(moved.source.cursor, copy.appendingPathComponent("cursor.jsonl").path)
+        XCTAssertEqual(project.inItsFolder(original), project, "the original stays as it is")
+        try Data("another, longer movie".utf8).write(to: copy.appendingPathComponent("screen.mp4"))
+        XCTAssertEqual(project.inItsFolder(copy).source.video, project.source.video, "a different movie is not taken for the copy")
+    }
+
     func testEveryCutoutLeavesItsInsideExactlyAsItWas() {
         let dark = CIImage(color: CIColor(red: 0.1, green: 0.1, blue: 0.1)).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 100))
         let context = CIContext()

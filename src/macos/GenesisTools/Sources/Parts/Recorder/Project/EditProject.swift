@@ -346,11 +346,31 @@ extension EditProject {
         return folder.appendingPathComponent(video.deletingPathExtension().lastPathComponent + ".edit.json")
     }
 
-    static func decode(_ data: Data) throws -> EditProject {
+    /// `at` is the edit file: a recording folder copied whole names the original folder in its source paths, so when
+    /// the edit's own folder holds the same movie (same name and size) its paths are read from there, as the CLI does
+    /// (`inItsFolder` in src/recorder/lib/edit.ts).
+    static func decode(_ data: Data, at url: URL? = nil) throws -> EditProject {
         let object = try JSONSerialization.jsonObject(with: data)
         guard var root = object as? [String: Any] else { throw ProjectError.notAnObject }
         root = try migrate(root)
-        return try JSONDecoder().decode(EditProject.self, from: JSONSerialization.data(withJSONObject: root))
+        let project = try JSONDecoder().decode(EditProject.self, from: JSONSerialization.data(withJSONObject: root))
+        guard let url else { return project }
+        return project.inItsFolder(url.deletingLastPathComponent())
+    }
+
+    func inItsFolder(_ folder: URL) -> EditProject {
+        let video = URL(fileURLWithPath: source.video)
+        guard video.deletingLastPathComponent().standardizedFileURL != folder.standardizedFileURL else { return self }
+        let here = folder.appendingPathComponent(video.lastPathComponent)
+        let size = { (path: String) in (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int) ?? nil }
+        guard let mine = size(here.path), let theirs = size(video.path), mine == theirs else { return self }
+        var moved = self
+        moved.source.video = here.path
+        if let cursor = source.cursor {
+            let local = folder.appendingPathComponent(URL(fileURLWithPath: cursor).lastPathComponent)
+            if FileManager.default.fileExists(atPath: local.path) { moved.source.cursor = local.path }
+        }
+        return moved
     }
 
     /// The loader's migration table: one step per version. Version 1 is the first shape, so it only refuses a newer

@@ -35,7 +35,7 @@ final class ProjectStore {
         guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isFolder) else { throw OpenError.missing(target.path) }
         if target.pathExtension == "json" {
             let store = ProjectStore(url: target)
-            let project = try EditProject.decode(Data(contentsOf: target))
+            let project = try EditProject.decode(Data(contentsOf: target), at: target)
             store.lastWritten = project.revision
             return (store, project)
         }
@@ -52,7 +52,7 @@ final class ProjectStore {
         let projectURL = EditProject.projectURL(forVideo: video)
         let store = ProjectStore(url: projectURL)
         if let data = try? Data(contentsOf: projectURL) {
-            let project = try EditProject.decode(data)
+            let project = try EditProject.decode(data, at: projectURL)
             store.lastWritten = project.revision
             return (store, project)
         }
@@ -111,7 +111,7 @@ final class ProjectStore {
 
     private func reloadIfChanged() {
         defer { watch() }
-        guard let data = try? Data(contentsOf: url), let project = try? EditProject.decode(data) else { return }
+        guard let data = try? Data(contentsOf: url), let project = try? EditProject.decode(data, at: url) else { return }
         guard project.revision > lastWritten else { return }
         lastWritten = project.revision
         HubPerf.log("recorder.editor: \(url.lastPathComponent) changed on disk (revision \(project.revision) by \(project.updatedBy ?? "?"))")
