@@ -51,6 +51,7 @@ import {
     type SettingsAnswer,
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
+import { runRecordingFinish } from "@genesiscz/utils/screen-recorder/finish";
 import {
     FrameOutput,
     type JpegConverter,
@@ -964,58 +965,52 @@ export async function runRecorder(options: {
             rmSync(pieceDir, { recursive: true, force: true });
         }
 
-        try {
-            const finished = await jobs.run({
-                kind: "finish",
-                id: finishJobId,
-                initial: [] as string[],
-                steps: [
-                    {
-                        name: "summary",
-                        run: async (ctx) => {
-                            await finishRecording();
-                            ctx.progress({ done: 1, total: 1, unit: "steps", message: `${state.frames} frames` });
-                            return ctx.state;
-                        },
+        const finish = runRecordingFinish<string[]>({
+            jobs,
+            kind: "finish",
+            id: finishJobId,
+            initial: [],
+            steps: [
+                {
+                    name: "summary",
+                    run: async (ctx) => {
+                        await finishRecording();
+                        ctx.progress({ done: 1, total: 1, unit: "steps", message: `${state.frames} frames` });
+                        return ctx.state;
                     },
-                    {
-                        name: "manifest",
-                        run: async (ctx) => {
-                            const current = store.read(meetingId);
+                },
+                {
+                    name: "manifest",
+                    run: async (ctx) => {
+                        const current = store.read(meetingId);
 
-                            if (current) {
-                                writeMeetingRecordingManifest(folder, current);
-                            }
+                        if (current) {
+                            writeMeetingRecordingManifest(folder, current);
+                        }
 
-                            return ctx.state;
-                        },
+                        return ctx.state;
                     },
-                    {
-                        name: "collect",
-                        run: async () => {
-                            const current = store.read(meetingId);
-                            return current ? (await collectRecord(store, current)).notes.map((one) => one.text) : [];
-                        },
+                },
+                {
+                    name: "collect",
+                    run: async () => {
+                        const current = store.read(meetingId);
+                        return current ? (await collectRecord(store, current)).notes.map((one) => one.text) : [];
                     },
-                ],
-            }).done;
-            stopped.resolve({
-                state: "stopped",
-                outcome: state.stopReason,
-                job: finishJobId,
-                frames: state.frames,
-                notes: finished.state,
-            });
-        } catch (err) {
-            log.error({ err, meetingId }, "the recording summary could not be written");
-            stopped.resolve({ state: "stopped", outcome: state.stopReason, job: finishJobId, frames: state.frames });
-        } finally {
+                },
+            ],
+            answer: (notes, job) => ({ state: "stopped", outcome: state.stopReason, job, frames: state.frames, notes }),
+            failed: (err, job) => {
+                log.error({ err, meetingId }, "the recording summary could not be written");
+                return { state: "stopped", outcome: state.stopReason, job, frames: state.frames };
+            },
+            close: () => live.close(state.stopReason),
             // A waiting `stop` call gets its answer before the socket closes.
-            await Bun.sleep(STOP_ANSWER_MS);
-            live.close(state.stopReason);
-
-            stateFile.retire();
-        }
+            closeAfterMs: STOP_ANSWER_MS,
+        });
+        void finish.answer.then(stopped.resolve);
+        await finish.closed;
+        stateFile.retire();
 
         log.info(
             { meetingId, frames: state.frames, bytes: state.bytes, stopReason: state.stopReason },

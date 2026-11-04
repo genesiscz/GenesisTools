@@ -22,6 +22,7 @@ import {
     type SettingsAnswer,
     type StopAnswer,
 } from "./control";
+import { runRecordingFinish } from "./finish";
 import {
     type FrameNaming,
     FrameOutput,
@@ -473,7 +474,8 @@ export class LibraryRecording extends RecorderControl {
             this.server?.update({ state: "stopping" });
             this.restartCaptures();
             this.wake?.();
-            const job = this.jobs.run<number>({
+            const finish = runRecordingFinish<number>({
+                jobs: this.jobs,
                 kind: "finalize",
                 initial: 0,
                 steps: [
@@ -493,22 +495,21 @@ export class LibraryRecording extends RecorderControl {
                         },
                     },
                 ],
+                answer: (frames, job) => ({
+                    state: "stopped",
+                    outcome: this.discarded ? "discarded" : "done",
+                    job,
+                    frames,
+                    notes: [...this.warnings],
+                }),
+                close: () => this.server?.close("stopped"),
             });
-            const done = job.done
-                .then(({ state: frames }): StopAnswer => {
-                    return {
-                        state: "stopped",
-                        outcome: this.discarded ? "discarded" : "done",
-                        job: job.id,
-                        frames,
-                        notes: [...this.warnings],
-                    };
-                })
-                .finally(() => this.server?.close("stopped"));
+            // The stop settles once the socket is closed.
+            const done = finish.closed.then(() => finish.answer);
             void done.catch((error: unknown) =>
                 log.warn({ error, id: this.id }, "library recording post-processing failed")
             );
-            this.finishing = { job: job.id, done };
+            this.finishing = { job: finish.job, done };
         }
 
         if (options.wait === false) {
