@@ -101,6 +101,16 @@ describe("process ancestry", () => {
         expect(agentOfChain([{ pid: 1, command: "/bin/zsh" }])).toBe("unknown");
     });
 
+    test("a Copilot parent names copilot when its environment says nothing, and shows in the chain", () => {
+        const chain = [
+            { pid: 2, command: "/bin/zsh" },
+            { pid: 3, command: "/opt/homebrew/bin/copilot" },
+        ];
+
+        expect(agentOfChain(chain)).toBe("copilot");
+        expect(describeAncestry(chain)).toBe("zsh ← copilot[3]");
+    });
+
     test("a helper binary of an agent and an agent's own MCP door name no agent", () => {
         expect(agentOfChain([{ pid: 1, command: "/opt/bin/codex-gateway serve" }])).toBe("unknown");
         expect(agentOfChain([{ pid: 1, command: "/Users/x/.bun/bin/claude mcp serve" }])).toBe("unknown");

@@ -5,9 +5,8 @@ import {
     type CallerProcess,
     whoIsCalling,
 } from "@genesiscz/utils/agent/identity";
-import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 import { env } from "@genesiscz/utils/env";
-import { classifyCommand } from "@genesiscz/utils/process/classify";
+import { runtimeAgentOfCommand } from "@genesiscz/utils/process/classify";
 import { readParentPid } from "@genesiscz/utils/process/cwd";
 import { profiler } from "@genesiscz/utils/profile";
 
@@ -50,28 +49,21 @@ function argv0Basename(command: string): string {
     return basename(argv0);
 }
 
-/** Is this frame an agent CLI running a session (not its own MCP door or a helper binary)? */
+/** Is this frame an agent running a session (a harness or Copilot; not an MCP door or a helper binary)? */
 function isAgentFrame(command: string): boolean {
-    const proc = classifyCommand(command);
-    return proc.kind === "agent" && !proc.service;
+    return runtimeAgentOfCommand(command) !== null;
 }
 
 /**
  * The agent running the frame nearest to the caller, by the shared process classification, when the environment did
- * not say. Only a harness answers: the classification also knows cursor-agent, which has no runtime agent name.
+ * not say: a harness, or Copilot. cursor-agent has no runtime agent name, so it names none.
  */
 function agentOfAncestry(frames: AncestryFrame[]): CallerAgent {
     for (const frame of frames) {
-        const proc = classifyCommand(frame.command);
+        const agent = runtimeAgentOfCommand(frame.command);
 
-        if (proc.kind !== "agent" || proc.service) {
-            continue;
-        }
-
-        const driver = harnessDrivers().find((candidate) => candidate.id === proc.provider);
-
-        if (driver) {
-            return harnessDriver(driver.id).parts.host.agent;
+        if (agent) {
+            return agent;
         }
     }
 

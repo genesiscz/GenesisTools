@@ -1,3 +1,5 @@
+import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+import { copilotHost } from "@genesiscz/utils/agent/hosts/copilot";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 
@@ -192,6 +194,25 @@ export function classifyCommand(raw: string): ProcClass {
     }
 
     return { kind: "other", provider: null, label: basename(argv0(command)), sessionId: null, service: false };
+}
+
+/**
+ * The runtime agent (`AgentRuntimeContext.agent`) whose session this command line runs, or null: a harness through
+ * its driver's host part, and Copilot, a host that is no harness, by its executable (`copilotHost.binary`).
+ * cursor-agent has no runtime agent name, and a helper binary or an MCP door runs no session, so both are null.
+ */
+export function runtimeAgentOfCommand(command: string): AgentRuntimeContext["agent"] | null {
+    const proc = classifyCommand(command);
+
+    if (proc.kind === "agent" && !proc.service) {
+        const driver = harnessDrivers().find((candidate) => candidate.id === proc.provider);
+
+        if (driver) {
+            return harnessDriver(driver.id).parts.host.agent;
+        }
+    }
+
+    return basename(argv0(command)) === copilotHost.binary ? copilotHost.agent : null;
 }
 
 /** Does this command line run the provider's agent itself, the binary or its script, and not one of its services? */
