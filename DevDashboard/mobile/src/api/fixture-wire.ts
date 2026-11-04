@@ -47,7 +47,9 @@ import {
 import { MOCK_APPROVALS } from "@/api/fixtures/approvals";
 import { MOCK_BRIEF } from "@/api/fixtures/brief";
 import { MOCK_GATES } from "@/api/fixtures/gates";
+import { MOCK_FORECAST, MOCK_GLANCE } from "@/api/fixtures/glance";
 import { MOCK_LAUNCH } from "@/api/fixtures/launch";
+import { MOCK_TIMESHEET } from "@/api/fixtures/timesheet";
 import { MOCK_HEALTH, MOCK_WAKE } from "@/api/fixtures/wake";
 import { MOCK_WATCHING } from "@/api/fixtures/watching";
 import { fixtureAnswerForm, fixtureDraft, fixtureQueue, fixtureSendDrafts } from "@/api/fixtures/queue";
@@ -254,6 +256,10 @@ const ROUTES: FixtureRoute[] = [
         handle: ({ body }) => ({ id: text(body.id), outcome: "asked", detail: "mock data: no window on a Mac" }),
     },
 
+    // The glance (F18 badge) and the accounts forecast (F16).
+    { method: ENDPOINTS.gatewayGlance.method, path: ENDPOINTS.gatewayGlance.path, handle: () => MOCK_GLANCE },
+    { method: ENDPOINTS.gatewayForecast.method, path: ENDPOINTS.gatewayForecast.path, handle: () => MOCK_FORECAST },
+
     // Approvals (F8); an answer is refused, since a fixture has no dialog to press keys in.
     { method: ENDPOINTS.gatewayApprovals.method, path: ENDPOINTS.gatewayApprovals.path, handle: () => MOCK_APPROVALS },
     {
@@ -278,6 +284,14 @@ const ROUTES: FixtureRoute[] = [
 
     // The morning brief (F29), as the daemon task stored it.
     { method: ENDPOINTS.gatewayBrief.method, path: ENDPOINTS.gatewayBrief.path, handle: () => MOCK_BRIEF },
+
+    // The Friday timesheet (F27); a fill is refused, since a fixture has no Clarity to write.
+    { method: ENDPOINTS.gatewayTimesheet.method, path: ENDPOINTS.gatewayTimesheet.path, handle: () => MOCK_TIMESHEET },
+    {
+        method: ENDPOINTS.timesheetFill.method,
+        path: ENDPOINTS.timesheetFill.path,
+        handle: () => ({ filled: false, written: 0, failed: 0, skipped: 0, error: "mock data: no Clarity to fill" }),
+    },
 
     // Wake my Mac (F26): the relay the phone keeps, and the health probe that answers once the Mac is awake.
     { method: ENDPOINTS.gatewayWake.method, path: ENDPOINTS.gatewayWake.path, handle: () => MOCK_WAKE },

@@ -2,9 +2,10 @@ import { ENDPOINTS } from "@dd/contract";
 import * as Notifications from "expo-notifications";
 import { Stack } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Switch, Text, View } from "react-native";
 import { useDashboardClient, useIsMockClient } from "@/api/client-provider";
 import { idempotencyKey } from "@/features/answer-queue/units";
+import { getPref, setPref } from "@/lib/storage/kv";
 import { pushIdentity } from "@/push/push-keys";
 import { registerForPush } from "@/push/push";
 import { useThemeColors } from "@/theme/colors";
@@ -26,6 +27,16 @@ export default function NotificationsScreen() {
     const [registration, setRegistration] = useState<Registration>({ state: "working" });
     const [test, setTest] = useState<string | null>(null);
     const [sending, setSending] = useState(false);
+    const [badge, setBadge] = useState(true);
+
+    useEffect(() => {
+        void getPref("dd.iconBadge").then((saved) => setBadge(saved !== "off"));
+    }, []);
+
+    const toggleBadge = (on: boolean) => {
+        setBadge(on);
+        void setPref("dd.iconBadge", on ? "waiting" : "off");
+    };
 
     const register = useCallback(async () => {
         setRegistration({ state: "working" });
@@ -105,6 +116,23 @@ export default function NotificationsScreen() {
                     )}
                 </Pressable>
                 {test ? <Text style={{ color: c.textSecondary, fontSize: 13 }}>{test}</Text> : null}
+                <View
+                    className="flex-row items-center gap-3 rounded-2xl p-4"
+                    style={{ backgroundColor: c.bgPanel, borderWidth: 1, borderColor: c.border }}
+                >
+                    <View className="flex-1 gap-1">
+                        <Text style={{ color: c.textPrimary, fontWeight: "600" }}>Waiting count on the app icon</Text>
+                        <Text style={{ color: c.textMuted, fontSize: 12 }}>
+                            Decisions, forms, open dialogs and tool calls that wait for you. Applies from the next start.
+                        </Text>
+                    </View>
+                    <Switch
+                        testID="switch-icon-badge"
+                        accessibilityLabel="Waiting count on the app icon"
+                        value={badge}
+                        onValueChange={toggleBadge}
+                    />
+                </View>
                 <Pressable
                     testID="btn-push-register"
                     accessibilityRole="button"
