@@ -133,3 +133,39 @@ whether a LogBox shows) into `~/.genesis-tools/mobile/captures/<id>/<time>/` (or
   `firstRun.defaults`, then launches and answers the first prompts. A `simctl privacy` grant that times out leaves a
   marker (`~/.genesis-tools/mobile/privacy-hangs/<udid>`): on some iOS 26.5 simulators one grant wedges installd, and
   later runs skip grants there.
+
+## Devices on every platform
+
+```bash
+tools mobile devices [--platform ios|android]
+tools mobile boot <udid | AVD name> [--platform android]
+tools mobile install [artifact] --device <udid | serial>
+tools mobile launch | terminate | uninstall --device <id>
+tools mobile url <route | URL> --device <id>
+tools mobile screenshot <file.png> --device <id>
+tools mobile shutdown --device <id>
+```
+
+These commands go through one table (`PLATFORMS` in `src/mobile/lib/platforms/`), one `MobilePlatform` per
+platform: `ios` (simulators through simctl) and `android` (emulators and devices through adb, AVDs through the SDK's
+`emulator`). A project names its Android app beside its iOS one:
+
+```ts
+platforms: {
+    android: { packageName: "com.example.shop", activity: ".MainActivity", apk: "android/app/build/outputs/apk/debug/app-debug.apk" },
+}
+```
+
+`--platform` defaults to the project's only platform. `--device` defaults to the only booted device of that platform,
+so a command never drives another session's. Android:
+
+- `devices` lists what adb sees (an emulator under its AVD name) and every AVD that does not run as `avd:<name>`.
+- `boot <AVD>` starts the emulator as a server this tool owns (`-no-snapshot-save -no-boot-anim -gpu host -noaudio`, on
+  the first free console port, log and pidfile in `~/.genesis-tools/mobile/emulator/<avd>.{log,pid}`) and waits until
+  adb answers and `sys.boot_completed` is 1. An emulator that stays `offline` has USB debugging off in the guest; boot
+  reports it instead of waiting.
+- `launch` starts `activity`, else the package's launcher activity; `url` sends a VIEW intent to the package.
+- The Android SDK root is `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then `~/Library/Android/sdk`.
+
+`build`, `up`, `open`, `capture`, `tour`, `alerts`, `logbox` and `first-run` are iOS only for now: they rest on
+xcodebuild, the XCUITest tree and WebDriverAgent.

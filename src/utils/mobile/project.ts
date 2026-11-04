@@ -48,6 +48,18 @@ export interface MetroSetup {
 
 export interface MobilePlatformsConfig {
     ios?: IosAppConfig;
+    android?: AndroidAppConfig;
+}
+
+/** The platforms a project can name; the tool's platform table has one entry per key. */
+export type MobilePlatformId = keyof MobilePlatformsConfig;
+
+export interface AndroidAppConfig {
+    packageName: string;
+    /** The activity `launch` starts (`.MainActivity`); default: the package's launcher activity. */
+    activity?: string;
+    /** The built APK `install` uses when no path is given, relative to the app folder. */
+    apk?: string;
 }
 
 /** One screen of an app, reached by a deep link. */
@@ -137,7 +149,16 @@ const configSchema: z.ZodType<MobileProjectConfig> = z.object({
     appDir: z.string().optional(),
     routes: z.union([z.array(routeSchema), fn<(appDir: string) => MobileRoute[]>("routes")]).optional(),
     metro: z.object({ defaultPort: z.number().int().positive() }).optional(),
-    platforms: z.object({ ios: iosSchema.optional() }),
+    platforms: z.object({
+        ios: iosSchema.optional(),
+        android: z
+            .object({
+                packageName: z.string().regex(/^[A-Za-z][\w]*(\.[A-Za-z][\w]*)+$/, "packageName: a Java package name"),
+                activity: z.string().optional(),
+                apk: z.string().optional(),
+            })
+            .optional(),
+    }),
 });
 
 /** The file names a project's config may have, checked in each folder from the working folder up. */
@@ -245,4 +266,15 @@ export function iosApp(project: MobileProject): IosApp {
         defaults: ios.firstRun?.defaults ?? [],
     };
     return { ...ios, bundleId, buildInputs: ios.buildInputs ?? { native: [], js: [] }, firstRun };
+}
+
+/** The Android part of a project; throws when the project has no Android app. */
+export function androidApp(project: MobileProject): AndroidAppConfig {
+    const android = project.config.platforms.android;
+
+    if (!android) {
+        throw new Error(`${project.configPath} has no platforms.android`);
+    }
+
+    return android;
 }

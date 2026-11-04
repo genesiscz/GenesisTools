@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { findById, flatten, formatTree, parseSource, readLogBox, summarize } from "./a11y";
 import { decideAlert } from "./alerts";
+import { emulatorCommand, freeEmulatorPort, parseAdbDevices } from "./android";
 import { appiumPortFor, compareVersions, xcuitestXcodeProblem } from "./appium";
 import { readMetroLog } from "./metro";
-import { findMobileConfig, iosApp, loadMobileProject, parseMobileConfig, projectRoutes } from "./project";
+import { androidApp, findMobileConfig, iosApp, loadMobileProject, parseMobileConfig, projectRoutes } from "./project";
 import { runtimeVersion, wdaPortsFor } from "./simulator";
 
 const root = mkdtempSync(join(tmpdir(), "gt-mobile-project-"));
@@ -199,5 +200,54 @@ describe("metro log", () => {
         expect(report.console).toEqual(["WARN  slow query"]);
         expect(readMetroLog("Bundling failed: Unable to resolve module ./missing").fatal).toHaveLength(1);
         expect(readMetroLog("Starting Metro Bundler\nWaiting on http://localhost:8091").ran).toBe(false);
+    });
+});
+
+describe("android", () => {
+    it("parses adb devices -l, flags emulators and reads the model", () => {
+        const devices = parseAdbDevices(
+            [
+                "List of devices attached",
+                "emulator-5554          device product:sdk_gphone64_arm64 model:sdk_gphone64_arm64 transport_id:1",
+                "R5CT1234ABC            unauthorized usb:1-1 transport_id:2",
+                "",
+            ].join("\n")
+        );
+
+        expect(devices).toEqual([
+            { serial: "emulator-5554", state: "device", model: "sdk_gphone64_arm64", emulator: true },
+            { serial: "R5CT1234ABC", state: "unauthorized", model: undefined, emulator: false },
+        ]);
+    });
+
+    it("picks the first console port no listed emulator holds, and builds a clean-boot command", () => {
+        const listed = [
+            { serial: "emulator-5554", state: "device", emulator: true },
+            { serial: "emulator-5558", state: "offline", emulator: true },
+        ];
+        expect(freeEmulatorPort(listed)).toBe(5556);
+        expect(freeEmulatorPort([])).toBe(5554);
+        expect(emulatorCommand({ avd: "Pixel_9", port: 5556 }).slice(1)).toEqual([
+            "-avd",
+            "Pixel_9",
+            "-port",
+            "5556",
+            "-no-snapshot-save",
+            "-no-boot-anim",
+            "-gpu",
+            "host",
+            "-noaudio",
+        ]);
+    });
+
+    it("reads an android platform from the config and refuses a bad package name", async () => {
+        const raw = { id: "shop", platforms: { android: { packageName: "com.example.shop", apk: "build/app.apk" } } };
+        expect(parseMobileConfig(raw, "x").platforms.android?.packageName).toBe("com.example.shop");
+        expect(() => parseMobileConfig({ id: "shop", platforms: { android: { packageName: "shop" } } }, "x")).toThrow(
+            "packageName"
+        );
+        const project = { configPath: "/p/mobile.config.ts", appDir: "/p", config: parseMobileConfig(raw, "x") };
+        expect(androidApp(project).apk).toBe("build/app.apk");
+        expect(() => iosApp(project)).toThrow("has no platforms.ios");
     });
 });

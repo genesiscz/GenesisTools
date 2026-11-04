@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { adbBinary, androidSdkRoot, emulatorBinary } from "@genesiscz/utils/mobile/android";
 import { appiumHome, appiumReady, xcuitestDriverVersion, xcuitestXcodeProblem } from "@genesiscz/utils/mobile/appium";
 import {
     developerDir,
@@ -51,6 +53,16 @@ export async function mobileDoctor(appiumPort: number): Promise<DoctorReport> {
         ok: true,
         detail: ready ? `answers on :${appiumPort}` : `not running on :${appiumPort} (only the Appium driver needs it)`,
         fix: ready ? undefined : toolCommand("mobile appium start", "--port", String(appiumPort)),
+    });
+
+    const adbPath = adbBinary();
+    const hasAdb = adbPath !== "adb" || Bun.which("adb") !== null;
+    checks.push({
+        name: "android",
+        ok: true,
+        detail: hasAdb
+            ? `adb ${adbPath} · emulator ${existsSync(emulatorBinary()) ? emulatorBinary() : "missing"}`
+            : `no adb under ${androidSdkRoot()} or on PATH (only Android needs it)`,
     });
 
     const booted = (await listSimulators())

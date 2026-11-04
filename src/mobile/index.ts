@@ -7,6 +7,7 @@ import { IOS_CONFIGURATIONS, type IosConfiguration, projectRoutes } from "@genes
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { Command } from "commander";
 import { registerAppCommands } from "./commands/app";
+import { registerDevices } from "./commands/devices";
 import { registerScreens } from "./commands/screens";
 import { registerServices } from "./commands/services";
 import { registerUp } from "./commands/up";
@@ -18,7 +19,7 @@ import { loadProject, type ProjectOptions, withConfig } from "./lib/project";
 const program = new Command()
     .name("mobile")
     .description(
-        "Drive iOS simulators for a project's app: build, install, open screens (Xcode 27 aware). The app comes from the project's mobile.config.ts"
+        "Drive a project's app on iOS simulators (build, install, open and capture screens; Xcode 27 aware) and on Android emulators and devices. The app comes from the project's mobile.config.ts"
     );
 
 function parseConfiguration(value: string | undefined): IosConfiguration | undefined {
@@ -151,5 +152,6 @@ registerUp(program);
 registerScreens(program);
 registerAppCommands(program);
 registerServices(program);
+registerDevices(program);
 
 await runTool(program, { tool: "mobile" });

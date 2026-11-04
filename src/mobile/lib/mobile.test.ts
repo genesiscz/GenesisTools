@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
+import type { MobileProject } from "@genesiscz/utils/mobile/project";
 import { builtAppPath } from "./build";
 import { compareFingerprints } from "./fingerprint";
 import { stamp } from "./paths";
+import { chooseDevice, choosePlatform, PLATFORMS } from "./platforms";
+import { mergeAndroidDevices } from "./platforms/android";
 import { resolveRoute, selectRoutes } from "./routes";
 import { chooseDeviceType, chooseRuntime, fitsWidth, simulatorNameFor } from "./simulator-fit";
 
@@ -102,5 +105,78 @@ describe("routes", () => {
         expect(selectRoutes(routes, ["order"]).map((route) => route.name)).toEqual(["order"]);
         expect(() => selectRoutes(routes, ["nope"])).toThrow("no route matches nope");
         expect(() => selectRoutes([])).toThrow("the project names none");
+    });
+});
+
+describe("platforms", () => {
+    const project = (platforms: MobileProject["config"]["platforms"]): MobileProject => ({
+        configPath: "/p/mobile.config.ts",
+        appDir: "/p",
+        config: { id: "shop", platforms },
+    });
+    const ios = {
+        bundleId: "com.example.shop",
+        build: { workspace: "w", scheme: "s", configuration: "Release" as const, productName: "Shop" },
+    };
+
+    it("takes the asked platform, else the project's only one, else asks for --platform", () => {
+        expect(choosePlatform("android", null).id).toBe("android");
+        expect(choosePlatform(undefined, project({ ios })).id).toBe("ios");
+        expect(() => choosePlatform(undefined, project({ ios, android: { packageName: "com.example.shop" } }))).toThrow(
+            "names ios and android"
+        );
+        expect(() => choosePlatform(undefined, null)).toThrow("no project config");
+        expect(() => choosePlatform("windows", null)).toThrow('--platform must be ios or android, not "windows"');
+    });
+
+    it("gives each platform the project's app id, launch activity and build", () => {
+        const both = project({
+            ios,
+            android: { packageName: "com.example.shop", activity: ".Main", apk: "out/a.apk" },
+        });
+        expect(PLATFORMS.android.app(both)).toEqual({
+            id: "com.example.shop",
+            activity: ".Main",
+            artifact: "/p/out/a.apk",
+        });
+        expect(PLATFORMS.ios.app(both)).toEqual({
+            id: "com.example.shop",
+            artifact: "/p/ios/build/Build/Products/Release-iphonesimulator/Shop.app",
+        });
+    });
+
+    it("lists running Android devices by AVD name and idle AVDs as bootable entries", () => {
+        const devices = mergeAndroidDevices({
+            adb: [
+                { serial: "emulator-5554", state: "device", model: "sdk_gphone", emulator: true },
+                { serial: "R5CT1234ABC", state: "unauthorized", emulator: false },
+            ],
+            avds: ["Pixel_9", "Tablet"],
+            running: { "emulator-5554": "Pixel_9" },
+            versions: { "emulator-5554": "15" },
+        });
+
+        expect(devices.map((device) => [device.id, device.name, device.state, device.kind])).toEqual([
+            ["emulator-5554", "Pixel_9", "booted", "emulator"],
+            ["R5CT1234ABC", "R5CT1234ABC", "offline", "device"],
+            ["avd:Tablet", "Tablet", "shutdown", "emulator"],
+        ]);
+    });
+
+    it("picks the asked device, else the only booted one, and refuses when several are booted", () => {
+        const device = (id: string, state: "booted" | "shutdown") => ({
+            platform: "ios" as const,
+            id,
+            name: `sim ${id}`,
+            state,
+            rawState: state,
+            osVersion: "26.5",
+            kind: "simulator" as const,
+        });
+        expect(chooseDevice([device("a", "booted"), device("b", "shutdown")]).id).toBe("a");
+        expect(chooseDevice([device("a", "booted"), device("b", "booted")], "sim b").id).toBe("b");
+        expect(() => chooseDevice([device("a", "booted"), device("b", "booted")])).toThrow("2 devices are booted");
+        expect(() => chooseDevice([device("b", "shutdown")], "b")).toThrow("boot it first");
+        expect(() => chooseDevice([])).toThrow("no device is booted");
     });
 });
