@@ -7,7 +7,7 @@
  * with no identity at all until 2026-08-29, even though `GROK_SESSION_ID` had
  * been sitting in the environment the whole time. GitHub Copilot CLI repeated the
  * bug exactly, with `COPILOT_AGENT_SESSION_ID`, until 2026-08-31. Adding a host
- * is now its harness driver's `host` part (a host that is not a harness, Copilot, is one entry here).
+ * is now its harness driver's `host` part (a host that is not a harness, Copilot, is its host file's `copilotHost`).
  *
  * This module is env-only on purpose. `getAgentRuntimeContext` adds git and
  * process-tree work on top; callers that only need "who am I" (the agents bus,
@@ -15,11 +15,7 @@
  */
 
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
-import { isCopilot, resolveCopilotContext } from "@genesiscz/utils/agent/hosts/copilot";
-import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
-import { profiler } from "@genesiscz/utils/profile";
-
-const prof = profiler.scope("agent-context");
+import { envHosts, resolveEnvHost } from "@genesiscz/utils/agent/identity/env";
 
 export type AgentHostKind = AgentRuntimeContext["agent"];
 
@@ -39,13 +35,10 @@ export interface AgentSessionId {
  * canonical driver order (claude, codex, grok: the precedence this list always had), then the hosts that are not
  * harnesses. A fourth harness that must not sit last in that order needs a precedence field on its host part.
  */
-export const AGENT_SESSION_KEYS: readonly { agent: AgentHostKind; key: string }[] = [
-    ...harnessDrivers().map((driver) => ({
-        agent: harnessDriver(driver.id).parts.host.agent,
-        key: harnessDriver(driver.id).parts.host.sessionEnvKey,
-    })),
-    { agent: "copilot", key: "COPILOT_AGENT_SESSION_ID" },
-];
+export const AGENT_SESSION_KEYS: readonly { agent: AgentHostKind; key: string }[] = envHosts().map((host) => ({
+    agent: host.agent,
+    key: host.sessionEnvKey,
+}));
 
 /**
  * Sessions assigned by whoever started this process, in order. `tools codex spawn`
@@ -69,23 +62,9 @@ export function assignedSessionId(env: NodeJS.ProcessEnv): string | null {
     return null;
 }
 
-/** The host chain. First match wins; see AGENT_SESSION_KEYS for why. */
+/** The host chain. First match wins; see AGENT_SESSION_KEYS for why. The identity module owns it. */
 export function resolveAgentHost(env: NodeJS.ProcessEnv): Partial<AgentRuntimeContext> {
-    return prof.measure("host.resolveAgentHost", () => {
-        for (const driver of harnessDrivers()) {
-            const host = harnessDriver(driver.id).parts.host;
-
-            if (host.detects(env)) {
-                return host.resolve(env);
-            }
-        }
-
-        if (isCopilot(env)) {
-            return resolveCopilotContext(env);
-        }
-
-        return { agent: "unknown", sessionId: null, isInAgent: false };
-    });
+    return resolveEnvHost(env);
 }
 
 /**

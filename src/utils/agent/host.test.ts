@@ -1,4 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     AGENT_SESSION_KEYS,
     ASSIGNED_SESSION_KEYS,
@@ -6,6 +11,7 @@ import {
     assignedSessionId,
     resolveAgentHost,
 } from "./host";
+import { whoIsCalling } from "./identity";
 
 describe("resolveAgentHost", () => {
     it("detects each host from its own session variable", () => {
@@ -176,8 +182,9 @@ describe("characterization: what each host resolves", () => {
         });
     });
 
-    it("Claude: the session id is not trimmed, unlike Grok's and Copilot's", () => {
-        expect(resolveAgentHost({ CLAUDE_CODE_SESSION_ID: " c1 " })).toMatchObject({ sessionId: " c1 " });
+    it("Claude: the session id is trimmed, like Grok's and Copilot's", () => {
+        expect(resolveAgentHost({ CLAUDE_CODE_SESSION_ID: " c1 " })).toMatchObject({ sessionId: "c1" });
+        expect(resolveAgentHost({ CODEX_THREAD_ID: " x1 " })).toMatchObject({ sessionId: "x1" });
     });
 
     it("Codex: CODEX_CI alone is a host without a session, and aiAgent is always null", () => {
@@ -228,13 +235,76 @@ describe("characterization: what each host resolves", () => {
     });
 });
 
-describe("not built yet: enrichers that the gatherer unification adds", () => {
-    it.todo("the T3 Code enricher: T3CODE_THREAD_ID gives the host app t3code with its thread id", () => {});
-    it.todo("the Claude subagent id: a Claude hook payload's agent_id reaches the runtime context as the subagent id", () => {});
-    it.todo("the account inside Codex: TOOLS_CODEX_ACCOUNT names the account of a Codex caller", () => {});
-    it.todo("the account inside Grok: TOOLS_GROK_ACCOUNT names the account of a Grok caller", () => {});
-    it.todo("the model of a Codex caller, read from its rollout, is part of the one agent context", () => {});
-    it.todo("the model of a Grok caller, read from its summary.json, is part of the one agent context", () => {});
+describe("the enrichers the gatherer unification added (agent identity module)", () => {
+    const NOW = new Date(2026, 10, 4, 12, 0, 0);
+
+    it("the T3 Code enricher: T3CODE_THREAD_ID gives the host app t3code with its thread id", () => {
+        const identity = whoIsCalling({
+            origin: "local",
+            env: { CODEX_THREAD_ID: "x1", T3CODE_THREAD_ID: "t3-thread" },
+        });
+        expect(identity.host).toEqual({ app: "t3code", threadId: "t3-thread" });
+        expect(identity.sources.host).toBe("t3code");
+    });
+
+    it("the Claude subagent id: a Claude hook payload's agent_id reaches the runtime context as the subagent id", () => {
+        // payload.ts turns `agent_id` into these typed facts (hooks.test.ts pins that half).
+        const identity = whoIsCalling({
+            origin: "local",
+            env: { CLAUDE_CODE_SESSION_ID: "c1" },
+            hook: { caller: "claude", sessionId: "c1", subagentId: "agent-7", toolUseId: "t" },
+        });
+        expect(identity).toMatchObject({
+            agent: "claude-code",
+            sessionId: "c1",
+            subagentId: "agent-7",
+            toolUseId: "t",
+        });
+    });
+
+    it("the account inside Codex: TOOLS_CODEX_ACCOUNT names the account of a Codex caller", () => {
+        const env = { CODEX_THREAD_ID: "x1", [accountEnvVar("codex")]: "work" };
+        expect(whoIsCalling({ origin: "local", env }).account).toEqual({
+            harness: "codex",
+            account: "work",
+            proxyTarget: null,
+        });
+    });
+
+    it("the account inside Grok: TOOLS_GROK_ACCOUNT names the account of a Grok caller", () => {
+        const env = { GROK_SESSION_ID: "g1", [accountEnvVar("grok")]: "personal" };
+        expect(whoIsCalling({ origin: "local", env }).account).toEqual({
+            harness: "grok",
+            account: "personal",
+            proxyTarget: null,
+        });
+    });
+
+    it("the model of a Codex caller, read from its rollout, is part of the one agent context", () => {
+        const home = mkdtempSync(join(tmpdir(), "host-codex-"));
+        const id = "01a0f4fc-171d-7c30-9679-ee00633dee2d";
+        const dir = join(home, "sessions", "2026", "11", "04");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+            join(dir, `rollout-x-${id}.jsonl`),
+            `${SafeJSON.stringify({ type: "turn_context", payload: { model: "codex-model-1" } })}\n`
+        );
+        const env = { CODEX_THREAD_ID: id, CODEX_HOME: home };
+        expect(whoIsCalling({ origin: "local", env }, { facets: ["model"], now: NOW }).model).toBe("codex-model-1");
+    });
+
+    it("the model of a Grok caller, read from its summary.json, is part of the one agent context", () => {
+        const home = mkdtempSync(join(tmpdir(), "host-grok-"));
+        const dir = join(home, "sessions", encodeURIComponent("/fixture/repo"), "g1");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "updates.jsonl"), "");
+        writeFileSync(join(dir, "summary.json"), SafeJSON.stringify({ current_model_id: "grok-model-1" }));
+        const identity = whoIsCalling(
+            { origin: "local", env: { GROK_SESSION_ID: "g1", GROK_HOME: home } },
+            { facets: ["model"], overrides: { cwd: "/fixture/repo" } }
+        );
+        expect(identity.model).toBe("grok-model-1");
+    });
 });
 
 describe("characterization: nested hosts inside T3 Code", () => {
@@ -272,11 +342,11 @@ describe("characterization: nested hosts inside T3 Code", () => {
 describe("characterization: blank host values in a nested environment", () => {
     it.each([
         ["CLAUDE_CODE_SESSION_ID", "", "CODEX_THREAD_ID", "codex", "fallback", true],
-        ["CLAUDE_CODE_SESSION_ID", " \t\n ", "CODEX_THREAD_ID", "claude-code", " \t\n ", false],
+        ["CLAUDE_CODE_SESSION_ID", " \t\n ", "CODEX_THREAD_ID", "codex", "fallback", true],
         ["CLAUDECODE", "", "CODEX_THREAD_ID", "codex", "fallback", true],
         ["CLAUDECODE", " \t\n ", "CODEX_THREAD_ID", "claude-code", null, true],
         ["CODEX_THREAD_ID", "", "GROK_SESSION_ID", "grok", "fallback", true],
-        ["CODEX_THREAD_ID", " \t\n ", "GROK_SESSION_ID", "codex", " \t\n ", true],
+        ["CODEX_THREAD_ID", " \t\n ", "GROK_SESSION_ID", "grok", "fallback", true],
         ["CODEX_CI", "", "GROK_SESSION_ID", "grok", "fallback", true],
         ["CODEX_CI", " \t\n ", "GROK_SESSION_ID", "grok", "fallback", true],
         ["CODEX_CI", " 1 ", "GROK_SESSION_ID", "grok", "fallback", true],
@@ -331,5 +401,11 @@ describe("characterization: blank host values in a nested environment", () => {
         expect(resolveAgentHost(vars)).toMatchObject({ agent: "claude-code", sessionId: null, isInAgent: true });
     });
 
-    it.todo("the T3 Code enricher keeps its host thread distinct from both nested harness session ids", () => {});
+    it("the T3 Code enricher keeps its host thread distinct from both nested harness session ids", () => {
+        const env = { CLAUDE_CODE_SESSION_ID: "outer", CODEX_THREAD_ID: "inner", T3CODE_THREAD_ID: "t3-parent" };
+        const identity = whoIsCalling({ origin: "local", env });
+        expect(identity).toMatchObject({ agent: "claude-code", sessionId: "outer" });
+        expect(identity.host?.threadId).toBe("t3-parent");
+        expect([identity.sessionId, "inner"]).not.toContain(identity.host?.threadId);
+    });
 });
