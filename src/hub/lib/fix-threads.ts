@@ -9,6 +9,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
 import { backendFor, type FoundPr, HubPrError, type PrThread, prThreads, resolvePr, type ThreadsResult } from "./pr";
 import { type PrSessionMatch, type PrSessionReason, type PrSessionsInput, prSessions } from "./pr-sessions";
+import { handOffError, handOffToSession } from "./send/hand-off";
 
 const log = logger.child({ component: "hub/fix-threads" });
 
@@ -74,7 +75,8 @@ export interface FixThreadsDeps {
     /** The ids among `sessionIds` that cmux has open now. */
     live: (sessionIds: string[]) => Promise<Set<string>>;
     write: (file: string, text: string) => Promise<void>;
-    send: (sessionId: string, text: string) => Promise<string | null>;
+    /** Types the pointer line into the session through its harness sender; null when it went, else why not. */
+    send: (sessionId: string, text: string, provider: string) => Promise<string | null>;
     focus: (sessionId: string, activate: boolean) => Promise<string | null>;
     dir: string;
     now: () => Date;
@@ -315,7 +317,7 @@ export async function sendPrTask(input: PrTaskInput, deps: PrTaskDeps): Promise<
         return result;
     }
 
-    const sendError = await deps.send(owner.sessionId, prompt);
+    const sendError = await deps.send(owner.sessionId, prompt, owner.provider);
 
     if (sendError) {
         result.error = `send to ${owner.sessionId.slice(0, 8)} failed: ${sendError}`;
@@ -361,8 +363,8 @@ async function liveSessions(sessionIds: string[]): Promise<Set<string>> {
 }
 
 /**
- * `tools claude cmux send|focus` in their own process: both exit the process on a cmux failure and
- * print tables for an ambiguous match, which must not end this command or reach its JSON on stdout.
+ * `tools claude cmux focus` in its own process: it exits the process on a cmux failure and
+ * prints tables for an ambiguous match, which must not end this command or reach its JSON on stdout.
  */
 async function cmuxVerb(args: string[]): Promise<string | null> {
     log.debug({ args: args.slice(0, 3) }, `fix threads: ${toolCommand("claude cmux")}`);
@@ -403,7 +405,7 @@ export const realFixThreadsDeps: FixThreadsDeps = {
         await mkdir(dirname(file), { recursive: true });
         await writeFile(file, text);
     },
-    send: (sessionId, text) => cmuxVerb(["send", sessionId, text]),
+    send: async (sessionId, text, provider) => handOffError(await handOffToSession({ sessionId, provider, text })),
     focus: (sessionId, activate) => cmuxVerb(["focus", sessionId, ...(activate ? [] : ["--no-activate"])]),
     dir: join(new Storage("hub").getBaseDir(), "fix-threads"),
     now: () => new Date(),
