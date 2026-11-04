@@ -171,6 +171,8 @@ const EMPTY_READ: OcrResult = { text: "", blocks: [] };
 /** Writes kept frames one at a time: the name, the format, and the OCR into its sink. */
 export class FrameOutput {
     readonly framesDir: string;
+    /** Names given out so far: two frames still converting must not share one. */
+    private readonly named = new Set<string>();
 
     constructor(private readonly options: FrameOutputOptions) {
         this.framesDir = join(options.folder, "frames");
@@ -185,7 +187,14 @@ export class FrameOutput {
         const when = new Date(at.atMs);
         const elapsedMs = at.atMs - at.originMs;
         const ext = format.kind === "jpeg" ? ".jpg" : extname(frame.path) || ".png";
-        const name = frameFileName(naming, { at: when, elapsedMs, displayId: at.displayId, ext });
+        const name = this.freeName((offsetMs) =>
+            frameFileName(naming, {
+                at: new Date(at.atMs + offsetMs),
+                elapsedMs: elapsedMs + offsetMs,
+                displayId: at.displayId,
+                ext,
+            })
+        );
         const path = join(this.framesDir, name);
         mkdirSync(this.framesDir, { recursive: true });
 
@@ -237,5 +246,20 @@ export class FrameOutput {
             path
         );
         return read ? { ...kept, read } : kept;
+    }
+
+    /**
+     * A name no other frame has: two frames of one display in the same millisecond would overwrite one file, so the
+     * later one is named a millisecond on (its `at` stays the real time).
+     */
+    private freeName(nameAt: (offsetMs: number) => string): string {
+        for (let offsetMs = 0; ; offsetMs++) {
+            const name = nameAt(offsetMs);
+
+            if (!this.named.has(name) && !existsSync(join(this.framesDir, name))) {
+                this.named.add(name);
+                return name;
+            }
+        }
     }
 }

@@ -687,6 +687,34 @@ describe("frame output", () => {
             blocks: [],
         });
     });
+
+    test("two frames of one display in the same millisecond keep two files, the second named a millisecond later", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-frame-out-"));
+        const rows: string[] = [];
+        const output = new FrameOutput({
+            folder: dir,
+            naming: "wall-clock",
+            format: { kind: "jpeg", quality: 0.8 },
+            convert: async (source, target) => {
+                await Bun.sleep(5);
+                writeFileSync(target, readFileSync(source));
+            },
+            ocr: {
+                settings: () => ({ enabled: false, languages: [], minChars: 0 }),
+                sink: { write: (row) => rows.push(row.file) },
+            },
+        });
+        const atMs = new Date(2026, 10, 4, 23, 33, 16, 102).getTime();
+        const [first, second] = await Promise.all([
+            output.keep(frameIn(dir), { atMs, originMs: atMs, displayId: 4 }),
+            output.keep(frameIn(dir), { atMs, originMs: atMs, displayId: 4 }),
+        ]);
+
+        expect([first.file, second.file]).toEqual(["frames/23-33-16-102-d4.jpg", "frames/23-33-16-103-d4.jpg"]);
+        expect(readdirSync(output.framesDir).sort()).toEqual(["23-33-16-102-d4.jpg", "23-33-16-103-d4.jpg"]);
+        expect(rows).toEqual([first.file, second.file]);
+        expect(second.at.getTime()).toBe(atMs);
+    });
 });
 
 describe("characterization: what a library recording asks its recorder for", () => {
