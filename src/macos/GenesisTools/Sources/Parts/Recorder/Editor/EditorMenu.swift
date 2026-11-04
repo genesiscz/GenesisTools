@@ -27,10 +27,14 @@ enum EditorMenu {
         EditorCommand(title: "Redo", key: "z", modifiers: [.command, .shift], label: "⇧⌘Z") { $0.redo() },
         EditorCommand(title: "Delete Selection", key: "\u{8}", label: "⌫") { $0.deleteSelection() },
         EditorCommand(title: "Deselect", key: "\u{1b}", label: "Esc") { $0.selection = .none },
+        EditorCommand(title: "Duplicate", key: "d", modifiers: .command, label: "⌘D") { $0.duplicateSelection() },
     ]
 
     static let timeline: [EditorCommand] = [
         EditorCommand(title: "Play or Pause", key: " ", label: "Space") { $0.togglePlay() },
+        EditorCommand(title: "Play Backwards (Again: Faster)", key: "j", label: "J") { $0.shuttle("j") },
+        EditorCommand(title: "Pause", key: "k", label: "K") { $0.shuttle("k") },
+        EditorCommand(title: "Play (Again: Faster)", key: "l", label: "L") { $0.shuttle("l") },
         EditorCommand(title: "Split at Playhead", key: "s", label: "S") { $0.splitAtPlayhead() },
         EditorCommand(title: "Add Zoom at Playhead", key: "z", label: "Z") { $0.addZoom() },
         EditorCommand(title: "Set Part In", key: "i", label: "I") { $0.markIn() },
@@ -73,6 +77,11 @@ enum EditorMenu {
         bar.addItem(withTitle: "Edit", action: nil, keyEquivalent: "").submenu = edit
 
         bar.addItem(withTitle: "Timeline", action: nil, keyEquivalent: "").submenu = menu("Timeline", timeline)
+
+        let view = NSMenu(title: "View")
+        let scrub = view.addItem(withTitle: "Scrub Library Cards on Hover", action: #selector(EditorMenuTarget.toggleHoverScrub(_:)), keyEquivalent: "")
+        scrub.target = EditorMenuTarget.shared
+        bar.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = view
 
         let window = NSMenu(title: "Window")
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
@@ -185,6 +194,12 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
         box.command.run(model)
     }
 
+    /// The library's hover scrub (on by default), a View menu item with a check mark.
+    @objc func toggleHoverScrub(_ sender: Any?) {
+        let on = UserDefaults.standard.object(forKey: LibraryModel.hoverScrubKey) as? Bool ?? true
+        UserDefaults.standard.set(!on, forKey: LibraryModel.hoverScrubKey)
+    }
+
     @objc func showLibrary(_ sender: Any?) {
         LibraryWindow.shared.show(focus: true)
     }
@@ -194,6 +209,10 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(toggleHoverScrub(_:)) {
+            item.state = (UserDefaults.standard.object(forKey: LibraryModel.hoverScrubKey) as? Bool ?? true) ? .on : .off
+            return true
+        }
         guard let box = item.representedObject as? CommandBox else { return true }
         // A key with no ⌘ (Space, S, ←) belongs to a text field while one edits; a disabled item lets it through.
         if box.command.modifiers.isDisjoint(with: [.command, .control]), NSApp.keyWindow?.firstResponder is NSText { return false }
@@ -202,6 +221,7 @@ final class EditorMenuTarget: NSObject, NSMenuItemValidation {
         case "Undo": return model.canUndo
         case "Redo": return model.canRedo
         case "Delete Selection", "Deselect": return model.selection != .none
+        case "Duplicate": return model.selection != .none
         case "Clear Part": return model.exportPart != nil
         default: return true
         }

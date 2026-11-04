@@ -17,6 +17,8 @@ final class LibraryModel {
     static let scrubFrameCount = 12
     private(set) var loaded = false
     var filter = ""
+    /// The card the keyboard is on (arrows move it, Return opens it, ⌘⌫ moves it to the Trash).
+    var selected: URL?
     @ObservationIgnored private var watch: DispatchSourceFileSystemObject?
     @ObservationIgnored private var reading = false
 
@@ -111,6 +113,17 @@ final class LibraryModel {
         }
     }
 
+    /// Moves the keyboard selection by `delta` cards through the visible list, in the order the sections show it.
+    func moveSelection(_ delta: Int) {
+        let list = sections.flatMap(\.items)
+        guard !list.isEmpty else { return }
+        let index = selected.flatMap { folder in list.firstIndex { $0.folder == folder } }
+        let next = index.map { min(max(0, $0 + delta), list.count - 1) } ?? 0
+        selected = list[next].folder
+    }
+
+    var selectedItem: RecorderMenu.Recent? { selected.flatMap { folder in visible.first { $0.folder == folder } } }
+
     /// The visible recordings by day: Today, Yesterday, then Earlier, each newest first.
     var sections: [(title: String, items: [RecorderMenu.Recent])] {
         let calendar = Calendar.current
@@ -155,15 +168,13 @@ struct LibraryView: View {
                 // The window's title already says "Recordings"; the row carries the count and the filter.
                 Text(verbatim: Plural.count(model.items.count, "recording")).font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
                 Spacer()
+                GhostButton("Record", symbol: "record.circle", tooltip: "Record the screen (the recorder's menu has more ways)",
+                            identifier: "recorder.library.record") { RecorderMenu.shared.startRecording(audio: false) }
                 TextField("Filter by title", text: $model.filter)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 220)
                     .accessibilityIdentifier("recorder.library.filter")
-                Toggle("Scrub on hover", isOn: $hoverScrub)
-                    .toggleStyle(.checkbox)
-                    .font(.system(size: 12))
-                    .instantTooltip("Moving the pointer over a card plays through its movie")
-                    .accessibilityIdentifier("recorder.library.hoverScrub")
+
                 IconButton(systemName: "folder", tooltip: "Open the recordings folder in Finder", size: 13) {
                     PathOpener.finder(RecorderMenu.libraryFolder.path)
                 }
@@ -177,6 +188,10 @@ struct LibraryView: View {
                            detail: model.items.isEmpty ? "Record the screen from the menu bar item, or run tools recorder start." : nil)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                GeometryReader { geometry in
+                // Cards per row, for ↑ and ↓: the grid's adaptive columns at 248 pt with 18 pt gaps inside 20 pt padding.
+                let perRow = max(1, Int((geometry.size.width - 40 + 18) / (248 + 18)))
+                ScrollViewReader { reader in
                 ScrollView {
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
                         ForEach(model.sections, id: \.title) { section in
@@ -184,13 +199,15 @@ struct LibraryView: View {
                                 ForEach(section.items, id: \.folder) { item in
                                     LibraryCard(item: item, thumbnail: item.thumbnail.flatMap { model.thumbnails[$0] },
                                                 frames: hoverScrub ? item.thumbnail.flatMap { model.scrubFrames[$0] } : nil,
-                                                wantFrames: hoverScrub ? { model.loadScrub(item) } : nil) {
+                                                wantFrames: hoverScrub ? { model.loadScrub(item) } : nil,
+                                                selected: model.selected == item.folder) {
                                         EditorWindows.shared.open(path: item.folder.path)
                                     } rename: {
                                         model.rename(item)
                                     } trash: {
                                         model.moveToTrash(item)
                                     }
+                                    .id(item.folder)
                                 }
                             } header: {
                                 HStack(spacing: 6) {
@@ -203,6 +220,27 @@ struct LibraryView: View {
                         }
                     }
                     .padding(20)
+                }
+                .focusable()
+                .focusEffectDisabled()
+                .onKeyPress(.leftArrow) { model.moveSelection(-1); return .handled }
+                .onKeyPress(.rightArrow) { model.moveSelection(1); return .handled }
+                .onKeyPress(.upArrow) { model.moveSelection(-perRow); return .handled }
+                .onKeyPress(.downArrow) { model.moveSelection(perRow); return .handled }
+                .onKeyPress(.return) {
+                    guard let item = model.selectedItem else { return .ignored }
+                    EditorWindows.shared.open(path: item.folder.path)
+                    return .handled
+                }
+                .onKeyPress(.delete, phases: .down) { press in
+                    guard press.modifiers.contains(.command), let item = model.selectedItem else { return .ignored }
+                    model.moveToTrash(item)
+                    return .handled
+                }
+                .onChange(of: model.selected) { _, folder in
+                    if let folder { withAnimation(.easeOut(duration: 0.15)) { reader.scrollTo(folder) } }
+                }
+                }
                 }
             }
         }
@@ -217,6 +255,8 @@ private struct LibraryCard: View {
     /// The hover scrub's frames (nil until read, or with the setting off) and the call that reads them.
     let frames: [NSImage]?
     let wantFrames: (() -> Void)?
+    /// The keyboard's card: a ring in the accent colour.
+    let selected: Bool
     let open: () -> Void
     let rename: () -> Void
     let trash: () -> Void
@@ -242,6 +282,11 @@ private struct LibraryCard: View {
                     .frame(height: 155)
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        if selected {
+                            RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Color.accentColor, lineWidth: 3)
+                        }
+                    }
                     .overlay(alignment: .bottom) {
                         if frames != nil, let at = scrubAt {
                             GeometryReader { geometry in
@@ -285,7 +330,8 @@ private struct LibraryCard: View {
             }
             .contentShape(Rectangle())
         }
-        .accessibilityLabel("\(item.title), \(item.edited ? "edited" : "not edited")")
+        .accessibilityLabel("\(item.title), \(item.durationMs.map { formatClock(Int64($0 * 1000)) } ?? "no length"), \(item.edited ? "edited" : "not edited")")
+        .accessibilityAddTraits(selected ? .isSelected : [])
         .contextMenu {
             Button("Open in Editor", action: open)
             Button("Rename…", action: rename)

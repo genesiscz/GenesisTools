@@ -214,9 +214,6 @@ private struct TitlebarExport: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            if model.edited {
-                Text("Edited").font(.system(size: 12)).foregroundStyle(.secondary)
-            }
             if let progress = model.exportProgress {
                 ProgressView(value: progress).frame(width: 80)
             } else {
@@ -231,6 +228,7 @@ private struct TitlebarExport: View {
         }
         .padding(.trailing, 10)
         .frame(height: 28)
+        .background(DocumentEditedMark(edited: model.edited))
     }
 }
 
@@ -281,6 +279,17 @@ private struct ExportSummary: View {
     }
 }
 
+/// Marks the window as edited while a change is unsaved: the close button gets its dot, as in every Mac document.
+private struct DocumentEditedMark: NSViewRepresentable {
+    let edited: Bool
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async { view.window?.isDocumentEdited = edited }
+    }
+}
+
 /// The editor's keys, for the key window only and never while a text field edits.
 enum EditorKeys {
     @MainActor
@@ -296,6 +305,9 @@ enum EditorKeys {
             case ("z", true): shift ? model.redo() : model.undo()
             case ("s", true): model.saveNow()
             case ("e", true): model.tab = .export; model.export()
+            case ("j", false), ("k", false), ("l", false):
+                model.shuttle(Character(event.charactersIgnoringModifiers?.lowercased() ?? "k"))
+            case ("d", true): model.duplicateSelection()
             case ("i", false): model.markIn()
             case ("o", false): model.markOut()
             default:

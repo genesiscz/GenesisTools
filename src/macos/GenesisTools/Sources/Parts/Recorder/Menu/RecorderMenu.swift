@@ -218,7 +218,7 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
 
     /// Starts `tools recorder start` in its own process (it owns the recording and its socket); the live recordings'
     /// item and the floating controls (on by default) appear when its live entry does.
-    private func startRecording(audio: Bool) {
+    func startRecording(audio: Bool) {
         var args = ["recorder", "start"]
         if audio { args += ["--audio", "system,mic"] }
         if !Self.drawsCursor { args.append("--system-cursor") }

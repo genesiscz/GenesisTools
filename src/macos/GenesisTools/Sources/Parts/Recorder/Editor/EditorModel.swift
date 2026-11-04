@@ -144,6 +144,32 @@ final class EditorModel {
         isPlaying = player.rate != 0
     }
 
+    /// J, K and L, as in every editor: L plays and each press doubles the speed (up to 4×), K pauses, J plays backwards
+    /// when the movie can (each press doubles too) and otherwise steps back a second.
+    func shuttle(_ key: Character) {
+        switch key {
+        case "k":
+            if player.rate != 0 { togglePlay() }
+        case "l":
+            if player.rate <= 0 {
+                if player.rate < 0 { player.pause() }
+                togglePlay()
+            } else {
+                player.rate = min(4, player.rate * 2)
+            }
+        case "j":
+            if player.currentItem?.canPlayReverse == true {
+                player.rate = player.rate < 0 ? max(-4, player.rate * 2) : -1
+            } else {
+                player.pause()
+                seek(max(0, clock.outUs - 1_000_000))
+            }
+        default:
+            return
+        }
+        isPlaying = player.rate != 0
+    }
+
     /// When the current playback started: the wall clock, the output time and the renderer's frame count.
     @ObservationIgnored private var playStart: (date: Date, outUs: Int64, frames: Int)?
 
@@ -268,6 +294,48 @@ final class EditorModel {
         }
         selection = .zoom(id)
         tab = .zoom
+        apply(next, rebuildMovie: false)
+    }
+
+    /// A copy of the selected zoom, hidden part or text right after the original, selected (⌘D).
+    func duplicateSelection() {
+        var next = project
+        switch selection {
+        case let .zoom(id):
+            guard let zoom = project.zooms.first(where: { $0.id == id }),
+                  let (added, newID) = TimelineMap.addZoom(project, startUs: zoom.endUs, endUs: zoom.endUs + (zoom.endUs - zoom.startUs), scale: zoom.scale) else {
+                show("No room after this zoom for a copy; zooms cannot overlap.", error: false)
+                return
+            }
+            next = added
+            if let index = next.zooms.firstIndex(where: { $0.id == newID }) {
+                next.zooms[index].mode = zoom.mode
+                next.zooms[index].focusX = zoom.focusX
+                next.zooms[index].focusY = zoom.focusY
+                next.zooms[index].easeInMs = zoom.easeInMs
+                next.zooms[index].easeOutMs = zoom.easeOutMs
+            }
+            selection = .zoom(newID)
+        case let .redaction(id):
+            guard var copy = project.redactions?.first(where: { $0.id == id }) else { return }
+            let length = copy.endUs - copy.startUs
+            copy.id = "r" + UUID().uuidString.prefix(8).lowercased()
+            copy.startUs = min(copy.endUs, project.source.durationUs - 100_000)
+            copy.endUs = min(project.source.durationUs, copy.startUs + length)
+            next.redactions = (next.redactions ?? []) + [copy]
+            selection = .redaction(copy.id)
+        case let .text(id):
+            guard var copy = project.texts?.first(where: { $0.id == id }) else { return }
+            let length = copy.endUs - copy.startUs
+            copy.id = "t" + UUID().uuidString.prefix(8).lowercased()
+            copy.startUs = min(copy.endUs, project.source.durationUs - 100_000)
+            copy.endUs = min(project.source.durationUs, copy.startUs + length)
+            next.texts = (next.texts ?? []) + [copy]
+            selection = .text(copy.id)
+        case .clip, .none:
+            show("Select a zoom, a hidden part or a text to duplicate it.", error: false)
+            return
+        }
         apply(next, rebuildMovie: false)
     }
 
