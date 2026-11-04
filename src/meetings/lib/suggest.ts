@@ -1,4 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
@@ -28,6 +27,7 @@ import {
     type VocabTerm,
 } from "@genesiscz/utils/transcribe/terms";
 import { arrivalItems } from "./arrival";
+import { contextFileText, contextMoment } from "./context-file";
 import { selectQuestions } from "./question-select";
 import { DEFAULT_LISTEN_BELOW, questionFor, questionKey } from "./questions";
 import { unlabeledStretches, unlabeledView } from "./unlabeled";
@@ -190,9 +190,8 @@ function contextDocuments(record: MeetingRecord): { name: string; text: string }
             return [{ name: entry.title ?? entry.id, text: entry.ref }];
         }
 
-        return entry.kind === "file" && existsSync(entry.ref)
-            ? [{ name: entry.title ?? basename(entry.ref, extname(entry.ref)), text: readFileSync(entry.ref, "utf8") }]
-            : [];
+        const file = entry.kind === "file" ? contextFileText(entry.ref, contextMoment(record)) : undefined;
+        return file ? [{ name: entry.title ?? basename(entry.ref, extname(entry.ref)), text: file.text }] : [];
     });
 }
 
@@ -269,9 +268,8 @@ function termVocabulary(options: TermSources): VocabTerm[] {
             return termsFromText(entry.ref, "context");
         }
 
-        return entry.kind === "file" && existsSync(entry.ref)
-            ? termsFromText(readFileSync(entry.ref, "utf8"), "context")
-            : [];
+        const file = entry.kind === "file" ? contextFileText(entry.ref, contextMoment(record)) : undefined;
+        return file ? termsFromText(file.text, "context") : [];
     });
     const dictionaryTerms = dictionary.entries.flatMap((entry) => {
         if (entry.type === "term") {

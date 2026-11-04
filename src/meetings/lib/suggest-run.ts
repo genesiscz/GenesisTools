@@ -1,5 +1,7 @@
+import { logger } from "@genesiscz/utils/logger";
 import { languageSettings } from "@genesiscz/utils/meetings/config";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { contextFileText, contextMoment } from "./context-file";
 import { OpenedMeeting } from "./opened-meeting";
 import { type SuggestRule, suggestItems } from "./suggest";
 import type { WordCheckChoice } from "./word-check";
@@ -24,6 +26,10 @@ export async function runSuggest(options: {
     const meeting = await opened.meeting();
     const config = await opened.config();
     const evidence = rules.includes("evidence") ? await opened.evidence() : null;
+
+    if (rules.includes("terms")) {
+        warnings.push(...contextWarnings(collected));
+    }
     let wordCheck: Awaited<ReturnType<OpenedMeeting["wordCheck"]>>["check"];
 
     if (rules.includes("terms")) {
@@ -67,4 +73,30 @@ export async function runSuggest(options: {
     }
 
     return { fresh, warnings };
+}
+
+/** What the term rules cannot read as the meeting saw it: a context file that is gone, or changed with no commit. */
+export function contextWarnings(record: MeetingRecord): string[] {
+    return record.context.flatMap((entry) => {
+        if (entry.kind !== "file") {
+            return [];
+        }
+
+        const file = contextFileText(entry.ref, contextMoment(record));
+
+        if (!file) {
+            return [
+                `The context file ${entry.ref} is gone and no git commit holds it; its quotes and identifiers are not checked`,
+            ];
+        }
+
+        if (file.from === "git") {
+            logger.debug(
+                { ref: entry.ref, commit: file.commit },
+                "meetings: context file read at its commit before the meeting"
+            );
+        }
+
+        return file.warning ? [file.warning] : [];
+    });
 }
