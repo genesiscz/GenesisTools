@@ -10,6 +10,7 @@ import {
     QA_STREAM_PATH,
 } from "@dd/contract";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { MOCK_BOARD, MOCK_TRANSCRIPT_TURNS } from "@/api/fixtures/agents";
 import {
     EMPTY_ATTACH,
     MOCK_ATTENTION,
@@ -238,6 +239,26 @@ const ROUTES: FixtureRoute[] = [
     { method: "GET", path: paths.containers(), handle: () => MOCK_CONTAINERS },
     { method: "GET", path: paths.diskUsage(), handle: () => MOCK_DISK_USAGE },
     { method: "GET", path: "/api/timeline", handle: () => MOCK_TIMELINE },
+
+    // The agents board (F9) and its session view; a stop is refused, since a fixture has no process to end.
+    { method: ENDPOINTS.gatewayBoard.method, path: ENDPOINTS.gatewayBoard.path, handle: () => MOCK_BOARD },
+    {
+        method: ENDPOINTS.gatewayTranscript.method,
+        path: ENDPOINTS.gatewayTranscript.path,
+        handle: () => ({ sessionId: MOCK_BOARD.sessions[0].sessionId, truncated: true, turns: MOCK_TRANSCRIPT_TURNS }),
+    },
+    {
+        method: ENDPOINTS.agentsStop.method,
+        path: ENDPOINTS.agentsStop.path,
+        handle: ({ body }) => ({
+            key: text(body.key),
+            pid: numberOf(body.pid),
+            stopped: false,
+            signal: null,
+            survivors: [],
+            reason: "mock data: no process to stop",
+        }),
+    },
 
     // The answer queue (F6): the waiting set and its writes.
     { method: ENDPOINTS.qaWaiting.method, path: ENDPOINTS.qaWaiting.path, handle: () => fixtureQueue() },
