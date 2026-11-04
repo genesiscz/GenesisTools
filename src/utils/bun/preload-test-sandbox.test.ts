@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { AGENT_SESSION_KEYS, ASSIGNED_SESSION_KEYS } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { configCandidates, resolveActiveVault } from "@genesiscz/utils/obsidian/discovery";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { isAmbientAgentEnvKey } from "./preload-test-sandbox";
 
 test("a startup Obsidian override survives fixture cleanup between tests", () => {
     const fixture = mkdtempSync(join(tmpdir(), "obsidian-startup-config-"));
@@ -160,5 +162,33 @@ describe("Obsidian sandbox between tests", () => {
     test("isolation resumes after the escape hatch is removed", () => {
         expect(env.getTrimmed("OBSIDIAN_CONFIG_DIR")).toBe(sandbox);
         expect(discover()).toBeNull();
+    });
+});
+
+describe("the ambient agent env is removed before the first test", () => {
+    test("every harness session key and assigned-session key counts as ambient, and the homes stay", () => {
+        for (const { key } of AGENT_SESSION_KEYS) {
+            expect(isAmbientAgentEnvKey(key), key).toBe(true);
+        }
+
+        for (const key of ASSIGNED_SESSION_KEYS) {
+            expect(isAmbientAgentEnvKey(key), key).toBe(true);
+        }
+
+        for (const key of ["T3CODE_THREAD_ID", "CMUX_SURFACE_ID", "TMUX_PANE", "TOOLS_CODEX_ACCOUNT", "AI_AGENT"]) {
+            expect(isAmbientAgentEnvKey(key), key).toBe(true);
+        }
+
+        for (const key of ["CODEX_HOME", "GROK_HOME", "CLAUDE_CONFIG_DIR", "TERM", "PATH", "HOME"]) {
+            expect(isAmbientAgentEnvKey(key), key).toBe(false);
+        }
+    });
+
+    test("no ambient key is left in this test process", () => {
+        if (env.test.allowsRealHome()) {
+            return;
+        }
+
+        expect(Object.keys(env.getProcessEnv()).filter(isAmbientAgentEnvKey)).toEqual([]);
     });
 });

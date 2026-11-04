@@ -137,6 +137,52 @@ function isolateCodexModelsCache(): void {
     env.testing.set("GENESIS_TOOLS_CODEX_MODELS_CACHE", env.getTrimmed("GENESIS_TOOLS_CODEX_MODELS_CACHE") ?? missing);
 }
 
+/** Who-is-calling keys a harness, a host app or a terminal sets for the processes it starts (`*_HOME` stay). */
+export const AMBIENT_AGENT_ENV_PREFIXES = ["CLAUDE_CODE_", "CODEX_", "GROK_", "COPILOT_", "T3CODE_", "CMUX_", "ITERM_"];
+export const AMBIENT_AGENT_ENV_KEYS = [
+    "CLAUDECODE",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+    "CLAUDE_AGENT_SDK_VERSION",
+    "AI_AGENT",
+    "TMUX",
+    "TMUX_PANE",
+    "TERM_PROGRAM",
+    "TERM_SESSION_ID",
+    "GENESIS_AGENTS_SESSION",
+    "GT_RENDEZVOUS_SESSION",
+];
+const ACCOUNT_STAMP = /^TOOLS_[A-Z0-9]+_ACCOUNT$/;
+
+export function isAmbientAgentEnvKey(name: string): boolean {
+    if (name.endsWith("_HOME")) {
+        return false;
+    }
+
+    return (
+        AMBIENT_AGENT_ENV_KEYS.includes(name) ||
+        ACCOUNT_STAMP.test(name) ||
+        AMBIENT_AGENT_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))
+    );
+}
+
+/**
+ * A run started inside Claude Code, Codex, Grok, T3 Code, cmux or tmux inherits that host's session ids, account
+ * stamps and pane ids, so a test that read the ambient env passed here and failed on CI (which has none of them).
+ * Every such key is removed before the first test; a test that needs one sets it itself.
+ */
+function isolateAgentEnv(): void {
+    if (env.test.allowsRealHome()) {
+        return;
+    }
+
+    for (const name of Object.keys(env.getProcessEnv())) {
+        if (isAmbientAgentEnvKey(name)) {
+            env.testing.unset(name);
+        }
+    }
+}
+
 /**
  * The native agent homes (`CLAUDE_CONFIG_DIR`, `GROK_HOME`) live outside `~/.genesis-tools` too. Decision delivery
  * reads the live Claude receivers from `<claude home>/sessions` and asks the Grok leader on `<grok home>/leader.sock`,
@@ -171,6 +217,7 @@ function isolateNativeHomes(): void {
 }
 
 installSandbox();
+isolateAgentEnv();
 isolateObsidian();
 isolateCodexModelsCache();
 isolateNativeHomes();
