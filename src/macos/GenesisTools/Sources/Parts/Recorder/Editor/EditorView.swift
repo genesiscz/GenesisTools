@@ -1059,6 +1059,29 @@ private struct MusicSection: View {
     }
 }
 
+/// One click for a common destination: it sets the format, size, codec and subtitles below, which stay editable.
+private struct ExportPreset {
+    let name: String
+    let symbol: String
+    let detail: String
+    let apply: (inout EditProject.ExportSettings) -> Void
+
+    static let all: [ExportPreset] = [
+        ExportPreset(name: "YouTube", symbol: "play.rectangle", detail: "MP4, H.264 at 1080p, with an SRT subtitle file and the markers as chapters") {
+            $0.format = nil; $0.codec = .h264; $0.maxHeight = 1080; $0.subtitles = .srt; $0.chapters = nil
+        },
+        ExportPreset(name: "Chat", symbol: "bubble.left", detail: "A small MP4 for Slack, Teams or a mail: H.264 at 720p, no subtitle file") {
+            $0.format = nil; $0.codec = .h264; $0.maxHeight = 720; $0.subtitles = nil
+        },
+        ExportPreset(name: "README GIF", symbol: "photo.on.rectangle", detail: "A GIF for a README or an issue: 10 fps, at most 960 pixels wide, no sound") {
+            $0.format = .gif; $0.subtitles = nil
+        },
+        ExportPreset(name: "Archive", symbol: "archivebox", detail: "HEVC at the recording's full size: the best picture in the smallest file") {
+            $0.format = nil; $0.codec = .hevc; $0.maxHeight = 0
+        },
+    ]
+}
+
 /// "100% (0 dB)", "50% (−6.0 dB)", "Muted".
 private func volumeLabel(_ volume: Double) -> String {
     guard volume > 0.001 else { return "Muted" }
@@ -1077,6 +1100,14 @@ private struct ExportInspector: View {
         let settings = model.project.export
         VStack(alignment: .leading, spacing: 12) {
             Text("Export").font(.system(size: 15, weight: .semibold))
+            SectionLabel(text: "Presets")
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                ForEach(ExportPreset.all, id: \.name) { preset in
+                    WideButton(title: preset.name, systemImage: preset.symbol) { model.setExport { preset.apply(&$0) } }
+                        .instantTooltip(preset.detail)
+                        .accessibilityIdentifier("recorder.export.preset.\(preset.name)")
+                }
+            }
             SectionLabel(text: "Format")
             GenSegmentedTabs("Format", items: EditProject.ExportFormat.allCases.map { .init($0, $0.rawValue.uppercased()) },
                              selection: Binding(get: { settings.format ?? .mp4 }, set: { format in model.setExport { $0.format = format == .mp4 ? nil : format } }),

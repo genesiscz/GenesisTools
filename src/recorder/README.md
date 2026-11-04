@@ -111,7 +111,8 @@ The window, the CLI and the REPL export with one renderer (AVFoundation and the 
 because the H.264 export preset lowers the rate instead (measured: 2880×1798 came out at 30 fps, 3724×2326 at 15).
 HEVC keeps the full size. `--from`/`--to` (REPL `export({ from, to })`, the window's I and O) export only the part
 that plays between two OUTPUT times; the edit itself stays whole. A GIF (10 fps, at most 960 wide) or WebM is made by ffmpeg from that movie. An export never
-overwrites a file: the default name moves on to `-edited-2`, `-3`. The Export tab can also put the file on the
+overwrites a file: the default name moves on to `-edited-2`, `-3`. The Export tab's presets (YouTube: 1080p H.264 with SRT and chapters; Chat: 720p; README GIF; Archive: HEVC at full
+size) set those choices in one click. The Export tab can also put the file on the
 clipboard when done (off by default) and show it in Finder (on).
 
 ## The window (GenesisTools.app, recorder part)
