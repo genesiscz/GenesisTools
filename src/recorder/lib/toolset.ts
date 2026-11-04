@@ -177,12 +177,13 @@ const movieMethods = [
         z
             .object({
                 id: z.string(),
+                at: timeSchema.optional(),
+                by: z.number().optional(),
                 from: timeSchema.optional(),
                 to: timeSchema.optional(),
-                by: z.number().optional(),
             })
             .strict(),
-        'Moves or trims a zoom, hidden part, text or shape by its id (info() lists them): `by` seconds moves it with its length kept (negative is earlier), `from` and/or `to` set a new start or end (source seconds or "m:ss"). retime({ id: "t1", by: 2 }), retime({ id: "s1", to: 9 }).'
+        'Moves or trims a zoom, hidden part, text or shape by its id (info() lists them). To MOVE it with its length kept: `at` (its new start) or `by` (seconds, negative is earlier). To TRIM it: `from` and/or `to` set a new start or end, so `from` alone makes it longer or shorter. Source seconds or "m:ss". retime({ id: "z1", at: 1 }), retime({ id: "t1", by: 2 }), retime({ id: "s1", to: 9 }).'
     ),
     edit(
         "fixLine",
@@ -722,6 +723,7 @@ export class Movie {
         const described = describeProject(edited.project, edited.path);
         const seconds = (us: number) => Math.round(us / 1000) / 1000;
         return {
+            summary: summarize(edited.project, undefined),
             ...described,
             ...(edited.removedIdleUs
                 ? { removed: edited.removedIdleUs.map(([from, to]) => [seconds(from), seconds(to)]) }
@@ -769,6 +771,7 @@ export class Movie {
 
     async retime(options: {
         id: string;
+        at?: z.infer<typeof timeSchema>;
         from?: z.infer<typeof timeSchema>;
         to?: z.infer<typeof timeSchema>;
         by?: number;

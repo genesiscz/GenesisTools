@@ -888,6 +888,7 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .object({
             op: z.literal("retime"),
             id: z.string(),
+            at: timeSchema.optional(),
             from: timeSchema.optional(),
             to: timeSchema.optional(),
             by: z.number().optional(),
@@ -1142,23 +1143,31 @@ export function opTimeWarnings(op: EditOp, sourceDurationUs: number): string[] {
 
 /** Applies one op; throws a RangeError a caller can show as it is. */
 /**
- * Moves or trims the zoom, hidden part, text or shape with this id: `by` seconds moves it (its length kept), `from`
- * and `to` set its start and end (source time). Held inside the recording; a zoom may not meet another zoom.
+ * Moves or trims the zoom, hidden part, text or shape with this id: `at` (a new start) or `by` seconds moves it with
+ * its length kept; `from` and `to` set its start and end, so `from` alone makes it longer or shorter (source time).
+ * Held inside the recording; a zoom may not meet another zoom.
  */
 function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>): EditProject {
-    if (op.by !== undefined && (op.from !== undefined || op.to !== undefined)) {
-        throw new Error("retime takes `by` (move, length kept) or `from`/`to` (new start or end), not both");
+    const moves = [op.at, op.by].filter((value) => value !== undefined).length;
+
+    if (moves > 1 || (moves === 1 && (op.from !== undefined || op.to !== undefined))) {
+        throw new Error(
+            "retime takes one of: `at` (a new start, length kept), `by` (seconds to move, length kept), or `from`/`to` (a new start or end, which changes the length), not both"
+        );
     }
 
-    if (op.by === undefined && op.from === undefined && op.to === undefined) {
-        throw new Error("retime needs `by` (seconds to move, negative is earlier) or `from` and/or `to`");
+    if (moves === 0 && op.from === undefined && op.to === undefined) {
+        throw new Error(
+            "retime needs `at` (a new start, length kept), `by` (seconds to move, negative is earlier) or `from` and/or `to`"
+        );
     }
 
     const durationUs = project.source.durationUs;
     const place = (startUs: number, endUs: number): { startUs: number; endUs: number } => {
-        if (op.by !== undefined) {
+        if (op.at !== undefined || op.by !== undefined) {
             const length = endUs - startUs;
-            const moved = Math.min(Math.max(0, startUs + Math.round(op.by * 1e6)), Math.max(0, durationUs - length));
+            const wanted = op.at !== undefined ? timeToUs(op.at) : startUs + Math.round((op.by ?? 0) * 1e6);
+            const moved = Math.min(Math.max(0, wanted), Math.max(0, durationUs - length));
             return { startUs: moved, endUs: moved + length };
         }
 
