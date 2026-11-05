@@ -29,7 +29,7 @@ export const prShowDoor: CallDoor<PrShowArgs> = {
         }
 
         const age = parsed.flags.has("--max-cache-age") ? wholeNumber(parsed.flags.get("--max-cache-age")) : 0;
-        if (age === null || !/^https?:\/\//.test(parsed.positionals[0])) {
+        if (age === null || !/^(?:https?:\/\/|\/|[A-Za-z]:[\\/])/.test(parsed.positionals[0])) {
             return null;
         }
 
