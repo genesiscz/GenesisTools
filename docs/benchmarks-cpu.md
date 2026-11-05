@@ -345,3 +345,34 @@ Rerun, 5 interleaved rounds, load 22–30:
 The full refresh costs about twice the earlier figure and still about a third of a discover process. The 5-minute
 side-by-side totals above stand as measured: they timed the real watch as it runs, with whatever reuse the other
 processes on the machine offered it.
+
+## 2026-11-05 06:29 — Meeting OCR: the cost of one kept frame, and the language-correction verdict
+
+The meeting recorder reads each kept frame with Vision OCR (`recognizeText` in `@genesiscz/utils/macos/ocr`, run by
+the shared darwinkit helper). Three scripts in `scripts/benchmarks/meetings-ocr/` measure it; CPU time is the metric,
+wall time on this Mac is noise (the runs below were taken at load averages between 166 and 266).
+
+- `bench.ts --runs 3 --compare` against the baseline of 63044e75fb, as the recorder calls it (one frame at a time,
+  accurate, the meeting's languages): warm call 178 ms wall (185 before), the helper's CPU per warm call 230 ms (260
+  before), one cold call 396 ms (360 before, +10%, inside the tolerance), over the 537 frames of one meeting's
+  `ocr.jsonl`. PASS.
+- `keep.ts --runs 3`, the whole keep path of one frame (PNG to JPEG through `sips`, OCR, one `ocr.jsonl` row), before
+  and after it moved into the shared `FrameOutput`: inline 229 ms wall and 205 ms helper CPU, shared 228 ms and 200 ms,
+  0 text mismatches, 2 spawned children per frame in both arms.
+- `correction.ts` (commit 0823c5556b), Vision's language correction on and off over 40 frames of one meeting (cs-CZ and
+  en-US), both arms in one Swift process, interleaved per frame: Vision CPU per frame 447 ms on, 185 ms off (total
+  29.0 s against 7.0 s). Without correction 9.1% of the corrected words are missing and 7.4% are new; the words a
+  dictionary knows fall from 81.2% to 79.8%. Verdict: correction stays on (off loses 2.9% of the dictionary words), so
+  the darwinkit `languageCorrection` option is not added.
+
+Not built yet (spec section 3 of the meetings OCR work): the skip rules (no OCR when the changed region holds no text,
+an OCR-only change threshold) and the crop to the changed region. They are the next CPU saving; when they land, rerun
+`bench.ts --compare` and add the numbers here.
+
+Rerun:
+
+```bash
+bun scripts/benchmarks/meetings-ocr/bench.ts --runs 3 --compare
+bun scripts/benchmarks/meetings-ocr/keep.ts --runs 3
+bun scripts/benchmarks/meetings-ocr/correction.ts
+```
