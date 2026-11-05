@@ -220,9 +220,21 @@ export class ChosenDisplays implements DisplayChoice {
     /** The displays as the recorder listed them last. */
     known: DisplayInfo[] = [];
 
-    /** The ids a mode or a list means for the known displays. */
-    pick(mode: DisplayMode | number[]): number[] {
-        return pickDisplayIds(mode, this.known);
+    /**
+     * The ids a mode or a list means for the known displays. More than one is refused when the recorder records one
+     * display at a time, so a start or a change asks for one display instead of losing the others silently.
+     */
+    pick(mode: DisplayMode | number[], recorder: FrameRecorder): number[] {
+        const ids = pickDisplayIds(mode, this.known);
+
+        if (ids.length > 1 && !recorder.supports.parallelCaptures) {
+            throw new RpcError(
+                RPC_ERRORS.unsupported,
+                "this recorder records one display at a time; select one display"
+            );
+        }
+
+        return ids;
     }
 
     /** The chosen displays with their names, for the live entry and the manifest. */
@@ -244,7 +256,7 @@ export class ChosenDisplays implements DisplayChoice {
     }
 
     async add(recording: DisplayHost, displayId: number): Promise<DisplaySelection> {
-        return this.choose(recording, this.pick([...this.chosen, displayId]));
+        return this.choose(recording, this.pick([...this.chosen, displayId], recording.recorder));
     }
 
     async remove(recording: DisplayHost, displayId: number): Promise<DisplaySelection> {
@@ -258,7 +270,7 @@ export class ChosenDisplays implements DisplayChoice {
     }
 
     async switchTo(recording: DisplayHost, displayId: number): Promise<DisplaySelection> {
-        const [to] = this.pick([displayId]);
+        const [to] = this.pick([displayId], recording.recorder);
         const switched = await recording.switchLive(this.targetOf(to));
 
         if (switched !== "live") {
@@ -271,7 +283,7 @@ export class ChosenDisplays implements DisplayChoice {
     }
 
     async mode(recording: DisplayHost, mode: DisplayMode): Promise<DisplaySelection> {
-        return { ...this.choose(recording, this.pick(mode)), mode };
+        return { ...this.choose(recording, this.pick(mode, recording.recorder)), mode };
     }
 
     private targetOf(displayId: number): PieceTarget {

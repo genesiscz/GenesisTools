@@ -839,6 +839,23 @@ describe("recorder and editor toolsets", () => {
         }
     }, 30_000);
 
+    test("serial recorders reject multiple displays before capture and on live selection", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-serial-rec-"));
+        const recorder = new FakeRecorder();
+        recorder.supports.parallelCaptures = false;
+        const options = { recorder, liveDir: join(root, "live"), folder: join(root, "rec") };
+        await expect(startRecording({ ...options, displays: "all" })).rejects.toThrow("one display");
+        expect(recorder.calls).toEqual([]);
+        const recording = await startRecording({ ...options, displays: "main" });
+        try {
+            await expect(recording.setDisplayMode("all")).rejects.toThrow("one display");
+            await expect(recording.addDisplay(4)).rejects.toThrow("one display");
+            expect((await recording.status()).displays.map((display) => display.id)).toEqual([1]);
+        } finally {
+            await recording.stop();
+        }
+    });
+
     test("docs come from the descriptors, handles included", () => {
         const recorder = renderDocs(recorderApi);
         expect(recorder).toContain('recording.audio.mute(source: "mic" | "system") → AudioState [reversible]');

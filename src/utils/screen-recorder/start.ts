@@ -249,7 +249,7 @@ export class LibraryRecording extends FrameRecording<number> {
 
         this.choice.known = await recorder.displays();
         this.options.signal?.throwIfAborted();
-        this.choice.chosen = this.choice.pick(this.options.displays ?? "main");
+        this.choice.chosen = this.choice.pick(this.options.displays ?? "main", recorder);
 
         if (this.audio.sources.length > 0 && !recorder.supports.audio) {
             this.warn(`the ${recorder.id} recorder records no sound; recording frames only`);
