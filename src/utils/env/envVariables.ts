@@ -93,6 +93,17 @@ export const env = {
         getHomeOverride: () => getTrimmed("GROK_HOME"),
     },
 
+    android: {
+        /** The Android SDK root (`platform-tools/adb`, `emulator/emulator`): `ANDROID_HOME`, then `ANDROID_SDK_ROOT`. */
+        getSdkRoot: () =>
+            getTrimmed("ANDROID_HOME") ?? getTrimmed("ANDROID_SDK_ROOT") ?? `${homedir()}/Library/Android/sdk`,
+    },
+
+    appium: {
+        /** The Appium home that holds the installed drivers (`appium driver install` writes there). */
+        getHome: () => getWithDefault("APPIUM_HOME", `${homedir()}/.appium`),
+    },
+
     codex: {
         /** Codex CLI data root override. Codex accepts a comma-separated list of homes. */
         getHomeOverride: () => getTrimmed("CODEX_HOME"),
