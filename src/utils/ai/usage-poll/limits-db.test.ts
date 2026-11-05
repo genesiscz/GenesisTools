@@ -965,14 +965,29 @@ describe("UsageLimitsDb", () => {
         });
 
         test("scope changes preserve distinct histories and close prior availability", () => {
-            for (const [hour, scopeModel, percent] of [[6, null, 30], [8, "fable", 12], [10, null, 5]] as const) {
-                mem.recordSnapshotV2("work", "primary", percent, `2026-11-01T${String(hour).padStart(2, "0")}:00:00.000Z`, {
-                    provider: "anthropic-sub", kind: "weekly", scopeModel, resetsAt: null, severity: null,
-                });
+            for (const [hour, scopeModel, percent] of [
+                [6, null, 30],
+                [8, "fable", 12],
+                [10, null, 5],
+            ] as const) {
+                mem.recordSnapshotV2(
+                    "work",
+                    "primary",
+                    percent,
+                    `2026-11-01T${String(hour).padStart(2, "0")}:00:00.000Z`,
+                    {
+                        provider: "anthropic-sub",
+                        kind: "weekly",
+                        scopeModel,
+                        resetsAt: null,
+                        severity: null,
+                    }
+                );
             }
             const entries = mem.getSeries({ from: FROM, to: TO, keys: ["primary"], agg: "raw" });
             expect(entries.map((entry) => [entry.scopeModel, entry.points.map((point) => point.percent)])).toEqual([
-                [null, [30, 5]], ["fable", [12]],
+                [null, [30, 5]],
+                ["fable", [12]],
             ]);
             expect(entries[0].availability[0].to).toBe("2026-11-01T08:00:00.000Z");
         });
@@ -980,15 +995,27 @@ describe("UsageLimitsDb", () => {
         test("minmax bins split on absence and kind re-entry within one bucket", () => {
             const store = new UsageLimitsDb(":memory:");
             const at = (minute: number) => `2026-11-01T04:${String(minute).padStart(2, "0")}:00.000Z`;
-            const reading = { provider: "openai-sub", kind: "session", resetsAt: null, scopeModel: null, severity: null };
+            const reading = {
+                provider: "openai-sub",
+                kind: "session",
+                resetsAt: null,
+                scopeModel: null,
+                severity: null,
+            };
             try {
                 store.recordSnapshotV2("work", "primary", 10, at(0), reading);
                 store.recordSnapshotV2("work", "primary", 0, at(10), { ...reading, availability: "absent" });
                 store.recordSnapshotV2("work", "primary", 20, at(20), reading);
                 store.recordSnapshotV2("work", "primary", 30, at(30), { ...reading, kind: "weekly" });
                 store.recordSnapshotV2("work", "primary", 40, at(40), reading);
-                const session = store.getSeries({ from: at(0), to: at(40), step: 3_600_000, agg: "minmax" }).find((entry) => entry.kind === "session");
-                expect(session?.bins.map((bin) => [bin.open, bin.close])).toEqual([[10, 10], [20, 20], [40, 40]]);
+                const session = store
+                    .getSeries({ from: at(0), to: at(40), step: 3_600_000, agg: "minmax" })
+                    .find((entry) => entry.kind === "session");
+                expect(session?.bins.map((bin) => [bin.open, bin.close])).toEqual([
+                    [10, 10],
+                    [20, 20],
+                    [40, 40],
+                ]);
             } finally {
                 store.close();
             }
