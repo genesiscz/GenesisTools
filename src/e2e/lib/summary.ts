@@ -126,7 +126,7 @@ export function compareRuns(before: RunSummary, after: RunSummary): TestChange[]
     const states = (summary: RunSummary) =>
         new Map(
             summary.specs.flatMap((spec) =>
-                spec.tests.map((test) => [`${spec.spec.name} > ${test.suite} > ${test.title}`, test.state] as const)
+                spec.tests.map((test) => [`${spec.spec.path} > ${test.suite} > ${test.title}`, test.state] as const)
             )
         );
     const a = states(before);
