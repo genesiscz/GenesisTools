@@ -32,8 +32,10 @@ function scriptField(script: string, field: string): string | undefined {
 function codeModeDetail(script: string, cwd: string | undefined): PendingToolCall["detail"] {
     const cmd = scriptField(script, "cmd");
 
+    // Only a script that is one exec_command call (its result may be assigned) shows as that command; any other code
+    // in it shows as the whole script, so an approval never hides what else would run.
     const singleCall =
-        /^\s*(?:await\s+)?tools\.exec_command\(\s*\{\s*(?:\w+\s*:\s*"(?:[^"\\]|\\.)*"\s*,?\s*)+\}\s*\)\s*;?\s*$/.test(
+        /^\s*(?:(?:const|let|var)\s+\w+\s*=\s*)?(?:await\s+)?tools\.exec_command\(\s*\{\s*(?:\w+\s*:\s*"(?:[^"\\]|\\.)*"\s*,?\s*)+\}\s*\)\s*;?\s*$/.test(
             script
         );
     const fields = [...script.matchAll(/(?:\{|,)\s*(\w+)\s*:/g)].map((match) => match[1]);
