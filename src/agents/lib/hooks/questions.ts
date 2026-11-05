@@ -1,4 +1,5 @@
 import type { AgentIdentity } from "@genesiscz/utils/agent/identity";
+import { type RecordedCallerSource, recordedCallerFacts } from "@genesiscz/utils/agent/identity/record-facts";
 import { closeQuestions, upsertQuestion } from "@genesiscz/utils/agents/dialogs/store";
 import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { questionCountOf, questionOptionsOf, questionTextOf } from "@genesiscz/utils/ai/transcripts/turn-state-core";
@@ -15,8 +16,17 @@ export interface QuestionHookAction {
     closes: "none" | "permissions" | "all";
 }
 
-/** Who ran the hook, as `hookCaller` names it: the payload first, then the env it inherited for the same caller. */
-export type QuestionHookCaller = Pick<AgentIdentity, "sessionId">;
+/**
+ * Who ran the hook, as `hookCaller` names it: the payload first, then the env it inherited for the same caller. Its
+ * session keys the record, and its other facts (`recordedCallerFacts`) are kept on the record as `caller`.
+ */
+export type QuestionHookCaller = Pick<AgentIdentity, "sessionId"> & Partial<RecordedCallerSource>;
+
+/** The record's `caller`, or nothing when the hook knew none of its facts. */
+function callerFactsOf(caller: QuestionHookCaller): Pick<OpenQuestion, "caller"> {
+    const facts = recordedCallerFacts(caller);
+    return Object.keys(facts).length > 0 ? { caller: facts } : {};
+}
 
 const PLAN_QUESTION = "Approve the plan?";
 const PERMISSION_QUESTION = "Permission needed";
@@ -68,6 +78,7 @@ export function questionHookAction(
                 ...(questionCount ? { questionCount } : {}),
                 askedAt: now,
                 source: "hook",
+                ...callerFactsOf(caller),
             },
             closes: "none",
         };
@@ -87,6 +98,7 @@ export function questionHookAction(
                 question: payload.notificationMessage?.trim() || PERMISSION_QUESTION,
                 askedAt: now,
                 source: "hook",
+                ...callerFactsOf(caller),
             },
             closes: "none",
         };

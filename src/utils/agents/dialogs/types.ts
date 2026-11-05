@@ -1,3 +1,4 @@
+import type { RecordedCallerFacts } from "@genesiscz/utils/agent/identity/record-facts";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 
 /** The harnesses a dialog record can belong to; the same type as `TurnProvider`. */
@@ -34,6 +35,11 @@ export interface OpenQuestion {
     /** ISO time it was answered or withdrawn; absent while it is open. */
     closedAt?: string;
     source: OpenQuestionSource;
+    /**
+     * What the hook knew about the agent that asked (added 2026-11-05): its transcript, tool call, subagent, turn,
+     * account and T3 Code host, a pick of its identity. Absent in records written before, and in a watcher's record.
+     */
+    caller?: RecordedCallerFacts;
 }
 
 export function openQuestionKey(question: Pick<OpenQuestion, "provider" | "sessionId" | "toolCallId">): string {

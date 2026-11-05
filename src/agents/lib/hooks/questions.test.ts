@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dialogsPath, openQuestions, readSessionQuestions } from "@genesiscz/utils/agents/dialogs/store";
+import type { OpenQuestion } from "@genesiscz/utils/agents/dialogs/types";
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { hookCaller } from "./caller";
 import { DEFAULT_HOOKS_CONFIG, loadHooksConfig } from "./config";
@@ -126,6 +128,8 @@ describe("the questions feature", () => {
             questionCount: 1,
             askedAt: now,
             source: "hook",
+            // Changed 2026-11-05 (decision 11 a): the record keeps the hook caller's facts; here only its tool call.
+            caller: { toolUseId: "toolu_q1" },
         });
         expect((await applyOf(ask, action ?? { closes: "none" }, { now, root })).recorded).toBe(
             "claude:s-questions-1:toolu_q1"
@@ -327,5 +331,80 @@ describe("the question hook's caller", () => {
             "/fixture/projects/-repo/s-lead-1/subagents/agent-a7.jsonl"
         );
         expect(hookCaller(payloadOf({ hook_event_name: "Stop" }), parentEnv).subagentId).toBeUndefined();
+    });
+});
+
+describe("the dialog record's caller facts", () => {
+    function payloadOf(fields: Record<string, unknown>): HookPayload {
+        const payload = parseHookPayload(SafeJSON.stringify({ session_id: "s-facts-1", cwd: "/repo", ...fields }));
+
+        if (!payload) {
+            throw new Error("the fixture payload did not parse");
+        }
+
+        return payload;
+    }
+
+    it("a subagent's question keeps its own facts, the account and the T3 thread beside the record's core", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-dialogs-facts-"));
+        const lead = "/fixture/.claude/projects/-repo/s-facts-1.jsonl";
+        const payload = payloadOf({
+            hook_event_name: "PreToolUse",
+            tool_name: "AskUserQuestion",
+            tool_use_id: "toolu_f1",
+            agent_id: "a7",
+            prompt_id: "p-1",
+            transcript_path: lead,
+            tool_input: { questions: [{ question: "Ship it?", options: [{ label: "Yes" }] }] },
+        });
+        const caller = hookCaller(payload, {
+            CLAUDE_CODE_SESSION_ID: "s-facts-1",
+            [accountEnvVar("claude")]: "work",
+            T3CODE_THREAD_ID: "thread:t1",
+        });
+        const action = questionHookAction(payload, "t", caller);
+        await applyQuestionHookAction(payload, action ?? { closes: "none" }, { now: "t", root, caller });
+
+        expect(readSessionQuestions("claude", "s-facts-1", root)[0]?.caller).toEqual({
+            transcriptPath: "/fixture/.claude/projects/-repo/s-facts-1/subagents/agent-a7.jsonl",
+            toolUseId: "toolu_f1",
+            subagentId: "a7",
+            turnId: "p-1",
+            account: { harness: "claude", account: "work", proxyTarget: null },
+            host: { app: "t3code", threadId: "thread:t1" },
+        });
+    });
+
+    it("a record file from before the facts reads, and a new question joins it without touching the old record", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-dialogs-facts-"));
+        const old: OpenQuestion = {
+            provider: "claude",
+            sessionId: "s-facts-2",
+            toolCallId: "toolu_old",
+            kind: "decision",
+            question: "Old?",
+            askedAt: "2026-11-03T10:00:00.000Z",
+            source: "hook",
+        };
+        mkdirSync(join(root, "claude"), { recursive: true });
+        writeFileSync(dialogsPath("claude", "s-facts-2", root), SafeJSON.stringify([old]));
+        const payload = payloadOf({
+            session_id: "s-facts-2",
+            hook_event_name: "PreToolUse",
+            tool_name: "AskUserQuestion",
+            tool_use_id: "toolu_new",
+            tool_input: { questions: [{ question: "New?" }] },
+        });
+        const caller = hookCaller(payload, {});
+        await applyQuestionHookAction(payload, questionHookAction(payload, "t", caller) ?? { closes: "none" }, {
+            now: "t",
+            root,
+            caller,
+        });
+
+        const records = readSessionQuestions("claude", "s-facts-2", root);
+        expect(records.map((record) => record.toolCallId)).toEqual(["toolu_old", "toolu_new"]);
+        expect(records[0]).toEqual(old);
+        expect(records[1]?.caller).toEqual({ toolUseId: "toolu_new" });
     });
 });

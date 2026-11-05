@@ -55,7 +55,8 @@ try {
         import("../lib/hooks/caller"),
     ]);
     const now = new Date().toISOString();
-    const caller = hookCaller(payload, env.getProcessEnv());
+    // A question the hook records keeps the T3 Code thread's provider instance too (one read of T3's own store).
+    const caller = hookCaller(payload, env.getProcessEnv(), asks ? { facets: ["host"] } : undefined);
     const action = questionHookAction(payload, now, caller);
 
     if (action) {

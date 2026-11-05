@@ -306,6 +306,8 @@ function isOpenQuestion(value: unknown): value is OpenQuestion {
         (record.closedAt === undefined || typeof record.closedAt === "string") &&
         (record.options === undefined ||
             (Array.isArray(record.options) && record.options.every((option) => typeof option === "string"))) &&
-        (record.questionCount === undefined || typeof record.questionCount === "number")
+        (record.questionCount === undefined || typeof record.questionCount === "number") &&
+        (record.caller === undefined ||
+            (typeof record.caller === "object" && record.caller !== null && !Array.isArray(record.caller)))
     );
 }
