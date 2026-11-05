@@ -1987,6 +1987,32 @@ test("duplicate live recording ownership does not steal the first socket", async
     }
 });
 
+test("a peekaboo capture that exits 0 but says success false fails, instead of counting as an empty piece", async () => {
+    const commands = await import("@genesiscz/utils/process/bounded-command");
+    const processes = await import("./process");
+    const { PeekabooFrameRecorder } = await import("./peekaboo");
+    const list = spyOn(commands, "boundedCommand").mockResolvedValue({
+        status: 0,
+        stdout: SafeJSON.stringify({ success: true, data: { screens: axScreens.screens } }),
+        stderr: "",
+        signal: null,
+    });
+    const run = spyOn(processes, "runCaptureProcess").mockResolvedValue({
+        exitCode: 0,
+        stdout: SafeJSON.stringify({ success: false, error: { message: "the capture stream stopped" } }),
+        stderr: "",
+        timedOut: false,
+        aborted: false,
+    });
+
+    try {
+        await expect(new PeekabooFrameRecorder().capture(request())).rejects.toThrow("the capture stream stopped");
+    } finally {
+        list.mockRestore();
+        run.mockRestore();
+    }
+});
+
 test("peekaboo display output rejects incomplete JSON as a capture error", async () => {
     const commands = await import("@genesiscz/utils/process/bounded-command");
     const { PeekabooFrameRecorder } = await import("./peekaboo");

@@ -175,7 +175,8 @@ export class PeekabooFrameRecorder extends FrameRecorder {
             return { startedAtMs, frames: [], endedEarly: "stopped" };
         }
 
-        if (run.exitCode !== 0 || !parsed.success) {
+        // A zero exit can still carry {success: false}: that is a failed capture, not a piece without frames.
+        if (run.exitCode !== 0 || !parsed.success || !parsed.data.success) {
             throw peekabooCaptureError(run.exitCode, run.stdout, run.stderr);
         }
 
