@@ -731,14 +731,15 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             throw new RpcError(RPC_ERRORS.unknownDevice, `no input device ${deviceId}; see audio.list`);
         }
 
-        this.sound = { ...this.sound, micDevice: deviceId };
         const owners = [...this.captures.running.values()].filter((one) => one.audio);
 
         if (owners.length > 0 && owners.every((one) => one.live?.setMic)) {
             await Promise.all(owners.map((one) => one.live?.setMic?.(deviceId))).catch((error: unknown) => {
                 throw new RpcError(RPC_ERRORS.internal, errorText(error));
             });
+            this.sound = { ...this.sound, micDevice: deviceId };
         } else {
+            this.sound = { ...this.sound, micDevice: deviceId };
             // The captures restart, so those that record the sound again use the new microphone.
             this.captures.abortAll();
         }

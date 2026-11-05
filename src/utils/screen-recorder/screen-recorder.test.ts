@@ -423,6 +423,7 @@ test("mutations from two clients share one recorder queue", async () => {
         expect(calls).toBe(1);
         release.resolve();
         await one;
+        expect(await two).toBeInstanceOf(Error);
         expect(String(await two)).toContain("already paused");
         expect(calls).toBe(2);
         expect(await second.resume()).toEqual({ state: "recording" });

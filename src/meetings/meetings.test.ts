@@ -2069,6 +2069,7 @@ describe("the meetings recorder loop", () => {
                 liveRates?: boolean;
                 /** The live rate change fails. */
                 ratesFail?: boolean;
+                rejectMic?: boolean;
                 /** The first capture ends while its live switch is still in flight. */
                 lateSwitch?: boolean;
                 /** A live switch's first frame reaches the hook 100 ms after it was captured. */
@@ -2188,6 +2189,9 @@ describe("the meetings recorder loop", () => {
                               },
                               setMic: async (deviceId: string) => {
                                   this.commands.push(`mic ${deviceId}`);
+                                  if (this.script.rejectMic) {
+                                      throw new Error("microphone refused");
+                                  }
                               },
                           }
                         : {}),
@@ -2283,6 +2287,7 @@ describe("the meetings recorder loop", () => {
         liveSettings?: boolean;
         liveRates?: boolean;
         ratesFail?: boolean;
+        rejectMic?: boolean;
         lateSwitch?: boolean;
         delayedFrame?: boolean;
         audio?: boolean;
@@ -2338,6 +2343,7 @@ describe("the meetings recorder loop", () => {
                 liveSettings: options.liveSettings,
                 liveRates: options.liveRates,
                 ratesFail: options.ratesFail,
+                rejectMic: options.rejectMic,
                 lateSwitch: options.lateSwitch,
                 delayedFrame: options.delayedFrame,
                 audio: options.audio || options.audioSources !== undefined,
@@ -3195,6 +3201,32 @@ describe("the meetings recorder loop", () => {
             ],
         });
         expect(run.recorder.requests.map((request) => request.audio?.sources ?? [])).toEqual([["mic"], [], ["mic"]]);
+    });
+
+    test("a rejected live microphone stays unchanged for settings and the next piece", async () => {
+        let settings: unknown;
+        let refused: unknown;
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["hang", "hang"],
+            liveControl: true,
+            liveSettings: true,
+            rejectMic: true,
+            audio: true,
+            actions: [
+                async (call) => {
+                    refused = await call("audio.setInput", { deviceId: "desk-mic" });
+                    settings = await call("settings.get");
+                    return call("displays.mode", { mode: "all" });
+                },
+                async (call) => call("stop"),
+            ],
+        });
+        expect(refused).toBeInstanceOf(Error);
+        expect(settings).toHaveProperty("audio");
+        expect(settings).not.toHaveProperty("audio.micDevice");
+        expect(run.recorder.requests).toHaveLength(2);
+        expect(run.recorder.requests[1]?.audio?.micDeviceId).toBeUndefined();
     });
 
     test("changing microphone without live setMic restarts all displays", async () => {
