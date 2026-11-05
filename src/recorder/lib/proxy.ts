@@ -134,6 +134,10 @@ const DEFAULT_WINDOW_SEC = 10;
  * display before it, so the movie does not flicker between screens. Consecutive windows of one display merge.
  */
 export function planMostChange(frames: readonly SourceFrame[], windowUs: number): DisplayRange[] {
+    if (!Number.isSafeInteger(windowUs) || windowUs <= 0) {
+        throw new Error("proxy window must round to a positive number of microseconds");
+    }
+
     const displays = [...new Set(frames.map((frame) => frame.displayId).filter((id) => id !== undefined))];
 
     if (displays.length === 0) {
