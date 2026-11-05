@@ -143,14 +143,12 @@ export function listPresets(root = presetsRoot()): PresetMeta[] {
                 return [];
             }
 
-            const parsed = presetMetaSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
-
-            if (!parsed.success) {
-                log.warn({ path, issues: parsed.error.issues.length }, "preset.json does not parse; left out");
+            try {
+                return [presetMetaSchema.parse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }))];
+            } catch (error) {
+                log.warn({ path, error }, "preset.json does not parse; left out");
                 return [];
             }
-
-            return [parsed.data];
         })
         .sort((a, b) => a.name.localeCompare(b.name));
 }
