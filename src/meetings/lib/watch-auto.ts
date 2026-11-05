@@ -1,0 +1,76 @@
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
+import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { MEETING_SOURCE_IDS } from "@genesiscz/utils/meetings/sources";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { z } from "zod";
+
+/** How long after a recorder stopped on its own (its capture failed) the watcher starts it again, while the meeting runs. */
+export const RETRY_AFTER_MS = 120_000;
+
+/** The recording the watcher started, so it stops only its own. */
+const autoSchema = z.object({
+    sourceMeetingId: z.string(),
+    sourceId: z.enum(MEETING_SOURCE_IDS).optional(),
+    meetingId: z.string().optional(),
+    startedAt: z.string(),
+    recorderStartedAt: z.string().optional(),
+    /** When the watcher last started the recorder again after it stopped on its own. */
+    retriedAt: z.string().optional(),
+    /** The source ended the meeting: refresh the record from it (title, end, people) until then. */
+    refreshUntil: z.string().optional(),
+});
+export type AutoRecording = z.infer<typeof autoSchema>;
+
+function autoPath(store: MeetingStore): string {
+    return join(store.root, "watch-auto.json");
+}
+
+export function readAuto(store: MeetingStore): AutoRecording | undefined {
+    const path = autoPath(store);
+
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    const parsed = autoSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8")));
+    return parsed.success ? parsed.data : undefined;
+}
+
+export function writeAuto(store: MeetingStore, auto: AutoRecording): void {
+    const previous = readAuto(store);
+
+    if (previous?.refreshUntil && previous.sourceMeetingId !== auto.sourceMeetingId) {
+        const pending = readPendingRefreshes(store);
+        if (
+            !pending.some(
+                (one) => one.sourceMeetingId === previous.sourceMeetingId && one.meetingId === previous.meetingId
+            )
+        ) {
+            writePendingRefreshes(store, [...pending, previous]);
+        }
+    }
+
+    atomicWriteFileSync(autoPath(store), SafeJSON.stringify(auto));
+}
+
+export function readPendingRefreshes(store: MeetingStore): AutoRecording[] {
+    const file = join(store.root, "watch-refresh.json");
+    if (!existsSync(file)) {
+        return [];
+    }
+    return z.array(autoSchema).parse(SafeJSON.parse(readFileSync(file, "utf8"), { strict: true }));
+}
+
+export function writePendingRefreshes(store: MeetingStore, pending: AutoRecording[]): void {
+    atomicWriteFileSync(join(store.root, "watch-refresh.json"), SafeJSON.stringify(pending));
+}
+
+export function clearAuto(store: MeetingStore): void {
+    const path = autoPath(store);
+
+    if (existsSync(path)) {
+        unlinkSync(path);
+    }
+}
