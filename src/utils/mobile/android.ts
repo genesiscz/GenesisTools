@@ -209,8 +209,23 @@ export async function startEmulator(options: {
     const port = freeEmulatorPort(await listAdbDevices());
     const serial = `emulator-${port}`;
     const command = emulatorCommand({ ...options, port });
+    let offlineSince: number | null = null;
     await startDetached(emulatorService(options.avd, command), {
-        ready: async () => (await waitForAndroidBoot(serial, 5_000)).kind === "ready",
+        ready: async () => {
+            const boot = await waitForAndroidBoot(serial, 5_000);
+
+            if (boot.kind === "ready") {
+                return true;
+            }
+
+            offlineSince = boot.state === "offline" ? (offlineSince ?? Date.now()) : null;
+
+            if (offlineSince !== null && Date.now() - offlineSince > 120_000) {
+                throw new Error(`${options.avd} stays offline in adb: enable USB debugging in the guest`);
+            }
+
+            return false;
+        },
         timeoutMs: options.timeoutMs,
     });
     return serial;
