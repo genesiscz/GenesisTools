@@ -73,7 +73,7 @@ package func runHost() -> Never {
         FaceLifecycle.install(arguments: arguments)
         // Quitting the hub with "Quit All" quits the widget too: the next hub or settings window starts it again while
         // "Show the widget" is on (WidgetLaunch.swift).
-        if !NativePreview.enabled, windowFace, firstArgument != "--widget" {
+        if !NativePreview.enabled, windowFace, WidgetLaunch.bootsWidget(arguments: arguments) {
             if arguments.contains("--no-activate") {
                 // A rebuild reopens the faces in the background, the widget among them, and its lock is not taken yet
                 // at this moment: an immediate check would start a second copy that exits at once.

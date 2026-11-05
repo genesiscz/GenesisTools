@@ -96,6 +96,16 @@ final class FaceLifecycleTests: XCTestCase {
         XCTAssertFalse(WidgetLaunch.showWidget(stateFile: scratch.appendingPathComponent("missing.json").path))
     }
 
+    func testASnapshotBenchmarkOrHeadlessRunStartsNoWidget() {
+        XCTAssertTrue(WidgetLaunch.bootsWidget(arguments: ["--hub"]))
+        XCTAssertTrue(WidgetLaunch.bootsWidget(arguments: ["--hub", "--no-activate"]))
+        XCTAssertTrue(WidgetLaunch.bootsWidget(arguments: ["--window"]))
+        XCTAssertFalse(WidgetLaunch.bootsWidget(arguments: ["--widget"]))
+        XCTAssertFalse(WidgetLaunch.bootsWidget(arguments: ["--hub", "--snapshot", "/tmp/hub.png"]))
+        XCTAssertFalse(WidgetLaunch.bootsWidget(arguments: ["--hub", "--bench", "/tmp/bench.json"]))
+        XCTAssertFalse(WidgetLaunch.bootsWidget(arguments: ["--review", "--headless"]))
+    }
+
     func testTheWidgetCountsAsRunningOnlyWhileSomethingHoldsItsInstanceLock() throws {
         XCTAssertFalse(WidgetLaunch.isRunning(in: scratch))
 

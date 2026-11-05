@@ -22,6 +22,16 @@ package enum WidgetLaunch {
     package static let ensureRunningFlag = "--ensure-running"
     package static func ensureRunning() { start(["--widget", ensureRunningFlag]) }
 
+    /// The scripted runs of a window face: a snapshot, a benchmark, a headless render. They end on their own and write
+    /// only their output, so they start no widget (FaceRecord and FaceLifecycle skip them too).
+    package static let scriptedRunFlags: Set<String> = ["--snapshot", "--bench", "--headless"]
+
+    /// Whether a window face started with `arguments` makes sure the widget runs: every face but the widget itself and
+    /// a scripted run (HostMain).
+    package static func bootsWidget(arguments: [String]) -> Bool {
+        arguments.first != "--widget" && !arguments.contains(where: scriptedRunFlags.contains)
+    }
+
     /// Starts the widget when this build has it, staging lets it run and "Show the widget" is on. Every window face but
     /// the widget calls it at its start (HostMain): "Quit All" in the hub quits the widget too, and the next hub or
     /// settings window brings it back (Martin, 2026-11-04, D44). Silent: no alert when the part or staging says no.
