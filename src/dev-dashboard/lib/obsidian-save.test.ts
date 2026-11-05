@@ -110,4 +110,25 @@ describe("saveToObsidianUnique", () => {
         expect(body).toContain("line one");
         expect(body).toContain("line two");
     });
+
+    test("concurrent appends to one note keep every line", async () => {
+        vaultRoot = await mkdtemp(join(tmpdir(), "vault-"));
+        const lines = Array.from({ length: 20 }, (_, index) => `line ${index}`);
+
+        const saved = await Promise.all(
+            lines.map((content) =>
+                saveToObsidianUnique({
+                    vaultRoot,
+                    relativeDir: "inbox",
+                    baseName: "shared",
+                    content,
+                    mode: "append",
+                    createDir: true,
+                })
+            )
+        );
+
+        const body = await readFile(saved[0].path, "utf8");
+        expect(lines.filter((line) => !body.includes(line))).toEqual([]);
+    });
 });
