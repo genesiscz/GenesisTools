@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { type CopyFile, cloneOrCopy } from "@genesiscz/utils/fs/clone";
+import { type Block, builtinConverters, renderBlocks, renderFrontmatter } from "@genesiscz/utils/json2md";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
@@ -122,33 +123,29 @@ export function screenNoteMarkdown({
     picturesLabel: string;
 }): { markdown: string; shown: number } {
     const names = new Map((record.recording?.displays ?? []).map((display) => [display.id, display.name]));
-    const sections: string[] = [];
+    const shown = shownRows(rows);
+    const blocks: Block[] = [
+        { h1: `Screen OCR: ${record.title}` },
+        {
+            p: `Source: \`${ocrPath}\` (${rows.length} frames; ${shown.length} shown here, a frame whose text did not change on its display is left out). Pictures: \`${picturesLabel}\`. Times are local time and the transcript time.`,
+        },
+    ];
 
-    for (const row of shownRows(rows)) {
+    for (const row of shown) {
         const atMs = Date.parse(row.at);
         const display =
             row.displayId === undefined ? "screen" : (names.get(row.displayId) ?? `display ${row.displayId}`);
         const link = links.get(row.file);
-        const picture = link ? `![](${link})` : `_The picture ${row.file} is not on disk._`;
         const text = row.text.trim() || "(no text)";
-        const fence = fenceFor(text);
-        sections.push(
-            `## ${clockTime(atMs)} · transcript ${formatClock(Math.max(0, (atMs - zeroMs) / 1000))} · ${display}\n\n${picture}\n\n${fence}text\n${text}\n${fence}\n`
+        blocks.push(
+            { h2: `${clockTime(atMs)} · transcript ${formatClock(Math.max(0, (atMs - zeroMs) / 1000))} · ${display}` },
+            link ? { img: { source: link } } : { p: `_The picture ${row.file} is not on disk._` },
+            { code: { language: "text", content: text } }
         );
     }
 
-    const head = [
-        "---",
-        `meeting: ${record.id}`,
-        "---",
-        "",
-        `# Screen OCR: ${record.title}`,
-        "",
-        `Source: \`${ocrPath}\` (${rows.length} frames; ${sections.length} shown here, a frame whose text did not change on its display is left out). Pictures: \`${picturesLabel}\`. Times are local time and the transcript time.`,
-        "",
-        "",
-    ].join("\n");
-    return { markdown: head + sections.join("\n"), shown: sections.length };
+    const body = renderBlocks(blocks, { options: {}, converters: builtinConverters() });
+    return { markdown: `${screenNoteFrontmatter(record.id)}\n\n${body}\n`, shown: shown.length };
 }
 
 /**
@@ -214,9 +211,14 @@ function shownRows(rows: OcrLine[]): OcrLine[] {
     });
 }
 
+/** The note's front matter; the writer and `isScreenNoteOf` share it, so a quoted id still matches. */
+function screenNoteFrontmatter(meetingId: string): string {
+    return renderFrontmatter({ meeting: meetingId });
+}
+
 function isScreenNoteOf(text: string, meetingId: string): boolean {
     const head = text.slice(0, 400);
-    return head.startsWith("---\n") && head.includes(`\nmeeting: ${meetingId}\n`) && head.includes("\n# Screen OCR: ");
+    return head.startsWith(`${screenNoteFrontmatter(meetingId)}\n`) && head.includes("\n# Screen OCR: ");
 }
 
 function isUnder(path: string, folder: string): boolean {
@@ -232,12 +234,6 @@ function linkPath(rel: string): string {
             encodeURIComponent(segment).replace(/[()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
         )
         .join("/");
-}
-
-/** A code fence longer than any run of backticks in the text, so OCR text with ``` cannot end the block. */
-function fenceFor(text: string): string {
-    const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
-    return "`".repeat(Math.max(3, longest + 1));
 }
 
 function clockTime(ms: number): string {

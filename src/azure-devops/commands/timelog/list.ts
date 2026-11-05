@@ -1,4 +1,5 @@
-import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
+import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
+import { formatMinutes } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -35,7 +36,7 @@ export function registerListSubcommand(parent: Command): void {
             }) => {
                 const config = requireTimeLogConfig();
                 const user = requireTimeLogUser(config);
-                const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+                const api = getTimeLogApi({ config, user });
 
                 // Resolve --from/--to with --since/--upto as hidden aliases
                 const resolvedFrom = options.day || options.from || options.since;

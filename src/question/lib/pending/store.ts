@@ -279,10 +279,11 @@ export function listForms(db: Database, opts: ListFormsOpts = {}): AskForm[] {
     }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     params.push(opts.limit ?? 50);
+    // Two forms posted in one millisecond keep the order they were posted in (the row id), not an arbitrary one.
     const rows = db
         .query(
-            `SELECT * FROM (SELECT * FROM qa_pending ${where} ORDER BY created_at DESC LIMIT ?) AS newest
-             ORDER BY created_at ASC`
+            `SELECT * FROM (SELECT *, rowid AS posted FROM qa_pending ${where} ORDER BY created_at DESC, rowid DESC LIMIT ?) AS newest
+             ORDER BY created_at ASC, posted ASC`
         )
         .all(...params) as PendingRow[];
 

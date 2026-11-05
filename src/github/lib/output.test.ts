@@ -29,6 +29,7 @@ import {
     formatSearchResults,
 } from "./output";
 import {
+    collapseBotComment,
     formatPrCommentsLLM,
     formatReviewJSON,
     formatReviewLLM,
@@ -1210,6 +1211,79 @@ describe("formatReviewJSON", () => {
 });
 
 describe("LLM review formats", () => {
+    const comments = [
+        {
+            id: "1",
+            author: "eve-bot-ci",
+            type: "comment" as const,
+            createdAt: "2026-01-01",
+            url: "https://example.com/1",
+            body: "🐉 eve review in progress - run 6\n- [x] Queued\n- [x] Reading diff\n- [ ] Reviewing\n\nPrevious runs\n| 1 | old |",
+        },
+        {
+            id: "2",
+            author: "coderabbitai[bot]",
+            type: "comment" as const,
+            createdAt: "2026-01-01",
+            url: "https://example.com/2",
+            body: "<!-- generated -->\n> [!IMPORTANT]\n> ## Review limit reached\nPlease wait before retrying.",
+        },
+        {
+            id: "3",
+            author: "coderabbitai",
+            type: "review" as const,
+            createdAt: "2026-01-01",
+            url: "https://example.com/3",
+            body: "## Review summary\n3 findings\n**Head SHA:** `abcdef1234567890`\nDetails follow.",
+        },
+        {
+            id: "4",
+            author: "human",
+            type: "comment" as const,
+            createdAt: "2026-01-01",
+            url: "https://example.com/4",
+            body: "First line\nSecond line",
+        },
+    ];
+
+    test("collapses bot progress, notices and findings into one line", () => {
+        const eve = collapseBotComment(comments[0]);
+        expect(eve).toContain("@eve-bot-ci");
+        expect(eve).toContain("run 6");
+        expect(eve).toContain("Reading diff");
+        expect(eve).not.toContain("Previous runs");
+        expect(eve).toContain(comments[0].url);
+        const notice = collapseBotComment(comments[1]);
+        expect(notice).toContain("Review limit reached");
+        expect(notice).toContain(comments[1].url);
+        const summary = collapseBotComment(comments[2]);
+        expect(summary).toContain("Review summary");
+        expect(summary).toContain("3 findings");
+        expect(summary).toContain("abcdef1234567890");
+        expect(summary).toContain(comments[2].url);
+        for (const line of [eve, notice, summary]) {
+            expect(line.split("\n")).toHaveLength(1);
+        }
+    });
+
+    test("keeps human bodies and offers full bot bodies", () => {
+        const compact = formatPrCommentsLLM(comments, "sess-1");
+        expect(compact).toContain(comments[3].body);
+        expect(compact).not.toContain("Previous runs");
+        const full = formatPrCommentsLLM(comments, "sess-1", { fullComments: true });
+        for (const comment of comments) {
+            expect(full).toContain(comment.body);
+        }
+    });
+
+    test("unresolved output includes the open count near the top", () => {
+        const output = formatReviewLLM(
+            makeReview({ threads: [], stats: { total: 0, unresolved: 0, resolved: 0, high: 0, medium: 0, low: 0 } }),
+            "sess-1"
+        );
+        expect(output.split("\n").slice(0, 5).join("\n")).toContain("0 unresolved");
+    });
+
     afterEach(() => {
         setSystemTime();
     });

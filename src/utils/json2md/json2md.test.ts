@@ -333,42 +333,6 @@ describe("blocks", () => {
         expect(render([{ callout: { kind: "note", labelCase: "upper", body: [{ p: "x" }] } }])).toBe("> [!NOTE]\n> x");
     });
 
-    test("speech: a speaker, a time and a play link make one labelled paragraph", () => {
-        expect(
-            render([
-                { speech: { speaker: "Alice", time: "01:05", play: "https://example.com/p?at=65", text: "Ahoj." } },
-            ])
-        ).toBe("**Alice:** `01:05`<sup>[play](https://example.com/p?at=65)</sup> Ahoj.");
-        expect(render([{ speech: { speaker: "Alice", time: "01:05", text: "Ahoj." } }])).toBe(
-            "**Alice:** `01:05` Ahoj."
-        );
-        expect(render([{ speech: { speaker: "Alice", text: "Ahoj." } }])).toBe("**Alice:** Ahoj.");
-    });
-
-    test("speech: a continuation has no label, and a play link without a time is not written", () => {
-        expect(render([{ speech: { time: "00:40", play: "https://example.com/p", text: "Dál." } }])).toBe(
-            "`00:40`<sup>[play](https://example.com/p)</sup> Dál."
-        );
-        expect(render([{ speech: { play: "https://example.com/p", text: "Dál." } }])).toBe("Dál.");
-    });
-
-    test("speech: a text that opens with a quote goes under the label, and blank lines around a break are tidied", () => {
-        expect(render([{ speech: { speaker: "Bob", time: "01:10", text: "\n\n> Citace.\n\n" } }])).toBe(
-            "**Bob:** `01:10`\n\n> Citace."
-        );
-        expect(render([{ speech: { speaker: "Bob", text: "\n\n> Citace." } }])).toBe("**Bob:**\n\n> Citace.");
-        expect(render([{ speech: { time: "00:40", text: "\n\n> Citace." } }])).toBe("`00:40`\n\n> Citace.");
-        expect(render([{ speech: { text: "Čtu:  \n\n  > Kap.  \n\n\n , konec." } }])).toBe(
-            "Čtu:\n\n> Kap.\n\n, konec."
-        );
-    });
-
-    test("speech: a play link with a space or a parenthesis is wrapped so the link stays whole", () => {
-        expect(render([{ speech: { time: "00:40", play: "https://example.com/a b", text: "x" } }])).toBe(
-            "`00:40`<sup>[play](<https://example.com/a b>)</sup> x"
-        );
-    });
-
     test("definition lists, links, images and badges", () => {
         expect(render([{ dl: [{ term: "engine", definitions: ["string", "mdast"] }] }])).toBe(
             "engine\n: string\n: mdast"

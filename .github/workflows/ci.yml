@@ -529,6 +529,21 @@ jobs:
         # A workflow_dispatch run has no base: then no --base, and every project is checked.
         run: bun scripts/ci/typecheck.ts ${TYPECHECK_BASE:+--base "$TYPECHECK_BASE"}
 
+      # Every Vite dashboard the change can reach boots its dev server and must render `/`. `tools clarity ui`
+      # answered 500 on every page for a day (2026-10-22) while tsc and the tests passed. It ran in the pre-push hook
+      # until 2026-11-05 (decision 21); the runner's empty home is the "no config yet" case a new Mac starts from.
+      - name: Dashboard smoke
+        timeout-minutes: 4
+        shell: bash
+        env:
+          SMOKE_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -n "$SMOKE_BASE" ] && [ "$SMOKE_BASE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$SMOKE_BASE^{commit}"; then
+            bun scripts/ci/dashboard-smoke.ts --base "$SMOKE_BASE" --head HEAD
+          else
+            bun scripts/ci/dashboard-smoke.ts
+          fi
+
       - name: Save TypeScript build info for the next push
         if: github.event_name == 'push'
         uses: actions/cache/save@v4

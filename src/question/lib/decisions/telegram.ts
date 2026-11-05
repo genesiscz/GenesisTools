@@ -48,7 +48,7 @@ export function decisionTelegramText(row: DecisionRecord, project: TelegramDecis
         );
     }
 
-    const shown = shownDecisionText({ prompt: row.prompt, options: row.options });
+    const shown = shownDecisionText({ prompt: row.prompt, options: row.options, type: kindOf(row) });
     const prompt = clip(shown.prompt, PROMPT_MAX);
     const options = shown.options.map(
         (option, index) => `${String.fromCharCode(97 + index)}) ${clip(option, OPTION_MAX)}`

@@ -64,7 +64,7 @@ describe("TelegramBotChannel", () => {
             },
         });
         const apiRoot = `http://127.0.0.1:${server.port}`;
-        const post = spyOn(CHANNELS.telegram, "post").mockImplementation((event, config) => {
+        const post = spyOn(CHANNELS.telegram, "post").mockImplementation((_event, config) => {
             if (config.apiRoot !== apiRoot) {
                 throw new Error("not the test server");
             }

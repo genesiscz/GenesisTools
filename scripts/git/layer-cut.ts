@@ -6,6 +6,11 @@
  *                                [--master <ref>] [--plan-only] [--no-typecheck] [--tests] [--swift] [--json <file>]
  *   bun scripts/git/layer-cut.ts --scratch <dir> --checks-only [--tests] [--swift] [--only <branch>]   (on the cut/
  *                                refs of the last run; --only limits the checks to one branch)
+ *   bun scripts/git/layer-cut.ts --scratch <dir> --ledger [--table <module>] [--json <file>]
+ *   bun scripts/git/layer-cut.ts --scratch <dir> --bodies [--notes <file>] [--go]
+ *
+ * Ledger and bodies read <scratch>/report.json. Pass the cut's original table for ledger explanations.
+ * Bodies print to stdout by default; --go writes them to GitHub. Notes map PR numbers or head names to markdown.
  *
  * --recut <pr> (repeatable) names an open PR that this run replaces: a re-cut of the stack after its base merged.
  * Its head is never an exclusion source, or its own files would stay at the base form.
@@ -50,6 +55,7 @@ import { stripAnsi } from "@genesiscz/utils/string";
 import { Glob } from "bun";
 import { diagnose, STAMP_FILE, lockStamp as wrapperLockStamp } from "../test-deps";
 import { checkSubject } from "./commit-scopes";
+import { buildBody, type CutReport, classifyDifferences, overlayPlan } from "./layer-cut-report";
 import { loadTable } from "./layer-cut-tables/load";
 import type { CutBranch, DerivedFile } from "./layer-cut-tables/types";
 
@@ -77,6 +83,10 @@ interface Options {
     scratch: string;
     planOnly: boolean;
     checksOnly: boolean;
+    ledger: boolean;
+    bodies: boolean;
+    go: boolean;
+    notes: string | null;
     /** --only: run the checks of this branch only. */
     only: string | null;
     typecheck: boolean;
@@ -937,6 +947,10 @@ function parseOptions(argv: string[]): Options {
         scratch: "",
         planOnly: false,
         checksOnly: false,
+        ledger: false,
+        bodies: false,
+        go: false,
+        notes: null,
         only: null,
         typecheck: true,
         tests: false,
@@ -944,7 +958,10 @@ function parseOptions(argv: string[]): Options {
         json: null,
         recut: [],
     };
-    const valueFlags: Record<string, "unified" | "unifiedBranch" | "base" | "master" | "scratch" | "json" | "only"> = {
+    const valueFlags: Record<
+        string,
+        "unified" | "unifiedBranch" | "base" | "master" | "scratch" | "json" | "only" | "notes"
+    > = {
         "--unified": "unified",
         "--unified-branch": "unifiedBranch",
         "--base": "base",
@@ -952,6 +969,7 @@ function parseOptions(argv: string[]): Options {
         "--scratch": "scratch",
         "--json": "json",
         "--only": "only",
+        "--notes": "notes",
     };
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
@@ -962,11 +980,21 @@ function parseOptions(argv: string[]): Options {
 
         const key = valueFlags[arg];
         if (key) {
-            options[key] = argv[++i] ?? "";
+            const value = argv[++i];
+            if (!value || value.startsWith("--")) {
+                throw new Error(`${arg} requires a value`);
+            }
+            options[key] = value;
         } else if (arg === "--plan-only") {
             options.planOnly = true;
         } else if (arg === "--checks-only") {
             options.checksOnly = true;
+        } else if (arg === "--ledger") {
+            options.ledger = true;
+        } else if (arg === "--bodies") {
+            options.bodies = true;
+        } else if (arg === "--go") {
+            options.go = true;
         } else if (arg === "--no-typecheck") {
             options.typecheck = false;
         } else if (arg === "--tests") {
@@ -989,13 +1017,180 @@ function parseOptions(argv: string[]): Options {
         throw new Error("--scratch <dir> is required (use your session's /tmp/cc/<project>/<session>/ folder)");
     }
 
+    if (Number(options.ledger) + Number(options.bodies) + Number(options.checksOnly) > 1) {
+        throw new Error("--ledger, --bodies and --checks-only are mutually exclusive");
+    }
+    if ((options.go || options.notes) && !options.bodies) {
+        throw new Error("--go and --notes require --bodies");
+    }
+
     return options;
+}
+
+async function readCutReport(scratch: string): Promise<CutReport> {
+    const value: unknown = SafeJSON.parse(await Bun.file(join(scratch, "report.json")).text());
+    if (
+        !value ||
+        typeof value !== "object" ||
+        !("unified" in value) ||
+        typeof value.unified !== "string" ||
+        !("base" in value) ||
+        typeof value.base !== "string" ||
+        !("branches" in value) ||
+        !Array.isArray(value.branches)
+    ) {
+        throw new Error("report must name unified, base and branches");
+    }
+    for (const branch of value.branches) {
+        if (
+            !branch ||
+            typeof branch.name !== "string" ||
+            typeof branch.parent !== "string" ||
+            typeof branch.commit !== "string" ||
+            !branch.commit ||
+            !Array.isArray(branch.fileList) ||
+            !branch.fileList.every((file: unknown) => typeof file === "string")
+        ) {
+            throw new Error("each report branch must name its commit and fileList");
+        }
+    }
+    return value as CutReport;
+}
+
+function reportBase(report: CutReport): string {
+    const names = new Set(report.branches.map((branch) => branch.name));
+    const roots = report.branches.filter((branch) => !names.has(branch.parent));
+    if (!roots.length) {
+        throw new Error("report has no root layer");
+    }
+    const bases = new Set(roots.map((branch) => revParse(`${branch.commit}^`)));
+    if (bases.size !== 1) {
+        throw new Error("report root layers do not share a base commit");
+    }
+    return [...bases][0];
+}
+
+interface ListedPr {
+    number: number;
+    headRefName: string;
+    body?: string;
+}
+
+function gh(args: string[]): string {
+    const proc = Bun.spawnSync(["gh", ...args], { stdout: "pipe", stderr: "pipe" });
+    if (proc.exitCode !== 0) {
+        throw new Error(`gh ${args.slice(0, 2).join(" ")}: ${proc.stderr.toString().trim()}`);
+    }
+    return proc.stdout.toString();
+}
+
+function ledger(options: Options, report: CutReport): number {
+    const base = reportBase(report);
+    const unified = revParse(report.unified);
+    const index = join(options.scratch, `ledger-${crypto.randomUUID()}.index`);
+    const env = { GIT_INDEX_FILE: index };
+    git(["read-tree", base], { env });
+    const trees = new Map(report.branches.map((branch) => [branch.commit, readTree(branch.commit)]));
+    const changes = overlayPlan(report.branches)
+        .map(({ commit, file }) => {
+            const entry = trees.get(commit)?.get(file);
+            return entry ? `${entry.mode} ${entry.sha}\t${file}\0` : `0 ${ZERO_SHA}\t${file}\0`;
+        })
+        .join("");
+    if (changes) {
+        git(["update-index", "-z", "--index-info"], { env, input: changes });
+    }
+    const finalTree = git(["write-tree"], { env }).trim();
+    const different = git(["diff", "--name-only", "--no-renames", "-z", finalTree, unified])
+        .split("\0")
+        .filter(Boolean);
+    const owners = new Map<string, number[]>();
+    if (different.length) {
+        const prs: ListedPr[] = SafeJSON.parse(
+            gh(["pr", "list", "--state", "open", "--limit", "1000", "--json", "number,headRefName"])
+        );
+        const excluded = new Set([...report.branches.map((branch) => branch.name), options.unifiedBranch]);
+        for (const pr of prs) {
+            if (excluded.has(pr.headRefName) || options.recut.includes(pr.number)) {
+                continue;
+            }
+            const ref = `origin/${pr.headRefName}`;
+            if (
+                Bun.spawnSync(["git", "rev-parse", "--verify", "--quiet", ref], { stdout: "pipe", stderr: "pipe" })
+                    .exitCode !== 0
+            ) {
+                throw new Error(`${ref} is not fetched; cannot classify ownership`);
+            }
+            for (const file of git(["diff", "--name-only", "--no-renames", "-z", `${base}...${ref}`])
+                .split("\0")
+                .filter(Boolean)) {
+                owners.set(file, [...(owners.get(file) ?? []), pr.number]);
+            }
+        }
+    }
+    const listed = new Set([...Object.keys(KEEP_AT_BASE), ...DERIVED]);
+    const result = { base, unified, finalTree, ...classifyDifferences(different, owners, listed) };
+    console.log(`base ${base.slice(0, 10)} unified ${unified.slice(0, 10)} final tree ${finalTree.slice(0, 10)}`);
+    console.log(
+        `${different.length} files differ; ${result.owned.length} owned by open PRs; ${result.sourceOnly.length} source-only; ${result.unexplained.length} unexplained`
+    );
+    for (const file of result.sourceOnly) {
+        console.log(`  ${file}${result.unexplained.includes(file) ? " (unexplained)" : ""}`);
+    }
+    if (options.json) {
+        writeFileSync(options.json, `${SafeJSON.stringify(result, null, 4)}\n`);
+    }
+    return result.unexplained.length ? 1 : 0;
+}
+
+async function bodies(options: Options, report: CutReport): Promise<number> {
+    const baseSha = reportBase(report);
+    const unified = revParse(report.unified);
+    const notes: Record<string, string> = options.notes ? SafeJSON.parse(await Bun.file(options.notes).text()) : {};
+    const prs = new Map<string, number>();
+    const oldBodies = new Map<string, string>();
+    for (const branch of report.branches) {
+        const found: ListedPr[] = SafeJSON.parse(
+            gh(["pr", "list", "--head", branch.name, "--state", "open", "--json", "number,headRefName,body"])
+        );
+        const matching = found.filter((pr) => pr.headRefName === branch.name);
+        if (matching.length !== 1 || typeof matching[0].body !== "string") {
+            throw new Error(`expected one open PR with a body for ${branch.name}, found ${matching.length}`);
+        }
+        prs.set(branch.name, matching[0].number);
+        oldBodies.set(branch.name, matching[0].body);
+    }
+    for (const branch of report.branches) {
+        const number = prs.get(branch.name);
+        if (number === undefined) {
+            throw new Error(`missing PR for ${branch.name}`);
+        }
+        const body = buildBody({
+            report: { ...report, unified },
+            branch,
+            baseSha,
+            prs,
+            oldBody: oldBodies.get(branch.name) ?? "",
+            extra: notes[String(number)] ?? notes[branch.name],
+        });
+        console.log(`--- #${number} ${branch.name} ---\n${body}`);
+        if (options.go) {
+            const bodyPath = join(options.scratch, `body-${number}.md`);
+            writeFileSync(bodyPath, body);
+            gh(["pr", "edit", String(number), "--body-file", bodyPath]);
+        }
+    }
+    return 0;
 }
 
 // ─── main ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<number> {
     const options = parseOptions(process.argv.slice(2));
+    if (options.ledger || options.bodies) {
+        const report = await readCutReport(options.scratch);
+        return options.ledger ? ledger(options, report) : bodies(options, report);
+    }
     if (options.checksOnly) {
         return checksOnly(options);
     }
@@ -1641,10 +1836,7 @@ function finish(state: {
         unplaced: state.assignment.unplaced,
         branches: reports.map((report) => ({
             ...report,
-            fileList: [...state.owner]
-                .filter(([, name]) => name === report.name)
-                .map(([file]) => file)
-                .sort(),
+            fileList: [...new Set(filesWithDerived(report.name))].sort(),
         })),
     };
     const jsonPath = state.options.json ?? join(state.options.scratch, "report.json");

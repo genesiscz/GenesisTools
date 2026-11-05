@@ -16,7 +16,7 @@ import { findBranchPr, findPrByRef } from "./find";
 import { githubBackend, githubThread, githubVersions } from "./github";
 import { gitlabBackend, gitlabPosition, gitlabThreads, gitlabVersions } from "./gitlab";
 import { type FoundPr, forgetThreads, gitlabBaseUrl, type PrBackend, prThreads, readPrThreads } from "./index";
-import { resolveHubPrRef } from "./project-ref";
+import { projectCheckout, resolveHubPrRef } from "./project-ref";
 
 // ─── find ─────────────────────────────────────────────────────────────────────
 
@@ -1352,6 +1352,28 @@ describe("resolveHubPrRef", () => {
             checkout("/work/one/tool", "github.com", "acme/tool"),
             checkout("/work/two/tool", "git.example.com", "team/tool"),
         ],
+    });
+
+    test("a checkout's folder name finds it when no project is named so; a name with a slash or two folders do not", async () => {
+        const renamed = async () => ({
+            roots: ["/work"],
+            checkouts: [
+                checkout("/work/Rewind", "github.com", "acme/rewinder"),
+                checkout("/work/one/kit", "github.com", "acme/kit-a"),
+                checkout("/work/two/kit", "github.com", "acme/kit-b"),
+            ],
+        });
+
+        expect(await projectCheckout("Rewind", { source: renamed })).toEqual({ root: "/work/Rewind" });
+        expect(await projectCheckout("rewind", { source: renamed })).toEqual({ root: "/work/Rewind" });
+        expect(await projectCheckout("acme/rewind", { source: renamed })).toEqual({
+            problem: "no checkout of acme/rewind under the repo roots (/work)",
+        });
+        expect(await projectCheckout("kit", { source: renamed })).toEqual({
+            problem: "kit names 2 projects (github.com/acme/kit-a, github.com/acme/kit-b); use the whole path",
+        });
+        // A project's own name still wins over a folder of that name.
+        expect(await projectCheckout("web", { source })).toEqual({ root: "/work/web" });
     });
 
     test("a GitLab project path with ! finds its main checkout, whatever the letter case or host prefix", async () => {

@@ -530,6 +530,17 @@ export async function postDecisions(
     const requested = input.sessionId?.trim() ?? "";
     // A live harness owns the session. A typed id is only for a human CLI or a test.
     const sessionId = !isTestProcess() && harnessSession ? harnessSession : requested || harnessSession || "unknown";
+
+    // An agent whose session could not be named would file this under the one shared "unknown" session: its number
+    // collides with other agents' ("DECISION 1 is already in session unknown"), the widget groups them as one session,
+    // and no answer can reach it. Five CVE triage sessions did that on 2026-11-05 16:00 UTC. A person at a terminal
+    // (no agent) still posts there.
+    if (sessionId === "unknown" && poster.agent !== "unknown") {
+        throw new Error(
+            `${poster.agent} posted a decision, but its session could not be identified, so no answer could reach it. ` +
+                'Post again with "sessionId" set to your session id (the session start prints it).'
+        );
+    }
     const provider = providerName(input.provider ?? (poster.agent === "unknown" ? undefined : poster.agent));
     const cwd = input.cwd ?? poster.cwd;
     const sessionTitle = input.title ?? poster.sessionTitle ?? undefined;
@@ -697,12 +708,17 @@ type ContentFields = Pick<DecisionRecord, "prompt" | "options" | VersionedKey>;
 
 /**
  * The versioned fields of a posted item, without the keys it leaves empty. A bare letter among the options ("a") takes
- * the words of its "a) …" line in the prompt, so no surface shows a button that reads "a) a".
+ * the words of its "a) …" line in the prompt, so no surface shows a button that reads "a) a", and a decision with no
+ * options takes the whole list.
  */
 function contentOf(decision: PostedDecision, excerpt: string | undefined): ContentFields {
     return {
         prompt: decision.prompt,
-        options: decisionOptionLabels(decision.prompt, decision.options),
+        // A decision posted with no options takes its prompt's "a) …" list; a to-do item keeps none.
+        options:
+            kindOf(decision) === "todo" && decision.options.length === 0
+                ? []
+                : decisionOptionLabels(decision.prompt, decision.options),
         ...(excerpt ? { excerpt } : {}),
         ...(decision.title ? { title: decision.title } : {}),
         ...(decision.proposal ? { proposal: decision.proposal } : {}),

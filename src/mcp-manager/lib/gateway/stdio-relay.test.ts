@@ -815,6 +815,81 @@ describe("runStdioHttpRelay", () => {
     });
 });
 
+describe("runStdioHttpRelay request headers of the 2026-07-28 HTTP transport", () => {
+    const MIRRORED = ["mcp-protocol-version", "mcp-method", "mcp-name"];
+    const modernMeta = { "io.modelcontextprotocol/protocolVersion": "2026-07-28" };
+
+    async function headersSeen(lines: unknown[]): Promise<Record<string, string>[]> {
+        const seen: Record<string, string>[] = [];
+        await runStdioHttpRelay({
+            url: "http://127.0.0.1:1/mcp",
+            headers: { Authorization: "Bearer fixture" },
+            stdin: (async function* () {
+                yield Buffer.from(lines.map((line) => `${SafeJSON.stringify(line, { strict: true })}\n`).join(""));
+            })(),
+            stdout: { write() {} },
+            fetchImpl: async (_input, init) => {
+                const headers = new Headers(init?.headers);
+                const picked: Record<string, string> = {};
+                for (const name of MIRRORED) {
+                    const value = headers.get(name);
+                    if (value !== null) {
+                        picked[name] = value;
+                    }
+                }
+                seen.push(picked);
+
+                return new Response('{"jsonrpc":"2.0","id":0,"result":{}}', {
+                    headers: { "Content-Type": "application/json" },
+                });
+            },
+        });
+
+        return seen;
+    }
+
+    test("mirrors the protocol version, the method and the tool name of a modern request", async () => {
+        const seen = await headersSeen([
+            { jsonrpc: "2.0", id: 1, method: "tools/list", params: { _meta: modernMeta } },
+            { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "secret_list", _meta: modernMeta } },
+            { jsonrpc: "2.0", id: 3, method: "resources/read", params: { uri: "file:///a.txt", _meta: modernMeta } },
+        ]);
+
+        expect(seen).toContainEqual({ "mcp-protocol-version": "2026-07-28", "mcp-method": "tools/list" });
+        expect(seen).toContainEqual({
+            "mcp-protocol-version": "2026-07-28",
+            "mcp-method": "tools/call",
+            "mcp-name": "secret_list",
+        });
+        expect(seen).toContainEqual({
+            "mcp-protocol-version": "2026-07-28",
+            "mcp-method": "resources/read",
+            "mcp-name": "file:///a.txt",
+        });
+    });
+
+    test("carries a name that is not plain ASCII in the base64 sentinel form", async () => {
+        const seen = await headersSeen([
+            { jsonrpc: "2.0", id: 1, method: "prompts/get", params: { name: "café", _meta: modernMeta } },
+        ]);
+
+        expect(seen[0]?.["mcp-name"]).toBe(`=?base64?${Buffer.from("café", "utf8").toString("base64")}?=`);
+    });
+
+    test("adds no mirrored header to a message without the modern _meta, such as a legacy initialize", async () => {
+        const seen = await headersSeen([
+            {
+                jsonrpc: "2.0",
+                id: 1,
+                method: "initialize",
+                params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } },
+            },
+        ]);
+
+        expect(seen).toEqual([{}]);
+    });
+});
+
 describe("runStdioHttpRelay concurrency", () => {
     test("awaits and serializes asynchronous stdout writes", async () => {
         let activeWrites = 0;

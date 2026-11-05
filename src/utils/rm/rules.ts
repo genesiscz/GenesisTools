@@ -1,4 +1,13 @@
-import { type Dirent, existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import {
+    accessSync,
+    constants,
+    type Dirent,
+    existsSync,
+    lstatSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
@@ -191,6 +200,46 @@ export function targetChangeReason(pinned: RmTarget): string | null {
     return null;
 }
 
+/** S_ISVTX: in a sticky folder only an entry's owner, the folder's owner or root may rename or remove the entry. */
+const STICKY_BIT = 0o1000;
+
+/**
+ * Why this user cannot move `target` out of the folder it is in, or null: an item of another user in a sticky folder
+ * (root's spindump files in `/private/var/tmp`), or a folder this user may not change. The rename into the trash would
+ * fail with EACCES, so a request for it waits for an approval no one can carry out. POSIX only; root moves anything.
+ */
+export function notMovableReason(target: Pick<RmTarget, "path" | "kind">): string | null {
+    const uid = process.getuid?.();
+
+    if (uid === undefined || uid === 0 || target.kind === "missing") {
+        return null;
+    }
+
+    const folder = dirname(target.path);
+
+    try {
+        const parent = statSync(folder);
+        const item = lstatSync(target.path);
+
+        if ((parent.mode & STICKY_BIT) !== 0 && item.uid !== uid && parent.uid !== uid) {
+            const owner = item.uid === 0 ? "root" : `user ${item.uid}`;
+            return `it belongs to ${owner} in the sticky folder ${folder}, so only its owner or root can move it`;
+        }
+    } catch (error) {
+        logger.debug({ path: target.path, error }, "rm: could not read the owner of a path or of its folder");
+        return null;
+    }
+
+    try {
+        accessSync(folder, constants.W_OK | constants.X_OK);
+    } catch (error) {
+        logger.debug({ folder, error }, "rm: the folder of a path is not writable");
+        return `this user may not change the folder it is in (${folder}), so it cannot be moved`;
+    }
+
+    return null;
+}
+
 const POSIX_DENY_EXACT = [
     "/",
     "/Users",
@@ -341,6 +390,15 @@ export const RM_RULES: readonly RmRule[] = [
         evaluate: (target, ctx) => {
             const reason = hardDenyReason(target, ctx);
             return reason ? { kind: "deny", rule: "hard-deny", reason } : null;
+        },
+    },
+    {
+        // A path this user cannot rename fails in the trash move, and as an ask it waits for an approval that cannot
+        // be carried out (m888au's root-owned spindump, 2026-11-04).
+        id: "not-movable",
+        evaluate: (target) => {
+            const reason = notMovableReason(target);
+            return reason ? { kind: "deny", rule: "not-movable", reason } : null;
         },
     },
     {
@@ -767,6 +825,12 @@ export function approvalDenyReason(target: RmTarget, ctx: RmRuleContext): string
 
     if (hard) {
         return hard;
+    }
+
+    const stuck = notMovableReason(target);
+
+    if (stuck) {
+        return stuck;
     }
 
     const owner = target.kind === "missing" ? null : ctx.git(target).linkedWorktreeOf;

@@ -138,7 +138,7 @@ export const HUB_CAPABILITIES = {
         parse: () => ({}),
         async run(_input, { signal }) {
             signal.throwIfAborted();
-            const { buildForecast } = await import("../forecast");
+            const { buildForecast } = await import("@genesiscz/utils/ai/usage/forecast/forecast");
             return buildForecast({});
         },
     } satisfies HubCapability<Record<string, never>>,

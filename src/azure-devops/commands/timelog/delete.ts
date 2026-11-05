@@ -1,6 +1,7 @@
 import { Api } from "@app/azure-devops/api";
 import { deleteTimeLogEntryWithEffort, printDeleteResult } from "@app/azure-devops/lib/timelog/delete-entry";
-import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
+import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
+import { formatMinutes } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
@@ -25,7 +26,7 @@ export function registerDeleteSubcommand(parent: Command): void {
                 const noEffort = options.effort === false;
                 const config = requireTimeLogConfig();
                 const user = requireTimeLogUser(config);
-                const api = new TimeLogApi(config.orgId!, config.projectId, config.timelog!.functionsKey, user);
+                const api = getTimeLogApi({ config, user });
 
                 let timeLogId = timeLogIdArg;
                 let workItemId: number | undefined;

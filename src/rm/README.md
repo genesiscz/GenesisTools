@@ -30,8 +30,8 @@ tools rm roots add <dir> [--note "<why>"]
 tools rm config set <key> <value>   # approval, notify-on-request, notify-on-failure, ask-min-mb, ask-action, aside-unsaved,
                                     # session-scratch, own-files, own-bash-files, tmp-small-mb, tmp-small-exclude,
                                     # tmp-small-include, grace-preset, grace-other, grace-scratch, sweep-every,
-                                    # sweep-linger, trash-root, disable-preset, enable-preset, disable-profile,
-                                    # enable-profile
+                                    # sweep-linger, disk-reserve-mb, trash-root, disable-preset, enable-preset,
+                                    # disable-profile, enable-profile
 tools rm profile set <name> --agent codex --ask-action request [...]
 tools rm profile remove <name>
 ```
@@ -50,27 +50,30 @@ The first rule that answers decides.
    `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.password-store` and the GenesisTools vault and AI config; virtual-machine
    disks of OrbStack, Docker Desktop, colima, lima and minikube; plus `protect` in the config) and every folder that
    holds one.
-2. **aside-pending** (refuse): a path that is, holds, or sits in an aside folder whose request still waits. The
+2. **not-movable** (refuse): a path this user cannot rename: an item of another user in a sticky folder (root's
+   spindump files in `/private/var/tmp`), or an item in a folder this user may not change. The move into the trash
+   would fail, so no approval could carry it out. The approval window refuses such a path too.
+3. **aside-pending** (refuse): a path that is, holds, or sits in an aside folder whose request still waits. The
    aside folder lives in the session's scratch, so without this rule the scratch rule would let the agent delete it.
-3. **registered-worktree** (refuse): a linked worktree git still lists. Use `git worktree remove`, which refuses
+4. **registered-worktree** (refuse): a linked worktree git still lists. Use `git worktree remove`, which refuses
    uncommitted work.
-4. **nested-work** (refuse or ask): a folder that holds a linked worktree git still lists is refused, and one that
+5. **nested-work** (refuse or ask): a folder that holds a linked worktree git still lists is refused, and one that
    holds a clone with uncommitted changes or commits on no remote asks, even in the session's scratch.
-5. **git-history** (ask): a `.git` folder or anything inside it, even in the session's scratch: its history and
+6. **git-history** (ask): a `.git` folder or anything inside it, even in the session's scratch: its history and
    unpushed commits go with it.
-6. **git-tracked** (ask): files git tracks. Prefer `git rm`.
-7. **unsaved-clone** (ask): a clone with uncommitted changes or commits on no remote.
-8. **session-scratch** (allow): inside the calling session's `/tmp/cc/<project>/<session id>/` (or the agent's own
+7. **git-tracked** (ask): files git tracks. Prefer `git rm`.
+8. **unsaved-clone** (ask): a clone with uncommitted changes or commits on no remote.
+9. **session-scratch** (allow): inside the calling session's `/tmp/cc/<project>/<session id>/` (or the agent's own
    folder, such as `/tmp/codex/...`). A profile can turn it off (`allowSessionScratch`).
-9. **own-files** (allow): a file the calling session wrote that git does not track: with the Write, Edit or
+10. **own-files** (allow): a file the calling session wrote that git does not track: with the Write, Edit or
    NotebookEdit tool (Claude's modified-file journal), or with a Bash command (the agents change log,
    `~/.genesis-tools/agents/<session>/changes.jsonl`, any harness). A Bash file counts only when it was born while
    that command ran (between the start the row records and the row itself), so a file the command only changed, or
    moved in (`mv ~/x ./y` keeps its birthtime), never does; a row written before 2026-11-02 records no start and
    counts for nothing. Only the last 8 MB of the log are read. A profile can turn it off (`allowOwnFiles`), or only
    the Bash part (`ownFilesFromBash`, `own-bash-files`).
-10. **git-untracked** (ask): untracked files git does not ignore, which may be new work.
-11. **tmp-small** (allow): a path in `/tmp` or the per-user temp folder (`getconf DARWIN_USER_TEMP_DIR`, never
+11. **git-untracked** (ask): untracked files git does not ignore, which may be new work.
+12. **tmp-small** (allow): a path in `/tmp` or the per-user temp folder (`getconf DARWIN_USER_TEMP_DIR`, never
    `$TMPDIR`) of at most `tmpSmallMB` (default 10, `tmp-small-mb`; 0 turns it off), with no socket and no repository
    with unsaved work anywhere inside. The rules above already asked for tracked and new work. A scratch root and a
    project folder under it never match, nor the system's folders at the top of a temp root (`com.apple.*`, `tmux-*`,
@@ -83,13 +86,13 @@ The first rule that answers decides.
    `/tmp/removable/disk-reclaim-<ts>/` folders a disk reclaim leaves. `tools rm` of one
    from an agent opens a request, the default rule's reason says `inside /tmp/removable, a staging area for the
    user's review: tmp-small never deletes there (tmp-small-exclude)`, and `tools rm ask <id>` opens it for the person.
-12. **nested-repos** (ask): a folder that holds git repositories.
-13. **preset** (allow): a folder a build or install recreates, next to the file that proves it: `node_modules` next to
+13. **nested-repos** (ask): a folder that holds git repositories.
+14. **preset** (allow): a folder a build or install recreates, next to the file that proves it: `node_modules` next to
    `package.json`, `dist`/`build`/`.next`/`.turbo`/... next to `package.json`, `.build` next to `Package.swift`,
    `target` next to `Cargo.toml`, Gradle and CMake output, Python caches, Pods, Xcode DerivedData and more.
-14. **root** (allow): inside a folder the user trusts (`tools rm roots add`). A root the approval window remembered
+15. **root** (allow): inside a folder the user trusts (`tools rm roots add`). A root the approval window remembered
    for "this session, this folder" counts only for that session and for 8 hours (`session`, `expiresAt`).
-15. **default** (ask).
+16. **default** (ask).
 
 A person at a terminal (not inside an agent) is asked to confirm an ask at once (see below) instead of a request.
 
@@ -307,6 +310,13 @@ GenesisTools.app cannot ask) cannot change once it shows, so it lists only the s
 - `tools rm drain --now` ends the grace period of every batch, so it is a person's command: the shell guard blocks
   it for an agent. An agent's run that gets past the guard drains early only the batches its own session made; a
   batch of another session, or one a person approved ("Move to the trash"), keeps its grace and its restore.
+- A full disk: the daily pass keeps a reserve of `diskReserveMB` (default 128, `disk-reserve-mb`, 0 is off) in
+  `~/.genesis-tools/rm/disk-reserve.bin` while the disk has 2 GB to spare beside it. A `tools rm` run that finds under
+  64 MB free deletes the reserve before it writes anything, so its locks, records and ledger lines still fit (on
+  2026-11-05 `approve` failed with ENOSPC at its first lock file).
+- An approved path the move cannot rename (EACCES, EPERM) stays where it is with a `refuse` line (`not-movable`); the
+  other paths of the batch still move. When a move stops halfway, what reached the trash counts as approved and the rest
+  stays pending, and in a window of several requests one that fails is named and the others are still decided.
 - The deletion code only deletes inside a trash root, at batch or item depth (`assertInsideTrash`), so a bug that
   builds a wrong path deletes nothing.
 

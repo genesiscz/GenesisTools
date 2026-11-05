@@ -69,6 +69,7 @@ const REVIEW_THREADS_QUERY_FULL = `
               body
               state
               createdAt
+              url
             }
           }
         }
@@ -85,6 +86,7 @@ const REVIEW_THREADS_QUERY_FULL = `
               }
               body
               createdAt
+              url
             }
           }
         }
@@ -179,6 +181,7 @@ const PR_REVIEWS_QUERY = `
               body
               state
               createdAt
+              url
             }
           }
         }
@@ -204,6 +207,7 @@ const PR_COMMENTS_QUERY = `
               }
               body
               createdAt
+              url
             }
           }
         }
@@ -244,6 +248,7 @@ interface ThreadNode {
 }
 
 interface ReviewNode {
+    url: string;
     id: string;
     author: { login: string } | null;
     body: string;
@@ -252,6 +257,7 @@ interface ReviewNode {
 }
 
 interface PrCommentNode {
+    url: string;
     id: string;
     author: { login: string } | null;
     body: string;
@@ -306,7 +312,7 @@ interface PRReviewInfo {
     headRefName: string;
     baseRefName: string;
     threads: ReviewThread[];
-    prComments: PRLevelComment[];
+    prComments: Array<PRLevelComment & { url?: string }>;
 }
 
 // =============================================================================
@@ -434,7 +440,7 @@ function collectThreadPage(
 export async function fetchPRReviewThreads(owner: string, repo: string, prNumber: number): Promise<PRReviewInfo> {
     const octokit = getOctokit();
     const allThreads: ReviewThread[] = [];
-    const prComments: PRLevelComment[] = [];
+    const prComments: Array<PRLevelComment & { url?: string }> = [];
     const threadsNeedingMoreComments: Array<{
         threadIndex: number;
         threadId: string;
@@ -477,6 +483,7 @@ export async function fetchPRReviewThreads(owner: string, repo: string, prNumber
 
         prComments.push({
             id: node.id,
+            url: node.url,
             author: node.author?.login ?? "ghost",
             body: node.body.trim() || "(no review body)",
             createdAt: node.createdAt,
@@ -504,6 +511,7 @@ export async function fetchPRReviewThreads(owner: string, repo: string, prNumber
 
         prComments.push({
             id: node.id,
+            url: node.url,
             author: node.author?.login ?? "ghost",
             body: node.body,
             createdAt: node.createdAt,

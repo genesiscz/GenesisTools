@@ -46,8 +46,8 @@ import {
     CAME_BACK_REASON,
     cameBack,
     closeAllLost,
-    copyLost,
     denyRequest,
+    nothingLeft,
     printDenyOutcome,
     reportLostCopies,
     savedSizes,
@@ -165,7 +165,7 @@ interface PreparedApproval {
  * and logged unless `quiet`).
  */
 function prepareApproval(request: RmRequest, ctx: RunContext, quiet = false): PreparedApproval {
-    const lost = request.targets.filter(copyLost);
+    const lost = request.targets.filter(nothingLeft);
 
     if (!quiet) {
         reportLostCopies(request, lost, ctx.caller);
@@ -526,16 +526,29 @@ async function decideBatch(
             continue;
         }
 
-        applyApprovalAnswer({
-            ctx,
-            request: fresh,
-            openEntries,
-            blocked: [...again.blocked, ...notShown],
-            answer,
-            selected,
-            denyOf: again.denyOf,
-            kickDrainer: deps.kickDrainer,
-        });
+        try {
+            applyApprovalAnswer({
+                ctx,
+                request: fresh,
+                openEntries,
+                blocked: [...again.blocked, ...notShown],
+                answer,
+                selected,
+                denyOf: again.denyOf,
+                kickDrainer: deps.kickDrainer,
+            });
+        } catch (error) {
+            // The person answered for every request in the window: one that fails must not leave the later ones
+            // undecided (2026-11-05 15:14, an EACCES in m888au ended the run with requests still to go).
+            logger.warn({ id: fresh.id, error }, "rm: one approval of a window failed");
+            const message = error instanceof Error ? error.message : String(error);
+            out.println(
+                pc.red(
+                    `request ${fresh.id} failed: ${message}; approve it again: ${toolCommand("rm")} approve ${fresh.id}`
+                )
+            );
+            process.exitCode = 1;
+        }
     }
 
     return answer;

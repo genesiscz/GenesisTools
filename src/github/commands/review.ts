@@ -203,8 +203,8 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
 
         const prComments = reviewData.prComments ?? [];
         if (prComments.length > 0) {
-            if (isFirstFetch) {
-                output += `\n${formatPrCommentsLLM(prComments, sessionId)}`;
+            if (isFirstFetch || options.fullComments) {
+                output += `\n${formatPrCommentsLLM(prComments, sessionId, { fullComments: options.fullComments })}`;
             } else {
                 output += `\nSummary: ${toolCommand("github review summary")} -s ${sessionId}\n`;
             }
@@ -459,7 +459,7 @@ async function summaryCommand(options: { session?: string }): Promise<void> {
     }
 
     const prComments = sessionData.prComments ?? [];
-    out.println(formatPrCommentsLLM(prComments, sessionId));
+    out.println(formatPrCommentsLLM(prComments, sessionId, { fullComments: true }));
 }
 
 /**
@@ -506,6 +506,7 @@ Examples:
         .option("-R, --resolve-thread", "Mark a thread as resolved", false)
         .option("--resolve", "Alias for --resolve-thread", false)
         .option("--llm", "LLM-optimized output with session (compact refs)", false)
+        .option("--full-comments", "Show full bot comment bodies in LLM output", false)
         .option("-s, --session <id>", "Review session ID")
         .option("-v, --verbose", "Enable verbose logging")
         .option("--no-pr-comments", "Hide PR-level review summaries and conversation comments")
