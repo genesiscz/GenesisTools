@@ -492,6 +492,9 @@ private struct MarksLaneView: View {
                 ForEach(model.reviewComments) { comment in
                     CommentMarker(model: model, comment: comment, scale: scale)
                 }
+                ForEach(model.project.markers ?? []) { marker in
+                    EditMarkerFlag(model: model, marker: marker, scale: scale)
+                }
             }
         }
     }
@@ -591,6 +594,34 @@ private struct MusicLaneView: View {
 
 /// A review comment on the marks lane: a yellow bubble at its time (a bar along its range), dimmed once resolved. A
 /// click goes there and opens its popover: the words, who wrote them, the page they came from, Resolve and Delete.
+/// A marker set while editing, over the flag the lane draws: a click goes to it, its menu deletes it (the recording's
+/// own markers cannot be deleted here).
+private struct EditMarkerFlag: View {
+    let model: EditorModel
+    let marker: EditProject.Marker
+    let scale: TimelineScale
+
+    var body: some View {
+        if let out = TimelineMap.outputTime(ofSource: marker.atUs, in: model.project) {
+            Color.clear
+                .frame(width: 14, height: TimelineView.marksLaneHeight)
+                .contentShape(Rectangle())
+                .onTapGesture { model.seek(out) }
+                .contextMenu {
+                    Button("Go to “\(marker.label)”") { model.seek(out) }
+                    Button("Delete Marker", role: .destructive) { model.deleteMarker(marker.id) }
+                }
+                .accessibilityElement()
+                .accessibilityLabel("Marker \(marker.label) at \(formatClock(out, tenths: true))")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { model.seek(out) }
+                .accessibilityAction(named: "Delete Marker") { model.deleteMarker(marker.id) }
+                .liveRow()
+                .offset(x: scale.x(out) - 2)
+        }
+    }
+}
+
 private struct CommentMarker: View {
     @Bindable var model: EditorModel
     let comment: ReviewComment

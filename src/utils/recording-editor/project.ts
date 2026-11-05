@@ -196,6 +196,18 @@ export function replaceWordsInLines(
     });
 }
 
+/**
+ * A moment marked while editing (the range popover's Add Marker, the `marker` op), at SOURCE microseconds. The
+ * recording's own markers, set while it recorded, stay in its recording.json; `markersOf` lists both, and the chapters
+ * and the editor's marks lane show both.
+ */
+export const editMarkerSchema = z.object({
+    id: z.string(),
+    atUs: z.number().int().nonnegative(),
+    label: z.string().trim().min(1).max(80),
+});
+export type EditMarker = z.infer<typeof editMarkerSchema>;
+
 export const TEXT_STYLES = ["plate", "plain"] as const;
 
 /**
@@ -352,6 +364,8 @@ export const editProjectSchema = z.object({
     lanes: z.array(effectLaneSchema).optional(),
     /** The camera recorded beside the screen, drawn as a bubble; absent is none (camera.ts). */
     camera: cameraBubbleSchema.optional(),
+    /** Moments marked while editing, in source order; absent is none (the recording's own are in recording.json). */
+    markers: z.array(editMarkerSchema).optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
 });
@@ -360,7 +374,7 @@ export type EditProject = z.infer<typeof editProjectSchema>;
 export type EditClip = EditProject["clips"][number];
 export type EditZoom = EditProject["zooms"][number];
 
-export function newId(prefix: "c" | "z" | "r" | "t" | "s"): string {
+export function newId(prefix: "c" | "z" | "r" | "t" | "s" | "m"): string {
     return `${prefix}${randomUUID().slice(0, 8)}`;
 }
 
@@ -873,7 +887,7 @@ export const cameraOpSchema = z
 
 /** One edit an agent or the CLI asks for; times are SOURCE times, seconds or "mm:ss". */
 /** The range popover's actions that edit (its "Export This Part" is export({ from, to })). */
-export const RANGE_ACTIONS = ["cut", "speed", "zoom", "hide", "spotlight", "text"] as const;
+export const RANGE_ACTIONS = ["cut", "speed", "zoom", "hide", "spotlight", "text", "marker"] as const;
 
 /** The middle of the picture a range's hidden part or spotlight starts with (the window's defaults). */
 const RANGE_RECTS = {
@@ -951,6 +965,16 @@ export const editOpSchema = z.discriminatedUnion("op", [
         })
         .strict(),
     z.object({ op: z.literal("untext"), id: z.string() }).strict(),
+    z
+        .object({
+            op: z.literal("marker"),
+            /** Source time of the moment. */
+            at: timeSchema,
+            /** Its name in the marks lane and as a chapter; absent is "Marker <n>". */
+            label: z.string().trim().min(1).max(80).optional(),
+        })
+        .strict(),
+    z.object({ op: z.literal("unmarker"), id: z.string() }).strict(),
     z
         .object({
             op: z.literal("retime"),
@@ -1585,6 +1609,20 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         }
         case "retime":
             return retimeItem(project, op);
+        case "marker":
+            return addMarker(project, timeToUs(op.at), op.label);
+        case "unmarker": {
+            const list = project.markers ?? [];
+
+            if (!list.some((marker) => marker.id === op.id)) {
+                throw new Error(
+                    `no marker ${op.id}; edit markers: ${list.map((marker) => marker.id).join(", ") || "none"}`
+                );
+            }
+
+            const rest = list.filter((marker) => marker.id !== op.id);
+            return { ...project, markers: rest.length ? rest : undefined };
+        }
         case "untext": {
             const list = project.texts ?? [];
 
@@ -1919,7 +1957,23 @@ function applyRange(project: EditProject, op: Extract<EditOp, { op: "range" }>):
             return addRedaction(project, { fromUs, toUs, rect: RANGE_RECTS.spotlight, style: "spotlight" });
         case "text":
             return applyOpItself(project, { op: "text", ...seconds, text: op.text ?? "Title" }, {});
+        case "marker":
+            return addMarker(project, fromUs, op.text);
     }
+}
+
+/**
+ * A marker at a source time, named `label` or "Marker <n>" (n counts this edit's markers), kept in source order. The
+ * range popover's Add Marker puts one at the range's start.
+ */
+export function addMarker(project: EditProject, atUs: number, label?: string): EditProject {
+    if (atUs < 0 || atUs > project.source.durationUs) {
+        throw new RangeError(`the marker (${atUs / 1e6} s) is outside the ${project.source.durationUs / 1e6} s movie`);
+    }
+
+    const list = project.markers ?? [];
+    const marker = { id: newId("m"), atUs: Math.round(atUs), label: label?.trim() || `Marker ${list.length + 1}` };
+    return { ...project, markers: [...list, marker].sort((a, b) => a.atUs - b.atUs) };
 }
 
 /** One spoken line of the movie: its source times, where it plays in the edit now, and its words. */

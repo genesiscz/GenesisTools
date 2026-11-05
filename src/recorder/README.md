@@ -84,6 +84,11 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   save and one undo; the editor's Captions tab lists the lines. Its scissors per line pick words to cut (the
   `cutWords` op with `occurrence`, through `tools recorder apply`), and Cut Fillers sends `cutFillers` at the level
   the tab sets (`recorder.captions.fillerLevel`: `sounds`, the default, or `all`).
+- `markers` (optional): moments marked while editing, `{ id, atUs, label }` at source microseconds, beside the
+  recording's own markers in recording.json. Op `marker` (`at`, `label`, default "Marker <n>"), op `unmarker` (`id`),
+  and the `range` op's action `marker` (at the range's start), which the editor's range popover sends as Add Marker.
+  `markers()` and `tools recorder markers` list both kinds (an edit marker with its `id`); the chapters and the marks
+  lane show both.
 - `texts` (optional): lines of text over the picture (a title, a step's name) from `startUs` to `endUs`: `text`,
   `x`/`y` its centre as 0 to 1 of the CANVAS (so it stays put through a zoom; 0.5, 0.12 by default), `size` 0.02 to
   0.15 of the short side (0.055), `style` `plate` or `plain`. Each fades in and out over 0.2 s. Ops `text` and

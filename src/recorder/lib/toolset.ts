@@ -467,7 +467,19 @@ const movieMethods = [
                 lane: z.string().optional(),
             })
             .strict(),
-        'Does what the editor\'s range popover does over `from`..`to` in OUTPUT seconds or "m:ss" (what plays, as the ruler shows it, so after cuts and speed changes): action "cut", "speed" (factor, 2), "zoom" (scale), "hide" or "spotlight" (the middle of the picture; redact and spotlight take a rect), or "text" (text, "Title"). lane puts the new item on an effect lane. Export such a part with export({ from, to }).'
+        'Does what the editor\'s range popover does over `from`..`to` in OUTPUT seconds or "m:ss" (what plays, as the ruler shows it, so after cuts and speed changes): action "cut", "speed" (factor, 2), "zoom" (scale), "hide" or "spotlight" (the middle of the picture; redact and spotlight take a rect), or "text" (text, "Title"), or "marker" (a marker at from, named text or "Marker <n>"). lane puts the new item on an effect lane. Export such a part with export({ from, to }).'
+    ),
+    edit(
+        "marker",
+        z.object({ at: timeSchema, label: z.string().trim().min(1).max(80).optional() }).strict(),
+        'A marker in the edit at `at` (SOURCE seconds or "m:ss"), named label or "Marker <n>": the marks lane, step titles and chapters show it beside the recording\'s own markers; markers() lists it with its id.',
+        ["at", "label"]
+    ),
+    edit(
+        "unmarker",
+        z.object({ id: z.string() }).strict(),
+        "Removes a marker set while editing, by the id markers() gives it; the recording's own markers stay.",
+        ["id"]
     ),
     edit("reset", z.object({}), "Starts over: the whole movie, no zooms, default audio and export."),
     edit(
@@ -1138,6 +1150,14 @@ export class Movie {
 
     async untext(id: string) {
         return this.change([{ op: "untext", id }]);
+    }
+
+    async marker(at: TimeValue, label?: string) {
+        return this.change([{ op: "marker", at, ...(label ? { label } : {}) }]);
+    }
+
+    async unmarker(id: string) {
+        return this.change([{ op: "unmarker", id }]);
     }
 
     /** Fixes the line spoken at `at` (any time inside it, so a time from find() or a still works). */

@@ -164,7 +164,7 @@ final class EditorModel {
         cursor = CursorTrack.load(project.source.cursor)
         zoom = ZoomState(project: project, cursor: cursor)
         hasTranscript = zoom.hasCaptions
-        markers = Self.readMarkers(video: project.source.video)
+        recordingMarkers = Self.readMarkers(video: project.source.video)
         commentsStore = ReviewCommentsStore(video: project.source.video)
         reviewComments = commentsStore.comments
         displayPlan = DisplayPlan.read(video: project.source.video)
@@ -435,9 +435,10 @@ final class EditorModel {
         if a.motion != b.motion { parts.append("motion") }
         if a.lanes != b.lanes { parts.append("lanes") }
         if a.camera != b.camera { parts.append("camera") }
+        if a.markers != b.markers { parts.append("markers") }
         // A count change (an add or a delete) is its own step, never part of a drag.
-        if (a.zooms.count, a.redactions?.count, a.texts?.count, a.shapes?.count, a.clips.count)
-            != (b.zooms.count, b.redactions?.count, b.texts?.count, b.shapes?.count, b.clips.count)
+        if (a.zooms.count, a.redactions?.count, a.texts?.count, a.shapes?.count, a.clips.count, a.markers?.count)
+            != (b.zooms.count, b.redactions?.count, b.texts?.count, b.shapes?.count, b.clips.count, b.markers?.count)
             || (a.camera == nil, a.camera?.hidden.count) != (b.camera == nil, b.camera?.hidden.count) { parts.append("count") }
         return parts
     }
@@ -483,13 +484,14 @@ final class EditorModel {
         if parts.contains("lanes") { return ("Lane Change", nil) }
         guard parts.count == 1, let part = parts.first else { return ("Changes", nil) }
         let counts: (Int, Int)
-        let named: (String, InspectorTab)
+        let named: (String, InspectorTab?)
         switch part {
         case "clips": named = ("Cut", .clip); counts = (a.clips.count, b.clips.count)
         case "zooms": named = ("Zoom", .zoom); counts = (a.zooms.count, b.zooms.count)
         case "redactions": named = ("Hidden Part", .hide); counts = (a.redactions?.count ?? 0, b.redactions?.count ?? 0)
         case "texts": named = ("Text", .text); counts = (a.texts?.count ?? 0, b.texts?.count ?? 0)
         case "shapes": named = ("Shape", .text); counts = (a.shapes?.count ?? 0, b.shapes?.count ?? 0)
+        case "markers": named = ("Marker", nil); counts = (a.markers?.count ?? 0, b.markers?.count ?? 0)
         case "audio": return ("Sound Change", .audio)
         case "export": return ("Export Settings", .export)
         case "clicks": return ("Click Style", .style)
@@ -921,7 +923,14 @@ final class EditorModel {
     }
 
     /// The moments marked while it recorded (`recording.json` settings.markers), at source microseconds.
-    private(set) var markers: [(us: Int64, label: String)] = []
+    private(set) var recordingMarkers: [(us: Int64, label: String)] = []
+
+    /// Every marker, the recording's and the edit's own (`markers` in edit.json), in source order: the marks lane, the
+    /// step titles and the chapters read both, as `markersOf` does.
+    var markers: [(us: Int64, label: String)] {
+        let edited = (project.markers ?? []).map { (us: $0.atUs, label: $0.label) }
+        return edited.isEmpty ? recordingMarkers : (recordingMarkers + edited).sorted { $0.us < $1.us }
+    }
 
     /// Reads the markers the recorder wrote into the recording's manifest; a plain movie has none.
     static func readMarkers(video: String) -> [(us: Int64, label: String)] {

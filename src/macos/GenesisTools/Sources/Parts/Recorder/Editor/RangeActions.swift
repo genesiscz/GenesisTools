@@ -12,7 +12,7 @@ struct TimelineRange: Equatable {
 /// What the popover over a dragged range can do with it. Each is the `range` op of `tools recorder apply`, the export
 /// with `--from`/`--to`, or `tools recorder comment --to`, so an agent does the same with one call.
 enum RangeAction: String, CaseIterable, Identifiable {
-    case cut, speed, zoom, hide, spotlight, text, comment, exportPart
+    case cut, speed, zoom, hide, spotlight, text, marker, comment, exportPart
     var id: String { rawValue }
 
     var title: String {
@@ -23,6 +23,7 @@ enum RangeAction: String, CaseIterable, Identifiable {
         case .hide: "Hide a Part"
         case .spotlight: "Spotlight"
         case .text: "Text"
+        case .marker: "Add Marker"
         case .comment: "Comment"
         case .exportPart: "Export This Part"
         }
@@ -36,6 +37,7 @@ enum RangeAction: String, CaseIterable, Identifiable {
         case .hide: "eye.slash"
         case .spotlight: "light.max"
         case .text: "textformat"
+        case .marker: "flag"
         case .comment: "text.bubble"
         case .exportPart: "square.and.arrow.up"
         }
@@ -49,6 +51,7 @@ enum RangeAction: String, CaseIterable, Identifiable {
         case .hide: "Blur a part of the picture"
         case .spotlight: "Dim everything around a part"
         case .text: "A title over it"
+        case .marker: "At its start"
         case .comment: "A review note, a marker on the timeline"
         case .exportPart: "Write only this part"
         }
@@ -96,6 +99,8 @@ extension EditorModel {
             addEffect(.spotlight, fromOut: range.fromUs, toOut: range.toUs, lane: nil)
         case .text:
             addEffect(.text, fromOut: range.fromUs, toOut: range.toUs, lane: nil)
+        case .marker:
+            addMarker(range, label: "")
         case .comment:
             commentPrompt(range: range)
         case .exportPart:
@@ -107,10 +112,46 @@ extension EditorModel {
     }
 }
 
-/// The popover over a dragged range: its times and one row per action; Speed has its factors inline.
+extension EditorModel {
+    /// What a new marker is called when it is given no name, as the `marker` op names it.
+    var nextMarkerName: String { "Marker \((project.markers?.count ?? 0) + 1)" }
+
+    /// A marker at the range's start, through the `range` op's `marker` action in `tools recorder apply`, so the
+    /// window, the CLI and the REPL add it the same way; one undo step.
+    func addMarker(_ range: TimelineRange, label: String) {
+        timelineRange = nil
+        var op: [String: Any] = ["op": "range", "from": Double(range.fromUs) / 1_000_000, "to": Double(range.toUs) / 1_000_000,
+                                 "action": "marker"]
+        let name = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { op["text"] = String(name.prefix(80)) }
+        let json = (try? JSONSerialization.data(withJSONObject: op, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        applyOps(json) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success: self.show("Added a marker at \(formatClock(range.fromUs, tenths: true)). ⌘Z takes it back.", error: false)
+            case let .failure(failure): self.show("The marker was not added: \(failure.reason)", error: true)
+            }
+        }
+    }
+
+    /// Removes a marker set while editing (the `unmarker` op); the recording's own markers stay.
+    func deleteMarker(_ id: String) {
+        applyOps(#"{"id":"\#(id)","op":"unmarker"}"#) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success: self.show("Deleted the marker. ⌘Z brings it back.", error: false)
+            case let .failure(failure): self.show("The marker was not deleted: \(failure.reason)", error: true)
+            }
+        }
+    }
+}
+
+/// The popover over a dragged range: its times and one row per action; Speed has its factors inline, Add Marker its
+/// name field.
 struct RangeActionsView: View {
     let model: EditorModel
     let range: TimelineRange
+    @State private var markerName = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -154,6 +195,21 @@ struct RangeActionsView: View {
                         }
                     }
                     .padding(.horizontal, 8).frame(height: 28)
+                } else if action == .marker {
+                    HStack(spacing: 8) {
+                        label(action)
+                        Spacer(minLength: 8)
+                        TextField(model.nextMarkerName, text: $markerName)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                            .onSubmit { model.addMarker(range, label: markerName) }
+                            .accessibilityLabel("Marker name")
+                        IconButton(systemName: "plus", tooltip: "Add the marker at \(formatClock(range.fromUs, tenths: true)) (Return in the name)", size: 11) {
+                            model.addMarker(range, label: markerName)
+                        }
+                        .accessibilityIdentifier("recorder.range.marker")
+                    }
+                    .padding(.horizontal, 8).frame(height: 32)
                 } else {
                     label(action)
                         .padding(.horizontal, 8).frame(height: 28)

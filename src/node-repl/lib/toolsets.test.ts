@@ -14,7 +14,14 @@ import {
     undoDepth,
     undoEdit,
 } from "@app/recorder/lib/edit";
-import { chapterMetadata, chaptersOf, chaptersOfPart, recordingFolderOf, spreadTimes } from "@app/recorder/lib/moments";
+import {
+    chapterMetadata,
+    chaptersOf,
+    chaptersOfPart,
+    markersOf,
+    recordingFolderOf,
+    spreadTimes,
+} from "@app/recorder/lib/moments";
 import { MoviesToolset } from "@app/recorder/lib/toolset";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -234,6 +241,38 @@ describe("movie chapters in a movie file", () => {
         ).toBe(
             ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=1500\ntitle=A\\=b\\; \\#1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=1500\nEND=4000\ntitle=Next\n"
         );
+    });
+});
+
+describe("markers of a recording and of its edit", () => {
+    test("list both in time order, each where it plays, and the edit's with the id unmarker takes", () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-markers-"));
+        writeFileSync(
+            join(folder, "recording.json"),
+            SafeJSON.stringify({
+                version: 1,
+                id: "rec",
+                title: "Rec",
+                startedAt: "2026-11-04T10:00:00.000Z",
+                displays: [],
+                frames: [],
+                settings: { markers: [{ atMs: 3000, label: "Recorded" }] },
+            })
+        );
+        const project = {
+            ...wholeProject({ video: join(folder, "screen.mp4"), durationUs: 10_000_000, width: 100, height: 100 }),
+            clips: [{ id: "a", fromUs: 2_000_000, toUs: 10_000_000, speed: 1 }],
+            markers: [
+                { id: "m1", atUs: 1_000_000, label: "Cut away" },
+                { id: "m2", atUs: 6_000_000, label: "Edited" },
+            ],
+        };
+
+        expect(markersOf({ path: join(folder, "edit.json"), project })).toEqual([
+            { at: 1, plays: null, label: "Cut away", id: "m1" },
+            { at: 3, plays: 1, label: "Recorded" },
+            { at: 6, plays: 4, label: "Edited", id: "m2" },
+        ]);
     });
 });
 

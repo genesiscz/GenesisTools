@@ -27,11 +27,14 @@ export function recordingFolderOf(opened: { path: string; project: EditProject }
     );
 }
 
-/** The moments marked while it recorded, from its manifest, with where each plays in the edit (null when cut). */
+/**
+ * The moments marked while it recorded (its manifest) and while it was edited (the edit's `markers`, with their `id`
+ * for the `unmarker` op), in time order, with where each plays in the edit (null when cut).
+ */
 export function markersOf(opened: {
     path: string;
     project: EditProject;
-}): Array<{ at: number; plays: number | null; label: string }> {
+}): Array<{ at: number; plays: number | null; label: string; id?: string }> {
     const { project } = opened;
     const folder = recordingFolderOf(opened);
     const manifest = folder ? readRecordingManifest(folder) : undefined;
@@ -41,14 +44,25 @@ export function markersOf(opened: {
 
     if (!parsed.success) {
         log.debug({ issues: parsed.error.issues }, "the manifest's markers do not read");
-        return [];
     }
 
     const round = (us: number) => Math.round(us / 1000) / 1000;
-    return parsed.data.map((marker) => {
-        const plays = outputTimeOf(project, marker.atMs * 1000);
-        return { at: marker.atMs / 1000, plays: plays === undefined ? null : round(plays), label: marker.label };
-    });
+    const played = (us: number) => {
+        const plays = outputTimeOf(project, us);
+        return plays === undefined ? null : round(plays);
+    };
+    const recorded = (parsed.success ? parsed.data : []).map((marker) => ({
+        at: marker.atMs / 1000,
+        plays: played(marker.atMs * 1000),
+        label: marker.label,
+    }));
+    const edited = (project.markers ?? []).map((marker) => ({
+        at: marker.atUs / 1_000_000,
+        plays: played(marker.atUs),
+        label: marker.label,
+        id: marker.id,
+    }));
+    return [...recorded, ...edited].sort((a, b) => a.at - b.at);
 }
 
 /**

@@ -222,9 +222,52 @@ final class RecorderTimelineTests: XCTestCase {
         try VNImageRequestHandler(cgImage: image).perform([request])
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
         // OCR reads a small "s" as "S" at this size, so the words compare without case.
-        for word in ["00:01.5", "00:04.0", "2.5 s", "Cut", "Speed", "Zoom", "Hide a Part", "Spotlight", "Text", "Comment", "Export This Part"] {
+        for word in ["00:01.5", "00:04.0", "2.5 s", "Cut", "Speed", "Zoom", "Hide a Part", "Spotlight", "Text", "Add Marker", "Comment", "Export This Part"] {
             XCTAssertTrue(text.lowercased().contains(word.lowercased()), "\(word) missing from: \(text)")
         }
+    }
+
+    /// Add Marker sends the `range` op's marker action through `tools recorder apply`, the marker the CLI writes shows
+    /// in the marks lane, and one ⌘Z takes it back. The edit.json TypeScript writes with markers decodes here and a
+    /// save from the window keeps them.
+    func testAddMarkerSendsTheRangeOpAndItsMarkerIsOneUndoStepInTheMarksLane() throws {
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: SharedEditorFixture.url("edit-markers.json"))) as? [String: Any])
+        let written = try JSONSerialization.data(withJSONObject: try XCTUnwrap(fixture["edit"]))
+        let fromTypeScript = try EditProject.decode(written, at: folder.appendingPathComponent("edit.json"))
+        XCTAssertEqual(fromTypeScript.markers?.map(\.label), ["Login", "Marker 1"])
+        XCTAssertEqual(fromTypeScript.markers?.map(\.atUs), [1_500_000, 2_000_000])
+        XCTAssertEqual(try EditProject.decode(fromTypeScript.encoded(), at: folder.appendingPathComponent("edit.json")).markers, fromTypeScript.markers)
+
+        let model = model()
+        var sent: [String] = []
+        model.runTools = { argv, done in
+            sent = argv
+            // What tools recorder apply writes for that op: the edit with the marker, one revision on.
+            var next = model.project
+            next.markers = [EditProject.Marker(id: "m0000aaaa", atUs: 1_500_000, label: "Login")]
+            next.revision += 5
+            try? next.encoded().write(to: model.store.url, options: .atomic)
+            done(0, "{}", "")
+        }
+        XCTAssertEqual(model.nextMarkerName, "Marker 1")
+        model.addMarker(TimelineRange(fromUs: 1_500_000, toUs: 4_000_000), label: "  Login ")
+        XCTAssertEqual(Array(sent.prefix(3)), ["recorder", "apply", model.store.url.path])
+        let op = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sent[3].utf8)) as? NSDictionary)
+        XCTAssertEqual(op, ["op": "range", "from": 1.5, "to": 4, "action": "marker", "text": "Login"] as NSDictionary)
+        XCTAssertEqual(model.markers.map(\.label), ["Login"])
+        XCTAssertEqual(model.nextMarkerName, "Marker 2")
+        XCTAssertEqual(model.undoName, "Add Marker")
+        XCTAssertTrue(TimelineLayout(model: model).marks, "the marks lane shows for an edit marker")
+
+        let lane = try EditorShots.write(TimelineView(model: model, viewportWidth: 800).frame(width: 800, height: 260, alignment: .topLeading),
+                                         name: "timeline-edit-marker", width: 800)
+        XCTAssertTrue(try EditorShots.text(lane).contains("Login"))
+        let popover = try EditorShots.write(RangeActionsView(model: model, range: TimelineRange(fromUs: 5_000_000, toUs: 7_000_000)),
+                                            name: "range-popover-add-marker", width: 300)
+        XCTAssertTrue(try EditorShots.text(popover).contains("Add Marker"))
+
+        model.undo()
+        XCTAssertNil(model.project.markers, "one undo takes the marker back")
     }
 
     /// A display switch is one undo step: ⌘Z makes the proxy again with exactly the plan from before, through

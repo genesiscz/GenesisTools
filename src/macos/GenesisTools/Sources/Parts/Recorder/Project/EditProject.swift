@@ -38,9 +38,19 @@ struct EditProject: Codable, Equatable {
     var lanes: [EffectLane]?
     /// The camera recorded beside the screen, drawn as a bubble; nil is none (Render/CameraLayer.swift).
     var camera: Camera?
+    /// Moments marked while editing (the range popover's Add Marker), in source order; nil is none. The recording's
+    /// own markers stay in recording.json. Written by the `marker` op (src/utils/recording-editor/project.ts).
+    var markers: [Marker]?
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
+
+    /// A moment marked while editing, at SOURCE microseconds; `id` is what the `unmarker` op takes.
+    struct Marker: Codable, Equatable, Identifiable {
+        var id: String
+        var atUs: Int64
+        var label: String
+    }
 
     struct Source: Codable, Equatable {
         /// The movie, absolute.

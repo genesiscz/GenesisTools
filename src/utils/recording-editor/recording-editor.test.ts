@@ -51,6 +51,7 @@ import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { createCanvas } from "@napi-rs/canvas";
 import { ZodError } from "zod";
 import cameraOps from "./__fixtures__/camera-ops.json";
+import editMarkers from "./__fixtures__/edit-markers.json";
 import legacyEvidence from "./__fixtures__/legacy-evidence.json";
 import transcriptCuts from "./__fixtures__/transcript-cuts.json";
 import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema } from "./denoise";
@@ -459,6 +460,42 @@ describe("edit project (edit.json)", () => {
             "not spotlight"
         );
         expect(() => applyOp(project, { op: "range", from: 3, to: 2, action: "cut" })).toThrow("before it starts");
+    });
+
+    test("a marker from a range sits at the range's start where it plays, numbered unless named, and unmarker removes it", () => {
+        // Output 1 s plays source 2 s after the first second was cut.
+        let project = applyOp(wholeProject(source), { op: "range", from: 0, to: 1, action: "cut" });
+        project = applyOp(project, { op: "range", from: 1, to: 3, action: "marker" });
+        project = applyOp(project, { op: "range", from: 0.5, to: 2, action: "marker", text: "Login" });
+        project = applyOp(project, { op: "marker", at: 8, label: "  Wrap up " });
+
+        expect(project.markers?.map((marker) => [marker.atUs, marker.label])).toEqual([
+            [1_500_000, "Login"],
+            [2_000_000, "Marker 1"],
+            [8_000_000, "Wrap up"],
+        ]);
+        expect(project.markers?.every((marker) => /^m[0-9a-f]{8}$/.test(marker.id))).toBe(true);
+        expect(editProjectSchema.parse(SafeJSON.parse(SafeJSON.stringify(project))).markers).toEqual(project.markers);
+
+        const [login] = project.markers ?? [];
+        const rest = applyOp(project, { op: "unmarker", id: login.id });
+        expect(rest.markers?.map((marker) => marker.label)).toEqual(["Marker 1", "Wrap up"]);
+        expect(() => applyOp(rest, { op: "unmarker", id: login.id })).toThrow(`no marker ${login.id}`);
+        expect(() => applyOp(rest, { op: "marker", at: 99 })).toThrow("outside the 10 s movie");
+        const none = (rest.markers ?? []).reduce(
+            (next, marker) => applyOp(next, { op: "unmarker", id: marker.id }),
+            rest
+        );
+        expect(none.markers).toBeUndefined();
+
+        // The window decodes the shared edit.json (RecorderTimelineTests.swift); these ops still make its markers.
+        const shared = editMarkers.ops.reduce(
+            (next, op) => applyOp(next, editOpSchema.parse(op)),
+            wholeProject({ video: "/rec/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 })
+        );
+        const strip = (list: Array<{ atUs: number; label: string }> = []) =>
+            list.map(({ atUs, label }) => ({ atUs, label }));
+        expect(strip(shared.markers)).toEqual(strip(editProjectSchema.parse(editMarkers.edit).markers));
     });
 
     test("review comments: added, changed and removed as appended lines, read back in time order", () => {
