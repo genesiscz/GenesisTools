@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
+import { answerAskForm, cancelAskForm, getAskForm } from "@app/question/lib/pending/ask";
 import type { CalendarEntry, CalendarLookup } from "@genesiscz/utils/meetings/calendar-entry";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import {
@@ -22,7 +23,13 @@ import {
     skipReason,
     viewProposals,
 } from "./assign";
-import type { AskAnswer, AssignInbox, CreateAskFormInput, InboxAnswer } from "./assign-inbox";
+import {
+    type AskAnswer,
+    type AssignInbox,
+    type CreateAskFormInput,
+    decisionInbox,
+    type InboxAnswer,
+} from "./assign-inbox";
 
 const ALICE = { name: "Alice Novak", email: "alice@example.com" };
 const BOB = { name: "Bob Smith", email: "bob@example.com" };
@@ -517,5 +524,102 @@ describe("ask each time", () => {
                 labels: { itemId: "labels", selectedChoices: ["label:A"], freeText: "a, B" },
             })
         ).toEqual({ project: "offers", labels: ["A", "B"] });
+    });
+});
+
+/**
+ * The same flow on the real question store (the test preload points ~/.genesis-tools at a temporary home). The owner
+ * answers or cancels through the store's own functions, the ones `tools question answer` and `cancel` call, so what
+ * `readAnswer` sees is what the store keeps and not what a test wrote in its shape.
+ */
+describe("ask each time on the real question store", () => {
+    const START = "2026-11-04T14:00:00.000Z";
+
+    // The form id comes from the meeting id and the clock, and the real store outlives each test: one title per test.
+    async function askedOnRealStore(title: string, inbox: AssignInbox = decisionInbox) {
+        const made = setup();
+        const deps: AssignDeps = { ...made.deps, inbox };
+        await made.config.addProject("offers");
+        const meeting = await made.create(title, START);
+        expect((await assignSweep(made.store, deps)).asked).toEqual([meeting.id]);
+        const formId = made.store.read(meeting.id)?.assign?.ask?.formId ?? "";
+
+        return { ...made, deps, meeting, formId };
+    }
+
+    test("a form answered through the store applies the project and the new labels", async () => {
+        const { store, config, deps, meeting, formId } = await askedOnRealStore("Northwind planning");
+        const posted = getAskForm(formId);
+
+        expect(posted?.status).toBe("pending");
+        expect(posted?.items.map((item) => item.id)).toEqual(["project", "labels"]);
+        expect(hasOpenAssignSteps(store)).toBe(true);
+        expect((await assignSweep(store, deps)).advanced).toEqual([]);
+
+        const outcome = await answerAskForm(formId, [
+            { itemId: "project", selectedChoices: ["project:offers"] },
+            { itemId: "labels", freeText: "Offers 2.0, Kickoff" },
+        ]);
+        expect(outcome).toMatchObject({ ok: true });
+        expect(getAskForm(formId)?.status).toBe("answered");
+
+        expect((await assignSweep(store, deps)).advanced).toEqual([{ meeting: meeting.id, outcome: "applied" }]);
+        const record = store.read(meeting.id)!;
+        expect(record.project).toBe("offers");
+        expect(record.labels).toEqual(["Offers 2.0", "Kickoff"]);
+        expect(record.assign?.ask?.outcome).toBe("applied");
+        expect(Object.keys((await config.read()).projects)).toEqual(["offers"]);
+    });
+
+    test("a project typed into the form's free text on the store is a new project", async () => {
+        const { store, config, deps, meeting, formId } = await askedOnRealStore("Fabrikam kickoff");
+
+        expect(
+            await answerAskForm(formId, [
+                { itemId: "project", freeText: "fabrikam" },
+                { itemId: "labels", freeText: "Rollout" },
+            ])
+        ).toMatchObject({ ok: true });
+        await assignSweep(store, deps);
+
+        expect(store.read(meeting.id)?.project).toBe("fabrikam");
+        expect(Object.keys((await config.read()).projects)).toContain("fabrikam");
+    });
+
+    test("a cancelled form leaves the meeting without a project, closes the step and is not asked again", async () => {
+        const { store, deps, meeting, formId } = await askedOnRealStore("Contoso review");
+
+        expect(cancelAskForm(formId)?.status).toBe("cancelled");
+        expect((await assignSweep(store, deps)).advanced).toEqual([{ meeting: meeting.id, outcome: "cancelled" }]);
+
+        const record = store.read(meeting.id)!;
+        expect(record.project).toBeUndefined();
+        expect(record.assign?.ask?.outcome).toBe("cancelled");
+        expect(hasOpenAssignSteps(store)).toBe(false);
+        expect((await assignSweep(store, deps)).asked).toEqual([]);
+    });
+
+    test("a form that passed its timeout is closed as a timeout by the store's own expiry", async () => {
+        // The assign flow posts without a timeout, so this inbox adds one to reach the store's expiry path.
+        const withTimeout: AssignInbox = {
+            ...decisionInbox,
+            post: (input) => decisionInbox.post({ ...input, timeoutMs: 60_000 }),
+        };
+        const { store, deps, meeting, formId } = await askedOnRealStore("Litware sync", withTimeout);
+
+        expect(getAskForm(formId)?.status).toBe("pending");
+        setSystemTime(new Date(Date.now() + 2 * 60_000));
+
+        try {
+            expect(getAskForm(formId)?.status).toBe("timeout");
+            expect((await assignSweep(store, deps)).advanced).toEqual([{ meeting: meeting.id, outcome: "timeout" }]);
+        } finally {
+            setSystemTime();
+        }
+
+        const record = store.read(meeting.id)!;
+        expect(record.project).toBeUndefined();
+        expect(record.assign?.ask?.outcome).toBe("timeout");
+        expect(hasOpenAssignSteps(store)).toBe(false);
     });
 });
