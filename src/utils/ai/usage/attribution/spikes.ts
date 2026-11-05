@@ -56,7 +56,13 @@ export function findRises(entry: SeriesEntry, settings: SpikeSettings): Rise[] {
             const point = points[j];
 
             // A drop is a reset (or a correction): a reading before it is not the base of this rise.
-            if (point.v > points[j + 1].v) {
+            if (
+                point.v > points[j + 1].v ||
+                entry.resets.some((reset) => {
+                    const at = Date.parse(reset);
+                    return at > point.at && at <= points[j + 1].at;
+                })
+            ) {
                 break;
             }
 
