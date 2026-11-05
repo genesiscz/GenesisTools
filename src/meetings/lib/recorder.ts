@@ -16,6 +16,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { recognizeText } from "@genesiscz/utils/macos/ocr";
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import {
     attemptStaleTakeover,
     classifyPidRecord,
@@ -83,13 +84,13 @@ function frameName(at: Date): string {
 }
 
 async function run(argv: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-    const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
-    return { exitCode, stdout, stderr };
+    const result = await boundedCommand({ command: argv, timeoutMs: CHUNK_MS + 15_000 });
+
+    if (result.error) {
+        throw result.error;
+    }
+
+    return { exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
 }
 
 /** One piece of change-aware screen capture: frames only when the screen changed, PNG files in `dir`. */

@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -1855,7 +1856,7 @@ test("exhausted capture retries persist failure without capturing a frame", asyn
         { title: "Retry fixture", start: meeting.start, createdBy: "new" },
         { command: "test", change: "fixture" }
     );
-    const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
+    const spawn = spyOn(childProcess, "spawn").mockImplementation(() => {
         throw new Error("capture unavailable");
     });
     const sleep = spyOn(Bun, "sleep").mockResolvedValue(undefined);
