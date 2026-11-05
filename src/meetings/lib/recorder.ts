@@ -60,6 +60,17 @@ const recorderStateSchema = z.object({
 });
 export type RecorderState = z.infer<typeof recorderStateSchema>;
 
+export function recorderAcknowledged(options: {
+    current: { running: boolean; state?: RecorderState };
+    meetingId: string;
+    startedAfter: number;
+}): boolean {
+    const { current, meetingId, startedAfter } = options;
+    return (
+        current.running && current.state?.meetingId === meetingId && Date.parse(current.state.startedAt) >= startedAfter
+    );
+}
+
 export function readRecorderState(store: MeetingStore): { running: boolean; state?: RecorderState } {
     const files = recorderFiles(store);
     const running = inspectPidFile(files.pid).status === "live";

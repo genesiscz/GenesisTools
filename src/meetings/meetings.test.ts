@@ -31,7 +31,7 @@ import {
     splitQuestion,
 } from "./lib/questions";
 import { rawMeeting } from "./lib/raw";
-import { recorderFiles, runRecorder } from "./lib/recorder";
+import { recorderAcknowledged, recorderFiles, runRecorder } from "./lib/recorder";
 import { suggestItems } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
 import { type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
@@ -1781,6 +1781,24 @@ describe("evidence --raw", () => {
             ["Bob Example", "Dobře."],
         ]);
     });
+});
+
+test("recorder startup requires a fresh acknowledgement and live ownership", () => {
+    const state = {
+        meetingId: "fixture",
+        pid: 12345,
+        startedAt: "2026-11-05T00:00:00.000Z",
+        display: 1,
+        frames: 0,
+        bytes: 0,
+    };
+    const startedAfter = Date.parse(state.startedAt);
+    const check = (running: boolean, startedAt: string, meetingId = "fixture") =>
+        recorderAcknowledged({ current: { running, state: { ...state, startedAt } }, meetingId, startedAfter });
+    expect(check(true, state.startedAt)).toBe(true);
+    expect(check(false, state.startedAt)).toBe(false);
+    expect(check(true, "2026-11-04T23:59:59.999Z")).toBe(false);
+    expect(check(true, state.startedAt, "other")).toBe(false);
 });
 
 test("a stale recorder claim is recovered and an initialization failure releases it", async () => {
