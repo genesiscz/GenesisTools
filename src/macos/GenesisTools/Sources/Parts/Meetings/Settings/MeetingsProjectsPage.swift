@@ -129,7 +129,7 @@ private struct ProjectCard: View {
                 model.changeLabels(name, add: values.filter { !old.contains($0) }, remove: old.filter { !values.contains($0) })
             }
             Divider()
-            PeopleList(model: model, project: name, people: project?.match?.people ?? [])
+            PeopleList(model: model, project: name, people: project?.match?.people ?? [], projects: settings.projects)
             Divider()
             NativeSettingsRow("Export folder", detail: "Where Export writes this project's meeting notes.") {
                 HStack(spacing: 8) {
@@ -146,12 +146,14 @@ private struct ProjectCard: View {
     }
 }
 
-/// The people paired with a project, each with where the pairing came from. Unpairing a calendar entry removes
-/// every pairing that came only from it, so its button says how many people that is.
+/// The people paired with a project, each with where the pairing came from. Unpairing a calendar entry removes its
+/// pairings in every project, so its button says how many pairings that is, in how many projects, and how many people
+/// leave a project because no other source pairs them.
 private struct PeopleList: View {
     @Bindable var model: MeetingsSettingsModel
     let project: String
     let people: [PairedPerson]
+    let projects: [String: ProjectSettings]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -181,12 +183,10 @@ private struct PeopleList: View {
         var items: [MenuButtonItem] = [.action("Unpair \(person.name) from \(project)") { model.unpair(person: person, from: project) }]
         for source in person.pairedBy where source.kind == "calendar" {
             guard let entry = source.entryId else { continue }
-            let count = people.filter { other in
-                other.pairedBy.contains { $0.entryId == entry } && other.pairedBy.allSatisfy { $0.entryId == entry }
-            }.count
+            let preview = UnpairPreview.of(entry: entry, in: projects)
             let title = source.title.map { "“\($0)”" } ?? "the calendar entry"
-            items.append(.action("Unpair every person \(title) paired (\(Plural.count(count, "person", "people")))") {
-                model.unpair(entry: entry, title: title, count: count)
+            items.append(.action("Unpair every person \(title) paired (\(preview.words))") {
+                model.unpair(entry: entry, title: title, preview: preview)
             })
         }
         return items
@@ -471,5 +471,35 @@ enum MeetingsDictionaryRules {
     /// The spoken forms typed as one line: "zus tent, zu stand" is two forms.
     static func spokenForms(_ text: String) -> [String] {
         text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+}
+
+/// What `projects unpair --entry` changes, in every project (the CLI's `removeEntryPairings`): each pairing the entry
+/// made goes, and a person no other source pairs leaves that project.
+struct UnpairPreview: Equatable {
+    let pairings: Int
+    let projects: Int
+    let leaving: Int
+
+    static func of(entry: String, in projects: [String: ProjectSettings]) -> UnpairPreview {
+        var pairings = 0, touched = 0, leaving = 0
+        for settings in projects.values {
+            let paired = (settings.match?.people ?? []).filter { person in
+                person.pairedBy.contains { $0.kind == "calendar" && $0.entryId == entry }
+            }
+            guard !paired.isEmpty else { continue }
+            touched += 1
+            pairings += paired.count
+            leaving += paired.filter { person in
+                person.pairedBy.allSatisfy { $0.kind == "calendar" && $0.entryId == entry }
+            }.count
+        }
+        return UnpairPreview(pairings: pairings, projects: touched, leaving: leaving)
+    }
+
+    /// "3 pairings in 2 projects; 2 people leave their project".
+    var words: String {
+        let left = leaving == 0 ? "nobody leaves a project" : "\(Plural.count(leaving, "person", "people")) \(leaving == 1 ? "leaves" : "leave") a project"
+        return "\(Plural.count(pairings, "pairing")) in \(Plural.count(projects, "project")); \(left)"
     }
 }

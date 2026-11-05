@@ -266,4 +266,19 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertNil(MeetingDetailModel.renameTarget(label: "S1", saved: nil, typed: "S1"))
         XCTAssertEqual(MeetingDetailModel.renameTarget(label: "S1", saved: nil, typed: "Bob"), "Bob")
     }
+
+    func testUnpairingACalendarEntryCountsEveryProjectItChanges() throws {
+        let projects = try JSONDecoder().decode([String: ProjectSettings].self, from: Data("""
+        {"work":{"labels":[],"match":{"people":[
+           {"name":"Alice","email":"alice@example.com","pairedBy":[{"kind":"calendar","entryId":"e1"}]},
+           {"name":"Bob","email":"bob@example.com","pairedBy":[{"kind":"calendar","entryId":"e1"},{"kind":"manual"}]}]}},
+         "side":{"labels":[],"match":{"people":[
+           {"name":"Alice","email":"alice@example.com","pairedBy":[{"kind":"calendar","entryId":"e1"}]}]}},
+         "other":{"labels":[],"match":{"people":[
+           {"name":"Carol","email":"carol@example.com","pairedBy":[{"kind":"calendar","entryId":"e2"}]}]}}}
+        """.utf8))
+        let preview = UnpairPreview.of(entry: "e1", in: projects)
+        XCTAssertEqual(preview, UnpairPreview(pairings: 3, projects: 2, leaving: 2))
+        XCTAssertEqual(preview.words, "3 pairings in 2 projects; 2 people leave a project")
+    }
 }

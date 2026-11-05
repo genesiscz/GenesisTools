@@ -167,9 +167,9 @@ final class MeetingsSettingsModel {
         run(key: "labels.\(project)", args, done: nil) { $0.loadSettings() }
     }
 
-    func unpair(entry: String, title: String, count: Int) {
+    func unpair(entry: String, title: String, preview: UnpairPreview) {
         run(key: "unpair.\(entry)", ["projects", "unpair", "--entry", entry],
-            done: "Unpaired \(Plural.count(count, "person", "people")) that \(title) paired") { $0.loadSettings() }
+            done: "Removed what \(title) paired: \(preview.words)") { $0.loadSettings() }
     }
 
     func unpair(person: PairedPerson, from project: String) {
