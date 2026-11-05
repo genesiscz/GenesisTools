@@ -101,9 +101,14 @@ export function registerBriefCommand(program: Command): void {
         .action(async (opts: { refresh?: boolean; push?: boolean; json?: boolean }) => {
             let result = readBrief();
 
-            if (opts.refresh || !result) {
+            if (opts.refresh) {
                 result = await buildBrief({ config: await readBriefConfig() });
                 storeBrief(result);
+            }
+
+            if (!result) {
+                opts.json ? out.result(null) : out.println("No brief has been built yet. Use --refresh to build one.");
+                return;
             }
 
             if (opts.push) {
