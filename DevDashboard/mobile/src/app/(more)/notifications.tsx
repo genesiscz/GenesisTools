@@ -92,7 +92,7 @@ export default function NotificationsScreen() {
                     ) : null}
                     <Text style={{ color: c.textMuted, fontSize: 12 }}>
                         The Mac pushes each decision that waits for you, with a button per option letter. A button answers
-                        without opening the app; the receipt arrives as a notice.
+                        unlocks and opens the app before submitting your answer; the receipt arrives as a notice.
                     </Text>
                 </View>
                 <Pressable
