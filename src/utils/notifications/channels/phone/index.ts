@@ -73,7 +73,7 @@ function send(transports: PushTransportTable, device: PhoneDevice, message: Push
 
     // An exhaustive table keyed by the route kind; the narrowing below is the type system's, not a name branch.
     return route.kind === "apns"
-        ? transports.apns.send(route, message, config.apns)
+        ? transports.apns.send(route, { ...message, topic: config.apns?.topic ?? message.topic }, config.apns)
         : transports.simctl.send(route, message, config.apns);
 }
 

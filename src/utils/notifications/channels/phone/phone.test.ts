@@ -186,6 +186,21 @@ describe("phone channel", () => {
         });
     });
 
+    test("the APNs topic override applies to alerts and retractions but not simulator delivery", async () => {
+        const store = memoryPhoneDeviceStore({
+            "phone-1": device({ kind: "apns", token: "abc", environment: "production" }),
+            "phone-2": device({ kind: "simctl", udid: "SIM-1" }, "phone-2"),
+        });
+        const { sent, transports } = fakeTransports();
+        const channel = createPhoneChannel({ devices: store, transports, keys: async () => macKeys, presence: AWAY });
+        const config = { enabled: true, apns: { topic: "dev.example.override" } };
+        await channel.post(decisionEvent, config);
+        await channel.retract("qa-decision-d3", config);
+        expect(sent.map(({ message }) => message.topic)).toEqual([
+            "dev.example.override", "dev.example.app", "dev.example.override", "dev.example.app",
+        ]);
+    });
+
     test("unusable until a phone registers", async () => {
         const store = memoryPhoneDeviceStore();
         const channel = createPhoneChannel({
