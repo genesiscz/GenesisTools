@@ -158,7 +158,7 @@ export async function recordVideo(options: VideoRecordingOptions): Promise<Video
 }
 
 async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecordingResult> {
-    const id = `video-${stamp()}`;
+    const id = `video-${stamp()}-${randomUUID()}`;
     const folder = recordingsLibraryDir(id);
     const movie = join(folder, "screen.mp4");
     // "display 0" (the target's own description) said nothing in the library; a time does.
