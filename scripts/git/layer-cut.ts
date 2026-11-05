@@ -7,6 +7,9 @@
  *   bun scripts/git/layer-cut.ts --scratch <dir> --checks-only [--tests] [--swift] [--only <branch>]   (on the cut/
  *                                refs of the last run; --only limits the checks to one branch)
  *
+ * --recut <pr> (repeatable) names an open PR that this run replaces: a re-cut of the stack after its base merged.
+ * Its head is never an exclusion source, or its own files would stay at the base form.
+ *
  * --unified takes a sha to pin a moving branch; --unified-branch names its PR head (never an exclusion source).
  * --tests runs `bun scripts/test.ts <folders>` per tree, serially; --swift runs one app `swift build --build-tests`
  * per Swift branch through the babysit skill's shared Swift slot.
@@ -80,6 +83,8 @@ interface Options {
     tests: boolean;
     swift: boolean;
     json: string | null;
+    /** --recut: open PRs this run replaces; never an exclusion source. */
+    recut: number[];
 }
 
 interface Commit {
@@ -221,7 +226,7 @@ function readCommits(revs: string[]): Commit[] {
  * The head refs of every open PR except the unified branch's own, as `origin/<head>`. A head that is an ancestor of
  * unified is the unified PR under another name and is skipped too: its subjects would exclude every commit.
  */
-function openPrRefs(unifiedBranch: string, unifiedSha: string): OpenPr[] {
+function openPrRefs(unifiedBranch: string, unifiedSha: string, recut: readonly number[]): OpenPr[] {
     const proc = Bun.spawnSync(
         [
             "gh",
@@ -246,6 +251,11 @@ function openPrRefs(unifiedBranch: string, unifiedSha: string): OpenPr[] {
     for (const line of proc.stdout.toString().split("\n").filter(Boolean)) {
         const [number, head] = line.split("\t");
         if (head === unifiedBranch) {
+            continue;
+        }
+
+        if (recut.includes(Number(number))) {
+            process.stderr.write(`! #${number} is re-cut by this run; not used as an open PR\n`);
             continue;
         }
 
@@ -932,6 +942,7 @@ function parseOptions(argv: string[]): Options {
         tests: false,
         swift: false,
         json: null,
+        recut: [],
     };
     const valueFlags: Record<string, "unified" | "unifiedBranch" | "base" | "master" | "scratch" | "json" | "only"> = {
         "--unified": "unified",
@@ -962,6 +973,13 @@ function parseOptions(argv: string[]): Options {
             options.tests = true;
         } else if (arg === "--swift") {
             options.swift = true;
+        } else if (arg === "--recut") {
+            const pr = Number(argv[++i]);
+            if (!Number.isInteger(pr) || pr <= 0) {
+                throw new Error(`--recut takes a PR number, got ${argv[i]}`);
+            }
+
+            options.recut.push(pr);
         } else {
             throw new Error(`unknown argument ${arg}`);
         }
@@ -1001,7 +1019,7 @@ async function main(): Promise<number> {
     }
 
     const commits = table.selection === "diff" ? [] : readCommits([`^${options.master}`, unifiedSha]);
-    const openPrs = table.selection === "diff" ? [] : openPrRefs(options.unifiedBranch, unifiedSha);
+    const openPrs = table.selection === "diff" ? [] : openPrRefs(options.unifiedBranch, unifiedSha, options.recut);
     const prRefs = openPrs.map((pr) => pr.ref);
     const prRevs = [`^${options.master}`, ...prRefs];
     const outside = outsidePrFiles(openPrs, options.master, baseSha);
