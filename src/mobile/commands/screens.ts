@@ -53,9 +53,10 @@ export function registerScreens(program: Command): void {
         .option("--json", "print the result as JSON")
         .action(async (target: string, options: ScreenOptions) => {
             const { project, device, driver } = await openDriver(options);
-            const route = projectRoute(project, target);
+            let route: ReturnType<typeof projectRoute>;
 
             try {
+                route = projectRoute(project, target);
                 await driver.open(route);
             } finally {
                 await driver.close();
@@ -77,10 +78,10 @@ export function registerScreens(program: Command): void {
         .option("--json", "print the result as JSON")
         .action(async (target: string | undefined, options: ScreenOptions & { out?: string; name?: string }) => {
             const { project, driver } = await openDriver(options);
-            const route = target ? projectRoute(project, target) : undefined;
             const outDir = options.out ?? runDirFor("captures", project.config.id);
 
             try {
+                const route = target ? projectRoute(project, target) : undefined;
                 if (route) {
                     await driver.open(route);
                 }
