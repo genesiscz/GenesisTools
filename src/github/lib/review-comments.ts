@@ -390,7 +390,10 @@ export function batchOutcome(
             },
             {
                 level: "warn",
-                text: `Do not rerun this batch. Open ${pr} on GitHub: if the review is still pending, submit or discard it there; if it was submitted, the replies are already posted.`,
+                text:
+                    result.posted.length === 0
+                        ? `Open ${pr} on GitHub and inspect the pending review for other drafts. Submit or discard it as appropriate before retrying this batch.`
+                        : `Do not rerun this batch. Open ${pr} on GitHub: if the review is still pending, submit or discard it there; if it was submitted, the replies are already posted.`,
             }
         );
 
