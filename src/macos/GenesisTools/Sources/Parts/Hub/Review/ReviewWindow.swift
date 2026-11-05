@@ -629,6 +629,10 @@ final class ReviewModel: ObservableObject {
     /// big repository), `symbolic-ref` and `remote` again with the same answer.
     private var refsStale = true
     private var refsReadFor: String?
+    private var refsReadGeneration = UUID()
+    private var refsContextKey: String {
+        "\(repo.path)|\(remoteHead?.commitRange)|\(chosenBase ?? targetRef ?? branchTarget ?? "")|\(scope)"
+    }
     private var reloadAgain = false
     /// Watch events per root since the last watch reload, and when that reload started. An agent that writes
     /// all the time sent a reload per 0.35 s event batch: 394 reloads and 2,173 git runs in one hour (2026-11-02
@@ -834,12 +838,16 @@ final class ReviewModel: ObservableObject {
             let primary = repo
             let commitRange = remoteHead?.commitRange
             let preferredBase = chosenBase ?? targetRef ?? branchTarget
-            refsReadFor = "\(primary.path)|\(commitRange)|\(preferredBase ?? "")"
+            let context = refsContextKey
+            let generation = UUID()
+            refsReadFor = context
+            refsReadGeneration = generation
             DispatchQueue.global(qos: .utility).async {
                 let source = GitWorkingTreeSource(repo: primary, preferredBase: preferredBase)
                 let refs = (commits: source.commits(range: commitRange), checkouts: source.worktrees(), candidates: source.baseCandidates())
                 DispatchQueue.main.async { [weak self] in
-                    self?.applyRefs(commits: refs.commits, checkouts: refs.checkouts, candidates: refs.candidates, primary: primary)
+                    guard let self, self.refsReadGeneration == generation, self.refsContextKey == context else { return }
+                    self.applyRefs(commits: refs.commits, checkouts: refs.checkouts, candidates: refs.candidates, primary: primary)
                 }
             }
         }
@@ -1149,9 +1157,11 @@ final class ReviewModel: ObservableObject {
         default: onlyPrimary = false
         }
         let loadsPrimary = jobs.contains { $0.repo.path == primary.path && $0.refresh == nil }
-        let refsKey = "\(primary.path)|\(commitRange)|\(preferredBase ?? "")"
+        let refsKey = refsContextKey
         let readsRefs = loadsPrimary && (refsStale || refsReadFor != refsKey)
+        let refsGeneration = UUID()
         if readsRefs {
+            refsReadGeneration = refsGeneration
             refsStale = false
             refsReadFor = refsKey
             refsReadAt = Date()
@@ -1217,7 +1227,7 @@ final class ReviewModel: ObservableObject {
             let candidates = readsRefs ? primarySource.baseCandidates() : nil
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                if readsRefs {
+                if readsRefs, self.refsReadGeneration == refsGeneration, self.refsContextKey == refsKey {
                     self.applyRefs(commits: commits, checkouts: checkouts, candidates: candidates, primary: primary)
                 }
                 self.loadInFlight = false
