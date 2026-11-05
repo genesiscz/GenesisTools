@@ -296,8 +296,9 @@ export class LibraryRecording extends FrameRecording<number> {
                 this.pending.push(item);
             }
 
+            // A live switch moved the capture: its sound belongs to the display it records now.
             for (const track of result.tracks ?? []) {
-                this.tracks.push({ ...track, displayId, startedAtMs: result.startedAtMs });
+                this.tracks.push({ ...track, displayId: entry.target.displayId, startedAtMs: result.startedAtMs });
             }
 
             return result.frames.length > 0;
