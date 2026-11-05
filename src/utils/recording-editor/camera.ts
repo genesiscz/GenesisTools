@@ -1,9 +1,10 @@
-import { randomUUID } from "node:crypto";
+
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
+import { recordingItemId } from "./item-ids";
 
 const { log } = logger.scoped("recording-editor-camera");
 
@@ -31,7 +32,7 @@ export const cameraHiddenSchema = z.object({
 
 /** A new hidden part's id ("k" for camera, like "z" for a zoom). */
 export function cameraHiddenId(): string {
-    return `k${randomUUID().slice(0, 8)}`;
+    return recordingItemId("k");
 }
 
 /**

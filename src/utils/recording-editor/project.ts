@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+
 import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
@@ -7,6 +7,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
 import { CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
+import { recordingItemId, withItemIds } from "./item-ids";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
 import {
     clipSpeed,
@@ -399,7 +400,7 @@ export type EditClip = EditProject["clips"][number];
 export type EditZoom = EditProject["zooms"][number];
 
 export function newId(prefix: "c" | "z" | "r" | "t" | "s" | "m"): string {
-    return `${prefix}${randomUUID().slice(0, 8)}`;
+    return recordingItemId(prefix);
 }
 
 /** `<folder>/edit.json` for a recording folder's movie, `<name>.edit.json` beside any other movie. */
@@ -1445,6 +1446,8 @@ export function parseEditOps(raw: unknown): EditOp[] {
 
 /** What an op needs from the movie itself, probed by the caller (`removeIdle`: the still and silent stretches). */
 export interface OpFacts {
+    /** Runtime replay data, never saved in the project: IDs already returned to the caller. */
+    generatedIds?: string[];
     idleUs?: ReadonlyArray<readonly [number, number]>;
     /** The cached transcript's lines (`cutWords`, `cutFillers`). */
     transcript?: readonly TranscriptSegment[];
@@ -1614,7 +1617,8 @@ function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>)
 }
 
 export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): EditProject {
-    const next = applyOpItself(project, op, facts);
+    facts.generatedIds ??= [];
+    const next = withItemIds(facts.generatedIds, () => applyOpItself(project, op, facts));
 
     if ("lane" in op && op.op !== "moveToLane" && op.lane) {
         const lanes = resolveLanes(next).map((entry) => entry.lane.id);
