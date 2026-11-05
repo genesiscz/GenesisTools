@@ -680,12 +680,32 @@ async function run(params: { cmd: string[]; cwd: string; log: string }): Promise
     return { exitCode, text };
 }
 
+/** Project configs that own selected files; paths stay relative to the repository for the mover. */
+export function checkProjects(files: string[], tree: Map<string, TreeEntry>): string[] {
+    const configs = new Set<string>(tree.has("tsconfig.json") ? ["tsconfig.json"] : []);
+    for (const file of files) {
+        let dir = dirname(file);
+        while (dir !== ".") {
+            const config = `${dir}/tsconfig.json`;
+            if (tree.has(config) && tree.has(`${dir}/package.json`)) {
+                configs.add(config);
+                break;
+            }
+
+            dir = dirname(dir);
+        }
+    }
+
+    return [...configs].sort();
+}
+
 export class ScratchTree {
     private lockStamp: string | null = null;
 
     constructor(
         readonly dir: string,
-        private readonly logDir: string
+        private readonly logDir: string,
+        private readonly files: string[] = []
     ) {}
 
     ensure(startCommit: string): void {
@@ -743,11 +763,17 @@ export class ScratchTree {
     }
 
     async typecheck(label: string): Promise<TsError[]> {
-        const result = await run({
-            cmd: ["tsc-rs", "--noEmit", "-p", "tsconfig.json"],
-            cwd: this.dir,
-            log: join(this.logDir, `tsc-${label}.log`),
-        });
+        const tree = readTree(git(["rev-parse", "HEAD"], { cwd: this.dir }).trim());
+        const results = [];
+        for (const config of checkProjects(this.files, tree)) {
+            results.push(await run({
+                cmd: ["tsc-rs", "--noEmit", "-p", config],
+                cwd: this.dir,
+                log: join(this.logDir, `tsc-${label}-${config.replaceAll("/", "_")}.log`),
+            }));
+        }
+
+        const result = { text: results.map((r) => r.text).join("\n"), exitCode: results.find((r) => r.exitCode !== 0)?.exitCode ?? 0 };
         const errors: TsError[] = [];
         for (const line of result.text.split("\n")) {
             const located = TS_ERROR_RE.exec(line);
@@ -1004,7 +1030,7 @@ async function main(): Promise<number> {
     };
 
     if (!options.planOnly) {
-        const scratchTree = new ScratchTree(join(options.scratch, "tree"), logDir);
+        const scratchTree = new ScratchTree(join(options.scratch, "tree"), logDir, [...owner.keys()]);
         let known = new Set<string>();
         if (options.typecheck) {
             scratchTree.ensure(baseSha);
@@ -1420,7 +1446,7 @@ async function checksOnly(options: Options): Promise<number> {
     const logDir = join(options.scratch, "logs");
     const checks = await runChecks({
         options,
-        scratchTree: new ScratchTree(join(options.scratch, "tree"), logDir),
+        scratchTree: new ScratchTree(join(options.scratch, "tree"), logDir, branches.flatMap((entry) => entry.files)),
         logDir,
         baseSha: revParse(options.base),
         branches,

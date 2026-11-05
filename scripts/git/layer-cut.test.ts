@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ScratchTree, testFolders } from "./layer-cut";
+import { checkProjects, ScratchTree, testFolders } from "./layer-cut";
 import { expect, test } from "bun:test";
 import { loadTable } from "./layer-cut-tables/load";
 import unified from "./layer-cut-tables/unified";
@@ -24,6 +24,13 @@ test("test discovery uses the checked tree even when the source no longer has it
     const checked = new Map([["src/widget/index.ts", entry], ["src/widget/index.test.ts", entry]]);
     expect(testFolders(["src/widget/index.ts"], checked)).toEqual(["src/widget"]);
     expect(testFolders(["src/widget/index.ts"], new Map())).toEqual([]);
+});
+
+test("project discovery includes mobile configs for selected mobile files", () => {
+    const entry = { mode: "100644", sha: "fixture" };
+    const tree = new Map(["tsconfig.json", "DevDashboard/mobile/tsconfig.json", "DevDashboard/mobile/package.json"].map((file) => [file, entry]));
+    expect(checkProjects(["DevDashboard/mobile/src/screen.tsx"], tree)).toEqual(["DevDashboard/mobile/tsconfig.json", "tsconfig.json"]);
+    expect(checkProjects(["src/widget/index.ts"], tree)).toEqual(["tsconfig.json"]);
 });
 
 test("--table requires a module path", async () => {
