@@ -53,7 +53,15 @@ export function registerDevices(program: Command): void {
         .option("--json", "print as JSON")
         .action(async (options: DeviceOptions) => {
             const platforms = options.platform ? [choosePlatform(options.platform, null)] : Object.values(PLATFORMS);
-            const devices = (await Promise.all(platforms.map((platform) => platform.listDevices()))).flat();
+            const results = await Promise.allSettled(platforms.map((platform) => platform.listDevices()));
+            const devices = results.flatMap((result, index) => {
+                if (result.status === "fulfilled") {
+                    return result.value;
+                }
+
+                ui.warn(`${platforms[index].title} unavailable: ${String(result.reason)}`);
+                return [];
+            });
 
             if (options.json) {
                 out.result(devices);
