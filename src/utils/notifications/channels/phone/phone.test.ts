@@ -283,6 +283,10 @@ describe("when the phone gets an alert (F14)", () => {
             await phoneHold({ event: {}, presence: async () => ({ idleSeconds: 600, locked: false }), now: noon })
         ).toBeNull();
         expect(await phoneHold({ event: {}, presence: AWAY, now: noon })).toBeNull();
+        // An unknown lock state counts as away even with recent input, so a push is never held on a guess.
+        expect(
+            await phoneHold({ event: {}, presence: async () => ({ idleSeconds: 30, locked: null }), now: noon })
+        ).toBeNull();
         expect(await phoneHold({ event: {}, when: { desk: "always" }, presence: atDesk, now: noon })).toBeNull();
     });
 

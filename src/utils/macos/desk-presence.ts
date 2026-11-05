@@ -52,7 +52,7 @@ export async function readDeskPresence(): Promise<DeskPresence> {
 
 /** Away from the desk: locked, or idle at least `idleMinutes`. Unknown counts as away, so a push is never lost. */
 export function awayFromDesk(presence: DeskPresence, idleMinutes: number): boolean {
-    if (presence.locked === true) {
+    if (presence.locked !== false) {
         return true;
     }
 
