@@ -20,11 +20,11 @@ import {
 import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import type { AudioSource } from "@genesiscz/utils/screen-recorder/control";
 import {
+    absoluteFrameName,
     type JpegConverter,
     type OcrRecognizer,
     sipsJpeg,
     visionOcr,
-    wallClockFrameName,
 } from "@genesiscz/utils/screen-recorder/frame-output";
 import { liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
@@ -112,9 +112,9 @@ export function requestRecorderStop<T>(
     return send();
 }
 
-/** `15-23-41-502-d4.jpg`: the frame's local wall time, sortable within a day, and its display. */
+/** `2026-11-05T13-29-23-502Z-d4.jpg`: the frame's UTC time with its date, so resumed days and DST hours stay distinct. */
 export function frameName(at: Date, displayId: number): string {
-    return wallClockFrameName(at, displayId);
+    return absoluteFrameName(at, displayId);
 }
 
 /** The frames a recording holds on disk, their size, and the count per display (from the `-d<id>` of the name). */

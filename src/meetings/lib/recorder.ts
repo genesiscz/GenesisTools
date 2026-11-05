@@ -40,7 +40,7 @@ function meetingRecorderConfig(run: MeetingRun) {
     return defineRecorderConfig<string[]>((recording) => {
         const output = new FrameOutput({
             folder: run.folder,
-            naming: "wall-clock",
+            naming: "absolute",
             format: { kind: "jpeg", quality: run.capture.jpegQuality },
             convert: deps.toJpeg,
             ocr: {

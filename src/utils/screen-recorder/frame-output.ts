@@ -25,7 +25,7 @@ export const CAPTURE_DIR_MODE = 0o700;
 export const CAPTURE_FILE_MODE = 0o600;
 
 /** How a kept frame is named under `frames/`. */
-export const FRAME_NAMINGS = ["elapsed", "wall-clock"] as const;
+export const FRAME_NAMINGS = ["elapsed", "wall-clock", "absolute"] as const;
 export type FrameNaming = (typeof FRAME_NAMINGS)[number];
 
 export interface FrameNameInput {
@@ -47,11 +47,20 @@ export function wallClockFrameName(at: Date, displayId: number, ext = ".jpg"): s
     return `${pad(at.getHours())}-${pad(at.getMinutes())}-${pad(at.getSeconds())}-${pad(at.getMilliseconds(), 3)}-d${displayId}${ext}`;
 }
 
+/**
+ * `2026-11-05T13-29-23-502Z-d4.jpg`: the frame's UTC time with its date, so a recording resumed on another day or
+ * across a repeated DST hour never reuses a name, and the names sort over the whole recording.
+ */
+export function absoluteFrameName(at: Date, displayId: number, ext = ".jpg"): string {
+    return `${at.toISOString().replace(/[:.]/g, "-")}-d${displayId}${ext}`;
+}
+
 const FRAME_NAMERS: Record<FrameNaming, (input: FrameNameInput) => string> = {
     /** `00012345-d1.png`: the milliseconds after the start, so the names sort over a whole recording. */
     elapsed: ({ elapsedMs, displayId, ext }) =>
         `${String(Math.max(0, Math.round(elapsedMs))).padStart(8, "0")}-d${displayId}${ext}`,
     "wall-clock": ({ at, displayId, ext }) => wallClockFrameName(at, displayId, ext),
+    absolute: ({ at, displayId, ext }) => absoluteFrameName(at, displayId, ext),
 };
 
 export function frameFileName(naming: FrameNaming, input: FrameNameInput): string {

@@ -12,7 +12,7 @@ tools recorder start [--audio system,mic] [--mic-device UID] [--title T] [--max-
                      [--fps N] [--idle-fps N] [--threshold PCT] [--countdown [S]] [--camera]
                      [--exclude-window-ids IDS] [--system-cursor] [--no-shortcuts] [--no-controls]
                      [--no-indicator] [--open] [--json]
-tools recorder start --frames [original|jpeg] [--jpeg-quality Q] [--naming elapsed|wall-clock]
+tools recorder start --frames [original|jpeg] [--jpeg-quality Q] [--naming elapsed|wall-clock|absolute]
                      [--flush finish|piece] [--ocr] [--ocr-languages L] [--ocr-min-chars N]
                      [--ocr-sink sidecar|jsonl] [--displays all|main|IDS] [--max-long-side PX]
                      [--heartbeat S] [--piece-seconds S] [--fps N] [--idle-fps N] [--threshold PCT]

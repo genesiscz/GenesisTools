@@ -2587,7 +2587,7 @@ describe("the meetings recorder loop", () => {
         expect(recordingSummary(run.saved!).join("\n")).toContain("Built-in (1) 2, External (4) 1");
     });
 
-    test("each piece's frames land as wall-clock JPEG names with one ocr.jsonl row each before the recording stops", async () => {
+    test("each piece's frames land as dated UTC JPEG names with one ocr.jsonl row each before the recording stops", async () => {
         const blocks = [{ text: "Quarterly", confidence: 0.9, bounds: { x: 0.1, y: 0.8, width: 0.3, height: 0.05 } }];
         let midway: { frames: string[]; rows: number } | undefined;
         const run = await recordWith({
@@ -2612,7 +2612,7 @@ describe("the meetings recorder loop", () => {
 
         expect(midway).toEqual({ frames, rows: 1 });
         expect(frames).toHaveLength(1);
-        expect(frames[0]).toMatch(/^\d{2}-\d{2}-\d{2}-\d{3}-d1\.jpg$/);
+        expect(frames[0]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-d1\.jpg$/);
         expect(rows).toEqual([
             {
                 file: `frames/${frames[0]}`,
@@ -2625,10 +2625,7 @@ describe("the meetings recorder loop", () => {
             },
         ]);
         const at = new Date(rows[0].at);
-        const pad = (n: number, width = 2) => String(n).padStart(width, "0");
-        expect(frames[0]).toBe(
-            `${pad(at.getHours())}-${pad(at.getMinutes())}-${pad(at.getSeconds())}-${pad(at.getMilliseconds(), 3)}-d1.jpg`
-        );
+        expect(frames[0]).toBe(`${at.toISOString().replace(/[:.]/g, "-")}-d1.jpg`);
         expect(run.state.frames).toBe(1);
     });
 
@@ -4837,4 +4834,11 @@ test("finalization drains a blocked resume write in pause/resume order", async (
     await done;
     expect(store.read(record.id)?.history.map((entry) => entry.change)).toEqual(["fixture", "paused", "resumed"]);
     expect(store.read(record.id)?.recording?.status).toBe("recording");
+});
+test("frame filenames distinguish resumed dates and repeated local hours", async () => {
+    const { frameName } = await import("./lib/recorder-shared");
+    const dates = ["2026-10-24T02:30:00+02:00", "2026-10-25T02:30:00+02:00", "2026-10-25T02:30:00+01:00"];
+    const names = dates.map((date) => frameName(new Date(date), 1));
+    expect(new Set(names).size).toBe(3);
+    expect(names).toEqual([...names].sort());
 });
