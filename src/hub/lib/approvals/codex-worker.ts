@@ -4,6 +4,7 @@ import { isFileChangeApproval, listPendingRequests, type PendingRequest } from "
 import { CodexSessionStore } from "@app/codex/lib/store";
 import type { PendingCallDetail } from "@genesiscz/utils/agent-sessions/types";
 import { oneLine } from "@genesiscz/utils/agents/approvals/keys";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { WorkerDeliveryRejectedError } from "@genesiscz/utils/worker/delivery";
 import { approvalId } from "./id";
@@ -11,8 +12,7 @@ import type { ApprovalReceipt, ApprovalSource, PendingApproval } from "./types";
 
 const log = logger.child({ component: "hub/approvals" });
 
-const ALLOW_ALWAYS_REFUSAL =
-    "a tools codex worker's control channel answers one request; it has no allow-for-the-session answer";
+const ALLOW_ALWAYS_REFUSAL = `a ${toolCommand("codex")} worker's control channel answers one request; it has no allow-for-the-session answer`;
 
 /** The edges of the worker source; tests pass scripted ones. */
 export interface CodexWorkerApprovalDeps {

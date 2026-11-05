@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { exportAs } from "./edit";
@@ -99,7 +100,9 @@ export async function copyRecording(folder: string, { gif = false }: { gif?: boo
     }
 
     if (!path) {
-        throw new Error(`${folder} has no movie to copy (a frames-only recording needs tools recorder proxy first)`);
+        throw new Error(
+            `${folder} has no movie to copy (a frames-only recording needs ${toolCommand("recorder proxy")} first)`
+        );
     }
 
     await copyFileToClipboard(path);
@@ -123,7 +126,7 @@ export async function revealRecording(folder: string, { meeting = false }: { mee
 export async function trashRecording(folder: string, { meetingsRoot }: { meetingsRoot?: string } = {}) {
     if (isMeetingFolder(folder, meetingsRoot)) {
         throw new Error(
-            `${folder} is a meeting's screen recording; its folder holds the whole meeting, so it stays. Remove the meeting with tools meetings.`
+            `${folder} is a meeting's screen recording; its folder holds the whole meeting, so it stays. Remove the meeting with ${toolCommand("meetings")}.`
         );
     }
 

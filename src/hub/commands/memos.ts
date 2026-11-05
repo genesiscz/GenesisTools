@@ -75,7 +75,7 @@ export function registerMemosCommand(program: Command): void {
     memos
         .command("act")
         .description("Run one action of a memo once: reminders, note, or agent (with --session)")
-        .argument("<id>", "a memo id from tools hub memos")
+        .argument("<id>", `a memo id from ${toolCommand("hub memos")}`)
         .argument("<action>", ACTIONS.join(", "), actionArg)
         .option("--session <key>", "agent: the agents board key of the session")
         .option("--json", "machine-readable output")

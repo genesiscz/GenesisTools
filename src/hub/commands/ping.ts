@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
@@ -32,7 +33,7 @@ export function registerPingCommand(program: Command): void {
         });
 
     ping.command("add <key>")
-        .description("Watch a session by its agents board key (tools hub board)")
+        .description(`Watch a session by its agents board key (${toolCommand("hub board")})`)
         .option("--label <text>", "what the push names")
         .action(async (key: string, _opts: unknown, command: Command) => {
             const opts = command.optsWithGlobals<{ label?: string; json?: boolean }>();

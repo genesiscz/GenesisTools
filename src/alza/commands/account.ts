@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { isInteractive, suggestCommand, toolCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { formatItemLines } from "@genesiscz/utils/watch/items";
@@ -237,7 +237,7 @@ export function registerAccountCommands(program: Command): void {
         .option("--limit <n>", "How many (max 100)", parseIntArg)
         .option(
             "--items",
-            "only the watchdogs that fire now, as Monitor item lines (tools monitor add --kind command --items)"
+            `only the watchdogs that fire now, as Monitor item lines (${toolCommand("monitor add")} --kind command --items)`
         )
         .action(async (flags: { limit?: number; items?: boolean }, command: Command) => {
             await runAccountOperation(

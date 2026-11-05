@@ -495,7 +495,7 @@ program
     .command("resolve")
     .description("Mark a review comment done (--reopen opens it again)")
     .argument("<recording>", "a library id, `last`, `open` or a recording folder")
-    .argument("<id>", "the comment's id (tools recorder comments lists them)")
+    .argument("<id>", `the comment's id (${toolCommand("recorder comments")} lists them)`)
     .option("--reopen", "open it again")
     .action(async (value: string, id: string, flags: { reopen?: boolean }) => {
         try {

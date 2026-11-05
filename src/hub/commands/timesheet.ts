@@ -1,4 +1,4 @@
-import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { isInteractive, suggestCommand, toolCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -55,7 +55,7 @@ export function registerTimesheetCommand(program: Command): void {
     command
         .command("fill")
         .description("Write the week into Clarity, if it still matches the revision you saw")
-        .requiredOption("--revision <hash>", "the revision tools hub timesheet printed")
+        .requiredOption("--revision <hash>", `the revision ${toolCommand("hub timesheet")} printed`)
         .option("--date <yyyy-mm-dd>", "any day of the week (default: today)")
         .option("--yes", "do not ask")
         .option("--json", "machine-readable output")

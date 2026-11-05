@@ -85,7 +85,7 @@ export function createWatchCommand(): Command {
         .option("--json", "print JSON to stdout")
         .option(
             "--items",
-            "print the news as Monitor item lines and exit 0 (run it as `tools monitor add --kind command --items`)"
+            `print the news as Monitor item lines and exit 0 (run it as \`${toolCommand("monitor add")} --kind command --items\`)`
         )
         .action(async (opts) => {
             const expiryWarnDays = Number(opts.expiryDays);

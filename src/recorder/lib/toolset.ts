@@ -674,7 +674,7 @@ const movieMethods = [
         params: z.object({ from: timeSchema, to: timeSchema, display: z.number().int().nonnegative() }).strict(),
         result: z.unknown(),
         resultName: "{ path, frames, plan: { policy, windowSec, ranges: { fromUs, toUs, displayId }[] } }",
-        doc: 'A frames recording of several displays (a meeting): its proxy movie shows `display` from `from` to `to` (source seconds or "m:ss") and is made again, the rest of its display plan (proxy.json) kept. The same as tools recorder proxy <rec> --keep-plan --switch from-to=display, and the editor\'s display lane.',
+        doc: `A frames recording of several displays (a meeting): its proxy movie shows \`display\` from \`from\` to \`to\` (source seconds or "m:ss") and is made again, the rest of its display plan (proxy.json) kept. The same as ${toolCommand("recorder proxy")} <rec> --keep-plan --switch from-to=display, and the editor's display lane.`,
         effect: "reversible",
     }),
     defineMethod({
