@@ -7,10 +7,31 @@ import SwiftUI
 /// id. A recording that asked for the camera (`settings.camera.requested` in its recording.json, from `--camera`)
 /// gets `camera.mov` beside `screen.mp4`, and at its end `camera.json` with where the bubble was, which a new edit
 /// takes as its camera bubble. A recording started with `--camera` outside the picker records the camera without a
-/// preview on screen, because nothing would keep the preview out of its movie.
+/// preview on screen, because nothing would keep the preview out of its movie. The recorder service starts and stops
+/// the same camera with `start(folder:)` and `stop(folder:)` (`camera.start`, `camera.stop`); `camera.requested`
+/// stays the way for a recording that starts while no service host is connected.
 @MainActor
 final class CameraBubble {
     static let shared = CameraBubble()
+
+    /// What `start(folder:)` did.
+    enum StartAnswer: Equatable {
+        case started
+        /// Camera access is off; the alert that explains it follows the answer.
+        case denied
+        /// The camera already records the folder named.
+        case busy(String)
+    }
+
+    /// The recording the camera writes for. `byService` ones end on `stop(folder:)`, or when their live entry,
+    /// once seen, ends; until it shows up, its absence from the live list means nothing.
+    private struct Session {
+        let id: String
+        let folder: URL
+        let target: [String: Any]?
+        var byService = false
+        var seenLive = false
+    }
 
     enum Key {
         static let size = "recorder.camera.bubbleSize"
@@ -33,7 +54,7 @@ final class CameraBubble {
     private var source: CameraFrameSource?
     private var panel: CameraBubblePanel?
     private var writer: CameraMovieWriter?
-    private var recording: (id: String, folder: URL, target: [String: Any]?)?
+    private var recording: Session?
     private var screenStartedAt: Date?
     /// The picker started a camera recording at this time: the next one that asks for the camera shows the preview.
     private var awaitingSince: Date?
@@ -68,9 +89,16 @@ final class CameraBubble {
 
     func liveRecordingsChanged(_ recordings: [LiveRecording]) {
         if let current = recording {
-            guard let entry = recordings.first(where: { $0.id == current.id }), !entry.isStopping else {
+            let entry = recordings.first { $0.id == current.id || (current.byService && Self.sameFolder($0.folder, current.folder)) }
+            guard let entry, !entry.isStopping else {
+                if current.byService, !current.seenLive { return }
                 finish()
                 return
+            }
+            if current.byService, !current.seenLive {
+                recording?.seenLive = true
+                // Looked at: when the service stops the camera, this recording does not start it again.
+                asked[entry.id] = true
             }
             if entry.isPaused { writer?.pause() } else if entry.isRecording { writer?.resume() }
             return
@@ -118,15 +146,25 @@ final class CameraBubble {
     }
 
     private func ensureCameraAccess() async -> Bool {
+        if await cameraAccess() { return true }
+        explainCameraDenied()
+        return false
+    }
+
+    /// Asks once when macOS has not asked yet; never shows the alert.
+    private func cameraAccess() async -> Bool {
         switch CameraAuthorization.status {
         case .authorized:
             return true
         case .notDetermined:
             NSApp.activate(ignoringOtherApps: true)
-            if await CameraAuthorization.request() { return true }
+            return await CameraAuthorization.request()
         default:
-            break
+            return false
         }
+    }
+
+    private func explainCameraDenied() {
         HubPerf.log("recorder: camera access is \(CameraAuthorization.status.rawValue); no camera bubble")
         let alert = NSAlert()
         alert.messageText = "The camera is off for GenesisTools"
@@ -135,15 +173,13 @@ final class CameraBubble {
         alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(CameraAuthorization.settingsURL) }
-        return false
     }
 
     // MARK: Recording
 
     private func begin(entry: LiveRecording, folder: URL, target: [String: Any]?) {
-        let fromPicker = awaitingSince.map { Date().timeIntervalSince($0) < 120 } ?? false
-        awaitingSince = nil
-        recording = (entry.id, folder, target)
+        let fromPicker = consumePickerStart()
+        recording = Session(id: entry.id, folder: folder, target: target)
         screenStartedAt = Date()
         if !fromPicker { panel?.orderOut(nil) }
         Task {
@@ -151,12 +187,54 @@ final class CameraBubble {
                 recording = nil
                 return
             }
-            startCamera()
-            let writer = CameraMovieWriter(url: folder.appendingPathComponent("camera.mov"))
-            self.writer = writer
-            source?.onFrame = { frame in writer.append(frame) }
-            HubPerf.log("recorder: camera recording for \(entry.id) (preview \(fromPicker ? "on screen" : "off"))")
+            startWriting(id: entry.id, folder: folder, fromPicker: fromPicker)
         }
+    }
+
+    /// `camera.start { folder }` from the recorder service: the camera records `camera.mov` into the folder, as for
+    /// a recording that asked for it. The same folder again answers `started`; another folder `busy`. A refusal
+    /// answers first and shows the alert after it, so the caller is not held by a modal dialog.
+    func start(folder: URL) async -> StartAnswer {
+        if let current = recording { return Self.sameFolder(current.folder.path, folder) ? .started : .busy(current.folder.path) }
+        guard await cameraAccess() else {
+            DispatchQueue.main.async { self.explainCameraDenied() }
+            return .denied
+        }
+        if let current = recording { return Self.sameFolder(current.folder.path, folder) ? .started : .busy(current.folder.path) }
+        let fromPicker = consumePickerStart()
+        let target = Self.manifestSettings(folder)?["target"] as? [String: Any]
+        recording = Session(id: "service:\(folder.path)", folder: folder, target: target, byService: true)
+        screenStartedAt = Date()
+        if !fromPicker { panel?.orderOut(nil) }
+        startWriting(id: folder.lastPathComponent, folder: folder, fromPicker: fromPicker)
+        return .started
+    }
+
+    /// `camera.stop { folder }`: ends the camera of that folder and writes its `camera.json`; false when the camera
+    /// did not record it.
+    func stop(folder: URL) -> Bool {
+        guard let current = recording, Self.sameFolder(current.folder.path, folder) else { return false }
+        finish()
+        return true
+    }
+
+    /// The picker started a camera recording less than two minutes ago: the one starting now keeps the preview.
+    private func consumePickerStart() -> Bool {
+        defer { awaitingSince = nil }
+        return awaitingSince.map { Date().timeIntervalSince($0) < 120 } ?? false
+    }
+
+    private func startWriting(id: String, folder: URL, fromPicker: Bool) {
+        startCamera()
+        let writer = CameraMovieWriter(url: folder.appendingPathComponent("camera.mov"))
+        self.writer = writer
+        source?.onFrame = { frame in writer.append(frame) }
+        HubPerf.log("recorder: camera recording for \(id) (preview \(fromPicker ? "on screen" : "off"))")
+    }
+
+    private static func sameFolder(_ path: String?, _ folder: URL) -> Bool {
+        guard let path else { return false }
+        return URL(fileURLWithPath: path).standardizedFileURL.path == folder.standardizedFileURL.path
     }
 
     private func finish() {

@@ -138,6 +138,7 @@ package func runRecorder(_ args: [String]) -> Never {
         RecorderShortcutActions.install()
         // The live recordings' item and floating controls; the hub defers to this face while it runs.
         LiveRecordingsStatusItem.shared.start(preferred: true)
+        RecorderServiceHost.startForFace()
         if let edit = request.edit { EditorWindows.shared.open(path: edit, focus: request.focus, atSeconds: request.atSeconds, tab: request.tab) }
         if request.library { LibraryWindow.shared.show(focus: request.focus) }
         if request.picker { CapturePicker.shared.show() }
@@ -159,7 +160,9 @@ final class EditorWindows: NSObject, NSWindowDelegate {
     /// Opens (or brings back) the editor of `path`; `atSeconds` (output time) and `tab` place it, so an agent can show
     /// a moment (`movie.show({ at, tab })`, `tools recorder edit --at --tab`).
     /// `atSourceSeconds` is a moment of the recording itself (a search hit), placed where it plays in the edit.
-    func open(path: String, focus wanted: Bool = true, atSeconds: Double? = nil, atSourceSeconds: Double? = nil, tab: InspectorTab? = nil) {
+    /// `opened` gets the window once it exists (or the reason it did not open), before any placement or alert.
+    func open(path: String, focus wanted: Bool = true, atSeconds: Double? = nil, atSourceSeconds: Double? = nil, tab: InspectorTab? = nil,
+              opened: ((Result<NSWindow, Error>) -> Void)? = nil) {
         let place = { (model: EditorModel) in
             if let tab { model.tab = tab }
             if let atSeconds { model.seek(Int64((atSeconds * 1_000_000).rounded())) }
@@ -171,6 +174,7 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         if let existing = open.values.first(where: { $0.1.store.url.deletingLastPathComponent().path == URL(fileURLWithPath: path).deletingLastPathComponent().path || $0.1.project.source.video == path }) {
             place(existing.1)
             if wanted { focus(existing.0) }
+            opened?(.success(existing.0))
             return
         }
         pendingPlacement[path] = place
@@ -180,7 +184,7 @@ final class EditorWindows: NSObject, NSWindowDelegate {
                 let (store, project) = try await ProjectStore.open(path: path)
                 span.end()
                 let model = EditorModel(project: project, store: store)
-                show(model, focus: wanted)
+                opened?(.success(show(model, focus: wanted)))
                 // The player item lands in the background; seek after it, as the snapshot face does.
                 if let place = pendingPlacement.removeValue(forKey: path) {
                     try? await Task.sleep(for: .milliseconds(400))
@@ -188,6 +192,7 @@ final class EditorWindows: NSObject, NSWindowDelegate {
                 }
             } catch {
                 HubPerf.log("recorder.editor: \(path) did not open: \(error.localizedDescription)")
+                opened?(.failure(error))
                 let alert = NSAlert()
                 alert.messageText = "The recording did not open"
                 alert.informativeText = error.localizedDescription
@@ -205,7 +210,8 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         return nil
     }
 
-    private func show(_ model: EditorModel, focus wanted: Bool) {
+    @discardableResult
+    private func show(_ model: EditorModel, focus wanted: Bool) -> NSWindow {
         EditorMenu.install()
         let window = Self.makeWindow(model: model, size: NSSize(width: 1440, height: 920))
         Self.rememberFrame(window)
@@ -220,25 +226,34 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         }
         HubPerf.log("recorder.editor: opened \(model.title) (\(Plural.count(model.project.clips.count, "clip")), \(Plural.count(model.project.zooms.count, "zoom")))")
         writeOpenState(front: wanted ? window : nil)
+        return window
+    }
+
+    /// `{ front?, open: [{ path, title, window }] }`: the editor's windows, `window` being each one's window number
+    /// (what `window.open` answers). The recorder host's `window.list` and `window.changed` carry it as is.
+    func openState() -> [String: Any] {
+        func row(_ entry: (NSWindow, EditorModel, Any?)) -> [String: Any] {
+            ["path": entry.1.store.url.deletingLastPathComponent().path, "title": entry.1.title, "window": entry.0.windowNumber]
+        }
+        var state: [String: Any] = ["open": open.values.map(row)]
+        if let id = frontWindow, let entry = open[id] { state["front"] = row(entry) }
+        return state
     }
 
     /// `recordings/editor-open.json`: which recordings the editor shows and which one is in front, so the CLI and the
     /// REPL can act on "the open one" (`tools recorder … open`, `tools recorder opened --wait`). Rewritten when a
-    /// window opens, comes to the front or closes. `front` keeps the last window that was in front while it is open;
+    /// window opens, comes to the front or closes, and sent to the recorder service as `window.changed`; the file
+    /// stays the answer while no service runs. `front` keeps the last window that was in front while it is open;
     /// `pid` lets a reader drop the file of a process that is gone (a crash, a rebuild's reap).
     private func writeOpenState(front window: NSWindow?) {
         if let window, open[ObjectIdentifier(window)] != nil { frontWindow = ObjectIdentifier(window) }
         if let id = frontWindow, open[id] == nil { frontWindow = nil }
-        func row(_ entry: (NSWindow, EditorModel, Any?)) -> [String: Any] {
-            ["path": entry.1.store.url.deletingLastPathComponent().path, "title": entry.1.title]
-        }
-        var state: [String: Any] = [
-            "version": 1,
-            "pid": Int(ProcessInfo.processInfo.processIdentifier),
-            "updatedAt": Self.stamp.string(from: Date()),
-            "open": open.values.map(row),
-        ]
-        if let id = frontWindow, let entry = open[id] { state["front"] = row(entry) }
+        let shown = openState()
+        RecorderServiceHost.shared?.notify("window.changed", params: shown)
+        var state = shown
+        state["version"] = 1
+        state["pid"] = Int(ProcessInfo.processInfo.processIdentifier)
+        state["updatedAt"] = Self.stamp.string(from: Date())
         let url = RecorderMenu.libraryFolder.deletingLastPathComponent().appendingPathComponent("editor-open.json")
         do {
             let data = try JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys])
