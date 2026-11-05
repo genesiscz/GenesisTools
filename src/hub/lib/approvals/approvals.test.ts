@@ -100,10 +100,8 @@ describe("pending call readers", () => {
         ];
 
         expect(codexPendingCall(records)?.detail).toEqual({
-            kind: "command",
-            command: "touch probe.txt",
-            cwd: "/work/side",
-            description: "May I?",
+            kind: "tool",
+            input: 'const r = await tools.exec_command({cmd:"touch probe.txt",sandbox_permissions:"require_escalated",justification:"May I?"});',
         });
         expect(
             codexPendingCall([
@@ -182,6 +180,24 @@ const BASH: PendingToolCall = { callId: "toolu_2", tool: "Bash", detail: { kind:
 const PLAN: PendingToolCall = { callId: "toolu_3", tool: "ExitPlanMode", detail: { kind: "plan", plan: "Do it" } };
 
 describe("pane approvals", () => {
+    it("serializes concurrent answers and refuses replay of the same call", async () => {
+        const { deps, pressed } = paneDeps({ ...BASH, callId: "concurrent-call" });
+        const source = paneApprovals(deps);
+        const [approval] = await source.list();
+        const target = {
+            backend: "pane" as const,
+            provider: "claude" as const,
+            session: SESSION,
+            callId: "concurrent-call",
+        };
+        const answers = await Promise.all([
+            source.answer(target, { id: approval.id, verdict: "allow" }),
+            source.answer(target, { id: approval.id, verdict: "allow" }),
+        ]);
+        expect(answers.map((answer) => answer.outcome).sort()).toEqual(["refused", "sent"]);
+        expect(pressed).toHaveLength(1);
+    });
+
     it("lists a permission dialog with its call and answers it with the measured keys", async () => {
         const { deps, pressed } = paneDeps(BASH);
         const source = paneApprovals(deps);
@@ -205,7 +221,7 @@ describe("pane approvals", () => {
         expect(pressed[0]).toEqual([{ text: "1" }]);
 
         await answerPendingApproval({ id: approval.id, verdict: "deny", reason: "use the\nother host" }, sources);
-        expect(pressed[1]).toEqual([{ key: "up" }, { key: "tab" }, { text: "use the other host" }, { key: "enter" }]);
+        expect(pressed).toHaveLength(1);
     });
 
     it("refuses a changed call and a plan's allow-always, pressing nothing", async () => {

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 import { KeyPressUnknownError, MessageError, pressDialogKeysInSurface } from "@app/ai/lib/agent-message/delivery";
 import { sessionOpenDialog } from "@app/claude/lib/cmux/dialog-guard";
 import { titleMatchKeys } from "@app/cmux/lib/title-match";
@@ -9,6 +11,7 @@ import { type FleetEntry, readFleetView } from "@genesiscz/utils/ai/live-session
 import { readPendingCall } from "@genesiscz/utils/ai/transcripts/pending-call";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { approvalId } from "./id";
 import type {
     ApprovalReceipt,
@@ -127,67 +130,83 @@ export function paneApprovals(deps: PaneApprovalDeps = livePaneApprovalDeps()): 
                 route: "none",
                 detail,
             });
-            const now = (await list()).find(
-                (approval) => approval.provider === target.provider && approval.session === target.session
-            );
+            const storage = new Storage("hub");
+            await storage.ensureDirs();
+            const marker = `pane-answer-${createHash("sha256").update(`${target.provider}:${target.session}`).digest("hex")}.json`;
+            return storage.withFileLock({
+                file: join(storage.getCacheDir(), marker),
+                fn: async () => {
+                    if ((await storage.getCacheFile<string>(marker, "100000 days")) === answer.id) {
+                        return refuse(
+                            "this call was already answered or its delivery is uncertain; check the terminal"
+                        );
+                    }
+                    const now = (await list()).find(
+                        (approval) => approval.provider === target.provider && approval.session === target.session
+                    );
 
-            if (!now) {
-                return refuse("the session shows no permission or plan dialog any more; nothing was pressed");
-            }
+                    if (!now) {
+                        return refuse("the session shows no permission or plan dialog any more; nothing was pressed");
+                    }
 
-            if (now.id !== answer.id) {
-                return refuse("the dialog now asks about another tool call; nothing was pressed. Read it again");
-            }
+                    if (now.id !== answer.id) {
+                        return refuse(
+                            "the dialog now asks about another tool call; nothing was pressed. Read it again"
+                        );
+                    }
 
-            // Checked on the fresh listing, right before the keys go out: a call without an id takes no approval.
-            const support = now.verdicts[answer.verdict];
+                    // Checked on the fresh listing, right before the keys go out: a call without an id takes no approval.
+                    const support = now.verdicts[answer.verdict];
 
-            if (!support.supported) {
-                return refuse(`${support.reason}; nothing was pressed`);
-            }
+                    if (!support.supported) {
+                        return refuse(`${support.reason}; nothing was pressed`);
+                    }
 
-            const plan = planApprovalKeys({
-                provider: now.provider,
-                kind: now.dialog,
-                verdict: answer.verdict,
-                reason: answer.reason,
-            });
-
-            if (!plan.ok) {
-                return refuse(plan.reason);
-            }
-
-            try {
-                const pressed = await deps.press({
-                    alias: now.provider,
-                    sessionId: now.session,
-                    presses: plan.presses,
-                });
-                log.info({ id: answer.id, verdict: answer.verdict, ref: pressed.ref }, "approval keys pressed");
-                return {
-                    id: answer.id,
-                    verdict: answer.verdict,
-                    outcome: "sent",
-                    route: "cmux-keys",
-                    detail: `key sent in ${pressed.ref}`,
-                };
-            } catch (error) {
-                if (error instanceof KeyPressUnknownError) {
-                    return {
-                        id: answer.id,
+                    const plan = planApprovalKeys({
+                        provider: now.provider,
+                        kind: now.dialog,
                         verdict: answer.verdict,
-                        outcome: "unknown",
-                        route: "cmux-keys",
-                        detail: error.message,
-                    };
-                }
+                        reason: answer.reason,
+                    });
 
-                if (error instanceof MessageError) {
-                    return { ...refuse(error.message), route: "cmux-keys" };
-                }
+                    if (!plan.ok) {
+                        return refuse(plan.reason);
+                    }
 
-                throw error;
-            }
+                    await storage.putCacheFile(marker, answer.id, "100000 days");
+                    try {
+                        const pressed = await deps.press({
+                            alias: now.provider,
+                            sessionId: now.session,
+                            presses: plan.presses,
+                        });
+                        log.info({ id: answer.id, verdict: answer.verdict, ref: pressed.ref }, "approval keys pressed");
+                        return {
+                            id: answer.id,
+                            verdict: answer.verdict,
+                            outcome: "sent",
+                            route: "cmux-keys",
+                            detail: `key sent in ${pressed.ref}`,
+                        };
+                    } catch (error) {
+                        if (error instanceof KeyPressUnknownError) {
+                            return {
+                                id: answer.id,
+                                verdict: answer.verdict,
+                                outcome: "unknown",
+                                route: "cmux-keys",
+                                detail: error.message,
+                            };
+                        }
+
+                        if (error instanceof MessageError) {
+                            return { ...refuse(error.message), route: "cmux-keys" };
+                        }
+
+                        throw error;
+                    }
+                },
+            });
         },
     };
 }
