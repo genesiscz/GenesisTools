@@ -38,8 +38,8 @@ extension EditorModel {
             show("This change cannot be sent to the edit.", error: true)
             return
         }
-        adopt(candidate, rebuild: parts.contains("clips") || parts.contains("audio"), debounceAudio: parts == ["audio"])
         step(key: key, ops: ops)
+        adopt(candidate, rebuild: parts.contains("clips") || parts.contains("audio"), debounceAudio: parts == ["audio"])
     }
 
     /// A continuous change named by its ops (from the gesture's mark): a zoom dragged in time, a clip edge, the camera.
