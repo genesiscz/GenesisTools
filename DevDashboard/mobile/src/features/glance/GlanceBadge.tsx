@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import * as Notifications from "expo-notifications";
 import { useEffect, useState } from "react";
-import { useDashboardClient } from "@/api/client-provider";
+import { useDashboardClient, useIsMockClient } from "@/api/client-provider";
 import { badgeNumber, glanceQuery, type IconBadgeMode } from "@/features/glance/queries";
 import { getPref } from "@/lib/storage/kv";
 
@@ -13,8 +13,9 @@ import { getPref } from "@/lib/storage/kv";
 export function GlanceBadge() {
     const client = useDashboardClient();
     const [mode, setMode] = useState<IconBadgeMode>("waiting");
-    const glance = useQuery(glanceQuery(client));
-    const count = badgeNumber(glance.data, mode);
+    const mock = useIsMockClient();
+    const glance = useQuery({ ...glanceQuery(client), enabled: !mock });
+    const count = mock ? 0 : badgeNumber(glance.data, mode);
 
     useEffect(() => {
         void getPref("dd.iconBadge").then((saved) => setMode(saved ?? "waiting"));
