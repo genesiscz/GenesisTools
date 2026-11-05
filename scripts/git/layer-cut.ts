@@ -699,6 +699,12 @@ export function checkProjects(files: string[], tree: Map<string, TreeEntry>): st
     return [...configs].sort();
 }
 
+/** Every tracked manifest and lock can affect workspace resolution, even with an unchanged root lock. */
+export function installStamp(tree: Map<string, TreeEntry>): string {
+    return [...tree].filter(([file]) => /(^|\/)(package\.json|bun\.lockb?|package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$/.test(file))
+        .sort(([a], [b]) => a.localeCompare(b)).map(([file, entry]) => `${file}:${entry.sha}`).join("\n");
+}
+
 export class ScratchTree {
     private lockStamp: string | null = null;
 
@@ -745,18 +751,24 @@ export class ScratchTree {
         git(["-c", "core.hooksPath=/dev/null", "checkout", "--detach", "--quiet", commit], {
             cwd: this.dir,
         });
-        const stamp = git(["rev-parse", `${commit}:bun.lock`]).trim();
-        if (stamp === this.lockStamp && existsSync(join(this.dir, "node_modules"))) {
+        const tree = readTree(commit);
+        const stamp = installStamp(tree);
+        const projects = new Set([".", ...checkProjects(this.files, tree).map(dirname)]);
+        if (stamp === this.lockStamp && [...projects].every((dir) => existsSync(join(this.dir, dir, "node_modules")))) {
             return;
         }
 
-        const install = await run({
-            cmd: ["bun", "install", "--ignore-scripts", "--frozen-lockfile"],
-            cwd: this.dir,
-            log: join(this.logDir, `bun-install-${commit.slice(0, 10)}.log`),
-        });
-        if (install.exitCode !== 0) {
-            throw new Error(`bun install failed in ${this.dir}: ${install.text.slice(-400)}`);
+        for (const dir of projects) {
+            const install = await run({
+                cmd: ["bun", "install", "--ignore-scripts", "--frozen-lockfile"],
+                cwd: join(this.dir, dir),
+                log: join(this.logDir, `bun-install-${commit.slice(0, 10)}-${dir.replaceAll("/", "_")}.log`),
+            });
+            if (install.exitCode !== 0) {
+                throw new Error(`bun install failed in ${dir}: ${install.text.slice(-400)}`);
+            }
+
+            this.assertOwnedClean();
         }
 
         this.lockStamp = stamp;
