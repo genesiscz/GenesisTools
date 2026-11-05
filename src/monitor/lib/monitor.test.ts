@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { CHANNELS, notificationsConfig } from "@genesiscz/utils/notifications";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MonitorDatabase } from "./db";
 import { isWorthNotifying, Monitor } from "./monitor";
-import { allTargetsResolved } from "./notify-targets";
+import { allTargetsResolved, dispatchToTarget } from "./notify-targets";
 import { isDue, Scheduler } from "./scheduler";
 import {
     DEFAULT_INTERVAL_SEC,
@@ -43,6 +44,21 @@ beforeEach(() => {
 function target(): string {
     return `http://127.0.0.1:${server.port}/`;
 }
+
+test("phone targets use global transport and timing settings", async () => {
+    const load = spyOn(notificationsConfig, "load").mockResolvedValue({
+        channels: { system: { enabled: false }, telegram: { enabled: false }, webhook: { enabled: false }, say: { enabled: false }, phone: { enabled: false, apns: { teamId: "TEAM" }, when: { desk: "always" } } },
+        apps: {},
+    });
+    const post = spyOn(CHANNELS.phone, "post").mockResolvedValue({ ok: true });
+    try {
+        expect(await dispatchToTarget({ id: 1, name: "phone", channel: "phone", enabled: true, config: { text: false }, createdAt: "", updatedAt: "", watcherCount: 0 }, { message: "hello" })).toBe(true);
+        expect(post.mock.calls[0][1]).toMatchObject({ enabled: true, text: false, apns: { teamId: "TEAM" }, when: { desk: "always" } });
+    } finally {
+        post.mockRestore();
+        load.mockRestore();
+    }
+});
 
 describe("MonitorDatabase", () => {
     test("creates, updates, lists and deletes watchers", async () => {
