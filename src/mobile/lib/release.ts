@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { iosApp, type MobileProject, type ReleaseCommand } from "@genesiscz/utils/mobile/project";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 
 const log = logger.child({ component: "mobile.release" });
 
@@ -189,29 +190,39 @@ export async function runRelease(
 
         onStep(step, index);
         const logPath = join(outDir, `${String(index + 1).padStart(2, "0")}.log`);
-        const sink = createWriteStream(logPath);
-        log.debug({ command: step.command.join(" "), cwd: step.cwd, logPath }, "release step");
-
         if (!existsSync(step.cwd)) {
             throw new Error(`${step.title}: ${step.cwd} does not exist`);
         }
 
-        const proc = Bun.spawn(step.command, {
-            cwd: step.cwd,
-            env: { ...env.getProcessEnv(), ...step.env },
-            stdout: "pipe",
-            stderr: "pipe",
+        log.debug({ command: step.command, logPath }, "release step");
+        const sink = createWriteStream(logPath);
+        let sinkError: Error | undefined;
+        sink.on("error", (error) => {
+            sinkError = error;
         });
-        const pump = async (stream: ReadableStream<Uint8Array>) => {
-            for await (const chunk of stream) {
-                sink.write(chunk);
-            }
+        const pump = (chunk: Uint8Array) => {
+            sink.write(chunk);
         };
-        await Promise.all([pump(proc.stdout), pump(proc.stderr), proc.exited]);
-        sink.end();
 
-        if (proc.exitCode !== 0) {
-            throw new Error(`${step.title} failed (exit ${proc.exitCode}); log: ${logPath}`);
+        try {
+            const result = await boundedCommand({
+                command: step.command,
+                cwd: step.cwd,
+                environment: { ...env.getProcessEnv(), ...step.env },
+                timeoutMs: 3_600_000,
+                onStdout: pump,
+                onStderr: pump,
+            });
+
+            if (sinkError) {
+                throw sinkError;
+            }
+
+            if (result.status !== 0) {
+                throw new Error(`${step.title} failed (${result.error?.message ?? result.status}); log: ${logPath}`);
+            }
+        } finally {
+            sink.end();
         }
     }
 }
