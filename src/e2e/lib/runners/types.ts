@@ -50,6 +50,15 @@ export function stringFlag(value: unknown): string | undefined {
 }
 
 export function numberFlag(value: unknown): number | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
     const parsed = Number(stringFlag(value));
-    return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new Error(`expected a positive integer, received ${String(value)}`);
+    }
+
+    return parsed;
 }
