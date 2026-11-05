@@ -400,6 +400,7 @@ export async function askMeeting(
     const view = await viewProposals(store, record, deps);
     const formId = `meetings-assign-${record.id}-${now.toString(36)}`;
     let claimed = false;
+    setOpen(store, record.id, "ask");
     await store.update(record.id, { command: "assign ask", change: `asked for its project (${formId})` }, (current) => {
         if (!options.force && current.assign?.ask && current.assign.ask.outcome !== "failed") {
             return;
@@ -614,8 +615,15 @@ async function advanceAsk(store: MeetingStore, record: MeetingRecord, deps: Assi
 
     const form = await deps.inbox.read(ask.formId);
 
-    if (!form || form.status === "pending") {
-        return form ? "pending" : "missing";
+    if (!form) {
+        const config = await deps.config.read();
+        const view = await viewProposals(store, record, deps);
+        await deps.inbox.post({ ...buildQuestion(view, config), id: ask.formId, projectPath: store.folder(record.id) });
+        return "pending";
+    }
+
+    if (form.status === "pending") {
+        return "pending";
     }
 
     if (form.status === "answered") {
@@ -847,6 +855,15 @@ export async function assignSweep(store: MeetingStore, deps: AssignDeps = defaul
 
     for (const id of recentMeetingIds(store, now - config.global.assign.lookbackHours * 3_600_000)) {
         const record = store.read(id);
+
+        if (record?.assign?.ask?.outcome === "pending" && !readState(store).open[id]) {
+            setOpen(store, id, "ask");
+            try {
+                await advance(store, id, "ask", deps);
+            } catch (err) {
+                log.warn({ err, meeting: id }, "recovering a pending project question failed");
+            }
+        }
 
         if (!record || endedAt(record) < since || skipReason({ record, store, now, retryFailedMin })) {
             continue;
