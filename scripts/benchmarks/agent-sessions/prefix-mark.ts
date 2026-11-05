@@ -12,12 +12,12 @@
  */
 
 import { closeSync, openSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { compareToBaseline, formatComparison, recordBaseline } from "@app/benchmark/lib";
 import { readPrefixMark } from "@genesiscz/utils/ai/transcripts/file-scan";
 import { runTool } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import { nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { Command, InvalidArgumentError } from "commander";
 
 const NAME = "prefix-mark";
@@ -42,7 +42,7 @@ function uptime(): string {
 
 /** The largest top-level transcripts of every Claude project folder. */
 function largestTranscripts(count: number): Array<{ path: string; size: number }> {
-    const root = join(homedir(), ".claude", "projects");
+    const root = nativeHomePath("claude", "projects");
     const found: Array<{ path: string; size: number }> = [];
     for (const project of readdirSync(root, { withFileTypes: true })) {
         if (!project.isDirectory()) {
