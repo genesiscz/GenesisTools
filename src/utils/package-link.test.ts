@@ -639,7 +639,13 @@ describe("the package exports map", () => {
                       ? moduleFile(join(dir, own))
                       : null;
 
-                if (own && !exported(own) && (own.startsWith("genesis-tools/tools/") || file.startsWith(toolsDir))) {
+                if (
+                    own &&
+                    !exported(own) &&
+                    (own.startsWith("genesis-tools/tools/") ||
+                        file.startsWith(toolsDir) ||
+                        file === join(dir, "cli", "executor.ts"))
+                ) {
                     missing.add(`${own} (imported by ${file.slice(dir.length + 1)})`);
                 }
 
