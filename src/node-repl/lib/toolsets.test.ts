@@ -14,9 +14,11 @@ import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as ocr from "@genesiscz/utils/macos/ocr";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { RecordingEditor } from "@genesiscz/utils/recording-editor/editor";
 import { readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import { readShowable } from "@genesiscz/utils/repl/show";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
-import { type Clip, EditorToolset, editorApi } from "@genesiscz/utils/repl/toolsets/editor";
+import { type Clip, EditorToolset, editorApi, ReplJob } from "@genesiscz/utils/repl/toolsets/editor";
 import { RecordingHandle, recorderApi } from "@genesiscz/utils/repl/toolsets/recorder";
 import {
     RecorderControl,
@@ -35,7 +37,7 @@ import {
     RecorderClient,
     readLiveRecording,
 } from "@genesiscz/utils/screen-recorder/live";
-import { startRecording } from "@genesiscz/utils/screen-recorder/start";
+import { LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
 import {
     type CaptureRequest,
     type CaptureResult,
@@ -676,6 +678,16 @@ describe("recorder and editor toolsets", () => {
         const events: string[] = [];
         framesJob.on("progress", (event) => events.push(`${event.step} ${event.done}/${event.total} ${event.unit}`));
         const frames = await framesJob;
+        const edit = new RecordingEditor().run({ source: clip.source, steps: [{ kind: "frames" }] });
+        const rejected = new ReplJob(edit, () => {
+            throw new Error("mapping failed");
+        });
+        await edit.done;
+        await Bun.sleep(0);
+        await expect(rejected.done).rejects.toThrow("mapping failed");
+        const otherClip = editor.open(recording.folder);
+        expect(() => otherClip.grid({ frames })).toThrow("this clip");
+        expect((await trimmed.info()).durationUs).toBeLessThan((await clip.info()).durationUs);
         expect(frames.frames.length).toBeGreaterThan(0);
         const grid = clip.grid({ frames, cols: 3, rows: 3, labels: "time" });
         const paths = await grid.show();
@@ -860,4 +872,36 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         );
         expect(handle).toEqual(expect.arrayContaining(["assign.proposals", "assign.ask", "assign.apply"]));
     });
+});
+
+test("default recording IDs remain distinct within one clock second", () => {
+    const recordings = Array.from({ length: 8 }, () => new LibraryRecording({ recorder: new FakeRecorder() }));
+    expect(new Set(recordings.map((recording) => recording.id)).size).toBe(recordings.length);
+});
+
+test("recording startup refuses an existing folder", async () => {
+    const root = mkdtempSync(join(tmpdir(), "owned-recording-"));
+    await Bun.write(join(root, "keep.txt"), "unrelated");
+    const recording = new LibraryRecording({ recorder: new FakeRecorder(), folder: root, liveDir: join(root, "live") });
+    let started = false;
+
+    try {
+        await expect(
+            recording.start().then((value) => {
+                started = true;
+                return value;
+            })
+        ).rejects.toThrow();
+        expect(await Bun.file(join(root, "keep.txt")).text()).toBe("unrelated");
+    } finally {
+        if (started) {
+            await recording.stop();
+        }
+    }
+});
+
+test("a MIME hint cannot turn arbitrary bytes into an image", async () => {
+    await expect(readShowable({ bytes: new Uint8Array([1, 2, 3]), mimeType: "image/png" })).rejects.toThrow(
+        "not a PNG"
+    );
 });

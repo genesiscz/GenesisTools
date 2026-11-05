@@ -50,7 +50,7 @@ import { ZodError } from "zod";
 import legacyEvidence from "./__fixtures__/legacy-evidence.json";
 import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema } from "./denoise";
 import { RecordingEditor } from "./editor";
-import { atempoChain, concatList } from "./ffmpeg";
+import { atempoChain, concatList, exportVideoArgv, speedArgv, trimArgv } from "./ffmpeg";
 import { parseEditPlan, timeToUs } from "./plan";
 import { locateSource } from "./source";
 import { formatSubtitles, subtitleCues } from "./subtitles";
@@ -1237,4 +1237,46 @@ describe("camera bubble", () => {
         writeFileSync(join(folder, CAMERA_SIDECAR), '{ "version": 2 }');
         expect(readCameraSidecar(video)).toBeUndefined();
     });
+});
+
+test("editor commands replace guarded outputs and force the requested container", () => {
+    expect(trimArgv({ input: "in.mp4", output: "out.mp4", fromUs: 0, toUs: 1000000 })).toContain("-y");
+    expect(speedArgv({ input: "in.mp4", output: "out.mp4", factor: 2, audio: true })).toContain("-y");
+
+    for (const format of ["mp4", "webm", "gif"] as const) {
+        const args = exportVideoArgv({ input: "in.mp4", output: "out.wrong", format });
+        expect(args).toContain("-y");
+        expect(args[args.lastIndexOf("-f") + 1]).toBe(format);
+    }
+});
+
+test("sampling a window retains the frame already on screen at its start", async () => {
+    const source = recordingFolder();
+    const result = await new RecordingEditor().run({
+        source: { file: source },
+        steps: [
+            { kind: "range", from: 0.5, to: 0.8 },
+            { kind: "frames", fps: 2 },
+        ],
+    }).done;
+    expect(result.frames).toHaveLength(2);
+    expect(result.frames.every((frame) => frame.actualUs === 0 && frame.requestedUs === 500000)).toBe(true);
+});
+
+test("movie export refuses interleaved displays", async () => {
+    const source = recordingFolder();
+    writeFileSync(join(source, "frames/d2-0.png"), createCanvas(40, 64).toBuffer("image/png"));
+    await expect(
+        new RecordingEditor().run({ source: { file: source }, steps: [{ kind: "export", format: "mp4" }] }).done
+    ).rejects.toThrow("one display");
+});
+
+test("video evidence rejects directories before hashing", async () => {
+    await expect(
+        prepareVideoEvidence({
+            input: workspace(),
+            outputRoot: workspace(),
+            settings: { fps: 1, framesPerImage: 1, minimumDifferencePct: 0 },
+        })
+    ).rejects.toThrow("Choose a local video file up to 1 GiB");
 });

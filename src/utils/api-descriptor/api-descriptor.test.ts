@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import { z } from "zod";
 import { defineApi, defineMethod } from "./descriptor";
 import { jsonSchemaOf, methodSignature, renderDocs, renderOneLine, toMcpTools, typeText } from "./render";
@@ -56,12 +57,12 @@ const api = defineApi({
 
 describe("api descriptors", () => {
     test("a schema is spelled as compact TypeScript", () => {
-        expect(typeText(jsonSchemaOf(z.object({ a: z.string(), b: z.number().optional() })) as never)).toBe(
+        expect(typeText(jsonSchemaOf(z.object({ a: z.string(), b: z.number().optional() })))).toBe(
             "{ a: string; b?: number }"
         );
-        expect(typeText(jsonSchemaOf(z.array(z.enum(["x", "y"]))) as never)).toBe('Array<"x" | "y">');
-        expect(typeText(jsonSchemaOf(z.record(z.string(), z.boolean())) as never)).toBe("Record<string, boolean>");
-        expect(typeText(jsonSchemaOf(z.custom<() => void>()) as never)).toBe("unknown");
+        expect(typeText(jsonSchemaOf(z.array(z.enum(["x", "y"]))))).toBe('Array<"x" | "y">');
+        expect(typeText(jsonSchemaOf(z.record(z.string(), z.boolean())))).toBe("Record<string, boolean>");
+        expect(typeText(jsonSchemaOf(z.custom<() => void>()))).toBe("unknown");
     });
 
     test("signatures, the one-line summary and the full docs come from the descriptor", () => {
@@ -99,4 +100,44 @@ describe("api descriptors", () => {
     test("a duplicate method name is refused", () => {
         expect(() => defineApi({ ...api, methods: [api.methods[0], api.methods[0]] })).toThrow("twice");
     });
+});
+
+test("REPL validation preserves an AbortSignal without changing the descriptor schema", async () => {
+    class SignalToolset extends ReplToolset {
+        readonly api = defineApi({
+            id: "fixture",
+            global: "fixture",
+            title: "Fixture",
+            summary: "Fixture",
+            methods: [
+                defineMethod({
+                    name: "call",
+                    params: z.object({ word: z.string() }).strict(),
+                    result: z.boolean(),
+                    doc: "Fixture",
+                    effect: "read",
+                }),
+            ],
+        });
+
+        async bootstrap() {
+            return {
+                fixture: {
+                    call: (options: { word: string; signal?: AbortSignal }) => options.signal?.aborted === true,
+                },
+            };
+        }
+    }
+    type Fixture = { fixture: { call(options: { word: string; signal?: AbortSignal }): boolean } };
+    const toolset = new SignalToolset();
+    const loaded = (await toolset.load({
+        scratchDir: "/tmp",
+        show: async () => undefined,
+        write: () => undefined,
+    })) as Fixture;
+    const controller = new AbortController();
+    controller.abort();
+    expect(loaded.fixture.call({ word: "hello", signal: controller.signal })).toBe(true);
+    expect(() => Reflect.apply(loaded.fixture.call, null, [{ word: 1, signal: controller.signal }])).toThrow();
+    expect(jsonSchemaOf(toolset.api.methods[0]!.params).properties).not.toHaveProperty("signal");
 });

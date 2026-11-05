@@ -309,3 +309,28 @@ describe("toolsets", () => {
         );
     });
 });
+
+it("reset interrupts an active turn and cancels turns queued before it", async () => {
+    const engine = new ReplEngine();
+    await engine.run("1");
+    const running = engine.run("await new Promise(() => {})", 60000);
+    const queued = engine.run("globalThis.shouldNotRun = true");
+    let reset: Promise<void> | undefined;
+
+    try {
+        reset = engine.reset();
+        await Promise.race([
+            reset,
+            Bun.sleep(500).then(() => {
+                throw new Error("reset waited for the active turn");
+            }),
+        ]);
+        expect((await running).ok).toBe(false);
+        expect((await queued).ok).toBe(false);
+        expect((await engine.run("typeof globalThis.shouldNotRun")).text).toContain("undefined");
+    } finally {
+        engine.dispose();
+        await reset;
+        engine.dispose();
+    }
+});

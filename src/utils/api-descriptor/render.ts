@@ -4,7 +4,7 @@ import type { ApiDescriptor, HandleDescriptor, MethodDescriptor } from "./descri
 
 const { log } = logger.scoped("api-descriptor");
 
-type JsonSchema = {
+export type JsonSchema = {
     type?: string | string[];
     properties?: Record<string, JsonSchema>;
     required?: string[];
@@ -60,9 +60,9 @@ function rangeText(raw: JsonSchema): string {
 }
 
 /** The JSON Schema of one side of a schema; `{}` (any) where zod cannot express it (a function, a custom type). */
-export function jsonSchemaOf(schema: z.ZodType, io: "input" | "output" = "input"): Record<string, unknown> {
+export function jsonSchemaOf(schema: z.ZodType, io: "input" | "output" = "input"): JsonSchema {
     try {
-        return z.toJSONSchema(schema, { io, unrepresentable: "any" }) as Record<string, unknown>;
+        return z.toJSONSchema(schema, { io, unrepresentable: "any" }) as JsonSchema;
     } catch (error) {
         log.debug({ error }, "a schema has no JSON Schema form");
         return {};
@@ -147,7 +147,7 @@ function isEmptyObject(schema: JsonSchema): boolean {
 }
 
 function paramsText(method: MethodDescriptor, depth: number): string {
-    const schema = jsonSchemaOf(method.params) as JsonSchema;
+    const schema = jsonSchemaOf(method.params);
 
     if (method.positional) {
         const properties = schema.properties ?? {};
@@ -166,7 +166,7 @@ function paramsText(method: MethodDescriptor, depth: number): string {
 }
 
 function resultText(method: MethodDescriptor, depth: number): string {
-    return method.resultName ?? typeText(jsonSchemaOf(method.result, "output") as JsonSchema, depth);
+    return method.resultName ?? typeText(jsonSchemaOf(method.result, "output"), depth);
 }
 
 /** `recorder.start(options?: { fps?: number }) → Recording` */
@@ -179,7 +179,7 @@ function paramKeys(method: MethodDescriptor): string {
         return method.positional.join(", ");
     }
 
-    const schema = jsonSchemaOf(method.params) as JsonSchema;
+    const schema = jsonSchemaOf(method.params);
     const keys = Object.keys(schema.properties ?? {});
     return keys.length === 0 ? "" : `{${keys.slice(0, 6).join(", ")}${keys.length > 6 ? ", …" : ""}}`;
 }

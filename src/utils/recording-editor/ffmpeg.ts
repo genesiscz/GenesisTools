@@ -31,6 +31,7 @@ export function trimArgv(options: { input: string; output: string; fromUs: numbe
     return [
         "ffmpeg",
         "-nostdin",
+        "-y",
         "-v",
         "error",
         "-ss",
@@ -56,6 +57,7 @@ export function speedArgv(options: { input: string; output: string; factor: numb
     return [
         "ffmpeg",
         "-nostdin",
+        "-y",
         "-v",
         "error",
         "-i",
@@ -111,11 +113,14 @@ export function exportVideoArgv(options: {
     return [
         "ffmpeg",
         "-nostdin",
+        "-y",
         "-v",
         "error",
         ...window,
         "-i",
         options.input,
+        "-f",
+        options.format,
         ...encodeArgs(options.format, true),
         options.output,
     ];
@@ -144,6 +149,7 @@ export function exportFramesArgv(options: { list: string; output: string; format
     return [
         "ffmpeg",
         "-nostdin",
+        "-y",
         "-v",
         "error",
         "-f",
@@ -154,6 +160,8 @@ export function exportFramesArgv(options: { list: string; output: string; format
         options.list,
         "-fps_mode",
         "vfr",
+        "-f",
+        options.format,
         ...encodeArgs(options.format, false),
         options.output,
     ];

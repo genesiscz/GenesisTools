@@ -79,6 +79,8 @@ export interface EditResult {
     jobId: string;
     outputDir: string;
     source: LoadedSource;
+    /** The transformed still timeline, when the source consists of frames. */
+    stills?: SourceFrame[];
     video?: { path: string; info: VideoInfo };
     /** Every candidate frame with its keep decision. */
     frames: EditFrame[];
@@ -141,6 +143,7 @@ function toResult(options: { state: EditState; steps: StepReport[]; jobId: strin
         jobId: options.jobId,
         outputDir: options.outputDir,
         source: state.source,
+        stills: state.stills,
         video: state.video,
         frames,
         kept: frames.filter((frame) => frame.kept),
@@ -225,6 +228,7 @@ async function extractVideoFrames(ctx: StepContext<EditState>, dir: string, fps:
         command: [
             "ffmpeg",
             "-nostdin",
+            "-y",
             "-v",
             "error",
             "-i",
@@ -285,16 +289,17 @@ export function frameSelectExpression(indices: readonly number[]): string {
 function stillFrames(state: EditState, step: { fps?: number; displays?: number[] }): EditFrame[] {
     const fromUs = state.window.fromUs ?? 0;
     const toUs = state.window.toUs ?? Number.POSITIVE_INFINITY;
+    // A sampled window starts with the frame already on screen at its start, so the frames before it stay candidates;
+    // an unsampled one lists only the frames inside it.
     const inWindow = (state.stills ?? []).filter(
         (frame) =>
-            frame.atUs >= fromUs &&
             frame.atUs <= toUs &&
             (!step.displays || (frame.displayId !== undefined && step.displays.includes(frame.displayId)))
     );
-    let chosen: Array<SourceFrame & { requestedUs?: number }> = inWindow;
+    let chosen: Array<SourceFrame & { requestedUs?: number }> = inWindow.filter((frame) => frame.atUs >= fromUs);
 
     if (step.fps !== undefined && inWindow.length > 0) {
-        const end = Math.min(toUs, inWindow[inWindow.length - 1].atUs + 1);
+        const end = Number.isFinite(toUs) ? toUs : inWindow[inWindow.length - 1].atUs + 1;
         const byDisplay = new Map<number, SourceFrame[]>();
 
         for (const frame of inWindow) {
@@ -437,6 +442,10 @@ async function exportStep(
 
         if (frames.length === 0) {
             throw new Error("Nothing to export: no frames in the range");
+        }
+
+        if (new Set(frames.map((frame) => frame.displayId)).size > 1) {
+            throw new Error("Movie export requires one display; select it in a frames step first");
         }
 
         const list = ctx.claim(join(dir, `export-${step.format}.ffconcat`));

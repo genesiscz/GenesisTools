@@ -63,6 +63,11 @@ export async function prepareVideoEvidence({
         logger.debug({ error, path }, "video evidence source is unreadable");
         throw new Error("Choose a local video file up to 1 GiB");
     });
+
+    if (!before.isFile() || before.size <= 0 || before.size > 1024 * 1024 * 1024) {
+        throw new Error("Choose a local video file up to 1 GiB");
+    }
+
     const sha256 = await videoDigest(path);
     const id = randomUUID();
     const root = resolve(outputRoot);

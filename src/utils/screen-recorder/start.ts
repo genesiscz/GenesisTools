@@ -1,8 +1,18 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { type JobInfo, JobRegistry } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import {
+    defaultRuleContext,
+    graceMinutesFor,
+    kickDrainer,
+    loadRmConfig,
+    moveToTrash,
+    planRemoval,
+    rmCallerFromRuntime,
+} from "@genesiscz/utils/rm";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import {
     type AudioDevices,
@@ -187,6 +197,8 @@ export class LibraryRecording extends RecorderControl {
     private streamed = 0;
     private stopRequested = false;
     private discarded = false;
+    /** The folder was made by this recording's start; only then may discard move it to the trash. */
+    private ownsFolder = false;
     private wake?: () => void;
     private loop?: Promise<void>;
     private finishing?: { job: string; done: Promise<StopAnswer> };
@@ -195,7 +207,8 @@ export class LibraryRecording extends RecorderControl {
 
     constructor(private readonly options: StartRecordingOptions) {
         super();
-        this.id = options.id ?? liveRecordingId("library", stamp(this.startedAt));
+        // Two recordings started in one second must not share an id, a socket or a folder.
+        this.id = options.id ?? liveRecordingId("library", `${stamp(this.startedAt)}-${randomUUID()}`);
         this.folder = options.folder ?? recordingsLibraryDir(this.id);
         this.settings = {
             activeFps: options.fps ?? 2,
@@ -279,7 +292,11 @@ export class LibraryRecording extends RecorderControl {
         }
 
         this.startedAt.setTime(Date.now());
-        mkdirSync(join(this.folder, "frames"), { recursive: true });
+        // The folder is reserved exclusively: an existing one (another recording, or a user's folder) is refused.
+        mkdirSync(dirname(this.folder), { recursive: true });
+        mkdirSync(this.folder);
+        this.ownsFolder = true;
+        mkdirSync(join(this.folder, "frames"));
         this.session = startRecording({
             recorder,
             session: {
@@ -520,9 +537,28 @@ export class LibraryRecording extends RecorderControl {
     }
 
     override async discard(): Promise<StopAnswer> {
+        if (!this.ownsFolder) {
+            throw new Error("This recording does not own its folder");
+        }
+
         this.discarded = true;
         const answer = await this.stop();
-        rmSync(this.folder, { recursive: true, force: true });
+        const config = loadRmConfig();
+        const caller = rmCallerFromRuntime();
+        const context = defaultRuleContext(config, caller, process.cwd());
+        const plan = planRemoval([this.folder], context);
+
+        if (plan.some((item) => item.verdict.kind === "deny")) {
+            throw new Error("The recording folder is protected from removal");
+        }
+
+        // Discard authorizes only the folder this recording reserved at its start, so it goes to the trash as a whole.
+        moveToTrash(
+            plan.map((item) => ({ target: item.target, rule: "recording-discard" })),
+            { config, caller, graceMinutes: Math.max(...plan.map((item) => graceMinutesFor(item, context))) }
+        );
+        this.ownsFolder = false;
+        kickDrainer(config);
         return answer;
     }
 

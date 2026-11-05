@@ -41,7 +41,7 @@ by name, description, and parameter schema; `describe("recorder.start")` prints 
 `describe()` accepts both the qualified handle names from search, such as `recorder.Recording.displays.switch`,
 and the names from help, such as `recording.displays.switch`.
 `help()` lists toolsets and `help("computer")` prints the full API with every signature; `await show(x)` returns
-an image to the model (a path, a Buffer or Uint8Array, `{ path }` or `{ bytes, mimeType }`, or an array of them).
+an image to the model (a path, a Buffer or Uint8Array, `{ path }` or `{ bytes, mimeType }`, or an array of them). The MIME hint is ignored; image bytes must identify a PNG, JPEG, GIF or WebP.
 Recordings started in a turn belong to the parent engine. A turn timeout loses bindings but leaves those
 recordings running: use `await recorder.list()` and `await recorder.attach(id)` in the next turn.
 `js_reset`, normal server shutdown, and the end of `run` stop owned recordings and await their post-processing.

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { JobRegistry, type ProgressEvent } from "@genesiscz/utils/jobs";
+import { logger } from "@genesiscz/utils/logger";
 import {
     type EditFrame,
     type EditJob,
@@ -49,7 +50,8 @@ export interface FrameSet {
     outputDir: string;
 }
 
-const stepsOf = new WeakMap<object, EditStep[]>();
+/** The clip each FrameSet came from and its steps: a grid takes a FrameSet only from the clip that made it. */
+const stepsOf = new WeakMap<object, { owner: Clip; steps: EditStep[] }>();
 
 const jobDoc =
     'a Job: await it (or job.done) for the result, job.on("progress", e => …) for ProgressEvents, job.cancel()';
@@ -154,6 +156,8 @@ export class ReplJob<T> implements PromiseLike<T> {
         map: (result: EditResult) => T | Promise<T>
     ) {
         this.done = edit.done.then(map);
+        // A caller that never awaits a failed job must not see an unhandled rejection; one that awaits still gets it.
+        void this.done.catch((error: unknown) => logger.debug({ error, job: edit.id }, "REPL edit job failed"));
     }
 
     get id(): string {
@@ -213,7 +217,9 @@ export class Clip {
         private readonly editor: RecordingEditor,
         private readonly ctx: ToolsetContext,
         readonly source: EditSource,
-        private readonly prefix: EditStep[] = []
+        private readonly prefix: EditStep[] = [],
+        /** The edit that made this clip (a trim or a speed change): its info is the edited result, not the source. */
+        private readonly derivedResult?: EditResult
     ) {}
 
     private start(steps: EditStep[]): EditJob {
@@ -222,6 +228,32 @@ export class Clip {
     }
 
     async info() {
+        const derived = this.derivedResult;
+
+        if (derived?.video) {
+            return {
+                kind: "video",
+                path: derived.video.path,
+                durationUs: derived.video.info.durationUs,
+                width: derived.video.info.displayWidth,
+                height: derived.video.info.displayHeight,
+            };
+        }
+
+        if (derived?.stills) {
+            return {
+                kind: "frames",
+                path: derived.outputDir,
+                durationUs: derived.stills.at(-1)?.atUs ?? 0,
+                frames: derived.stills.length,
+                displays: [
+                    ...new Set(
+                        derived.stills.flatMap((frame) => (frame.displayId === undefined ? [] : [frame.displayId]))
+                    ),
+                ],
+            };
+        }
+
         const loaded = await loadSource(locateSource(this.source));
         return loaded.kind === "video"
             ? {
@@ -249,16 +281,17 @@ export class Clip {
         const steps = this.framesSteps(input);
         return new ReplJob(this.start(steps), (result) => {
             const set: FrameSet = { frames: result.kept, total: result.frames.length, outputDir: result.outputDir };
-            stepsOf.set(set, steps);
+            stepsOf.set(set, { owner: this, steps });
             return set;
         });
     }
 
     grid(input: z.input<typeof gridOptionsSchema> = {}): GridJob {
         const { frames, cols, rows, perImage, labels, maxWidth, ...rest } = gridOptionsSchema.parse(input);
-        const base = frames ? stepsOf.get(frames) : undefined;
+        const owned = frames ? stepsOf.get(frames) : undefined;
+        const base = owned?.steps;
 
-        if (frames && !base) {
+        if (frames && owned?.owner !== this) {
             throw new Error("grid({ frames }) takes the FrameSet that clip.frames() of this clip resolved to");
         }
 
@@ -272,7 +305,7 @@ export class Clip {
     private derived(step: EditStep): ReplJob<Clip> {
         return new ReplJob(
             this.start([step]),
-            () => new Clip(this.editor, this.ctx, this.source, [...this.prefix, step])
+            (result) => new Clip(this.editor, this.ctx, this.source, [...this.prefix, step], result)
         );
     }
 

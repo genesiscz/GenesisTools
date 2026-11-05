@@ -97,6 +97,9 @@ export class ReplEngine {
     private pending = new Map<number, (response: WorkerResponse) => void>();
     private moduleDirs: string[] = [];
     private queue: Promise<unknown> = Promise.resolve();
+    /** Grows on every reset and shutdown: a turn queued before it never runs in the next worker. */
+    private generation = 0;
+    private shutdownJob?: Promise<void>;
     private scratch?: TemporaryArtifacts;
     private readonly recordings = new Set<LibraryRecording>();
     private readonly recordingStarts = new Set<Promise<void>>();
@@ -352,7 +355,12 @@ export class ReplEngine {
 
     /** Runs one turn. Turns are serialised: the context is one, and so is its output buffer. */
     run(code: string, timeoutMs = this.defaultTimeoutMs): Promise<ReplResult> {
-        const turn = this.queue.then(() => this.runNow(code, timeoutMs));
+        const generation = this.generation;
+        const turn = this.queue.then(() =>
+            generation === this.generation
+                ? this.runNow(code, timeoutMs)
+                : { ok: false, text: "", images: [], error: "REPL reset before this queued turn ran", durationMs: 0 }
+        );
         this.queue = turn.catch(() => undefined);
         return turn;
     }
@@ -407,9 +415,17 @@ export class ReplEngine {
         return { ...response, durationMs: Math.round(performance.now() - started) };
     }
 
-    /** Asks the worker's toolsets to release what they started, then kills it. Waits behind a running turn. */
+    /**
+     * Gives the toolsets a bounded dispose, then kills the worker. It does not wait for a running turn's deadline,
+     * and the turns queued before it are cancelled.
+     */
     async shutdown(reason = "shutdown"): Promise<void> {
-        const stop = this.queue.then(async () => {
+        if (this.shutdownJob) {
+            return this.shutdownJob;
+        }
+
+        this.generation += 1;
+        const stop = (async () => {
             const worker = this.worker;
 
             if (worker && worker.exitCode === null && this.toolsets.length > 0) {
@@ -440,9 +456,15 @@ export class ReplEngine {
                     "Recording post-processing failed"
                 );
             }
-        });
+        })();
+        this.shutdownJob = stop;
         this.queue = stop.catch(() => undefined);
-        await stop;
+
+        try {
+            await stop;
+        } finally {
+            this.shutdownJob = undefined;
+        }
     }
 
     /** A fresh worker on the next turn: every binding is gone, the toolsets are disposed and preloaded again. */

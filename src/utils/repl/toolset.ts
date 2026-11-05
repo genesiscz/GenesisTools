@@ -95,7 +95,24 @@ export abstract class ReplToolset {
                             : args[0] === undefined
                               ? {}
                               : args[0];
-                        let parsed = method.params.safeParse(input);
+                        // An AbortSignal rides beside the options: the descriptor does not list it, and the method
+                        // gets it back after validation.
+                        let schemaInput = input;
+                        let signal: AbortSignal | undefined;
+
+                        if (
+                            !method.positional &&
+                            typeof input === "object" &&
+                            input !== null &&
+                            "signal" in input &&
+                            input.signal instanceof AbortSignal
+                        ) {
+                            const { signal: reserved, ...rest } = input;
+                            signal = reserved;
+                            schemaInput = rest;
+                        }
+
+                        let parsed = method.params.safeParse(schemaInput);
                         // cut({ from, to }) for cut(from, to): one plain object whose keys are all parameter names is
                         // taken as the named arguments, when the positional reading of it fails.
                         const named = args[0];
@@ -132,7 +149,10 @@ export abstract class ReplToolset {
 
                             throw error;
                         }
-                        const params = parsed.data;
+                        const params =
+                            signal && typeof parsed.data === "object" && parsed.data !== null
+                                ? { ...parsed.data, signal }
+                                : parsed.data;
                         const callArgs =
                             method.positional && params !== null && typeof params === "object"
                                 ? method.positional.map((key) => Reflect.get(params, key))

@@ -82,7 +82,7 @@ export function createServer(engine: ReplEngine, options: { toolsetLines?: reado
                 {
                     name: "js_reset",
                     description:
-                        "Kill the REPL worker and start a fresh one: every binding is gone, the preloaded toolsets are disposed and preloaded again, registered module directories stay.",
+                        "Reset the REPL without waiting for a running turn deadline. Toolsets get up to 10 seconds to dispose before the worker is killed. Every binding is gone, queued turns are cancelled, and registered module directories stay.",
                     inputSchema: { type: "object", properties: {}, additionalProperties: false },
                 },
                 TURN_ENDED_TOOL,
@@ -164,6 +164,8 @@ export async function startMcpServer(options: { toolsets?: readonly string[]; na
         server: createServer(engine, { toolsetLines }),
         transport: new StdioServerTransport(),
         shutdown: () => engine.shutdown(),
+        // Above the 10 s toolset dispose, so a close is not cut off before the worker is killed.
+        shutdownTimeoutMs: 15_000,
         onExit: () => engine.dispose(),
     });
 }
