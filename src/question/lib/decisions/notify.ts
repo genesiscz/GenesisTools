@@ -42,7 +42,7 @@ export function answerable(row: DecisionRecord): boolean {
 
 /** The prompt, the lettered options and the recommendation, short enough for a lock screen. */
 export function phoneDecisionBody(row: DecisionRecord): string {
-    const shown = shownDecisionText({ prompt: row.prompt, options: row.options });
+    const shown = shownDecisionText({ prompt: row.prompt, options: row.options, type: kindOf(row) });
     const clip = (value: string, max: number) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
     const options = shown.options.map(
         (option, index) => `${String.fromCharCode(97 + index)}) ${clip(option, OPTION_MAX)}`

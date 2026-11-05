@@ -149,10 +149,28 @@ function sameText(a: string, b: string): boolean {
 }
 
 /**
+ * The options of a decision posted with none: its prompt's last "a) …" list, when that list holds a), b) and on in
+ * order. Decision 12 of 2026-11-05 wrote "- a) Step 1: …" to "- d) …" in its prompt and passed no options, so the
+ * widget drew no buttons and said "Answer in its session" (Martin: "this incorrectly didnt show it as answer options?").
+ * One "a) …" line alone, or a list that skips a letter, is no set of options.
+ */
+function promptOptions(prompt: string): string[] {
+    const list = [...lastOptionList(prompt.split("\n")).values()];
+    const inOrder = list.every((line, index) => line.letter === letterAt(index) && line.text !== "");
+    return list.length >= 2 && inOrder ? list.map((line) => line.text) : [];
+}
+
+/**
  * The options with each bare letter replaced by the text of its line in the prompt ("a) empty it now" makes option a
- * "empty it now"). An option with words of its own is unchanged, and a bare letter with no line keeps its letter.
+ * "empty it now"). An option with words of its own is unchanged, and a bare letter with no line keeps its letter. No
+ * options at all: the prompt's list (`promptOptions`). For a decision only: a to-do item passes through
+ * `shownDecisionText` with its kind, and its "a) …" lines are steps of the work, never answers.
  */
 export function decisionOptionLabels(prompt: string, options: readonly string[]): string[] {
+    if (options.length === 0) {
+        return promptOptions(prompt);
+    }
+
     if (!options.some((option, index) => isBareOptionLabel(option, letterAt(index)))) {
         return [...options];
     }
@@ -172,11 +190,20 @@ export function decisionOptionLabels(prompt: string, options: readonly string[])
  * posted "Keep it" and wrote "a) Keep it: it saves 2 s" in the prompt), every line stays: a list with holes reads
  * worse than a repeat. A prompt that is nothing but the options keeps them.
  */
-export function shownDecisionText({ prompt, options }: { prompt: string; options: readonly string[] }): {
+export function shownDecisionText({
+    prompt,
+    options,
+    type,
+}: {
+    prompt: string;
+    options: readonly string[];
+    type?: "decision" | "todo";
+}): {
     prompt: string;
     options: string[];
 } {
-    const labels = decisionOptionLabels(prompt, options);
+    // A to-do item takes no options from its prompt: its "a) …" lines stay in it.
+    const labels = type === "todo" && options.length === 0 ? [] : decisionOptionLabels(prompt, options);
     const lines = prompt.split("\n");
     const list = [...lastOptionList(lines).values()];
     const repeats =

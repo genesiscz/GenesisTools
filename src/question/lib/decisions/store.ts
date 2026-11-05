@@ -708,12 +708,17 @@ type ContentFields = Pick<DecisionRecord, "prompt" | "options" | VersionedKey>;
 
 /**
  * The versioned fields of a posted item, without the keys it leaves empty. A bare letter among the options ("a") takes
- * the words of its "a) …" line in the prompt, so no surface shows a button that reads "a) a".
+ * the words of its "a) …" line in the prompt, so no surface shows a button that reads "a) a", and a decision with no
+ * options takes the whole list.
  */
 function contentOf(decision: PostedDecision, excerpt: string | undefined): ContentFields {
     return {
         prompt: decision.prompt,
-        options: decisionOptionLabels(decision.prompt, decision.options),
+        // A decision posted with no options takes its prompt's "a) …" list; a to-do item keeps none.
+        options:
+            kindOf(decision) === "todo" && decision.options.length === 0
+                ? []
+                : decisionOptionLabels(decision.prompt, decision.options),
         ...(excerpt ? { excerpt } : {}),
         ...(decision.title ? { title: decision.title } : {}),
         ...(decision.proposal ? { proposal: decision.proposal } : {}),

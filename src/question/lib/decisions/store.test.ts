@@ -169,6 +169,22 @@ describe("decision store", () => {
         ]);
     });
 
+    test("a decision posted with no options saves its prompt's list as the options; a to-do item saves none", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "decisions-prompt-list-"));
+        const file = join(dir, "decisions.jsonl");
+        const prompt = "Which steps?\n- a) Step 1: a limit\n- b) Step 2: smaller builds\nProposal: a + b.";
+        const rows = await postDecisions(file, join(dir, "events.jsonl"), {
+            sessionId: "prompt-list",
+            decisions: [
+                { prompt, recommended: "ab" },
+                { type: "todo", prompt },
+            ],
+        });
+
+        expect(rows.map((row) => row.options)).toEqual([["Step 1: a limit", "Step 2: smaller builds"], []]);
+        expect(rows[0]?.prompt).toBe(prompt);
+    });
+
     test("a post keeps the number its chat reply gave, and refuses one the session already used", async () => {
         const dir = mkdtempSync(join(tmpdir(), "decisions-"));
         const file = join(dir, "decisions.jsonl");
