@@ -195,6 +195,7 @@ final class MeetingsWindowModel {
     /// The window became key again: what changed outside it (a confirm in a terminal, a new meeting) shows.
     func refreshAfterReturn() {
         loadOverview()
-        detail?.reloadRecord()
+        loadSettings()
+        detail?.refreshLoaded()
     }
 }

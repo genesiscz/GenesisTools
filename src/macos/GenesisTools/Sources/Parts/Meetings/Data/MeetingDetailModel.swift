@@ -151,12 +151,34 @@ final class MeetingDetailModel {
 
     func isBusy(_ key: String) -> Bool { busy.contains(key) }
 
-    func setProject(_ project: String?) {
-        if let project {
-            change("project", ["set", id, "--project", project], done: "Project set to \(project)")
-        } else {
-            change("project", ["assign", "apply", id, "--none"], done: "No project for this meeting")
+    /// The changes that make the corrected transcript stale besides the record: it applies the project's dictionary,
+    /// the confirmed items (a reject can take away an unclear mark), the renames and the answers.
+    enum Change { case project, label, decision, rename, answer, context }
+
+    static func reloadsTranscript(after change: Change) -> Bool {
+        switch change {
+        case .project, .decision, .rename, .answer: return true
+        case .label, .context: return false
         }
+    }
+
+    func setProject(_ project: String?) {
+        let reload = Self.reloadsTranscript(after: .project)
+        if let project {
+            change("project", ["set", id, "--project", project], done: "Project set to \(project)", reloadTranscript: reload)
+        } else {
+            change("project", ["assign", "apply", id, "--none"], done: "No project for this meeting", reloadTranscript: reload)
+        }
+    }
+
+    /// The window came back: what a terminal changed since (a correction, a dictionary entry, a rename) shows in every
+    /// tab already read; a tab not read yet reads when it shows.
+    func refreshLoaded() {
+        reloadRecord()
+        loadProposals()
+        if transcript != .idle { loadTranscript() }
+        if speakers != .idle { loadSpeakers() }
+        if timeline != .idle { loadTimeline() }
     }
 
     func toggleLabel(_ label: String, on: Bool) {
@@ -181,7 +203,7 @@ final class MeetingDetailModel {
                 note.action = { [weak model = self] in model?.reopen(item, token: result.token) }
                 notice = note
                 scheduleUndoExpiry(for: note.id)
-                if confirm { transcript = .idle; if tab == .transcript { loadTranscript() } }
+                if Self.reloadsTranscript(after: .decision) { transcript = .idle; if tab == .transcript { loadTranscript() } }
             } catch {
                 notice = .failure(error) { [weak model = self] in model?.decide(item, confirm: confirm, speaker: speaker) }
             }

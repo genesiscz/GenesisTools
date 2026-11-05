@@ -223,4 +223,10 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(MeetingsSettingsModel.addEntryArgs(type: "fix", value: "Viky", substitution: "wiki", scope: "work", ifAbsent: true),
                        ["dictionary", "add", "Viky", "wiki", "--type", "fix", "--project", "work", "--if-absent"])
     }
+
+    func testAProjectChangeAndEitherDecisionMakeTheTranscriptStale() {
+        XCTAssertTrue(MeetingDetailModel.reloadsTranscript(after: .project), "the project brings its dictionary")
+        XCTAssertTrue(MeetingDetailModel.reloadsTranscript(after: .decision), "a reject can take an unclear mark away")
+        XCTAssertFalse(MeetingDetailModel.reloadsTranscript(after: .label))
+    }
 }
