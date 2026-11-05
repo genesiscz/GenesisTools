@@ -849,12 +849,14 @@ describe("characterization: what a library recording asks its recorder for", () 
         /** The live switch waits for this before it answers. */
         switchGate?: Promise<void>;
         private readonly waiters: Array<{ count: number; resolve: () => void }> = [];
-        private readonly running = new Set<() => void>();
+        private readonly running = new Map<() => void, number>();
 
-        /** Ends every running capture as if its piece had run out. */
-        finishAll(): void {
-            for (const finish of this.running) {
-                finish();
+        /** Ends every running capture (or those of one display) as if its piece had run out. */
+        finishAll(displayId?: number): void {
+            for (const [finish, display] of this.running) {
+                if (displayId === undefined || display === displayId) {
+                    finish();
+                }
             }
         }
 
@@ -867,6 +869,8 @@ describe("characterization: what a library recording asks its recorder for", () 
                 liveAudio?: boolean;
                 /** False: the capture offers no live channel. */
                 live?: boolean;
+                /** Each capture announces its frame as it lands (`onFrame`). */
+                stream?: boolean;
             } = {}
         ) {
             super();
@@ -978,6 +982,10 @@ describe("characterization: what a library recording asks its recorder for", () 
                 const path = join(request.outDir, "keep-0.png");
                 writeFileSync(path, "png");
                 frames.push({ path, atMs: 0, displayId, changePercent: 5, reason: "first" });
+
+                if (this.script.stream) {
+                    request.hooks?.onFrame?.(frames[0]!);
+                }
             }
 
             await new Promise<void>((resolve) => {
@@ -987,7 +995,7 @@ describe("characterization: what a library recording asks its recorder for", () 
                     resolve();
                 };
                 const timer = setTimeout(finish, request.durationSec * 1000);
-                this.running.add(finish);
+                this.running.set(finish, displayId);
                 signal?.addEventListener("abort", finish);
             });
             return { startedAtMs, frames };
@@ -1192,6 +1200,30 @@ describe("characterization: what a library recording asks its recorder for", () 
         await Bun.sleep(50);
         expect(recorder.requests).toHaveLength(2);
         await recording.stop();
+    });
+
+    test("the live frame count keeps each running capture's streamed frames, the status carries the last frame time, and a frame event says when", async () => {
+        const recorder = new ScriptRecorder({ stream: true });
+        const recording = await start(recorder, { displays: "all" });
+        await recorder.waitFor(2);
+        const client = await RecorderClient.connect(recording.id, { dir: join(recording.folder, "..", "live") });
+        const events: unknown[] = [];
+        await client.subscribe((event) => events.push(event.params), ["frame"]);
+
+        expect(await recording.status()).toMatchObject({ frames: 2, lastFrameAt: expect.any(String) });
+        recorder.finishAll(1);
+        await Bun.sleep(50);
+        expect((await recording.status()).frames).toBe(2);
+        expect((await recording.setSettings({ heartbeatSec: 5 })).applied).toBe("restart");
+        await recorder.waitFor(4);
+        await Bun.sleep(50);
+        client.close();
+        await recording.stop();
+
+        expect(events).toEqual([
+            { displayId: 1, at: expect.any(String), file: expect.stringContaining("keep-0.png") },
+            { displayId: 4, at: expect.any(String), file: expect.stringContaining("keep-0.png") },
+        ]);
     });
 
     test("an error in the capture loop ends the library recording by itself, with the finish and the reason in its notes", async () => {

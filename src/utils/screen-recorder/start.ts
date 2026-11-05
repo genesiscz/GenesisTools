@@ -198,7 +198,7 @@ export class LibraryRecording extends RecorderControl {
     private readonly pending: PendingFrame[] = [];
     private readonly tracks: Array<AudioTrack & { displayId: number; startedAtMs: number }> = [];
     private readonly warnings: string[] = [];
-    private streamed = 0;
+
     private stopRequested = false;
     private discarded = false;
     /** The folder was made by this recording's start; only then may discard move it to the trash. */
@@ -403,10 +403,16 @@ export class LibraryRecording extends RecorderControl {
             : { target: { kind: "display", displayId }, displayId, label: `display ${displayId}` };
     }
 
+    /** The frames kept so far and those each running capture announced and has not returned yet. */
+    private liveFrames(): number {
+        return this.pending.length + [...this.running.values()].reduce((sum, one) => sum + one.streamed, 0);
+    }
+
     private onFrame(entry: SessionCapture, frame: CapturedFrame): void {
-        this.streamed += 1;
-        this.server?.update({ frames: this.pending.length + this.streamed, lastFrameAt: new Date().toISOString() });
-        this.server?.emit("frame", { displayId: frame.displayId ?? entry.startDisplayId, file: frame.path });
+        const at = new Date().toISOString();
+        entry.streamed += 1;
+        this.server?.update({ frames: this.liveFrames(), lastFrameAt: at });
+        this.server?.emit("frame", { displayId: frame.displayId ?? entry.startDisplayId, at, file: frame.path });
     }
 
     private onLive(entry: SessionCapture, live: LiveCapture): void {
@@ -454,8 +460,8 @@ export class LibraryRecording extends RecorderControl {
                 this.tracks.push({ ...track, displayId, startedAtMs: result.startedAtMs });
             }
 
-            this.streamed = 0;
-            this.server?.update({ frames: this.pending.length });
+            entry.streamed = 0;
+            this.server?.update({ frames: this.liveFrames() });
             return result.frames.length > 0;
         } catch (error) {
             log.warn({ error, displayId }, "a capture of the library recording failed");
@@ -465,12 +471,14 @@ export class LibraryRecording extends RecorderControl {
     }
 
     async status(): Promise<RecorderStatus> {
+        const entry = this.server?.current;
         return {
             kind: this.kind,
             title: this.options.title ?? this.id,
             state: this.state,
             displays: this.recordedDisplays(),
-            frames: this.pending.length + this.streamed,
+            frames: this.liveFrames(),
+            ...(entry?.lastFrameAt ? { lastFrameAt: entry.lastFrameAt } : {}),
             warning: this.warnings.at(-1),
             folder: this.folder,
         };
