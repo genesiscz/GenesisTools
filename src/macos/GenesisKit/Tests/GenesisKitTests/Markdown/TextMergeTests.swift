@@ -7,6 +7,37 @@ final class TextMergeTests: XCTestCase {
         return (r.text(trailingNewline: true), r.conflictCount)
     }
 
+    func testEditsKeepParagraphSeparatorMatched() {
+        let edits = TextMerge.edits(from: ["p1", "", "p2", "", "p3"], to: ["P1", "", "p3"])
+        XCTAssertEqual(edits.removed, Set([0, 2, 3]))
+        XCTAssertEqual(edits.inserted, Set([0]))
+    }
+
+    func testHeavilyRewrittenDocumentUsesBoundedReplacement() {
+        let edits = TextMerge.edits(from: Array(repeating: "old", count: 10_000),
+                                   to: Array(repeating: "new", count: 10_000))
+        XCTAssertEqual(edits.removed, Set(0..<10_000))
+        XCTAssertEqual(edits.inserted, Set(0..<10_000))
+    }
+
+    func testSmallEditScriptsAreMinimalAndReconstructTarget() {
+        let cases = [[String](), ["a"], ["b"], ["a", "b"], ["b", "a"], ["a", "", "a"]]
+        for a in cases {
+            for b in cases {
+                let edits = TextMerge.edits(from: a, to: b)
+                XCTAssertEqual(a.enumerated().filter { !edits.removed.contains($0.offset) }.map(\.element),
+                               b.enumerated().filter { !edits.inserted.contains($0.offset) }.map(\.element))
+                var lcs = Array(repeating: Array(repeating: 0, count: b.count + 1), count: a.count + 1)
+                for i in a.indices {
+                    for j in b.indices {
+                        lcs[i + 1][j + 1] = a[i] == b[j] ? lcs[i][j] + 1 : max(lcs[i][j + 1], lcs[i + 1][j])
+                    }
+                }
+                XCTAssertEqual(edits.removed.count + edits.inserted.count, a.count + b.count - 2 * lcs[a.count][b.count])
+            }
+        }
+    }
+
     func testUnchangedSidesReturnTheBase() {
         let (t, c) = merged("a\nb\nc\n", "a\nb\nc\n", "a\nb\nc\n")
         XCTAssertEqual(t, "a\nb\nc\n"); XCTAssertEqual(c, 0)
