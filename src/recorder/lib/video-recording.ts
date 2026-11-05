@@ -9,6 +9,7 @@ import { SessionRecorderControl } from "@app/control/lib/recording-session-contr
 import { describeRecordingTarget, type RecordingTarget } from "@app/control/lib/recording-targets";
 import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
+import type { FlockState } from "@genesiscz/utils/fs/flock";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { passStartGate, releaseStartGate } from "@genesiscz/utils/process/start-gate";
@@ -18,6 +19,7 @@ import {
     recordingsLibraryDir,
 } from "@genesiscz/utils/screen-recorder/library";
 import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
+import { cameraRefusal, missingCameraWarning, recorderFaceState } from "./camera-recorder";
 import { CAMERA_MOVIE } from "./library";
 import { VIDEO_RECORDING_MAX_SECONDS } from "./start-options";
 
@@ -33,8 +35,13 @@ export interface VideoRecordingOptions {
     threshold?: number;
     /** CG window ids no movie may show (the camera bubble's preview, a host's own panel). */
     excludeWindowIds?: number[];
-    /** The recorder face records the camera beside the screen into `camera.mov` (`settings.camera` asks for it). */
+    /**
+     * The menu bar recorder records the camera beside the screen into `camera.mov` (`settings.camera` asks for it):
+     * refused while it does not run, and a warning at the end when no camera movie came.
+     */
     camera?: boolean;
+    /** Whether the menu bar recorder runs; default its lock (`recorderFaceState`). */
+    recorderFace?: () => FlockState;
     audio?: ("system" | "mic")[];
     micDevice?: string;
     /** Keep the system cursor in the movie; by default it stays out and the editor draws it from the track. */
@@ -104,6 +111,16 @@ async function writeManifest(folder: string, manifest: RecordingManifest): Promi
 export async function recordVideo(options: VideoRecordingOptions): Promise<VideoRecordingResult> {
     const gate = options.startGate;
     const countdownSeconds = options.countdownSeconds ?? 0;
+
+    if (options.camera) {
+        const face = (options.recorderFace ?? recorderFaceState)();
+        const refusal = cameraRefusal(face);
+        log.info({ face }, "the recording asks for the camera");
+
+        if (refusal) {
+            throw new Error(refusal);
+        }
+    }
 
     if (!gate && countdownSeconds === 0) {
         return recordPassed(options);
@@ -264,6 +281,17 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
 
     if (existsSync(joinedCursor)) {
         await rename(joinedCursor, cursorTrack);
+    }
+
+    // The face finishes the camera movie once the live entry is gone; a recording that asked for it and got none says
+    // so here, in the manifest and in the result, instead of a movie that quietly has no camera.
+    const cameraWarning =
+        options.camera && outcome !== "discarded" ? await missingCameraWarning({ folder }) : undefined;
+
+    if (cameraWarning) {
+        log.warn({ id, folder }, "the recording asked for the camera and got no camera movie");
+        warnings.push(cameraWarning);
+        options.emit?.({ event: "error", message: cameraWarning, code: "camera-missing", fatal: false });
     }
 
     await writeManifest(folder, {

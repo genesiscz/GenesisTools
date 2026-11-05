@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import type { FlockState } from "@genesiscz/utils/fs/flock";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { awaitStart, startGatePath, stopPassedChild, sweepStartGates } from "@genesiscz/utils/process/start-gate";
@@ -52,6 +53,7 @@ import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/uti
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
+import { cameraRefusal, recorderFaceState } from "./camera-recorder";
 import { type DemoDriver, type DemoStep, demoEditSchema, runDemo } from "./demo";
 import {
     collapseUndo,
@@ -1955,26 +1957,40 @@ export class MovieRecording {
     }
 }
 
-/** How `movies.record()` starts `tools recorder start <args>`: detached, so a REPL reset does not end the recording. */
-export type MovieRecorderStart = (args: string[]) => void;
+/** What `movies.record()` reaches outside the process; a test passes a fake recorder and a face state. */
+export interface MovieRecorderDeps {
+    /** Starts `tools recorder start <args>`: detached, so a REPL reset does not end the recording. */
+    start: (args: string[]) => void;
+    /** Whether the menu bar recorder, the camera's only writer, runs. */
+    recorderFace: () => FlockState;
+}
 
-const startDetached: MovieRecorderStart = (args) => {
-    spawnToolDetached(args, { reparent: true });
+const REAL_DEPS: MovieRecorderDeps = {
+    start: (args) => {
+        spawnToolDetached(args, { reparent: true });
+    },
+    recorderFace: recorderFaceState,
 };
 
 /** Starts `tools recorder start` in its own process and waits for its entry. */
 async function record({
     options,
     ctx,
-    start = startDetached,
+    deps = REAL_DEPS,
 }: {
     options: RecordOptions;
     ctx?: ToolsetContext;
-    start?: MovieRecorderStart;
+    deps?: MovieRecorderDeps;
 }): Promise<MovieRecording> {
     const flags = startArgsOf(options);
-    // The CLI's own parse, here: the child runs detached, so a refusal there would only show as a start that timed out.
-    parseStartFlags(readStartArgs(flags));
+    // The CLI's own checks, here: the child runs detached, so a refusal there would only show as a start that timed out.
+    const request = parseStartFlags(readStartArgs(flags));
+    const cameraProblem = request.camera ? cameraRefusal(deps.recorderFace()) : undefined;
+
+    if (cameraProblem) {
+        throw new Error(cameraProblem);
+    }
+
     const before = new Set(listLiveRecordings().map((entry) => entry.id));
     const args = ["recorder", "start", ...flags];
 
@@ -1986,7 +2002,7 @@ async function record({
     const gate = startGatePath(gates);
     args.push("--start-gate", gate);
     log.info({ args }, "movie recording requested");
-    start(args);
+    deps.start(args);
     const outcome = await awaitStart({
         gate,
         find: () =>
@@ -2089,8 +2105,8 @@ async function recordDemo(options: z.input<typeof demoParamsSchema> & { steps: D
 export class MoviesToolset extends ReplToolset {
     readonly api = moviesApi;
 
-    /** `start` is how record() starts `tools recorder start`; a test passes a fake recorder. */
-    constructor(private readonly start: MovieRecorderStart = startDetached) {
+    /** What record() reaches outside the process; a test passes a fake recorder. */
+    constructor(private readonly deps: Partial<MovieRecorderDeps> = {}) {
         super();
     }
 
@@ -2099,7 +2115,7 @@ export class MoviesToolset extends ReplToolset {
             movies: {
                 list: (options: { limit?: number } = {}) => listLibrary().slice(0, options.limit ?? 20),
                 open: (recording: string) => serviceRoutedMovie(new Movie(recording, ctx), movieMethods),
-                record: (options: RecordOptions = {}) => record({ options, ctx, start: this.start }),
+                record: (options: RecordOptions = {}) => record({ options, ctx, deps: { ...REAL_DEPS, ...this.deps } }),
                 demo: (options: z.input<typeof demoParamsSchema> & { steps: DemoStep[] }) => recordDemo(options, ctx),
                 search: (text: string) => searchLibrary(text),
             },

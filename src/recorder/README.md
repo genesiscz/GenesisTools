@@ -229,7 +229,10 @@ the same `camera` op (Swift `EditProject.CameraChange`; both sides are tested on
 `src/utils/recording-editor/__fixtures__/camera-ops.json`), so `edit.json` is the same from every door, and a drag is
 one undo step. `tools recorder
 start --camera` asks for the camera without the picker: then the face records it with no preview on screen, because
-nothing would keep the preview out of the movie.
+nothing would keep the preview out of the movie. Only that face writes `camera.mov`, so `--camera` and
+`movies.record({ camera: true })` are refused while it does not run (it holds `~/.genesis-tools/hub/recorder.lock`;
+`tools recorder library --no-focus` starts it), and a recording that asked for the camera and has no `camera.json`
+10 s after it ended gets a warning in `recording.json`, in the result and on stderr (`lib/camera-recorder.ts`).
 
 ## Demo mode: one call, a finished demo
 

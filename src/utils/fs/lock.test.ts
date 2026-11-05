@@ -1,7 +1,10 @@
+import { FFIType } from "bun:ffi";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { defineSystemLibrary } from "@genesiscz/utils/bun/compiler";
+import { flockState } from "./flock";
 import { acquireLock, getLockHolderPid, isLocked, type LockHandle } from "./lock";
 
 let tempDir: string;
@@ -112,4 +115,34 @@ describe("getLockHolderPid", () => {
         const pid = await getLockHolderPid(lockPath);
         expect(pid).toBe(null);
     });
+});
+
+describe("flockState", () => {
+    // The holder side as a GenesisKit SingleInstance face does it: an exclusive flock kept on its own descriptor.
+    const holder = defineSystemLibrary({
+        path: "/usr/lib/libSystem.B.dylib",
+        platforms: ["darwin"],
+        symbols: { flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 } },
+    });
+
+    test.if(process.platform === "darwin")(
+        "reads held while another descriptor holds the lock, free once it lets go",
+        () => {
+            const lockPath = join(tempDir, "recorder.lock");
+            expect(flockState(lockPath)).toBe("free");
+            writeFileSync(lockPath, `${process.pid}\n`);
+            const calls = holder();
+            expect(calls).not.toBeNull();
+            const fd = openSync(lockPath, "r+");
+
+            try {
+                expect(calls?.flock(fd, 2 | 4)).toBe(0);
+                expect(flockState(lockPath)).toBe("held");
+                calls?.flock(fd, 8);
+                expect(flockState(lockPath)).toBe("free");
+            } finally {
+                closeSync(fd);
+            }
+        }
+    );
 });

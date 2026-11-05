@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { ReplEngine } from "@app/node-repl/lib/engine";
 import { MeetingsToolset } from "@app/node-repl/lib/toolsets/meetings";
+import { missingCameraWarning } from "@app/recorder/lib/camera-recorder";
 import {
     collapseUndo,
     defaultExportName,
@@ -28,7 +29,7 @@ import {
     readStartArgs,
     type StartRequest,
 } from "@app/recorder/lib/start-options";
-import { type MovieRecorderStart, MoviesToolset, moviesApi } from "@app/recorder/lib/toolset";
+import { type MovieRecorderDeps, MoviesToolset, moviesApi } from "@app/recorder/lib/toolset";
 import { RecordingStartCancelled, recordVideo } from "@app/recorder/lib/video-recording";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -1197,7 +1198,7 @@ describe("movies.record() takes the options of tools recorder start", () => {
     function fakeRecorder() {
         const started: StartRequest[] = [];
         const servers: LiveRecordingServer[] = [];
-        const start: MovieRecorderStart = (args) => {
+        const start: MovieRecorderDeps["start"] = (args) => {
             expect(args.slice(0, 2)).toEqual(["recorder", "start"]);
             const request = parseStartFlags(readStartArgs(args.slice(2)));
             started.push(request);
@@ -1221,7 +1222,7 @@ describe("movies.record() takes the options of tools recorder start", () => {
 
     test("an area, the idle rate, the threshold, the countdown, the cursor, the shortcuts and the microphone reach the recorder", async () => {
         const fake = fakeRecorder();
-        const { movies } = (await new MoviesToolset(fake.start).load(ctx)) as {
+        const { movies } = (await new MoviesToolset({ start: fake.start }).load(ctx)) as {
             movies: { record(options: unknown): Promise<{ folder?: string }> };
         };
 
@@ -1272,7 +1273,7 @@ describe("movies.record() takes the options of tools recorder start", () => {
 
     test("an option the CLI would refuse is refused before anything starts, with the CLI's message", async () => {
         const fake = fakeRecorder();
-        const { movies } = (await new MoviesToolset(fake.start).load(ctx)) as {
+        const { movies } = (await new MoviesToolset({ start: fake.start }).load(ctx)) as {
             movies: { record(options: unknown): Promise<unknown> };
         };
         // The schema check throws at the call, the CLI's parse inside the promise: both must refuse.
@@ -1309,6 +1310,49 @@ describe("movies.record() takes the options of tools recorder start", () => {
         ]) {
             expect(line).toContain(field);
         }
+    });
+
+    test("the camera is refused while the menu bar recorder does not run, from the REPL and from the core", async () => {
+        const fake = fakeRecorder();
+        let face: "held" | "free" = "free";
+        const { movies } = (await new MoviesToolset({ start: fake.start, recorderFace: () => face }).load(ctx)) as {
+            movies: { record(options: unknown): Promise<{ folder?: string }> };
+        };
+
+        try {
+            await expect(movies.record({ camera: true })).rejects.toThrow(
+                "The camera needs the menu bar recorder of GenesisTools.app"
+            );
+            expect(fake.started).toHaveLength(0);
+
+            face = "held";
+            await movies.record({ camera: true });
+            expect(fake.started[0]).toMatchObject({ camera: true });
+        } finally {
+            fake.close();
+        }
+
+        // `tools recorder start --camera` refuses in the core before anything is built or recorded.
+        let prepared = false;
+        await expect(
+            recordVideo({
+                target: { kind: "display", screenIndex: 0 },
+                camera: true,
+                recorderFace: () => "free",
+                countdownSeconds: 1,
+                prepare: async () => {
+                    prepared = true;
+                },
+            })
+        ).rejects.toThrow("it is not running, so the movie would have no camera");
+        expect(prepared).toBe(false);
+    });
+
+    test("a recording that asked for the camera says so when no camera.json came", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "camera-end-"));
+        expect(await missingCameraWarning({ folder, timeoutMs: 50 })).toContain("camera.json is missing");
+        writeFileSync(join(folder, "camera.json"), "{}");
+        expect(await missingCameraWarning({ folder, timeoutMs: 50 })).toBeUndefined();
     });
 
     test("the countdown runs after the slow part and before the start gate, so a caller that gave up still cancels", async () => {
