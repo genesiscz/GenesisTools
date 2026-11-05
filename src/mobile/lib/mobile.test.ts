@@ -1,4 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { type MobileProject, resolveRoute } from "@genesiscz/utils/mobile/project";
 import { Command } from "commander";
 import { registerUp } from "../commands/up";
@@ -10,6 +13,7 @@ import { mergeAndroidDevices } from "./platforms/android";
 import { clockBuildNumber, releasePlan } from "./release";
 import { selectRoutes } from "./routes";
 import { chooseDeviceType, chooseRuntime, fitsWidth, simulatorNameFor } from "./simulator-fit";
+import { readSince } from "./up";
 
 describe("build staleness", () => {
     it("names the inputs that changed, appeared or went", () => {
@@ -281,4 +285,16 @@ it("rejects invalid startup numbers during argument parsing", async () => {
         registerUp(program);
         await expect(program.parseAsync(["up", flag, value], { from: "user" })).rejects.toThrow("finite and positive");
     }
+});
+
+test("Metro log byte offsets skip Unicode history and recover after truncation", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mobile-log-"));
+    const file = join(dir, "metro.log");
+    const before = "staré řádky\n";
+    writeFileSync(file, before + "new bundle\n");
+    expect(readSince(file, Buffer.byteLength(before))).toBe("new bundle\n");
+    writeFileSync(file, "rotated\n");
+    expect(readSince(file, 1000)).toBe("rotated\n");
+    writeFileSync(file, "x".repeat(2 * 1024 * 1024));
+    expect(Buffer.byteLength(readSince(file, 0))).toBe(512_000);
 });
