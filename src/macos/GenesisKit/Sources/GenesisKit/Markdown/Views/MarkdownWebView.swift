@@ -1430,6 +1430,7 @@ md.renderer.rules.wikilink=function(tokens,idx){
   }
   if(hit&&hit.kind==='json')return gnJSONChip(hit,meta.alias||meta.target);
   if(meta.embed&&hit&&hit.kind==='pending')return gnPendingHTML(meta.target);
+  if(meta.embed&&hit&&hit.kind==='outside')return gnMissingImage(meta.target,'',GN_IMG_OUTSIDE).outerHTML;
   if(meta.embed&&GN_IMG_EXT.test(meta.target))return gnMissingImage(meta.target).outerHTML;
   if(meta.embed){
     // `![[Other note]]`: drawn as a stub, and a click opens the note like its wikilink.
@@ -1632,6 +1633,8 @@ function gnJSONChip(hit,label){
     +'<span class="gn-json-icon">{ }</span> '+gnEsc(label||hit.name)+'</button>';
 }
 // A picture that is not there says so in its own words, not only in a tooltip, so VoiceOver reads it too.
+// One that is there but outside the vault and the note's folder says that instead: the viewer shows only those.
+var GN_IMG_OUTSIDE="Picture outside the vault and this note's folder";
 function gnMissingImage(ref,alt,why){
   var text=(why||'Picture not found')+': '+(alt||ref);
   var s=document.createElement('span');s.className='dd-md-embed-stub gn-img-missing';s.title=ref;
@@ -1654,6 +1657,7 @@ function gnApplyMedia(frag){
     var hit=gnMedia[gnMediaKey(ref)];
     if(hit&&hit.kind==='image'){img.setAttribute('src',hit.src);}
     else if(hit&&hit.kind==='pending'){var tp=document.createElement('template');tp.innerHTML=gnPendingHTML(ref);img.parentNode.replaceChild(tp.content.firstChild,img);continue;}
+    else if(hit&&hit.kind==='outside'){img.parentNode.replaceChild(gnMissingImage(ref,img.getAttribute('alt'),GN_IMG_OUTSIDE),img);continue;}
     else if(!/^(https?:|data:image\/)/i.test(ref.trim())){img.parentNode.replaceChild(gnMissingImage(ref,img.getAttribute('alt')),img);continue;}
     // A file over the size limit, one deleted since the render, a web picture that does not load: the pill
     // with the cause, never the browser's broken-picture glyph.

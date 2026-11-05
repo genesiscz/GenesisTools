@@ -195,12 +195,19 @@ enum MarkdownMedia {
         return out
     }
 
+    /// Whether a reference that did not resolve names a real file of an allowed type that the containment check
+    /// refused: it exists, but outside the vault and the document's folder. The page then says why, instead of
+    /// "not found" for a file that is there. Only the answer reaches the page, never the file.
+    static func isOutsideRoots(_ key: String, in context: Context, attachmentFolder: String?) -> Bool {
+        candidates(key, in: context, attachmentFolder: attachmentFolder).contains { url in
+            allowedFile(url) != nil && admitted(url, in: context) == nil
+        }
+    }
+
     /// The real path of `url` when it is a regular file of an allowed type
     /// inside the vault or under the document's folder.
     static func admitted(_ url: URL, in context: Context) -> URL? {
-        guard let real = realPath(url), kind(ofExtension: real.pathExtension) != nil,
-              let values = try? real.resourceValues(forKeys: [.isRegularFileKey]),
-              values.isRegularFile == true else { return nil }
+        guard let real = allowedFile(url) else { return nil }
         let roots = [context.vaultRoot, context.folder].compactMap { $0 }
         let path = real.path
         for root in roots {
@@ -208,6 +215,14 @@ enum MarkdownMedia {
             if path.hasPrefix(base.hasSuffix("/") ? base : base + "/") { return real }
         }
         return nil
+    }
+
+    /// The real path of `url` when it is a regular file of an allowed type, wherever it is.
+    private static func allowedFile(_ url: URL) -> URL? {
+        guard let real = realPath(url), kind(ofExtension: real.pathExtension) != nil,
+              let values = try? real.resourceValues(forKeys: [.isRegularFileKey]),
+              values.isRegularFile == true else { return nil }
+        return real
     }
 
     /// realpath(3): every symlink and `..` resolved, nil when the path does not exist.
@@ -425,6 +440,9 @@ final class MarkdownMediaRegistry {
                 // draws a quiet placeholder instead of "not found" (a pending lookup never shows its negative answer).
                 if let index, !index.isReady, onIndexReady != nil {
                     map[ref.key] = ["kind": "pending", "name": (ref.key as NSString).lastPathComponent]
+                } else if MarkdownMedia.isOutsideRoots(ref.key, in: context, attachmentFolder: index?.attachmentFolder) {
+                    // The file is there, but the viewer shows only what is inside the vault or the note's folder.
+                    map[ref.key] = ["kind": "outside", "name": (ref.key as NSString).lastPathComponent]
                 }
                 continue
             }

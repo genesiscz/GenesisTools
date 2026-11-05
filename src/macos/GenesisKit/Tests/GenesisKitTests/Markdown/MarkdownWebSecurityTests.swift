@@ -398,6 +398,41 @@ final class MarkdownWebSecurityTests: XCTestCase {
         XCTAssertEqual(widths?.prefix(2), ["30|by-name.png", "25|caption"])
     }
 
+    /// A picture that is there but outside the vault and the note's folder is still refused, and its pill says why;
+    /// a file that does not exist still says "not found". Meeting frames in `~/.genesis-tools` were the first case.
+    func testAPictureOutsideTheRootsSaysWhyAndAMissingOneSaysNotFound() async throws {
+        let v = try makeMediaVault()
+        let secret = v.outside.appendingPathComponent("secret.png").path
+        let gone = v.outside.appendingPathComponent("gone.png").path
+        let markdown = "![shot](\(secret))\n\n![](\(gone))\n\n![[link.png]]\n"
+        let registry = MarkdownMediaRegistry()
+        let context = MarkdownMedia.Context(folder: v.note.deletingLastPathComponent(), vaultRoot: v.vault)
+        let map = registry.update(markdown: markdown, context: context)
+        XCTAssertEqual(map[secret]?["kind"], "outside")
+        XCTAssertNil(map[gone], "a file that does not exist gets no answer, so the page says not found")
+        XCTAssertEqual(map["link.png"]?["kind"], "outside", "a symlink to a file outside counts as outside")
+        XCTAssertNil(map[secret]?["token"], "the page gets the reason, never a token for the file")
+        XCTAssertTrue(registry.entries.isEmpty, "nothing outside is registered, so the page can never load it")
+
+        let (page, _) = try await mediaPage(v, markdown)
+        let expected = [
+            "⧉ Picture outside the vault and this note's folder: shot",
+            "⧉ Picture not found: \(gone)",
+            "⧉ Picture outside the vault and this note's folder: link.png",
+        ]
+        var pills: [String] = []
+        for _ in 0..<40 {
+            pills = try await page.evaluateJavaScript("""
+            Array.from(document.querySelectorAll('#gn-article .gn-img-missing')).map(function(m){return m.textContent.trim();})
+            """) as? [String] ?? []
+            if pills == expected { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertEqual(pills, expected)
+        let images = try await page.evaluateJavaScript("document.querySelectorAll('#gn-article img').length") as? Int
+        XCTAssertEqual(images, 0, "no picture outside the roots loads")
+    }
+
     /// `..` out of the vault, a symlink that points outside it, an absolute
     /// `file://` path outside it, and a token the page made up all fail.
     func testTraversalAndSymlinkEscapesAreRefused() async throws {
