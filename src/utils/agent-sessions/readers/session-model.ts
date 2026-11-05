@@ -14,6 +14,14 @@ import { requireSibling } from "@genesiscz/utils/fs/module-dir";
  */
 export const SESSION_MODEL_TAIL_BYTES = 512 * 1024;
 
+/**
+ * The tail read first. The newest model is nearly always in it, and a model found there is the one the whole tail
+ * finds, since no later row names one; the whole tail is read only when it names none. On the widget roster's 1,257
+ * Claude transcripts every answer was the same, 106 needed the whole tail, and reading all of them cost 68 ms
+ * instead of 238 ms (2026-11-05).
+ */
+export const SESSION_MODEL_FIRST_TAIL_BYTES = 32 * 1024;
+
 /** The model one row names, and whether the row belongs to a sub-agent's side chain. */
 export interface RowModel {
     model: string;
@@ -90,7 +98,21 @@ export function newestModelInTail(
     probe: RowModelProbe,
     options: { acceptSidechain?: boolean; tailBytes?: number } = {}
 ): string | null {
-    const lines = windowLines(path, options.tailBytes ?? SESSION_MODEL_TAIL_BYTES, "tail");
+    const tailBytes = options.tailBytes ?? SESSION_MODEL_TAIL_BYTES;
+    // A compressed rollout is decompressed for any window, so it is read once, whole.
+    if (tailBytes > SESSION_MODEL_FIRST_TAIL_BYTES && !path.endsWith(".zst")) {
+        const first = windowLines(path, SESSION_MODEL_FIRST_TAIL_BYTES, "tail");
+        if (!first) {
+            return null;
+        }
+
+        const model = newestModelIn(first, probe, options.acceptSidechain);
+        if (model !== null) {
+            return model;
+        }
+    }
+
+    const lines = windowLines(path, tailBytes, "tail");
     return lines ? newestModelIn(lines, probe, options.acceptSidechain) : null;
 }
 
