@@ -24,10 +24,10 @@ import {
     recorderSettings,
 } from "@genesiscz/utils/meetings/config";
 import {
+    type MeetingRecord,
     type MeetingStore,
     RECORDING_STOP_REASONS,
     type RecordingBlock,
-    type RecordingStopReason,
     recordingDisplaySpanSchema,
 } from "@genesiscz/utils/meetings/record";
 import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
@@ -51,6 +51,7 @@ import { liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
 import {
     captureErrorVerdict,
+    defineRecorderConfig,
     FRAME_RECORDING_METHODS,
     FrameRecording,
 } from "@genesiscz/utils/screen-recorder/recording";
@@ -194,12 +195,8 @@ function errorText(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
 }
 
-/**
- * The recorder process (`tools meetings record run`): captures the screen in pieces until a stop (a live recording
- * command, `record stop`, or a signal), converts each new frame to JPEG under the meeting's `frames/`, runs Vision
- * OCR on it into `ocr.jsonl`, and keeps the meeting's `recording` block. Pause and resume end and start a span.
- */
-export async function runRecorder(options: {
+/** What `record run` passes the recorder. */
+export interface RunRecorderOptions {
     store: MeetingStore;
     meetingId: string;
     capture: MeetingsConfig["global"]["capture"];
@@ -210,43 +207,72 @@ export async function runRecorder(options: {
     /** Overrides `capture.recorders.<backend>.audio.sources`. */
     audio?: AudioSource[];
     deps?: Partial<RecorderDeps>;
-}): Promise<RecorderState> {
-    const { store, meetingId, capture } = options;
-    const deps: RecorderDeps = { ...defaultDeps(capture), ...options.deps };
-    const { audio: audioConfig, ...nativeKeys } = recorderSettings(capture, deps.recorder.id);
-    const settings: RecorderSettings = {
-        activeFps: capture.activeFps,
-        idleFps: capture.idleFps,
-        threshold: capture.threshold * 100,
-        maxLongSide: capture.resolutionCap,
-        heartbeatSec: nativeKeys.heartbeatSec ?? 0,
-        ocr: { enabled: true, languages: options.ocrLanguages ?? defaultOcrLanguages(), minChars: 0 },
-    };
-    const audio: AudioState = {
-        sources: options.audio ?? audioConfig?.sources ?? [],
-        muted: { mic: false, system: false },
-        ...(audioConfig?.micDevice ? { micDevice: audioConfig.micDevice } : {}),
-    };
-    const policy = options.display ?? capture.displays;
-    const files = recorderFiles(store);
-    const folder = store.folder(meetingId);
-    const framesDir = join(folder, "frames");
-    const pieceDir = join(folder, ".piece");
-    const ocrPath = join(folder, "ocr.jsonl");
-    const audioDir = join(folder, "audio");
-    let audioFiles = 0;
-    const record = store.read(meetingId);
+}
 
-    const claim = await claimRecorderPid(files.pid);
-    let final: RecorderState;
-    const stateFile = new RecorderStateFile<RecorderState>({
-        state: files.state,
-        last: join(folder, "recorder-last.json"),
-    });
+/** The recorder's own keys of a capture request (`capture.recorders.<backend>`), without its sound. */
+type NativeKeys = Omit<ReturnType<typeof recorderSettings>, "audio">;
 
-    try {
-        mkdirSync(framesDir, { recursive: true });
-        const state: RecorderState = {
+/**
+ * One run of the meetings recorder: the meeting's folder and record, its spans, the recorder state file and the
+ * notes. The shared core (`FrameRecording`) runs the capture loop; this keeps what is a meeting's own.
+ */
+class MeetingRun {
+    readonly store: MeetingStore;
+    readonly meetingId: string;
+    readonly capture: MeetingsConfig["global"]["capture"];
+    readonly deps: RecorderDeps;
+    /** The meeting's record when the run started. */
+    readonly initial: MeetingRecord | undefined;
+    readonly folder: string;
+    readonly framesDir: string;
+    readonly pieceDir: string;
+    readonly settings: RecorderSettings;
+    readonly audio: AudioState;
+    readonly nativeKeys: NativeKeys;
+    readonly state: RecorderState;
+    readonly notes: string[] = [];
+    readonly recordingRecord: RecordingRecord;
+    readonly displays: PolicyDisplays;
+    private readonly stateFile: RecorderStateFile<RecorderState>;
+    private failureNoticeOpen: boolean;
+    private runFrames = 0;
+    private audioFiles = 0;
+
+    constructor(
+        options: RunRecorderOptions & {
+            deps: RecorderDeps;
+            initial: MeetingRecord | undefined;
+            stateFile: RecorderStateFile<RecorderState>;
+        }
+    ) {
+        const { store, meetingId, capture, deps, initial } = options;
+        this.store = store;
+        this.meetingId = meetingId;
+        this.capture = capture;
+        this.deps = deps;
+        this.initial = initial;
+        this.stateFile = options.stateFile;
+        this.folder = store.folder(meetingId);
+        this.framesDir = join(this.folder, "frames");
+        this.pieceDir = join(this.folder, ".piece");
+        const { audio: audioConfig, ...nativeKeys } = recorderSettings(capture, deps.recorder.id);
+        this.nativeKeys = nativeKeys;
+        this.settings = {
+            activeFps: capture.activeFps,
+            idleFps: capture.idleFps,
+            threshold: capture.threshold * 100,
+            maxLongSide: capture.resolutionCap,
+            heartbeatSec: nativeKeys.heartbeatSec ?? 0,
+            ocr: { enabled: true, languages: options.ocrLanguages ?? defaultOcrLanguages(), minChars: 0 },
+        };
+        this.audio = {
+            sources: options.audio ?? audioConfig?.sources ?? [],
+            muted: { mic: false, system: false },
+            ...(audioConfig?.micDevice ? { micDevice: audioConfig.micDevice } : {}),
+        };
+        const policy = options.display ?? capture.displays;
+        mkdirSync(this.framesDir, { recursive: true });
+        this.state = {
             meetingId,
             pid: process.pid,
             startedAt: new Date().toISOString(),
@@ -255,133 +281,262 @@ export async function runRecorder(options: {
             frames: 0,
             bytes: 0,
         };
-        const notes: string[] = [];
-        const note = (text: string) => {
-            if (!notes.includes(text)) {
-                notes.push(text);
+        this.recordingRecord = new RecordingRecord(store, meetingId, initial?.recording?.spans ?? []);
+        this.failureNoticeOpen = Boolean(initial?.recording?.failureNotifiedAt);
+        this.displays = new PolicyDisplays(policy, {
+            note: (text) => this.note(text),
+            onPolicy: (next) => {
+                this.state.display = next;
+            },
+        });
+    }
+
+    note(text: string): void {
+        if (!this.notes.includes(text)) {
+            this.notes.push(text);
+        }
+    }
+
+    saveState(): void {
+        this.stateFile.save(this.state);
+    }
+
+    /** The loop starts: an empty piece folder, the state file, an open span, and the record's recording block. */
+    async begin(recording: FrameRecording<string[]>): Promise<void> {
+        rmSync(this.pieceDir, { recursive: true, force: true });
+        mkdirSync(this.pieceDir, { recursive: true });
+        this.saveState();
+        this.recordingRecord.openSpan();
+        await this.recordingRecord.start({
+            startedAt: this.state.startedAt,
+            backend: this.deps.recorder.id,
+            displayPolicy: this.displays.policy,
+            displaySpans: recording.displayBook.intervals,
+        });
+    }
+
+    /** A capture recorded again: an open failure notice in the record is cleared. */
+    async captureWorksAgain(): Promise<void> {
+        if (this.failureNoticeOpen) {
+            this.failureNoticeOpen = false;
+            await this.recordingRecord.update("capture works again", (recordingBlock) => {
+                delete recordingBlock.failureNotifiedAt;
+            });
+        }
+    }
+
+    /** Moves a capture's `.m4a` files to the meeting's `audio/` and lists each in `audio.jsonl`. */
+    keepTracks(result: CaptureResult, target: PieceTarget): void {
+        const audioDir = join(this.folder, "audio");
+
+        for (const track of result.tracks ?? []) {
+            if (!track.path || !existsSync(track.path)) {
+                continue;
             }
-        };
-        const recordingRecord = new RecordingRecord(store, meetingId, record?.recording?.spans ?? []);
-        const spans = recordingRecord.spans;
-        let failureNoticeOpen = Boolean(record?.recording?.failureNotifiedAt);
-        let runFrames = 0;
-        const saveState = () => stateFile.save(state);
-        const closeSpan = (stopReason: RecordingStopReason, at?: string) => recordingRecord.closeSpan(stopReason, at);
-        /** Moves a capture's `.m4a` files to the meeting's `audio/` and lists each in `audio.jsonl`. */
-        const keepTracks = (result: CaptureResult, target: PieceTarget): void => {
-            for (const track of result.tracks ?? []) {
-                if (!track.path || !existsSync(track.path)) {
-                    continue;
+
+            const at = new Date(result.startedAtMs);
+            const name = frameName(at, target.displayId).replace(/\.jpg$/, `-${track.source}.m4a`);
+            mkdirSync(audioDir, { recursive: true });
+            renameSync(track.path, join(audioDir, name));
+            appendFileSync(
+                join(this.folder, "audio.jsonl"),
+                `${SafeJSON.stringify({ file: `audio/${name}`, source: track.source, at: at.toISOString(), durationMs: track.durationMs, mutedSpans: track.mutedSpans })}\n`
+            );
+            this.audioFiles += 1;
+        }
+    }
+
+    /** Keeps a capture's frames as JPEGs with their OCR. `streamed`: the socket announced them as they landed. */
+    async keepFrames({
+        recording,
+        output,
+        result,
+        target,
+        streamed,
+        onFrame,
+    }: {
+        recording: FrameRecording<string[]>;
+        output: FrameOutput;
+        result: CaptureResult;
+        target: PieceTarget;
+        streamed: boolean;
+        onFrame: (done: number) => void;
+    }): Promise<void> {
+        const { state } = this;
+        let done = 0;
+
+        for (const frame of [...result.frames].sort((a, b) => a.atMs - b.atMs)) {
+            const kept = await output.keep(frame, {
+                atMs: result.startedAtMs + frame.atMs,
+                originMs: Date.parse(state.startedAt),
+                displayId: frame.displayId ?? target.displayId,
+            });
+
+            if (kept.read && state.frames === 0 && kept.read.text.trim().length < EMPTY_FRAME_CHARS) {
+                this.note(
+                    `The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check ${toolCommand("control", "doctor")}), or the text is too small for capture.resolutionCap.`
+                );
+            }
+
+            state.frames += 1;
+            this.runFrames += 1;
+            state.bytes += kept.bytes;
+            state.lastFrameAt = kept.at.toISOString();
+
+            if (!streamed) {
+                recording.emit("frame", { displayId: kept.displayId, at: kept.at.toISOString(), file: kept.path });
+            }
+
+            done += 1;
+            onFrame(done);
+        }
+    }
+
+    /**
+     * The finish's first step: the stop reason, the closed span, and the record's recording block with the frames on
+     * disk, the sound files, the display intervals and the source's clock. A failed run notifies once.
+     */
+    async summary(recording: FrameRecording<string[]>): Promise<void> {
+        const { store, meetingId, state } = this;
+        state.stopReason ??= "requested";
+
+        if (this.runFrames === 0) {
+            this.note(
+                `No frame was recorded${state.stopReason === "requested" ? " before the stop" : ""}. Check the recorder: ${toolCommand("control", "doctor")}`
+            );
+        }
+
+        state.warning = this.notes.length > 0 ? this.notes.join("; ") : undefined;
+        this.recordingRecord.closeSpan(state.stopReason);
+        this.saveState();
+        const stoppedAt = new Date().toISOString();
+        const total = existsSync(this.framesDir)
+            ? framesOnDisk(this.framesDir)
+            : { frames: 0, bytes: 0, perDisplay: new Map() };
+        const current = store.read(meetingId);
+        const ref = current ? sourceRefOf(current) : undefined;
+        const sourceClock = ref
+            ? await (async () =>
+                  CallTimeline.sourceClock({
+                      source: await meetingSource(ref.sourceId),
+                      sourceMeetingId: ref.sourceMeetingId,
+                  }))().catch((err: unknown) => {
+                  log.warn({ err, meetingId }, "source clock unavailable; finalizing without it");
+                  return undefined;
+              })
+            : undefined;
+        const clock = sourceClock?.source
+            ? { source: sourceClock.source, startedAt: sourceClock.startedAt }
+            : undefined;
+
+        const failed = state.stopReason === "failed" || state.stopReason === "error";
+        const notifyFailure = failed && !current?.recording?.failureNotifiedAt;
+        await store.update(
+            meetingId,
+            {
+                command: "record stop",
+                change: `${state.frames} frames, ${Math.round(state.bytes / 1_000_000)} MB${total.frames > state.frames ? ` (${total.frames} frames, ${Math.round(total.bytes / 1_000_000)} MB in all)` : ""}, ${state.stopReason}${state.warning && failed ? `, ${state.warning}` : ""}`,
+            },
+            (next) => {
+                const recordingBlock: RecordingBlock = {
+                    ...next.recording,
+                    startedAt: state.startedAt,
+                    stoppedAt,
+                    frames: total.frames,
+                    bytes: total.bytes,
+                    status: "stopped",
+                    stopReason: state.stopReason,
+                    displayPolicy: this.displays.policy,
+                    ...(this.audio.sources.length > 0
+                        ? { audio: { sources: recording.audio.sources, files: this.audioFiles } }
+                        : {}),
+                    spans: this.recordingRecord.spans,
+                    displaySpans: recording.displayBook.intervals,
+                    displays: [...recording.displayBook.names].map(([id, name]) => ({
+                        id,
+                        name,
+                        frames: total.perDisplay.get(id) ?? 0,
+                    })),
+                    ...(clock ? { clock } : {}),
+                    ...(notifyFailure ? { failureNotifiedAt: stoppedAt } : {}),
+                };
+
+                if (state.warning) {
+                    recordingBlock.warning = state.warning;
+                } else {
+                    delete recordingBlock.warning;
                 }
 
-                const at = new Date(result.startedAtMs);
-                const name = frameName(at, target.displayId).replace(/\.jpg$/, `-${track.source}.m4a`);
-                mkdirSync(audioDir, { recursive: true });
-                renameSync(track.path, join(audioDir, name));
-                appendFileSync(
-                    join(folder, "audio.jsonl"),
-                    `${SafeJSON.stringify({ file: `audio/${name}`, source: track.source, at: at.toISOString(), durationMs: track.durationMs, mutedSpans: track.mutedSpans })}\n`
-                );
-                audioFiles += 1;
+                next.recording = recordingBlock;
             }
-        };
+        );
 
+        if (notifyFailure) {
+            const byWatcher = readAuto(store)?.meetingId === meetingId;
+            await this.deps.notify({
+                title: "Screen recording stopped",
+                message: `${state.warning ?? "The capture failed."} ${byWatcher ? `It starts again every ${RETRY_AFTER_MS / 60_000} min while the meeting runs.` : `Start it again: ${toolCommand("meetings", "record", "start", "--meeting", meetingId)}`}`,
+                open: this.folder,
+            });
+        }
+    }
+}
+
+/**
+ * The meetings recorder's configuration of the shared capture core. Its rules: one capture records the sound, the
+ * controls are refused while it stops, each capture takes a settings change on its own, and the socket stays open a
+ * moment for the stop answer. The meeting's own steps are the run's.
+ */
+function meetingRecorderConfig(run: MeetingRun) {
+    const { store, meetingId, deps, state } = run;
+    return defineRecorderConfig<string[]>((recording) => {
         const output = new FrameOutput({
-            folder,
+            folder: run.folder,
             naming: "wall-clock",
-            format: { kind: "jpeg", quality: capture.jpegQuality },
+            format: { kind: "jpeg", quality: run.capture.jpegQuality },
             convert: deps.toJpeg,
             ocr: {
                 settings: () => recording.settings.ocr,
-                sink: new JsonlOcrSink(ocrPath),
+                sink: new JsonlOcrSink(join(run.folder, "ocr.jsonl")),
                 recognize: deps.ocr,
                 onError: (err, jpg) => log.warn({ err, jpg }, "OCR failed for a frame"),
             },
         });
 
-        /** `streamed`: the socket announced these frames as they landed already. */
-        const keepFrames = async ({
-            result,
-            target,
-            streamed,
-            onFrame = () => undefined,
-        }: {
-            result: CaptureResult;
-            target: PieceTarget;
-            streamed: boolean;
-            onFrame?: (done: number) => void;
-        }): Promise<void> => {
-            let done = 0;
-
-            for (const frame of [...result.frames].sort((a, b) => a.atMs - b.atMs)) {
-                const kept = await output.keep(frame, {
-                    atMs: result.startedAtMs + frame.atMs,
-                    originMs: Date.parse(state.startedAt),
-                    displayId: frame.displayId ?? target.displayId,
-                });
-
-                if (kept.read && state.frames === 0 && kept.read.text.trim().length < EMPTY_FRAME_CHARS) {
-                    note(
-                        `The first frame holds almost no readable text: Screen Recording may be missing (macOS then returns only the desktop; check ${toolCommand("control", "doctor")}), or the text is too small for capture.resolutionCap.`
-                    );
-                }
-
-                state.frames += 1;
-                runFrames += 1;
-                state.bytes += kept.bytes;
-                state.lastFrameAt = kept.at.toISOString();
-
-                if (!streamed) {
-                    recording.emit("frame", { displayId: kept.displayId, at: kept.at.toISOString(), file: kept.path });
-                }
-
-                done += 1;
-                onFrame(done);
-            }
-        };
-
-        const displays = new PolicyDisplays(policy, {
-            note,
-            onPolicy: (next) => {
-                state.display = next;
-            },
-        });
-        const recording: FrameRecording<string[]> = new FrameRecording<string[]>({
+        return {
             kind: "meeting",
             methods: FRAME_RECORDING_METHODS,
             recorder: deps.recorder,
-            live: { id: meetingLiveId(meetingId), title: record?.title || meetingId, folder, dir: deps.liveDir },
-            history: {
-                intervals: record?.recording?.displaySpans ?? [],
-                names: (record?.recording?.displays ?? []).map((display) => [display.id, display.name]),
+            live: {
+                id: meetingLiveId(meetingId),
+                title: run.initial?.title || meetingId,
+                folder: run.folder,
+                dir: deps.liveDir,
             },
-            settings,
-            audio,
+            history: {
+                intervals: run.initial?.recording?.displaySpans ?? [],
+                names: (run.initial?.recording?.displays ?? []).map((display) => [display.id, display.name]),
+            },
+            settings: run.settings,
+            audio: run.audio,
             stopOnSignals: true,
-            displays,
+            displays: run.displays,
             keptFrames: () => state.frames,
             pieces: {
-                dir: pieceDir,
+                dir: run.pieceDir,
                 sec: deps.pieceSec,
                 // One capture records the sound: two would write the same microphone twice.
                 audioOwnership: "single",
-                request: (now) => ({ ...nativeKeys, heartbeatSec: now.heartbeatSec }),
+                request: (now) => ({ ...run.nativeKeys, heartbeatSec: now.heartbeatSec }),
                 failures: {
                     max: MAX_FAILURES,
                     pauseMs: deps.failurePauseMs,
                     verdict: captureErrorVerdict,
                     gaveUp: (count, err) => {
-                        note(`capture failed ${count} times in a row: ${errorText(err)}`);
+                        run.note(`capture failed ${count} times in a row: ${errorText(err)}`);
                         state.stopReason = "failed";
                     },
-                    recorded: async () => {
-                        if (failureNoticeOpen) {
-                            failureNoticeOpen = false;
-                            await recordingRecord.update("capture works again", (recordingBlock) => {
-                                delete recordingBlock.failureNotifiedAt;
-                            });
-                        }
-                    },
+                    recorded: () => run.captureWorksAgain(),
                 },
             },
             controls: {
@@ -391,52 +546,43 @@ export async function runRecorder(options: {
                 settings: { scope: "each", change: settingsChange },
             },
             hooks: {
-                beforeLoop: async () => {
-                    rmSync(pieceDir, { recursive: true, force: true });
-                    mkdirSync(pieceDir, { recursive: true });
-                    saveState();
-                    recordingRecord.openSpan();
-                    await recordingRecord.start({
-                        startedAt: state.startedAt,
-                        backend: deps.recorder.id,
-                        displayPolicy: displays.policy,
-                        displaySpans: recording.displayBook.intervals,
-                    });
-                },
+                beforeLoop: () => run.begin(recording),
                 afterLoop: () => {
-                    rmSync(pieceDir, { recursive: true, force: true });
+                    rmSync(run.pieceDir, { recursive: true, force: true });
                 },
                 onError: (err) => {
                     log.error({ err, meetingId }, "the recorder stopped on an error");
-                    note(`the recorder stopped on an error: ${errorText(err)}`);
+                    run.note(`the recorder stopped on an error: ${errorText(err)}`);
                     state.stopReason = "error";
                 },
                 onPaused: (at) => {
-                    closeSpan("paused", at);
+                    run.recordingRecord.closeSpan("paused", at);
                     state.paused = true;
-                    saveState();
-                    recordingRecord.markStatus("paused");
+                    run.saveState();
+                    run.recordingRecord.markStatus("paused");
                 },
                 onResumed: () => {
-                    recordingRecord.openSpan();
+                    run.recordingRecord.openSpan();
                     state.paused = false;
-                    saveState();
-                    recordingRecord.markStatus("recording");
+                    run.saveState();
+                    run.recordingRecord.markStatus("recording");
                 },
                 onDisplays: () => {
                     state.displays = recording.displayBook.recorded;
-                    saveState();
+                    run.saveState();
                 },
                 afterPiece: () => {
-                    state.warning = notes.length > 0 ? notes.join("; ") : undefined;
+                    state.warning = run.notes.length > 0 ? run.notes.join("; ") : undefined;
                     recording.update({ lastFrameAt: state.lastFrameAt, warning: state.warning });
-                    saveState();
+                    run.saveState();
                 },
                 captures: {
                     onResult: async (entry, result) => {
-                        keepTracks(result, entry.target);
+                        run.keepTracks(result, entry.target);
                         await recording.jobs.task("ocr", (ctx) =>
-                            keepFrames({
+                            run.keepFrames({
+                                recording,
+                                output,
                                 result,
                                 target: entry.target,
                                 streamed: entry.streamed > 0,
@@ -459,7 +605,7 @@ export async function runRecorder(options: {
                         log.warn({ err, display: entry.target.label }, "a capture failed");
 
                         if (outcome.count > 1) {
-                            note(`${entry.target.label}: ${errorText(err)}`);
+                            run.note(`${entry.target.label}: ${errorText(err)}`);
                         }
                     },
                     onSettled: (entry) => rmSync(entry.outDir, { recursive: true, force: true }),
@@ -473,7 +619,7 @@ export async function runRecorder(options: {
                     {
                         name: "summary",
                         run: async (ctx) => {
-                            await finishRecording();
+                            await run.summary(recording);
                             ctx.progress({ done: 1, total: 1, unit: "steps", message: `${state.frames} frames` });
                             return ctx.state;
                         },
@@ -484,7 +630,7 @@ export async function runRecorder(options: {
                             const current = store.read(meetingId);
 
                             if (current) {
-                                writeMeetingRecordingManifest(folder, current);
+                                writeMeetingRecordingManifest(run.folder, current);
                             }
 
                             return ctx.state;
@@ -513,121 +659,67 @@ export async function runRecorder(options: {
                 // A waiting `stop` call gets its answer before the socket closes.
                 closeAfterMs: STOP_ANSWER_MS,
             },
-        });
-        state.displaySpans = recording.displayBook.intervals;
+        };
+    });
+}
+
+/**
+ * A failure outside the capture loop (the folders, the socket, the session) still leaves a terminal record before the
+ * pidfile is released, so `record status` and the watcher never read a recording that is gone.
+ */
+async function saveFailedRun(store: MeetingStore, meetingId: string, err: unknown): Promise<void> {
+    const warning = errorText(err);
+    const last = readRecorderState(store).state;
+    await store
+        .update(meetingId, { command: "record stop", change: `error: ${warning}` }, (current) => {
+            current.recording = {
+                ...current.recording,
+                status: "stopped",
+                stopReason: "error",
+                stoppedAt: new Date().toISOString(),
+                frames: last?.frames ?? current.recording?.frames ?? 0,
+                bytes: last?.bytes ?? current.recording?.bytes ?? 0,
+                warning,
+            };
+        })
+        .catch((persistErr: unknown) =>
+            log.warn({ err: persistErr, meetingId }, "the failed recording could not be saved")
+        );
+}
+
+/**
+ * The recorder process (`tools meetings record run`): captures the screen in pieces until a stop (a live recording
+ * command, `record stop`, or a signal), converts each new frame to JPEG under the meeting's `frames/`, runs Vision
+ * OCR on it into `ocr.jsonl`, and keeps the meeting's `recording` block. Pause and resume end and start a span.
+ */
+export async function runRecorder(options: RunRecorderOptions): Promise<RecorderState> {
+    const { store, meetingId } = options;
+    const deps: RecorderDeps = { ...defaultDeps(options.capture), ...options.deps };
+    const files = recorderFiles(store);
+    const initial = store.read(meetingId);
+    const claim = await claimRecorderPid(files.pid);
+    let final: RecorderState;
+    const stateFile = new RecorderStateFile<RecorderState>({
+        state: files.state,
+        last: join(store.folder(meetingId), "recorder-last.json"),
+    });
+
+    try {
+        const run = new MeetingRun({ ...options, deps, initial, stateFile });
+        const recording = new FrameRecording(meetingRecorderConfig(run));
+        run.state.displaySpans = recording.displayBook.intervals;
         recording.open();
         await recording.finished;
         stateFile.retire();
 
+        const { state } = run;
         log.info(
             { meetingId, frames: state.frames, bytes: state.bytes, stopReason: state.stopReason },
             "recording stopped"
         );
         final = state;
-
-        async function finishRecording(): Promise<void> {
-            state.stopReason ??= "requested";
-
-            if (runFrames === 0) {
-                note(
-                    `No frame was recorded${state.stopReason === "requested" ? " before the stop" : ""}. Check the recorder: ${toolCommand("control", "doctor")}`
-                );
-            }
-
-            state.warning = notes.length > 0 ? notes.join("; ") : undefined;
-            closeSpan(state.stopReason);
-            saveState();
-            const stoppedAt = new Date().toISOString();
-            const total = existsSync(framesDir)
-                ? framesOnDisk(framesDir)
-                : { frames: 0, bytes: 0, perDisplay: new Map() };
-            const current = store.read(meetingId);
-            const ref = current ? sourceRefOf(current) : undefined;
-            const sourceClock = ref
-                ? await (async () =>
-                      CallTimeline.sourceClock({
-                          source: await meetingSource(ref.sourceId),
-                          sourceMeetingId: ref.sourceMeetingId,
-                      }))().catch((err: unknown) => {
-                      log.warn({ err, meetingId }, "source clock unavailable; finalizing without it");
-                      return undefined;
-                  })
-                : undefined;
-            const clock = sourceClock?.source
-                ? { source: sourceClock.source, startedAt: sourceClock.startedAt }
-                : undefined;
-
-            const failed = state.stopReason === "failed" || state.stopReason === "error";
-            const notifyFailure = failed && !current?.recording?.failureNotifiedAt;
-            await store.update(
-                meetingId,
-                {
-                    command: "record stop",
-                    change: `${state.frames} frames, ${Math.round(state.bytes / 1_000_000)} MB${total.frames > state.frames ? ` (${total.frames} frames, ${Math.round(total.bytes / 1_000_000)} MB in all)` : ""}, ${state.stopReason}${state.warning && failed ? `, ${state.warning}` : ""}`,
-                },
-                (next) => {
-                    const recordingBlock: RecordingBlock = {
-                        ...next.recording,
-                        startedAt: state.startedAt,
-                        stoppedAt,
-                        frames: total.frames,
-                        bytes: total.bytes,
-                        status: "stopped",
-                        stopReason: state.stopReason,
-                        displayPolicy: displays.policy,
-                        ...(audio.sources.length > 0
-                            ? { audio: { sources: recording.audio.sources, files: audioFiles } }
-                            : {}),
-                        spans,
-                        displaySpans: recording.displayBook.intervals,
-                        displays: [...recording.displayBook.names].map(([id, name]) => ({
-                            id,
-                            name,
-                            frames: total.perDisplay.get(id) ?? 0,
-                        })),
-                        ...(clock ? { clock } : {}),
-                        ...(notifyFailure ? { failureNotifiedAt: stoppedAt } : {}),
-                    };
-
-                    if (state.warning) {
-                        recordingBlock.warning = state.warning;
-                    } else {
-                        delete recordingBlock.warning;
-                    }
-
-                    next.recording = recordingBlock;
-                }
-            );
-
-            if (notifyFailure) {
-                const byWatcher = readAuto(store)?.meetingId === meetingId;
-                await deps.notify({
-                    title: "Screen recording stopped",
-                    message: `${state.warning ?? "The capture failed."} ${byWatcher ? `It starts again every ${RETRY_AFTER_MS / 60_000} min while the meeting runs.` : `Start it again: ${toolCommand("meetings", "record", "start", "--meeting", meetingId)}`}`,
-                    open: folder,
-                });
-            }
-        }
     } catch (err) {
-        // A failure outside the capture loop (the folders, the socket, the session) still leaves a terminal record
-        // before the pidfile is released, so `record status` and the watcher never read a recording that is gone.
-        const warning = errorText(err);
-        const last = readRecorderState(store).state;
-        await store
-            .update(meetingId, { command: "record stop", change: `error: ${warning}` }, (current) => {
-                current.recording = {
-                    ...current.recording,
-                    status: "stopped",
-                    stopReason: "error",
-                    stoppedAt: new Date().toISOString(),
-                    frames: last?.frames ?? current.recording?.frames ?? 0,
-                    bytes: last?.bytes ?? current.recording?.bytes ?? 0,
-                    warning,
-                };
-            })
-            .catch((persistErr: unknown) =>
-                log.warn({ err: persistErr, meetingId }, "the failed recording could not be saved")
-            );
+        await saveFailedRun(store, meetingId, err);
         stateFile.retire();
         throw err;
     } finally {
