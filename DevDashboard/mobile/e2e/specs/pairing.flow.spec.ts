@@ -1,4 +1,5 @@
 import { getDevDashboardBundleId } from "@e2e/bundle-id";
+import { appPage } from "@e2e/pages/app.page";
 import { connectionsPage } from "@e2e/pages/ConnectionsPage.page";
 import { connectPage } from "@e2e/pages/ConnectPage.page";
 import { pairingUri, TEST_AGENT_BASE_URL } from "@e2e/pages/testAgent";
@@ -40,6 +41,7 @@ describe("Pairing flow", () => {
     });
 
     it("the agent is the active saved connection", async () => {
+        await appPage.openTab("More");
         await connectionsPage.openFromMore();
         const active = await connectionsPage.activeConnectionId();
         expect(active).not.toBeNull();
