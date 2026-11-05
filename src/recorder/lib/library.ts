@@ -255,8 +255,22 @@ export function openLibraryWindow({ focus = true }: { focus?: boolean } = {}): v
 }
 
 /** Opens the editor through Launch Services; a running recorder takes the request. */
-/** The editor window's inspector tabs, as `--tab` takes them. */
-export const EDITOR_TABS = ["zoom", "clip", "hide", "text", "style", "cursor", "captions", "audio", "export"] as const;
+/**
+ * The editor window's inspector tabs, as `--tab` takes them: the Swift `InspectorTab` cases, in the same order
+ * (service.test.ts reads the Swift enum and fails when the two lists differ).
+ */
+export const EDITOR_TABS = [
+    "zoom",
+    "clip",
+    "hide",
+    "text",
+    "style",
+    "cursor",
+    "captions",
+    "audio",
+    "export",
+    "find",
+] as const;
 export type EditorTab = (typeof EDITOR_TABS)[number];
 
 export interface EditorPlace {

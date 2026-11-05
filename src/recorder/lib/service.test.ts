@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import type { RpcProgress } from "@genesiscz/utils/rpc/peer";
@@ -11,6 +12,7 @@ import fixture from "./__fixtures__/service-protocol.json";
 import { readUndoSteps, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
+import { EDITOR_TABS } from "./library";
 import { applyEdit, serviceRoutedMovie, undoLastEdit } from "./movie-client";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
 import { hostStill, ServiceHost } from "./service-client";
@@ -581,6 +583,20 @@ describe("the protocol fixture the Swift host tests read", () => {
                 RPC_ERRORS.nothingToRedo,
             ].sort()
         );
+    });
+});
+
+describe("the inspector tabs", () => {
+    test("the tabs the service, the CLI and the REPL accept are the Swift editor's InspectorTab cases, in order", () => {
+        // The Find tab reached the Swift editor after the service schema was written, so render.snapshot refused
+        // tab "find" (2026-11-05). One list on each side; this test keeps them equal.
+        const swift = readFileSync(
+            join(moduleDir(import.meta), "../../macos/GenesisTools/Sources/Parts/Recorder/Editor/EditorModel.swift"),
+            "utf8"
+        );
+        const cases = swift.match(/enum InspectorTab: String[^{]*\{\s*case ([a-z, ]+)\n/)?.[1];
+        expect(cases).toBeDefined();
+        expect(cases?.split(",").map((name) => name.trim())).toEqual([...EDITOR_TABS]);
     });
 });
 
