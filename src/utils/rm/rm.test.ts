@@ -1142,6 +1142,18 @@ describe("request lookups", () => {
         expect(priorDenials(["/w/a"], null, all)).toEqual([]);
     });
 
+    test("a partial approval retains the person's denial of its remaining path", () => {
+        const mixed = request("mixed", {
+            status: "approved",
+            decidedVia: "touch-id",
+            decided: { approved: ["/w/shared"], denied: ["/w/a"] },
+            deniedNote: "keep this",
+        });
+        expect(priorDenials(["/w/a", "/w/shared"], "sess-1111", [mixed])).toEqual([
+            { path: "/w/a", requestId: "mixed", decidedAt: mixed.createdAt, note: "keep this" },
+        ]);
+    });
+
     test("restore by request id resolves to the batch its approval made", () => {
         const requestsDir = dir("batch-requests");
         saveRmRequest(request("ffffff", { status: "approved", batchId: "20261030-batch" }), requestsDir);
