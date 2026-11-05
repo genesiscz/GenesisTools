@@ -5,6 +5,7 @@ import {
     toRuntimeContext,
     whoIsCalling,
 } from "@genesiscz/utils/agent/identity";
+import { recordedCallerFacts } from "@genesiscz/utils/agent/identity/record-facts";
 import { profiler } from "@genesiscz/utils/profile";
 import type { FailureCaller } from "./record";
 
@@ -12,8 +13,18 @@ export { claudeProjectFolder } from "@genesiscz/utils/agent-sessions/readers/cla
 
 const prof = profiler.scope("agent-context");
 
-/** The facts a failure record keeps: the live folder, its git facts, the title, and the model from the transcript. */
-const FAILURE_FACETS = ["cwd", "git", "title", "model"] as const satisfies readonly IdentityFacet[];
+/**
+ * The facts a failure record keeps: the live folder, its git facts, the title, the transcript and the model from it,
+ * and the host app's details (the T3 Code thread's provider instance).
+ */
+const FAILURE_FACETS = [
+    "cwd",
+    "git",
+    "title",
+    "transcript",
+    "model",
+    "host",
+] as const satisfies readonly IdentityFacet[];
 
 export interface CallerInputs {
     /** The caller's environment: the agent identity module reads the host, the session and the effort from it. */
@@ -67,5 +78,6 @@ export function failureCallerOf(identity: AgentIdentity): FailureCaller {
         branch: context.branch,
         commitSha: context.commitSha,
         worktreePath: context.worktreePath,
+        ...recordedCallerFacts(identity),
     };
 }
