@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { totalsOf } from "@genesiscz/utils/ai/transcripts/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { codexPendingCall } from "./codex-pending-call";
 import { codexGtEventsToTurns, codexNativeLinesToTurns } from "./codex-turns";
 
 describe("codexGtEventsToTurns", () => {
@@ -660,4 +661,19 @@ test("a usage record with no cache is unchanged", () => {
 
     expect(usage?.inputTokens).toBe(43_023);
     expect(usage?.cacheReadTokens).toBe(0);
+});
+
+test("approval details retain every statement of ambiguous code mode scripts", () => {
+    const scripts = [
+        'await tools.exec_command({cmd:"echo safe"}); await tools.exec_command({cmd:"echo second"});',
+        'tools.exec_command({cmd:"echo first",cmd:"echo second"})',
+        'const other = {cmd:"echo misleading"}; tools.exec_command({cmd:"echo actual"})',
+    ];
+    for (const input of scripts) {
+        const pending = codexPendingCall([
+            { type: "response_item", payload: { type: "custom_tool_call", name: "exec", call_id: "c1", input } },
+        ]);
+        expect(SafeJSON.stringify(pending?.detail)).toContain("echo");
+        expect(pending?.detail).toEqual({ kind: "tool", input });
+    }
 });
