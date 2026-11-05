@@ -61,11 +61,6 @@ async function evidence(
         const meeting = await source.load(block.meetingId);
         const found = speakingEvidence(record, await source.evidence(block.meetingId));
 
-        if (!found) {
-            fail(`${source.label} keeps no speaker evidence for this meeting on this Mac.`);
-            return;
-        }
-
         const presence = await presenceFor(record, meeting, opts.attendance);
         const energy = await energyMicShareFor(store, record, found);
 
@@ -110,6 +105,11 @@ async function evidence(
                 opened.check?.dispose();
             }
 
+            return;
+        }
+
+        if (!found) {
+            fail(`${source.label} keeps no speaker evidence for this meeting on this Mac.`);
             return;
         }
 
