@@ -277,7 +277,9 @@ final class CameraBubble {
         self.writer = nil
         writer.finish { [weak self] startedAt, frames in
             MainActor.assumeIsolated {
-                self?.source?.stop()
+                // The stop answered before this movie finished writing; a recording that started since uses the same
+                // camera, so only a camera nobody records with goes off.
+                if self?.recording == nil { self?.source?.stop() }
                 guard let startedAt else {
                     HubPerf.log("recorder: camera movie for \(current.id) has no frames")
                     return
