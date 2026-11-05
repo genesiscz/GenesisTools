@@ -867,8 +867,8 @@ function itemKey(item: NewItem | MeetingItem): string {
         return questionKey(item);
     }
 
-    // A quote or a meaning belongs to one place; a spelling fix to the word wherever it is heard.
-    const place = item.quote || item.meaning ? `|${item.meaning ?? ""}|${Math.round(item.atSec ?? 0)}` : "";
+    const scope = item.scope ?? (item.quote || item.meaning ? "line" : "everywhere");
+    const place = `|${scope}${scope === "line" ? `|${item.meaning ?? ""}|${item.atSec ?? 0}` : ""}`;
     return `term|${item.heard.toLowerCase()}|${item.proposed ?? ""}${place}`;
 }
 
