@@ -60,6 +60,28 @@ public enum HubResizeGrips: String, CaseIterable, Identifiable, Sendable {
     public func showsAtRest(prominent: Bool) -> Bool { self == .always || (self == .auto && prominent) }
 }
 
+/// How the Agents list lands a refresh that moves a few rows: at their new places at once, or with a slide there.
+/// The slide moves every row between a moved row's old and new place on each frame of the spring. With about 700 rows
+/// a one-row slide kept the main thread busy for about 300 ms, against about 60 ms for a refresh that moved more than
+/// eight rows in place (`hub.agents.refresh.render` after each `hub.agents.publish`, 100 refreshes, 2026-11-05).
+public enum HubListMotion: String, CaseIterable, Identifiable, Sendable {
+    case inPlace, slide
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .inPlace: return "In place"
+        case .slide: return "Slide"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .inPlace: return "A moved row shows at its new place at once, so the list stays responsive while it refreshes."
+        case .slide: return "A moved row slides to its new place. In a long list each slide keeps the hub busy for about 0.3 s."
+        }
+    }
+}
+
 /// The hub's preferences that a person sets, shared by the hub window (`--hub`) and the Hub pages of the settings
 /// window (`--features`). Both faces run from one bundle, so they read one defaults domain. A write posts a distributed
 /// notification, and every other process reloads, as `NativeSettingsAppearance` does for General.
@@ -75,6 +97,7 @@ public final class HubPreferences: ObservableObject {
         public static let cleanupIdleDays = "hub.worktreeCleanup.olderThanDays"
         public static let navigationLimit = "hub.nav.limit"
         public static let agentNavigation = "hub.nav.agentNavigation"
+        public static let agentsMotion = "hub.agents.motion"
     }
 
     public static let shared = HubPreferences()
@@ -102,8 +125,12 @@ public final class HubPreferences: ObservableObject {
     @Published public var agentNavigation: HubAgentNavigation {
         didSet { if oldValue != agentNavigation { persist(.agentNavigation) } }
     }
+    /// How the Agents list lands moved rows: in place (the default) or with the slide.
+    @Published public var agentsMotion: HubListMotion {
+        didSet { if oldValue != agentsMotion { persist(.agentsMotion) } }
+    }
 
-    private enum Field { case style, glass, processEnergy, cleanupIdleDays, navigationLimit, agentNavigation }
+    private enum Field { case style, glass, processEnergy, cleanupIdleDays, navigationLimit, agentNavigation, agentsMotion }
     public let notificationNamespace: String
     public let notificationName: Notification.Name
     private let defaults: UserDefaults
@@ -130,6 +157,7 @@ public final class HubPreferences: ObservableObject {
         cleanupIdleDays = Self.storedIdleDays(defaults)
         navigationLimit = Self.storedNavigationLimit(defaults)
         agentNavigation = Self.storedAgentNavigation(defaults)
+        agentsMotion = Self.storedAgentsMotion(defaults)
         if observeExternalChanges {
             observer = DistributedNotificationCenter.default().addObserver(
                 forName: notificationName, object: notificationNamespace, queue: .main
@@ -153,6 +181,7 @@ public final class HubPreferences: ObservableObject {
         let storedDays = Self.storedIdleDays(defaults)
         let storedLimit = Self.storedNavigationLimit(defaults)
         let storedAgent = Self.storedAgentNavigation(defaults)
+        let storedMotion = Self.storedAgentsMotion(defaults)
         applyingExternal = true
         if style != storedStyle { style = storedStyle }
         if glass != storedGlass { glass = storedGlass }
@@ -160,6 +189,7 @@ public final class HubPreferences: ObservableObject {
         if cleanupIdleDays != storedDays { cleanupIdleDays = storedDays }
         if navigationLimit != storedLimit { navigationLimit = storedLimit }
         if agentNavigation != storedAgent { agentNavigation = storedAgent }
+        if agentsMotion != storedMotion { agentsMotion = storedMotion }
         applyingExternal = false
     }
 
@@ -181,6 +211,10 @@ public final class HubPreferences: ObservableObject {
         HubAgentNavigation(rawValue: defaults.string(forKey: Key.agentNavigation) ?? "") ?? .navigate
     }
 
+    private static func storedAgentsMotion(_ defaults: UserDefaults) -> HubListMotion {
+        HubListMotion(rawValue: defaults.string(forKey: Key.agentsMotion) ?? "") ?? .inPlace
+    }
+
     private func persist(_ field: Field) {
         guard !applyingExternal else { return }
         switch field {
@@ -194,6 +228,7 @@ public final class HubPreferences: ObservableObject {
             let clamped = min(Self.navigationLimitRange.upperBound, max(Self.navigationLimitRange.lowerBound, navigationLimit))
             defaults.set(clamped, forKey: Key.navigationLimit)
         case .agentNavigation: defaults.set(agentNavigation.rawValue, forKey: Key.agentNavigation)
+        case .agentsMotion: defaults.set(agentsMotion.rawValue, forKey: Key.agentsMotion)
         }
         guard broadcasts else { return }
         if !defaults.synchronize() { log.warning("Could not flush the hub preferences") }

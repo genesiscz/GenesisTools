@@ -75,6 +75,13 @@ It runs the installed bundle: `bun run app` first. A worktree's `.build/debug/Ge
 or `--snapshot` also runs (no bundle needed), but its web diff does not load (NSURLErrorDomain -1100), and
 its window starts at 1440×900, not the live hub's saved frame: pass `--width/--height` to compare.
 
+🛑 **A bench cannot see what an animation costs.** Its window is off screen, so a SwiftUI animation runs no
+frames there. On 2026-11-05 a one-row slide of the 693-row Agents list (`hub.agents.publish 693 rows, 1 moved,
+animated`) cost 10 ms of main thread in eight bench steps, the same as the move landed in place. In the live hub the
+render after an animated publish cost 178 to 487 ms (40 refreshes), and after a plain publish of more than eight
+moved rows about 60 ms (60 refreshes). For an animation, read the live log: each `hub.agents.publish` line names the
+kind of refresh (`animated` or `plain`), and the `main busy` line after it is what that refresh cost on screen.
+
 Two traps when reading a hub stall or a `main busy` line:
 - **Whose process?** Several processes write `app-perf.log` and none of its lines had a pid. A hang
   sample's header names the process: `Parent Process: zsh` and a `/private/tmp/*/GenesisTools` path is an

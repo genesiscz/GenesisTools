@@ -21,7 +21,7 @@ public enum HubSettingsPages {
                 },
                 NativeSettingsPage(
                     id: panesPageID, title: "Panes", symbol: "rectangle.split.3x1", tint: .teal,
-                    subtitle: "Defaults for the Agent processes and Worktree cleanup panes."
+                    subtitle: "Defaults for the Agents list, the Agent processes pane and the Worktree cleanup pane."
                 ) {
                     HubPaneSettings(preferences: preferences)
                 },
@@ -97,6 +97,12 @@ private struct HubPaneSettings: View {
 
     var body: some View {
         VStack(spacing: 18) {
+            NativeSettingsCard("Agents list") {
+                NativeSettingsSegmented(
+                    "When a refresh moves a row", identifier: "hub.agents.motion",
+                    options: HubListMotion.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
+                    selection: $preferences.agentsMotion, minSegmentWidth: 80)
+            }
             NativeSettingsCard("Agent processes") {
                 NativeSettingsToggle(
                     "Measure energy impact",

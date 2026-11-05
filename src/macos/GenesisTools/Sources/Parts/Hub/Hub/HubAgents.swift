@@ -443,6 +443,8 @@ final class HubAgentsModel: ObservableObject {
     /// changing bucket with its children) landed under the animation too: SwiftUI then laid out the whole list
     /// and walked its accessibility responders on every frame of the slide, 0.6 to 2.5 s of main thread per
     /// refresh with 50 sessions and 626 agents (`hub.agents.refresh.render`, stall stacks in `publish`, 2026-10-27).
+    /// Even a one-row slide costs about 300 ms with 692 rows, against about 60 ms for a move landed in place
+    /// (2026-11-05), so the slide is a preference (Settings → Hub → Panes → Agents list), off by default.
     private func publish(_ nextParents: [AgentParent], _ nextOrphans: [AgentNode]) {
         guard nextParents != parents || nextOrphans != orphans else { return }
         let shape: ([AgentParent], [AgentNode]) -> [String] = { parents, orphans in
@@ -451,7 +453,8 @@ final class HubAgentsModel: ObservableObject {
         let before = shape(parents, orphans)
         let after = shape(nextParents, nextOrphans)
         let changed = Self.changedRows(from: before, to: after)
-        let animated = changed > 0 && (Self.animateEveryMove || changed <= Self.animatedChangeLimit)
+        let slides = HubDefaults.preferences.agentsMotion == .slide
+        let animated = changed > 0 && (Self.animateEveryMove || (slides && changed <= Self.animatedChangeLimit))
         // Named in the stall line's recent work, so the next slow render says which kind of refresh it was.
         HubPerf.log("agents.publish \(after.count) rows, \(changed) moved, \(animated ? "animated" : "plain")")
         let land = {

@@ -48,6 +48,18 @@ final class HubPreferencesTests: XCTestCase {
         XCTAssertEqual(reopened.cleanupIdleDays, 14)
     }
 
+    func testTheAgentsListLandsMovedRowsInPlaceUntilTheSlideIsChosen() {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        XCTAssertEqual(preferences(defaults, name).agentsMotion, .inPlace)
+        defaults.set("bounce", forKey: HubPreferences.Key.agentsMotion)
+        XCTAssertEqual(preferences(defaults, name).agentsMotion, .inPlace)
+        let hub = preferences(defaults, name)
+        hub.agentsMotion = .slide
+        XCTAssertEqual(defaults.string(forKey: "hub.agents.motion"), "slide")
+        XCTAssertEqual(preferences(defaults, name).agentsMotion, .slide)
+    }
+
     func testUnknownOrOutOfRangeStoredValuesReadAsTheDefaultsOrTheNearestLimit() {
         let (defaults, name) = suite()
         defer { defaults.removePersistentDomain(forName: name) }
