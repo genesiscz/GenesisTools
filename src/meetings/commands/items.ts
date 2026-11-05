@@ -33,7 +33,8 @@ import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/
 import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
-import { FINDING_KINDS, findingItems, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
+import { prepareFindings } from "../lib/add-findings";
+import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { playLinksFor } from "../lib/link";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
@@ -41,7 +42,7 @@ import { questionIdOf, questionLabel, questionWarnings } from "../lib/questions"
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES, suggestItems } from "../lib/suggest";
-import { checkAnchors, correctTranscript, ledgerEntryFor, outcomeText } from "../lib/transcript-corrections";
+import { correctTranscript, ledgerEntryFor, outcomeText } from "../lib/transcript-corrections";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS, type WordCheckChoice } from "../lib/word-check";
 
 const { log } = logger.scoped("meetings-items");
@@ -368,21 +369,13 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
             record.id,
             { command: "items add", change: `${parsed.data.length} findings` },
             (current) => {
-                added = findingItems(parsed.data, current.items, new Date().toISOString());
-
-                if (meeting) {
-                    const anchors = checkAnchors(added, meeting.transcript);
-                    anchorWarnings = anchors.warnings;
-
-                    for (const item of added) {
-                        const line = anchors.addresses.get(item.id);
-
-                        if (line !== undefined) {
-                            item.evidence = { ...item.evidence, transcriptLine: line };
-                        }
-                    }
-                }
-
+                const prepared = prepareFindings({
+                    findings: parsed.data,
+                    items: current.items,
+                    transcript: meeting?.transcript,
+                });
+                added = prepared.added;
+                anchorWarnings = prepared.warnings;
                 current.items.push(...added);
             }
         );
