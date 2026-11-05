@@ -248,6 +248,24 @@ final class RecorderEditTests: XCTestCase {
         return project
     }
 
+    /// Only `tools recorder export` cleans the sound, so an MP4 with noise reduction goes there; a plain MP4 stays in
+    /// the window's own renderer (progress and Cancel), and a GIF or WebM always goes to the CLI.
+    func testAnMP4WithNoiseReductionExportsThroughTheCLIAndAPlainOneInTheWindow() {
+        var edit = project([EditProject.Clip(id: "a", fromUs: 0, toUs: 10_000_000)])
+        XCTAssertEqual(EditorModel.exportRoute(edit), .window)
+        edit.export.format = .mp4
+        XCTAssertEqual(EditorModel.exportRoute(edit), .window)
+        edit.audio.denoise = EditProject.Denoise(method: "afftdn", reductionDb: 12, tracks: nil)
+        XCTAssertEqual(EditorModel.exportRoute(edit), .tools(.mp4))
+        edit.export.format = .gif
+        XCTAssertEqual(EditorModel.exportRoute(edit), .tools(.gif))
+        edit.audio.denoise = nil
+        XCTAssertEqual(EditorModel.exportRoute(edit), .tools(.gif))
+        edit.export.format = nil
+        edit.audio.denoise = EditProject.Denoise(method: "afftdn", reductionDb: 12, tracks: nil)
+        XCTAssertEqual(EditorModel.exportRoute(edit), .tools(.mp4), "no format is an MP4")
+    }
+
     func testTheExportsNoiseReductionSurvivesADecodeAndEncode() throws {
         let json = #"{"include":true,"volume":1,"mutedTracks":[],"denoise":{"method":"afftdn","reductionDb":20,"tracks":[1]}}"#
         let audio = try JSONDecoder().decode(EditProject.AudioSettings.self, from: Data(json.utf8))

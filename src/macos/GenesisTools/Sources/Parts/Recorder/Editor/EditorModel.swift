@@ -1588,11 +1588,23 @@ final class EditorModel {
         exportCancelled = true
     }
 
+    /// Where an export renders: an MP4 here (fast, with progress and Cancel), unless the sound is cleaned, which only
+    /// `tools recorder export` does (`withDenoisedSource` in src/recorder/lib/edit.ts); a GIF or WebM always there.
+    enum ExportRoute: Equatable {
+        case window
+        case tools(EditProject.ExportFormat)
+    }
+
+    nonisolated static func exportRoute(_ project: EditProject) -> ExportRoute {
+        let format = project.export.format ?? .mp4
+        return format != .mp4 || project.audio.denoise != nil ? .tools(format) : .window
+    }
+
     func export() {
         guard exportProgress == nil else { return }
         saveNow()
         let project = project
-        if let format = project.export.format, format != .mp4 {
+        if case let .tools(format) = Self.exportRoute(project) {
             exportThroughTools(format)
             return
         }
@@ -1627,7 +1639,8 @@ final class EditorModel {
     }
 
     /// After the window's export: the subtitle file and the markers as chapters, by `tools recorder finish` (the same
-    /// step the CLI and the REPL run); a GIF or WebM gets it from `tools recorder export` itself.
+    /// step the CLI and the REPL run); an export through `tools recorder export` (a GIF, a WebM, an MP4 with cleaned
+    /// sound) gets it from that command itself.
     private func finishExport(_ movie: URL, part: (fromUs: Int64, toUs: Int64)?) {
         guard project.export.subtitles != nil || (project.export.chapters != false && !markers.isEmpty) else { return }
         var argv = ["recorder", "finish", store.url.path, movie.path]
@@ -1793,10 +1806,11 @@ final class EditorModel {
         if reveal { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     }
 
-    /// A GIF or WebM: the CLI renders with this same renderer and converts with ffmpeg, then prints `{ ok, path }`.
+    /// A GIF, a WebM or an MP4 with cleaned sound: the CLI renders with this same renderer (from the cleaned copy of
+    /// the movie when noise reduction is on) and converts with ffmpeg, then prints `{ ok, path }`.
     private func exportThroughTools(_ format: EditProject.ExportFormat) {
         exportProgress = 0
-        show("Exporting a \(format.rawValue.uppercased())…", error: false)
+        show(format == .mp4 ? "Exporting an MP4 with the cleaned sound…" : "Exporting a \(format.rawValue.uppercased())…", error: false)
         var argv = ["recorder", "export", store.url.path, "--format", format.rawValue, "--json"]
         if let part = exportPart {
             argv += ["--from", String(format: "%.3f", Double(part.fromUs) / 1_000_000), "--to", String(format: "%.3f", Double(part.toUs) / 1_000_000)]
