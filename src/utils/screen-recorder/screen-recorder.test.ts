@@ -7,6 +7,7 @@ import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as bounded from "@genesiscz/utils/process/bounded-command";
+import * as rm from "@genesiscz/utils/rm";
 import { z } from "zod";
 import {
     type DisplayEntry,
@@ -1248,6 +1249,21 @@ describe("characterization: what a library recording asks its recorder for", () 
             { displayId: 1, at: expect.any(String), file: expect.stringContaining("keep-0.png") },
             { displayId: 4, at: expect.any(String), file: expect.stringContaining("keep-0.png") },
         ]);
+    });
+
+    test("a discard whose move to the trash was refused fails and keeps the folder, instead of answering discarded", async () => {
+        const recorder = new ScriptRecorder();
+        const recording = await start(recorder);
+        await recorder.waitFor(1);
+        const refused = spyOn(rm, "moveToTrash").mockReturnValue(null);
+
+        try {
+            await expect(recording.discard()).rejects.toThrow("changed before it could be discarded");
+            expect(refused).toHaveBeenCalledTimes(1);
+            expect(existsSync(recording.folder)).toBe(true);
+        } finally {
+            refused.mockRestore();
+        }
     });
 
     test("an error in the capture loop ends the library recording by itself, with the finish and the reason in its notes", async () => {

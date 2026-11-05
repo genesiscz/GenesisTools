@@ -312,10 +312,16 @@ export class LibraryRecording extends FrameRecording<number> {
         }
 
         // Discard authorizes only the folder this recording reserved at its start, so it goes to the trash as a whole.
-        moveToTrash(
+        const batch = moveToTrash(
             plan.map((item) => ({ target: item.target, rule: "recording-discard" })),
             { config, caller, graceMinutes: Math.max(...plan.map((item) => graceMinutesFor(item, context))) }
         );
+
+        // Nothing moved (the trash refused it): the folder and the claim on it stay, and the discard says so.
+        if (!batch) {
+            throw new Error("The recording folder changed before it could be discarded");
+        }
+
         this.ownsFolder = false;
         kickDrainer(config);
         return answer;
