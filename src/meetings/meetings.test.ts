@@ -4332,7 +4332,7 @@ describe("a meeting recording as an editor project", () => {
     });
 });
 
-test("Teams observation bounds never count as an arrival", () => {
+test("Teams observation bounds survive storage and never count as an arrival", async () => {
     for (const exact of [false, true]) {
         const raw = SafeJSON.stringify([
             {
@@ -4349,13 +4349,27 @@ test("Teams observation bounds never count as an arrival", () => {
         ]);
         const attendance = teamsAttendanceFromJson(raw, { title: "Planning", start: meeting.start }, "fixture");
         expect(attendance?.presence[0]).toMatchObject({ joinedAtExact: exact, leftAtExact: false });
+        const storage = new Storage(`attendance-roundtrip-${exact}`);
+        const store = new MeetingStore(storage);
+        const saved = await store.create(record, { command: "fixture", change: "fixture" });
+        await store.update(saved.id, { command: "fixture", change: "attendance" }, (draft) => {
+            draft.attendance = { from: "fixture", people: attendance!.presence };
+        });
+        const reopened = new MeetingStore(storage).read(saved.id)!;
+        expect(reopened.attendance?.people[0]).toMatchObject({ joinedAtExact: exact, leftAtExact: false });
+        expect(
+            meetingRecordSchema.parse({
+                ...record,
+                attendance: { from: "old", people: [{ name: "Old", fromSec: 0, toSec: 30 }] },
+            }).attendance?.people[0].joinedAtExact
+        ).toBeUndefined();
         const items = suggestItems({
             record,
             meeting: { ...meeting, transcript: [line("Other", 20, "O co jsem přišel?")] },
             rules: ["evidence"],
             dictionary: { abbrExpansion: "every", entries: [] },
             sourceWords: [],
-            presence: attendance?.presence,
+            presence: reopened.attendance?.people,
             evidence: { selfName: "Self", segments: [], speaking: [], files: [] },
             now: "2026-11-02T15:00:00.000Z",
         });
