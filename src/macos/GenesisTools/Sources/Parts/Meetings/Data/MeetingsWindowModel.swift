@@ -139,9 +139,14 @@ final class MeetingsWindowModel {
                 receive(value)
             } catch {
                 guard generation == overviewGeneration else { return }
-                overview = .failed(asFailure(error), previous: overview.value)
+                receive(failure: asFailure(error))
             }
         }
+    }
+
+    /// A read failed: the list keeps the meetings it showed, and the pane says why with a Retry.
+    func receive(failure: MeetingsCLI.Failure) {
+        overview = .failed(failure, previous: overview.value)
     }
 
     /// A read overview lands: the list shows it, and a selection it no longer holds moves to the first row.

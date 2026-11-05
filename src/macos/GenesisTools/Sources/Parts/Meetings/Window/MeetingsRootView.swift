@@ -10,14 +10,18 @@ struct MeetingsRootView: View {
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
         } content: {
             MeetingsListPane(model: model)
+                .heightFromWindow()
                 .navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 480)
         } detail: {
-            if let detail = model.detail {
-                MeetingDetailView(detail: detail, window: model)
-                    .id(detail.id)
-            } else {
-                EmptyState(symbol: "person.2.wave.2", text: "Choose a meeting", detail: "Its transcript, screen and items show here.")
+            Group {
+                if let detail = model.detail {
+                    MeetingDetailView(detail: detail, window: model)
+                        .id(detail.id)
+                } else {
+                    EmptyState(symbol: "person.2.wave.2", text: "Choose a meeting", detail: "Its transcript, screen and items show here.")
+                }
             }
+            .heightFromWindow()
         }
         .background(shortcuts)
     }
@@ -30,6 +34,16 @@ struct MeetingsRootView: View {
             Button("Reload") { model.load(); model.detail?.load() }.keyboardShortcut("r", modifiers: .command)
         }
         .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
+    }
+}
+
+private extension View {
+    /// The column is as tall as the window and never asks its content for a smallest height. The split view makes
+    /// itself as tall as the tallest column's smallest height, and an error pill's wrapping sentence measures that
+    /// at about one letter per line: a 222-character CLI error made the split view 3193 pt tall in an 848 pt window,
+    /// centred in it, so the sidebar and the list drew only their empty middle.
+    func heightFromWindow() -> some View {
+        frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
     }
 }
 

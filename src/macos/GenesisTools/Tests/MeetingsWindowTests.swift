@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 @testable import GenesisToolsMeetings
@@ -280,5 +281,51 @@ final class MeetingsWindowTests: XCTestCase {
         let preview = UnpairPreview.of(entry: "e1", in: projects)
         XCTAssertEqual(preview, UnpairPreview(pairings: 3, projects: 2, leaving: 2))
         XCTAssertEqual(preview.words, "3 pairings in 2 projects; 2 people leave a project")
+    }
+
+    // MARK: Layout
+
+    /// A failed overview shows the CLI's whole sentence in the list's error pill. The window must still show the sidebar's
+    /// rows and the pill: a sentence of about 200 characters once made the split view 3193 pt tall in an 848 pt window,
+    /// centred in it, so the sidebar and the list drew only their empty middle.
+    func testAFailedOverviewWithALongSentenceKeepsTheSplitViewInTheWindow() throws {
+        let suite = "meetings.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MeetingsWindowModel(defaults: defaults)
+        model.go(.all)
+        let path = "/tmp/example/" + String(repeating: "a-long-folder-name/", count: 4) + ".genesis-tools/meetings/config.json"
+        model.receive(failure: MeetingsCLI.Failure(
+            sentence: "Failed to parse config at \(path): Unexpected token 'b', \"{ \"version\": 3, \"projects\": [ broken\" is not valid JSON.",
+            detail: "tools meetings overview --days 14 --json exited 1:\n✗ Failed to parse config at \(path)\n  The config file exists but contains invalid JSON."))
+
+        let window = MeetingsWindow.makeWindow(model: model, size: NSSize(width: 1280, height: 820))
+        // Never visible: alpha 0, below the desktop, ignores the mouse, the app is not activated.
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.orderFrontRegardless()
+        defer {
+            window.orderOut(nil)
+            window.close()
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+
+        let content = try XCTUnwrap(window.contentView)
+        let split = try XCTUnwrap(Self.firstView(NSSplitView.self, in: content), "the window holds the split view")
+        let frame = split.convert(split.bounds, to: content)
+        XCTAssertEqual(frame.height, content.bounds.height, accuracy: 1, "the split view is as tall as the window, \(frame)")
+        XCTAssertEqual(frame.minY, 0, accuracy: 1, "the split view starts at the window's edge, \(frame)")
+        let sidebar = try XCTUnwrap(Self.firstView(NSOutlineView.self, in: split), "the sidebar is a list")
+        XCTAssertGreaterThanOrEqual(sidebar.numberOfRows, 2, "the sidebar lists Needs you and All meetings")
+        XCTAssertEqual(sidebar.visibleRect.minY, 0, accuracy: 1, "the sidebar shows its first rows, \(sidebar.visibleRect)")
+    }
+
+    private static func firstView<V: NSView>(_ type: V.Type, in view: NSView) -> V? {
+        if let match = view as? V { return match }
+        for child in view.subviews {
+            if let match = firstView(type, in: child) { return match }
+        }
+        return nil
     }
 }
