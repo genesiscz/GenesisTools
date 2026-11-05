@@ -242,7 +242,7 @@ function withCaseFields(command: Command): Command {
         );
 }
 
-export function registerTestPlanCommand(program: Command): void {
+export function registerTestPlanCommand(program: Command, caseService: typeof service = service): void {
     const testplan = program
         .command("testplan")
         .description("Test plans, suites, test cases and test points (the Test Plans hub)");
@@ -365,7 +365,7 @@ export function registerTestPlanCommand(program: Command): void {
 
     registerSuiteCommands(testplan);
     registerPointCommands(testplan);
-    registerCaseCommands(testplan);
+    registerCaseCommands(testplan, caseService);
 }
 
 function registerSuiteCommands(testplan: Command): void {
@@ -592,7 +592,7 @@ function registerPointCommands(testplan: Command): void {
     );
 }
 
-function registerCaseCommands(testplan: Command): void {
+function registerCaseCommands(testplan: Command, caseService: typeof service): void {
     const testCase = testplan
         .command("case")
         .description("Test case work items: show with parsed steps, create, update, delete");
@@ -622,7 +622,13 @@ function registerCaseCommands(testplan: Command): void {
             return;
         }
 
-        const { plans, org } = service();
+        if (options.suite && !options.plan) {
+            out.error("--suite requires --plan");
+            process.exitCode = 1;
+            return;
+        }
+
+        const { plans, org } = caseService();
         const suite = options.plan ? suiteRefOf(options.plan, options.suite, org) : undefined;
         const outcome = await plans.createTestCase(
             { ...caseInput(options), title: options.title, suite },
