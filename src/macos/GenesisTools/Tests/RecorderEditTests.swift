@@ -414,6 +414,20 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(older.denoise)
     }
 
+    func testEffectMovesAndTrimsUseSourceTimeAtClipSpeeds() {
+        var project = EditProject.whole(video: "/fixture.mp4", durationUs: 10_000_000, width: 640, height: 480, cursor: nil, recording: nil)
+        project.clips[0].speed = 2
+        XCTAssertEqual(TimelineMap.sourceShift(outputDeltaUs: 1_000_000, atSource: 1_000_000, in: project), 2_000_000)
+        project.clips[0].speed = 0.5
+        XCTAssertEqual(TimelineMap.sourceShift(outputDeltaUs: 1_000_000, atSource: 1_000_000, in: project), 500_000)
+        var first = project.clips[0]
+        first.fromUs = 2_000_000; first.toUs = 4_000_000; first.speed = 2
+        var second = first
+        second.id = "second"; second.fromUs = 7_000_000; second.toUs = 9_000_000; second.speed = 0.5
+        project.clips = [first, second]
+        XCTAssertEqual(TimelineMap.sourceShift(outputDeltaUs: 1_000_000, atSource: 3_000_000, in: project), 4_250_000)
+    }
+
     func testOutputAndSourceTimesMapThroughACutAndASpeedUp() {
         let edit = project([
             .init(id: "a", fromUs: 0, toUs: 3_000_000),
