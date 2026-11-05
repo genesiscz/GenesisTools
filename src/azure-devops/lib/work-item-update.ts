@@ -216,15 +216,44 @@ const HTML_ELEMENTS = new Set(
  * The server stores a `&lt;` it is sent as `&lt;`, the same form it gives a literal `<`.
  */
 export function escapeMarkdownTagLikes(markdown: string): string {
-    const parts = markdown.split(/(^(?:```|~~~)[^\n]*\n[\s\S]*?^(?:```|~~~)[ \t]*$|`[^`\n]+`)/m);
-    return parts
-        .map((part, index) => {
-            if (index % 2 === 1) {
-                return part.replace(/<(?=[A-Za-z/])/g, "&lt;");
+    let fence: { marker: string; length: number } | undefined;
+    return markdown
+        .split(/(?<=\n)/)
+        .map((line) => {
+            const opening = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+            if (fence) {
+                const escaped = line.replace(/<(?=[A-Za-z/])/g, "&lt;");
+                const closing = /^ {0,3}(`{3,}|~{3,})[ \t]*(?:\r?\n)?$/.exec(line);
+                if (closing && closing[1][0] === fence.marker && closing[1].length >= fence.length) {
+                    fence = undefined;
+                }
+                return escaped;
             }
-
-            return part.replace(/<(\/?)([A-Za-z][\w-]*)/g, (match, slash: string, name: string) =>
-                HTML_ELEMENTS.has(name.toLowerCase()) ? match : `&lt;${slash}${name}`
+            if (opening) {
+                fence = { marker: opening[1][0], length: opening[1].length };
+                return line.replace(/<(?=[A-Za-z/])/g, "&lt;");
+            }
+            if (/^(?: {4}|\t)/.test(line)) {
+                return line.replace(/<(?=[A-Za-z/])/g, "&lt;");
+            }
+            return line.replace(
+                /(`+[^`\n]*`+)|(\]\(<[^<>\n]*>)|(<(?:[a-z][a-z0-9+.-]*:\/\/[^\s<>]+|[^\s<>@]+@[^\s<>@]+)>)|(<\/?)([A-Za-z][\w-]*)/gi,
+                (
+                    match,
+                    code: string | undefined,
+                    destination: string | undefined,
+                    link: string | undefined,
+                    prefix: string | undefined,
+                    name: string | undefined
+                ) => {
+                    if (code) {
+                        return code.replace(/<(?=[A-Za-z/])/g, "&lt;");
+                    }
+                    if (destination || link || !name || HTML_ELEMENTS.has(name.toLowerCase())) {
+                        return match;
+                    }
+                    return `&lt;${prefix?.slice(1) ?? ""}${name}`;
+                }
             );
         })
         .join("");

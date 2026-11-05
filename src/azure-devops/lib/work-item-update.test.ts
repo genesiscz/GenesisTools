@@ -396,6 +396,62 @@ describe("what the read-back may forgive", () => {
 });
 
 describe("Markdown tag-like text", () => {
+    test("the update pipeline escapes only Markdown fields and reports a lossy read-back", async () => {
+        for (const switched of [true, false]) {
+            const ado = client(
+                live({ multilineFieldsFormat: { "System.Description": switched ? "html" : "markdown" } })
+            );
+            const read = ado.read;
+            let count = 0;
+            ado.read = async (id) => {
+                const item = await read(id);
+                if (++count > 1) {
+                    item.fields["System.Description"] = "List";
+                }
+                return item;
+            };
+            const result = await executeWorkItemUpdate(ado, {
+                id: 100,
+                fields: [{ name: "System.Description", value: "List<T>" }],
+                markdownFields: switched ? ["System.Description"] : [],
+                images: [],
+                reuse: new Map(),
+                confirm: true,
+            });
+            expect(ado.operations[0]).toContainEqual({
+                op: "add",
+                path: "/fields/System.Description",
+                value: "List&lt;T>",
+            });
+            expect(result).toMatchObject({ ok: false, mismatches: [{ firstDifference: { line: 1 } }] });
+        }
+        const ado = client(live());
+        await executeWorkItemUpdate(ado, {
+            id: 100,
+            fields: [{ name: "System.Description", value: "List<T>" }],
+            markdownFields: [],
+            images: [],
+            reuse: new Map(),
+            confirm: true,
+        });
+        expect(ado.operations[0]).toContainEqual({ op: "add", path: "/fields/System.Description", value: "List<T>" });
+    });
+    test("preserves links and escapes tag-like text in fenced and indented code", () => {
+        const source =
+            "<https://example.com> <alice@example.com> [x](<relative/path>)\n  ````java\nList<B>\n  ````\n    List<B>";
+        expect(escapeMarkdownTagLikes(source)).toBe(
+            "<https://example.com> <alice@example.com> [x](<relative/path>)\n  ````java\nList&lt;B>\n  ````\n    List&lt;B>"
+        );
+    });
+    test("HTML difference ignores server indentation", () => {
+        expect(
+            firstStoredDifference({
+                stored: "<p>first</p>\n<p>second</p>",
+                sent: "<p>first</p><p>second</p>",
+                format: "html",
+            })
+        ).toBeNull();
+    });
     test("a generic is escaped in code and prose, a known HTML element stays a tag", () => {
         const source = "Use <br> and <b>x</b>, List<FeeOrder>, `Optional<T>`\n```java\nMap<String, List<B>> m;\n```";
         expect(escapeMarkdownTagLikes(source)).toBe(
