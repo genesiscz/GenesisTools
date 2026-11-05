@@ -1,5 +1,6 @@
 import { type DashboardClient, ENDPOINTS, type HealthDto, type WakeRelayDto } from "@dd/contract";
 import { queryOptions } from "@tanstack/react-query";
+import type { RelayStore } from "@/features/wake/relay-store";
 
 export const wakeKeys = { relay: ["wake", "relay"] as const, health: ["wake", "health"] as const };
 
@@ -9,10 +10,26 @@ export const HEALTH_INTERVAL_MS = 3_000;
 export const WAKE_PATIENCE_MS = 120_000;
 
 /** The relay as the Mac last described it. A sleeping Mac answers nothing, so the screen falls back to the stored copy. */
-export function relayQuery(client: DashboardClient) {
+export function relayQuery({
+    client,
+    connectionId,
+    store,
+}: {
+    client: DashboardClient;
+    connectionId: string | null;
+    store: RelayStore;
+}) {
     return queryOptions<WakeRelayDto>({
-        queryKey: wakeKeys.relay,
-        queryFn: () => client.call(ENDPOINTS.gatewayWake, {}),
+        queryKey: [...wakeKeys.relay, connectionId],
+        queryFn: async () => {
+            const relay = await client.call(ENDPOINTS.gatewayWake, {});
+
+            if (connectionId !== null) {
+                await store.save(connectionId, relay);
+            }
+
+            return relay;
+        },
         retry: false,
     });
 }
@@ -76,6 +93,9 @@ export async function sendWake(
             return { sent: false, detail: "The wake relay request timed out. Try again when the relay is reachable." };
         }
 
-        return { sent: false, detail: `Could not reach the relay: ${error instanceof Error ? error.message : String(error)}` };
+        return {
+            sent: false,
+            detail: `Could not reach the relay: ${error instanceof Error ? error.message : String(error)}`,
+        };
     }
 }
