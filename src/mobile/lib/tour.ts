@@ -46,7 +46,7 @@ export async function runTour(options: {
                 shot = { route, file };
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
-                log.warn({ route: route.name, url: route.url, error: message }, "tour shot failed");
+                log.warn({ route: route.name, url: route.url, error }, "tour shot failed");
 
                 if (error instanceof RootMissingError) {
                     await driver.screenshot(file.replace(/\.png$/, ".MISSING.png")).catch((shotError: unknown) => {
