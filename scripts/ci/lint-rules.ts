@@ -652,6 +652,13 @@ function isAgentBinaryTable(node: SgNode): boolean {
 const AGENT_CONTEXT_SCOPE = /^(?:src|scripts)\//;
 /** scripts/ci/ holds these lint rules and their guards, which name the keys, binaries and fields on purpose. */
 const AGENT_CONTEXT_OUT_OF_SCOPE = /^scripts\/(?:benchmarks|ci)\//;
+/**
+ * Files that name agent and terminal keys only to REMOVE them from an environment they hand on: the test preloads
+ * (a test must never see the host's session ids), a Claude worker's child env, and the env a new tmux pane starts
+ * with. They read no caller, so the identity module has nothing to give them.
+ */
+const AGENT_ENV_SCRUBBERS =
+    /^src\/(?:utils\/bun\/preload-test-(?:sandbox|tmpdir)\.ts|claude\/lib\/worker\/worker\.ts|utils\/tmux\/sessions\.ts)$/;
 
 const RULES: Rule[] = [
     {
@@ -959,8 +966,9 @@ const RULES: Rule[] = [
             "src/utils/t3code/ and src/utils/env/. Ask the identity module who the caller is. " +
             "scripts/ci/agent-context-ratchet.ts lists the files not migrated yet.",
         onlyIn: AGENT_CONTEXT_SCOPE,
-        allowedIn:
-            /^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/agent\/|src\/utils\/ai\/providers\/plugins\/[\w-]+\/harness\.ts$|src\/utils\/t3code\/|src\/utils\/env\/)/,
+        allowedIn: new RegExp(
+            `${/^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/agent\/|src\/utils\/ai\/providers\/plugins\/[\w-]+\/harness\.ts$|src\/utils\/t3code\/|src\/utils\/env\/)/.source}|${AGENT_ENV_SCRUBBERS.source}`
+        ),
         allowedFiles: RAW_AGENT_ENV_RATCHET,
     },
     {
@@ -972,8 +980,9 @@ const RULES: Rule[] = [
             "src/utils/cmux/, src/utils/tmux/, src/utils/env/ and the agent identity module's terminal part " +
             "(src/utils/agent/identity/). scripts/ci/agent-context-ratchet.ts lists the files not migrated yet.",
         onlyIn: AGENT_CONTEXT_SCOPE,
-        allowedIn:
-            /^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/cmux\/|src\/utils\/tmux\/|src\/utils\/env\/|src\/utils\/agent\/identity\/)/,
+        allowedIn: new RegExp(
+            `${/^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/cmux\/|src\/utils\/tmux\/|src\/utils\/env\/|src\/utils\/agent\/identity\/)/.source}|${AGENT_ENV_SCRUBBERS.source}`
+        ),
         allowedFiles: RAW_TERMINAL_ENV_RATCHET,
     },
     {
