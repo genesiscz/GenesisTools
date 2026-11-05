@@ -520,6 +520,20 @@ describe("the git facet's cache", () => {
         expect(read()).toMatchObject({ branch: "feat/other", commitMessage: "third" });
     });
 
+    it("a repository made later inside a cached checkout is seen at once", () => {
+        const repo = scratch("identity-nested-");
+        git(["init", "-q", "-b", "main"], repo);
+        git(["commit", "-q", "--allow-empty", "-m", "outer"], repo);
+        const inner = join(repo, "inner");
+        mkdirSync(inner);
+        const read = () => whoIsCalling(local({}), { facets: ["git"], overrides: { cwd: inner } });
+
+        expect(read()).toMatchObject({ repoRoot: repo, commitMessage: "outer" });
+        git(["init", "-q", "-b", "main"], inner);
+        git(["commit", "-q", "--allow-empty", "-m", "inner"], inner);
+        expect(read()).toMatchObject({ repoRoot: inner, commitMessage: "inner" });
+    });
+
     it("a reftable repository: a commit or a branch switch is seen at once", () => {
         const repo = scratch("identity-reftable-");
         git(["init", "-q", "--ref-format=reftable", "-b", "main"], repo);

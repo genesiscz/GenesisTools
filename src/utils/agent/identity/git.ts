@@ -1,5 +1,5 @@
 import { readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 
@@ -77,10 +77,43 @@ function exists(path: string): boolean {
     return statKey(path) !== "-";
 }
 
+/**
+ * True when a repository appeared between `cwd` and the cached top level after the layout was cached (a nested
+ * `git init` or clone): the parent's HEAD still exists, so only a `.git` on the way up shows it. One stat per level.
+ */
+function nestedRepositoryAppeared(cwd: string, topLevel: string | null): boolean {
+    if (!topLevel) {
+        return false;
+    }
+
+    let dir: string;
+
+    try {
+        dir = realpathSync(cwd);
+    } catch (error) {
+        log.debug({ error, cwd }, "agent context cwd has no real path; the cached layout is checked again");
+        return true;
+    }
+
+    while (dir !== topLevel && dir.startsWith(`${topLevel}${sep}`)) {
+        if (exists(join(dir, ".git"))) {
+            return true;
+        }
+
+        dir = dirname(dir);
+    }
+
+    return false;
+}
+
 function layoutOf(cwd: string): Layout {
     const cached = layouts.get(cwd);
 
-    if (cached?.gitDir && exists(resolve(cwd, cached.gitDir, "HEAD"))) {
+    if (
+        cached?.gitDir &&
+        exists(resolve(cwd, cached.gitDir, "HEAD")) &&
+        !nestedRepositoryAppeared(cwd, cached.topLevel)
+    ) {
         return cached;
     }
 
