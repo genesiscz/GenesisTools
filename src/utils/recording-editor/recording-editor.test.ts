@@ -211,6 +211,23 @@ describe("the editor on a recording folder", () => {
         expect(sha(frame)).toBe(before);
     });
 
+    test("exports cannot overwrite the source recording manifest", async () => {
+        const source = recordingFolder();
+        const manifest = join(source, RECORDING_MANIFEST);
+        const before = readFileSync(manifest, "utf8");
+        await expect(
+            new RecordingEditor().run({
+                source: { file: source },
+                output: workspace(),
+                steps: [
+                    { kind: "frames", displays: [1] },
+                    { kind: "export", format: "mp4", output: manifest },
+                ],
+            }).done
+        ).rejects.toThrow(OverwriteInputError);
+        expect(readFileSync(manifest, "utf8")).toBe(before);
+    });
+
     test("receipt fingerprints include nested manifest frames", () => {
         const source = recordingFolder();
         const before = locateSource({ file: source }).fingerprint;

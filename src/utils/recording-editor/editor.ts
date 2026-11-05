@@ -14,6 +14,7 @@ import {
 } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { RECORDING_MANIFEST } from "@genesiscz/utils/screen-recorder/library";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { FrameDifferenceGuard } from "@genesiscz/utils/video/difference-guard";
 import { probeVideo, readVideoFrameTimes } from "@genesiscz/utils/video/probe";
@@ -715,7 +716,12 @@ export class RecordingEditor {
             ],
             inputs: [
                 located.path,
-                ...(located.kind === "frames" ? readFrameFolder(located.path).map((frame) => frame.path) : []),
+                ...(located.kind === "frames"
+                    ? [
+                          join(located.path, RECORDING_MANIFEST),
+                          ...readFrameFolder(located.path).map((frame) => frame.path),
+                      ]
+                    : []),
             ],
             receipts: receipts ? join(outputDir, ".receipts") : undefined,
             fingerprint: located.fingerprint,
