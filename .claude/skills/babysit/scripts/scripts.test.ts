@@ -30,6 +30,8 @@ import { appendEvent, readEvents, renderMarkdown } from "./ledger";
 import { continueVersionPick } from "./pick-unified";
 import { summarize, testEvidence } from "./plant";
 import { hitsInAddedLines, probeAddedLines } from "./probe";
+import { resolveSameText } from "./resolve-same";
+import { classifyPatch } from "./restack-verify";
 import { reviewBrief, reviewSpawnCommand } from "./review-brief";
 import { loadRun, runPaths } from "./run";
 import { trySwiftSlot } from "./swift-slot";
@@ -55,6 +57,134 @@ import {
     resolveVersionText,
 } from "./versions";
 import { createTaskLookup, pump } from "./watch-workers";
+
+describe("safe restack helpers", () => {
+    const block = (a: string, b: string) => `<<<<<<< HEAD\n${a}\n=======\n${b}\n>>>>>>> change\n`;
+
+    test("resolves whitespace and trailing commas but preserves real conflicts", () => {
+        expect(resolveSameText("a.ts", block("const x = [1, 2];", "const x=[1,2];")).text).toBe("const x = [1, 2];\n");
+        expect(resolveSameText("a.ts", block("const x = [1,];", "const x = [1];")).unresolved).toBe(0);
+        expect(resolveSameText("a.ts", block("one", "two")).unresolved).toBe(1);
+        expect(resolveSameText("a.ts", block('"a b"', '"ab"')).unresolved).toBe(1);
+        expect(resolveSameText("a.ts", block('f(",]")', 'f("]")')).unresolved).toBe(1);
+        expect(resolveSameText("a.ts", block("return x", "returnx")).unresolved).toBe(1);
+    });
+
+    test("only resolves a version line when it is the version file's only conflict", () => {
+        const file = ".claude-plugin/marketplace.json";
+        const version = block('  "version": "1.2.3",', '  "version": "1.3.0",');
+        expect(resolveSameText(file, version).text).toContain('"1.3.0"');
+        expect(resolveSameText(file, version + block('"name": "a"', '"name": "b"')).unresolved).toBeGreaterThan(0);
+        expect(resolveSameText(file, block('"version": "1.0.0-beta.1"', '"version": "1.0.0"')).text).toContain(
+            '"1.0.0"'
+        );
+    });
+
+    test("classifies per-file patches", () => {
+        expect(classifyPatch({ oldPatch: "a", newPatch: "a", equalsReference: false })).toBe("OK");
+        expect(classifyPatch({ oldPatch: "a", newPatch: null, equalsReference: true })).toBe("DROPPED");
+        expect(classifyPatch({ oldPatch: "a", newPatch: "b", equalsReference: true })).toBe(
+            "CHANGED (equals reference)"
+        );
+        expect(classifyPatch({ oldPatch: "a", newPatch: "b", equalsReference: false })).toBe("CHANGED");
+    });
+
+    test("the verifier reports an unchanged patch and a dropped change in a real repository", () => {
+        const cwd = fs.mkdtempSync(join(tmpdir(), "restack-verify-"));
+        const git = (...args: string[]) => {
+            const p = Bun.spawnSync(
+                [
+                    "git",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.com",
+                    ...args,
+                ],
+                { cwd, stdout: "pipe", stderr: "pipe" }
+            );
+            expect(p.exitCode, p.stderr.toString()).toBe(0);
+            return p.stdout.toString().trim();
+        };
+        git("init", "-q");
+        fs.writeFileSync(join(cwd, "file.txt"), "before\n");
+        git("add", "file.txt");
+        git("commit", "-qm", "base");
+        fs.writeFileSync(join(cwd, "file.txt"), "after\n");
+        git("commit", "-qam", "change");
+        const script = join(import.meta.dir, "restack-verify.ts");
+        const run = (newBase: string) =>
+            Bun.spawnSync(
+                [
+                    "bun",
+                    script,
+                    "--branch",
+                    "fixture=HEAD..HEAD",
+                    "--old-base",
+                    "HEAD^",
+                    "--new-base",
+                    newBase,
+                    "--reference",
+                    "HEAD",
+                ],
+                { cwd, stdout: "pipe", stderr: "pipe" }
+            );
+        const same = run("HEAD^");
+        expect(same.exitCode, same.stderr.toString()).toBe(0);
+        expect(same.stdout.toString()).toContain("OK\tfile.txt");
+        const dropped = run("HEAD");
+        expect(dropped.exitCode, dropped.stderr.toString()).toBe(1);
+        expect(dropped.stdout.toString()).toContain("DROPPED\tfile.txt");
+    });
+
+    test("the resolver completes a rebase even when Git leaves REBASE_HEAD behind", () => {
+        const cwd = fs.mkdtempSync(join(tmpdir(), "resolve-same-"));
+        const git = (...args: string[]) =>
+            Bun.spawnSync(
+                [
+                    "git",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.com",
+                    ...args,
+                ],
+                { cwd, stdout: "pipe", stderr: "pipe" }
+            );
+        const must = (...args: string[]) => {
+            const result = git(...args);
+            expect(result.exitCode, result.stderr.toString()).toBe(0);
+        };
+        must("init", "-q", "-b", "main");
+        fs.writeFileSync(join(cwd, "a.ts"), "const x = [];\n");
+        fs.writeFileSync(join(cwd, "b.txt"), "before\n");
+        must("add", ".");
+        must("commit", "-qm", "base");
+        must("checkout", "-qb", "feature");
+        fs.writeFileSync(join(cwd, "a.ts"), "const x=[1, 2];\n");
+        fs.writeFileSync(join(cwd, "b.txt"), "after\n");
+        must("commit", "-qam", "feature");
+        must("checkout", "-q", "main");
+        fs.writeFileSync(join(cwd, "a.ts"), "const x = [1, 2,];\n");
+        must("commit", "-qam", "main");
+        must("checkout", "-q", "feature");
+        expect(git("rebase", "--empty=stop", "--reapply-cherry-picks", "main").exitCode).toBe(1);
+        const result = Bun.spawnSync(["bun", join(import.meta.dir, "resolve-same.ts"), "--cwd", cwd], {
+            cwd,
+            stdout: "pipe",
+            stderr: "pipe",
+            env: { ...process.env, GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com" },
+        });
+        expect(result.exitCode, result.stderr.toString() + result.stdout.toString()).toBe(0);
+        expect(result.stdout.toString()).toContain("summary: 1 files resolved");
+        expect(fs.readFileSync(join(cwd, "a.ts"), "utf8")).toBe("const x = [1, 2,];\n");
+        expect(fs.readFileSync(join(cwd, "b.txt"), "utf8")).toBe("after\n");
+    });
+});
 
 const mainCheckout = dirname(
     Bun.spawnSync(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], {
