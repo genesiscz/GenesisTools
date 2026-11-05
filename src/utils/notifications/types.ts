@@ -54,8 +54,9 @@ export interface PhoneChannelConfig {
 }
 
 /**
- * When the phone gets an alert (F14). `desk: "away"` keeps the phone quiet while someone works at the Mac (the Mac's
- * own banner shows it) and lets it through once the Mac is locked or idle `idleMinutes`; `"always"` sends every time.
+ * When the phone gets an alert (F14). `desk: "away"` sends an alert to the phone only while the Mac is locked or idle
+ * `idleMinutes`; an alert that comes while someone works at the Mac shows on the Mac's own banner only, and the phone
+ * never gets it later. `"always"` sends every time.
  * `quiet` is a local `HH:MM` span with no alert, which a time-sensitive event still breaks. Retractions always go.
  */
 export interface PhoneWhenConfig {

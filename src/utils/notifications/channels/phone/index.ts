@@ -162,8 +162,9 @@ export function createPhoneChannel(deps: PhoneChannelDeps): ChannelDefinition<"p
             const hold = await phoneHold({ event, when: config.when, presence: deps.presence ?? readDeskPresence });
 
             if (hold) {
-                log.info({ id: event.id, hold }, "phone alert held");
-                return { ok: true, detail: `held: ${hold}` };
+                // Skipped, not queued: the Mac's banner shows it, and the phone does not get it later.
+                log.info({ id: event.id, hold }, "phone alert skipped");
+                return { ok: true, detail: `skipped, not sent later: ${hold}` };
             }
 
             try {
