@@ -974,6 +974,25 @@ describe("webhook receiver end to end", () => {
 });
 
 describe("bot pipeline", () => {
+    it("answers an unknown callback through the default router", async () => {
+        const fake = startFakeTelegram();
+        const bot = createBot(fakeToken(), { commands: 42, presses: [42, 43] }, { apiRoot: fake.apiRoot });
+        await bot.init();
+        await handleUpdate(bot, {
+            update_id: 1,
+            callback_query: {
+                id: "callback-1",
+                from: { id: 42, is_bot: false, first_name: "Tester" },
+                chat_instance: "instance",
+                data: "unknown:1",
+                message: { message_id: 1, date: 1, chat: { id: 43, type: "private", first_name: "Tester" } },
+            },
+        });
+        expect(fake.calls.find((call) => call.method === "answerCallbackQuery")?.body.text).toContain(
+            "no longer handled"
+        );
+        await fake.stop();
+    });
     it("takes only button presses from the decisions chat, never a command", async () => {
         const fake = startFakeTelegram();
         const pressed: number[] = [];
