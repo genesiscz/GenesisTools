@@ -99,9 +99,12 @@ describe("pending call readers", () => {
             },
         ];
 
+        // One exec_command call, its result assigned and nothing else: it reads as that command (unified ac188afc07).
         expect(codexPendingCall(records)?.detail).toEqual({
-            kind: "tool",
-            input: 'const r = await tools.exec_command({cmd:"touch probe.txt",sandbox_permissions:"require_escalated",justification:"May I?"});',
+            kind: "command",
+            command: "touch probe.txt",
+            cwd: "/work/side",
+            description: "May I?",
         });
         expect(
             codexPendingCall([
