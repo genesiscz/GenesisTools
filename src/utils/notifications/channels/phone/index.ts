@@ -114,7 +114,7 @@ async function sendToDevice({
         if (result.ok) {
             await deps.devices.update((devices) => {
                 const current = devices[device.id];
-                if (current && sameRoute(current.route, device.route)) {
+                if (current && current.seenAt === device.seenAt && sameRoute(current.route, device.route)) {
                     devices[device.id] = { ...current, route: flipped.route };
                 }
             });
@@ -125,7 +125,7 @@ async function sendToDevice({
         log.info({ device: device.id, reason: result.reason }, "a phone unregistered; it is dropped");
         await deps.devices.update((devices) => {
             const current = devices[device.id];
-            if (current && sameRoute(current.route, device.route)) {
+            if (current && current.seenAt === device.seenAt && sameRoute(current.route, device.route)) {
                 delete devices[device.id];
             }
         });
@@ -241,3 +241,5 @@ export const phoneChannel = createPhoneChannel({
     transports: PUSH_TRANSPORTS,
     keys: () => loadPushKeys(),
 });
+
+import { SafeJSON } from "@genesiscz/utils/json";
