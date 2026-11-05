@@ -1,8 +1,8 @@
 import { describe, expect, it, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type MobileProject, resolveRoute } from "@genesiscz/utils/mobile/project";
+import { iosApp, type MobileProject, resolveRoute } from "@genesiscz/utils/mobile/project";
 import { Command } from "commander";
 import { registerUp } from "../commands/up";
 import { builtAppPath } from "./build";
@@ -11,7 +11,7 @@ import { freshInstall, preseedFirstRun } from "./first-run";
 import { stamp } from "./paths";
 import { chooseDevice, choosePlatform, PLATFORMS } from "./platforms";
 import { mergeAndroidDevices } from "./platforms/android";
-import { clockBuildNumber, releasePlan } from "./release";
+import { clockBuildNumber, releasePlan, runRelease } from "./release";
 import { selectRoutes } from "./routes";
 import { chooseDeviceType, chooseRuntime, fitsWidth, simulatorNameFor } from "./simulator-fit";
 import { readSince } from "./up";
@@ -218,6 +218,46 @@ describe("release plan", () => {
             },
         },
     };
+
+    it("checks for a Podfile only after preparation, and skips pods when none was created", async () => {
+        for (const prepared of [true, false]) {
+            const appDir = mkdtempSync(join(tmpdir(), "release-preparation-"));
+            const command = prepared
+                ? 'require("node:fs").mkdirSync("ios");require("node:fs").writeFileSync("ios/Podfile","fixture")'
+                : "process.exit(0)";
+            const configured: MobileProject = {
+                ...project,
+                appDir,
+                config: {
+                    ...project.config,
+                    platforms: {
+                        ...project.config.platforms,
+                        ios: {
+                            ...iosApp(project),
+                            release: {
+                                prepare: () => [{ title: "prepare", command: [process.execPath, "-e", command] }],
+                            },
+                        },
+                    },
+                },
+            };
+            const outDir = join(appDir, "out");
+            const plan = releasePlan({ project: configured, buildNumber: "2", outDir, exportOnly: true });
+            for (const step of plan.steps) {
+                if (step.title !== "prepare") {
+                    step.command = [
+                        process.execPath,
+                        "-e",
+                        step.title === "pods"
+                            ? 'require("node:fs").writeFileSync("pods-ran","yes")'
+                            : "process.exit(0)",
+                    ];
+                }
+            }
+            await runRelease(plan, { outDir, onStep: () => {} });
+            expect(existsSync(join(appDir, "ios", "pods-ran"))).toBe(prepared);
+        }
+    });
 
     it("runs the project's preparation with the build number, then archives and uploads", () => {
         const plan = releasePlan({ project, buildNumber: "202611042105", outDir: "/out", exportOnly: false });
