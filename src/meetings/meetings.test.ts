@@ -1986,6 +1986,8 @@ describe("the meetings recorder loop", () => {
                 parallel?: boolean;
                 /** The live channel also takes settings, mute and a microphone (ax-tool with those commands). */
                 liveSettings?: boolean;
+                /** The live channel changes its rates and nothing else. */
+                liveRates?: boolean;
                 /** The first capture ends while its live switch is still in flight. */
                 lateSwitch?: boolean;
                 /** A live switch's first frame reaches the hook 100 ms after it was captured. */
@@ -2078,6 +2080,13 @@ describe("the meetings recorder loop", () => {
                     },
                     pause: () => this.commands.push("pause"),
                     resume: () => this.commands.push("resume"),
+                    ...(this.script.liveRates
+                        ? {
+                              setRates: async (active: number, idle: number) => {
+                                  this.commands.push(`rates ${active} ${idle}`);
+                              },
+                          }
+                        : {}),
                     ...(this.script.liveSettings
                         ? {
                               setRates: async (active: number, idle: number) => {
@@ -2177,6 +2186,7 @@ describe("the meetings recorder loop", () => {
         }>;
         liveControl?: boolean;
         liveSettings?: boolean;
+        liveRates?: boolean;
         lateSwitch?: boolean;
         delayedFrame?: boolean;
         audio?: boolean;
@@ -2228,6 +2238,7 @@ describe("the meetings recorder loop", () => {
                 steps: options.steps,
                 liveControl: options.liveControl,
                 liveSettings: options.liveSettings,
+                liveRates: options.liveRates,
                 lateSwitch: options.lateSwitch,
                 delayedFrame: options.delayedFrame,
                 audio: options.audio || options.audioSources !== undefined,
@@ -2940,6 +2951,25 @@ describe("the meetings recorder loop", () => {
 
         expect(restarted.answers[0]).toMatchObject({ applied: "restart" });
         expect(restarted.recorder.requests.map((request) => request.activeFps)).toEqual([1, 2]);
+    });
+
+    test("a settings change a capture can take only in part restarts it without sending it half the change", async () => {
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["hang", "hang"],
+            liveControl: true,
+            liveRates: true,
+            actions: [async (call) => [await call("settings.set", { activeFps: 2, threshold: 3 }), await call("stop")]],
+        });
+        const [changed] = run.answers[0] as unknown[];
+
+        expect(changed).toMatchObject({ applied: "restart", settings: { activeFps: 2, threshold: 3 } });
+        // No command is left in flight on the capture that restarts.
+        expect(run.recorder.commands).toEqual([]);
+        expect(run.recorder.requests.map((request) => [request.activeFps, request.thresholdPercent])).toEqual([
+            [capture.activeFps, capture.threshold * 100],
+            [2, 3],
+        ]);
     });
 
     test("muted audio is absent from a restarted capture and unmute restarts it enabled", async () => {
