@@ -1617,6 +1617,12 @@ function finish(state: {
     }
 
     for (const [file, why] of Object.entries(KEEP_AT_BASE)) {
+        const owner = state.owner.get(file);
+        if (owner) {
+            say(`! the table keeps ${file} at base, but the type tracer moved it into ${owner}: ${why}`);
+            continue;
+        }
+
         say(`kept at base by the table: ${file}: ${why}`);
     }
 
