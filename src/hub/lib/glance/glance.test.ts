@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { WaitingQueue } from "@app/question/lib/inbox/load";
+import type { PendingApproval } from "../approvals/types";
 import { buildGlance, closestLimit, fleetCounts } from "./index";
 
 const NOW = new Date("2026-11-04T15:00:00.000Z");
@@ -108,6 +109,44 @@ describe("glance", () => {
             resetsAt: null,
             exhaustAt: "2026-11-04T20:00:00.000Z",
         });
+    });
+
+    it("counts a pane call once when it is already a waiting dialog, and adds worker-only calls", async () => {
+        const pane: PendingApproval = {
+            id: "pane|claude|s-1|call-1",
+            backend: "pane",
+            provider: "claude",
+            session: "s-1",
+            cwd: null,
+            dialog: "permission",
+            tool: "Bash",
+            detail: { kind: "command", command: "echo test" },
+            askedAt: null,
+            verdicts: { allow: { supported: true }, "allow-always": { supported: true }, deny: { supported: true } },
+        };
+        const queue: WaitingQueue = {
+            ...QUEUE,
+            sessions: QUEUE.sessions.map((session) => ({
+                ...session,
+                items: session.items.map((item) =>
+                    item.kind === "dialog" ? { ...item, id: "claude:s-1:call-1" } : item
+                ),
+            })),
+        };
+        const glance = await buildGlance(
+            {
+                waiting: async () => queue,
+                approvals: async () => [
+                    pane,
+                    { ...pane, id: "codex-worker|codex|worker|call-2", backend: "codex-worker" },
+                ],
+                fleet: async () => [],
+                forecast: async () => ({ generatedAt: "", source: null, elapsedMs: 0, accounts: [] }),
+            },
+            NOW
+        );
+        expect(glance.waiting.total).toBe(3);
+        expect(glance.waiting.approvals).toBe(2);
     });
 
     it("adds the approvals to the waiting count, and a failed source counts as empty", async () => {

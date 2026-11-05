@@ -10,6 +10,7 @@ import { FLEET_PHASES } from "@genesiscz/utils/ai/live-sessions/phase";
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { buildForecast, type ForecastResult } from "@genesiscz/utils/ai/usage/forecast/forecast";
 import { logger } from "@genesiscz/utils/logger";
+import { parseApprovalId } from "../approvals/id";
 import { listPendingApprovals } from "../approvals/index";
 import type { PendingApproval } from "../approvals/types";
 
@@ -171,9 +172,23 @@ export async function buildGlance(
         }),
     ]);
 
+    const dialogs = new Set(
+        queue.sessions.flatMap((session) =>
+            session.items.filter((item) => item.kind === "dialog").map((item) => item.id)
+        )
+    );
+    const extraApprovals = approvals.filter((approval) => {
+        const target = parseApprovalId(approval.id);
+        return (
+            approval.backend !== "pane" ||
+            !target ||
+            !dialogs.has(`${target.provider}:${target.session}:${target.callId}`)
+        );
+    });
+
     return {
         generatedAt: now.toISOString(),
-        waiting: { total: queue.total + approvals.length, approvals: approvals.length, oldest: oldestOf(queue) },
+        waiting: { total: queue.total + extraApprovals.length, approvals: approvals.length, oldest: oldestOf(queue) },
         fleet: fleetCounts(fleet),
         inbox: inboxOf(queue),
         limits: closestLimit(forecast),
