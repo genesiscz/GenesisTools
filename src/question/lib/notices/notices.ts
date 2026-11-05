@@ -120,8 +120,14 @@ export async function postNotice(
     }
 
     try {
+        const channels = event.only ?? [...CHANNEL_NAMES];
+        await recordNotice({ id: event.id, channels, items }, deps);
         const delivered = await deps.dispatch(event);
-        await recordNotice({ id: event.id, channels: event.only ?? [...CHANNEL_NAMES], items }, deps);
+        const closed = await deps.store.update((notices) => !notices[event.id]);
+        if (closed) {
+            await Promise.all(channels.map((channel) => deps.retract(channel, event.id)));
+        }
+
         return delivered;
     } catch (err) {
         log.warn({ err, id: event.id }, "could not post a notice; the items it is about are stored");
