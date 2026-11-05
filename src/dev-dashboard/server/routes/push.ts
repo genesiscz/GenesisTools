@@ -24,7 +24,15 @@ const registration = z
         id: z.string().min(8).max(128),
         name: z.string().min(1).max(120),
         bundleId: z.string().min(3).max(200),
-        publicKey: z.string().min(40).max(64),
+        publicKey: z
+            .string()
+            .refine(
+                (value) =>
+                    /^[A-Za-z0-9+/]{43}=$/.test(value) &&
+                    Buffer.from(value, "base64").length === 32 &&
+                    Buffer.from(value, "base64").toString("base64") === value,
+                "expected a canonical base64 32-byte public key"
+            ),
         apns: z.object({ token: z.string().regex(/^[0-9a-f]{64,200}$/i) }).optional(),
         simulator: z.object({ udid: z.string().regex(/^[0-9A-F-]{36}$/i) }).optional(),
     })
