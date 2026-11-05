@@ -477,7 +477,7 @@ describe("update on quit", () => {
             deps: { readState: () => OLD, updater: () => c.now() < 10_000 ? "updater" : null, ...c },
         });
         expect(r.settled).toBe(true);
-        expect(r.waitedMs).toBeGreaterThanOrEqual(12_500);
+        expect(r.waitedMs).toBe(13_000);
     });
 
     test("a running updater holds the relaunch, and the cap ends the wait with a warning", async () => {
