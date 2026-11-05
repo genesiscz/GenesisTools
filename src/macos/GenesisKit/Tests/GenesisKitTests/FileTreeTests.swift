@@ -132,6 +132,10 @@ final class FileTreeTests: XCTestCase {
         model.diskChanged([root.standardizedFileURL.path])
         await settle(model) { !model.rows.contains { $0.name == ".hidden" } }
         XCTAssertFalse(model.rows.contains { $0.name == ".hidden" })
+        try Data("x".utf8).write(to: file)
+        model.reveal(file)
+        await settle(model) { model.rows.contains { $0.name == ".hidden" } }
+        XCTAssertTrue(model.rows.contains { $0.name == ".hidden" }, "reveal refreshes a recreated hidden file")
     }
 
     func testReRootingReadsAnOpenFolderWhoseReadItDropped() async {
