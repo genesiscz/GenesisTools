@@ -6,6 +6,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { fillerListsOf, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { bubbleFromSidecar, readCameraSidecar } from "@genesiscz/utils/recording-editor/camera";
 import { checkProject } from "@genesiscz/utils/recording-editor/check";
 import { ensureDenoisedSource } from "@genesiscz/utils/recording-editor/denoise";
@@ -44,6 +45,7 @@ import {
     wordCuts,
     wordSpans,
 } from "@genesiscz/utils/recording-editor/transcript-cuts";
+import { RPC_ERRORS, RpcError } from "@genesiscz/utils/screen-recorder/control";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { probeVideo, type VideoProbeLimits } from "@genesiscz/utils/video/probe";
@@ -280,9 +282,15 @@ export async function computeEdit({
     return { project: next, changed: true, facts, removedIdleUs, ...(loudness ? { loudness } : {}), warnings };
 }
 
+/** How often an edit runs again on a newer file before it refuses with `staleRevision`. */
+const EDIT_REPLAYS = 3;
+/** A save that finds another process saving the edit waits this long before it reads the file again. */
+const ARBITER_BUSY_WAIT_MS = 25;
+
 /**
  * Applies ops in order to the file as it is now (the window may have saved since the last read) and saves once. One
- * op that fails leaves the file as it was and names the op.
+ * op that fails leaves the file as it was and names the op. When another writer saved while the ops ran, they run
+ * again on its file; the save only happens on the file the ops last ran on.
  */
 export async function editProject(value: string, ops: readonly EditOp[]): Promise<OpenedProject> {
     const path = editPathOf(value);
@@ -296,31 +304,54 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
 
     let opened = await openProject(value);
     let edit = await computeEdit({ project: opened.project, ops, fresh: opened.fresh });
+    let saved: EditProject | undefined;
 
-    // Another writer (the window, a second CLI) may have saved while the ops measured: they run once more on its
-    // file, with the measurements they had, so neither edit is lost. A second save in between still wins this way.
-    if (edit.changed && diskRevision(opened.path) !== (opened.fresh ? null : opened.project.revision)) {
+    for (let replay = 0; ; replay++) {
+        if (!edit.changed) {
+            log.debug({ path: opened.path, ops: ops.map((op) => op.op) }, "edit changed nothing, not saved");
+            return { path: opened.path, project: opened.project, fresh: false, warnings: edit.warnings };
+        }
+
+        const base = opened;
+        const next = edit.project;
+        const attempt = saveIfAt(base.path, base.fresh ? null : base.project.revision, () => {
+            const written = writeProject(base.path, next);
+            pushUndo({
+                editPath: base.path,
+                before: base.project,
+                afterRevision: written.revision,
+                ops: ops.map((op) => op.op),
+            });
+            return written;
+        });
+
+        if (attempt.outcome === "saved") {
+            saved = attempt.value;
+            break;
+        }
+
+        if (replay >= EDIT_REPLAYS) {
+            throw new RpcError(
+                RPC_ERRORS.staleRevision,
+                `the edit kept changing on disk while these ops ran (${EDIT_REPLAYS + 1} tries); nothing was saved`
+            );
+        }
+
+        if (attempt.outcome === "busy") {
+            await Bun.sleep(ARBITER_BUSY_WAIT_MS);
+        }
+
+        // Another writer (the window, a second CLI) saved while the ops ran: they run again on its file, with the
+        // measurements they had, so neither edit is lost.
         const measured = edit.facts;
         opened = await openProject(value);
         log.info(
-            { path: opened.path, revision: opened.project.revision, by: opened.project.updatedBy },
+            { path: opened.path, revision: opened.project.revision, by: opened.project.updatedBy, replay },
             "the edit changed on disk since it was read; the ops run again on the newer file"
         );
         edit = await computeEdit({ project: opened.project, ops, fresh: opened.fresh, facts: measured });
     }
 
-    if (!edit.changed) {
-        log.debug({ path: opened.path, ops: ops.map((op) => op.op) }, "edit changed nothing, not saved");
-        return { path: opened.path, project: opened.project, fresh: false, warnings: edit.warnings };
-    }
-
-    const saved = writeProject(opened.path, edit.project);
-    pushUndo({
-        editPath: opened.path,
-        before: opened.project,
-        afterRevision: saved.revision,
-        ops: ops.map((op) => op.op),
-    });
     log.debug({ path: opened.path, ops: ops.map((op) => op.op), warnings: edit.warnings }, "edit applied");
     return {
         path: opened.path,
@@ -335,6 +366,30 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
 /** The revision of the edit file now, or null when it has none. */
 function diskRevision(path: string): number | null {
     return existsSync(path) ? readProject(path).revision : null;
+}
+
+/**
+ * Runs `write` only while the edit file is still at `expected` (null: no file yet). The check and the write are one
+ * synchronous step under the path's arbiter, so no writer in this process, and no TypeScript writer in another one,
+ * saves between them. `moved`: another writer saved since; `busy`: another process is saving it now.
+ */
+function saveIfAt<T>(
+    path: string,
+    expected: number | null,
+    write: () => T
+): { outcome: "saved"; value: T } | { outcome: "moved" | "busy" } {
+    try {
+        return withPathArbitrationSync(path, () =>
+            diskRevision(path) === expected ? { outcome: "saved", value: write() } : { outcome: "moved" }
+        );
+    } catch (error) {
+        if (isArbitrationBusy(error)) {
+            log.debug({ error, path }, "another process saves the edit now");
+            return { outcome: "busy" };
+        }
+
+        throw error;
+    }
 }
 
 /** The items of an edit that never show because their whole time is cut (check()'s first kind of issue). */

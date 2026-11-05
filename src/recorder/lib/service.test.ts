@@ -19,7 +19,7 @@ import {
 import { callRecorder, LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import type { z } from "zod";
 import fixture from "./__fixtures__/service-protocol.json";
-import { readUndoSteps, undoEdit } from "./edit";
+import { editProject, readUndoSteps, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
 import { EDITOR_TABS } from "./library";
@@ -536,6 +536,26 @@ describe("the REPL's and the CLI's way to the service", () => {
         const offline = serviceRoutedMovie(new Movie(alone), methods, { dir: mkdtempSync(join(tmpdir(), "rs-none-")) });
         await offline.volume(0.75);
         expect(readProject(alone).audio.volume).toBe(0.75);
+    });
+});
+
+describe("edits that run at the same time", () => {
+    // Regression test: 2026-11-05 recorder service review, finding 1 — a third edit at once overwrote an accepted one
+    test("three edits of the file at once keep all three changes, each at its own revision", async () => {
+        const path = editFixture("gt-edit-three-");
+        const results = await Promise.all([
+            editProject(path, [{ op: "text", from: 1, to: 2, text: "A" }]),
+            editProject(path, [{ op: "volume", volume: 0.4 }]),
+            editProject(path, [{ op: "marker", at: 2, label: "C" }]),
+        ]);
+        const saved = readProject(path);
+
+        expect(results.map((result) => result.project.revision).sort()).toEqual([2, 3, 4]);
+        expect({
+            volume: saved.audio.volume,
+            texts: saved.texts?.map((text) => text.text),
+            markers: saved.markers?.map((marker) => marker.label),
+        }).toEqual({ volume: 0.4, texts: ["A"], markers: ["C"] });
     });
 });
 
