@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
@@ -1920,6 +1920,13 @@ test("recorder failure persists a terminal state before releasing ownership", as
         },
         { command: "test", change: "fixture" }
     );
+    const captureDirs = [store.root, store.folder(record.id), join(store.folder(record.id), "frames"), join(store.folder(record.id), ".piece")];
+    for (const dir of captureDirs) {
+        mkdirSync(dir, { recursive: true });
+        chmodSync(dir, 0o755);
+    }
+    const ocrPath = join(store.folder(record.id), "ocr.jsonl");
+    writeFileSync(ocrPath, "", { mode: 0o644 });
     const update = store.update.bind(store);
     let calls = 0;
     store.update = async (...args: Parameters<typeof update>) => {
@@ -1931,6 +1938,11 @@ test("recorder failure persists a terminal state before releasing ownership", as
     await expect(
         runRecorder({ store, meetingId: record.id, display: 1, capture: meetingsConfigSchema.parse({}).global.capture })
     ).rejects.toThrow("injected recording failure");
+    for (const dir of captureDirs) {
+        expect(statSync(dir).mode & 0o777).toBe(0o700);
+    }
+    expect(statSync(ocrPath).mode & 0o777).toBe(0o600);
+    expect(statSync(store.path(record.id)).mode & 0o777).toBe(0o600);
     expect(store.read(record.id)?.recording).toMatchObject({
         status: "failed",
         warning: expect.stringContaining("injected recording failure"),
@@ -2078,14 +2090,14 @@ test("uncertain attendance ends neither exclude speakers nor prove a sole attend
 });
 
 test("listening answers replace quoted and meaning-marked terms", () => {
-    for (const mark of [{ quote: { text: "old", doc: "fixture", line: 1 } }, { meaning: "old meaning" }]) {
+    for (const mark of [{ quote: { text: "old", source: "fixture" } }, { meaning: "old meaning" }]) {
         const draft = meetingRecordSchema.parse({ ...record, items: [
             { id: "i1", kind: "term", status: "suggested", atSec: 12, heard: "old", rules: [], suggestedAt: meeting.start, ...mark },
             { id: "i2", kind: "question", status: "suggested", about: "term", question: "Spelling?", decides: ["i1"], choices: [], rules: [], suggestedAt: meeting.start },
         ] });
         answerQuestion(draft, "i2", { answer: "new", now: meeting.start });
         const corrections = correctionsOf(draft, meetingsConfigSchema.parse({}), { format: "md" });
-        expect(applyCorrections([line("Alice", 12, "old")], corrections)[0]?.text).toBe("new");
+        expect(applyCorrections([line("Alice", 12, "old")], corrections).entries[0]?.text).toBe("new");
     }
 });
 
@@ -2096,5 +2108,5 @@ test("confirmed attribution wins over later overlapping suggestions", () => {
         { ...range, id: "i2", status: "suggested", speaker: "Bob", confidence: 1 },
     ] });
     const corrections = correctionsOf(draft, meetingsConfigSchema.parse({}), { format: "md", withSuggested: true });
-    expect(applyCorrections([line("Unknown", 10, "Hello")], corrections)[0]?.speaker).toBe("Alice");
+    expect(applyCorrections([line("Unknown", 10, "Hello")], corrections).entries[0]?.speaker).toBe("Alice");
 });

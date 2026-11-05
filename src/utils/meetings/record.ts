@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -351,10 +351,11 @@ export class MeetingStore {
             history: [{ at: now, command: change.command, change: change.change }],
         });
 
-        mkdirSync(this.root, { recursive: true });
+        mkdirSync(this.root, { recursive: true, mode: 0o700 });
+        chmodSync(this.root, 0o700);
         for (let n = 2; ; n += 1) {
             try {
-                mkdirSync(this.folder(id));
+                mkdirSync(this.folder(id), { mode: 0o700 });
                 break;
             } catch (err) {
                 if (!(err instanceof Error) || !("code" in err) || err.code !== "EEXIST") {
@@ -393,7 +394,9 @@ export class MeetingStore {
     }
 
     private write(record: MeetingRecord): void {
-        atomicWriteFileSync(this.path(record.id), `${SafeJSON.stringify(record, null, 4)}\n`);
+        chmodSync(this.root, 0o700);
+        chmodSync(this.folder(record.id), 0o700);
+        atomicWriteFileSync(this.path(record.id), `${SafeJSON.stringify(record, null, 4)}\n`, { mode: 0o600 });
     }
 }
 

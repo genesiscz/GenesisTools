@@ -1,5 +1,6 @@
 import {
     appendFileSync,
+    chmodSync,
     existsSync,
     mkdirSync,
     readdirSync,
@@ -217,8 +218,14 @@ export async function runRecorder(options: {
     }
 
     try {
-        mkdirSync(framesDir, { recursive: true });
-        mkdirSync(pieceDir, { recursive: true });
+        for (const dir of [store.root, folder, framesDir, pieceDir]) {
+            mkdirSync(dir, { recursive: true, mode: 0o700 });
+            chmodSync(dir, 0o700);
+        }
+
+        if (existsSync(ocrPath)) {
+            chmodSync(ocrPath, 0o600);
+        }
 
         if (existsSync(files.stop)) {
             unlinkSync(files.stop);
@@ -280,6 +287,7 @@ export async function runRecorder(options: {
                     const jpg = join(framesDir, name);
                     try {
                         await toJpeg(frame.path, jpg, capture.jpegQuality);
+                        chmodSync(jpg, 0o600);
                     } catch (err) {
                         log.warn({ err, frame: frame.path }, "frame conversion failed; frame skipped");
                         continue;
@@ -304,7 +312,8 @@ export async function runRecorder(options: {
                                 confidence: block.confidence,
                                 bounds: block.bounds,
                             })),
-                        })}\n`
+                        })}\n`,
+                        { mode: 0o600 }
                     );
                     state.frames += 1;
                     state.bytes += statSync(jpg).size;
