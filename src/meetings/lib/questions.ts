@@ -474,7 +474,6 @@ export function answerQuestion(
 
         if (entry) {
             ledger.push(entry);
-
         }
     }
 
