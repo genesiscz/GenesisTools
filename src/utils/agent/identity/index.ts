@@ -287,6 +287,13 @@ function readTranscriptAndModel({
     const needPath = facets.has("transcript") || needModel;
 
     if (needPath && !given.has("transcriptPath") && identity.transcriptPath === undefined) {
+        // The locator finds the transcript of `sessionId`. A subagent with a session of its own (a Codex thread) is
+        // that session; one that runs inside its lead's session (Claude's agent_id) is not, so the found file would
+        // be the lead's: the path, and the model read from it, stay unset.
+        if (identity.subagentId && identity.subagentId !== identity.sessionId) {
+            return;
+        }
+
         try {
             const path = callerTranscriptOf({
                 agent: identity.agent,
