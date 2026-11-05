@@ -95,6 +95,35 @@ describe("job runner", () => {
         expect(runs).toEqual(["a", "a"]);
     });
 
+    test("a rerun that skips a step through its receipt still protects the inputs that step added", async () => {
+        const dir = workspace();
+        const source = join(dir, "source.mp4");
+        writeFileSync(source, "x");
+        const steps: JobStep<{ source?: string }>[] = [
+            {
+                name: "discover",
+                key: "source",
+                run: async (ctx) => {
+                    ctx.addInput(source);
+                    return { source };
+                },
+            },
+            {
+                name: "export",
+                run: async (ctx) => {
+                    ctx.claim(ctx.state.source ?? "");
+                    return ctx.state;
+                },
+            },
+        ];
+        const receipts = join(dir, "r");
+
+        await expect(runJob({ kind: "test", initial: {}, steps, receipts }).done).rejects.toThrow(OverwriteInputError);
+        const again = runJob({ kind: "test", initial: {}, steps, receipts });
+        await expect(again.done).rejects.toThrow(OverwriteInputError);
+        expect(again.steps[0]).toMatchObject({ name: "discover", skipped: true });
+    });
+
     test("a step never writes an input, and the guard sees through a relative or symlinked spelling", async () => {
         const dir = workspace();
         const input = join(dir, "input.mp4");

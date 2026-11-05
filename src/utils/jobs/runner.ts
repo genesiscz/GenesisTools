@@ -67,6 +67,8 @@ interface Receipt {
     key: string;
     state: unknown;
     at: string;
+    /** The inputs the steps up to this one protected with `addInput`; a receipt written before this field has none. */
+    inputs?: string[];
 }
 
 function receiptPath({ dir, index, name }: { dir: string; index: number; name: string }): string {
@@ -228,6 +230,14 @@ export class Job<S> {
                         if (missing.length === 0) {
                             state = restored;
                             start = index + 1;
+
+                            // The skipped steps' addInput calls do not run again: their inputs come from the receipt.
+                            for (const input of Array.isArray(receipt.inputs) ? receipt.inputs : []) {
+                                if (typeof input === "string") {
+                                    guard.add(input);
+                                }
+                            }
+
                             break;
                         }
 
@@ -267,7 +277,13 @@ export class Job<S> {
                 const key = keys[index];
 
                 if (receipts && key) {
-                    const receipt: Receipt = { version: 1, key, state, at: new Date().toISOString() };
+                    const receipt: Receipt = {
+                        version: 1,
+                        key,
+                        state,
+                        at: new Date().toISOString(),
+                        inputs: guard.list(),
+                    };
                     const path = guard.claim(receiptPath({ dir: receipts, index, name: step.name }));
 
                     try {
