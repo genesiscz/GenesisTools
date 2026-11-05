@@ -31,7 +31,7 @@ final class MeetingsWindowTests: XCTestCase {
         let suite = "meetings.tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let model = MeetingsWindowModel(defaults: defaults)
+        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
 
         XCTAssertEqual(model.place, .needs, "the window opens on Needs you by default")
         model.receive(overview)
@@ -51,7 +51,7 @@ final class MeetingsWindowTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set("all", forKey: MeetingsPreferences.openOnKey)
         defaults.set(30, forKey: MeetingsPreferences.daysKey)
-        let model = MeetingsWindowModel(defaults: defaults)
+        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
         XCTAssertEqual(model.place, .all)
         XCTAssertEqual(model.days, 30)
     }

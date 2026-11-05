@@ -87,8 +87,10 @@ final class MeetingsWindowModel {
     var notice: MeetingsNotice?
     var days: Int
     private var overviewGeneration = 0
+    private let loadDetail: @MainActor (MeetingDetailModel) -> Void
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, loadDetail: @escaping @MainActor (MeetingDetailModel) -> Void = { $0.load() }) {
+        self.loadDetail = loadDetail
         place = MeetingsPreferences.openOn(defaults) == .needs ? .needs : .all
         days = MeetingsPreferences.days(defaults)
     }
@@ -190,7 +192,7 @@ final class MeetingsWindowModel {
         }
         if detail?.id != id {
             detail = MeetingDetailModel(id: id, window: self)
-            detail?.load()
+            if let detail { loadDetail(detail) }
         }
     }
 
