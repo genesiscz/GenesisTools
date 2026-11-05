@@ -65,6 +65,8 @@ measured. So the rule of this skill is simple: no change, and no claim, without 
   <when>`, `tools compress cat <plain name>`, or `rg -z`.
 - "Is A faster than B?" → a benchmark pair under `scripts/benchmarks/`, A/B in fresh processes.
 - "What is burning CPU right now?" → `tools doctor cpu`.
+- "Does it write too much?" Check bytes written per poll and the macOS `.diag` disk-writes report (6da2c39ac0).
+- "Who calls this, and how often?" Count launches in the logs first. A poller caused 680 Bun launches in 12 hours (e42fe6ae86).
 - "Would FFI or C help?" → `references/ffi-and-native.md` first. FFI wins when one call replaces many JS calls or
   syscalls (a bulk directory read, a field pick over many lines). It does not win for one thin syscall, or for
   anything that must hand full JS objects back.

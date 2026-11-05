@@ -15,6 +15,10 @@ Contents: 1. what to measure · 2. the harness · 3. a benchmark pair · 4. A/B 
   few lines between samples (transcripts grow); say so when it happens.
 - **The input size** (files, lines, MB) and `uptime` before and after.
 
+## Memory
+
+- Measure current physical footprint with `physFootprintBytes()` in `src/utils/process/footprint.ts`. Peak `maxRSS` reported 1.3 to 1.7 GB when footprint was 550 to 650 MB (44904bfbd3). Log footprint, RSS, peak and heap separately every 10 minutes, and check that footprint falls after a cache drop while the peak remains.
+
 ## 2. The harness
 
 - `src/benchmark/lib`: `recordBaseline`, `readBaseline`, `compareToBaseline` (tolerance, `lowerIsBetter`, absolute

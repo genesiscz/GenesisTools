@@ -4,6 +4,10 @@ Each pattern is one measured change in this repository. The commit has the numbe
 (`.claude/docs/performance.md` in the main checkout) has the method. Look here before you design a fix: most new
 slowness is one of these shapes again.
 
+## Disk writes
+
+- A poll that finds nothing new writes nothing. The hub dirtied 2.1 GB in 4.5 hours through unchanged folds, a SQLite sort spill and full snapshot rewrites (6da2c39ac0, 0e1f82ec07, f275ef7e32). Compare identities before saving and write full snapshots only after full loads. Check bytes per poll and the `.diag` disk-writes stacks; an identical second read writes 0 bytes.
+
 ## Growing files: bound the reader and the writer
 
 - **Read an append-only file from its end.** The cmux surface journal (6.9 MB, 19,344 lines) was parsed whole by
@@ -60,6 +64,9 @@ slowness is one of these shapes again.
   reconcile benchmark measures both QoS levels (6018c717d3).
 
 ## Child processes and hooks
+
+- Bound writes to a peer that stops reading and keep deadlines independent of the blocked write. The server closes a connection above an 8 MB outbox (36da213781), and progress renews the call deadline (933eeaf347). Test a peer that accepts but never reads and verify bounded failure and flat memory.
+- Count command launches before optimizing them. An external poller caused 680 Bun launches in 12 hours (e42fe6ae86). Keep `--version` and `--help` independent of account and config loading, and reuse a clean version answer only while the binary identity is unchanged.
 
 - **An abandoned Bun child needs its pipes and timer unref'd too.** A build waited 20 s for a child it no longer
   needed. Unref'ing the child alone: 4 s; also its stdout pipe and the deadline timer: 0.03 s (22089d5c24; details in
