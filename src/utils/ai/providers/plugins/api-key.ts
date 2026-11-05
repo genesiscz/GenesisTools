@@ -120,12 +120,13 @@ function speechFor(
 function transcriptionFor(
     providerId: string,
     apiKey: string,
-    sdkTranscriptionModel?: (id: string) => never
+    sdkTranscriptionModel?: (id: string) => never,
+    transport?: BindContext["fetch"]
 ): { transcription?: (modelId: string) => TranscriptionModel } {
     if (providerId === "xai") {
         return {
             transcription: (modelId: string) =>
-                toTranscriptionModel({ provider: new AIXAITranscriptionProvider({ apiKey }), providerId, modelId }),
+                toTranscriptionModel({ provider: new AIXAITranscriptionProvider({ apiKey, fetch: transport }), providerId, modelId }),
         };
     }
 
@@ -173,7 +174,7 @@ function buildPlugin(spec: ApiKeyProviderSpec): ProviderPlugin {
                 ...(provider.textEmbeddingModel
                     ? { embedding: (modelId: string) => provider.textEmbeddingModel?.(modelId) }
                     : {}),
-                ...transcriptionFor(spec.id, apiKey, provider.transcriptionModel),
+                ...transcriptionFor(spec.id, apiKey, provider.transcriptionModel, ctx.fetch),
                 ...speechFor(spec.id, provider.speechModel),
                 ...(provider.imageModel ? { image: (modelId: string) => provider.imageModel?.(modelId) } : {}),
             } as ProviderBinding;

@@ -59,8 +59,8 @@ export class AIXAITranscriptionProvider implements AITranscriptionProvider {
     private readonly client: XAIClient;
 
     /** `apiKey`: the key of the account the binding resolved; without it the client walks the provider ladder. */
-    constructor(options: { apiKey?: string } = {}) {
-        this.client = new XAIClient(options.apiKey);
+    constructor(options: { apiKey?: string; fetch?: typeof globalThis.fetch } = {}) {
+        this.client = new XAIClient(options.apiKey, { fetch: options.fetch });
     }
 
     async isAvailable(): Promise<boolean> {
