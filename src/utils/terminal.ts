@@ -1,15 +1,18 @@
+import { readTerminalApp } from "@genesiscz/utils/agent/identity/terminal";
+import { readCmuxBundleId } from "@genesiscz/utils/cmux/caller-enricher";
 import { env } from "@genesiscz/utils/env";
+
 /**
- * Detect the name of the current terminal application.
- * Checks CMUX_BUNDLE_ID first (cmux sets TERM_PROGRAM="" but has its own env),
- * then falls back to TERM_PROGRAM.
+ * The display name of the terminal application an environment runs in: cmux by its bundle id first (cmux sets
+ * TERM_PROGRAM=""), then the terminal app's program, both read by their one reader (the cmux folder and the identity's
+ * terminal app reader).
  */
-export function detectTerminalApp(): string {
-    if (env.device.getCmuxBundleId()) {
+export function detectTerminalApp(environment: NodeJS.ProcessEnv = env.getProcessEnv()): string {
+    if (readCmuxBundleId(environment)) {
         return "cmux";
     }
 
-    const tp = env.device.getTermProgram() ?? "";
+    const tp = readTerminalApp(environment)?.program ?? "";
 
     switch (tp) {
         case "iTerm.app":

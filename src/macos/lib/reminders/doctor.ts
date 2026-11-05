@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { execPath } from "node:process";
 import { ensureBinary } from "@genesiscz/darwinkit";
+import { readTerminalApp } from "@genesiscz/utils/agent/identity/terminal";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
@@ -146,7 +147,10 @@ export async function runRemindersDoctor(
     const hasRemindersUsageString =
         plistPath && existsSync(plistPath) ? plistHasKey(plistPath, REMINDERS_USAGE_KEY) : null;
 
-    const hostApp = { bundleId: env.device.getHostBundleIdentifier(), termProgram: env.device.getTermProgram() };
+    const hostApp = {
+        bundleId: env.device.getHostBundleIdentifier(),
+        termProgram: readTerminalApp(env.getProcessEnv())?.program ?? undefined,
+    };
     const tcc = deps.readTcc();
     let auth = await deps.authorizationStatus();
 

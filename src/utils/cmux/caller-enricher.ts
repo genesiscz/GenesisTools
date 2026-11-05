@@ -14,6 +14,15 @@ export const CMUX_IDENTITY_ENV = ["CMUX_SURFACE_ID", "CMUX_WORKSPACE_ID", "CMUX_
  * it answers even when the cmux socket is dead (the offline rescue path). A blank surface names none; the workspace
  * and the tab are kept only beside a surface, trimmed, and may be stale once the surface moves.
  */
+/**
+ * Whether the environment is cmux's own: cmux exports its bundle id to every process it starts, and sets
+ * `TERM_PROGRAM` to an empty string, so the terminal app is named by this and not by the program. Trimmed; undefined
+ * outside cmux.
+ */
+export function readCmuxBundleId(env: NodeJS.ProcessEnv): string | undefined {
+    return env.CMUX_BUNDLE_ID?.trim() || undefined;
+}
+
 export function readCmuxTerminal(env: NodeJS.ProcessEnv): CmuxTerminal | undefined {
     const surfaceId = env.CMUX_SURFACE_ID?.trim();
 
