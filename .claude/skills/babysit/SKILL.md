@@ -359,12 +359,16 @@ file> --dedicated-review`); after a merge they go to a follow-up PR from master 
 Never count a reply-only round, or a label, as a fix round: on 2026-10-14 the report said "#500 merged after 3
 rounds" when GitHub showed two round summaries.
 
-**In T3 Code, or for any worker without the review harness, chunk the diff before the review starts** (2026-11-05).
-Split the PR's files into chunks of at most 8 files and give each chunk to its own reader (`delegate_task`,
-`isolation: "shared"`). Each reader writes its findings file as it goes, and its report ends with `Files reviewed: n
-of N`. A report under N is split again, never steered again. Measured on 2026-11-05: chunks of 8 files or fewer
-finished in 27 of 27 runs; chunks of 10 to 47 files stopped after 1 to 12 files, because a Terra turn at effort
-`high` ended after about 70,000 input tokens.
+**In T3 Code, or for any worker without the review harness, add `--delegate` to the same command** (Martin,
+2026-11-05): `review-brief.ts --run <dir> --pr <N> --wt <worktree> --delegate [--effort high|xhigh]`. The brief then
+carries what `--mode review` gives a Codex worker: the diff manifest, one `git diff <merge base>...<head> -- <path>`
+per file with its line counts, and the tier's review contract from `src/utils/worker/contract.ts` (high: every hunk,
+its callers and its tests; xhigh: also a probe for each finding), ending in `Files reviewed: <n> of <N>`. The reader
+opens each file's diff and only the code around a hunk, never a whole file. The script picks the tier from the diff
+size, as `--mode review` does, and prints the `delegate_task` line (`isolation: "shared"`). A report under N gets one
+steer that names the unread files from the manifest; a second short report reruns one tier higher in a new task.
+Never chunk the diff into many small readers instead: on 2026-11-05, reviewers told to "read the touched files" stopped
+after 1 to 12 files of 10 to 47, and the fix is a brief that asks for diffs, not a smaller slice.
 
 ## 7b. Optional: land a PR in master (only with the user's explicit approval)
 
@@ -403,6 +407,14 @@ only prepares and prints the squash; every git call is an argument array, becaus
 3. `git fetch origin <branch>` in the main checkout (`tools github merge` compares against the local remote ref and
    refuses a "moved" branch otherwise), then `tools github merge --rebase <N>`. Stacks merge bottom-up; the tool
    retargets dependents.
+   🛑 Never push the head of a PR whose GitHub base is `master` on top of commits master does not hold yet (#717,
+   2026-11-05). GitHub stores a PR's base commit at the head push and moves it only when the base branch changes, so
+   that PR's merged page keeps every commit under it (#717: 735 files, 3 its own; #705, #719 and #723 the same), and a
+   merged page cannot be repaired. Before a batch push of a rebased train, retarget each such PR to the branch it now
+   sits on (`gh pr edit <N> --base <parent branch>`), or push it only after master holds everything under it.
+   Merging PR by PR with the tool is safe: it restacks the head onto the master that holds the PR below, pushes,
+   then fast-forwards. After each merge, check that `gh api repos/<owner>/<repo>/pulls/<N> --jq .changed_files`
+   counts only the PR's own files (`gh pr view --json files` stops at 100).
 4. Check `gh pr view <N> --json state`: a restacked merge can leave the PR OPEN (#501, 2026-10-15). Log a `note`
    event with the merge SHA, and list every PR that did not land with its reason in the report.
 

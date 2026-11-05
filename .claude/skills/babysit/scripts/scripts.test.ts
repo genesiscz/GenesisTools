@@ -1050,6 +1050,28 @@ describe("independent review brief", () => {
         }
     });
 
+    test("a delegate brief carries the diff manifest and the review contract, and never asks for whole files", () => {
+        const input = { pr: 498, title: "t", wt: "/w", base: "master", scratch: "/s", postMerge: false, swift: false };
+        const manifest = {
+            base: "abc1234",
+            head: "def5678",
+            files: [
+                { path: "src/a.ts", added: 10, deleted: 2 },
+                { path: "src/b.ts", added: 1, deleted: 1 },
+            ],
+            added: 11,
+            deleted: 3,
+        };
+        const text = reviewBrief({ ...input, delegate: { manifest, effort: "high" } });
+        expect(text).toContain("Files to review (2, +11 -3):");
+        expect(text).toContain("git diff --no-textconv --no-ext-diff abc1234...def5678 -- <path>");
+        expect(text).toContain("Read every hunk of every file in the manifest.");
+        expect(text).toContain("Open the callers and the tests of every changed function.");
+        expect(text).toContain("Files reviewed: <n> of <N>");
+        expect(text).not.toContain("read the touched files in full");
+        expect(reviewBrief(input)).not.toContain("Files to review (");
+    });
+
     test("a fresh PR's brief says the bots review next to it, not that they found nothing", () => {
         const input = { pr: 498, title: "t", wt: "/w", base: "master", scratch: "/s", postMerge: false, swift: false };
         const fresh = reviewBrief({ ...input, fresh: true });
