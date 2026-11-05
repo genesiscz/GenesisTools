@@ -15,8 +15,10 @@ import {
     type RecorderSettingsPatch,
     type RecorderState,
     type RecorderStatus,
+    type RecordingMarker,
     RPC_ERRORS,
     RpcError,
+    refuseMarker,
     type SettingsAnswer,
     type StopAnswer,
 } from "./control";
@@ -111,6 +113,7 @@ export const FRAME_RECORDING_METHODS = [
     "audio.list",
     "audio.mute",
     "audio.setInput",
+    "marker.add",
     "settings.get",
     "settings.set",
 ] as const satisfies readonly RecorderMethod[];
@@ -198,6 +201,26 @@ export interface RecorderHooks {
     captures: Omit<PieceCapturesOptions["hooks"], "onLive">;
 }
 
+/** A marker as `marker.add` answers it, with the wall-clock time it was added. */
+export interface AddedMarker extends RecordingMarker {
+    /** ISO time of the call. */
+    at: string;
+}
+
+/**
+ * Where a kind keeps the markers of `marker.add`. A marker's `atMs` is wall-clock time since the movie's time 0: the
+ * proxy shows each frame at its own time and holds it until the next, so a pause stays in the movie as a held frame.
+ */
+export interface RecorderMarkersConfig {
+    /** Wall-clock ms of the movie's time 0, the time the kind's frame times count from. Default: the recording's start. */
+    originMs?: () => number;
+    /**
+     * Saves the marker where the editor reads the recording's own markers, before the call answers, so a crash keeps
+     * it. A throw refuses the marker.
+     */
+    save: (marker: AddedMarker) => Promise<void> | void;
+}
+
 export interface RecorderFinishConfig<S> {
     kind: string;
     /** The finish job's id; one is made when it is omitted. */
@@ -263,6 +286,7 @@ export interface RecorderConfig<S> {
         failures: PieceFailureRule;
     };
     controls: RecorderControlsConfig;
+    markers: RecorderMarkersConfig;
     hooks: RecorderHooks;
     finish: RecorderFinishConfig<S>;
 }
@@ -305,6 +329,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     private readonly completed = Promise.withResolvers<StopAnswer>();
     private current: RecorderSettings;
     private sound: AudioState;
+    private readonly marked: RecordingMarker[] = [];
     protected readonly config: RecorderConfig<S>;
 
     /** A definition is called once, here; its hooks run only after `open()`. */
@@ -472,6 +497,11 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         return { ...this.sound, muted: { ...this.sound.muted } };
     }
 
+    /** The markers this recording took, in the order they were added. */
+    get markers(): readonly RecordingMarker[] {
+        return this.marked;
+    }
+
     /** A recorder that turned out to have no sound: the recording records frames only. */
     protected recordNoSound(): void {
         this.sound = { ...this.sound, sources: [] };
@@ -580,6 +610,29 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         if (this.config.finish.capturesStep) {
             this.beginFinish();
         }
+    }
+
+    /** Marks this moment at its time in the movie; the kind saves the marker before the call answers. */
+    override async addMarker(label: string): Promise<RecordingMarker> {
+        if (this.phase !== "recording") {
+            refuseMarker(this.phase);
+        }
+
+        const now = Date.now();
+        const originMs = this.config.markers.originMs?.() ?? this.startedAt.getTime();
+        const marker: RecordingMarker = { atMs: Math.round(now - originMs), label };
+        this.marked.push(marker);
+
+        try {
+            await this.config.markers.save({ ...marker, at: new Date(now).toISOString() });
+        } catch (error) {
+            this.marked.splice(this.marked.indexOf(marker), 1);
+            log.warn({ error, id: this.config.live.id, marker }, "the marker could not be saved");
+            throw new RpcError(RPC_ERRORS.internal, `the marker could not be saved: ${errorText(error)}`);
+        }
+
+        log.debug({ id: this.config.live.id, marker }, "recording marker added");
+        return marker;
     }
 
     override async listJobs(): Promise<JobInfo[]> {

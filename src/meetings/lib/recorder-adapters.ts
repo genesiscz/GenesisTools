@@ -114,6 +114,13 @@ export class RecordingRecord {
         );
     }
 
+    /** Adds a marker of `marker.add` to the record at its wall time, beside the markers of earlier starts. */
+    async addMarker(marker: { at: string; label: string }): Promise<void> {
+        await this.update(`marker "${marker.label}"`, (recording) => {
+            recording.markers = [...(recording.markers ?? []), { at: marker.at, label: marker.label }];
+        });
+    }
+
     /** Writes the pause (or the resume) in the background; a failed write is logged, the recording goes on. */
     markStatus(status: "paused" | "recording"): void {
         const change = status === "paused" ? "paused" : "resumed";

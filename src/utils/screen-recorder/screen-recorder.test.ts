@@ -1376,6 +1376,50 @@ describe("characterization: what a library recording asks its recorder for", () 
             { id: 4, name: "right" },
         ]);
     });
+
+    test("stage 9 (markers): marker.add over the socket at its movie time, a pause included, saved into recording.json at once, refused while paused or stopping", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-lib-marker-"));
+        const liveDir = join(root, "live");
+        const recorder = new ScriptRecorder();
+        const recording = await start(recorder, { liveDir, folder: join(root, "rec") });
+        await recorder.waitFor(1);
+        const client = await RecorderClient.connect(recording.id, { dir: liveDir });
+        const before = Date.now();
+        const first = await client.addMarker("login done");
+        const after = Date.now();
+        const saved = readRecordingManifest(recording.folder);
+        await recording.pause();
+        const paused = await client.addMarker("while paused").catch((error: unknown) => error);
+        await Bun.sleep(150);
+        await recording.resume();
+        const second = await client.addMarker("after the pause");
+        client.close();
+        // The socket closes as soon as the finish ends, so the refusal while it stops is asked of the core itself.
+        await recording.stop({ wait: false });
+        const stopping = await recording.addMarker("too late").catch((error: unknown) => error);
+        await recording.stop();
+        const manifest = readRecordingManifest(recording.folder);
+        const startedMs = recording.startedAt.getTime();
+
+        expect(first.label).toBe("login done");
+        expect(first.atMs).toBeGreaterThanOrEqual(before - startedMs);
+        expect(first.atMs).toBeLessThanOrEqual(after - startedMs);
+        // Saved while it records: the marker, no end time (a reader still sees it record), no frame out of place.
+        expect(saved?.endedAt).toBeUndefined();
+        expect(saved?.settings.markers).toEqual([first]);
+        expect(saved?.frames).toEqual([]);
+        expect(paused).toBeInstanceOf(RpcError);
+        expect((paused as RpcError).code).toBe(RPC_ERRORS.unsupported);
+        expect((paused as RpcError).message).toBe("a marker needs a running recording; this one is paused");
+        // The movie holds the last frame through a pause, so the paused time is movie time.
+        expect(second.atMs - first.atMs).toBeGreaterThanOrEqual(150);
+        expect((stopping as RpcError).code).toBe(RPC_ERRORS.unsupported);
+        expect((stopping as RpcError).message).toBe("a marker needs a running recording; this one is stopping");
+        expect(recording.markers).toEqual([first, second]);
+        expect(manifest?.endedAt).toEqual(expect.any(String));
+        expect(manifest?.settings.markers).toEqual([first, second]);
+        expect(manifest?.frames.length).toBeGreaterThan(0);
+    });
 });
 
 test("malformed native stderr is ignored without losing valid events", () => {

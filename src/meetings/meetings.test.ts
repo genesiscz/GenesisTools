@@ -8,11 +8,24 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { voiceRuns } from "@genesiscz/utils/meetings/energy";
 import { MEETING_PLATFORM_IDS } from "@genesiscz/utils/meetings/platform";
-import { MeetingStore, meetingItemSchema, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import {
+    type MeetingRecord,
+    MeetingStore,
+    meetingItemSchema,
+    meetingRecordSchema,
+} from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { buildPidRecord, clearPidFile, serializePidRecord, writePidFile } from "@genesiscz/utils/process/pidfile";
-import { callRecorder, listLiveRecordings, RecorderClient, RPC_ERRORS } from "@genesiscz/utils/screen-recorder/live";
+import type { RecordingMarker } from "@genesiscz/utils/screen-recorder/control";
+import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import {
+    callRecorder,
+    listLiveRecordings,
+    RecorderClient,
+    RPC_ERRORS,
+    type RpcError,
+} from "@genesiscz/utils/screen-recorder/live";
 import { pieceTargets } from "@genesiscz/utils/screen-recorder/targets";
 import {
     CaptureError,
@@ -2226,6 +2239,8 @@ describe("the meetings recorder loop", () => {
                     folder: string;
                     files: { pid: string; state: string };
                     requests: CaptureRequest[];
+                    /** The meeting's record as it is saved now. */
+                    saved: () => MeetingRecord | undefined;
                 }
             ) => Promise<unknown>
         >;
@@ -2270,6 +2285,7 @@ describe("the meetings recorder loop", () => {
                     folder: store.folder(created.id),
                     files: recorderFiles(store),
                     requests: recorder.requests,
+                    saved: () => store.read(created.id),
                 }).then((answer) => {
                     answers[index] = answer;
                 });
@@ -2782,6 +2798,50 @@ describe("the meetings recorder loop", () => {
         expect(notPaused).toMatchObject({ code: RPC_ERRORS.notPaused });
         expect(run.saved?.recording?.spans?.map((span) => span.stopReason)).toEqual(["paused", "requested"]);
         expect(readdirSync(join(run.folder, "frames"))).toHaveLength(2);
+    });
+
+    test("marker.add: the record keeps each marker as it is added, recording.json lists them at their movie time, and a pause or a stop refuses one", async () => {
+        let keptAtOnce: unknown;
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["frames", "hang", "frames", "hang"],
+            actions: [
+                async (call, live) => {
+                    const intro = await call("marker.add", { label: "intro" });
+                    keptAtOnce = live.saved()?.recording?.markers;
+                    return [
+                        intro,
+                        await call("pause"),
+                        await call("marker.add", { label: "while paused" }),
+                        await Bun.sleep(60),
+                        await call("resume"),
+                    ];
+                },
+                // The next piece: a marker while it records, then one after the stop.
+                async (call) => [
+                    await call("marker.add", { label: "after the pause" }),
+                    await call("stop", { wait: false }),
+                    await call("marker.add", { label: "too late" }),
+                ],
+            ],
+        });
+        const [intro, , paused] = run.answers[0] as [RecordingMarker, unknown, RpcError];
+        const [afterPause, , late] = run.answers[1] as [RecordingMarker, unknown, RpcError];
+        const manifest = readRecordingManifest(run.folder);
+        const zeroMs = Date.parse(manifest?.startedAt ?? "");
+        const saved = run.saved?.recording?.markers ?? [];
+
+        expect(keptAtOnce).toEqual([{ at: expect.any(String), label: "intro" }]);
+        expect(intro).toEqual({ atMs: expect.any(Number), label: "intro" });
+        expect(paused.code).toBe(RPC_ERRORS.unsupported);
+        expect(paused.message).toBe("a marker needs a running recording; this one is paused");
+        expect(late.code).toBe(RPC_ERRORS.unsupported);
+        expect(late.message).toBe("a marker needs a running recording; this one is stopping");
+        expect(afterPause.atMs - intro.atMs).toBeGreaterThanOrEqual(60);
+        expect(saved.map((marker) => marker.label)).toEqual(["intro", "after the pause"]);
+        // The answer, the record's wall time and recording.json name the same moment of the movie.
+        expect(saved.map((marker) => Date.parse(marker.at) - zeroMs)).toEqual([intro.atMs, afterPause.atMs]);
+        expect(manifest?.settings.markers).toEqual([intro, afterPause]);
     });
 
     test("a switch completing after its capture ended does not resurrect it", async () => {

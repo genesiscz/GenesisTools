@@ -195,6 +195,11 @@ export const recordingBlockSchema = z
         clock: z.object({ source: z.string(), startedAt: isoTime }).optional(),
         /** When the failure notice of the current failure episode was posted; cleared by a piece that recorded. */
         failureNotifiedAt: isoTime.optional(),
+        /**
+         * The moments marked while it recorded (`marker.add`), over all its starts, at their wall-clock time; the
+         * meeting's recording.json gets them at their movie time.
+         */
+        markers: z.array(z.object({ at: isoTime, label: z.string() })).optional(),
     })
     .loose();
 export type RecordingBlock = z.infer<typeof recordingBlockSchema>;

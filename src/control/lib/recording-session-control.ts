@@ -10,6 +10,7 @@ import {
     type RecordingMarker,
     RPC_ERRORS,
     RpcError,
+    refuseMarker,
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
 import { parseDisplayList } from "@genesiscz/utils/screen-recorder/displays";
@@ -112,7 +113,7 @@ export class SessionRecorderControl extends RecorderControl {
 
     async addMarker(label: string): Promise<RecordingMarker> {
         if (this.state !== "recording") {
-            throw new RpcError(RPC_ERRORS.unsupported, `a marker needs a running recording; this one is ${this.state}`);
+            refuseMarker(this.state);
         }
 
         const marker = { atMs: Math.round(this.session.elapsedMs()), label };

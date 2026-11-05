@@ -23,6 +23,7 @@ import type { PieceTarget } from "@genesiscz/utils/screen-recorder/targets";
 import type { CaptureResult } from "@genesiscz/utils/screen-recorder/types";
 import { CallTimeline } from "./call-timeline";
 import { type RecorderStateFile, RecordingRecord } from "./recorder-adapters";
+import { meetingMovieZeroMs } from "./recording-manifest";
 import { meetingSource, sourceRefOf } from "./sources";
 import { RETRY_AFTER_MS, readAuto } from "./watch-auto";
 
@@ -51,6 +52,7 @@ export class MeetingRun {
     private failureNoticeOpen: boolean;
     private runFrames = 0;
     private audioFiles = 0;
+    private zeroMs?: number;
 
     constructor(
         options: RunRecorderOptions & {
@@ -113,6 +115,15 @@ export class MeetingRun {
 
     saveState(): void {
         this.stateFile.save(this.state);
+    }
+
+    /**
+     * Wall-clock ms of the meeting movie's time 0, read at the first marker: this run's start, or the first frame of an
+     * earlier run. Every frame of this run comes later, so it holds for the whole run.
+     */
+    movieZeroMs(): number {
+        this.zeroMs ??= meetingMovieZeroMs(this.folder, this.state.startedAt);
+        return this.zeroMs;
     }
 
     /** The loop starts: an empty piece folder, the state file, an open span, and the record's recording block. */

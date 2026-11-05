@@ -26,6 +26,7 @@ import {
     type RecorderSettingsPatch,
     type RecorderState,
     type RecorderStatus,
+    type RecordingMarker,
     RPC_ERRORS,
     RpcError,
     type SettingsAnswer,
@@ -419,6 +420,10 @@ export class RecorderClient extends RecorderControl {
 
     override setAudioInput(deviceId: string): Promise<AudioState> {
         return this.call("audio.setInput", { deviceId });
+    }
+
+    override addMarker(label: string): Promise<RecordingMarker> {
+        return this.call("marker.add", { label });
     }
 
     override getSettings(): Promise<SettingsAnswer> {

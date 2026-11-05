@@ -21,12 +21,8 @@ interface TimedFrame {
     reason: string;
 }
 
-/**
- * Writes `recording.json` into a meeting folder, so the recorder's menu, its library window and the editor list the
- * meeting's screen recording beside the library recordings (`tools recorder open <folder>` makes the proxy movie).
- * Frame times come from `ocr.jsonl`; a frame it lacks takes its file time. Returns undefined when there are no frames.
- */
-export function writeMeetingRecordingManifest(folder: string, record: MeetingRecord): RecordingManifest | undefined {
+/** When each kept frame was taken: its `ocr.jsonl` row, else its file time; undefined without a `frames/` folder. */
+function frameTimes(folder: string): Map<string, TimedFrame> | undefined {
     const framesDir = join(folder, "frames");
 
     if (!existsSync(framesDir)) {
@@ -70,13 +66,42 @@ export function writeMeetingRecordingManifest(folder: string, record: MeetingRec
         }
     }
 
-    if (timed.size === 0) {
+    return timed;
+}
+
+/** Wall-clock ms of the movie's time 0: the recording's start, or its first frame when that came earlier. */
+function movieZeroMs(startedAt: string | undefined, frames: Iterable<TimedFrame>): number {
+    const first = Math.min(...[...frames].map((frame) => frame.at));
+    return startedAt ? Math.min(Date.parse(startedAt), first) : first;
+}
+
+/**
+ * Wall-clock ms of time 0 of a meeting's movie while it records from `startedAt`: that start, or the first frame of an
+ * earlier run. The manifest counts the frames and the markers from this time.
+ */
+export function meetingMovieZeroMs(folder: string, startedAt: string): number {
+    return movieZeroMs(startedAt, frameTimes(folder)?.values() ?? []);
+}
+
+/**
+ * Writes `recording.json` into a meeting folder, so the recorder's menu, its library window and the editor list the
+ * meeting's screen recording beside the library recordings (`tools recorder open <folder>` makes the proxy movie).
+ * Frame times come from `ocr.jsonl`; a frame it lacks takes its file time. The record's markers go into
+ * `settings.markers` at their movie time. Returns undefined when there are no frames.
+ */
+export function writeMeetingRecordingManifest(folder: string, record: MeetingRecord): RecordingManifest | undefined {
+    const timed = frameTimes(folder);
+
+    if (!timed || timed.size === 0) {
         return undefined;
     }
 
     const recording = record.recording;
-    const first = Math.min(...[...timed.values()].map((frame) => frame.at));
-    const started = recording?.startedAt ? Math.min(Date.parse(recording.startedAt), first) : first;
+    const started = movieZeroMs(recording?.startedAt, timed.values());
+    const markers = (recording?.markers ?? []).map((marker) => ({
+        atMs: Math.max(0, Math.round(Date.parse(marker.at) - started)),
+        label: marker.label,
+    }));
     const manifest: RecordingManifest = {
         version: 1,
         id: record.id,
@@ -84,7 +109,7 @@ export function writeMeetingRecordingManifest(folder: string, record: MeetingRec
         startedAt: new Date(started).toISOString(),
         ...(recording?.stoppedAt ? { endedAt: recording.stoppedAt } : {}),
         displays: (recording?.displays ?? []).map((display) => ({ id: display.id, name: display.name })),
-        settings: { source: "meeting", meetingId: record.id },
+        settings: { source: "meeting", meetingId: record.id, ...(markers.length > 0 ? { markers } : {}) },
         frames: [...timed]
             .sort((a, b) => a[1].at - b[1].at || a[0].localeCompare(b[0]))
             .map(([file, frame]) => ({

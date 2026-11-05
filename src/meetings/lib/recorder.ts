@@ -93,6 +93,11 @@ function meetingRecorderConfig(run: MeetingRun) {
                 // Each capture takes a change live or restarts on its own.
                 settings: { scope: "each", change: settingsChange },
             },
+            // The record keeps each marker at its wall time; the finish's manifest step puts it into recording.json.
+            markers: {
+                originMs: () => run.movieZeroMs(),
+                save: (marker) => run.recordingRecord.addMarker(marker),
+            },
             hooks: {
                 beforeLoop: () => run.begin(recording),
                 afterLoop: () => {

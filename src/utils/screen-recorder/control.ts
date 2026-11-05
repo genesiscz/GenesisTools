@@ -171,6 +171,11 @@ export interface RecordingMarker {
     label: string;
 }
 
+/** The answer of every kind to `marker.add` while the recording does not record (paused, stopping). */
+export function refuseMarker(state: string): never {
+    throw new RpcError(RPC_ERRORS.unsupported, `a marker needs a running recording; this one is ${state}`);
+}
+
 export abstract class RecorderControl {
     abstract readonly kind: string;
     abstract readonly methods: readonly RecorderMethod[];

@@ -6,7 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { readFrameFolder } from "@genesiscz/utils/recording-editor/source";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
-import { writeMeetingRecordingManifest } from "./recording-manifest";
+import { meetingMovieZeroMs, writeMeetingRecordingManifest } from "./recording-manifest";
 
 const folder = mkdtempSync(join(tmpdir(), "gt-test-meeting-manifest-"));
 afterAll(() => rmSync(folder, { recursive: true, force: true }));
@@ -61,5 +61,33 @@ describe("a meeting's screen recording as a recorder recording", () => {
             [0, "change"],
             [12.5, "change"],
         ]);
+    });
+
+    it("puts the record's markers into settings.markers on the frames' axis, also when an earlier run's frame is time 0", () => {
+        const markers = [
+            { at: "2026-03-02T09:00:03.250Z", label: "intro" },
+            { at: "2026-03-02T09:10:00.000Z", label: "second start" },
+        ];
+        const marked = { ...record, recording: { ...record.recording, markers } } as MeetingRecord;
+        // A later start: the movie still begins at the first frame of the first run.
+        const restarted = {
+            ...marked,
+            recording: { ...marked.recording, startedAt: "2026-03-02T09:09:00.000Z" },
+        } as MeetingRecord;
+
+        expect(writeMeetingRecordingManifest(folder, marked)?.settings.markers).toEqual([
+            { atMs: 3250, label: "intro" },
+            { atMs: 600_000, label: "second start" },
+        ]);
+        expect(meetingMovieZeroMs(folder, "2026-03-02T09:00:00.000Z")).toBe(Date.parse("2026-03-02T09:00:00.000Z"));
+        expect(writeMeetingRecordingManifest(folder, restarted)?.settings.markers).toEqual([
+            { atMs: 1750, label: "intro" },
+            { atMs: 598_500, label: "second start" },
+        ]);
+        expect(meetingMovieZeroMs(folder, "2026-03-02T09:09:00.000Z")).toBe(Date.parse("2026-03-02T09:00:01.500Z"));
+        expect(writeMeetingRecordingManifest(folder, record)?.settings).toEqual({
+            source: "meeting",
+            meetingId: record.id,
+        });
     });
 });

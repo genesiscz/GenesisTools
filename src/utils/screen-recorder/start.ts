@@ -162,6 +162,8 @@ export class LibraryRecording extends FrameRecording<number> {
                 // Live only when every capture takes every change; otherwise every capture restarts.
                 settings: { scope: "all", change: (_before, _after, patch) => patchChange(patch) },
             },
+            // The frames count from the recording's start, so the markers do too (the default origin).
+            markers: { save: () => this.writeManifest(false) },
             hooks: {
                 // Anything a piece throws ends the recording; the finish still keeps what it recorded.
                 onError: (error) => {
@@ -193,7 +195,7 @@ export class LibraryRecording extends FrameRecording<number> {
                     {
                         name: "manifest",
                         run: async (ctx) => {
-                            this.writeManifest();
+                            this.writeManifest(true);
                             return ctx.state;
                         },
                     },
@@ -369,20 +371,30 @@ export class LibraryRecording extends FrameRecording<number> {
         item.kept = true;
     }
 
-    private writeManifest(): void {
+    /**
+     * Writes recording.json. `final`: every frame, the tracks and the end time. Before that (a marker while it records)
+     * only what is in place: the frames already under `frames/` and no end time, so a reader still sees it record.
+     */
+    private writeManifest(final: boolean): void {
         if (this.discarded) {
             return;
         }
 
+        const frames = final ? this.pending : this.pending.filter((item) => item.kept).sort((a, b) => a.atMs - b.atMs);
         const manifest: RecordingManifest = {
             version: 1,
             id: this.id,
             title: this.options.title ?? this.id,
             startedAt: this.startedAt.toISOString(),
-            endedAt: new Date().toISOString(),
+            ...(final ? { endedAt: new Date().toISOString() } : {}),
             displays: this.choice.recorded(),
-            settings: { ...this.settings, audio: this.audio, tracks: this.tracks },
-            frames: this.pending.map((item) => ({
+            settings: {
+                ...this.settings,
+                audio: this.audio,
+                ...(final ? { tracks: this.tracks } : {}),
+                ...(this.markers.length > 0 ? { markers: [...this.markers] } : {}),
+            },
+            frames: frames.map((item) => ({
                 file: join("frames", basename(item.frame.path)),
                 atMs: Math.max(0, Math.round(item.atMs)),
                 displayId: item.displayId,
