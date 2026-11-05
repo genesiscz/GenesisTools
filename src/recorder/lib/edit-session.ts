@@ -179,6 +179,9 @@ export class EditSession {
             // A save during the computation (the timer, a render) may have taken in another writer's file: the ops
             // run again on the edit as it is now, with the measurements they had, so this change keeps that file.
             while (this.project !== base) {
+                if (options.baseRevision !== undefined && options.baseRevision !== this.project.revision) {
+                    throw stale(`the edit moved to revision ${this.project.revision}, not ${options.baseRevision}`);
+                }
                 base = this.project;
                 edit = await computeEdit({ project: base, ops, fresh: this.fresh, facts: edit.facts, recordedMarkers });
             }
