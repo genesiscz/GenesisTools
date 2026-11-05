@@ -367,6 +367,23 @@ export const HOST_TIMEOUT_MS: Record<HostMethod, number> = {
  */
 export const SERVICE_EVENTS = ["project.changed", "window.changed", RECORDINGS_CHANGED, RECORDING_EVENT] as const;
 
+const requestId = z.union([z.number().int(), z.string()]);
+
+/** Each notification's params: the two events and the transport's progress and cancel (`utils/rpc/peer.ts`). */
+export const NOTIFICATION_SCHEMAS = {
+    "project.changed": z.object({ path: z.string(), revision: z.number().int().nonnegative(), by: z.string() }),
+    "window.changed": windowStateSchema,
+    "$/progress": z.object({
+        id: requestId,
+        fraction: z.number().min(0).max(1).optional(),
+        label: z.string().optional(),
+    }),
+    "$/cancel": z.object({ id: requestId }),
+} as const;
+
+/** `subscribe`'s params; the transport answers it (`utils/rpc/socket-server.ts`). */
+export const subscribeParamsSchema = z.object({ events: z.array(z.string()).optional() });
+
 /** The protocol's fingerprint, which `hello` answers: a change of the method list is a new version. */
 export function protocolVersion(methods: readonly string[]): string {
     const text = `${SERVICE_PROTOCOL}\n${[...methods].sort().join("\n")}`;

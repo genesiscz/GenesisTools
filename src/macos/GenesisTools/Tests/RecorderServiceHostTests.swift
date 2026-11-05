@@ -459,6 +459,49 @@ final class RecorderServiceHostTests: XCTestCase {
         XCTAssertThrowsError(try LiveRecordingRPCClientIncomingStub.params(["path": "/r/demo", "part": "soon"]).snapshotRequest())
     }
 
+    /// Each request the fixture says the service sends the host gets a result the zod result schema accepts, or the
+    /// error code the fixture names; what the host sends of its own (hello, progress, the window state) fits too.
+    /// render.snapshot is left out: it opens snapshot windows (its params are covered by the test above).
+    func testTheHostAnswersEveryFixtureRequestAsTheTypeScriptSchemasSay() async throws {
+        let schemas = try RecorderFixtures.Schemas()
+        let movie = folder.appendingPathComponent("screen.mp4")
+        try await makeMovie(at: movie, frames: 90)
+        _ = try await connectedHost()
+        var id = 900
+        var answered: [String] = []
+        for example in try RecorderFixtures.examples() where example["direction"] as? String == "service→host" {
+            let method = try XCTUnwrap(example["method"] as? String)
+            guard method != "render.snapshot" else { continue }
+            id += 1
+            var params = (example["request"] as? [String: Any])?["params"] as? [String: Any] ?? [:]
+            // The same fields, on local files: the renders read a real movie, the camera a real folder.
+            if method.hasPrefix("render."), params["path"] != nil { params["path"] = movie.path }
+            if let out = params["out"] as? String {
+                params["out"] = folder.appendingPathComponent("out-\(id).\(URL(fileURLWithPath: out).pathExtension)").path
+            }
+            if params["folder"] != nil { params["folder"] = folder.path }
+            let refusal = ((example["reply"] as? [String: Any])?["error"] as? [String: Any])?["code"] as? Int
+            face.camera = refusal == 1014 ? .denied : refusal == 1015 ? .busy("FaceTime") : .started
+            let answer = try await ask(id, method, params, timeout: 60)
+            if let refusal {
+                XCTAssertEqual(errorCode(answer), refusal, method)
+            } else {
+                XCTAssertEqual(try schemas.check(try XCTUnwrap(answer["result"], "\(method): \(answer)"), "results", method), [], method)
+            }
+            answered.append(method)
+        }
+        XCTAssertEqual(Set(answered), Set(RecorderHostMethods.table(face: face).keys).subtracting(["render.snapshot"]))
+        let hello = try XCTUnwrap(service.received.first { $0["method"] as? String == "hello" }?["params"])
+        XCTAssertEqual(try schemas.check(hello, "params", "hello"), [])
+        let progress = service.received.filter { $0["method"] as? String == "$/progress" }
+        XCTAssertFalse(progress.isEmpty, "the export reported progress")
+        for step in progress {
+            XCTAssertEqual(try schemas.check(step["params"], "notifications", "$/progress"), [])
+        }
+        XCTAssertEqual(try schemas.check(EditorWindows.shared.openState(), "notifications", "window.changed"), [])
+        XCTAssertEqual(try schemas.check(face.windows, "results", "window.list"), [])
+    }
+
     /// A movie of grey frames at 30 fps, 320 × 200.
     private func makeMovie(at url: URL, frames: Int) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)

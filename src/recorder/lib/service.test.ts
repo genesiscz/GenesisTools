@@ -19,12 +19,14 @@ import {
 import { callRecorder, LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import type { z } from "zod";
 import fixture from "./__fixtures__/service-protocol.json";
+import schemasFixture from "./__fixtures__/service-protocol.schemas.json";
 import * as edits from "./edit";
 import { editProject, readUndoSteps, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
 import { EDITOR_TABS } from "./library";
 import { applyEdit, serviceRoutedMovie, undoLastEdit } from "./movie-client";
+import { protocolJsonSchemas } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
 import { hostStill, ServiceHost } from "./service-client";
 import {
@@ -1006,6 +1008,11 @@ describe("the protocol fixture the Swift host tests read", () => {
         "recording.event service→client": recordingEventSchema,
         "recording.event recording→service": recordingEventSchema.omit({ id: true }),
     };
+
+    test("the JSON Schema file is what the zod schemas make (bun scripts/recorder/write-protocol-fixtures.ts)", () => {
+        expect(SafeJSON.parse(SafeJSON.stringify(protocolJsonSchemas()), { strict: true })).toEqual(schemasFixture);
+    });
+
     const schemasOf = (method: string) =>
         [...serviceApi.methods, ...hostApi.methods].find((each) => each.name === method) ??
         moviesApi.handles
