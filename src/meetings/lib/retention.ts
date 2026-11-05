@@ -24,7 +24,7 @@ export const RETENTION_STAMP_FILE = "retention-last.json";
 
 export interface PrunePlan {
     meetingId: string;
-    /** The newest frame or OCR line of the meeting, as an mtime. */
+    /** The newest frame, OCR line or sound track of the meeting, as an mtime. */
     lastCaptureAt: string;
     paths: string[];
 }
