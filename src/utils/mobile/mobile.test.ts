@@ -1,12 +1,14 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as boundedCommands from "@genesiscz/utils/process/bounded-command";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import { findById, flatten, formatTree, parseSource, readLogBox, summarize } from "./a11y";
 import { AlertWatcher, decideAlert } from "./alerts";
-import { emulatorCommand, freeEmulatorPort, parseAdbDevices } from "./android";
+import { emulatorCommand, freeEmulatorPort, openAndroidUrl, parseAdbDevices } from "./android";
 import { appiumPortFor, compareVersions, xcuitestXcodeProblem } from "./appium";
 import { readMetroLog } from "./metro";
 import { androidApp, findMobileConfig, iosApp, loadMobileProject, parseMobileConfig, projectRoutes } from "./project";
@@ -287,4 +289,23 @@ it("streams verbose build output without the captured-output ceiling", async () 
     expect(result.status).toBe(0);
     expect(bytes).toBe(5 * 1024 * 1024);
     expect(result.stdout.length).toBeLessThanOrEqual(16_384);
+});
+
+it("quotes a deep link as one remote shell argument before adb receives it", async () => {
+    const spy = spyOn(boundedCommands, "boundedCommand").mockResolvedValue({
+        status: 0,
+        signal: null,
+        stdout: "",
+        stderr: "",
+    });
+    const url = "shop://cart?a=1&b=$(printf injected);printf wrong";
+    try {
+        await openAndroidUrl({ serial: "fixture-device", url });
+        expect(spy.mock.calls[0][0].command.slice(-2)).toEqual([
+            "shell",
+            shellCommandLine(["am", "start", "-W", "-a", "android.intent.action.VIEW", "-d", url]),
+        ]);
+    } finally {
+        spy.mockRestore();
+    }
 });
