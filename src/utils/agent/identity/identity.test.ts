@@ -182,7 +182,9 @@ describe("whoIsCalling: a remote caller", () => {
             expect(identity.host).toBeUndefined();
         } finally {
             for (const key of Object.keys(gatewayEnv)) {
-                if (!(key in saved)) {
+                if (key in saved) {
+                    process.env[key] = saved[key];
+                } else {
                     delete process.env[key];
                 }
             }
