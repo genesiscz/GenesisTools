@@ -400,6 +400,18 @@ describe("digest folds", () => {
         );
 
         expect([window?.startPct, window?.endPct]).toEqual([50, 70]);
+
+        const [carried] = digestWindows(
+            [
+                day("2026-10-31", 0, 0, 0),
+                { ...day("2026-11-01", 0, 55, 55), availability: "limited" },
+                day("2026-11-02", 3, 70, 80),
+                { ...day("2026-11-03", 0, 80, 80), availability: "limited" },
+                day("2026-11-04", 0, 0, 0),
+            ],
+            () => ({ provider: "anthropic-sub", accountId: "acc-work", accountName: "work" })
+        );
+        expect([carried?.startPct, carried?.endPct]).toEqual([55, 80]);
     });
 
     test("one slot that held two kinds folds into one window per kind", () => {
