@@ -25,7 +25,7 @@ export const RECORDER_METHODS = [
 ] as const;
 export type RecorderMethod = (typeof RECORDER_METHODS)[number];
 
-export const RECORDER_STATES = ["recording", "paused", "stopping"] as const;
+export const RECORDER_STATES = ["recording", "paused", "stopping", "stopped"] as const;
 export type RecorderState = (typeof RECORDER_STATES)[number];
 
 /** JSON-RPC 2.0 error codes: the standard ones, and the recorder's own from 1001. */
