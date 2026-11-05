@@ -525,12 +525,13 @@ describe("proposal publish and discard (M11, F20)", () => {
         expect(result.drafts.map((draft) => draft.sent)).toEqual([true, false]);
         expect(calls).not.toContain("publish:COMMENT");
 
+        const saved = listProposalsFor(proposal, base)[0];
+        expect(saved?.drafts[1].claim).toBeDefined();
+        await expect(publishProposal({ pr: "mr" }, { pr: fakePr(calls), intent: now, base })).rejects.toThrow();
+        expect(calls.filter((call) => call.includes("src/b.ts"))).toHaveLength(1);
         const discarded = await discardProposal({ pr: "mr" }, { pr: fakePr([]), intent: now, base });
-        expect(discarded.rejected).toEqual(["d2"]);
-        expect(listProposalsFor(proposal, base)[0]?.drafts.map((draft) => draft.status)).toEqual([
-            "drafted",
-            "rejected",
-        ]);
+        expect(discarded.rejected).toEqual([]);
+        expect(listProposalsFor(proposal, base)[0]?.drafts[1].claim).toBeDefined();
     });
 
     test("a proposal for another head is refused before anything is posted", async () => {

@@ -17,7 +17,6 @@ import {
     realProposalIntentDeps,
     reconcileProposal,
     recordDraftSent,
-    releaseDraftClaim,
     SENT_STATUSES,
 } from "./proposal";
 
@@ -90,7 +89,7 @@ function storedProposal(ref: ProposalRef, base?: string): ReviewProposal {
 /**
  * Posts every accepted or edited draft as a pending review draft, then (unless `publish` is false) submits the
  * review with the agent's verdict as the event, or the given one, and reconciles. A draft that fails keeps its
- * decision (its claim is released) and stops the submit, so a retry posts only what is left. The window's rule
+ * decision and claim for reconciliation and stops the submit, since the post may have landed. The window's rule
  * that a proposal goes only to the head it reviewed holds here too.
  */
 export async function publishProposal(
@@ -134,8 +133,10 @@ export async function publishProposal(
             );
             result.drafts.push({ draftId: draft.id, sent: true, providerId });
         } catch (err) {
-            await releaseDraftClaim({ ref, draftId: draft.id, base: deps.base });
-            log.warn({ err, pr: found.url, draft: draft.id }, "proposal draft was not posted");
+            log.warn(
+                { err, pr: found.url, draft: draft.id },
+                "proposal draft send is uncertain; retained claim for reconciliation"
+            );
             result.drafts.push({
                 draftId: draft.id,
                 sent: false,
