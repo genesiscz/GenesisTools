@@ -30,7 +30,7 @@ export function useAnswerQueue() {
     const decisions = useLiveRefetchInterval("decisions");
     const pending = useLiveRefetchInterval("pending");
     const poll = decisions === false && pending === false ? false : (decisions || pending);
-    return useQuery({ ...answerQueueQuery(useDashboardClient()), refetchInterval: focused ? poll : false });
+    return useQuery({ ...answerQueueQuery(useDashboardClient()), enabled: focused, refetchInterval: focused ? poll : false });
 }
 
 /**
