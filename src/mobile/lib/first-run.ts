@@ -51,11 +51,15 @@ export async function preseedFirstRun(options: {
             continue;
         }
 
-        if (await setPrivacy({ udid, action: "grant", service, bundleId })) {
+        const outcome = await setPrivacy({ udid, action: "grant", service, bundleId });
+
+        if (outcome === true) {
             report.granted.push(service);
         } else {
-            mkdirSync(dirname(marker), { recursive: true });
-            writeFileSync(marker, new Date().toISOString());
+            if (outcome === "timeout") {
+                mkdirSync(dirname(marker), { recursive: true });
+                writeFileSync(marker, new Date().toISOString());
+            }
             report.skipped.push(`privacy ${service}: simctl privacy failed or timed out`);
         }
     }
