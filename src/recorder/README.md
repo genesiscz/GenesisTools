@@ -64,6 +64,11 @@ Pausing ends a segment, so the paused time is not in the movie; segments of the 
 While it runs, the menu bar item and the floating controls (hidden from the capture) control it, and so do
 `tools recorder stop` and the REPL.
 
+While `tools recorder serve` runs, every live recording joins it, so `stop`, `pause`, `resume`, `status`, `mark` and
+the REPL's recording handles go through the service's one socket (`recordings.live`, `recording.call`, and
+`recordings.changed` to subscribers). Without a service they use the recording's own socket, which stays the whole
+time. A recording that loses the service goes on recording and joins the next service that starts.
+
 A `<recording>` is a library id, `last` (the newest), `open` (the one in front in the editor; with one window open,
 that one), a recording folder, a movie or an `edit.json`. The editor writes which windows it shows to
 `~/.genesis-tools/recordings/editor-open.json` with its pid, so a reader drops the file of an editor that is gone.

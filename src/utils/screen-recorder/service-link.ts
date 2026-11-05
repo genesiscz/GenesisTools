@@ -131,6 +131,9 @@ export class ServiceRegistration {
     private refused?: { key: string; until: number };
     private frameTimer?: ReturnType<typeof setTimeout>;
     private closed = false;
+    /** Forwarded calls being answered now; a close waits for them, since `stop` closes the recording before it answers. */
+    private answering = 0;
+    private closeWhenAnswered?: () => void;
 
     constructor(
         private readonly options: {
@@ -192,7 +195,10 @@ export class ServiceRegistration {
         }
     }
 
-    /** Leaves the service; the service tells its subscribers the recording ended. */
+    /**
+     * Leaves the service, after the answers of the calls it is answering now (a forwarded `stop` closes the recording
+     * before it answers); the service tells its subscribers the recording ended.
+     */
     close(): void {
         if (this.closed) {
             return;
@@ -204,7 +210,31 @@ export class ServiceRegistration {
         void this.watch?.unsubscribe();
         const client = this.client;
         this.client = undefined;
-        client?.close();
+
+        if (this.answering === 0) {
+            client?.close();
+            return;
+        }
+
+        this.closeWhenAnswered = () => client?.close();
+    }
+
+    /** A forwarded call; the connection stays open until its answer is written. */
+    private async answer(method: string, params: unknown): Promise<unknown> {
+        this.answering += 1;
+
+        try {
+            return await this.options.answer(method, params);
+        } finally {
+            this.answering -= 1;
+
+            if (this.answering === 0 && this.closeWhenAnswered) {
+                const close = this.closeWhenAnswered;
+                this.closeWhenAnswered = undefined;
+                // The peer writes the answer after this returns; the close goes after it.
+                setTimeout(close, 0);
+            }
+        }
     }
 
     private send(): void {
@@ -244,7 +274,11 @@ export class ServiceRegistration {
         let client: RpcSocketClient | undefined;
 
         try {
-            client = await connectService({ entry: service, role: "recording", onRequest: this.options.answer });
+            client = await connectService({
+                entry: service,
+                role: "recording",
+                onRequest: (method, params) => this.answer(method, params),
+            });
             await client.call("recordings.register", this.options.entry());
         } catch (error) {
             client?.close();

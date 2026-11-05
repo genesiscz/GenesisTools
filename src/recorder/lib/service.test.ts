@@ -563,8 +563,11 @@ class FakeRecordingControl extends RecorderControl {
         return { state: this.state };
     }
 
+    /** As the real recorders do, the live recording closes before the stop answers. */
     async stop(): Promise<StopAnswer> {
         this.stops += 1;
+        this.live?.close("stopped");
+        await Bun.sleep(10);
         return { state: "stopped", outcome: "requested" };
     }
 
@@ -644,7 +647,8 @@ describe("live recordings in the service", () => {
             code: RPC_ERRORS.unknownRecording,
         });
 
-        live.close();
+        expect(await client.stop()).toEqual({ state: "stopped", outcome: "requested" });
+        expect(live.joinedService).toBe(false);
         await waitUntil("the end", () => service.liveRecordings().length === 0);
         await waitUntil("the ended change", () =>
             heard.some((each) => each.method === "recordings.changed" && Object(each.params).change === "ended")

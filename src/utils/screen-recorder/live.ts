@@ -184,8 +184,8 @@ export class LiveRecordingServer {
         /** The host opens the floating controls for it (`tools recorder start`, the menu's Record Screen). */
         panel?: boolean;
         /**
-         * The recorder service it joins while one runs: by default the one beside the live folder; a scratch `dir`
-         * joins none unless this names one.
+         * The recorder service it joins while one runs: by default the one in `<genesis-tools root>/recordings`; a
+         * scratch `dir` joins none unless this names one.
          */
         service?: ServiceJoin;
     }) {

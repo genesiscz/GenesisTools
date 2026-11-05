@@ -22,6 +22,8 @@ these names.
   answers window, render and camera requests. In TypeScript, `RecorderHost` is the seam, with the connected app and the
   headless app face as its two adapters.
 - **Live recording**: a recording while its capture runs. Its own process owns the capture and serves a per-recording
-  control socket (`RecorderControl`).
+  control socket (`RecorderControl`). While a recorder service runs, the process also joins it as a `recording`
+  connection, so clients reach it through the service (`recordings.live`, `recording.call`); it rejoins a service that
+  restarts and keeps its own socket the whole time.
 - **Recorder face**: the recorder part of GenesisTools.app, started with `--recorder`: the menu bar item, the editor and
   library windows, and the headless render modes.

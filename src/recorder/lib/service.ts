@@ -419,6 +419,15 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
                 throw new RpcError(RPC_ERRORS.invalidParams, 'recordings.register needs a hello with role "recording"');
             }
 
+            const [registered] = connection.state.recordings;
+
+            if (registered !== undefined && registered !== params.id) {
+                throw new RpcError(
+                    RPC_ERRORS.invalidParams,
+                    `this connection registered ${registered}; one recording per connection`
+                );
+            }
+
             const held = recordings.get(params.id);
 
             if (held && held.connection !== connection && !held.connection.closed) {
@@ -489,7 +498,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
         }
 
         if (method === RECORDING_EVENT) {
-            // A recording's notification: subscribers hear it with the recording's id.
+            // A recording's notification: subscribers hear it with the recording's id (one recording per connection).
             const event = recordingEventSchema.omit({ id: true }).safeParse(params);
             const [id] = connection.state.recordings;
 
