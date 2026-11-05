@@ -5,6 +5,8 @@ import {
     parseWindowIdList,
     type RecordingTarget,
 } from "@app/control/lib/recording-targets";
+import { FRAME_NAMINGS, OCR_SINK_KINDS } from "@genesiscz/utils/screen-recorder/frame-output";
+import { FRAME_FLUSHES } from "@genesiscz/utils/screen-recorder/start";
 import { Command, Option } from "commander";
 import { z } from "zod";
 import type { VideoRecordingOptions } from "./video-recording";
@@ -65,7 +67,23 @@ export interface StartFlags {
     controls?: boolean;
     open?: boolean;
     json?: boolean;
+    /** `--frames [format]`: a frames recording (`recorder.start()` of the REPL) instead of a movie. */
+    frames?: string | boolean;
+    jpegQuality?: string;
+    naming?: string | boolean;
+    flush?: string | boolean;
+    ocr?: boolean;
+    ocrLanguages?: string;
+    ocrMinChars?: string;
+    ocrSink?: string | boolean;
+    displays?: string;
+    maxLongSide?: string;
+    heartbeat?: string;
+    pieceSeconds?: string;
 }
+
+/** A movie's frame rate when `--fps` is not given (a frames recording keeps the library recorder's own). */
+export const DEFAULT_MOVIE_FPS = 60;
 
 /** Declares the flags of `tools recorder start` on `command`. */
 export function withStartOptions(command: Command): Command {
@@ -73,7 +91,10 @@ export function withStartOptions(command: Command): Command {
     return command
         .option("--audio <sources>", "audio tracks: system, mic, or system,mic")
         .option("--mic-device <uid>", "the microphone (an id from `ax-tool audio-devices`; needs --audio mic)")
-        .option("--fps <n>", "frames per second while something moves, 1–120", "60")
+        .option(
+            "--fps <n>",
+            `frames per second while something moves, 1–120 (default ${DEFAULT_MOVIE_FPS} for a movie)`
+        )
         .option(
             "--idle-fps <n>",
             `frames per second while nothing moves, ${idleFps.min}–${idleFps.max} (by default the movie keeps --fps)`
@@ -112,6 +133,30 @@ export function withStartOptions(command: Command): Command {
         .option("--no-controls", "do not open the floating controls")
         .option("--open", "open the editor when the recording stops")
         .option("--json", "events and the result as JSON lines on stdout")
+        .option(
+            "--frames [format]",
+            "record frames instead of a movie, as recorder.start() in the REPL does: original (the recorder's files, the default) or jpeg"
+        )
+        .option("--jpeg-quality <q>", "with --frames jpeg: the JPEG quality, 0.1–1 (default 0.75)")
+        .option("--naming [naming]", `with --frames: how frames are named, ${FRAME_NAMINGS.join(" or ")}`)
+        .option(
+            "--flush [when]",
+            `with --frames: ${FRAME_FLUSHES.join(" (all at the stop) or ")} (each piece's frames land as the piece ends)`
+        )
+        .option("--ocr", "with --frames: read the text of each kept frame (Vision OCR)")
+        .option(
+            "--ocr-languages <list>",
+            "with --frames: the OCR languages in order of preference (en-US,cs-CZ); turns OCR on"
+        )
+        .option("--ocr-min-chars <n>", "with --frames: OCR text shorter than this is stored as no text; turns OCR on")
+        .option(
+            "--ocr-sink [sink]",
+            `with --frames: where the OCR goes, ${OCR_SINK_KINDS.join(" (a <frame>.ocr.json beside each frame) or ")} (one ocr.jsonl row per frame)`
+        )
+        .option("--displays <which>", "with --frames: all, main (the default) or display ids, comma separated")
+        .option("--max-long-side <px>", "with --frames: the longest side of a kept frame, 320–16384")
+        .option("--heartbeat <seconds>", "with --frames: a frame at least this often while nothing changes, 0 is off")
+        .option("--piece-seconds <n>", "with --frames: the length of one capture piece, 5–180")
         .addOption(
             new Option("--start-gate <path>", "the start gate of a caller that waits for this recording").hideHelp()
         );
@@ -161,7 +206,8 @@ function parseAudio(raw: string | undefined): StartAudioSource[] | undefined {
     return known;
 }
 
-function countdownOf(raw: string | boolean | undefined): number | undefined {
+/** `--countdown [seconds]`: undefined when not given, the picker's 3 s when bare. */
+export function countdownSecondsOf(raw: string | boolean | undefined): number | undefined {
     if (raw === undefined || raw === false) {
         return undefined;
     }
@@ -198,22 +244,29 @@ export type StartRequest = Omit<VideoRecordingOptions, "target" | "emit" | "prep
 };
 
 /** Checks and converts the flags; throws one plain message naming the flag that is wrong. */
-export function parseStartFlags(flags: StartFlags): StartRequest {
+/** `--audio` and `--mic-device`; the device without the microphone is refused, since it would record nothing. */
+export function startAudioOf(flags: StartFlags): StartAudioSource[] | undefined {
     const audio = parseAudio(flags.audio);
 
     if (flags.micDevice !== undefined && !audio?.includes("mic")) {
         throw new Error("--mic-device needs --audio mic (or system,mic): without the microphone it records nothing");
     }
 
+    return audio;
+}
+
+export function parseStartFlags(flags: StartFlags): StartRequest {
+    const audio = startAudioOf(flags);
+
     return {
         target: namedTarget(flags),
         title: flags.title,
-        fps: bounded(flags.fps, "--fps", START_LIMITS.fps),
+        fps: bounded(flags.fps ?? String(DEFAULT_MOVIE_FPS), "--fps", START_LIMITS.fps),
         idleFps: bounded(flags.idleFps, "--idle-fps", START_LIMITS.idleFps),
         threshold: bounded(flags.threshold, "--threshold", START_LIMITS.threshold),
         excludeWindowIds: parseWindowIdList(flags.excludeWindowIds, "--exclude-window-ids"),
         camera: flags.camera === true,
-        countdownSeconds: countdownOf(flags.countdown),
+        countdownSeconds: countdownSecondsOf(flags.countdown),
         audio,
         micDevice: flags.micDevice,
         maxSeconds: bounded(flags.maxSeconds, "--max-seconds", START_LIMITS.maxSeconds),

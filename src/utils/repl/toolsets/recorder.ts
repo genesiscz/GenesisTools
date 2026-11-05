@@ -16,7 +16,12 @@ import {
 } from "@genesiscz/utils/screen-recorder/control";
 import { FRAME_NAMINGS, OCR_SINK_KINDS } from "@genesiscz/utils/screen-recorder/frame-output";
 import { type LiveNotification, listLiveRecordings, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
-import { FRAME_FLUSHES, type LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
+import {
+    FRAME_FLUSHES,
+    type LibraryRecording,
+    type StartRecordingOptions,
+    startRecording,
+} from "@genesiscz/utils/screen-recorder/start";
 import type { FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
 import { z } from "zod";
 import { ReplToolset, type ToolsetContext } from "../toolset";
@@ -58,6 +63,16 @@ export const recorderStartSchema = z
         pieceSec: z.number().min(5).max(180).optional(),
     })
     .strict();
+
+/**
+ * What `startRecording` takes for the options of `recorder.start()` (also `tools recorder start --frames`): an OCR
+ * block that does not say `enabled` turns OCR on.
+ */
+export function libraryStartOptions(
+    options: z.infer<typeof recorderStartSchema>
+): Omit<StartRecordingOptions, "recorder"> {
+    return { ...options, ocr: options.ocr ? { ...options.ocr, enabled: options.ocr.enabled ?? true } : undefined };
+}
 
 /** `set` takes `fps` for the active rate, as `start` does. */
 export const recorderSetSchema = recorderSettingsPatchSchema
@@ -479,8 +494,7 @@ export class RecorderToolset extends ReplToolset {
 
                 const recording = await startRecording({
                     recorder: this.createRecorder(),
-                    ...options,
-                    ocr: options.ocr ? { ...options.ocr, enabled: options.ocr.enabled ?? true } : undefined,
+                    ...libraryStartOptions(options),
                 });
                 this.owned.push(recording);
                 return this.track(new RecordingHandle(await RecorderClient.connect(recording.id), recording));

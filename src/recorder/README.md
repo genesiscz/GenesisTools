@@ -12,6 +12,12 @@ tools recorder start [--audio system,mic] [--mic-device UID] [--title T] [--max-
                      [--fps N] [--idle-fps N] [--threshold PCT] [--countdown [S]] [--camera]
                      [--exclude-window-ids IDS] [--system-cursor] [--no-shortcuts] [--no-controls]
                      [--no-indicator] [--open] [--json]
+tools recorder start --frames [original|jpeg] [--jpeg-quality Q] [--naming elapsed|wall-clock]
+                     [--flush finish|piece] [--ocr] [--ocr-languages L] [--ocr-min-chars N]
+                     [--ocr-sink sidecar|jsonl] [--displays all|main|IDS] [--max-long-side PX]
+                     [--heartbeat S] [--piece-seconds S] [--fps N] [--idle-fps N] [--threshold PCT]
+                     [--audio …] [--mic-device UID] [--title T] [--max-seconds N] [--countdown [S]] [--json]
+                                                 # frames instead of a movie: the REPL's recorder.start()
 tools recorder demo <script.json | -> [--no-export]  # a finished demo from a JSON script of steps (below)
 tools recorder stop|pause|resume|status [id]     # the newest live recording, or the id given
 tools recorder mark <label> [id]                 # a marker at this moment (a movie, frames or meeting recording); the editor and movie.markers() show it
@@ -201,6 +207,12 @@ The flags, their limits and their parse live once in `lib/start-options.ts`: `to
 there, and `movies.record()` takes the same options in camelCase (`region`, `idleFps`, `threshold`, `countdown`,
 `systemCursor`, `shortcuts`, `micDevice`, `excludeWindowIds`, …), writes them as those flags and runs the same parse
 before it starts the CLI, so a wrong value fails in the REPL with the CLI's message.
+
+`--frames` records the frames of the displays instead of a movie, through the library recorder the REPL's
+`recorder.start()` uses (`lib/frames-recording.ts`): the flags become that method's options and its schema checks them,
+so `--frames jpeg --flush piece --ocr --ocr-sink jsonl` records the way a meeting does (each piece's JPEGs and
+`ocr.jsonl` rows exist while it records). A movie flag with `--frames` (`--region`, `--camera`, …) and a frames flag
+without it are refused by name.
 
 ## Camera bubble
 

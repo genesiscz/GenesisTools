@@ -18,6 +18,7 @@ import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/reco
 import {
     AUDIO_SOURCES,
     type AudioSource,
+    type RecorderSettingsPatch,
     type RecorderStatus,
     RpcError,
 } from "@genesiscz/utils/screen-recorder/control";
@@ -33,6 +34,7 @@ import { runRecorder, stateDisplays } from "../lib/recorder";
 import { framesOnDisk, meetingLiveId, readRecorderState, recorderFiles } from "../lib/recorder-shared";
 import { meetingScreen, type ScreenBoxFrame } from "../lib/screen-boxes";
 import { screenTimeline } from "../lib/screen-timeline";
+import { type SetSettingsFlags, settingsPatchFromFlags } from "../lib/settings-flags";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { askProjectAtEnd } from "./watch";
 
@@ -329,22 +331,16 @@ async function muteSource(raw: string, muted: boolean): Promise<void> {
     }
 }
 
-async function setSettings(opts: {
-    activeFps?: string;
-    idleFps?: string;
-    threshold?: string;
-    maxLongSide?: string;
-    json?: boolean;
-}): Promise<void> {
-    const number = (raw: string | undefined) => (raw === undefined ? undefined : Number(raw));
-    const patch = Object.fromEntries(
-        Object.entries({
-            activeFps: number(opts.activeFps),
-            idleFps: number(opts.idleFps),
-            threshold: number(opts.threshold),
-            maxLongSide: number(opts.maxLongSide),
-        }).filter(([, value]) => value !== undefined)
-    );
+async function setSettings(opts: SetSettingsFlags): Promise<void> {
+    let patch: RecorderSettingsPatch;
+
+    try {
+        patch = settingsPatchFromFlags(opts);
+    } catch (error) {
+        fail(errorText(error));
+        return;
+    }
+
     const answer = await callRunning(new MeetingStore(), (recorder) =>
         Object.keys(patch).length > 0 ? recorder.setSettings(patch) : recorder.getSettings()
     );
@@ -359,8 +355,11 @@ async function setSettings(opts: {
     }
 
     const { settings, applied } = answer.result;
+    const ocr = settings.ocr.enabled
+        ? `OCR on (${settings.ocr.languages.join(", ")}, at least ${settings.ocr.minChars} characters)`
+        : "OCR off";
     ui.ok(
-        `${settings.activeFps} fps active, ${settings.idleFps} idle, threshold ${settings.threshold} %, long side ${settings.maxLongSide} px${applied ? ` (${applied})` : ""}`
+        `${settings.activeFps} fps active, ${settings.idleFps} idle, threshold ${settings.threshold} %, long side ${settings.maxLongSide} px, ${ocr}${applied ? ` (${applied})` : ""}`
     );
 }
 
@@ -751,6 +750,10 @@ export function registerRecordCommands(program: Command): void {
         .option("--idle-fps <n>", "frames per second while it does not")
         .option("--threshold <percent>", "the share of the screen that must change for a frame")
         .option("--max-long-side <px>", "the longest side of a frame")
+        .option("--ocr", "read the text of each kept frame (Vision OCR)")
+        .option("--no-ocr", "stop reading the text of the frames")
+        .option("--ocr-languages <list>", "the OCR languages in order of preference, comma separated (en-US,cs-CZ)")
+        .option("--ocr-min-chars <n>", "OCR text shorter than this is stored as no text, 0–1000")
         .option("--json", "print the settings as JSON")
         .action(setSettings);
     const display = record

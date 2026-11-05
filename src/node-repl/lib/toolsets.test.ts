@@ -1,8 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
+import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
 import { ReplEngine } from "@app/node-repl/lib/engine";
 import { MeetingsToolset } from "@app/node-repl/lib/toolsets/meetings";
 import { missingCameraWarning } from "@app/recorder/lib/camera-recorder";
@@ -15,6 +16,7 @@ import {
     undoDepth,
     undoEdit,
 } from "@app/recorder/lib/edit";
+import { framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "@app/recorder/lib/frames-recording";
 import {
     chapterMetadata,
     chaptersOf,
@@ -45,7 +47,12 @@ import { readProject, wholeProject, writeProject } from "@genesiscz/utils/record
 import { readShowable } from "@genesiscz/utils/repl/show";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { type Clip, EditorToolset, editorApi, ReplJob } from "@genesiscz/utils/repl/toolsets/editor";
-import { RecordingHandle, recorderApi } from "@genesiscz/utils/repl/toolsets/recorder";
+import {
+    RecordingHandle,
+    recorderApi,
+    recorderStartSchema,
+    settingsPatchOf,
+} from "@genesiscz/utils/repl/toolsets/recorder";
 import {
     RecorderControl,
     type RecorderMethod,
@@ -1375,5 +1382,150 @@ describe("movies.record() takes the options of tools recorder start", () => {
             })
         ).rejects.toBeInstanceOf(RecordingStartCancelled);
         expect(order).toEqual(["prepare", "countdown 2"]);
+    });
+});
+
+describe("the CLI doors of a frames recording and of the live OCR settings take the REPL's values", () => {
+    test("tools recorder start --frames gives the options recorder.start() takes, checked by its schema", () => {
+        const flags = readStartArgs([
+            "--frames",
+            "jpeg",
+            "--jpeg-quality",
+            "0.6",
+            "--naming",
+            "wall-clock",
+            "--flush",
+            "piece",
+            "--ocr",
+            "--ocr-languages",
+            "en-US,cs-CZ",
+            "--ocr-min-chars",
+            "5",
+            "--ocr-sink",
+            "jsonl",
+            "--displays",
+            "all",
+            "--fps",
+            "2",
+            "--idle-fps",
+            "0.5",
+            "--threshold",
+            "3",
+            "--max-long-side",
+            "1600",
+            "--heartbeat",
+            "30",
+            "--piece-seconds",
+            "20",
+            "--max-seconds",
+            "600",
+            "--audio",
+            "mic",
+            "--mic-device",
+            "BuiltInMicrophoneDevice",
+            "--title",
+            "Standup",
+        ]);
+        expect(wantsFrames(flags)).toBe(true);
+        expect(framesStartOf(flags)).toEqual(
+            recorderStartSchema.parse({
+                title: "Standup",
+                displays: "all",
+                audio: { mic: true, system: false, micDeviceId: "BuiltInMicrophoneDevice" },
+                fps: 2,
+                idleFps: 0.5,
+                threshold: 3,
+                maxLongSide: 1600,
+                heartbeatSec: 30,
+                ocr: { languages: ["en-US", "cs-CZ"], minChars: 5 },
+                ocrSink: "jsonl",
+                frames: { format: "jpeg", jpegQuality: 0.6, naming: "wall-clock", flush: "piece" },
+                maxDurationSec: 600,
+                pieceSec: 20,
+            })
+        );
+        // A bare --frames is the REPL's default (the recorder's own files); --displays takes ids too.
+        expect(framesStartOf(readStartArgs(["--frames", "--displays", "1,4"]))).toMatchObject({ displays: [1, 4] });
+        // A movie still defaults to 60 fps: the default left the flag so a frames recording keeps its own.
+        expect(parseStartFlags(readStartArgs([])).fps).toBe(60);
+    });
+
+    test("each kind refuses the other kind's flags, and a bad value names its flag", () => {
+        const frames = (args: string[]) => () => framesStartOf(readStartArgs(args));
+        expect(frames(["--frames", "--region", "1,2,3,4", "--camera"])).toThrow(
+            "A frames recording (--frames) does not take --region, --camera"
+        );
+        expect(() => refuseOtherKindFlags(readStartArgs(["--ocr", "--flush", "piece"]))).toThrow(
+            "--flush, --ocr need --frames"
+        );
+        expect(frames(["--frames", "jpeg", "--jpeg-quality", "2"])).toThrow("--jpeg-quality: Too big");
+        expect(frames(["--frames", "png"])).toThrow("--frames:");
+        expect(frames(["--frames", "--max-seconds", "9000"])).toThrow("--max-seconds: Too big");
+        expect(frames(["--frames", "--mic-device", "BuiltInMicrophoneDevice"])).toThrow(
+            "--mic-device needs --audio mic"
+        );
+    });
+
+    test("recordFrames records JPEG frames with their OCR rows and ends with the finish's answer", async () => {
+        const converted: number[] = [];
+        const result = await recordFrames({
+            start: framesStartOf(
+                readStartArgs([
+                    "--frames",
+                    "jpeg",
+                    "--flush",
+                    "piece",
+                    "--ocr",
+                    "--ocr-sink",
+                    "jsonl",
+                    "--title",
+                    "Frames",
+                ])
+            ),
+            recorder: () => new FakeRecorder(),
+            deps: {
+                convert: async (_source, target, quality) => {
+                    converted.push(quality);
+                    writeFileSync(target, "jpeg");
+                },
+                recognize: async () => ({
+                    text: "Sprint board",
+                    blocks: [{ text: "Sprint board", confidence: 1, bounds: { x: 0, y: 0, width: 1, height: 1 } }],
+                }),
+            },
+            // A few of the fake's frames (one each 60 ms), then the stop the CLI's Ctrl-C would send.
+            onStart: (recording) => {
+                void Bun.sleep(300).then(() => recording.stop());
+            },
+        });
+        const rows = readFileSync(join(result.folder, "ocr.jsonl"), "utf8").trim().split("\n");
+
+        expect(result).toMatchObject({ state: "stopped", outcome: "done" });
+        expect(result.frames).toBeGreaterThan(0);
+        expect(converted.length).toBeGreaterThan(0);
+        expect(SafeJSON.parse(rows[0], { strict: true })).toMatchObject({ text: "Sprint board" });
+        expect(readRecordingManifest(result.folder)?.title).toBe("Frames");
+    }, 30_000);
+
+    test("tools meetings record set sends the patch the REPL's setSettings() sends, OCR included", () => {
+        expect(
+            settingsPatchFromFlags({
+                activeFps: "3",
+                threshold: "2",
+                ocr: false,
+                ocrLanguages: "en-US, cs-CZ",
+                ocrMinChars: "6",
+            })
+        ).toEqual(
+            settingsPatchOf({
+                fps: 3,
+                threshold: 2,
+                ocr: { enabled: false, languages: ["en-US", "cs-CZ"], minChars: 6 },
+            })
+        );
+        expect(settingsPatchFromFlags({ ocr: true })).toEqual({ ocr: { enabled: true } });
+        expect(settingsPatchFromFlags({})).toEqual({});
+        expect(() => settingsPatchFromFlags({ ocrMinChars: "2000" })).toThrow("--ocr-min-chars: Too big");
+        expect(() => settingsPatchFromFlags({ ocrLanguages: " , " })).toThrow("--ocr-languages:");
     });
 });

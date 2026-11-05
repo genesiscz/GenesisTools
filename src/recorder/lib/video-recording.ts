@@ -67,7 +67,8 @@ export interface VideoRecordingOptions {
     countdown?: (seconds: number) => Promise<void>;
 }
 
-const showCountdown = (seconds: number) =>
+/** The recorder's countdown: an overlay near the pointer and a line a second on stderr. */
+export const showRecorderCountdown = (seconds: number) =>
     runCountdown(seconds, {
         text: { who: "recorder", line: "switch to what you record", overlay: "switch to what you record" },
     });
@@ -132,7 +133,7 @@ export async function recordVideo(options: VideoRecordingOptions): Promise<Video
     // up during it still cancels the start.
     if (countdownSeconds > 0) {
         log.info({ seconds: countdownSeconds }, "counting down before the recording");
-        await (options.countdown ?? showCountdown)(countdownSeconds);
+        await (options.countdown ?? showRecorderCountdown)(countdownSeconds);
     }
 
     if (!gate) {

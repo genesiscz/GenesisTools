@@ -9,8 +9,10 @@ import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording
 import { describeProject, EDIT_OP_NAMES, parseEditOps } from "@genesiscz/utils/recording-editor/project";
 import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recording-editor/subtitles";
 import { FILLER_WORDS } from "@genesiscz/utils/recording-editor/transcript-cuts";
+import { FRAME_NAMINGS, OCR_SINK_KINDS } from "@genesiscz/utils/screen-recorder/frame-output";
 import { renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
+import { FRAME_FLUSHES } from "@genesiscz/utils/screen-recorder/start";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { Command } from "commander";
 import { registerServeCommand } from "./commands/serve";
@@ -31,6 +33,7 @@ import {
     restoreDisplayPlan,
     stepDisplaySwitch,
 } from "./lib/frames-movie";
+import { framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "./lib/frames-recording";
 import {
     EDITOR_TABS,
     type EditorTab,
@@ -50,7 +53,13 @@ import { copyRecording, revealRecording, trashRecording } from "./lib/quick-acti
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./lib/review";
 import { findOnScreen } from "./lib/screen-search";
 import { hostOpenEditor } from "./lib/service-client";
-import { defaultStartTarget, parseStartFlags, type StartFlags, withStartOptions } from "./lib/start-options";
+import {
+    countdownSecondsOf,
+    defaultStartTarget,
+    parseStartFlags,
+    type StartFlags,
+    withStartOptions,
+} from "./lib/start-options";
 import { Movie, movieDemoDriver } from "./lib/toolset";
 import { recordVideo } from "./lib/video-recording";
 
@@ -183,14 +192,96 @@ const program = new Command()
         "Screen recordings with a movie editor: record the screen, a window or an app with audio and the cursor, then cut, zoom and export in the recorder window or from the command line"
     );
 
+/** The enumerated flags of a frames recording; a bare one asks in a terminal and lists its values elsewhere. */
+const FRAMES_ENUM_FLAGS = [
+    { key: "naming", flag: "--naming", values: FRAME_NAMINGS },
+    { key: "flush", flag: "--flush", values: FRAME_FLUSHES },
+    { key: "ocrSink", flag: "--ocr-sink", values: OCR_SINK_KINDS },
+] as const;
+
+/** False when a bare or unknown enumerated flag was answered with its values, or the question was cancelled. */
+async function settleFramesEnumFlags(flags: StartFlags): Promise<boolean> {
+    for (const { key, flag, values } of FRAMES_ENUM_FLAGS) {
+        const given = flags[key];
+
+        if (given === undefined || values.some((one) => one === given)) {
+            continue;
+        }
+
+        if (given === true && isInteractive()) {
+            const picked = await p.select({
+                message: `${flag}`,
+                options: values.map((one) => ({ value: one, label: one })),
+            });
+
+            if (p.isCancel(picked)) {
+                return false;
+            }
+
+            flags[key] = String(picked);
+            continue;
+        }
+
+        out.printlnErr(
+            suggestEnumFlag("tools recorder", flag, values, {
+                given: typeof given === "string" ? given : undefined,
+            })
+        );
+        process.exitCode = 1;
+        return false;
+    }
+
+    return true;
+}
+
+/** `tools recorder start --frames`: the REPL's `recorder.start()` from the command line. */
+async function startFrames(flags: StartFlags): Promise<void> {
+    if (!(await settleFramesEnumFlags(flags))) {
+        return;
+    }
+
+    const start = framesStartOf(flags);
+    const result = await recordFrames({
+        start,
+        countdownSeconds: countdownSecondsOf(flags.countdown),
+        onStart: (recording) => {
+            if (flags.json) {
+                out.print(`${SafeJSON.stringify({ event: "started", id: recording.id, folder: recording.folder })}\n`);
+            } else {
+                out.printlnErr(`recording frames into ${recording.folder}`);
+            }
+        },
+    });
+
+    if (flags.json) {
+        out.print(`${SafeJSON.stringify({ event: "result", ...result })}\n`);
+    } else {
+        out.println(`${result.outcome ?? result.state}: ${result.folder} (${result.frames ?? 0} frames)`);
+
+        for (const note of result.notes ?? []) {
+            out.printlnErr(`note: ${note}`);
+        }
+    }
+
+    if (result.outcome === "failed") {
+        process.exitCode = 1;
+    }
+}
+
 withStartOptions(
     program
         .command("start")
         .description(
-            "Record a movie into the recordings library (screen.mp4 with audio tracks, cursor.jsonl, recording.json). Runs until the stop command, the menu bar item, the floating controls, Ctrl-C or --max-seconds; pausing leaves the paused time out of the movie"
+            "Record a movie into the recordings library (screen.mp4 with audio tracks, cursor.jsonl, recording.json), or with --frames the frames of the displays (JPEG or the recorder's files, OCR into ocr.jsonl or beside each frame), as recorder.start() in the REPL does. Runs until the stop command, the menu bar item, the floating controls, Ctrl-C or --max-seconds; pausing leaves the paused time out"
         )
 ).action(async (flags: StartFlags) => {
     try {
+        if (wantsFrames(flags)) {
+            await startFrames(flags);
+            return;
+        }
+
+        refuseOtherKindFlags(flags);
         const request = parseStartFlags(flags);
         const result = await recordVideo({
             ...request,
