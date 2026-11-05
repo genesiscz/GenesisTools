@@ -541,10 +541,17 @@ function nameWords(name: string): Set<string> {
     return new Set(plain.split(/[^\p{L}\p{N}]+/u).filter(Boolean));
 }
 
-/** "Bob Example" is "Example Bob (QT)": every word of the shorter name is in the longer one, and it has two words at least. */
+/**
+ * "Bob Example" is "Example Bob (QT)": every word of the shorter name is in the longer one, and it has two words at
+ * least. A one-word name matches only the same one word ("Alice" is "Alice", never "Alice Example").
+ */
 export function sameName(a: string, b: string): boolean {
     const [short, long] = [nameWords(a), nameWords(b)].sort((x, y) => x.size - y.size);
-    return short!.size >= 2 && [...short!].every((word) => long!.has(word));
+    return (
+        short!.size > 0 &&
+        (short!.size >= 2 || short!.size === long!.size) &&
+        [...short!].every((word) => long!.has(word))
+    );
 }
 
 function presentAt(presence: Presence[], sec: number): Presence[] {
