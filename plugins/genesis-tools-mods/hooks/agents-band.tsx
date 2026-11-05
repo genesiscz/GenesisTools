@@ -652,7 +652,10 @@ async function agentsPane(host: Host, kit: Kit): Promise<RenderElement> {
         key: "agents-refresh",
         label: "refresh",
         isDim: true,
-        onPress: () => void refreshAgentDetails(host),
+        onPress: () => {
+            workersAt = 0;
+            void refreshAgentDetails(host);
+        },
     };
 
     if (all.length === 0 && workers.length === 0) {
