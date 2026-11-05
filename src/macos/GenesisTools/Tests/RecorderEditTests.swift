@@ -203,6 +203,17 @@ final class RecorderScreenFindViewTests: XCTestCase {
         return EditorModel(project: project, store: ProjectStore(url: folder.appendingPathComponent("edit.json")))
     }
 
+    func testAContinuousChangeKeepsItsOriginalMark() throws {
+        let model = model()
+        let original = model.project
+        model.change { $0.audio.volume = 0.4 }
+        XCTAssertEqual(model.gesture?.mark, original)
+        model.change { $0.audio.volume = 0.7 }
+        XCTAssertEqual(model.gesture?.mark, original)
+        XCTAssertEqual(model.project.audio.volume, 0.7)
+        model.gesture?.commit?.cancel()
+    }
+
     func testTheFindTabListsEachMomentWithItsDisplayAndAClickGoesThere() throws {
         let model = model()
         let hits = try Self.hits()
