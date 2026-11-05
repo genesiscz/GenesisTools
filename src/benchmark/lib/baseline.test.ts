@@ -1,8 +1,9 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
+
+import { SafeJSON } from "@genesiscz/utils/json";
 import { baselinePath, compareToBaseline, formatComparison, readBaseline, recordBaseline, recordRun } from "./baseline";
 
 const BENCHMARK_SCRIPTS = ["agent-sessions/prefix-mark.ts", "widget/roster-read.ts", "widget/snapshot.ts"];
@@ -10,38 +11,77 @@ const CLI_HOME = mkdtempSync(join(tmpdir(), "gt-benchmark-cli-"));
 mkdirSync(join(CLI_HOME, "projects"));
 const CLI_ENV = {
     HOME: CLI_HOME,
+    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+    TMPDIR: CLI_HOME,
     GENESIS_TOOLS_HOME: join(CLI_HOME, "tools"),
     CLAUDE_CONFIG_DIR: CLI_HOME,
     CODEX_HOME: join(CLI_HOME, "codex"),
     GROK_HOME: join(CLI_HOME, "grok"),
 };
 
-async function benchmarkCommand(script: string, args: string[]) {
-    let exitCode = 0;
-    let stderr = "";
-    await env.testing.withOverrides(CLI_ENV, () => {
-        const proc = Bun.spawnSync(
-            [process.execPath, join(import.meta.dir, "../../../scripts/benchmarks", script), ...args],
-            { env: CLI_ENV, stdout: "pipe", stderr: "pipe", timeout: 10_000 }
-        );
-        exitCode = proc.exitCode;
-        stderr = new TextDecoder().decode(proc.stderr);
-    });
-    return { exitCode, stderr };
+async function benchmarkCommand({ script, args, preload }: { script: string; args: string[]; preload?: string }) {
+    const proc = Bun.spawnSync(
+        [
+            process.execPath,
+            ...(preload ? ["--preload", preload] : []),
+            join(import.meta.dir, "../../../scripts/benchmarks", script),
+            ...args,
+        ],
+        { env: CLI_ENV, stdout: "pipe", stderr: "pipe", timeout: 10_000 }
+    );
+    return {
+        exitCode: proc.exitCode,
+        stderr: new TextDecoder().decode(proc.stderr),
+        stdout: new TextDecoder().decode(proc.stdout),
+    };
 }
-
 for (const script of BENCHMARK_SCRIPTS) {
     test(`${script} rejects recording and comparing together before reading workload or writing a baseline`, async () => {
-        const proc = await benchmarkCommand(script, ["--baseline", "fixture", "--compare", "fixture"]);
+        const proc = await benchmarkCommand({ script, args: ["--baseline", "fixture", "--compare", "fixture"] });
         expect(proc.exitCode).not.toBe(0);
         expect(proc.stderr).toContain("--baseline and --compare cannot be used together");
     });
 }
 
 test("prefix benchmark refuses an empty project listing before measuring or recording", async () => {
-    const proc = await benchmarkCommand("agent-sessions/prefix-mark.ts", ["--baseline", "fixture"]);
+    const proc = await benchmarkCommand({ script: "agent-sessions/prefix-mark.ts", args: ["--baseline", "fixture"] });
     expect(proc.exitCode).not.toBe(0);
     expect(proc.stderr).toContain("No selected transcript has a positive prefix");
+});
+
+test("roster CLI records and compares CPU-only metrics while retaining wall-time diagnostics", async () => {
+    const preload = join(CLI_HOME, "roster-contract.ts");
+    const rosterModule = SafeJSON.stringify(join(import.meta.dir, "../../hub/lib/widget/roster-index.ts"));
+    const baselineModule = SafeJSON.stringify(join(import.meta.dir, "index.ts"));
+    writeFileSync(
+        preload,
+        `import { mock } from "bun:test";
+mock.module(${rosterModule}, () => ({ readWidgetRoster: async () => ({ rows: [], agents: { parents: [], orphans: [] } }) }));
+function check(input, operation) {
+    if (Object.keys(input.metrics).join(",") !== "rosterReadCpuMs") throw new Error("incompatible roster baseline metrics");
+    process.stderr.write("fixture " + operation + " CPU-only\\n");
+}
+mock.module(${baselineModule}, () => ({
+    recordBaseline: async input => { check(input, "recordBaseline"); },
+    compareToBaseline: async input => { check(input, "compareToBaseline"); return { ok: true }; },
+    recordRun: async input => { check(input, "recordRun"); },
+    formatComparison: () => "fixture comparison passed",
+}));
+`
+    );
+    for (const mode of ["baseline", "compare"]) {
+        const proc = await benchmarkCommand({
+            script: "widget/roster-read.ts",
+            preload,
+            args: ["--runs", "1", "--gap-ms", "0", `--${mode}`, "fixture", "--record-run", "fixture change", "--json"],
+        });
+        expect(proc.exitCode).toBe(0);
+        expect(proc.stderr).toContain(
+            `fixture ${mode === "baseline" ? "recordBaseline" : "compareToBaseline"} CPU-only`
+        );
+        expect(proc.stderr).toContain("fixture recordRun CPU-only");
+        expect(proc.stdout).toContain('"rosterReadWallMs"');
+    }
 });
 
 const DIR = mkdtempSync(join(tmpdir(), "gt-benchmark-baseline-"));

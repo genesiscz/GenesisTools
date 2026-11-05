@@ -90,6 +90,7 @@ const program = new Command()
             }
 
             const metrics = { rosterReadCpuMs: median(cpu), rosterReadWallMs: median(wall) };
+            const baselineMetrics = { rosterReadCpuMs: metrics.rosterReadCpuMs };
             if (options.json) {
                 out.result({ metrics, cpu, check, loadBefore, loadAfter: uptime() });
             } else {
@@ -107,15 +108,15 @@ const program = new Command()
             const name = (value: string | true) => (value === true ? NAME : value);
             const notes = `runs=${options.runs} gap=${options.gapMs}ms | ${check} | Bun ${Bun.version} | ${uptime()}`;
             if (options.baseline) {
-                await recordBaseline({ name: name(options.baseline), metrics, notes });
+                await recordBaseline({ name: name(options.baseline), metrics: baselineMetrics, notes });
             }
 
             if (options.compare) {
                 const comparison = await compareToBaseline({
                     name: name(options.compare),
-                    metrics,
+                    metrics: baselineMetrics,
                     tolerancePct: 50,
-                    lowerIsBetter: Object.keys(metrics),
+                    lowerIsBetter: Object.keys(baselineMetrics),
                 });
                 out.log.info(formatComparison(comparison));
                 if (!comparison.ok) {
@@ -129,7 +130,7 @@ const program = new Command()
                     : options.baseline
                       ? name(options.baseline)
                       : NAME;
-                await recordRun({ name: target, metrics, change: options.recordRun, notes });
+                await recordRun({ name: target, metrics: baselineMetrics, change: options.recordRun, notes });
             }
         }
     );
