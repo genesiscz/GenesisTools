@@ -63,5 +63,5 @@
             "@ext": ["./src/youtube/extension/index.ts"]
         }
     },
-    "include": ["src/**/*", "packages/*/src/**/*", "scripts/**/*", "./test-*.ts"]
+    "include": ["src/**/*", "e2e/**/*", "packages/*/src/**/*", "scripts/**/*", "./test-*.ts"]
 }

@@ -1,28 +1,5 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { type MobileProject, type MobileRoute, projectRoutes } from "@genesiscz/utils/mobile/project";
-
-/**
- * A route from what a person types: a route name (`agents`), a route name with a query (`session?key=abc`, which
- * keeps the route's root id), or a whole URL (`shop://cart`, opened with no root to wait for).
- */
-export function resolveRoute(routes: MobileRoute[], target: string): MobileRoute {
-    if (target.includes("://")) {
-        return { name: "link", url: target };
-    }
-
-    const [name, query] = target.split(/\?(.*)/s, 2);
-    const route = routes.find((candidate) => candidate.name === name);
-
-    if (!route) {
-        throw new Error(`no route "${name}"; list them with: ${toolCommand("mobile routes")}`);
-    }
-
-    if (!query) {
-        return route;
-    }
-
-    return { ...route, url: `${route.url}${route.url.includes("?") ? "&" : "?"}${query}` };
-}
+import { type MobileProject, type MobileRoute, projectRoutes, resolveRoute } from "@genesiscz/utils/mobile/project";
 
 /** The routes a command works on: all of them, or the named ones (an unknown name is an error with the list). */
 export function selectRoutes(routes: MobileRoute[], only?: string[]): MobileRoute[] {

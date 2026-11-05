@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { mobileRoutesCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 import { SIMCTL_PRIVACY_SERVICES, type SimctlPrivacyService } from "./simulator";
@@ -304,4 +305,27 @@ export function androidApp(project: MobileProject): AndroidAppConfig {
     }
 
     return android;
+}
+
+/**
+ * A route from what a person types: a route name (`agents`), a route name with a query (`session?key=abc`, which
+ * keeps the route's root id), or a whole URL (`shop://cart`, opened with no root to wait for).
+ */
+export function resolveRoute(routes: MobileRoute[], target: string): MobileRoute {
+    if (target.includes("://")) {
+        return { name: "link", url: target };
+    }
+
+    const [name, query] = target.split(/\?(.*)/s, 2);
+    const route = routes.find((candidate) => candidate.name === name);
+
+    if (!route) {
+        throw new Error(`no route "${name}"; list them with: ${mobileRoutesCommand()}`);
+    }
+
+    if (!query) {
+        return route;
+    }
+
+    return { ...route, url: `${route.url}${route.url.includes("?") ? "&" : "?"}${query}` };
 }

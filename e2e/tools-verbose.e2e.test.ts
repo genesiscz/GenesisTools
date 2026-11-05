@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { skip } from "@genesiscz/utils/test/skip";
 
-const TOOLS_BIN = join(import.meta.dir, "../../tools");
+const TOOLS_BIN = join(import.meta.dir, "../tools");
 
 describe("tools launcher verbose flag", () => {
     // Global `--verbose` on nested subcommands needs addGlobalVerboseOption
