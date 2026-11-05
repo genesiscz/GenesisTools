@@ -2093,6 +2093,24 @@ final class WidgetStagingTests: XCTestCase {
     }
 
     /// Decision audit F16: Esc right after a pick, before any snapshot lists it, still asks about it.
+    func testANewerStageDuringASendAsksOnLeave() throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.receive([try snapshot(draftOption: nil)])
+        model.select(key)
+        let card = try XCTUnwrap(model.cards.first)
+        let old = model.markPending(card.sourceId, "a", item: card, note: "first")
+        model.sendingDecisionIDs.insert(card.sourceId)
+        model.sendingStageVersions[card.sourceId] = old
+        model.keptStaged.insert(card.sourceId)
+        XCTAssertTrue(model.stagedForLeave.isEmpty)
+        model.markPending(card.sourceId, "a", item: card, note: "newer")
+        XCTAssertEqual(model.stagedForLeave.first?.draft, "newer")
+        model.expanded = .right
+        model.requestCollapse()
+        XCTAssertTrue(model.stagedLeavePrompt)
+    }
+
     func testLeavingRightAfterAPickAsksAboutIt() throws {
         let model = StagingFixture.model()
         defer { model.stop() }
