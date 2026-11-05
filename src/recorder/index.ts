@@ -19,7 +19,7 @@ import { FILLER_WORDS } from "@genesiscz/utils/recording-editor/transcript-cuts"
 import { renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { demoScriptSchema, runDemo, scriptSteps } from "./lib/demo";
 import {
     EXPORT_FORMATS,
@@ -58,6 +58,7 @@ type AudioSource = (typeof AUDIO_SOURCES)[number];
 
 interface StartFlags {
     audio?: string;
+    startGate?: string;
     micDevice?: string;
     fps?: string;
     idleFps?: string;
@@ -298,6 +299,7 @@ program
     .option("--no-controls", "do not open the floating controls")
     .option("--open", "open the editor when the recording stops")
     .option("--json", "events and the result as JSON lines on stdout")
+    .addOption(new Option("--start-gate <path>", "the start gate of a caller that waits for this recording").hideHelp())
     .action(async (flags: StartFlags) => {
         try {
             const target = await targetOf(flags);
@@ -316,6 +318,7 @@ program
                 systemCursor: flags.systemCursor,
                 shortcuts: flags.shortcuts,
                 panel: flags.controls !== false,
+                startGate: flags.startGate,
                 emit: (event) => {
                     if (flags.json) {
                         out.print(`${SafeJSON.stringify(event)}\n`);

@@ -261,5 +261,11 @@ await m.undo();                             // { undone: ["redact"], stepsLeft, 
 const r = await movies.record({ maxSeconds: 30, audio: ["system"] }); /* … */ const movie = await r.stop();
 ```
 
+`movies.record()` starts `tools recorder start` in its own process and waits up to 120 s for it to record. The two race
+for one start gate (`src/utils/process/start-gate.ts`, on `claimPidFile`): the recorder passes it right before it
+records, after ax-tool is built, and the wait closes it when it gives up. A recorder that comes after the close records
+nothing and exits 1 ("not recording: the caller … gave up"); one that passed first gets 30 s more to record, and is
+stopped by its pid when it does not. The flag is `--start-gate <path>` (hidden; only `movies.record` passes it).
+
 `transcript()` runs `tools transcribe` once and caches the result beside the movie; the first run may ask for the AI
 vault key in GenesisTools.app.

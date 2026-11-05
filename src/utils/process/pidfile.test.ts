@@ -19,6 +19,7 @@ import {
     writePidFile,
     writePidFileWhenFree,
 } from "./pidfile";
+import { awaitStart, closeStartGate, passStartGate, releaseStartGate, startGatePath } from "./start-gate";
 
 /** A pid the kernel will never have handed out — the "owner is gone" case. */
 const DEAD_PID = 999999999;
@@ -382,5 +383,118 @@ describe("pidfile", () => {
         writeFileSync(notAFolder, "x");
 
         await expect(claimPidFile(join(notAFolder, "test.pid"))).rejects.toThrow();
+    });
+});
+
+/**
+ * A spawner that gives up and a child that starts late (`tools recorder start` after `movies.record` timed out) race
+ * for one claim. The fake recorders below stand in for the child: each passes the gate when it would start recording.
+ */
+describe("start gate", () => {
+    let dir: string;
+
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "start-gate-test-"));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    /** A fake recorder: after `arriveMs` it passes the gate, and `startMs` later its entry shows in `live`. */
+    function fakeRecorder(gate: string, live: string[], opts: { arriveMs: number; startMs?: number }) {
+        const seen: { turn?: string } = {};
+        const done = (async () => {
+            await Bun.sleep(opts.arriveMs);
+            const turn = await passStartGate(gate);
+            seen.turn = turn.status;
+
+            if (turn.status === "passed" && opts.startMs !== undefined) {
+                await Bun.sleep(opts.startMs);
+                live.push("recording");
+            }
+        })();
+        return { seen, done };
+    }
+
+    const timings = { timeoutMs: 80, graceMs: 120, pollMs: 5 };
+
+    test("a recorder that starts in time is the answer and holds the gate until it ends", async () => {
+        const gate = startGatePath(dir);
+        const live: string[] = [];
+        const stops: Array<number | null> = [];
+        const child = fakeRecorder(gate, live, { arriveMs: 5, startMs: 5 });
+        const outcome = await awaitStart({
+            gate,
+            find: () => live[0],
+            stop: (pid) => {
+                stops.push(pid);
+            },
+            ...timings,
+        });
+        await child.done;
+        expect(outcome).toEqual({ status: "started", value: "recording", late: false });
+        expect(child.seen.turn).toBe("passed");
+        expect(stops).toEqual([]);
+        expect(existsSync(gate)).toBe(true);
+        releaseStartGate(gate);
+        expect(existsSync(gate)).toBe(false);
+    });
+
+    test("a recorder that arrives after the timeout finds the start cancelled and records nothing", async () => {
+        const gate = startGatePath(dir);
+        const live: string[] = [];
+        const child = fakeRecorder(gate, live, { arriveMs: 150, startMs: 0 });
+        const outcome = await awaitStart({ gate, find: () => live[0], stop: () => {}, ...timings });
+        expect(outcome).toEqual({ status: "cancelled" });
+        await child.done;
+        expect(child.seen.turn).toBe("cancelled");
+        expect(live).toEqual([]);
+        // The late recorder was the last to read the gate, so it removes it.
+        expect(existsSync(gate)).toBe(false);
+    });
+
+    test("a recorder past the gate when the wait ends still reaches its owner within the grace", async () => {
+        const gate = startGatePath(dir);
+        const live: string[] = [];
+        const child = fakeRecorder(gate, live, { arriveMs: 70, startMs: 40 });
+        const outcome = await awaitStart({ gate, find: () => live[0], stop: () => {}, ...timings });
+        await child.done;
+        expect(outcome).toEqual({ status: "started", value: "recording", late: true });
+    });
+
+    test("a recorder past the gate that never starts is stopped by its pid", async () => {
+        const gate = startGatePath(dir);
+        const live: string[] = [];
+        const stops: Array<number | null> = [];
+        const child = fakeRecorder(gate, live, { arriveMs: 5 });
+        const outcome = await awaitStart({
+            gate,
+            find: () => live[0],
+            stop: (pid) => {
+                stops.push(pid);
+            },
+            ...timings,
+        });
+        await child.done;
+        // The fake recorder runs in this process, so the pid the gate holds is this one.
+        expect(outcome).toEqual({ status: "stopped", pid: process.pid });
+        expect(stops).toEqual([process.pid]);
+    });
+
+    test("closing first wins, and a second close or pass sees the gate taken", async () => {
+        const gate = startGatePath(dir);
+        expect(await closeStartGate(gate)).toEqual({ status: "cancelled" });
+        expect(await passStartGate(gate)).toEqual({ status: "cancelled" });
+        const other = startGatePath(dir);
+        expect(await passStartGate(other)).toEqual({ status: "passed" });
+        expect(await closeStartGate(other)).toEqual({ status: "passed", pid: process.pid });
+    });
+
+    test("a gate path is new each time and lives in the folder given", () => {
+        const a = startGatePath(dir);
+        const b = startGatePath(dir);
+        expect(a).not.toBe(b);
+        expect(a.startsWith(dir)).toBe(true);
     });
 });

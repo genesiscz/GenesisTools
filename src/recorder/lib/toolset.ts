@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
@@ -6,6 +6,7 @@ import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { awaitStart, startGatePath, sweepStartGates } from "@genesiscz/utils/process/start-gate";
 import { checkProject, type EditFacts, fixOps } from "@genesiscz/utils/recording-editor/check";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { EFFECT_KINDS } from "@genesiscz/utils/recording-editor/lanes";
@@ -47,6 +48,7 @@ import {
 } from "@genesiscz/utils/repl/toolsets/recorder";
 import { readRecordingManifest, renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
 import { type DemoDriver, type DemoStep, demoEditSchema, runDemo } from "./demo";
@@ -86,6 +88,10 @@ const { log } = logger.scoped("recorder-toolset");
  * child went on and then recorded with no one to stop it.
  */
 const START_TIMEOUT_MS = 120_000;
+/** How long a recorder that passed its start gate before the wait ended may still take to record. */
+const START_GRACE_MS = 30_000;
+/** A gate a recorder never read (it died first) is swept after a day. */
+const START_GATE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const FINISH_TIMEOUT_MS = 120_000;
 const POLL_MS = 250;
 
@@ -1926,24 +1932,44 @@ async function record(options: z.infer<typeof recordSchema>, ctx?: ToolsetContex
         args.push("--camera");
     }
 
+    // The recorder passes this gate right before it records; when the wait below ends first, it closes the gate, so a
+    // recorder that starts later records nothing instead of running with no one to stop it.
+    const gates = toolDataDir("recorder", "start-gates");
+    mkdirSync(gates, { recursive: true });
+    sweepStartGates(gates, START_GATE_MAX_AGE_MS);
+    const gate = startGatePath(gates);
+    args.push("--start-gate", gate);
     log.info({ args }, "movie recording requested");
     spawnToolDetached(args, { reparent: true });
-    const deadline = Date.now() + START_TIMEOUT_MS;
+    const outcome = await awaitStart({
+        gate,
+        find: () =>
+            listLiveRecordings().find(
+                (entry) => !before.has(entry.id) && entry.folder?.includes("/video-") && entry.state === "recording"
+            ),
+        timeoutMs: START_TIMEOUT_MS,
+        graceMs: START_GRACE_MS,
+        pollMs: POLL_MS,
+        stop: (pid) => {
+            log.warn({ pid, gate }, "the recorder passed its start but never recorded; stopping it");
+            process.kill(pid, "SIGTERM");
+        },
+    });
 
-    while (Date.now() < deadline) {
-        const started = listLiveRecordings().find(
-            (entry) => !before.has(entry.id) && entry.folder?.includes("/video-") && entry.state === "recording"
+    if (outcome.status === "started") {
+        return new MovieRecording(outcome.value, ctx);
+    }
+
+    const why = `run ${toolCommand("genesis-tools logs failures")} or ${toolCommand("recorder start")} in a terminal to see why`;
+
+    if (outcome.status === "cancelled") {
+        throw new Error(
+            `the recording did not start within ${START_TIMEOUT_MS / 1000} s, and it will not start later (its start was cancelled); ${why}`
         );
-
-        if (started) {
-            return new MovieRecording(started, ctx);
-        }
-
-        await Bun.sleep(POLL_MS);
     }
 
     throw new Error(
-        `the recording did not start within ${START_TIMEOUT_MS / 1000} s; if it starts later, end it with ${toolCommand("recorder stop")}; run ${toolCommand("genesis-tools logs failures")} or ${toolCommand("recorder start")} in a terminal to see why`
+        `the recorder began its start but did not record within ${(START_TIMEOUT_MS + START_GRACE_MS) / 1000} s; ${outcome.pid === null ? "it is no longer running" : `it was stopped (pid ${outcome.pid})`}; ${why}`
     );
 }
 

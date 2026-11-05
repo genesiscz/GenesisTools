@@ -45,6 +45,7 @@ preview on screen.
 ## Rules
 
 - A recording is the person's screen: record only what the task needs, and say where the movie is.
-- `movies.record()` waits up to 120 s for the first segment (a fresh checkout compiles ax-tool first). If it still
-  gives up, end a late start with `tools recorder stop`.
+- `movies.record()` waits up to 120 s for the first segment (a fresh checkout compiles ax-tool first). When it gives
+  up, the start is cancelled: a recorder that comes later records nothing, and one that had begun its start gets 30 s
+  more, then is stopped. Its error says which; there is nothing to clean up.
 - Times in ops are SOURCE seconds; a cut never moves later items.

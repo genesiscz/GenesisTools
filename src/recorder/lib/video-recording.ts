@@ -6,9 +6,11 @@ import { cursorTrackPath, ffmpegSegmentJoiner, nativeSegmentRecorder } from "@ap
 import { RecordingSession, type RecordingSessionEvent } from "@app/control/lib/recording-session";
 import { SessionRecorderControl } from "@app/control/lib/recording-session-control";
 import { describeRecordingTarget, type RecordingTarget } from "@app/control/lib/recording-targets";
+import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { passStartGate, releaseStartGate } from "@genesiscz/utils/process/start-gate";
 import {
     RECORDING_MANIFEST,
     type RecordingManifest,
@@ -48,6 +50,21 @@ export interface VideoRecordingOptions {
     /** The menu bar host opens the floating controls. */
     panel?: boolean;
     emit?: (event: RecordingSessionEvent) => void;
+    /**
+     * The start gate of a caller that waits for this recording and may give up (`movies.record`): passed right before
+     * anything is made, after the slow part, so a recording that comes after the caller gave up never starts.
+     */
+    startGate?: string;
+    /** The slow part before the gate; default ax-tool's build, which a fresh checkout does first. */
+    prepare?: () => Promise<unknown>;
+}
+
+/** The caller that started this recording gave up waiting before it could start (its start gate was closed). */
+export class RecordingStartCancelled extends Error {
+    constructor() {
+        super("not recording: the caller that started this recording gave up waiting for it");
+        this.name = "RecordingStartCancelled";
+    }
 }
 
 export interface VideoRecordingResult {
@@ -79,6 +96,27 @@ async function writeManifest(folder: string, manifest: RecordingManifest): Promi
  * paused time is not in the movie. Ctrl-C or SIGTERM keeps what was recorded.
  */
 export async function recordVideo(options: VideoRecordingOptions): Promise<VideoRecordingResult> {
+    const gate = options.startGate;
+
+    if (!gate) {
+        return recordPassed(options);
+    }
+
+    await (options.prepare ?? ensureBinaryAsync)();
+
+    if ((await passStartGate(gate)).status === "cancelled") {
+        log.warn({ gate }, "the caller gave up waiting before the recording could start; not recording");
+        throw new RecordingStartCancelled();
+    }
+
+    try {
+        return await recordPassed(options);
+    } finally {
+        releaseStartGate(gate);
+    }
+}
+
+async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecordingResult> {
     const id = `video-${stamp()}`;
     const folder = recordingsLibraryDir(id);
     const movie = join(folder, "screen.mp4");
