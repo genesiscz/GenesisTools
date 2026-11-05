@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
-import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
+import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import {
     applyOp,
     type EditOp,
@@ -112,6 +112,7 @@ export class EditSession {
     private redoSteps: RedoStep[] = [];
     private readonly gestures = new Map<string, Gesture>();
     private timer?: ReturnType<typeof setTimeout>;
+    private retrySaveUntil?: number;
     private turn: Promise<unknown> = Promise.resolve();
     private closed = false;
 
@@ -336,18 +337,29 @@ export class EditSession {
             return;
         }
 
-        withPathArbitrationSync(this.path, () => {
-            this.syncWithDisk();
-
-            if (this.unsaved.length === 0) {
-                return;
+        try {
+            withPathArbitrationSync(this.path, () => {
+                this.syncWithDisk();
+    
+                if (this.unsaved.length === 0) {
+                    return;
+                }
+    
+                this.diskText = saveAt(this.path, this.project);
+                writeUndoSteps(this.path, this.undoSteps);
+                this.unsaved = [];
+                log.debug({ path: this.path, revision: this.project.revision }, "edit session saved");
+            });
+            this.retrySaveUntil = undefined;
+        } catch (error) {
+            if (isArbitrationBusy(error)) {
+                this.retrySaveUntil ??= Date.now() + 10_000;
+                if (Date.now() < this.retrySaveUntil) {
+                    this.scheduleSave();
+                }
             }
-
-            this.diskText = saveAt(this.path, this.project);
-            writeUndoSteps(this.path, this.undoSteps);
-            this.unsaved = [];
-            log.debug({ path: this.path, revision: this.project.revision }, "edit session saved");
-        });
+            throw error;
+        }
     }
 
     /** Saves what waits and ends the session; later calls are refused, and so is work it accepted and did not finish. */
@@ -356,17 +368,12 @@ export class EditSession {
             return;
         }
 
-        try {
-            this.flush();
-        } finally {
-            this.closed = true;
-
-            for (const id of [...this.gestures.keys()]) {
-                this.cancelGesture(id);
-            }
-
-            log.debug({ path: this.path }, "edit session closed");
+        this.flush();
+        this.closed = true;
+        for (const id of [...this.gestures.keys()]) {
+            this.cancelGesture(id);
         }
+        log.debug({ path: this.path }, "edit session closed");
     }
 
     private exclusive<T>(work: () => Promise<T>): Promise<T> {
@@ -569,8 +576,22 @@ export class EditSessions {
         entry.holders--;
 
         if (entry.holders <= 0) {
-            this.open.delete(path);
+            this.closeWhenFree(path, Date.now() + 10_000);
+        }
+    }
+
+    private closeWhenFree(path: string, deadline: number): void {
+        const entry = this.open.get(path);
+        if (!entry || entry.holders > 0) { return; }
+        try {
             entry.session.close();
+            this.open.delete(path);
+        } catch (error) {
+            if (isArbitrationBusy(error) && Date.now() < deadline) {
+                setTimeout(() => this.closeWhenFree(path, deadline), 100);
+                return;
+            }
+            log.warn({ error, path }, "last save refused; the edit session is retained for recovery");
         }
     }
 
@@ -587,13 +608,9 @@ export class EditSessions {
 
     closeAll(): void {
         for (const [path, { session }] of this.open) {
-            this.open.delete(path);
-
-            try {
-                session.close();
-            } catch (error) {
-                log.warn({ error, path }, "an edit session's last save was refused");
-            }
+            const entry = this.open.get(path);
+            if (entry) { entry.holders = 0; }
+            this.closeWhenFree(path, Date.now() + 10_000);
         }
     }
 }
