@@ -1,7 +1,7 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import { skip } from "@genesiscz/utils/test/skip";
-import { printLn, writeStdout, writeStdoutStrict } from "./stdout";
+import { isBrokenPipe, printLn, writeStdout, writeStdoutStrict } from "./stdout";
 
 const FIXTURE = join(import.meta.dir, "__fixtures__/stdout-fixture.ts");
 
@@ -107,6 +107,12 @@ describe("writeStdout on a closed pipe", () => {
         } finally {
             spy.mockRestore();
         }
+    });
+
+    it("identifies broken pipes without swallowing other errors", () => {
+        expect(isBrokenPipe(Object.assign(new Error("closed"), { code: "EPIPE" }))).toBe(true);
+        expect(isBrokenPipe(Object.assign(new Error("disk"), { code: "EIO" }))).toBe(false);
+        expect(isBrokenPipe(null)).toBe(false);
     });
 
     it("reports a closed pipe to delivery-sensitive callers", async () => {
