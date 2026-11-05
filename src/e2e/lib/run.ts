@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -87,7 +88,10 @@ export async function runE2e(options: {
 
         for (const [index, spec] of options.specs.entries()) {
             options.onSpecStart?.(spec, index, options.specs.length);
-            const dir = join(runDir, spec.name);
+            const dir = join(
+                runDir,
+                `${spec.name}-${createHash("sha256").update(spec.path).digest("hex").slice(0, 16)}`
+            );
             mkdirSync(dir, { recursive: true });
             const logPath = join(dir, "runner.log");
             const resultsFile = join(dir, RESULTS_FILE);
