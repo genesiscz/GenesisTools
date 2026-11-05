@@ -1,6 +1,7 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { Logger } from "@genesiscz/utils/logger";
 import { getLogger } from "@genesiscz/utils/logger";
+import { verifiedTls } from "@genesiscz/utils/net/verified-tls";
 import { type FetchError, ofetch, type ResponseType } from "ofetch";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -200,6 +201,7 @@ export class ApiClient {
                 timeout: options.timeoutMs ?? this.defaultTimeoutMs,
                 retry: options.retry ?? this.defaultRetry,
                 signal: options.signal,
+                tls: verifiedTls(),
                 onResponse: ({ response }) => {
                     this.requestLogger.debug(
                         {
@@ -265,6 +267,7 @@ export class ApiClient {
                 timeout: options.timeoutMs ?? this.defaultTimeoutMs,
                 retry: options.retry ?? this.defaultRetry,
                 signal: options.signal,
+                tls: verifiedTls(),
                 responseType: "text",
                 onResponse: ({ response }) => {
                     this.requestLogger.debug(
@@ -309,6 +312,7 @@ export class ApiClient {
                 timeout: options.timeoutMs ?? this.defaultTimeoutMs,
                 retry: options.retry ?? this.defaultRetry,
                 signal: options.signal,
+                tls: verifiedTls(),
                 responseType: "arrayBuffer",
                 onResponse: ({ response: rawResponse }) => {
                     this.requestLogger.debug(

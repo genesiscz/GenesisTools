@@ -1140,6 +1140,7 @@ describe("a movie recording's live settings", () => {
                     threshold: 0,
                     skipTextless: false,
                     region: "frame",
+                    read: "frame",
                 },
             });
             expect(answer.audio).toEqual({ sources: ["mic"], muted: { mic: false, system: false } });
