@@ -123,25 +123,78 @@ export async function runE2e(options: {
             log.info({ spec: spec.path, exitCode, tests: run.tests.length }, "spec done");
             options.onSpecDone?.(run);
         }
-    } finally {
-        notes = await target.finish();
-    }
-
-    const counts = countResults(specs);
-    const summary: RunSummary = {
-        project: project.config.id,
-        runner: project.config.runner.kind,
-        runDir,
-        startedAt,
-        finishedAt: new Date().toISOString(),
-        facts: target.facts,
-        specs,
-        counts,
-        notes,
-        ok: counts.specsFailed === 0 && specs.length > 0,
     };
-    writeFileSync(join(runDir, "summary.json"), SafeJSON.stringify(summary, null, 2));
-    writeFileSync(join(runDir, "summary.md"), formatSummary(summary));
-    await project.config.hooks?.afterRun?.({ ...hookContext, ok: summary.ok });
-    return summary;
+    try {
+        try {
+            await project.config.hooks?.beforeRun?.(hookContext);
+
+            for (const [index, spec] of options.specs.entries()) {
+                options.onSpecStart?.(spec, index, options.specs.length);
+                const dir = join(runDir, spec.name);
+                mkdirSync(dir, { recursive: true });
+                const logPath = join(dir, "runner.log");
+                const resultsFile = join(dir, RESULTS_FILE);
+                const started = performance.now();
+                const command = target.command(spec, dir);
+                log.info({ spec: spec.path, dir, command: command.join(" ") }, "spec start");
+                const exitCode = await runSpec({
+                    command,
+                    timeoutMs: options.timeoutMs ?? 30 * 60 * 1000,
+                    cwd: project.cwd,
+                    environment: {
+                        ...env.getProcessEnv(),
+                        ...environment,
+                        [E2E_ENV.runDir]: dir,
+                        [E2E_ENV.resultsFile]: resultsFile,
+                        [E2E_ENV.spec]: spec.file,
+                    },
+                    logPath,
+                    onLine: options.onLine,
+                });
+                const run: SpecRun = {
+                    spec,
+                    dir,
+                    exitCode,
+                    seconds: Math.round((performance.now() - started) / 1000),
+                    log: logPath,
+                    tests: readResults(resultsFile),
+                };
+                specs.push(run);
+                log.info({ spec: spec.path, exitCode, tests: run.tests.length }, "spec done");
+                options.onSpecDone?.(run);
+            }
+        } catch (error) {
+            failed = true;
+            throw error;
+        } finally {
+            await cleanup(async () => {
+                notes = await target.finish();
+            });
+        }
+
+        const counts = countResults(specs);
+        const summary: RunSummary = {
+            project: project.config.id,
+            runner: project.config.runner.kind,
+            runDir,
+            startedAt,
+            finishedAt: new Date().toISOString(),
+            facts: target.facts,
+            specs,
+            counts,
+            notes,
+            ok: counts.specsFailed === 0 && specs.length > 0,
+        };
+        writeFileSync(join(runDir, "summary.json"), SafeJSON.stringify(summary, null, 2));
+        writeFileSync(join(runDir, "summary.md"), formatSummary(summary));
+        succeeded = summary.ok;
+        return summary;
+    } catch (error) {
+        failed = true;
+        throw error;
+    } finally {
+        await cleanup(async () => {
+            await project.config.hooks?.afterRun?.({ ...hookContext, ok: succeeded });
+        });
+    }
 }
