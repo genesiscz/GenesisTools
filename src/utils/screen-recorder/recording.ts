@@ -198,6 +198,8 @@ export interface RecorderConfig<S> {
     audio: AudioState;
     /** Which displays it records, and what the display calls do. */
     displays: DisplayChoice;
+    /** The frames the kind has kept so far; the live count adds those the running captures announced. */
+    keptFrames: () => number;
     pieces: {
         dir: string;
         /** The length of one piece; at most `MAX_CAPTURE_SECONDS`. */
@@ -290,10 +292,17 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                     kind.onStart?.(capture);
                 },
                 onFrame: (capture, frame) => {
+                    const displayId = frame.displayId ?? capture.target.displayId;
+
                     if (!capture.controller.signal.aborted) {
-                        this.openDisplay(capture, frame.displayId ?? capture.target.displayId);
+                        this.openDisplay(capture, displayId);
                     }
 
+                    // Frames count as they land; the kind keeps them when the capture returns.
+                    const at = new Date().toISOString();
+                    capture.streamed += 1;
+                    this.update({ frames: this.liveFrames(), lastFrameAt: at });
+                    this.emit("frame", { displayId, at, file: frame.path });
                     kind.onFrame?.(capture, frame);
                 },
                 onLive: (_capture, channel) => {
@@ -301,10 +310,17 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                         channel.pause();
                     }
                 },
-                onResult: (capture, result) => {
+                onResult: async (capture, result) => {
                     this.displayBook.align(capture, result);
                     this.closeDisplay(capture);
-                    return kind.onResult?.(capture, result) ?? Promise.resolve(undefined);
+
+                    try {
+                        return await kind.onResult?.(capture, result);
+                    } finally {
+                        // Its frames are the kind's now (kept, or dropped with an error).
+                        capture.streamed = 0;
+                        this.update({ frames: this.liveFrames() });
+                    }
                 },
                 onError: (capture, error, outcome) => {
                     this.closeDisplay(capture);
@@ -338,6 +354,13 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         if (this.displayBook.open(capture, displayId)) {
             this.config.hooks.onDisplays?.();
         }
+    }
+
+    /** The frames kept so far and those each running capture announced and has not returned yet. */
+    liveFrames(): number {
+        return (
+            this.config.keptFrames() + [...this.captures.running.values()].reduce((sum, one) => sum + one.streamed, 0)
+        );
     }
 
     private closeDisplay(capture: SessionCapture): void {

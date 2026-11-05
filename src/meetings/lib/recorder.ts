@@ -270,9 +270,7 @@ export async function runRecorder(options: {
         let runFrames = 0;
         const saveState = () => stateFile.save(state);
         const onSignal = () => recording.requestStop();
-        const running = () => recording.captures.running;
         const closeSpan = (stopReason: RecordingStopReason, at?: string) => recordingRecord.closeSpan(stopReason, at);
-        const liveFrames = () => state.frames + [...running().values()].reduce((sum, one) => sum + one.streamed, 0);
         /** Moves a capture's `.m4a` files to the meeting's `audio/` and lists each in `audio.jsonl`. */
         const keepTracks = (result: CaptureResult, target: PieceTarget): void => {
             for (const track of result.tracks ?? []) {
@@ -364,6 +362,7 @@ export async function runRecorder(options: {
             settings,
             audio,
             displays,
+            keptFrames: () => state.frames,
             pieces: {
                 dir: pieceDir,
                 sec: deps.pieceSec,
@@ -455,23 +454,10 @@ export async function runRecorder(options: {
                 },
                 afterPiece: () => {
                     state.warning = notes.length > 0 ? notes.join("; ") : undefined;
-                    recording.update({
-                        frames: liveFrames(),
-                        lastFrameAt: state.lastFrameAt,
-                        warning: state.warning,
-                    });
+                    recording.update({ lastFrameAt: state.lastFrameAt, warning: state.warning });
                     saveState();
                 },
                 captures: {
-                    onFrame: (entry, frame) => {
-                        entry.streamed += 1;
-                        recording.update({ frames: liveFrames(), lastFrameAt: new Date().toISOString() });
-                        recording.emit("frame", {
-                            displayId: frame.displayId ?? entry.target.displayId,
-                            at: new Date().toISOString(),
-                            file: frame.path,
-                        });
-                    },
                     onResult: async (entry, result) => {
                         keepTracks(result, entry.target);
                         await recording.jobs.task("ocr", (ctx) =>
@@ -482,7 +468,6 @@ export async function runRecorder(options: {
                                 onFrame: (done) => ctx.progress({ done, total: result.frames.length, unit: "frames" }),
                             })
                         ).done;
-                        entry.streamed = 0;
 
                         if (result.endedEarly === "display-removed") {
                             log.info({ display: entry.target.label }, "a display left during a piece");

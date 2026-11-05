@@ -158,6 +158,7 @@ export class LibraryRecording extends FrameRecording<number> {
             },
             audio: { sources, muted: { mic: false, system: false }, micDevice: options.audio?.micDeviceId },
             displays: choice,
+            keptFrames: () => this.pending.length,
             pieces: {
                 dir: join(folder, ".pieces"),
                 sec: options.pieceSec ?? 60,
@@ -193,7 +194,6 @@ export class LibraryRecording extends FrameRecording<number> {
                     );
                 },
                 captures: {
-                    onFrame: (entry, frame) => this.onFrame(entry, frame),
                     onResult: (entry, result) => this.onResult(entry, result),
                     onError: (entry, error) => {
                         const displayId = entry.startDisplayId;
@@ -287,18 +287,6 @@ export class LibraryRecording extends FrameRecording<number> {
         log.warn({ id: this.id }, message);
     }
 
-    /** The frames kept so far and those each running capture announced and has not returned yet. */
-    private liveFrames(): number {
-        return this.pending.length + [...this.running.values()].reduce((sum, one) => sum + one.streamed, 0);
-    }
-
-    private onFrame(entry: SessionCapture, frame: CapturedFrame): void {
-        const at = new Date().toISOString();
-        entry.streamed += 1;
-        this.update({ frames: this.liveFrames(), lastFrameAt: at });
-        this.emit("frame", { displayId: frame.displayId ?? entry.startDisplayId, at, file: frame.path });
-    }
-
     /** A capture's frames into the pending list (written now with `flush: "piece"`); false when it kept none. */
     private async onResult(entry: SessionCapture, result: CaptureResult): Promise<boolean> {
         const displayId = entry.startDisplayId;
@@ -322,8 +310,6 @@ export class LibraryRecording extends FrameRecording<number> {
                 this.tracks.push({ ...track, displayId, startedAtMs: result.startedAtMs });
             }
 
-            entry.streamed = 0;
-            this.update({ frames: this.liveFrames() });
             return result.frames.length > 0;
         } catch (error) {
             log.warn({ error, displayId }, "a capture of the library recording failed");
