@@ -61,6 +61,7 @@ package enum AppDock {
             // permissions window ("it did open, but didnt forward it", 2026-11-02).
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.arguments = ["--hub"]
+            configuration.environment = ProcessInfo.processInfo.environment
             configuration.createsNewApplicationInstance = true
             configuration.activates = true
             NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { app, error in
