@@ -57,9 +57,9 @@ final class CursorTrackWriter {
     /// `rect` is the recorded rectangle in global display points (top-left origin), read per sample, so a window
     /// that moves keeps its cursor coordinates right.
     init?(path: String, shapes: String? = nil, rect: @escaping () -> CGRect) {
-        guard FileManager.default.createFile(atPath: path, contents: nil), let handle = FileHandle(forWritingAtPath: path) else {
-            return nil
-        }
+        let descriptor = Darwin.open(path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { return nil }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         self.path = path
         self.handle = handle
         self.rect = rect
