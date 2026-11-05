@@ -346,7 +346,10 @@ that varies by recorder, source or language sits under that axis:
         "capture": { "backend": "native", "activeFps": 1, "retentionDays": 30, "recorders": { "native": { "maxMb": 400 } } },
         "playback": { "listen": { "roundCap": 12 } },
         "suggest": { "questionCap": 12 },
-        "assign": { "ask": true, "lookbackHours": 48, "maxProposals": 5, "calendarSlackMin": 15 }
+        "assign": {
+            "ask": true, "lookbackHours": 48, "maxProposals": 5, "calendarSlackMin": 15,
+            "calendarLookbehindHours": 3, "folderWaitDays": 14, "retryFailedMin": 10
+        }
     },
     "projects": {
         "work": {
@@ -367,9 +370,22 @@ that varies by recorder, source or language sits under that axis:
         }
     },
     "sources": { "wisprflow": { "autoRecord": { "enabled": false }, "match": { "work": { "folders": ["Work"] } } } },
-    "languages": { "cs": { "ocr": ["cs-CZ", "en-US"], "render": { "unclearLabel": "nejasné" }, "wordCheck": "hunspell" } }
+    "languages": {
+        "cs": {
+            "ocr": ["cs-CZ", "en-US"], "render": { "unclearLabel": "nejasné" }, "wordCheck": "hunspell",
+            "fillers": { "sounds": ["ehm", "hm"], "words": ["jako", "jakože"] }
+        }
+    }
 }
 ```
+
+`global.assign` timings: `calendarLookbehindHours` (3) is how long before a meeting a calendar entry may start and still
+be looked up (never less than `calendarSlackMin`), `folderWaitDays` (14) is how long a meeting waits to be moved into a
+source folder before the folder question ends, and `retryFailedMin` (10) is how long after a failed post the project
+question is posted again. `languages.<code>.fillers` is what `recorder cut-fillers` cuts for that language: `sounds` are
+never words, `words` are fillers that are also real words (cut only with `--all`). `cs` and `sk` ship their lists; `en`
+has a shipped list without a block, and a block of another language may omit `fillers` to keep the shipped list of its
+code. An older file without these keys reads with the values above.
 
 `languages` has blocks for `cs` and `sk` with every default; another language is a block with every key
 (`ocr`, `render.unclearLabel`, `readAloudLabel`, `lineLabel`). `global.language` picks the block that labels the
