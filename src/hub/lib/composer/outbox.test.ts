@@ -117,7 +117,14 @@ import {
     recordVoiceNote,
     transcribeVoiceNote,
 } from "../widget/voice-notes";
-import { StdinLines, WARM_SESSIONS, watchWidget, widgetDecisionLine, widgetSelectionLine } from "../widget/watch";
+import {
+    inboxPublishDelay,
+    StdinLines,
+    WARM_SESSIONS,
+    watchWidget,
+    widgetDecisionLine,
+    widgetSelectionLine,
+} from "../widget/watch";
 import { importWidgetAsset, reviseVideoAsset } from "./assets";
 import * as dispatchModule from "./dispatch";
 import { widgetDeliveryReceipt, widgetDispatcher } from "./dispatch";
@@ -6712,4 +6719,17 @@ test("an open decision's summary is the prompt under its title, cut at a word ne
     const long = decisionSummary(row("Long", "word ".repeat(200))).summary ?? "";
     expect(long.length).toBeLessThanOrEqual(601);
     expect(long.endsWith("word…")).toBe(true);
+});
+
+test("the inbox publish delay leaves out an item that waited behind an older one in its session's slot", () => {
+    const startedAt = 1_000;
+    // The first item of a slot is timed from its receipt.
+    expect(inboxPublishDelay({ at: 5_000, startedAt, now: 5_300 })).toBe(300);
+    // Posted together with it, the next one appears only when the first is answered 37 s later: not a publish delay.
+    expect(inboxPublishDelay({ at: 5_000, previousSeenAt: 5_300, startedAt, now: 42_300 })).toBeUndefined();
+    // One that arrived after the slot's last publication is timed again.
+    expect(inboxPublishDelay({ at: 50_000, previousSeenAt: 5_300, startedAt, now: 50_400 })).toBe(400);
+    // Older than the watch, or stamped in the future: not this watch's delay.
+    expect(inboxPublishDelay({ at: 500, startedAt, now: 5_000 })).toBeUndefined();
+    expect(inboxPublishDelay({ at: 6_000, startedAt, now: 5_000 })).toBeUndefined();
 });

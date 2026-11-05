@@ -42,6 +42,32 @@ const FULL_REFRESH_TICKS = 4;
 /** Inbox sessions whose cards every snapshot carries beside the selected one's (`widgetSnapshot({ warm })`). */
 export const WARM_SESSIONS = 16;
 
+/**
+ * How long an inbox item newly published in its session's slot took from its receipt, or undefined when that does
+ * not measure the watch: the item arrived before this watch started, or while an older item was still published in
+ * the same slot. A session shows one pending item at a time, so such an item waited for the older one to be answered,
+ * not for a snapshot; timed from its own receipt, a decision posted behind another read as a 37 s publish
+ * (2026-11-05, d_3 behind d_2 of one session).
+ */
+export function inboxPublishDelay(options: {
+    at: number;
+    /** When the slot's previous item was last published, if the slot held one. */
+    previousSeenAt?: number;
+    startedAt: number;
+    now: number;
+}): number | undefined {
+    const latency = options.now - options.at;
+    if (options.at < options.startedAt || latency < 0) {
+        return undefined;
+    }
+
+    if (options.previousSeenAt !== undefined && options.at <= options.previousSeenAt) {
+        return undefined;
+    }
+
+    return latency;
+}
+
 export async function watchWidget({
     root,
     selectedKey,
@@ -105,7 +131,8 @@ export async function watchWidget({
             let last = "";
             const startedAt = Date.now();
             let emitted = false;
-            const profiledInbox = new Map<string, { at: number; id: string }>();
+            /** Per session slot: the item last published there, and when it was last published. */
+            const profiledInbox = new Map<string, { at: number; id: string; seenAt: number }>();
             /** The widget's latest pick, until `state.json` names it too. */
             let picked: string | undefined;
             let decisionLookup: { id: string; token: string } | undefined;
@@ -223,12 +250,19 @@ export async function watchWidget({
                                 const key = item.key + (item.needsAnswer ? "|pending" : "|unread");
                                 active.add(key);
                                 const previous = profiledInbox.get(key);
+                                const now = Date.now();
+                                profiledInbox.set(key, { id: item.id, at: item.at, seenAt: now });
                                 if (previous?.id === item.id && previous.at === item.at) {
                                     continue;
                                 }
-                                profiledInbox.set(key, { id: item.id, at: item.at });
-                                const latency = Date.now() - item.at;
-                                if (item.at >= startedAt && latency >= 0) {
+
+                                const latency = inboxPublishDelay({
+                                    at: item.at,
+                                    previousSeenAt: previous?.seenAt,
+                                    startedAt,
+                                    now,
+                                });
+                                if (latency !== undefined) {
                                     prof.record("inbox receipt-to-publish", latency, `id=${item.id}`);
                                 }
                             }
