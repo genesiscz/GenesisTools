@@ -109,6 +109,39 @@ describe("runners", () => {
 });
 
 describe("run loop", () => {
+    it("runs both cleanup paths after setup fails and preserves the setup error", async () => {
+        const project = fixtureProject("setup-failure");
+        const calls: string[] = [];
+        project.config.hooks = {
+            beforeRun: async () => {
+                throw new Error("setup failed");
+            },
+            afterRun: async ({ ok }) => {
+                calls.push(`after:${ok}`);
+                throw new Error("teardown failed");
+            },
+        };
+        await expect(
+            runE2e({
+                project,
+                specs: listSpecs(project).slice(0, 1),
+                runDir: join(root, "setup-failure-run"),
+                flags: {},
+                extraEnv: {},
+                prepare: async () => ({
+                    facts: {},
+                    environment: {},
+                    command: () => [],
+                    finish: async () => {
+                        calls.push("finish");
+                        throw new Error("target cleanup failed");
+                    },
+                }),
+            })
+        ).rejects.toThrow("setup failed");
+        expect(calls).toEqual(["finish", "after:false"]);
+    });
+
     it("refuses an existing run directory before preparing a target", async () => {
         const project = fixtureProject("reuse");
         const runDir = join(root, "reused-run");
