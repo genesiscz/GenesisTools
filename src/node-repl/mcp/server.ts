@@ -82,7 +82,7 @@ export function createServer(engine: ReplEngine, options: { toolsetLines?: reado
                 {
                     name: "js_reset",
                     description:
-                        "Reset the REPL without waiting for a running turn deadline. Toolsets get up to 10 seconds to dispose before the worker is killed. Every binding is gone, queued turns are cancelled, and registered module directories stay.",
+                        "Reset the REPL and cancel queued turns. Owned recordings are stopped and finalized: pending recording startups may take up to 120 seconds by default, followed by up to 10 minutes for finalization. Toolsets then get up to 10 seconds to dispose before the worker is killed. Every binding is gone; registered module directories stay.",
                     inputSchema: { type: "object", properties: {}, additionalProperties: false },
                 },
                 TURN_ENDED_TOOL,
