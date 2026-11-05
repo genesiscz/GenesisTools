@@ -16,6 +16,26 @@ prompt and read "haiku" as "a cheap model". The REVIEW contract — fetch throug
 `tools github review`, judge each comment against the real code, one commit per logical fix,
 reply per thread — holds unchanged on all three.
 
+## Quick path for a worker that fixes one PR's threads
+
+A worker briefed to fix a PR's review threads needs only these steps; the rest of this file is for an interactive
+session that lets the user pick (2026-11-05: workers that loaded the whole file, or fetched with `gh pr view
+--comments`, spent their context before the first fix).
+
+1. **Fetch once:** `tools github review <N> --llm -u`. Note the session id it prints and the thread refs (`t1`,
+   `t2`, ...). 0 open threads means the round is done: report that and stop. Never fetch with `gh pr view
+   --comments` or raw `gh api graphql`.
+2. **Expand a thread** when its L1 line is not enough: `tools github review expand t3 -s <session>`.
+3. **Read the code at each cited line before you judge it.** A finding that is wrong or already fixed gets a
+   reply that cites the file and line that prove it; it is never "fixed" a second time.
+4. **Fix each valid finding** with the smallest change and a test that fails first. One commit per logical fix,
+   `git add -- <paths>` then `git commit` as two commands.
+5. **Verify** with the commands your brief names; report their real exit codes.
+6. **Replies:** write one JSONL line per thread (`{"ref": "t1", "body": "Fixed in [<sha>](<commit url>): <what>"}`;
+   prefix `@coderabbitai ` for a CodeRabbit thread) and post them as one review with `tools github review
+   respond-batch replies.jsonl -s <session>`, unless the brief says the lead posts them.
+7. **Stop** at your brief's checkpoint and report: the fixed refs, the replied refs, the commits and the checks.
+
 ## Usage
 
 ```
