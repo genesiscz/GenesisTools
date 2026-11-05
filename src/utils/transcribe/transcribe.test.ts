@@ -404,6 +404,24 @@ describe("applyCorrections", () => {
 });
 
 describe("transcriptMarkdown", () => {
+    test("preserves speaker, continuation, and missing play link bytes", () => {
+        const turns = groupTurns([
+            line("Alice", 65, "First."),
+            line("Alice", 105, "Continued."),
+            line("Bob", 120, "Last."),
+        ]);
+
+        expect(
+            transcriptMarkdown(turns, true, {
+                playLink: (sec) => (sec === 120 ? null : `https://example.com/a b?at=${sec}`),
+            })
+        ).toBe(
+            "**Alice:** `01:05`<sup>[play](<https://example.com/a b?at=65>)</sup> First.\n\n" +
+                "`01:45`<sup>[play](<https://example.com/a b?at=105>)</sup> Continued.\n\n" +
+                "**Bob:** `02:00` Last."
+        );
+    });
+
     test("a play link follows each timestamp, and a quote at a paragraph's start gets its own lines", () => {
         const turns = groupTurns([
             line("Alice", 65, "Ahoj."),

@@ -1,4 +1,4 @@
-import { type Block, json2md } from "@genesiscz/utils/json2md";
+import { type Block, escapeUrl, json2md } from "@genesiscz/utils/json2md";
 import { TranscriptLines } from "./lines";
 import { firstName } from "./speakers";
 import type { TermSuggestion } from "./terms";
@@ -125,7 +125,7 @@ export function suspectsCallout(suspects: TermSuggestion[], options: { tool: str
 }
 
 /**
- * The turns as speech blocks: a bold speaker on the first paragraph of each turn, a clock (and a play link) on each
+ * The turns as paragraphs: a bold speaker on the first paragraph of each turn, a clock (and a play link) on each
  * paragraph when `timestamps` is on.
  */
 export function transcriptBlocks(
@@ -141,14 +141,24 @@ export function transcriptBlocks(
             const at = timestamps ? paragraph.startSec : undefined;
 
             return {
-                speech: {
+                p: transcriptParagraph({
                     ...(index === 0 ? { speaker: turn.speaker } : {}),
                     ...(at === undefined ? {} : { time: formatClock(at), play: options.playLink?.(at) ?? undefined }),
                     text: paragraph.text,
-                },
+                }),
             };
         })
     );
+}
+
+function transcriptParagraph(block: { speaker?: string; time?: string; play?: string; text: string }): string {
+    const text = block.text.replace(/\s*\n\n\s*/g, "\n\n").trim();
+    const play = block.time && block.play ? `<sup>[play](${escapeUrl(block.play)})</sup>` : "";
+    const stamp = block.time ? `\`${block.time}\`${play}` : "";
+    const separator = text.startsWith(">") ? "\n\n" : " ";
+    const head = block.speaker ? [`**${block.speaker}:**`, stamp].filter(Boolean).join(" ") : stamp;
+
+    return head ? `${head}${separator}${text}` : text;
 }
 
 /** The turns as Markdown: a bold speaker per turn, one block per paragraph. */
