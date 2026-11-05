@@ -31,6 +31,8 @@ mock.module("@app/question/lib/hub-link", () => ({
 
 import { readDecisions } from "@app/question/lib/decisions/store";
 import { inboxInstructions } from "@app/question/lib/inbox-guidance";
+import { setNoticeDeps } from "@app/question/lib/notices/notices";
+import { memoryNoticeStore } from "@app/question/lib/notices/store";
 import { type AskDeps, getAskForm } from "@app/question/lib/pending/ask";
 import { PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -57,6 +59,16 @@ let deps: AskDeps;
 let db: Database;
 
 beforeEach(() => {
+    // A test process posts no notice unless it injects these; the banners are caught at the dispatch.
+    setNoticeDeps({
+        store: memoryNoticeStore(),
+        dispatch: async (event) => {
+            banners.push(event);
+            return true;
+        },
+        retract: async () => true,
+        now: Date.now,
+    });
     db = new Database(":memory:");
     runMigrations(db, PENDING_MIGRATIONS as Migration[], { tableName: "qa_pending" });
     const scratch = mkdtempSync(join(tmpdir(), "gt-mcp-ask-"));
@@ -66,6 +78,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    setNoticeDeps(undefined);
     db.close();
 });
 
