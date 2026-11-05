@@ -102,24 +102,39 @@ final class LibraryModel {
         guard !reading else { return }
         reading = true
         let folders = RecorderMenu.recordingFolders
-        let known = Set(thumbnails.keys)
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("recorder.library.read", folders.map(\.path).joined(separator: ", "))
             let list = RecorderMenu.readRecents(folders)
-            var images: [URL: NSImage] = [:]
-            for item in list {
-                guard let url = item.thumbnail, !known.contains(url) else { continue }
-                // The middle of the movie: its first frame is often the same desktop for every recording.
-                let middle = (item.durationMs ?? 0) / 2000
-                if let image = RecorderMenu.thumbnail(url, size: Self.thumbnailSize, radius: 8, atSeconds: middle) { images[url] = image }
-            }
             span.end()
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.reading = false
                     self.loaded = true
-                    self.thumbnails.merge(images) { $1 }
+                    let available = Set(list.compactMap(\.thumbnail))
+                    self.thumbnails = self.thumbnails.filter { available.contains($0.key) }
+                    self.scrubFrames = self.scrubFrames.filter { available.contains($0.key) }
                     self.items = list
+                }
+            }
+        }
+    }
+
+    @ObservationIgnored private var thumbnailReads: Set<URL> = []
+
+    /// Cards request images only when the lazy grid makes them visible. Counts cap decoded image memory.
+    func loadThumbnail(_ item: RecorderMenu.Recent) {
+        guard let url = item.thumbnail, thumbnails[url] == nil, thumbnailReads.insert(url).inserted else { return }
+        let middle = (item.durationMs ?? 0) / 2000
+        DispatchQueue.global(qos: .userInitiated).async {
+            let image = RecorderMenu.thumbnail(url, size: Self.thumbnailSize, radius: 8, atSeconds: middle)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self.thumbnailReads.remove(url)
+                    guard self.items.contains(where: { $0.thumbnail == url }), let image else { return }
+                    self.thumbnails[url] = image
+                    while self.thumbnails.count > 32, let old = self.thumbnails.keys.first(where: { $0 != url }) {
+                        self.thumbnails.removeValue(forKey: old)
+                    }
                 }
             }
         }
@@ -156,7 +171,11 @@ final class LibraryModel {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.scrubbing.remove(movie)
+                    guard self.items.contains(where: { $0.thumbnail == movie }) else { return }
                     self.scrubFrames[movie] = frames
+                    while self.scrubFrames.count > 8, let old = self.scrubFrames.keys.first(where: { $0 != movie }) {
+                        self.scrubFrames.removeValue(forKey: old)
+                    }
                 }
             }
         }
@@ -348,6 +367,7 @@ struct LibraryView: View {
                                     } select: {
                                         model.selected = item.folder
                                     } report: { model.handle($0) }
+                                    .onAppear { model.loadThumbnail(item) }
                                     .id(item.folder)
                                 }
                             } header: {
