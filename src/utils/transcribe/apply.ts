@@ -205,6 +205,9 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     // name that is also a label ("Alice Example") is not moved again by that label's ranges. A join that names the
     // voice settles its line.
     const sourceLabel = new Map(lines.map((line) => [line, line.speaker]));
+    // The time a range reads for a line: a line a join glued a word onto keeps the time of the line the word came
+    // from, so the range that covers the following line's voice covers the joined line too.
+    const attributionTime = new Map(lines.map((line) => [line, line.startSec]));
     const voiced = new Map<TranscriptEntry, string | undefined>();
     const ranged = new Set<TranscriptEntry>();
 
@@ -236,6 +239,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         before.text = `${before.text.trimEnd()}${between}${word}`;
         before.speaker = join.speaker ?? line.speaker;
         sourceLabel.set(before, sourceLabel.get(line) ?? line.speaker);
+        attributionTime.set(before, attributionTime.get(line));
 
         if (join.speaker) {
             voiced.set(before, join.item);
@@ -252,13 +256,12 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     lines = lines.filter((line) => line.text.trim());
 
     for (const range of corrections.ranges ?? []) {
-        const labelled = lines.filter(
-            (line) =>
-                sourceLabel.get(line) === range.label &&
-                line.startSec !== undefined &&
-                line.startSec >= range.fromSec &&
-                line.startSec <= range.toSec
-        );
+        const labelled = lines.filter((line) => {
+            const sec = attributionTime.get(line);
+            return (
+                sourceLabel.get(line) === range.label && sec !== undefined && sec >= range.fromSec && sec <= range.toSec
+            );
+        });
         const moved = labelled.filter((line) => !voiced.has(line));
 
         for (const line of moved) {

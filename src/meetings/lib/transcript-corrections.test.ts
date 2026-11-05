@@ -127,10 +127,13 @@ describe("the corrections ledger", () => {
             meeting: base.id,
             project: "demo",
             kind: "term",
+            scope: "everywhere",
             heard: "redakt",
             fixed: "Redux",
             item: "i1",
         });
+        const lineOnly = item({ id: "i3", kind: "term", heard: "redakt", proposed: "Redux", atSec: 5, scope: "line" });
+        expect(ledgerEntryFor(base, lineOnly, now)?.scope).toBe("line");
         expect(ledgerEntryFor(base, join, now)).toEqual({
             at: now,
             meeting: base.id,

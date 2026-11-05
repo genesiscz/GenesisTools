@@ -4,12 +4,14 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
-import { clearPidFile, inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
+import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import type { Command } from "commander";
 import { errorText, fail, resolveEnum } from "../lib/shared";
 import { watchLoop, watchOnce } from "../lib/watch";
 
 const { log } = logger.scoped("meetings-watch-cmd");
+/** How long `ensureWatcher` waits for the spawned watcher to own its pidfile. */
+const WATCHER_CLAIM_MS = 15_000;
 
 export function watcherPidPath(store: MeetingStore): string {
     return join(store.root, "watch.pid");
@@ -28,8 +30,34 @@ export async function ensureWatcher(): Promise<"started" | "running" | "disabled
     }
 
     const pid = spawnToolDetached(["meetings", "watch"]);
+    // "started" means the child owns the pidfile, so a second ensureWatcher in this window does not spawn another.
+    const deadline = Date.now() + WATCHER_CLAIM_MS;
+
+    while (inspectPidFile(watcherPidPath(new MeetingStore())).status !== "live") {
+        if (Date.now() >= deadline) {
+            throw new Error(
+                `The meetings watcher did not claim its pidfile within ${WATCHER_CLAIM_MS / 1000} seconds.`
+            );
+        }
+
+        await Bun.sleep(Math.min(500, deadline - Date.now()));
+    }
+
     log.info({ pid }, "meetings watcher started in the background");
     return "started";
+}
+
+/** Claims the watcher's pidfile: a dead or foreign owner is taken over, a live one is refused. */
+export async function claimWatcher(store: MeetingStore): Promise<void> {
+    const file = watcherPidPath(store);
+    const claim = await claimPidFile(file, {
+        reclaimable: (state) => state.status === "dead" || state.status === "foreign",
+    });
+
+    if (claim.status !== "claimed") {
+        const owner = claim.status === "held" && "pid" in claim.state ? ` (pid ${claim.state.pid})` : "";
+        throw new Error(`another meetings watcher holds ${file}${owner}`);
+    }
 }
 
 async function watch(opts: { once?: boolean }): Promise<void> {
@@ -41,7 +69,7 @@ async function watch(opts: { once?: boolean }): Promise<void> {
             return;
         }
 
-        writePidFile(watcherPidPath(store), { exclusive: true });
+        await claimWatcher(store);
 
         try {
             await watchLoop(store);

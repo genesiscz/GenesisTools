@@ -1098,6 +1098,28 @@ export async function runRecorder(options: {
                 });
             }
         }
+    } catch (err) {
+        // A failure outside the capture loop (the folders, the socket, the session) still leaves a terminal record
+        // before the pidfile is released, so `record status` and the watcher never read a recording that is gone.
+        const warning = errorText(err);
+        const last = readRecorderState(store).state;
+        await store
+            .update(meetingId, { command: "record stop", change: `error: ${warning}` }, (current) => {
+                current.recording = {
+                    ...current.recording,
+                    status: "stopped",
+                    stopReason: "error",
+                    stoppedAt: new Date().toISOString(),
+                    frames: last?.frames ?? current.recording?.frames ?? 0,
+                    bytes: last?.bytes ?? current.recording?.bytes ?? 0,
+                    warning,
+                };
+            })
+            .catch((persistErr: unknown) =>
+                log.warn({ err: persistErr, meetingId }, "the failed recording could not be saved")
+            );
+        stateFile.retire();
+        throw err;
     } finally {
         claim.release();
     }

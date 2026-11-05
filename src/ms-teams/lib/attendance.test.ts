@@ -136,3 +136,38 @@ describe("intervalsFromEvents", () => {
         expect(Date.parse(record.attendance[1].leftAt ?? "")).toBe(t("10:50:00"));
     });
 });
+
+test("observer rejoins produce separate self and remote attendance intervals", () => {
+    const cache = new TeamsCache(":memory:");
+    cache.setMeta("me_mri", ME);
+    const events: CallLogEvent[] = [
+        { kind: "thread-link", callId: CALL, at: 1000, threadId: THREAD },
+        { kind: "self-state", callId: CALL, at: 1000, state: "Connected" },
+        { kind: "participant-added", callId: CALL, at: 1100, mri: ADA },
+        { kind: "self-state", callId: CALL, at: 2000, state: "Disconnected" },
+        { kind: "self-state", callId: CALL, at: 3000, state: "Connected" },
+        { kind: "participant-added", callId: CALL, at: 3100, mri: ADA },
+    ];
+    const [record] = buildMeetingAttendance({
+        cache,
+        liveEvents: events,
+        conversation: {
+            id: THREAD,
+            type: "meeting",
+            title: "Fixture",
+            topic: null,
+            membersJson: "[]",
+            lastMessageTime: null,
+            lastPreview: null,
+            memberCount: 1,
+        },
+    });
+    cache.close();
+    const self = record!.attendance.filter((row) => row.self);
+    expect(self).toHaveLength(2);
+    expect(self.map((row) => (row.leftAt === null ? null : Date.parse(row.leftAt)))).toEqual([2000, null]);
+    const remote = record!.attendance.filter((row) => !row.self);
+    expect(remote).toHaveLength(2);
+    expect(remote.map((row) => Date.parse(row.joinedAt!))).toEqual([1100, 3100]);
+    expect(remote.map((row) => (row.leftAt === null ? null : Date.parse(row.leftAt)))).toEqual([2000, null]);
+});

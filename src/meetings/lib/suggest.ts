@@ -1212,7 +1212,7 @@ export function suggestItems(options: {
             }),
             ...arrivalItems({
                 entries: meeting.transcript,
-                lines: lineEvidence(meeting.transcript, options.evidence, options.presence),
+                lines: lineEvidence(meeting.transcript, options.evidence, options.presence, options.energyMicShare),
                 presence: options.presence,
                 speakingReadings: options.evidence.speaking,
             })

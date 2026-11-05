@@ -376,7 +376,7 @@ export function ledgerEntryFor(record: MeetingRecord, item: MeetingItem, now: st
     const base = { at: now, meeting: record.id, project: record.project, item: item.id };
 
     if (item.kind === "term" && item.proposed) {
-        return { ...base, kind: "term", heard: item.heard, fixed: item.proposed };
+        return { ...base, kind: "term", scope: item.scope ?? "everywhere", heard: item.heard, fixed: item.proposed };
     }
 
     if (item.kind === "join" && item.joined) {

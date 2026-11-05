@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -415,4 +416,31 @@ test.skipIf(!Bun.which("ffmpeg"))("concurrent energy builders publish complete s
     }
     expect(await channelEnergy(audio, cache)).toEqual(results[0]);
     expect(readdirSync(dir).sort()).toEqual(["energy.bin", "stereo.wav"]);
+});
+
+test("meeting allocation retries when another process reserves the selected directory", async () => {
+    const store = new MeetingStore(new Storage("meeting-allocation-race"));
+    const mkdir = fs.mkdirSync;
+    let collided = false;
+    const spy = spyOn(fs, "mkdirSync").mockImplementation((target, options) => {
+        if (!collided && String(target).startsWith(`${store.root}/`)) {
+            collided = true;
+            mkdir(target, { recursive: true });
+            writeFileSync(join(String(target), "meeting.json"), "other-process-record");
+        }
+
+        return mkdir(target, options);
+    });
+
+    try {
+        const record = await store.create(
+            { title: "Race", start: "2026-11-02T15:00:00Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        expect(collided).toBe(true);
+        expect(record.id.endsWith("-2")).toBe(true);
+        expect(fs.readFileSync(store.path(record.id.slice(0, -2)), "utf8")).toBe("other-process-record");
+    } finally {
+        spy.mockRestore();
+    }
 });

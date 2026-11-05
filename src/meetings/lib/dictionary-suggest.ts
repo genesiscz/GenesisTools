@@ -49,7 +49,12 @@ export function suggestDictionary(options: {
     const evidence = new Set<string>();
 
     for (const correction of options.corrections) {
-        if (correction.kind !== "term" || (options.project && correction.project !== options.project)) {
+        // Only a fix confirmed for every line teaches the dictionary; a line-only fix or an older unscoped one does not.
+        if (
+            correction.kind !== "term" ||
+            correction.scope !== "everywhere" ||
+            (options.project && correction.project !== options.project)
+        ) {
             continue;
         }
 

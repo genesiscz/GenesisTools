@@ -390,6 +390,12 @@ async function stop(): Promise<void> {
 
     const record = current.state ? store.read(current.state.meetingId) : undefined;
     const recording = record?.recording;
+
+    if (recording?.stopReason === "failed" || recording?.stopReason === "error") {
+        fail(`Recording failed: ${recording.warning ?? recording.stopReason}`);
+        return;
+    }
+
     ui.ok(`Stopped ${record?.id ?? ""}: ${recording?.frames ?? 0} frames, ${formatBytes(recording?.bytes ?? 0)}.`);
 
     if (recording?.warning) {

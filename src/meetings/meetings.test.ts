@@ -11,7 +11,7 @@ import { MEETING_PLATFORM_IDS } from "@genesiscz/utils/meetings/platform";
 import { MeetingStore, meetingItemSchema, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
-import { buildPidRecord, serializePidRecord, writePidFile } from "@genesiscz/utils/process/pidfile";
+import { buildPidRecord, clearPidFile, serializePidRecord, writePidFile } from "@genesiscz/utils/process/pidfile";
 import { callRecorder, listLiveRecordings, RecorderClient, RPC_ERRORS } from "@genesiscz/utils/screen-recorder/live";
 import {
     CaptureError,
@@ -25,6 +25,7 @@ import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
 import { groupTurns } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { createCanvas } from "@napi-rs/canvas";
+import { claimWatcher, watcherPidPath } from "./commands/watch";
 import { CallTimeline } from "./lib/call-timeline";
 import { suggestDictionary } from "./lib/dictionary-suggest";
 import { captionSegments } from "./lib/editor-project";
@@ -201,6 +202,7 @@ describe("suggestDictionary", () => {
             at: "t",
             meeting: "m",
             kind: "term" as const,
+            scope: "everywhere" as const,
             heard: "Zushtent",
             fixed: "Zustand",
             item: "i1",
@@ -221,6 +223,7 @@ describe("suggestDictionary", () => {
             at: "t",
             meeting: "m",
             kind: "term" as const,
+            scope: "everywhere" as const,
             heard: "Zushtent",
             fixed: "Zustand",
             item: "i1",
@@ -2952,6 +2955,139 @@ test("a stale recorder claim is recovered and an initialization failure releases
         runRecorder({ store, meetingId: record.id, capture: meetingsConfigSchema.parse({}).global.capture })
     ).rejects.toThrow();
     expect(existsSync(files.pid)).toBe(false);
+});
+
+test("dictionary promotion requires explicit everywhere scope", () => {
+    const correction = {
+        at: "t",
+        meeting: "m1",
+        kind: "term" as const,
+        heard: "Zushtent",
+        fixed: "Zustand",
+        item: "i1",
+    };
+
+    for (const scope of [undefined, "line"] as const) {
+        expect(
+            suggestDictionary({
+                dictionary: { abbrExpansion: "every", entries: [] },
+                sourceId: "wisprflow",
+                sourceWords: [],
+                ignore: [],
+                corrections: [
+                    { ...correction, scope },
+                    { ...correction, meeting: "m2", scope },
+                ],
+            })
+        ).toEqual([]);
+    }
+});
+
+test("Teams attendance without an end message uses the observer join", () => {
+    const raw = SafeJSON.stringify([
+        {
+            meeting: { startedAt: null },
+            observer: { joinedAt: meeting.start },
+            attendance: [{ name: "Alice Example", joinedAt: meeting.start }],
+        },
+    ]);
+    expect(teamsAttendanceFromJson(raw, { title: "Planning", start: meeting.start }, "fixture")?.presence).toHaveLength(
+        1
+    );
+});
+
+test("an implicit join inherits the following line's ranged voice", () => {
+    const result = applyCorrections([line("Before", 10, "dot"), line("After", 20, "ahnu zbytek")], {
+        joins: [{ atSec: 20 }],
+        ranges: [{ label: "After", fromSec: 20, toSec: 20, speaker: "Alice Example" }],
+    });
+    expect(result.entries.map((entry) => entry.speaker)).toEqual(["Alice Example", "Alice Example"]);
+});
+
+test("arrival attribution honors calibrated energy over coarse segment channels", () => {
+    const base = {
+        record,
+        meeting: { ...meeting, transcript: [line("Other", 20, "O co jsem přišel?")] },
+        rules: ["evidence" as const],
+        dictionary: { abbrExpansion: "every" as const, entries: [] },
+        sourceWords: [],
+        presence: [{ name: "Newcomer", fromSec: 15, toSec: 100 }],
+        now: "2026-11-02T15:00:00.000Z",
+    };
+
+    for (const [channel, energy, confidence] of [
+        ["mic", 0, 0.65],
+        ["system", 1, 0.35],
+    ] as const) {
+        const items = suggestItems({
+            ...base,
+            energyMicShare: () => energy,
+            evidence: { selfName: "Self", segments: [{ startSec: 20, endSec: 40, channel }], speaking: [], files: [] },
+        });
+        expect(items.find((item) => item.kind === "speaker-range" && item.speaker === "Newcomer")?.confidence).toBe(
+            confidence
+        );
+    }
+});
+
+test("a watcher reclaims a dead owner but refuses a second live claim", async () => {
+    const store = new MeetingStore(new Storage("watcher-claim-regression"));
+    writePidFile(watcherPidPath(store), { pid: 99999999 });
+
+    try {
+        await claimWatcher(store);
+        await expect(claimWatcher(store)).rejects.toThrow();
+    } finally {
+        clearPidFile(watcherPidPath(store));
+    }
+});
+
+test("recorder failure persists a terminal state before releasing ownership", async () => {
+    const store = new MeetingStore(new Storage("recorder-failed-state"));
+    const record = await store.create(
+        { title: "Failure fixture", start: meeting.start, createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const update = store.update.bind(store);
+    let calls = 0;
+    store.update = async (...args: Parameters<typeof update>) => {
+        calls += 1;
+
+        if (calls === 1) {
+            throw new Error("injected recording failure");
+        }
+
+        return update(...args);
+    };
+    const failed = await runRecorder({
+        store,
+        meetingId: record.id,
+        display: 1,
+        capture: meetingsConfigSchema.parse({}).global.capture,
+    });
+    expect(failed.stopReason).toBe("error");
+    expect(store.read(record.id)?.recording).toMatchObject({
+        status: "stopped",
+        stopReason: "error",
+        warning: expect.stringContaining("injected recording failure"),
+    });
+    expect(existsSync(recorderFiles(store).state)).toBe(false);
+    expect(existsSync(recorderFiles(store).pid)).toBe(false);
+});
+
+test("a recorder that fails before its capture loop persists the error and retires its state", async () => {
+    const store = new MeetingStore(new Storage("recorder-failed-setup"));
+    const record = await store.create(
+        { title: "Setup failure fixture", start: meeting.start, createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    writeFileSync(join(store.folder(record.id), "frames"), "blocks the frames directory");
+    await expect(
+        runRecorder({ store, meetingId: record.id, capture: meetingsConfigSchema.parse({}).global.capture })
+    ).rejects.toThrow();
+    expect(store.read(record.id)?.recording).toMatchObject({ status: "stopped", stopReason: "error" });
+    expect(existsSync(recorderFiles(store).state)).toBe(false);
+    expect(existsSync(recorderFiles(store).pid)).toBe(false);
 });
 
 describe("transcriptDocument", () => {

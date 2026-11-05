@@ -20,6 +20,7 @@ const attendanceSchema = z.array(
             startedAt: z.string().nullish(),
             endedAt: z.string().nullish(),
         }),
+        observer: z.object({ joinedAt: z.string().nullish() }).optional(),
         attendance: z.array(
             z.object({
                 name: z.string(),
@@ -35,7 +36,11 @@ type AttendanceCall = z.infer<typeof attendanceSchema>[number];
 /** The call that started closest to the meeting, if one is close enough to be the same call. */
 function closestCall(calls: AttendanceCall[], startMs: number): AttendanceCall | undefined {
     const timed = calls
-        .map((call) => ({ call, gap: Math.abs(Date.parse(call.meeting.startedAt ?? "") - startMs) }))
+        // A call still running has no "call ended" message, so no startedAt: the observer's join stands in for it.
+        .map((call) => ({
+            call,
+            gap: Math.abs(Date.parse(call.meeting.startedAt ?? call.observer?.joinedAt ?? "") - startMs),
+        }))
         .filter((entry) => Number.isFinite(entry.gap))
         .sort((a, b) => a.gap - b.gap);
 

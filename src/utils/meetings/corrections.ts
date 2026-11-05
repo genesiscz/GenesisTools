@@ -17,6 +17,8 @@ const correctionSchema = z.object({
     heard: z.string(),
     fixed: z.string(),
     item: z.string(),
+    /** A term's reach: `line` fixed one line only, so it does not teach the dictionary. Absent on older lines. */
+    scope: z.enum(["line", "everywhere"]).optional(),
 });
 export type Correction = z.infer<typeof correctionSchema>;
 
