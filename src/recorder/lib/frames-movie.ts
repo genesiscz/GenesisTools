@@ -170,6 +170,10 @@ export async function stepDisplaySwitch(
     }
 
     const result = await make(target ? { plan: target } : {});
+    if (direction === "undo") {
+        step.before = readDisplayPlan(folder);
+    }
+
     writeSwitchJournal(
         folder,
         direction === "undo"

@@ -192,11 +192,15 @@ describe("a display switch from the editor", () => {
         const old = mkdtempSync(join(tmpdir(), "gt-switch-undo-old-"));
         await keepingSwitchStep(old, async () => writeFileSync(join(old, "proxy.json"), SafeJSON.stringify(plan(2))));
         const calls: unknown[] = [];
-        await stepDisplaySwitch(old, "undo", async (options) => {
+        const regenerate = async (options: { plan?: unknown }) => {
             calls.push(options);
+            writeFileSync(join(old, "proxy.json"), SafeJSON.stringify(options.plan ?? plan(1)));
             return { path: join(old, "proxy.mp4"), frames: 1, audioPieces: 0, plan: plan(1) };
-        });
+        };
+        await stepDisplaySwitch(old, "undo", regenerate);
         expect(calls).toEqual([{}]);
+        await stepDisplaySwitch(old, "redo", regenerate);
+        expect(SafeJSON.parse(readFileSync(join(old, "proxy.json"), "utf8"))).toEqual(plan(2));
     });
 
     it("an undo makes the proxy with exactly the plan from before the switch, never the policy's pick", () => {
