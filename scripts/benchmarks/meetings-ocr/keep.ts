@@ -18,7 +18,7 @@
  *
  * Usage: bun scripts/benchmarks/meetings-ocr/keep.ts [--runs 3] [--meeting <folder>] [--scratch <dir>] [--json]
  */
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, statSync } from "node:fs";
 import { loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
@@ -55,13 +55,11 @@ async function preparePngs(meeting: string, scratch: string): Promise<string[]> 
     for (const name of names) {
         const png = join(dir, name.replace(/\.jpg$/, ".png"));
 
-        if (!existsSync(png)) {
-            const proc = Bun.spawn(["sips", "-s", "format", "png", join(source, name), "--out", png], {
-                stdout: "ignore",
-                stderr: "ignore",
-            });
-            await proc.exited;
-        }
+        const proc = Bun.spawn(["sips", "-s", "format", "png", join(source, name), "--out", png], {
+            stdout: "ignore",
+            stderr: "ignore",
+        });
+        await proc.exited;
 
         pngs.push(png);
     }

@@ -3,7 +3,7 @@
  * helper's CPU, and the line share one read keeps of another. The meeting is only read; its frames are copied into
  * the scratch folder, and no text leaves the bench process.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { foldText, textSimilarity } from "@genesiscz/utils/macos/ocr-boxes";
@@ -87,9 +87,8 @@ export async function consecutiveFrames(options: {
         for (const [index, row] of picked.entries()) {
             const path = join(options.scratch, row.file.replace(/^frames\//, ""));
 
-            if (!existsSync(path)) {
-                copyFileSync(join(options.meeting, row.file), path);
-            }
+            // Scratch names repeat between meetings; refresh the bytes before measuring them.
+            copyFileSync(join(options.meeting, row.file), path);
 
             const signature = await signatureOf(path);
             const reason = index === 0 ? "first" : (row.reason ?? "change");

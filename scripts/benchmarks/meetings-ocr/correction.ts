@@ -111,9 +111,7 @@ function pickFrames(meeting: string, scratch: string, count: number): string[] {
         .map((name) => {
             const path = join(dir, name);
 
-            if (!existsSync(path)) {
-                copyFileSync(join(source, name), path);
-            }
+            copyFileSync(join(source, name), path);
 
             return path;
         });

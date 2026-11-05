@@ -18,7 +18,7 @@
  * Usage:
  *   bun scripts/benchmarks/meetings-ocr/bench.ts [--runs 3] [--meeting <folder>] [--scratch <dir>] [--baseline] [--compare] [--json]
  */
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { type BaselineMetrics, withSpawnCounter } from "@app/benchmark/lib";
@@ -81,9 +81,7 @@ function prepareFrames(meeting: string, scratch: string): FrameRef[] {
     return picked.map((name) => {
         const path = join(scratch, name);
 
-        if (!existsSync(path)) {
-            copyFileSync(join(source, name), path);
-        }
+        copyFileSync(join(source, name), path);
 
         return { path, displayId: displayOf(name), name };
     });
