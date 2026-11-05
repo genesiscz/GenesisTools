@@ -42,6 +42,8 @@ export const env = {
         getBindHost: (fallback = "127.0.0.1") => getWithDefault("DASHBOARD_BIND_HOST", fallback),
         shouldOpenBrowser: () => isFlag("DASHBOARD_OPEN_BROWSER"),
         isDevtoolsEnabled: () => isFlag("DASHBOARD_DEVTOOLS"),
+        /** The background log a detached or launchd DashboardApp child writes to; unset in the foreground. */
+        getLogFile: () => getTrimmed("DASHBOARD_LOG_FILE"),
         getQaBaseUrl: () => getWithDefault("DD_QA_BASE_URL", "http://localhost:3042"),
         getPublicPort: () => getTrimmed("DEV_DASHBOARD_PUBLIC_PORT"),
         getDiskDuTimeoutMs: () => parseIntEnv("DD_DISK_DU_TIMEOUT_MS", 0),
