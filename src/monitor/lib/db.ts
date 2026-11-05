@@ -558,13 +558,13 @@ export class MonitorDatabase {
         //  - "its first check row" alone lets a failed first check consume the
         //    priming run (safeRunCheck records a row for a throw too), so the
         //    next success replays the whole feed as notifications.
-        // Only an `up` check ever carries items. The caller records its check
+        // Only an `up` or a `degraded` check carries items (a degraded read still read the feed). The caller records its check
         // row before it ingests, so the count is 1 here on that first read.
         const read = await this.client.kysely
             .selectFrom("checks")
             .select((eb) => eb.fn.countAll<number>().as("n"))
             .where("watcher_id", "=", watcherId)
-            .where("status", "=", "up")
+            .where("status", "in", ["up", "degraded"])
             .executeTakeFirst();
         const first = Number(existing?.n ?? 0) === 0 && Number(read?.n ?? 0) <= 1;
         const seenAt = nowUtcIso();

@@ -417,6 +417,22 @@ describe("MonitorDatabase feed items", () => {
         db.close();
     });
 
+    test("a degraded first read that ingests nothing does not re-prime on the next one", async () => {
+        const db = new MonitorDatabase(":memory:");
+        const watcher = await db.createWatcher({ name: "feed", kind: "rss", target: "https://a.dev/rss" });
+
+        // A degraded check still read the feed; its item filter matched nothing.
+        await db.recordCheck(watcher.id, { status: "degraded", latencyMs: 1, httpStatus: 200, detail: "partial" });
+        expect(await db.ingestFeedItems(watcher.id, [])).toEqual({ fresh: [], first: true });
+
+        await db.recordCheck(watcher.id, { status: "up", latencyMs: 1, httpStatus: 200, detail: "ok" });
+        const second = await db.ingestFeedItems(watcher.id, [item("g1", "release 1.0")]);
+
+        expect(second.first).toBe(false);
+        expect(second.fresh.map((entry) => entry.guid)).toEqual(["g1"]);
+        db.close();
+    });
+
     test("a failed first check does not consume the priming run", async () => {
         // safeRunCheck records a row for a check that threw too, so counting
         // check rows made run 1 (down) the "first sync" and run 2 replayed the
