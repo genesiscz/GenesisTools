@@ -23,6 +23,7 @@ import {
 } from "./approve-codex";
 import { type ConflictPick, resolutionProblems, resolveConflictText } from "./conflicts";
 import { threadRefs } from "./fetch-threads";
+import { formatStack } from "./fill-brief-stack";
 import { earlierVerdicts, PRE_PUSH_GUARDS, postingExitCode } from "./integrate";
 import { recordLandingPush } from "./land";
 import { appendEvent, readEvents, renderMarkdown } from "./ledger";
@@ -2338,23 +2339,17 @@ test("generated worker briefs follow the round and dedicated-review policy", () 
     const dir = fs.mkdtempSync(join(tmpdir(), "babysit-policy-"));
     const preload = join(dir, "github-fixture.ts");
     fs.writeFileSync(join(dir, "run.json"), SafeJSON.stringify({ repo: "fixture/repo", main: dir }));
-    const fixture = SafeJSON.stringify({
-        title: "Fixture review",
-        headRefName: "fixture",
-        baseRefName: "main",
-        changedFiles: 63,
-    });
-    fs.writeFileSync(
-        preload,
+    const pulls = [
         [
-            "const spawn = Bun.spawnSync;",
-            "Bun.spawnSync = (args, options) => args[0] === 'gh'",
-            " ? spawn([process.execPath, '-e', " +
-                SafeJSON.stringify("console.log(" + SafeJSON.stringify(fixture) + ")") +
-                "], options)",
-            " : spawn(args, options);",
-        ].join("\n")
-    );
+            { number: 535, head: { ref: "feature/base" }, base: { ref: "main" } },
+            { number: 536, head: { ref: "fixture" }, base: { ref: "feature/base" } },
+            { number: 537, head: { ref: "feature/top" }, base: { ref: "fixture" } },
+        ],
+    ];
+    const files = [
+        Array.from({ length: 100 }, (_, i) => ({ filename: `src/file-${i}.ts` })),
+        [{ filename: "src/last.ts" }],
+    ];
     for (const [changedFiles, round, dedicated, all] of [
         [63, 1, false, true],
         [63, 2, false, true],
@@ -2363,12 +2358,30 @@ test("generated worker briefs follow the round and dedicated-review policy", () 
         [120, 4, false, false],
         [120, 32, true, true],
     ] as const) {
-        const metadata = { title: "Fixture review", headRefName: "fixture", baseRefName: "main", changedFiles };
+        const metadata = {
+            number: 536,
+            title: "Fixture review",
+            headRefName: "fixture",
+            baseRefName: "feature/base",
+            changedFiles,
+        };
         fs.writeFileSync(
             preload,
-            "Bun.spawnSync=(args)=>({exitCode:0,stdout:Buffer.from(JSON.stringify(" +
-                SafeJSON.stringify(metadata) +
-                ")),stderr:Buffer.alloc(0)});"
+            [
+                "Bun.spawnSync=(args)=>{",
+                "if(args[0]!=='gh') return {exitCode:0,stdout:Buffer.from(''),stderr:Buffer.alloc(0)};",
+                "if(args[1]==='pr') return {exitCode:0,stdout:Buffer.from(JSON.stringify(" +
+                    SafeJSON.stringify(metadata) +
+                    ")),stderr:Buffer.alloc(0)};",
+                "if(args[2].includes('/pulls') && (!args.includes('--paginate') || !args.includes('--slurp'))) throw new Error('pagination required');",
+                "const data=args[2].includes('/files?') ? " +
+                    SafeJSON.stringify(files) +
+                    " : args[2].includes('/pulls?') ? " +
+                    SafeJSON.stringify(pulls) +
+                    " : null;",
+                "return {exitCode:0,stdout:Buffer.from(data ? JSON.stringify(data) : 'main\\n'),stderr:Buffer.alloc(0)};",
+                "};",
+            ].join("\n")
         );
         const target = join(dir, "brief-" + round + ".md");
         const result = Bun.spawnSync(
@@ -2396,6 +2409,10 @@ test("generated worker briefs follow the round and dedicated-review policy", () 
         expect(brief).toContain(all ? "fix EVERY valid finding" : "fix Critical, Major and High");
         expect(brief).toContain("A valid security finding is always fixed");
         expect(brief).toContain("Change every file the fix needs in this PR");
+        expect(brief).toContain("#535 feature/base");
+        expect(brief).toContain("#537 feature/top");
+        expect(brief).toContain("`src/file-0.ts`");
+        expect(brief).toContain("`src/last.ts`");
         if (!all) {
             expect(brief).toContain("about 20 changed lines");
             expect(brief).toContain("deferred");
@@ -4167,14 +4184,15 @@ describe("round 15 review regressions", () => {
         const preload = join(dir, "preload.ts");
         fs.writeFileSync(
             preload,
-            "Bun.spawnSync=(args)=>{if(args[0] !== 'gh' && args[0] !== 'git') throw new Error('unexpected command');return {exitCode:0,stdout:Buffer.from(args[0] === 'gh'?'" +
+            "Bun.spawnSync=(args)=>{if(args[0] !== 'gh' && args[0] !== 'git') throw new Error('unexpected command');const value=args[0] === 'git' ? '' : args[1] === 'pr' ? '" +
                 SafeJSON.stringify({
+                    number: 1,
                     title: "Fixture",
                     headRefName: "fixture",
                     baseRefName: "main",
                     changedFiles: 63,
                 }) +
-                "':''),stderr:Buffer.alloc(0)};};"
+                "' : args[2].includes('/pulls') ? '[[]]' : 'main';return {exitCode:0,stdout:Buffer.from(value),stderr:Buffer.alloc(0)};};"
         );
         for (const model of ["Grok", "GPT-6.1 Sol"]) {
             const out = join(dir, "brief.md");
@@ -6746,5 +6764,45 @@ describe("tmp-reclaim never lists a pending aside copy", () => {
 
         saveRmRequest({ ...request, status: "denied" });
         expect(moveBlocker(scratch, { open: new OpenFiles([]) })).toBeNull();
+    });
+});
+
+describe("brief stack", () => {
+    const prs = [
+        { number: 1, headRefName: "feature/base", baseRefName: "main" },
+        { number: 2, headRefName: "feature/middle", baseRefName: "feature/base" },
+        { number: 3, headRefName: "feature/top", baseRefName: "feature/middle" },
+    ];
+
+    test("shows the middle PR's parent and child", () => {
+        const text = formatStack({ pr: prs[1], openPrs: prs, defaultBranch: "main" });
+        expect(text).toContain("#1 feature/base");
+        expect(text).toContain("#3 feature/top");
+        expect(text).toContain("Push the parent before the child.");
+        expect(text).toContain("reply");
+    });
+
+    test("shows all direct children", () => {
+        const openPrs = [...prs, { number: 4, headRefName: "feature/other", baseRefName: "feature/base" }];
+        const text = formatStack({ pr: prs[0], openPrs, defaultBranch: "main" });
+        expect(text).toContain("#2 feature/middle");
+        expect(text).toContain("#4 feature/other");
+    });
+
+    test("uses one line for a standalone PR", () => {
+        expect(formatStack({ pr: prs[0], openPrs: [prs[0]], defaultBranch: "main" })).toBe(
+            "This PR is not part of a stack."
+        );
+    });
+
+    test("stops a cycle without listing the current PR as its own parent", () => {
+        const cycle = [
+            { number: 5, headRefName: "feature/a", baseRefName: "feature/b" },
+            { number: 6, headRefName: "feature/b", baseRefName: "feature/a" },
+        ];
+        const text = formatStack({ pr: cycle[0], openPrs: cycle, defaultBranch: "main" });
+        expect(text).toContain("#6 feature/b");
+        expect(text).toContain("cycle");
+        expect(text).not.toContain("#5 feature/a");
     });
 });

@@ -16,6 +16,13 @@ reruns your checks, and pushes. Quality is judged, not speed.
 - Commit subject: `fix({{SCOPES}}): #{{PR}} followup - <what the round fixes, short>`. The commit-msg hook checks the
   scopes; if it prints a corrected subject, commit with that.
 
+## Stack and changed files
+
+{{STACK}}
+
+Files changed by this PR:
+{{FILES}}
+
 ## 1. Read the open threads (read-only)
 
 - The lead fetched them for you, because a sandboxed worker has no network: `.claude/work/babysit/{{PR}}-r{{ROUND}}-threads.md`
