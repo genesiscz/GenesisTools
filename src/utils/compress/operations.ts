@@ -500,20 +500,13 @@ export async function expandPath(options: ExpandOptions): Promise<LedgerRecord> 
     } else {
         assertRoomFor({ outputDir: into, inputBytes: knownBytes ?? digestZstdContent(archive).bytes, keptShare: 1 });
         // The check above ran before the write: a restore in another process can publish the target meanwhile.
-        const written = await decompressFile({ source: archive, target }).catch((err: unknown) => {
-            throw err instanceof AtomicTargetExistsError ? refuseExisting() : err;
-        });
-        restoredBytes = written.bytes;
-        // The ledger knows the original's sha256 when this tool wrote the archive.
         const recorded = recordedInputSha256(archive);
-
-        if (recorded && recorded !== written.sha256) {
-            removePath(target);
-            throw new Error(
-                `${archive} decompressed to other bytes than the original the ledger recorded; output removed`
-            );
-        }
-
+        const written = await decompressFile({ source: archive, target, expectedSha256: recorded }).catch(
+            (err: unknown) => {
+                throw err instanceof AtomicTargetExistsError ? refuseExisting() : err;
+            }
+        );
+        restoredBytes = written.bytes;
         outputSha256 = written.sha256;
     }
 

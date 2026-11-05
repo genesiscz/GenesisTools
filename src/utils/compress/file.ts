@@ -211,9 +211,18 @@ export function sourceUnchanged(path: string, before: SourceStat): boolean {
  * when another process created `target` meanwhile (a concurrent restore whose file already took appends), it throws
  * `AtomicTargetExistsError` and leaves that file as it was.
  */
-export async function decompressFile({ source, target }: { source: string; target: string }): Promise<ContentDigest> {
+export async function decompressFile({
+    source,
+    target,
+    expectedSha256,
+}: {
+    source: string;
+    target: string;
+    expectedSha256?: string;
+}): Promise<ContentDigest> {
     const hasher = new Bun.CryptoHasher("sha256");
     let bytes = 0;
+    let sha256 = "";
 
     await atomicWriteFileStreamed(
         target,
@@ -223,9 +232,16 @@ export async function decompressFile({ source, target }: { source: string; targe
                 write(frame);
                 bytes += frame.length;
             }
+
+            sha256 = hasher.digest("hex");
+            if (expectedSha256 && sha256 !== expectedSha256) {
+                throw new Error(
+                    `${source} decompressed to other bytes than the original the ledger recorded; output not published`
+                );
+            }
         },
         { mode: statSync(source).mode & 0o777, exclusive: true }
     );
 
-    return { bytes, sha256: hasher.digest("hex") };
+    return { bytes, sha256 };
 }

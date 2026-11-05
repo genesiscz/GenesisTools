@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, fsyncSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { transcriptOnDisk } from "@app/ai-proxy/lib/sessions/view";
+import { recordCompression, searchLedger } from "@genesiscz/utils/compress/ledger";
 import { applyOldFileCompression, planOldFileCompression } from "@genesiscz/utils/compress/retention";
 import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -245,6 +246,43 @@ describe("appendTranscriptLines", () => {
         // The next pass compresses the whole history, not the entries written after the first one.
         await dailyPass();
         expect(readWholeTextSync(`${file}.zst`)).toBe(all);
+    });
+
+    it("keeps a mismatched archive when two proxy processes try to resume it", async () => {
+        const shared = transcriptFile(day, "mismatched-two-proxies");
+        appendTranscriptLines(shared, day, ['{"n":1}']);
+        await transcriptAppendsSettled();
+        await dailyPass();
+
+        const record = searchLedger({ path: shared }).findLast((entry) => entry.op === "compress");
+        expect(record).toBeDefined();
+        if (!record) {
+            throw new Error("missing compression ledger record");
+        }
+
+        const { id: _id, ...entry } = record;
+        recordCompression({ ...entry, inputSha256: "0".repeat(64) });
+        const script = `
+            import { appendTranscriptLines, transcriptAppendsSettled } from "./src/ai-proxy/lib/usage/transcripts.ts";
+            appendTranscriptLines(${SafeJSON.stringify(shared)}, ${SafeJSON.stringify(day)}, ['{"new":1}']);
+            await transcriptAppendsSettled();
+        `;
+        const children = [1, 2].map(() =>
+            Bun.spawn([process.execPath, "-e", script], {
+                cwd: join(import.meta.dir, "../../../.."),
+                env: { ...process.env },
+                stdout: "pipe",
+                stderr: "pipe",
+            })
+        );
+        for (const child of children) {
+            const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+            expect(code).toBe(0);
+            expect(stderr).toContain("output not published");
+        }
+
+        expect(existsSync(shared)).toBe(false);
+        expect(readWholeTextSync(`${shared}.zst`)).toBe('{"n":1}\n');
     });
 
     it("keeps the exchange of a second proxy process that restored and appended while this one was restoring", async () => {
