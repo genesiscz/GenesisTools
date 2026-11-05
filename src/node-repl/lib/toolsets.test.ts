@@ -46,6 +46,7 @@ import transcriptCuts from "@genesiscz/utils/recording-editor/__fixtures__/trans
 import transcriptWordsFixture from "@genesiscz/utils/recording-editor/__fixtures__/transcript-words.json";
 import { RecordingEditor } from "@genesiscz/utils/recording-editor/editor";
 import { readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import { searchMethods } from "@genesiscz/utils/repl/discovery";
 import { readShowable } from "@genesiscz/utils/repl/show";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { type Clip, EditorToolset, editorApi, ReplJob } from "@genesiscz/utils/repl/toolsets/editor";
@@ -1048,6 +1049,30 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             server.close();
             await session.command({ cmd: "discard" });
         }
+    });
+
+    test("movies: search() gives each hit its own signature line, and apply's op list only through describe()", () => {
+        const lines = searchMethods([moviesApi], "click").split("\n");
+        expect(
+            lines.find((line) => line.startsWith("movies.Movie.clickGroups(options?: { gapSeconds?:"))
+        ).toBeDefined();
+        const apply = lines.find((line) => line.startsWith("movies.Movie.apply("));
+        expect(apply).toStartWith("movies.Movie.apply(ops: {…}[]) → ");
+        expect(apply).toContain('describe("movies.Movie.apply") prints it in full');
+        expect(apply?.length).toBeLessThan(600);
+    });
+
+    test("movies: every time argument names its base, SourceTime or OutputTime, and the notes define both", () => {
+        const docs = renderDocs(moviesApi);
+        expect(docs).toContain("movie.cut(from: SourceTime, to: SourceTime) →");
+        expect(docs).toContain("movie.still(at?: OutputTime, out?: string) →");
+        expect(docs).toContain("movie.range(options: { from: OutputTime; to: OutputTime;");
+        expect(docs).toContain('{ op: "cut"; from: SourceTime; to: SourceTime }');
+        expect(docs).toContain('{ op: "range"; from: OutputTime; to: OutputTime;');
+        // A time spelled out as its type has lost its base.
+        expect(docs).not.toContain("number (≥0) | string");
+        expect(docs).toContain("Note: SourceTime is");
+        expect(docs).toContain("Note: OutputTime is");
     });
 
     test("movies: the docs of a MovieRecording's settings name the keys a movie takes and the ones it keeps", async () => {

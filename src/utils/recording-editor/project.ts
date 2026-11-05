@@ -37,7 +37,7 @@ import {
     setLanes,
     withLane,
 } from "./lanes";
-import { timeSchema, timeToUs } from "./plan";
+import { outputTimeSchema, sourceTimeSchema, timeSchema, timeToUs } from "./plan";
 import {
     cutRanges,
     FILLER_LEVELS,
@@ -928,7 +928,7 @@ export function annotateClicks(
 const focusSchema = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) });
 /** A point a drag sends: any numbers, which the op holds inside the picture. */
 const loosePoint = z.object({ x: z.number(), y: z.number() }).strict();
-const rangeFields = { from: timeSchema, to: timeSchema };
+const rangeFields = { from: sourceTimeSchema, to: sourceTimeSchema };
 
 /** Places or changes the camera bubble (camera.ts); the Movie handle's camera() takes the same fields. */
 export const cameraOpSchema = z
@@ -961,7 +961,7 @@ const RANGE_RECTS = {
 } as const;
 
 export const editOpSchema = z.discriminatedUnion("op", [
-    z.object({ op: z.literal("split"), at: timeSchema }).strict(),
+    z.object({ op: z.literal("split"), at: sourceTimeSchema }).strict(),
     z.object({ op: z.literal("cut"), ...rangeFields }).strict(),
     z.object({ op: z.literal("keep"), ...rangeFields }).strict(),
     z.object({ op: z.literal("speed"), ...rangeFields, factor: z.number().min(0.25).max(16) }).strict(),
@@ -980,8 +980,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z
         .object({
             op: z.literal("redact"),
-            from: timeSchema,
-            to: timeSchema,
+            from: sourceTimeSchema,
+            to: sourceTimeSchema,
             /** 0...1 of the source picture from its top left; x + width and y + height stay inside it. */
             rect: rectSchema,
             style: z.enum(REDACTION_STYLES).optional(),
@@ -999,8 +999,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z
         .object({
             op: z.literal("spotlight"),
-            from: timeSchema,
-            to: timeSchema,
+            from: sourceTimeSchema,
+            to: sourceTimeSchema,
             /** Stays as it is while the rest of the picture dims; with follow, its size around the cursor. */
             rect: rectSchema,
             label: z.string().max(60).optional(),
@@ -1017,8 +1017,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z
         .object({
             op: z.literal("text"),
-            from: timeSchema,
-            to: timeSchema,
+            from: sourceTimeSchema,
+            to: sourceTimeSchema,
             text: z.string().trim().min(1).max(200),
             /** The centre, 0...1 of the canvas from the top left; 0.5, 0.12 (top middle) by default. */
             x: z.number().min(0).max(1).optional(),
@@ -1034,7 +1034,7 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .object({
             op: z.literal("marker"),
             /** Source time of the moment. */
-            at: timeSchema,
+            at: sourceTimeSchema,
             /** Its name in the marks lane and as a chapter; absent is "Marker <n>". */
             label: z.string().trim().min(1).max(80).optional(),
         })
@@ -1044,17 +1044,17 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .object({
             op: z.literal("retime"),
             id: z.string(),
-            at: timeSchema.optional(),
-            from: timeSchema.optional(),
-            to: timeSchema.optional(),
+            at: sourceTimeSchema.optional(),
+            from: sourceTimeSchema.optional(),
+            to: sourceTimeSchema.optional(),
             by: z.number().optional(),
         })
         .strict(),
     z
         .object({
             op: z.literal("shape"),
-            from: timeSchema,
-            to: timeSchema,
+            from: sourceTimeSchema,
+            to: sourceTimeSchema,
             kind: z.enum(SHAPE_KINDS),
             /** An arrow's tail, or a box's or circle's corner, 0...1 of the source picture from its top left. */
             start: z
@@ -1089,19 +1089,19 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .object({
             op: z.literal("fixLine"),
             /** The line's `from` as transcript() gives it (source seconds). */
-            from: timeSchema,
+            from: sourceTimeSchema,
             /** The corrected words; "" hides the line. */
             text: z.string().max(300),
         })
         .strict(),
-    z.object({ op: z.literal("unfixLine"), from: timeSchema }).strict(),
+    z.object({ op: z.literal("unfixLine"), from: sourceTimeSchema }).strict(),
     z.object({ op: z.literal("autoZoom"), scale: z.number().min(1).max(4).optional() }).strict(),
     z
         .object({
             op: z.literal("annotateClicks"),
             /** Source seconds; the whole recording by default. */
-            from: timeSchema.optional(),
-            to: timeSchema.optional(),
+            from: sourceTimeSchema.optional(),
+            to: sourceTimeSchema.optional(),
             kind: z.enum(SHAPE_KINDS).optional(),
             /** How long each mark shows (1.2). */
             seconds: z.number().min(0.3).max(10).optional(),
@@ -1243,7 +1243,7 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .object({
             op: z.literal("cutWords"),
             /** Any source time inside the line (a line's from, from transcript() or find()). */
-            at: timeSchema,
+            at: sourceTimeSchema,
             /** The word or words (in order) to cut out of that line; every place the line says them. */
             words: z.string().min(1),
             /** Only this place of the words in the line (1 is the first); absent cuts every place. */
@@ -1381,8 +1381,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z
         .object({
             op: z.literal("range"),
-            from: timeSchema,
-            to: timeSchema,
+            from: outputTimeSchema,
+            to: outputTimeSchema,
             action: z.enum(RANGE_ACTIONS),
             factor: z.number().min(0.25).max(16).optional(),
             scale: z.number().min(1).max(4).optional(),

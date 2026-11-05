@@ -73,8 +73,15 @@ function literal(value: unknown): string {
     return typeof value === "string" ? `"${value}"` : String(value);
 }
 
-/** A compact TypeScript spelling of a JSON Schema, cut to `…` below `depth` levels. */
+/**
+ * A compact TypeScript spelling of a JSON Schema, cut to `…` below `depth` levels. A schema with a title (zod
+ * `.meta({ title })`) is written as that name, which the API's notes define once (`SourceTime`, `OutputTime`).
+ */
 export function typeText(schema: JsonSchema, depth = 3): string {
+    if (schema.title) {
+        return schema.title;
+    }
+
     if (schema.const !== undefined) {
         return literal(schema.const);
     }

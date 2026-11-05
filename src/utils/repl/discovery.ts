@@ -39,11 +39,24 @@ function fullDescriptor(owner: string, method: MethodDescriptor): string {
     ].join("\n");
 }
 
+/** A line spells a signature out up to this length; a longer one (an op list of 60 kinds) goes one level deep. */
+const LINE_SIGNATURE_MAX = 600;
+
+/** One method as search and a listing print it: its own signature, its effect and its doc. */
+function methodLine(owner: string, method: MethodDescriptor): string {
+    const full = methodSignature(owner, method);
+    const signature =
+        full.length <= LINE_SIGNATURE_MAX
+            ? full
+            : `${methodSignature(owner, method, 1)} (describe("${owner}.${method.name}") prints it in full)`;
+    return `${signature} [${method.effect}] — ${method.doc}`;
+}
+
 /** One line per method of an owner (`movies`, `movies.Movie`, or its alias `movie`), like search's lines. */
 function ownerListing(list: ReturnType<typeof entries>, owner: string): string {
     return list
         .filter((entry) => entry.owner === owner)
-        .map(({ method }) => `${methodSignature(owner, method)} [${method.effect}] — ${method.doc}`)
+        .map(({ method }) => methodLine(owner, method))
         .join("\n");
 }
 
@@ -56,7 +69,7 @@ export function searchMethods(apis: readonly ApiDescriptor[], query: string): st
                     `${owner}.${method.name} ${method.doc} ${SafeJSON.stringify(jsonSchemaOf(method.params))}`.toLowerCase();
                 return terms.every((term) => text.includes(term));
             })
-            .map(({ owner, method }) => `${methodSignature(owner, method)} [${method.effect}] — ${method.doc}`)
+            .map(({ owner, method }) => methodLine(owner, method))
             .join("\n") || "No matching methods in the loaded toolsets."
     );
 }

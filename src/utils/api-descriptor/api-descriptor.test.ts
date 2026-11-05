@@ -67,6 +67,13 @@ describe("api descriptors", () => {
         expect(typeText(jsonSchemaOf(z.custom<() => void>()))).toBe("unknown");
     });
 
+    test("a schema with a title is written as that name, so a docs note can define it once", () => {
+        const seconds = z.number().nonnegative().meta({ title: "SourceTime" });
+        expect(typeText(jsonSchemaOf(z.object({ at: seconds, to: seconds.optional(), n: z.number() })))).toBe(
+            "{ at: SourceTime; to?: SourceTime; n: number }"
+        );
+    });
+
     test("signatures, the one-line summary and the full docs come from the descriptor", () => {
         expect(methodSignature("demo", api.methods[0])).toBe(
             'demo.start(options: { fps?: number; displays: "all" | number[] }) → Recording'

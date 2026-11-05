@@ -12,7 +12,13 @@ import { checkProject, type EditFacts, fixOps } from "@genesiscz/utils/recording
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { placedShape } from "@genesiscz/utils/recording-editor/item-ops";
 import { EFFECT_KINDS } from "@genesiscz/utils/recording-editor/lanes";
-import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
+import {
+    outputTimeSchema,
+    sourceTimeSchema,
+    type TimeValue,
+    type timeSchema,
+    timeToUs,
+} from "@genesiscz/utils/recording-editor/plan";
 import {
     BACKGROUND_KINDS,
     CANVAS_ASPECTS,
@@ -97,7 +103,7 @@ const START_GATE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const FINISH_TIMEOUT_MS = 120_000;
 const POLL_MS = 250;
 
-const range = { from: timeSchema, to: timeSchema };
+const range = { from: sourceTimeSchema, to: sourceTimeSchema };
 const focusSchema = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) });
 const zoomSchema = z
     .object({
@@ -178,7 +184,7 @@ const movieMethods = [
         doc: "Runs every fix check() offers (each issue's action.ops: remove what never shows, move an edit marker a cut hides to the nearest kept moment, lengthen what is too short to read, move a text off another) in one save and one undo() step. Issues with no fix (a missing transcript or music file) stay; check() again lists them.",
         effect: "reversible",
     }),
-    edit("split", z.object({ at: timeSchema }), "Splits the clip at a source time.", ["at"]),
+    edit("split", z.object({ at: sourceTimeSchema }), "Splits the clip at a source time.", ["at"]),
     edit("cut", z.object(range), "Removes a source range from the movie.", ["from", "to"]),
     edit("keep", z.object(range), "Keeps only a source range (trims both ends).", ["from", "to"]),
     edit(
@@ -197,8 +203,8 @@ const movieMethods = [
         "redact",
         z
             .object({
-                from: timeSchema,
-                to: timeSchema,
+                from: sourceTimeSchema,
+                to: sourceTimeSchema,
                 rect: z
                     .object({
                         x: z.number().min(0).max(1),
@@ -220,8 +226,8 @@ const movieMethods = [
         "text",
         z
             .object({
-                from: timeSchema,
-                to: timeSchema,
+                from: sourceTimeSchema,
+                to: sourceTimeSchema,
                 text: z.string().trim().min(1).max(200),
                 x: z.number().min(0).max(1).optional(),
                 y: z.number().min(0).max(1).optional(),
@@ -238,17 +244,17 @@ const movieMethods = [
         z
             .object({
                 id: z.string(),
-                at: timeSchema.optional(),
+                at: sourceTimeSchema.optional(),
                 by: z.number().optional(),
-                from: timeSchema.optional(),
-                to: timeSchema.optional(),
+                from: sourceTimeSchema.optional(),
+                to: sourceTimeSchema.optional(),
             })
             .strict(),
         'Moves or trims a zoom, hidden part, text or shape by its id (info() lists them). To MOVE it with its length kept: `at` (its new start) or `by` (seconds, negative is earlier). To TRIM it: `from` and/or `to` set a new start or end, so `from` alone makes it longer or shorter. Source seconds or "m:ss". retime({ id: "z1", at: 1 }), retime({ id: "t1", by: 2 }), retime({ id: "s1", to: 9 }).'
     ),
     edit(
         "fixLine",
-        z.object({ from: timeSchema, text: z.string().max(300) }).strict(),
+        z.object({ from: sourceTimeSchema, text: z.string().max(300) }).strict(),
         'Corrects the transcript line spoken at `from` (any source time inside it, e.g. a line\'s from from transcript() or find()): text is the right words ("" hides the line). Kept in the edit, so captions, transcript(), find() and movies.search() read the fixed words, and a new transcription keeps them.',
         ["from", "text"]
     ),
@@ -268,7 +274,7 @@ const movieMethods = [
         "fixLines",
         z.object({
             fixes: z
-                .array(z.object({ at: timeSchema, text: z.string().max(300) }).strict())
+                .array(z.object({ at: sourceTimeSchema, text: z.string().max(300) }).strict())
                 .min(1)
                 .max(500),
         }),
@@ -277,7 +283,7 @@ const movieMethods = [
     ),
     edit(
         "unfixLine",
-        z.object({ from: timeSchema }).strict(),
+        z.object({ from: sourceTimeSchema }).strict(),
         "Drops the correction of the line that starts at `from`.",
         ["from"]
     ),
@@ -301,8 +307,8 @@ const movieMethods = [
         "annotateClicks",
         z
             .object({
-                from: timeSchema.optional(),
-                to: timeSchema.optional(),
+                from: sourceTimeSchema.optional(),
+                to: sourceTimeSchema.optional(),
                 kind: z.enum(SHAPE_KINDS).optional(),
                 seconds: z.number().min(0.3).max(10).optional(),
                 color: z
@@ -331,8 +337,8 @@ const movieMethods = [
         "shape",
         z
             .object({
-                from: timeSchema,
-                to: timeSchema,
+                from: sourceTimeSchema,
+                to: sourceTimeSchema,
                 kind: z.enum(SHAPE_KINDS),
                 start: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict(),
                 end: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict(),
@@ -351,8 +357,8 @@ const movieMethods = [
         "arrow",
         z
             .object({
-                from: timeSchema,
-                to: timeSchema,
+                from: sourceTimeSchema,
+                to: sourceTimeSchema,
                 at: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict(),
                 tail: z
                     .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
@@ -387,8 +393,8 @@ const movieMethods = [
         "spotlight",
         z
             .object({
-                from: timeSchema,
-                to: timeSchema,
+                from: sourceTimeSchema,
+                to: sourceTimeSchema,
                 rect: z
                     .object({
                         x: z.number().min(0).max(1),
@@ -439,8 +445,8 @@ const movieMethods = [
         "range",
         z
             .object({
-                from: timeSchema,
-                to: timeSchema,
+                from: outputTimeSchema,
+                to: outputTimeSchema,
                 action: z.enum(RANGE_ACTIONS),
                 factor: z.number().min(0.25).max(16).optional(),
                 scale: z.number().min(1).max(4).optional(),
@@ -452,7 +458,7 @@ const movieMethods = [
     ),
     edit(
         "marker",
-        z.object({ at: timeSchema, label: z.string().trim().min(1).max(80).optional() }).strict(),
+        z.object({ at: sourceTimeSchema, label: z.string().trim().min(1).max(80).optional() }).strict(),
         'A marker in the edit at `at` (SOURCE seconds or "m:ss"), named label or "Marker <n>": the marks lane, step titles and chapters show it beside the recording\'s own markers; markers() lists it with its id.',
         ["at", "label"]
     ),
@@ -586,7 +592,7 @@ const movieMethods = [
         name: "cutWords",
         params: z
             .object({
-                at: timeSchema,
+                at: sourceTimeSchema,
                 words: z.string().min(1),
                 occurrence: z.number().int().min(1).optional(),
                 padMs: z.number().int().min(0).max(500).optional(),
@@ -600,7 +606,7 @@ const movieMethods = [
     }),
     defineMethod({
         name: "lineWords",
-        params: z.object({ at: timeSchema.optional() }).strict(),
+        params: z.object({ at: sourceTimeSchema.optional() }).strict(),
         result: z.unknown(),
         resultName: "{ start, end, text, plays, words: { word, fold, start, end, estimated }[] }[]",
         doc: "The words of every transcript line (or of the line spoken at `at`) as cutWords splits and times them: pick words, then cutWords({ at: line.start, words, occurrence }), where occurrence counts the earlier places of the same folded words in that line.",
@@ -645,8 +651,8 @@ const movieMethods = [
             .object({
                 out: z.string().optional(),
                 format: z.enum(EXPORT_FORMATS).optional(),
-                from: timeSchema.optional(),
-                to: timeSchema.optional(),
+                from: outputTimeSchema.optional(),
+                to: outputTimeSchema.optional(),
                 subtitles: z.enum(SUBTITLE_FORMATS).optional(),
             })
             .strict(),
@@ -678,7 +684,7 @@ const movieMethods = [
     }),
     defineMethod({
         name: "poster",
-        params: z.object({ at: timeSchema.optional(), out: z.string().optional() }).strict(),
+        params: z.object({ at: outputTimeSchema.optional(), out: z.string().optional() }).strict(),
         result: z.unknown(),
         resultName: "{ path, width, height }",
         doc: "One frame of the edit at OUTPUT seconds `at` (0), rendered at the export's full size with every look, as a PNG for a video thumbnail or a README: at out, or beside the movie as <export name>-poster.png (never over a file). still() is the quick preview-size look.",
@@ -688,10 +694,10 @@ const movieMethods = [
         name: "sheet",
         params: z
             .object({
-                from: timeSchema.optional(),
-                to: timeSchema.optional(),
+                from: outputTimeSchema.optional(),
+                to: outputTimeSchema.optional(),
                 count: z.number().int().min(1).max(12).optional(),
-                at: z.array(timeSchema).min(1).max(12).optional(),
+                at: z.array(outputTimeSchema).min(1).max(12).optional(),
                 out: z.string().optional(),
             })
             .strict(),
@@ -702,7 +708,7 @@ const movieMethods = [
     }),
     defineMethod({
         name: "itemsAt",
-        params: z.object({ at: timeSchema }),
+        params: z.object({ at: outputTimeSchema }),
         positional: ["at"],
         result: z.unknown(),
         resultName: "{ output, source, zoom, redactions, texts, shapes, caption }",
@@ -711,7 +717,7 @@ const movieMethods = [
     }),
     defineMethod({
         name: "still",
-        params: z.object({ at: timeSchema.optional(), out: z.string().optional() }),
+        params: z.object({ at: outputTimeSchema.optional(), out: z.string().optional() }),
         positional: ["at", "out"],
         result: z.unknown(),
         resultName: "{ path, width, height }",
@@ -729,7 +735,9 @@ const movieMethods = [
     }),
     defineMethod({
         name: "switchDisplay",
-        params: z.object({ from: timeSchema, to: timeSchema, display: z.number().int().nonnegative() }).strict(),
+        params: z
+            .object({ from: sourceTimeSchema, to: sourceTimeSchema, display: z.number().int().nonnegative() })
+            .strict(),
         result: z.unknown(),
         resultName: "{ path, frames, plan: { policy, windowSec, ranges: { fromUs, toUs, displayId }[] } }",
         doc: `A frames recording of several displays (a meeting): its proxy movie shows \`display\` from \`from\` to \`to\` (source seconds or "m:ss") and is made again, the rest of its display plan (proxy.json) kept. The same as ${toolCommand("recorder proxy")} <rec> --keep-plan --switch from-to=display, and the editor's display lane. undoDisplaySwitch() takes it back.`,
@@ -790,8 +798,8 @@ const movieMethods = [
         name: "comment",
         params: z
             .object({
-                at: timeSchema,
-                to: timeSchema.optional(),
+                at: outputTimeSchema,
+                to: outputTimeSchema.optional(),
                 text: z.string().min(1).max(2000),
                 author: z.string().max(80).optional(),
                 link: z.string().url().optional(),
@@ -1005,9 +1013,11 @@ export const moviesApi = defineApi({
         { name: "MovieRecording", summary: "A movie recording that runs now.", methods: recordingMethods },
     ],
     notes: [
-        'Times are SOURCE seconds (the movie as recorded) or "mm:ss": a cut never moves later times.',
+        'SourceTime is seconds (or "m:ss", "h:mm:ss") of the movie as recorded, before any cut or speed change: every edit op and every method that places an item takes it, and a cut never moves it.',
+        'OutputTime is seconds (or "m:ss") of the edited movie, what plays after cuts and speed changes: range(), itemsAt(), still(), poster(), sheet(), export({ from, to }) and comment() take it (comment({ source: true }) takes SourceTime).',
+        "In an answer, from, to, at, start and end are source seconds and plays is output seconds (null where that moment is cut). The exceptions say so: itemsAt() gives output and source, info() gives sourceSeconds and outputSeconds, sheet() times and chapters() are output seconds, and a comment's at is when it was written.",
         "Every edit reads the file fresh and saves once, so the open window and you never overwrite each other.",
-        'The edit is a file: it stays after the worker ends, and the next run starts from it. apply([{ op: "reset" }]) starts over; undo() reaches only the changes of this handle.',
+        'The edit is a file: it stays after the worker ends, and the next run starts from it. apply([{ op: "reset" }]) starts over; undo() takes back the last change, one of an earlier run too (<edit>.undo.json, 30 steps).',
         "Limits: speed 0.25–16, zoom scale 1–4, focus x and y 0–1, volume 0–2.",
     ],
 });
