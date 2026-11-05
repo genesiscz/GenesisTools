@@ -66,7 +66,7 @@ test("cut preserves foreign refs and checks recorded tests without resolving a m
     const script = join(import.meta.dir, "layer-cut.ts");
     const root = mkdtempSync("/tmp/cc/GenesisTools/a7346bf7-545b-49f3-9f68-bfea934db066/rl-739/cut-");
     const invoke = (cmd: string[]) => {
-        const result = Bun.spawnSync(cmd, { cwd: root, stdout: "pipe", stderr: "pipe" });
+        const result = Bun.spawnSync(cmd, { cwd: root, env: process.env, stdout: "pipe", stderr: "pipe" });
         expect(result.exitCode, result.stderr.toString()).toBe(0);
         return result.stdout.toString().trim();
     };
@@ -153,7 +153,7 @@ test("scratch reuse refuses developer checkouts and dirty owned trees", async ()
     const original = process.cwd();
     const root = mkdtempSync("/tmp/cc/GenesisTools/a7346bf7-545b-49f3-9f68-bfea934db066/rl-739/ownership-");
     const git = (args: string[], cwd = root): string => {
-        const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+        const result = Bun.spawnSync(["git", ...args], { cwd, env: process.env, stdout: "pipe", stderr: "pipe" });
         expect(result.exitCode).toBe(0);
         return result.stdout.toString().trim();
     };

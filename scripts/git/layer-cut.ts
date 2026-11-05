@@ -798,12 +798,10 @@ export class ScratchTree {
             );
         }
 
-        const result = {
-            text: results.map((r) => r.text).join("\n"),
-            exitCode: results.find((r) => r.exitCode !== 0)?.exitCode ?? 0,
-        };
         const errors: TsError[] = [];
-        for (const line of result.text.split("\n")) {
+        for (const result of results) {
+            const before = errors.length;
+            for (const line of result.text.split("\n")) {
             const located = TS_ERROR_RE.exec(line);
             if (located) {
                 errors.push({
@@ -822,10 +820,11 @@ export class ScratchTree {
             }
         }
 
-        if (result.exitCode !== 0 && errors.length === 0) {
-            throw new Error(
-                `tsc-rs exited ${result.exitCode} without a parsable error (${label}): ${result.text.slice(-400)}`
-            );
+            if (result.exitCode !== 0 && errors.length === before) {
+                throw new Error(
+                    `tsc-rs exited ${result.exitCode} without a parsable error (${label}): ${result.text.slice(-400)}`
+                );
+            }
         }
 
         return errors;
