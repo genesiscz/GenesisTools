@@ -553,8 +553,9 @@ struct PRThreadsList: View {
             }
         }
         .onChange(of: store.payload?.pr.url, initial: true) { _, _ in markSeen() }
-        .task(id: store.payload?.pr.url) {
-            mounted = Self.mountBatch
+        .onChange(of: store.payload?.pr.url) { _, _ in mounted = Self.mountBatch }
+        .task(id: "\(store.payload?.pr.url ?? ""):\(store.payload?.threads.count ?? 0)") {
+            mounted = max(mounted, Self.mountBatch)
             while !Task.isCancelled, mounted < (store.payload?.threads.count ?? 0) {
                 // One frame: the batch built so far lays out and draws, and clicks are answered, before the next one.
                 try? await Task.sleep(for: .milliseconds(16))
