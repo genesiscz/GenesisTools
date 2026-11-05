@@ -78,7 +78,8 @@ function impactOf(text: string, label: string, context: QuestionContext): { impa
  * The question carries its impact and signature in `evidence`; `selectQuestions` clusters and ranks them.
  */
 export function questionFor(item: MeetingItem, context: QuestionContext): NewQuestion | undefined {
-    const low = item.confidence !== undefined && item.confidence < context.listenBelow;
+    const low =
+        item.evidence?.listen === true || (item.confidence !== undefined && item.confidence < context.listenBelow);
 
     // A goodbye nobody answered (R1/R5 without R13 or R14) may be only an intention: kept, never asked by ear.
     if (item.status !== "suggested" || !low || item.evidence?.intention === true) {
