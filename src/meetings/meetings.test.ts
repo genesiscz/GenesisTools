@@ -1062,6 +1062,30 @@ describe("microphone scoring (R2.1)", () => {
     });
 });
 
+test("a rejected line spelling fix does not suppress an everywhere suggestion", () => {
+    const options = {
+        record,
+        meeting: { ...meeting, transcript: [line("Alice Example", 12, "A kubernetu zítra.", 1)] },
+        rules: ["terms" as const],
+        dictionary: {
+            abbrExpansion: "every" as const,
+            fuzzy: { apply: 0.95, suggest: 0.8 },
+            entries: [{ type: "term" as const, value: "Kubernetes" }],
+        },
+        sourceWords: [],
+        now: "2026-11-02T15:00:00.000Z",
+    };
+    const initial = suggestItems(options);
+    const term = initial.find((item) => item.kind === "term")!;
+    const local = meetingRecordSchema.parse({ ...record, items: [{ ...term, scope: "line", status: "rejected" }] });
+    expect(
+        suggestItems({ ...options, record: local }).some(
+            (item) => item.kind === "term" && item.proposed === "Kubernetes"
+        )
+    ).toBe(true);
+    expect(suggestItems({ ...options, record: { ...record, items: initial } })).toEqual([]);
+});
+
 describe("fuzzy dictionary suggestions (R2.5)", () => {
     test("a word close to a term but below the apply score becomes a term item with its score", () => {
         const items = suggestItems({
