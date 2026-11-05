@@ -249,9 +249,11 @@ const customLanguageSchema = z.object({
     ocr: z.array(label).min(1),
     render: z.object({ unclearLabel: label, readAloudLabel: label, lineLabel: label }),
     wordCheck: label.optional(),
-    /** Unset: the shipped list of that code (`FILLER_WORDS`), or none for a code the editor has no list for. */
-    fillers: fillersSchema({ sounds: [], words: [] }).optional(),
+    /** A level left out is the shipped list of that code (`FILLER_WORDS`), or none for a code the editor has no list for. */
+    fillers: z.object({ sounds: z.array(label).optional(), words: z.array(label).optional() }).optional(),
 });
+
+type LanguageBlock = z.output<ReturnType<typeof languageSchema>>;
 
 /** One block per spoken language. A new one is a block here (or in the file, with every key) and a class in the word check. */
 const languagesSchema = z
@@ -267,9 +269,27 @@ const languagesSchema = z
             fillers: shippedFillers("sk"),
         }).prefault({}),
     })
-    .catchall(customLanguageSchema);
+    .catchall(customLanguageSchema)
+    // Filled here, not by each reader: `config show` (the Settings window) then lists what a cut removes, `en` included,
+    // and a write of one level keeps the other level's shipped list. Writes edit the raw file, so nothing is stored.
+    .transform(({ cs, sk, ...custom }): Record<string, LanguageBlock> & { cs: LanguageBlock; sk: LanguageBlock } => {
+        const filled: Record<string, LanguageBlock> = {};
 
-export type LanguageSettings = z.infer<typeof customLanguageSchema>;
+        for (const [code, block] of Object.entries(custom)) {
+            const shipped = shippedFillers(code);
+            filled[code] = {
+                ...block,
+                fillers: {
+                    sounds: block.fillers?.sounds ?? shipped.sounds,
+                    words: block.fillers?.words ?? shipped.words,
+                },
+            };
+        }
+
+        return { ...filled, cs, sk };
+    });
+
+export type LanguageSettings = LanguageBlock;
 
 /** How a meeting without a project gets one. */
 const assignSchema = z.object({

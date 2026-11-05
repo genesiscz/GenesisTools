@@ -119,6 +119,24 @@ describe("meetings config", () => {
             },
         });
         expect(fillerListsOf(withoutKey.languages).en).toEqual(FILLER_WORDS.en);
+        expect(withoutKey.languages.en.fillers).toEqual(shipped("en"));
+
+        const oneLevel = meetingsConfigSchema.parse({
+            languages: {
+                en: {
+                    ocr: ["en-US"],
+                    render: { unclearLabel: "unclear", readAloudLabel: "reads from", lineLabel: "l." },
+                    fillers: { sounds: ["um"] },
+                },
+                de: {
+                    ocr: ["de-DE"],
+                    render: { unclearLabel: "unklar", readAloudLabel: "liest aus", lineLabel: "Z." },
+                    fillers: { sounds: ["äh"] },
+                },
+            },
+        });
+        expect(oneLevel.languages.en.fillers).toEqual({ sounds: ["um"], words: [...FILLER_WORDS.en.words] });
+        expect(oneLevel.languages.de.fillers).toEqual({ sounds: ["äh"], words: [] });
     });
 
     test("an empty file has the three assign timings of today, and a changed one is read", () => {
