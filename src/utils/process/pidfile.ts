@@ -499,12 +499,6 @@ export async function claimPidFile(path: string, opts: ClaimPidFileOptions = {})
             }
         }
 
-        const state = inspectPidFile(path, { expected: opts.expected });
-
-        if (!reclaimable(state)) {
-            return { status: "held", state };
-        }
-
         let staleContent: string;
 
         try {
@@ -512,6 +506,19 @@ export async function claimPidFile(path: string, opts: ClaimPidFileOptions = {})
         } catch (err) {
             logger.debug({ err, path }, "[pidfile] claimed file vanished; creating it again");
             continue;
+        }
+
+        const record = parsePidRecord(staleContent);
+        const identity = record ? classifyPidRecord(record, opts.expected) : undefined;
+        const state: PidFileState =
+            record && identity
+                ? identity.status === "foreign"
+                    ? { status: "foreign", pid: record.pid, record, command: identity.command ?? "(unknown)" }
+                    : { status: identity.status, pid: record.pid, record }
+                : { status: "none" };
+
+        if (!reclaimable(state)) {
+            return { status: "held", state };
         }
 
         if (await attemptStaleTakeover(path, staleContent)) {
