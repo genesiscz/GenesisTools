@@ -3,6 +3,7 @@ import { basename, dirname, join } from "node:path";
 import type { PreparedPromptDto, PromptVariableDto } from "@app/dev-dashboard/contract/agents";
 import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { originDriver } from "@genesiscz/utils/git/origins";
 import { repoFacts } from "@genesiscz/utils/git/repo-facts";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
@@ -348,7 +349,7 @@ export interface SendPromptResult {
 export interface SendPromptDeps {
     /** The session's working folder (the history index), or null. */
     cwdOf: (session: string) => string | null;
-    /** Branch and PR of a checkout; the PR only when asked (a forge call behind a 60 s cache). */
+    /** Branch and PR of a checkout; the PR only when asked, without updating durable caches. */
     facts: (cwd: string, withPr: boolean) => Promise<{ branch: string | null; root: string | null; pr: string | null }>;
     /** Type one line into the session's cmux pane; an error message, or null when it went. */
     send: (session: string, text: string) => Promise<string | null>;
@@ -383,12 +384,18 @@ async function writeFresh(deps: SendPromptDeps, file: string, text: string): Pro
     throw new HubPromptError("send-failed", `no free file name next to ${file}`);
 }
 
+/** Preparation and dry runs must not refresh the persistent PR lookup cache. */
+export async function readPromptFacts(cwd: string, withPr: boolean, factsOf = repoFacts, driverOf = originDriver) {
+    const facts = await factsOf({ path: cwd, withPr: false });
+    const driver = withPr && facts.branch ? await driverOf(cwd) : null;
+    const lookup = driver && facts.branch ? await driver.prForHead(facts.branch) : null;
+
+    return { branch: facts.branch, root: facts.root, pr: lookup?.pr ? String(lookup.pr.number) : null };
+}
+
 export const realSendPromptDeps: SendPromptDeps = {
     cwdOf: (session) => readCachedSessionCwd({ sessionId: session }),
-    facts: async (cwd, withPr) => {
-        const facts = await repoFacts({ path: cwd, withPr });
-        return { branch: facts.branch, root: facts.root, pr: facts.pr ? String(facts.pr.number) : null };
-    },
+    facts: readPromptFacts,
     send: async (session, text) => handOffError(await handOffToSession({ sessionId: session, text })),
     write: async (file, text) => {
         await mkdir(dirname(file), { recursive: true });

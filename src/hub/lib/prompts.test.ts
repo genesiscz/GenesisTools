@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { RepoFacts } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     addPrompt,
@@ -11,6 +12,7 @@ import {
     listPrompts,
     parseVars,
     preparePrompt,
+    readPromptFacts,
     readPrompts,
     removePrompt,
     type SavedPrompt,
@@ -276,6 +278,78 @@ describe("sendPrompt", () => {
 });
 
 describe("preparePrompt", () => {
+    test("preparation and dry run fetch PR facts without entering the persistent cache path", async () => {
+        const path = scratch();
+        const requests: boolean[] = [];
+        const lookups: string[] = [];
+        const facts: RepoFacts = {
+            path: "/tmp/prompt-checkout",
+            root: "/tmp/prompt-checkout",
+            repo: "prompt-checkout",
+            branch: "feat/cart",
+            head: "abc",
+            origin: null,
+            branchUrl: null,
+            headUrl: null,
+        };
+        const deps = fakeDeps({
+            facts: (cwd, withPr) =>
+                readPromptFacts(
+                    cwd,
+                    withPr,
+                    async (options) => {
+                        requests.push(options.withPr ?? false);
+                        // repoFacts enters the persistent cache only when withPr is true.
+                        expect(options.withPr).toBe(false);
+                        return facts;
+                    },
+                    async () => ({
+                        kind: "github",
+                        prForHead: async (branch) => {
+                            lookups.push(branch);
+                            return {
+                                pr: { number: 42, state: "OPEN", target: "main", url: "https://example.com/pr/42" },
+                                error: null,
+                            };
+                        },
+                    })
+                ),
+        });
+        const prepared = await preparePrompt({ name: "fix-review", session: SESSION, path, deps });
+        expect(prepared.text).toContain("PR 42 (feat/cart)");
+        const dry = await sendPrompt({ name: "fix-review", session: SESSION, path, deps, dryRun: true });
+        expect(dry.sent).toBe(false);
+        expect(requests).toEqual([false, false]);
+        expect(lookups).toEqual(["feat/cart", "feat/cart"]);
+        expect(deps.sent).toEqual([]);
+        expect(deps.written).toEqual([]);
+        expect(readPrompts(path).prompts.find((prompt) => prompt.name === "fix-review")?.uses).toBe(0);
+    });
+
+    test("branch-only prompt facts never request a forge driver", async () => {
+        let driverCalls = 0;
+        const facts = await readPromptFacts(
+            "/tmp/missing-prompt-checkout",
+            false,
+            async () => ({
+                path: "/tmp/missing-prompt-checkout",
+                root: null,
+                repo: null,
+                branch: null,
+                head: null,
+                origin: null,
+                branchUrl: null,
+                headUrl: null,
+            }),
+            async () => {
+                driverCalls++;
+                return null;
+            }
+        );
+        expect(facts.pr).toBeNull();
+        expect(driverCalls).toBe(0);
+    });
+
     test("names each variable's value and source, keeps a missing one as written, and sends nothing", async () => {
         const path = scratch();
         const deps = fakeDeps();
