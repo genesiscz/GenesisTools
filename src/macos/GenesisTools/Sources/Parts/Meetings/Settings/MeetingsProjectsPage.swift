@@ -324,7 +324,7 @@ struct MeetingsDictionaryPage: View {
             NativeSettingsCard("Scope", subtitle: "A project's dictionary applies over the global one in its meetings.") {
                 NativeSettingsPicker("Dictionary", identifier: "meetings.dictionary.scope",
                                      options: [NativeSettingsOption("", "Global")] + settings.projectNames.map { NativeSettingsOption($0, $0) },
-                                     selection: Binding(get: { model.dictionaryScope ?? "" }, set: { model.dictionaryScope = $0.isEmpty ? nil : $0 }))
+                                     selection: Binding(get: { model.dictionaryScope ?? "" }, set: { clear(); model.dictionaryScope = $0.isEmpty ? nil : $0 }))
             }
 
             NativeSettingsCard("Test a phrase", subtitle: "Type a sentence as a transcript would have it; the result is what this dictionary makes of it.") {
