@@ -1663,7 +1663,7 @@ function gnRefusedImage(hit,ref){
 function gnMissingImage(ref,alt,why,action){
   var text=(why||'Picture not found')+': '+(alt||ref);
   var s=document.createElement('span');s.className='dd-md-embed-stub gn-img-missing';s.title=ref;
-  s.setAttribute('role','img');s.setAttribute('aria-label',text);
+  s.setAttribute('role',action?'group':'img');s.setAttribute('aria-label',text);
   s.innerHTML='<span class="dd-md-embed-icon" aria-hidden="true">⧉</span> ';s.appendChild(document.createTextNode(text));
   if(action){var b=document.createElement('button');b.type='button';b.className='gn-img-allow';b.textContent=action;s.appendChild(b);}
   return s;
