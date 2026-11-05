@@ -595,9 +595,15 @@ test("bounded meeting discovery skips old JSON and applies limits before read", 
     try {
         const result = records.listBounded({ since: new Date("2026-11-04T00:00:00Z") });
         expect(result.olderMeetings).toBe(1);
-        expect(read.mock.calls.map(([id]) => id).sort()).toEqual(["2026-11-03_10-00-margin", "2026-11-05_10-00-new", "undated"]);
+        expect(read.mock.calls.map(([id]) => id).sort()).toEqual([
+            "2026-11-03_10-00-margin",
+            "2026-11-05_10-00-new",
+            "undated",
+        ]);
         read.mockClear();
         records.listBounded({ limit: 0 });
         expect(read).not.toHaveBeenCalled();
-    } finally { read.mockRestore(); }
+    } finally {
+        read.mockRestore();
+    }
 });

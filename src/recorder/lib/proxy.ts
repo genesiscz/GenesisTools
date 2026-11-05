@@ -381,7 +381,13 @@ export async function makeProxy(folder: string, options: ProxyOptions = {}): Pro
     const list = join(folder, ".proxy-frames.txt");
     const lastUs = chosen.at(-1)?.atUs ?? 0;
     const durationUs = framesDurationUs({ lastUs, startedAt: manifest?.startedAt, endedAt: manifest?.endedAt });
-    await writeFile(list, concatList(chosen.map((frame) => ({ path: frame.path, atUs: frame.atUs })), durationUs - lastUs));
+    await writeFile(
+        list,
+        concatList(
+            chosen.map((frame) => ({ path: frame.path, atUs: frame.atUs })),
+            durationUs - lastUs
+        )
+    );
     const startedMs = manifest ? Date.parse(manifest.startedAt) : Number.NaN;
     const audioDir = join(folder, "audio");
     const libraryPieces =

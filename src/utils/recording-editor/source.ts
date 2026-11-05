@@ -15,7 +15,15 @@ export interface SourceFrame {
 }
 
 /** The final still lasts until the recording ends; a folder without an endpoint holds it for one second. */
-export function framesDurationUs({ lastUs, startedAt, endedAt }: { lastUs: number; startedAt?: string; endedAt?: string }): number {
+export function framesDurationUs({
+    lastUs,
+    startedAt,
+    endedAt,
+}: {
+    lastUs: number;
+    startedAt?: string;
+    endedAt?: string;
+}): number {
     const elapsedUs = endedAt && startedAt ? (Date.parse(endedAt) - Date.parse(startedAt)) * 1000 : NaN;
     return Number.isFinite(elapsedUs) && elapsedUs > 0 ? Math.max(lastUs + 1, elapsedUs) : lastUs + 1_000_000;
 }

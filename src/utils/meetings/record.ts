@@ -405,7 +405,10 @@ export class MeetingStore {
     /** Folder dates bound discovery before JSON hydration. A record whose start is edited after creation keeps
      * its folder date for this bound. One day of margin covers local/UTC time-zone differences. Undated folders
      * are treated as today and read. `olderMeetings` counts excluded record folders without parsing their JSON. */
-    listBounded({ since, limit }: { since?: Date; limit?: number }): { records: MeetingRecord[]; olderMeetings: number } {
+    listBounded({ since, limit }: { since?: Date; limit?: number }): {
+        records: MeetingRecord[];
+        olderMeetings: number;
+    } {
         const records: MeetingRecord[] = [];
         let olderMeetings = 0;
         if (!existsSync(this.root)) {
@@ -414,7 +417,10 @@ export class MeetingStore {
         const cutoff = since ? new Date(since.getTime() - 86_400_000).toISOString().slice(0, 10) : undefined;
         const folders = readdirSync(this.root, { withFileTypes: true })
             .filter((entry) => entry.isDirectory() && existsSync(this.path(entry.name)))
-            .map((entry) => ({ id: entry.name, day: /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}/.test(entry.name) ? entry.name.slice(0, 10) : undefined }))
+            .map((entry) => ({
+                id: entry.name,
+                day: /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}/.test(entry.name) ? entry.name.slice(0, 10) : undefined,
+            }))
             .sort((a, b) => (b.day ?? "9999").localeCompare(a.day ?? "9999") || b.id.localeCompare(a.id));
         for (const folder of folders) {
             if (cutoff && folder.day && folder.day < cutoff) {

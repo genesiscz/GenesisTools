@@ -114,7 +114,9 @@ export async function meetingEditorSource(
         entries,
         zeroMs: (await CallTimeline.forRecord(record)).zeroMs,
         startedMs: Date.parse(manifest.startedAt),
-        durationSec: framesDurationUs({ lastUs: lastMs * 1000, startedAt: manifest.startedAt, endedAt: manifest.endedAt }) / 1_000_000,
+        durationSec:
+            framesDurationUs({ lastUs: lastMs * 1000, startedAt: manifest.startedAt, endedAt: manifest.endedAt }) /
+            1_000_000,
     });
     const transcript = transcriptCachePath(proxy.path);
     atomicWriteFileSync(

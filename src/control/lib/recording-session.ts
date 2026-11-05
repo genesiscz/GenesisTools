@@ -749,13 +749,17 @@ export function joinSegmentsArgv({
         (_, index) =>
             `[${index}:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
             `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p,settb=AVTB[v${index}]` +
-            Array.from({ length: audioTracks }, (_, track) =>
-                `;[${index}:a:${track}]aresample=async=1:first_pts=0[a${index}_${track}]`
+            Array.from(
+                { length: audioTracks },
+                (_, track) => `;[${index}:a:${track}]aresample=async=1:first_pts=0[a${index}_${track}]`
             ).join("")
     );
-    const labels = inputs.map((_, index) => `[v${index}]` +
-        Array.from({ length: audioTracks }, (_, track) => `[a${index}_${track}]`).join("")
-    ).join("");
+    const labels = inputs
+        .map(
+            (_, index) =>
+                `[v${index}]` + Array.from({ length: audioTracks }, (_, track) => `[a${index}_${track}]`).join("")
+        )
+        .join("");
     const outputs = Array.from({ length: audioTracks }, (_, track) => `[aout${track}]`);
 
     if (audioTracks > 0) {
