@@ -12,5 +12,67 @@
         "snapshotCpuMs": 163.454,
         "snapshotWallMs": 137.68829200000005
     },
-    "notes": "runs=9 | sessions=1450 bytes=1757733 | 0:58  up 2 days, 14:07, 23 users, load averages: 54.21 119.37 147.25"
+    "notes": "runs=9 | sessions=1450 bytes=1757733 | 0:58  up 2 days, 14:07, 23 users, load averages: 54.21 119.37 147.25",
+    "runs": [
+        {
+            "capturedAt": "2026-11-05T01:53:40Z",
+            "commit": "5ec077b767",
+            "loadAvg": [
+                22.84,
+                27.48,
+                32.97
+            ],
+            "hostname": "MacBook-Pro-2299.local",
+            "metrics": {
+                "snapshotCpuMs": 167.018
+            },
+            "change": "none: the PR's base (#701's head), measured again as the before",
+            "notes": "median of 3 interleaved rounds of snapshot.ts (median of 9 snapshots): 167.018, 171.788, 154.906; sessions=1471"
+        },
+        {
+            "capturedAt": "2026-11-05T01:53:42Z",
+            "commit": "c6d6384947",
+            "loadAvg": [
+                22.84,
+                27.48,
+                32.97
+            ],
+            "hostname": "MacBook-Pro-2299.local",
+            "metrics": {
+                "snapshotCpuMs": 80.399
+            },
+            "change": "the snapshot finds sessions through indexes by id, agent and transcript",
+            "notes": "median of 3 interleaved rounds of snapshot.ts (median of 9 snapshots): 87.484, 79.192, 80.399; sessions=1471"
+        },
+        {
+            "capturedAt": "2026-11-05T01:53:43Z",
+            "commit": "62076f05cd",
+            "loadAvg": [
+                22.84,
+                27.48,
+                32.97
+            ],
+            "hostname": "MacBook-Pro-2299.local",
+            "metrics": {
+                "snapshotCpuMs": 55.107
+            },
+            "change": "question reads skip the per-file catch-up when no log file changed",
+            "notes": "median of 3 interleaved rounds of snapshot.ts (median of 9 snapshots): 56.456, 55.107, 49.175; sessions=1471"
+        },
+        {
+            "capturedAt": "2026-11-05T01:53:44Z",
+            "commit": "55e2f25396",
+            "loadAvg": [
+                22.85,
+                27.41,
+                32.91
+            ],
+            "hostname": "MacBook-Pro-2299.local",
+            "metrics": {
+                "snapshotCpuMs": 45.693
+            },
+            "change": "dialogs are read only for sessions with a dialog record",
+            "notes": "median of 3 interleaved rounds of snapshot.ts (median of 9 snapshots): 45.693, 47.703, 45.313; sessions=1471"
+        }
+    ]
 }

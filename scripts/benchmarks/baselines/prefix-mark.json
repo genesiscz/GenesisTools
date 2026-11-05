@@ -11,5 +11,37 @@
     "metrics": {
         "prefixCpuMsPerMb": 0.4078447560293243
     },
-    "notes": "runs=7 | files=3 mb=1862 | Bun 1.4.2 | 1:33  up 2 days, 14:42, 24 users, load averages: 119.35 68.20 66.79"
+    "notes": "runs=7 | files=3 mb=1862 | Bun 1.4.2 | 1:33  up 2 days, 14:42, 24 users, load averages: 119.35 68.20 66.79",
+    "runs": [
+        {
+            "capturedAt": "2026-11-05T01:53:50Z",
+            "commit": "5ec077b767",
+            "loadAvg": [
+                22.54,
+                27.27,
+                32.83
+            ],
+            "hostname": "MacBook-Pro-2299.local",
+            "metrics": {
+                "prefixCpuMsPerMb": 0.408
+            },
+            "change": "none: the PR's base (#701's head), measured again as the before",
+            "notes": "median of 3 interleaved rounds of prefix-mark.ts (median of 5 passes, 3 files): 0.407, 0.423, 0.408; files=3"
+        },
+        {
+            "capturedAt": "2026-11-05T01:53:51Z",
+            "commit": "7ae6a41bf8",
+            "loadAvg": [
+                22.54,
+                27.27,
+                32.83
+            ],
+            "hostname": "MacBook-Pro-2299.local",
+            "metrics": {
+                "prefixCpuMsPerMb": 0.094
+            },
+            "change": "the prefix check hashes with xxHash3 over 4 KB blocks instead of SHA-256",
+            "notes": "median of 3 interleaved rounds of prefix-mark.ts (median of 5 passes, 3 files): 0.094, 0.095, 0.09; files=3"
+        }
+    ]
 }

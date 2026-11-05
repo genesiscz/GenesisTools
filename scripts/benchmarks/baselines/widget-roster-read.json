@@ -1,0 +1,107 @@
+{
+    "name": "widget-roster-read",
+    "capturedAt": "2026-11-05T01:54:25Z",
+    "commit": "5ec077b767",
+    "loadAvg": [
+        24.1,
+        26.96,
+        32.48
+    ],
+    "hostname": "MacBook-Pro-2299.local",
+    "metrics": {
+        "rosterReadCpuMs": 418.549
+    },
+    "notes": "median of 3 interleaved rounds of roster-read.ts (4 reads 6 s apart): 418.549, 435.188, 315.944",
+    "runs": [
+        {
+            "capturedAt": "2026-11-05T01:54:56Z",
+            "commit": "89d407ab3c",
+            "loadAvg": [
+                32.58,
+                28.56,
+                32.86
+            ],
+            "hostname": "MacBook-Pro-2299.local",
+            "metrics": {
+                "rosterReadCpuMs": 365.307
+            },
+            "change": "a listing that reads the index as it is counts nothing",
+            "notes": "median of 3 interleaved rounds of roster-read.ts (4 reads 6 s apart): 398.902, 299.618, 365.307; rows=191 parents=150"
+        },
+        {
+            "capturedAt": "2026-11-05T01:55:25Z",
+            "commit": "7ae6a41bf8",
+            "loadAvg": [
+                24.37,
+                26.98,
+                32.14
+            ],
+            "hostname": "MacBook-Pro-2299.local",
+            "metrics": {
+                "rosterReadCpuMs": 248.967
+            },
+            "change": "the prefix check hashes with xxHash3 over 4 KB blocks instead of SHA-256",
+            "notes": "median of 3 interleaved rounds of roster-read.ts (4 reads 6 s apart): 217.201, 248.967, 268.282; rows=191 parents=150"
+        },
+        {
+            "capturedAt": "2026-11-05T01:55:52Z",
+            "commit": "aed1915f9d",
+            "loadAvg": [
+                19.23,
+                25.56,
+                31.47
+            ],
+            "hostname": "MacBook-Pro-2299.local",
+            "metrics": {
+                "rosterReadCpuMs": 213.783
+            },
+            "change": "a folder listing is served again while the folder is unchanged",
+            "notes": "median of 3 interleaved rounds of roster-read.ts (4 reads 6 s apart): 195.584, 230.808, 213.783; rows=191 parents=150"
+        },
+        {
+            "capturedAt": "2026-11-05T01:56:21Z",
+            "commit": "860be65cbb",
+            "loadAvg": [
+                26.7,
+                26.87,
+                31.75
+            ],
+            "hostname": "MacBook-Pro-2299.local",
+            "metrics": {
+                "rosterReadCpuMs": 192.679
+            },
+            "change": "the pin journal is parsed again only when it changed",
+            "notes": "median of 3 interleaved rounds of roster-read.ts (4 reads 6 s apart): 205.032, 175.133, 192.679; rows=191 parents=150"
+        },
+        {
+            "capturedAt": "2026-11-05T01:56:55Z",
+            "commit": "3b0dd14e0b",
+            "loadAvg": [
+                35.57,
+                29.26,
+                32.43
+            ],
+            "hostname": "MacBook-Pro-2299.local",
+            "metrics": {
+                "rosterReadCpuMs": 211.457
+            },
+            "change": "spawn prompt previews fold a growing prefix",
+            "notes": "median of 3 interleaved rounds of roster-read.ts (4 reads 6 s apart): 225.855, 211.457, 173.385; rows=191 parents=150"
+        },
+        {
+            "capturedAt": "2026-11-05T01:57:23Z",
+            "commit": "714f6f7f8a",
+            "loadAvg": [
+                47.35,
+                32.17,
+                33.37
+            ],
+            "hostname": "MacBook-Pro-2299.local",
+            "metrics": {
+                "rosterReadCpuMs": 195.831
+            },
+            "change": "the current model is read from a 32 KB tail first",
+            "notes": "median of 3 interleaved rounds of roster-read.ts (4 reads 6 s apart): 231.854, 195.831, 185.542; rows=191 parents=150"
+        }
+    ]
+}
