@@ -52,12 +52,18 @@ public extension View {
     }
 
     /// A control at rest, drawn without its `Button`, hover sensor and tooltip: still a button to VoiceOver and the
-    /// accessibility clients, which press it through its default action.
+    /// accessibility clients, which press it through its default action, and to the pointer. A row turns live only on
+    /// a hover event, and a pointer that was already on it when the list opened, scrolled or refreshed sends none, so
+    /// its click did nothing (Martin, 2026-11-05: an inbox entry "sometimes doesn't expand"). A tap gesture is no
+    /// focusable responder, so the accessibility walk stays as cheap as the label's.
     func restingButton(enabled: Bool = true, action: @escaping () -> Void) -> some View {
         disabled(!enabled)
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
             .accessibilityAction {
+                if enabled { action() }
+            }
+            .onTapGesture {
                 if enabled { action() }
             }
     }
