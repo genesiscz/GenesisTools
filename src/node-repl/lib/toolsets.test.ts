@@ -1303,6 +1303,24 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         }
     });
 
+    test("meetings: an opened meeting shows the findings items.add stored", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Findings", start: "2026-11-02T16:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: {
+                open(ref: string): {
+                    readonly record: { items: unknown[] };
+                    items: { add(input: unknown): Promise<unknown> };
+                };
+            };
+        };
+        const meeting = meetings.open(record.id);
+        await meeting.items.add({ findings: [{ kind: "question", from: 0, to: 5, question: "Who spoke first?" }] });
+        expect(meeting.record.items).toHaveLength(1);
+    });
+
     test("meetings: an opened meeting reads and changes the settings of its live recording, and says so when it is not recording", async () => {
         const store = new MeetingStore();
         const record = await store.create(

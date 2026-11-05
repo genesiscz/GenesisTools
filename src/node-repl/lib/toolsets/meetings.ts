@@ -638,7 +638,10 @@ export class MeetingsToolset extends ReplToolset {
         };
 
         return {
-            record: found,
+            // Read again on each access, so the findings items.add stores show at once.
+            get record() {
+                return current();
+            },
             info: () => describe(current()),
             evidence: () => opened().evidence(),
             transcript: async () => (await opened().meeting()).transcript,
