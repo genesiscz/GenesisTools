@@ -163,6 +163,16 @@ export function parseWhen(text: string, ctx: { now: Date; tz: string; flag?: str
     }
 
     if (ISO_WITH_OFFSET.test(value)) {
+        const day = {
+            year: Number(value.slice(0, 4)),
+            month: Number(value.slice(5, 7)),
+            day: Number(value.slice(8, 10)),
+        };
+        const check = shiftDay(day, 0);
+        if (check.year !== day.year || check.month !== day.month || check.day !== day.day) {
+            throw new UsageQueryError("bad-window", `${flag} "${text}" is not a calendar date.`, { given: text });
+        }
+
         const ms = Date.parse(value);
 
         if (Number.isFinite(ms)) {
