@@ -1967,3 +1967,22 @@ test("track denoise starts from no cleaned tracks when noise reduction is off", 
         projectOps.applyOp(project, { op: "denoise", track: 1, trackCount: 2, on: false }).audio.denoise
     ).toBeUndefined();
 });
+
+test("disabling track denoise preserves excluded audio", () => {
+    const project = projectOps.wholeProject({
+        video: "/tmp/fixture.mp4",
+        durationUs: 5_000_000,
+        width: 640,
+        height: 480,
+    });
+    project.audio.include = false;
+    for (const denoise of [undefined, { method: "afftdn" as const, reductionDb: 12, tracks: [1] }]) {
+        const muted = { ...project, audio: { ...project.audio, denoise } };
+        const disabled = projectOps.applyOp(muted, { op: "denoise", track: 1, trackCount: 2, on: false });
+        expect(disabled.audio.include).toBe(false);
+        expect(disabled.audio.denoise).toBeUndefined();
+        expect(projectOps.applyOp(muted, { op: "denoise", track: 1, trackCount: 2, on: true }).audio.include).toBe(
+            true
+        );
+    }
+});
