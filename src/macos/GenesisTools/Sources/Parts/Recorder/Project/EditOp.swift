@@ -535,6 +535,9 @@ extension EditOp {
         var at: Double
         var words: String
         var occurrence: Int?
+        /// Where the picked words start and end, source seconds: the place even when the line's count changed.
+        var from: Double?
+        var to: Double?
         var padMs: Int?
         var op: EditOp { .cutWords(self) }
     }

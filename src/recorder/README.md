@@ -100,7 +100,10 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   `transcript()`, `find()` and `movies.search()` read the fixed words. Ops `fixLine` (`from` the line's start) and
   `unfixLine`; `movie.fixLine(at, text)` takes any time inside the line, `movie.fixLines([{ at, text }])` many in one
   save and one undo; the editor's Captions tab lists the lines. Its scissors per line pick words to cut (the
-  `cutWords` op with `occurrence`, through `tools recorder apply`), and Cut Fillers sends `cutFillers` at the level
+  `cutWords` op with `occurrence` and the picked words' `from` and `to`, through the recorder service or
+  `tools recorder apply`; when the transcript changed since the pick, the times win over the count, and a pick whose
+  words are no longer there is refused and the words are read again; the scissors also read them again when the
+  transcript file was written again or the line fixes changed), and Cut Fillers sends `cutFillers` at the level
   the tab sets (`recorder.captions.fillerLevel`: `sounds`, the default, or `all`).
 - `markers` (optional): moments marked while editing, `{ id, atUs, label }` at source microseconds, beside the
   recording's own markers in recording.json. Op `marker` (`at`, `label`, default "Marker <n>"), op `unmarker` (`id`),

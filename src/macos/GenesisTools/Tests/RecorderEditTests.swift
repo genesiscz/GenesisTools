@@ -77,11 +77,16 @@ final class RecorderTranscriptCutViewTests: XCTestCase {
         try? FileManager.default.removeItem(at: folder)
     }
 
-    /// A model of a movie with the shared transcript cached beside it, and its words read.
-    private func model() throws -> EditorModel {
+    /// The shared transcript, cached beside the movie as the window finds it.
+    private func writeTranscript() throws {
         let cuts = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: SharedEditorFixture.url("transcript-cuts.json"))) as? [String: Any])
         let segments = try JSONSerialization.data(withJSONObject: ["segments": try XCTUnwrap(cuts["segments"])])
         try segments.write(to: folder.appendingPathComponent("talk.transcript.json"))
+    }
+
+    /// A model of a movie with the shared transcript cached beside it, and its words read.
+    private func model() throws -> EditorModel {
+        try writeTranscript()
         let project = EditProject.whole(video: folder.appendingPathComponent("talk.mp4").path, durationUs: 60_000_000,
                                         width: 1920, height: 1080, cursor: nil, recording: nil)
         let model = EditorModel(project: project, store: ProjectStore(url: folder.appendingPathComponent("edit.json")))
@@ -97,6 +102,73 @@ final class RecorderTranscriptCutViewTests: XCTestCase {
         for word in ["cut filler words", "sounds", "sounds and words", "cut fillers", "lines", "hello, ehm"] {
             XCTAssertTrue(text.contains(word), "\(word) missing from: \(text)")
         }
+    }
+
+    // Regression test: 2026-11-05 review of the editor gaps, R1.2. The words were read once, and a transcript that
+    // changed before the cut moved the place count, so the cut took other words. The pick now sends its times, the
+    // service refuses a pick whose words moved (recording-editor.test.ts), and the refusal reads the words again.
+    func testAWordPickRefusedForAChangedTranscriptReadsTheWordsAgain() throws {
+        try writeTranscript()
+        let stale = try SharedEditorFixture.transcriptWords()
+        let line = try XCTUnwrap(stale.first { $0.start == 20 })
+        let refusal = #"the transcript changed since the words were picked: the line at 20 s no longer says "jako" from 22.9 s to 23.3 s; pick them again"#
+        let project = EditProject.whole(video: folder.appendingPathComponent("talk.mp4").path, durationUs: 60_000_000,
+                                        width: 1920, height: 1080, cursor: nil, recording: nil)
+        let service = FakeServiceLink(project: project) { _, _ in
+            throw LiveRecordingRPCClient.Failure.remote(code: 1010, message: refusal)
+        }
+        service.serviceMethods.append("movie.lineWords")
+        let file = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: SharedEditorFixture.url("transcript-words.json"))) as? [String: Any])
+        var lines = try XCTUnwrap(file["lines"] as? [[String: Any]])
+        let at = try XCTUnwrap(lines.firstIndex { ($0["start"] as? Double) == 20 })
+        var words = try XCTUnwrap(lines[at]["words"] as? [[String: Any]])
+        words.remove(at: 4)
+        lines[at]["words"] = words
+        service.movieAnswer = { name, _ in name == "lineWords" ? lines : nil }
+        let model = EditorModel.on(service, store: ProjectStore(url: folder.appendingPathComponent("edit.json")))
+        XCTAssertTrue(model.hasTranscript)
+        model.lineWords = stale
+
+        model.cutWords(line, picked: 6...6)
+
+        XCTAssertEqual(service.sentOps.first?["from"] as? Double, 22.9, "the pick names its place by the word's times")
+        XCTAssertEqual(service.count("movie.lineWords"), 1, "the refusal reads the words again")
+        XCTAssertEqual(model.lineWords?.first { $0.start == 20 }?.words.map(\.fold), ["hmm", "hmm", "we", "start", "now", "jako", "always"])
+        XCTAssertEqual(model.notice, "“jako” was not cut: \(refusal)")
+        XCTAssertTrue(model.noticeIsError)
+    }
+
+    // Regression test: 2026-11-05 review of the editor gaps, R1.2. The scissors read the words only while none were
+    // read, so a transcript written again (another transcription) or a line fix left the picker on the old words.
+    func testTheScissorsReadTheWordsAgainOnlyWhenTheTranscriptOrItsFixesChanged() throws {
+        try writeTranscript()
+        let project = EditProject.whole(video: folder.appendingPathComponent("talk.mp4").path, durationUs: 60_000_000,
+                                        width: 1920, height: 1080, cursor: nil, recording: nil)
+        let service = FakeServiceLink(project: project) { project, op in
+            var next = project
+            next.transcript = EditProject.TranscriptSettings(fixes: [String(Int(((op["from"] as? Double) ?? 0) * 1000)): op["text"] as? String ?? ""])
+            return next
+        }
+        service.serviceMethods.append("movie.lineWords")
+        let file = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: SharedEditorFixture.url("transcript-words.json"))) as? [String: Any])
+        let lines = try XCTUnwrap(file["lines"] as? [[String: Any]])
+        service.movieAnswer = { name, _ in name == "lineWords" ? lines : nil }
+        let model = EditorModel.on(service, store: ProjectStore(url: folder.appendingPathComponent("edit.json")))
+
+        model.readLineWordsIfChanged()
+        model.readLineWordsIfChanged()
+        XCTAssertEqual(service.count("movie.lineWords"), 1, "nothing changed: the words are read once")
+
+        let transcript = folder.appendingPathComponent("talk.transcript.json")
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: transcript.path)
+        model.readLineWordsIfChanged()
+        XCTAssertEqual(service.count("movie.lineWords"), 2, "another transcription wrote the file")
+
+        let line = try XCTUnwrap(model.zoom.captionLines.first { $0.fromUs == 20_000_000 })
+        model.fixCaption(line, text: "We start now, always.")
+        XCTAssertNotNil(model.project.transcript)
+        model.readLineWordsIfChanged()
+        XCTAssertEqual(service.count("movie.lineWords"), 3, "a line fix changes the line's words")
     }
 
     func testTheWordPickerShowsTheLinesWordsAndNamesThePickedOnes() throws {
@@ -233,9 +305,12 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(EditorModel.occurrence(of: 3...4, in: you.words), 2, "the second \"you know\"")
         XCTAssertEqual(EditorModel.occurrence(of: 0...1, in: you.words), 1)
         let op = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(EditorModel.cutWordsOp(start, picked: 6...6).utf8)) as? NSDictionary)
-        XCTAssertEqual(op, ["op": "cutWords", "at": 20, "words": "jako", "occurrence": 2] as NSDictionary)
+        XCTAssertEqual(op, ["op": "cutWords", "at": 20, "words": "jako", "occurrence": 2, "from": 22.9, "to": 23.3] as NSDictionary,
+                       "the place by its count and by the picked word's times")
         let run = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(EditorModel.cutWordsOp(you, picked: 3...4).utf8)) as? NSDictionary)
         XCTAssertEqual(run["words"] as? String, "you know")
+        XCTAssertEqual(run["from"] as? Double, 32, "where \"you\" starts")
+        XCTAssertEqual(run["to"] as? Double, 32.6, "where \"know\" ends")
     }
 
     /// A recording folder with files, each `[name, seconds after a fixed time]`, as recording-movies.json lists them.

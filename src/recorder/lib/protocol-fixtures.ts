@@ -158,7 +158,7 @@ const EXAMPLE_OPS: readonly unknown[] = [
     { op: "cameraShow", id: "k1" },
     { op: "cameraShow", from: 1.5, to: 2 },
     { op: "removeIdle", speed: 4 },
-    { op: "cutWords", at: 3, words: "ehm", occurrence: 1, padMs: 40 },
+    { op: "cutWords", at: 3, words: "ehm", occurrence: 1, from: 3.2, to: 3.5, padMs: 40 },
     { op: "cutFillers", language: "cs", level: "all", words: ["ehm"], padMs: 30 },
     { op: "denoise", enabled: true, method: "afftdn", reductionDb: 12, tracks: [0, 1], trackReductionDb: { "1": 18 } },
     { op: "denoise", track: 1, on: false, trackCount: 2 },

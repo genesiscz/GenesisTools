@@ -150,6 +150,8 @@ final class EditorModel {
     /// Each transcript line's words as `tools recorder words` splits them, for the Captions tab's word pick; nil until
     /// read (EditorTranscriptCuts.swift).
     var lineWords: [TranscriptLineWords]?
+    /// What `lineWords` were read from; another source makes them stale.
+    @ObservationIgnored var lineWordsSource: TranscriptWordsSource?
     /// `tools recorder words` runs.
     var isReadingLineWords = false
     /// A cut by the transcript runs in `tools recorder apply`; its buttons wait for it.

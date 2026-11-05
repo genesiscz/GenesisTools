@@ -22,6 +22,13 @@ struct TranscriptLineWords: Decodable, Equatable {
     let words: [Word]
 }
 
+/// What a read of the transcript's words came from: the cached transcript file's date and the edit's line fixes.
+/// Either changing makes the words stale.
+struct TranscriptWordsSource: Equatable {
+    let written: Date?
+    let fixes: EditProject.TranscriptSettings?
+}
+
 /// Which filler words "Cut Fillers" takes: the sounds only (ehm, hm, um), or also the fillers that are real words
 /// (jako, like). The `cutFillers` op's `level`.
 enum FillerLevel: String, CaseIterable, Identifiable {
@@ -54,10 +61,18 @@ extension EditorModel {
         UserDefaults.standard.string(forKey: fillerLevelKey).flatMap(FillerLevel.init(rawValue:)) ?? .sounds
     }
 
+    /// What the words come from now: the transcript file's date and the edit's line fixes.
+    func transcriptWordsSource() -> TranscriptWordsSource {
+        let file = CaptionTrack.cacheURL(video: project.source.video)
+        let written = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
+        return TranscriptWordsSource(written: written, fixes: project.transcript)
+    }
+
     /// Reads every line's words once (and again after a transcription), off the main thread.
     func readLineWords() {
         guard hasTranscript, !isReadingLineWords else { return }
         isReadingLineWords = true
+        let source = transcriptWordsSource()
         let target = FileManager.default.fileExists(atPath: store.url.path) ? store.url.path : project.source.video
         ask("lineWords", recording: target, argv: ["recorder", "words", target]) { [weak self] result in
             guard let self else { return }
@@ -66,10 +81,19 @@ extension EditorModel {
                 Result { try JSONDecoder().decode([TranscriptLineWords].self, from: data) }.mapError { ApplyFailure(reason: $0.localizedDescription) }
             }
             switch decoded {
-            case let .success(lines): self.lineWords = lines
+            case let .success(lines):
+                self.lineWords = lines
+                self.lineWordsSource = source
             case let .failure(failure): self.show("The transcript's words did not load: \(failure.reason)", error: true)
             }
         }
+    }
+
+    /// The scissors' read of the words: before the first pick, and again when the transcript file was written again
+    /// (another transcription) or the edit's line fixes changed since the words were read.
+    func readLineWordsIfChanged() {
+        guard lineWords == nil || lineWordsSource != transcriptWordsSource() else { return }
+        readLineWords()
     }
 
     /// The words of a caption line, found by its start (the caption track keeps whole microseconds).
@@ -88,11 +112,14 @@ extension EditorModel {
     }
 
     /// The `cutWords` op for the picked words of a line: only that place, so a word the line says twice stays once.
+    /// The place goes by its count and by the picked words' times (`from`, `to`): when the transcript changed since the
+    /// words were read, the service cuts the words at those times, or refuses when the line no longer says them there.
     nonisolated static func cutWordsOp(_ line: TranscriptLineWords, picked: ClosedRange<Int>) -> String {
         let op: [String: Any] = [
             "op": "cutWords", "at": line.start,
             "words": line.words[picked].map(\.word).joined(separator: " "),
             "occurrence": occurrence(of: picked, in: line.words),
+            "from": line.words[picked.lowerBound].start, "to": line.words[picked.upperBound].end,
         ]
         return (try? JSONSerialization.data(withJSONObject: op, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
@@ -109,6 +136,8 @@ extension EditorModel {
                 self.show("Cut “\(text)” (\(String(format: "%.1f s", Double(saved) / 1_000_000))). ⌘Z brings it back.", error: false)
             case let .failure(failure):
                 self.show("“\(text)” was not cut: \(failure.reason)", error: true)
+                // The words shown may come from an older transcript (a refusal says so): read them again.
+                self.readLineWords()
             }
         }
     }
@@ -161,7 +190,7 @@ struct CaptionLineCutButton: View {
 
     var body: some View {
         IconButton(systemName: "scissors", tooltip: "Cut words of this line", size: 10) {
-            if model.lineWords == nil { model.readLineWords() }
+            model.readLineWordsIfChanged()
             open = true
         }
         .popover(isPresented: $open, arrowEdge: .leading) {
