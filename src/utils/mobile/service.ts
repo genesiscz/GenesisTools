@@ -36,13 +36,23 @@ export async function startDetached(
     mkdirSync(dirname(service.pidPath), { recursive: true });
     const fd = openSync(service.logPath, "a");
     const [file, ...args] = service.command;
-    const child = spawn(file, args, {
-        cwd: service.cwd,
-        env: service.environment,
-        detached: true,
-        stdio: ["ignore", fd, fd],
+    let child: ReturnType<typeof spawn>;
+
+    try {
+        child = spawn(file, args, {
+            cwd: service.cwd,
+            env: service.environment,
+            detached: true,
+            stdio: ["ignore", fd, fd],
+        });
+    } finally {
+        closeSync(fd);
+    }
+
+    await new Promise<void>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("spawn", resolve);
     });
-    closeSync(fd);
     child.unref();
 
     if (!child.pid) {
