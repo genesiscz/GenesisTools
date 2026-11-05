@@ -18,7 +18,7 @@ function meetingWithCaptures(store: MeetingStore, id: string, ageDays: number): 
     writeFileSync(join(folder, "meeting.json"), "{}");
     const at = new Date(now - ageDays * DAY_MS);
 
-    for (const path of [join(folder, "frames"), join(folder, "ocr.jsonl")]) {
+    for (const path of [join(folder, "frames", "f1.jpg"), join(folder, "frames"), join(folder, "ocr.jsonl")]) {
         utimesSync(path, at, at);
     }
 }
@@ -42,6 +42,27 @@ describe("capture retention", () => {
             join(store.folder("2026-09-01_10-00-old"), "frames"),
             join(store.folder("2026-09-01_10-00-old"), "ocr.jsonl"),
         ]);
+    });
+
+    test("audio-only captures expire using the newest audio file timestamp", () => {
+        const store = fresh();
+        const id = "audio-only";
+        const folder = store.folder(id);
+        const audio = join(folder, "audio");
+        mkdirSync(audio, { recursive: true });
+        const track = join(audio, "mic.m4a");
+        const ledger = join(folder, "audio.jsonl");
+        writeFileSync(track, "audio fixture");
+        writeFileSync(ledger, "{}\n");
+        const old = new Date(now - 60 * DAY_MS);
+        const recent = new Date(now - 2 * DAY_MS);
+        utimesSync(ledger, old, old);
+        utimesSync(audio, old, old);
+        utimesSync(track, recent, recent);
+        expect(capturesToPrune(store, { days: 30, now })).toEqual([]);
+        utimesSync(track, old, old);
+        expect(capturesToPrune(store, { days: 30, now })[0]?.paths).toEqual([audio, ledger]);
+        expect(capturesToPrune(store, { days: 30, now, skip: id })).toEqual([]);
     });
 
     test("the daily pass runs once a day and hands the paths to the trash", () => {

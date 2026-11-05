@@ -18,7 +18,7 @@ const { log } = logger.scoped("meetings-retention");
 
 const DAY_MS = 86_400_000;
 /** What `capture.retentionDays` removes from a meeting folder. The meeting record and its items stay. */
-const CAPTURE_PATHS = ["frames", "ocr.jsonl"] as const;
+const CAPTURE_PATHS = ["frames", "ocr.jsonl", "audio", "audio.jsonl"] as const;
 /** When the last pass ran, beside the meeting folders. */
 export const RETENTION_STAMP_FILE = "retention-last.json";
 
@@ -39,7 +39,15 @@ export interface PruneResult {
 export type TrashPaths = (paths: string[]) => string | null;
 
 function newestMtime(paths: string[]): number {
-    return Math.max(...paths.map((path) => statSync(path).mtimeMs));
+    let newest = 0;
+    for (const path of paths) {
+        const stat = statSync(path);
+        newest = Math.max(newest, stat.mtimeMs);
+        if (stat.isDirectory()) {
+            newest = Math.max(newest, newestMtime(readdirSync(path).map((name) => join(path, name))));
+        }
+    }
+    return newest;
 }
 
 /**
