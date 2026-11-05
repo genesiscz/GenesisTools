@@ -889,9 +889,9 @@ describe("joining segments with their audio and cursor tracks", () => {
             audio: true,
         });
         const graph = argv[argv.indexOf("-filter_complex") + 1];
-        expect(graph).toContain("[0:a]aresample=async=1:first_pts=0[a0]");
-        expect(graph).toEndWith("[v0][a0][v1][a1]concat=n=2:v=1:a=1[out][aout]");
-        expect(argv).toContain("[aout]");
+        expect(graph).toContain("[0:a:0]aresample=async=1:first_pts=0[a0_0]");
+        expect(graph).toEndWith("[v0][a0_0][v1][a1_0]concat=n=2:v=1:a=1[out][aout0]");
+        expect(argv).toContain("[aout0]");
         expect(argv[argv.indexOf("-c:a") + 1]).toBe("aac");
     });
 
