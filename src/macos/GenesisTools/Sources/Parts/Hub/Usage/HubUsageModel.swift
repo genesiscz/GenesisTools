@@ -477,15 +477,16 @@ final class HubUsageModel: ObservableObject {
     /// `provider/name` or a name, case-insensitive, and a name two providers share selects nothing.
     func selectAccounts(named names: [String]) {
         pendingAccounts = names
+        selectedAccounts = []
         applyPendingAccounts()
     }
 
     private func applyPendingAccounts() {
         guard !pendingAccounts.isEmpty else { return }
-        let ids = pendingAccounts.compactMap { Self.uniqueRow(for: $0, in: table.rows)?.id }
-        if !ids.isEmpty {
-            selectedAccounts = ids
-            pendingAccounts = []
+        pendingAccounts = pendingAccounts.filter { name in
+            guard let id = Self.uniqueRow(for: name, in: table.rows)?.id else { return true }
+            if !selectedAccounts.contains(id) { selectedAccounts.append(id) }
+            return false
         }
     }
 
