@@ -699,9 +699,20 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             throw new RpcError(RPC_ERRORS.unsupported, `the running capture cannot mute ${source}`);
         }
 
-        await Promise.all(owners.map((one) => one.live?.mute?.(source, true))).catch((error: unknown) => {
-            throw new RpcError(RPC_ERRORS.internal, errorText(error));
-        });
+        const results = await Promise.allSettled(owners.map((one) => one.live?.mute?.(source, true)));
+        const refused = results.find((one) => one.status === "rejected");
+
+        if (refused) {
+            // A capture that took the mute would stay silent while the state says unmuted: restart them all.
+            if (results.some((one) => one.status === "fulfilled")) {
+                for (const one of owners) {
+                    one.controller.abort();
+                }
+            }
+
+            throw new RpcError(RPC_ERRORS.internal, errorText(refused.reason));
+        }
+
         this.sound = { ...this.sound, muted: { ...this.sound.muted, [source]: true } };
         log.info({ id: this.config.live.id, source }, "audio muted");
         return this.audio;

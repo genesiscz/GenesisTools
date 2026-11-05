@@ -867,6 +867,8 @@ describe("characterization: what a library recording asks its recorder for", () 
         started = Promise.withResolvers<void>();
         /** The live mute command throws. */
         muteFails = false;
+        /** The live mute command of this display's capture throws. */
+        muteFailsOn?: number;
         /** The device list throws. */
         devicesFail = false;
         /** The live switch throws this. */
@@ -980,7 +982,7 @@ describe("characterization: what a library recording asks its recorder for", () 
                     ...(this.script.liveAudio
                         ? {
                               mute: async (source: string, muted: boolean) => {
-                                  if (this.muteFails) {
+                                  if (this.muteFails || this.muteFailsOn === displayId) {
                                       throw new Error("the capture did not take the mute");
                                   }
 
@@ -1224,6 +1226,23 @@ describe("characterization: what a library recording asks its recorder for", () 
         await expect(recording.listAudioDevices()).rejects.toMatchObject({ code: RPC_ERRORS.unsupported });
         await Bun.sleep(50);
         expect(recorder.requests).toHaveLength(2);
+        await recording.stop();
+    });
+
+    test("sound: a mute that only some captures take restarts every capture, so none stays silent under an unmuted state", async () => {
+        const recorder = new ScriptRecorder({ audio: true, liveAudio: true });
+        const recording = await start(recorder, { displays: "all", audio: { mic: true } });
+        await recorder.waitFor(2);
+
+        recorder.muteFailsOn = 4;
+        await expect(recording.muteAudio("mic", true)).rejects.toMatchObject({ code: RPC_ERRORS.internal });
+        expect(recorder.commands).toEqual(["mute 1 mic"]);
+        expect((await recording.getSettings()).audio.muted.mic).toBe(false);
+        await recorder.waitFor(4);
+        expect(recorder.requests.slice(2).map((request) => request.audio)).toEqual([
+            { sources: ["mic"] },
+            { sources: ["mic"] },
+        ]);
         await recording.stop();
     });
 
