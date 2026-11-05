@@ -122,7 +122,7 @@ extension ReviewRepositoryLayout {
 }
 
 /// What an Uncommitted load saw beside its files: HEAD and the index's entry count, so a live reload can tell
-/// whether a ref or index event changed anything, and the paths it already knows git ignores.
+/// whether a ref or index event changed anything.
 public struct WorkingTreeMarks: Equatable {
     /// The HEAD file as written: `ref: refs/heads/main`, or a detached commit id.
     public var headFile: String
@@ -130,18 +130,10 @@ public struct WorkingTreeMarks: Equatable {
     public var head: String
     /// The index header's entry count; nil when the file could not be read as an index.
     public var indexEntries: Int?
-    /// Paths `git status` reported as ignored since the last full load; a folder ends with `/`.
-    public var ignored: Set<String> = []
-
-    public init(headFile: String, head: String, indexEntries: Int?, ignored: Set<String> = []) {
+    public init(headFile: String, head: String, indexEntries: Int?) {
         self.headFile = headFile
         self.head = head
         self.indexEntries = indexEntries
-        self.ignored = ignored
-    }
-
-    public func ignores(_ path: String) -> Bool {
-        ignored.contains(path) || ignored.contains { $0.hasSuffix("/") && path.hasPrefix($0) }
     }
 }
 
@@ -165,7 +157,7 @@ extension GitWorkingTreeSource {
     public func refresh(_ previous: Snapshot, batch: ReviewWatchBatch, layout: ReviewRepositoryLayout) -> WorkingTreeRefresh {
         if batch.rescan { return .full(reason: "FSEvents asked for a rescan") }
         if batch.index { return .full(reason: "the index may have changed paths without changing its count") }
-        guard var marks = previous.marks else { return .full(reason: "the last answer has no marks") }
+        guard let marks = previous.marks else { return .full(reason: "the last answer has no marks") }
         guard let now = readMarks(layout) else { return .full(reason: "HEAD could not be read") }
         if now.headFile != marks.headFile || now.head != marks.head { return .full(reason: "HEAD moved") }
         // A file added to or removed from the index (`git add` of a new file, `git rm --cached`, `git mv`) can change
@@ -199,7 +191,7 @@ extension GitWorkingTreeSource {
             return .full(reason: "git status failed")
         }
         guard let status = Self.parseStatus(data) else { return .full(reason: "a rename, a conflict or a submodule") }
-        marks.ignored.formUnion(status.ignored)
+
 
         let touched = { (file: DiffFile) in inRegion(file.path) || file.oldPath.map(inRegion) == true }
         let before = previous.files.filter(touched)
