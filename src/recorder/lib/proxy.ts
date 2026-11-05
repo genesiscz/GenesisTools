@@ -5,7 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { imageSize } from "@genesiscz/utils/macos/ocr-boxes";
 import { concatList } from "@genesiscz/utils/recording-editor/ffmpeg";
-import { readFrameFolder, type SourceFrame } from "@genesiscz/utils/recording-editor/source";
+import { framesDurationUs, readFrameFolder, type SourceFrame } from "@genesiscz/utils/recording-editor/source";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
@@ -379,7 +379,9 @@ export async function makeProxy(folder: string, options: ProxyOptions = {}): Pro
     const display = shownDisplays.length === 1 ? shownDisplays[0] : undefined;
     const videoFilter = proxyVideoFilter(shownSizes(chosen));
     const list = join(folder, ".proxy-frames.txt");
-    await writeFile(list, concatList(chosen.map((frame) => ({ path: frame.path, atUs: frame.atUs }))));
+    const lastUs = chosen.at(-1)?.atUs ?? 0;
+    const durationUs = framesDurationUs({ lastUs, startedAt: manifest?.startedAt, endedAt: manifest?.endedAt });
+    await writeFile(list, concatList(chosen.map((frame) => ({ path: frame.path, atUs: frame.atUs })), durationUs - lastUs));
     const startedMs = manifest ? Date.parse(manifest.startedAt) : Number.NaN;
     const audioDir = join(folder, "audio");
     const libraryPieces =

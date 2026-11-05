@@ -4,6 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { transcriptCachePath } from "@genesiscz/utils/recording-editor/project";
+import { framesDurationUs } from "@genesiscz/utils/recording-editor/source";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -113,7 +114,7 @@ export async function meetingEditorSource(
         entries,
         zeroMs: (await CallTimeline.forRecord(record)).zeroMs,
         startedMs: Date.parse(manifest.startedAt),
-        durationSec: lastMs / 1000 + 1,
+        durationSec: framesDurationUs({ lastUs: lastMs * 1000, startedAt: manifest.startedAt, endedAt: manifest.endedAt }) / 1_000_000,
     });
     const transcript = transcriptCachePath(proxy.path);
     atomicWriteFileSync(

@@ -14,6 +14,12 @@ export interface SourceFrame {
     changePercent?: number;
 }
 
+/** The final still lasts until the recording ends; a folder without an endpoint holds it for one second. */
+export function framesDurationUs({ lastUs, startedAt, endedAt }: { lastUs: number; startedAt?: string; endedAt?: string }): number {
+    const elapsedUs = endedAt && startedAt ? (Date.parse(endedAt) - Date.parse(startedAt)) * 1000 : NaN;
+    return Number.isFinite(elapsedUs) && elapsedUs > 0 ? Math.max(lastUs + 1, elapsedUs) : lastUs + 1_000_000;
+}
+
 /** Where a source is, found without reading it: what the receipts and the input guard need first. */
 export interface LocatedSource {
     kind: "video" | "frames";
@@ -151,11 +157,8 @@ export async function loadSource(located: LocatedSource, signal?: AbortSignal): 
     }
 
     const manifest = readRecordingManifest(located.path);
-    const elapsedUs = manifest?.endedAt ? (Date.parse(manifest.endedAt) - Date.parse(manifest.startedAt)) * 1000 : NaN;
     const lastUs = frames[frames.length - 1].atUs;
-    // A plain folder has no endpoint: let its final still remain on screen for one second.
-    const durationUs =
-        Number.isFinite(elapsedUs) && elapsedUs > 0 ? Math.max(lastUs + 1, elapsedUs) : lastUs + 1_000_000;
+    const durationUs = framesDurationUs({ lastUs, startedAt: manifest?.startedAt, endedAt: manifest?.endedAt });
     return {
         kind: "frames",
         path: located.path,
