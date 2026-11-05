@@ -116,6 +116,17 @@ describe("readGateLedger", () => {
         expect(ledger.pending[0].request?.expiresAt).toBe("2026-11-05T11:00:00.000Z");
     });
 
+    test("an rm request whose files wait aside never expires", () => {
+        const ledger = readGateLedger({
+            lines: () => [],
+            rmRequests: () => [rmRequest("abc", { asideDir: "/tmp/project/.rm-aside/abc" })],
+            isWriterAlive: () => true,
+            now: NOW,
+        });
+
+        expect(ledger.pending[0].request?.expiresAt).toBeNull();
+    });
+
     test("a gate that waits on no person and a line that is not JSON are skipped", () => {
         const lines = ["not json", line({ gate: "privacy-permission", event: "prompted" }, 51, 5)];
         const ledger = readGateLedger({
