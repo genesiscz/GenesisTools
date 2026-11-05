@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { E2eHookContext, E2eProject } from "@genesiscz/utils/e2e/project";
 import { E2E_ENV } from "@genesiscz/utils/e2e/spec-env";
 import { env } from "@genesiscz/utils/env";
@@ -70,7 +70,9 @@ export async function runE2e(options: {
     const { project } = options;
     const runDir = resolve(options.runDir);
     const startedAt = new Date().toISOString();
-    mkdirSync(runDir, { recursive: true });
+    mkdirSync(dirname(runDir), { recursive: true });
+    // Exclusive creation prevents stale appended results and concurrent runs sharing artifacts.
+    mkdirSync(runDir);
     const prepare = options.prepare ?? ((input) => prepareRunner(project.config.runner, input));
     const target = await prepare({ project, flags: options.flags, runDir });
     const environment = { ...target.environment, [E2E_ENV.project]: project.config.id, ...options.extraEnv };
