@@ -166,6 +166,10 @@ describe("markdown steps", () => {
         expect(parseStepsMarkdown(rendered)).toEqual([{ action: "", expected: "Result" }]);
     });
 
+    test("a case without steps round trips through the displayed list", () => {
+        expect(parseStepsInput(renderStepsMarkdown([]))).toEqual([]);
+    });
+
     test("literal action markers and backslashes round trip without becoming controls", () => {
         const steps: TestStep[] = [
             { kind: "step", id: 1, action: "Inspect\nExpected: header", expected: "200" },
