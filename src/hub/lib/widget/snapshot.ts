@@ -23,7 +23,7 @@ import {
 } from "@app/question/lib/read-model";
 import { askedAtOf, INBOX_STALE_MS, inboxSessionFresh, waitsOnHuman } from "@app/question/lib/waiting/set";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
-import { openQuestions } from "@genesiscz/utils/agents/dialogs/store";
+import { openQuestions, sessionsWithDialogRecords } from "@genesiscz/utils/agents/dialogs/store";
 import { type DialogProvider, type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
@@ -235,6 +235,8 @@ export interface WidgetSources {
     decisions(): DecisionRecord[] | { rows: DecisionRecord[]; complete: boolean; missing?: boolean };
     forms(session?: string): AskForm[];
     dialogs?(provider: DialogProvider, session: string): OpenQuestion[];
+    /** The sessions of `provider` that have dialog records; `dialogs` is read only for them. Without it, for all. */
+    dialogSessions?(provider: DialogProvider): Set<string>;
     answers(session?: string): QaRow[];
     /** The newest `limit` answers of each session in one read (the warm sessions); else `answers` per session. */
     answersOf?(sessions: string[], limit: number): QaRow[];
@@ -663,6 +665,7 @@ export const realWidgetSources: WidgetSources = {
         }),
     decisions: () => readDecisionsWithIntegrity(decisionFiles().file),
     dialogs: (provider, session) => openQuestions(provider, session),
+    dialogSessions: (provider) => sessionsWithDialogRecords(provider),
     forms: (sessionHint) => widgetForms({ dbPath: toolDataDir("question", "qa.db"), sessionHint }),
     answers: (sessionId) =>
         queryEntriesSnapshot({
@@ -925,8 +928,8 @@ export async function widgetSnapshot({
     if (rosterStatus?.error) {
         errors.push(`Agent list: ${rosterStatus.error}. Showing the last completed list.`);
     }
-    async function read<T>(name: string, fn: () => T | Promise<T>, fallback: T): Promise<T> {
-        const stop = prof.start(name);
+    async function read<T>(name: string, fn: () => T | Promise<T>, fallback: T, timed = true): Promise<T> {
+        const stop = timed ? prof.start(name) : undefined;
         try {
             const value = fn();
             return value instanceof Promise ? await value : value;
@@ -935,7 +938,7 @@ export async function widgetSnapshot({
             errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
             return fallback;
         } finally {
-            stop();
+            stop?.();
         }
     }
     const [rows, decisionRead, waitingForms, agents, answerRoster] = await Promise.all([
@@ -1285,15 +1288,26 @@ export async function widgetSnapshot({
     const dialogBySession = new Map<string, OpenQuestion[]>();
     let pendingDialogs = 0;
     if (sources.dialogs) {
+        // One timer for the loop, not one per session: 1,450 lines per snapshot were most of the profiling log.
+        const stopDialogs = prof.start("dialogs");
+        const recorded = new Map<DialogProvider, Set<string> | undefined>();
         for (const session of sessions.values()) {
             const provider = session.target.provider;
             if (provider === "unknown") {
                 continue;
             }
+            if (!recorded.has(provider)) {
+                recorded.set(provider, sources.dialogSessions?.(provider));
+            }
+            if (recorded.get(provider)?.has(session.target.sessionId) === false) {
+                dialogBySession.set(session.key, []);
+                continue;
+            }
             const dialogs = await read(
                 "dialogs",
                 () => sources.dialogs?.(provider, session.target.sessionId) ?? [],
-                []
+                [],
+                false
             );
             dialogBySession.set(session.key, dialogs);
             for (const dialog of dialogs) {
@@ -1316,6 +1330,7 @@ export async function widgetSnapshot({
                 );
             }
         }
+        stopDialogs();
     }
     // Counted per item: each SQL group carries its session's newest item and how many of its items fall after the
     // clear watermark and after the stale cut-off. A listed group counts by its session's freshness; the groups past

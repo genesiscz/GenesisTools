@@ -17,6 +17,7 @@ import {
     openQuestions,
     readSessionQuestions,
     readSessionQuestionsStrict,
+    sessionsWithDialogRecords,
     upsertQuestion,
 } from "./store";
 import { type OpenQuestion, openQuestionKey } from "./types";
@@ -152,6 +153,15 @@ describe("dialog record store", () => {
                 .map((item) => item.toolCallId)
                 .sort()
         ).toEqual(["after-crash", "toolu_ask_1"]);
+    });
+
+    test("the sessions with a record file are listed per provider, beside their markers and locks", async () => {
+        const dir = root();
+        expect(sessionsWithDialogRecords("claude", dir)).toEqual(new Set());
+        await upsertQuestion(question(), dir);
+        expect(existsSync(openMarkerPath(dialogsPath("claude", SESSION, dir)))).toBe(true);
+        expect(sessionsWithDialogRecords("claude", dir)).toEqual(new Set([SESSION]));
+        expect(sessionsWithDialogRecords("codex", dir)).toEqual(new Set());
     });
 
     test("a stale watcher cannot replace or close a hook record", async () => {

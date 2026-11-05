@@ -1449,6 +1449,48 @@ test("widget snapshot exposes the selected session's open dialog with its full k
     );
 });
 
+test("widget snapshot reads dialogs only for the sessions the store lists records for", async () => {
+    const directory = await root();
+    const row = (sessionId: string) => ({
+        ...target,
+        sessionId,
+        provider: "codex" as const,
+        title: `Fixture ${sessionId}`,
+        project: "Fixture",
+        cwdShort: "Fixture",
+        mtime: Date.now(),
+        model: null,
+        account: null,
+        filePath: `/fixture/${sessionId}.jsonl`,
+    });
+    const asked: string[] = [];
+    const sources: WidgetSources = {
+        ...emptySources,
+        sessions: async () => [row(target.sessionId), row("fixture-quiet")],
+        dialogSessions: () => new Set([target.sessionId]),
+        dialogs: (provider, sessionId) => {
+            asked.push(sessionId);
+            return [
+                {
+                    provider: "codex" as const,
+                    sessionId,
+                    toolCallId: "call:one",
+                    kind: "decision" as const,
+                    question: "Choose?",
+                    options: ["Yes", "No"],
+                    questionCount: 1,
+                    askedAt: "2026-10-30T10:00:00.000Z",
+                    source: "hook" as const,
+                },
+            ];
+        },
+    };
+    const overview = await widgetSnapshot({ root: directory, sources });
+    expect(asked).toEqual([target.sessionId]);
+    const pending = overview.notifications?.sessions.filter((session) => session.pendingItem?.kind === "dialog");
+    expect(pending?.map((session) => session.key)).toEqual([widgetSessionKey(target)]);
+});
+
 function readyVideo(id: string, manifestPath: string): WidgetAsset {
     return {
         id,

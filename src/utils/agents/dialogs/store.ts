@@ -165,6 +165,19 @@ function holdsOpenRecord(path: string): boolean {
     }
 }
 
+/**
+ * The sessions of `provider` that have a record file: one directory listing instead of a record read per session (the
+ * widget read one for each of its 1,450 sessions on every snapshot, 2026-11-05). A session without a file has no
+ * records, so `openQuestions` would return none for it.
+ */
+export function sessionsWithDialogRecords(provider: DialogProvider, root?: string): Set<string> {
+    return new Set(
+        listNames(join(dialogsRoot(root), provider))
+            .filter((name) => name.endsWith(".json"))
+            .map((name) => name.slice(0, -".json".length))
+    );
+}
+
 /** Every well-formed record of the session; an unreadable file reads as none, and a malformed row is dropped. */
 export function readSessionQuestions(provider: DialogProvider, sessionId: string, root?: string): OpenQuestion[] {
     const document = recordsDocument(provider, sessionId, root);
