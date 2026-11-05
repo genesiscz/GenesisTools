@@ -111,6 +111,11 @@ export function useSteerComposer(sessionKey: string, store: DraftStore = kvDraft
                 setResult({ kind: "receipt", receipt: mine.receipt });
                 void queryClient.invalidateQueries({ queryKey: agentsKeys.transcript(sessionKey) });
             }
+
+            const failed = flushed.failed.find((entry) => entry.draft.key === sessionKey);
+            if (failed) {
+                setResult({ kind: "failed", error: failed.error });
+            }
         } finally {
             flushing.current = false;
             await reload();
@@ -177,6 +182,13 @@ export function useSteerComposer(sessionKey: string, store: DraftStore = kvDraft
         [sessionKey, store, send, queryClient, reload, connectionId]
     );
 
+    const retry = useCallback(async (id: string) => {
+        await store.write((await store.read()).map((draft) =>
+            draft.id === id && draft.connectionId === connectionId ? { ...draft, blocked: false } : draft
+        ));
+        await flush();
+    }, [store, connectionId, flush]);
+
     const discard = useCallback(
         async (id: string) => {
             await removeDraft(store, id);
@@ -185,7 +197,7 @@ export function useSteerComposer(sessionKey: string, store: DraftStore = kvDraft
         [store, reload]
     );
 
-    return { drafts, result, sending, submit, discard, flush, clearResult: () => setResult(null) };
+    return { drafts, result, sending, submit, discard, retry, flush, clearResult: () => setResult(null) };
 }
 
 /** Ends a session's running turn with its TUI's Esc key (F19). */

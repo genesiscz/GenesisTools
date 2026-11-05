@@ -50,7 +50,8 @@ describe("steer outbox (F10)", () => {
         expect(keys).toEqual(["a", "b", "c"]);
         expect(result.sent.map((entry) => entry.draft.id)).toEqual(["a"]);
         expect(result.failed.map((entry) => entry.draft.id)).toEqual(["c"]);
-        expect((await store.read()).map((entry) => [entry.id, entry.attempts])).toEqual([["b", 1]]);
+        expect((await store.read()).map((entry) => [entry.id, entry.attempts])).toEqual([["b", 1], ["c", 1]]);
+        expect((await store.read()).find((entry) => entry.id === "c")?.blocked).toBe(true);
     });
 
     it("never sends another Mac's prompt or legacy unscoped prompts, and keeps them stored", async () => {
@@ -71,6 +72,22 @@ describe("steer outbox (F10)", () => {
         } });
         expect(sent).toEqual(["b", "a"]);
         expect((await store.read()).map((entry) => entry.id)).toEqual(["legacy"]);
+    });
+
+    it("keeps refused and unknown receipts recoverable without automatically replaying them", async () => {
+        const store = memoryDraftStore([draft("refused", 1), draft("unknown", 2)]);
+        let calls = 0;
+        const send = async (entry: SteerDraft) => {
+            calls++;
+            return { ...receipt(entry.key), outcome: entry.id === "refused" ? "refused" as const : "unknown" as const };
+        };
+        const result = await flushDrafts({ store, connectionId: "mac-a", send });
+        expect(result.sent).toEqual([]);
+        expect(result.failed).toHaveLength(2);
+        expect((await store.read()).every((entry) => entry.blocked && entry.lastError)).toBe(true);
+        await flushDrafts({ store, connectionId: "mac-a", send });
+        expect(calls).toBe(2);
+        expect(await store.read()).toHaveLength(2);
     });
 
     it("keeps a draft added while a flush runs", async () => {
