@@ -537,7 +537,7 @@ function compile(options: {
 
                         const { fromUs, toUs } = videoWindow({ ...ctx.state, window });
                         mkdirSync(dir, { recursive: true });
-                        const output = ctx.claim(join(dir, "trim.mp4"));
+                        const output = ctx.claim(join(dir, `trim-${index}.mp4`));
                         const video = await newVideo(
                             ctx,
                             trimArgv({ input: ctx.state.video.path, output, fromUs, toUs }),
@@ -562,7 +562,7 @@ function compile(options: {
                         }
 
                         mkdirSync(dir, { recursive: true });
-                        const output = ctx.claim(join(dir, "speed.mp4"));
+                        const output = ctx.claim(join(dir, `speed-${index}.mp4`));
                         const audio = await hasAudio(ctx.state.video.path, ctx.signal);
                         const video = await newVideo(
                             ctx,
