@@ -119,27 +119,37 @@ export const wdioRunner: E2eRunner<"wdio"> = {
         const ports = wdaPortsFor(device.udid);
         const headless = !(await simulatorUiRunning());
         const info = await installedAppInfo(device.udid, ios.bundleId);
-        const stopDeviceLog = streamDeviceLog(
-            device.udid,
-            info?.bundleName || ios.build.productName,
-            join(runDir, "device.log")
-        );
+
         const appium = await appiumStatus(appiumPort);
         const appiumOffset = existsSync(appium.log) ? statSync(appium.log).size : 0;
-        const stopAlerts =
-            flags.alertWatcher === false
-                ? async () => []
-                : watchAlerts({
-                      udid: device.udid,
-                      wdaPort: ports.wda,
-                      appName: info?.displayName ?? "",
-                      path: join(runDir, "alerts.jsonl"),
-                  });
+
         const config = resolve(project.dir, runner.config);
         log.info(
             { udid: device.udid, appiumPort, wda: ports.wda, bundleId: ios.bundleId, config },
             "wdio run prepared"
         );
+
+        const stopDeviceLog = streamDeviceLog(
+            device.udid,
+            info?.bundleName || ios.build.productName,
+            join(runDir, "device.log")
+        );
+        let stopAlerts: () => Promise<RunNote[]>;
+
+        try {
+            stopAlerts =
+                flags.alertWatcher === false
+                    ? async () => []
+                    : watchAlerts({
+                          udid: device.udid,
+                          wdaPort: ports.wda,
+                          appName: info?.displayName ?? "",
+                          path: join(runDir, "alerts.jsonl"),
+                      });
+        } catch (error) {
+            stopDeviceLog();
+            throw error;
+        }
 
         return {
             facts: {
