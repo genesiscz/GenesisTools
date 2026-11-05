@@ -69,7 +69,9 @@ export class CallTimeline {
         }
 
         try {
-            return await CallTimeline.ofSource(record, await linkedSource(record));
+            const linked = await linkedSource(record);
+            const meeting = await linked.source.load(linked.sourceMeetingId);
+            return await CallTimeline.ofSource(record, linked, meeting);
         } catch (err) {
             log.warn({ err, meeting: record.id }, "source unavailable; the stored clock is used");
             return CallTimeline.stored(record);
