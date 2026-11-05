@@ -15,6 +15,7 @@ import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
 import { findReadAloud } from "@genesiscz/utils/transcribe/doc-match";
 import { sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { CallTimeline } from "./lib/call-timeline";
 import { suggestDictionary } from "./lib/dictionary-suggest";
 import { findingItems, findingProblems, findingsFileSchema } from "./lib/findings";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
@@ -726,6 +727,7 @@ describe("watchOnce", () => {
         const posted: WatchNote[] = [];
         let running = false;
         const deps: Partial<WatchDeps> = {
+            source: async () => ({ id: "wisprflow", label: "Wispr Flow" }),
             settings: async () => settings,
             liveRecording: async () => live,
             recorder: () =>
@@ -1014,12 +1016,16 @@ describe("questions (R2.3)", () => {
 
     test("an unsure range that matters is asked, offering everyone present, the user under their own name", () => {
         const parsed = withItems([{ ...range, confidence: 0.45 }]).items[0]!;
-        const presence = [
+        const withSelf = meetingRecordSchema.parse({
+            ...record,
+            participants: [{ name: "Alice Example", self: true }],
+        });
+        const presence = CallTimeline.stored(withSelf).named([
             { name: "Bob Example", fromSec: 0, toSec: 200 },
             { name: "alice@example.com", self: true, fromSec: 0, toSec: 200 },
             { name: "Dan Example", fromSec: 150, toSec: 200 },
-        ];
-        expect(questionFor(parsed, context({ presence, selfName: "Alice Example" }))).toMatchObject({
+        ]);
+        expect(questionFor(parsed, context({ presence }))).toMatchObject({
             kind: "question",
             about: "speaker",
             fromSec: 120,
@@ -1103,6 +1109,30 @@ describe("questions (R2.3)", () => {
                 []
             ).map((item) => item.decides)
         ).toEqual([["i5"], ["i6"]]);
+    });
+
+    test("a term question retains the finding line when timestamps coincide", () => {
+        const item = meetingItemSchema.parse({
+            id: "i1",
+            kind: "term",
+            status: "suggested",
+            atSec: 10,
+            heard: "Ada",
+            proposed: "ADA",
+            rules: [MeetingRule.SummaryName],
+            suggestedAt: now,
+            confidence: 0.4,
+            evidence: { occurrences: 2, transcriptLine: 1 },
+        });
+        const transcript = [line("A", 10, "Ada first."), line("B", 10, "Ada second.")];
+        const prepared = questionFor(item, { listenBelow: 0.6, transcript, points: [] });
+        const record = withItems([item, { ...prepared, id: "i2", suggestedAt: now }]);
+        const question = record.items[1]!;
+        if (question.kind !== "question") {
+            throw new Error("missing question");
+        }
+        expect(heardContext(question, transcript, 100)?.rest).toContain("second");
+        expect(question.evidence?.transcriptLine).toBe(1);
     });
 
     test("settled propagation confirms the decided speaker range", () => {
@@ -1844,6 +1874,7 @@ describe("evidence --raw", () => {
             evidence: null,
             points: [],
         });
+        expect(raw.lines.map((entry) => entry.index)).toEqual([1, 2, 3]);
         expect(raw.lines.map((entry) => [entry.label, entry.text])).toEqual([
             ["Bob Example", "To právě."],
             ["Carol Example", "Já ti ho pošlu novej."],
@@ -2006,7 +2037,8 @@ test("recorder failure persists a terminal state before releasing ownership", as
     expect(statSync(ocrPath).mode & 0o777).toBe(0o600);
     expect(statSync(store.path(record.id)).mode & 0o777).toBe(0o600);
     expect(store.read(record.id)?.recording).toMatchObject({
-        status: "failed",
+        status: "stopped",
+        stopReason: "error",
         warning: expect.stringContaining("injected recording failure"),
         frames: 12,
         bytes: 500,
@@ -2036,7 +2068,7 @@ test("exhausted capture retries persist failure without capturing a frame", asyn
             })
         ).rejects.toThrow("capture failed 3 times in a row");
         expect(spawn).toHaveBeenCalledTimes(3);
-        expect(store.read(record.id)?.recording).toMatchObject({ status: "failed", frames: 0 });
+        expect(store.read(record.id)?.recording).toMatchObject({ status: "stopped", stopReason: "error", frames: 0 });
         expect(existsSync(recorderFiles(store).pid)).toBe(false);
     } finally {
         spawn.mockRestore();
@@ -2044,6 +2076,19 @@ test("exhausted capture retries persist failure without capturing a frame", asyn
     }
 });
 
+test("a legacy failed recording remains readable and updateable", async () => {
+    const store = new MeetingStore(new Storage("legacy-failed-recording"));
+    const record = await store.create(
+        { title: "Legacy fixture", start: meeting.start, createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    writeFileSync(store.path(record.id), SafeJSON.stringify({ ...record, recording: { status: "failed", frames: 0 } }));
+    expect(store.read(record.id)?.recording).toMatchObject({ status: "stopped", stopReason: "error", frames: 0 });
+    await store.update(record.id, { command: "test", change: "recovery" }, (current) => {
+        current.title = "Recovered";
+    });
+    expect(store.read(record.id)?.title).toBe("Recovered");
+});
 test("Teams observation bounds survive storage and never count as an arrival", async () => {
     for (const exact of [false, true]) {
         const raw = SafeJSON.stringify([
@@ -2223,4 +2268,37 @@ test("frame filenames distinguish resumed dates and repeated local hours", async
     const names = dates.map((date) => frameName(new Date(date)));
     expect(new Set(names).size).toBe(3);
     expect(names).toEqual([...names].sort());
+});
+
+test("addressed questions select repeated words within their own line", async () => {
+    const { questionOccurrence, askedSpotSec } = await import("./lib/questions");
+    const question = {
+        id: "i1",
+        kind: "question",
+        status: "suggested",
+        about: "term",
+        question: "Which?",
+        heard: "word",
+        fromSec: 10,
+        toSec: 20,
+        choices: [],
+        decides: [],
+        rules: [],
+        suggestedAt: meeting.start,
+        evidence: { transcriptLine: 0 },
+    };
+    const draft = meetingRecordSchema.parse({
+        ...record,
+        items: [{ ...question, id: "i0", evidence: { transcriptLine: 1 } }, question, { ...question, id: "i2" }],
+    });
+    const first = draft.items[1]!;
+    const second = draft.items[2]!;
+    if (first.kind !== "question" || second.kind !== "question") {
+        throw new Error("fixture");
+    }
+    const transcript = [line("Alice", 10, "word then word"), line("Bob", 20, "word")];
+    expect(questionOccurrence(draft, first)).toBe(0);
+    expect(questionOccurrence(draft, second)).toBe(1);
+    expect(heardContext(second, transcript, 240, 1)?.lead).toBe("word then ");
+    expect(askedSpotSec(second, transcript, 1)).toBeGreaterThan(askedSpotSec(first, transcript, 0));
 });
