@@ -4,7 +4,7 @@ import type { ChannelName, NotificationEvent } from "@genesiscz/utils/notificati
 import { memoryActTokenStore } from "../act/tokens";
 import { postDecisionNotices } from "../decisions/notify";
 import type { DecisionRecord } from "../decisions/store";
-import { closeNoticeItems, NOTICE_IDS, type NoticeDeps, noticeItem, postNotice } from "./notices";
+import { closeNoticeItems, NOTICE_IDS, type NoticeDeps, noticeItem, postNotice, recordNotice } from "./notices";
 import { memoryNoticeStore } from "./store";
 
 function fakeDeps() {
@@ -43,6 +43,16 @@ function decision(over: Partial<DecisionRecord> = {}): DecisionRecord {
 }
 
 describe("notices", () => {
+    test("records every destination of the same notice", async () => {
+        const { deps, store, retracted } = fakeDeps();
+        const notice = { id: "qa-decision-d1", items: [noticeItem("decision", "d1")] };
+        await recordNotice({ ...notice, channels: ["phone"] }, deps);
+        await recordNotice({ ...notice, channels: ["telegram"] }, deps);
+        expect(store.notices[notice.id].channels).toEqual(["phone", "telegram"]);
+        await closeNoticeItems(notice.items, deps);
+        expect(retracted.map(({ channel }) => channel)).toEqual(["phone", "telegram"]);
+    });
+
     test("answering one item of a grouped notice keeps it; answering the last retracts it on every channel", async () => {
         const { deps, retracted } = fakeDeps();
         await postNotice(
