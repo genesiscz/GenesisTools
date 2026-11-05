@@ -8,8 +8,8 @@
  *                                refs of the last run; --only limits the checks to one branch)
  *
  * --unified takes a sha to pin a moving branch; --unified-branch names its PR head (never an exclusion source).
- * --tests runs `bun scripts/test.ts <folders>` per tree, serially; --swift runs one app `swift build` per Swift branch
- * through the babysit skill's shared Swift slot.
+ * --tests runs `bun scripts/test.ts <folders>` per tree, serially; --swift runs one app `swift build --build-tests`
+ * per Swift branch through the babysit skill's shared Swift slot.
  *
  * The final run of a night (unified keeps moving, so pin the head you cut; the open PR heads must be fetched):
  *
@@ -79,7 +79,7 @@ interface CutBranch {
      * (the app lifecycle's `(GenesisHub, app)` commits), so the branch does not hold half of it.
      */
     sweep?: readonly string[];
-    /** Run one `swift build` of the app package on this tree when --swift is given. */
+    /** Run one `swift build --build-tests` of the app package on this tree when --swift is given. */
     swift?: boolean;
 }
 
@@ -1589,6 +1589,8 @@ async function runChecks(params: {
                     "--",
                     "swift",
                     "build",
+                    // The test target too: a test whose helper sat in a later layer passed a plain build (2026-11-05).
+                    "--build-tests",
                     "--package-path",
                     "src/macos/GenesisTools",
                     "--disable-build-manifest-caching",
