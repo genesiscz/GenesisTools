@@ -291,7 +291,8 @@ function readTranscriptAndModel({
             const path = callerTranscriptOf({
                 agent: identity.agent,
                 sessionId: identity.sessionId,
-                env: input.origin === "local" ? input.env : {},
+                // A remote caller's own process env, read by the gateway for `callerEnvKeys` (its home override).
+                env: input.origin === "local" ? input.env : (input.caller?.env ?? {}),
                 cwds: [identity.cwd ?? "", identity.repoRoot ?? ""],
                 now: options.now,
                 home: options.home,

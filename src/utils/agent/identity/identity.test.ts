@@ -8,6 +8,7 @@ import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readT3ThreadDetails } from "@genesiscz/utils/t3code/caller-enricher";
+import { callerEnvKeys } from "./enrichers";
 import { type CallerSource, clearGitFactsCache, readPeerCaller, toRuntimeContext, whoIsCalling } from "./index";
 
 const local = (env: NodeJS.ProcessEnv) => ({ origin: "local" as const, env });
@@ -429,6 +430,22 @@ describe("the transcript and model facets, through each harness's locator and mo
 
         expect(identity).toMatchObject({ transcriptPath: rollout, model: "codex-model-1" });
         expect(identity.sources).toMatchObject({ transcriptPath: "transcript", model: "transcript" });
+    });
+
+    it("Codex: a remote caller's rollout in the CODEX_HOME its own process names", () => {
+        const home = scratch("codex-remote-home-");
+        const id = "01a0f4fc-171d-7c30-9679-ee00633dee2e";
+        const rollout = put(
+            join(home, "sessions", "2026", "11", "04", `rollout-2026-11-04T09-00-00-${id}.jsonl`),
+            `${SafeJSON.stringify({ type: "turn_context", payload: { model: "codex-model-2" } })}\n`
+        );
+        const identity = whoIsCalling(
+            { origin: "remote", caller: { agent: "codex", sessionId: id, cwd: null, env: { CODEX_HOME: home } } },
+            { facets: ["model"], now: NOW }
+        );
+
+        expect(identity).toMatchObject({ transcriptPath: rollout, model: "codex-model-2" });
+        expect(callerEnvKeys({ agent: "codex", sessionId: id })).toContain("CODEX_HOME");
     });
 
     it("Grok: the session folder under its cwd, and the model of its summary.json", () => {

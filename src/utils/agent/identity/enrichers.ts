@@ -1,6 +1,7 @@
 import { accountEnvVar, accountOfEnv } from "@genesiscz/utils/ai/account-env";
 import { harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { logger } from "@genesiscz/utils/logger";
+import { nativeHomeOverrideVariable } from "@genesiscz/utils/providers/session-paths";
 import { t3codeCallerEnricher } from "@genesiscz/utils/t3code/caller-enricher";
 import {
     type CallerTerminals,
@@ -82,10 +83,15 @@ const ENRICHERS: { readonly [Id in EnricherId]: ContextEnricher<Id> } = {
     account: accountCallerEnricher,
 };
 
-/** Every variable an enricher reads for this caller, each once: what a remote caller's process env is read for. */
+/**
+ * Every variable an enricher reads for this caller, each once: what a remote caller's process env is read for. The
+ * caller's harness home override (`CODEX_HOME`) is one of them, because the transcript facet looks there.
+ */
 export function callerEnvKeys(caller: EnricherView["caller"]): string[] {
     const ids = Object.keys(ENRICHERS) as EnricherId[];
-    return [...new Set(ids.flatMap((id) => ENRICHERS[id].envKeys(caller)))];
+    const harness = harnessOfRuntimeAgent(caller.agent);
+    const home = harness ? [nativeHomeOverrideVariable(harness)] : [];
+    return [...new Set([...ids.flatMap((id) => ENRICHERS[id].envKeys(caller)), ...home])];
 }
 
 /** Whether a host slot carries more than its env thread id: the details only the host's own store gives. */
