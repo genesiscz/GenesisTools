@@ -1030,6 +1030,29 @@ test("an account without a 5-hour limit shows a dash with a legend in the 5h col
     expect(message).toContain("— in 5h: no 5h limit on this account");
 });
 
+test("a reading a deleted account left under the same name is not a budget of the account that reused the name", () => {
+    const reading = (accountId: string, percentUsed: number) => ({
+        provider: "anthropic-sub",
+        accountId,
+        accountName: "work",
+        fetchedAt: "2026-10-08T19:59:00Z",
+        limits: [{ key: "seven_day", label: "Weekly", kind: "weekly" as const, percentUsed }],
+        absentLimits: [{ key: "five_hour", kind: "session" as const }],
+    });
+    const work = [{ id: "acc_work", name: "work", provider: "anthropic-sub", enabled: true }];
+
+    expect(budgetsFromSnapshots(work, [reading("acc_deleted", 30)])[0]).toMatchObject({
+        fiveHourAbsent: false,
+        weeklyLeft: null,
+        note: "no usage reading",
+    });
+    // By id first, even listed after a row of the old account; a row without an id still matches by name.
+    expect(budgetsFromSnapshots(work, [reading("acc_deleted", 30), reading("acc_work", 90)])[0]).toMatchObject({
+        weeklyLeft: 10,
+    });
+    expect(budgetsFromSnapshots(work, [reading("", 30)])[0]).toMatchObject({ fiveHourAbsent: true, weeklyLeft: 70 });
+});
+
 test("budgets come from the poller's cache slice of the agent's provider, and an old reading says how old", () => {
     const now = Date.parse("2026-10-08T20:00:00Z");
     const reading = (accountId: string, accountName: string, fetchedAt: string) => ({

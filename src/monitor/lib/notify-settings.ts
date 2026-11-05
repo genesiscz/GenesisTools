@@ -1,25 +1,19 @@
 import { logger } from "@genesiscz/utils/logger";
 import {
+    CHANNEL_NAMES,
+    CHANNELS,
     type ChannelConfigs,
     type ChannelName,
     dispatchNotification,
-    dispatchSay,
-    dispatchSystem,
-    dispatchTelegram,
-    dispatchWebhook,
     type NotificationEvent,
     notificationsConfig,
     type ResolvedChannels,
-    type SayChannelConfig,
-    type SystemChannelConfig,
-    type TelegramChannelConfig,
-    type WebhookChannelConfig,
 } from "@genesiscz/utils/notifications";
 import { maskSecrets } from "./types";
 import { WatcherValidationError } from "./validate";
 
 export const NOTIFY_APP = "monitor";
-export const CHANNEL_NAMES: readonly ChannelName[] = ["system", "say", "telegram", "webhook"];
+export { CHANNEL_NAMES };
 
 /** Monitor-specific switches stored under `apps.monitor.meta` in the shared notify config. */
 export interface MonitorNotifyMeta {
@@ -78,19 +72,9 @@ export async function getNotifySettings(): Promise<NotifySettings> {
     };
 }
 
-const STRING_FIELDS: Record<ChannelName, readonly string[]> = {
-    system: ["sound", "title"],
-    say: ["voice", "provider"],
-    telegram: ["botToken", "chatId"],
-    webhook: ["url"],
-};
-
-const BOOLEAN_FIELDS: Record<ChannelName, readonly string[]> = {
-    system: ["enabled", "ignoreDnD"],
-    say: ["enabled"],
-    telegram: ["enabled"],
-    webhook: ["enabled"],
-};
+function fieldKind(name: ChannelName, key: string) {
+    return Object.hasOwn(CHANNELS[name].fields, key) ? CHANNELS[name].fields[key] : undefined;
+}
 
 function cleanChannelPatch(name: ChannelName, raw: unknown): Record<string, unknown> {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -101,7 +85,9 @@ function cleanChannelPatch(name: ChannelName, raw: unknown): Record<string, unkn
     const clean: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(record)) {
-        if (BOOLEAN_FIELDS[name].includes(key)) {
+        const kind = fieldKind(name, key);
+
+        if (kind === "boolean") {
             if (typeof value !== "boolean") {
                 throw new WatcherValidationError(`channels.${name}.${key} must be a boolean`);
             }
@@ -110,7 +96,7 @@ function cleanChannelPatch(name: ChannelName, raw: unknown): Record<string, unkn
             continue;
         }
 
-        if (STRING_FIELDS[name].includes(key)) {
+        if (kind === "string") {
             if (typeof value !== "string") {
                 throw new WatcherValidationError(`channels.${name}.${key} must be a string`);
             }
@@ -234,6 +220,11 @@ function describePatch(patch: NotifySettingsPatch): Record<string, unknown> {
     return { meta: patch.meta, channels };
 }
 
+/** Posts through one channel with `enabled` forced on, so a demo works on a channel you are about to switch on. */
+async function postEnabled<K extends ChannelName>(channel: K, event: NotificationEvent, resolved: ResolvedChannels) {
+    return CHANNELS[channel].post(event, { ...resolved[channel], enabled: true });
+}
+
 /**
  * Demo through the app-default channels. With `channel` set, only that one
  * fires, and it fires even when it is currently disabled (that is the point
@@ -256,22 +247,7 @@ export async function sendTestNotification(channel?: ChannelName): Promise<{ sen
         return { sent: true, channels: targets };
     }
 
-    const config = { ...resolved[channel], enabled: true };
-
-    switch (channel) {
-        case "system":
-            await dispatchSystem(event, config as SystemChannelConfig);
-            break;
-        case "say":
-            await dispatchSay(event.message, config as SayChannelConfig);
-            break;
-        case "telegram":
-            await dispatchTelegram(event, config as TelegramChannelConfig);
-            break;
-        case "webhook":
-            await dispatchWebhook(event, config as WebhookChannelConfig);
-            break;
-    }
+    await postEnabled(channel, event, resolved);
 
     return { sent: true, channels: [channel] };
 }

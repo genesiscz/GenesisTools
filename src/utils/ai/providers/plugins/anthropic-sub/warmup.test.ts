@@ -1,7 +1,17 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import { WarmupFailure } from "@genesiscz/utils/ai/providers/account-features";
+import { type AccountUsageSnapshot, WarmupFailure } from "@genesiscz/utils/ai/providers/account-features";
+import {
+    __resetUsagePollStorage,
+    snapshotsCacheKey,
+    USAGE_CACHE_TTL,
+    usagePollStorage,
+} from "@genesiscz/utils/ai/usage-poll/storage";
 import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
+import { env } from "@genesiscz/utils/env";
 import { APICallError, RetryError } from "ai";
 import type { UsageResponse } from "./api";
 import { anthropicWarmup, type LongLivedTokens } from "./warmup";
@@ -227,5 +237,72 @@ describe("anthropicWarmup", () => {
             },
         });
         expect(await outcome).toEqual({ via: "login-long" });
+    });
+});
+
+describe("anthropicWarmup reading the usage cache", () => {
+    const homes: string[] = [];
+    const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
+
+    afterEach(() => {
+        env.testing.unset("GENESIS_TOOLS_HOME");
+        __resetUsagePollStorage();
+
+        for (const home of homes.splice(0)) {
+            rmSync(home, { recursive: true, force: true });
+        }
+    });
+
+    /** One cached row with no 5-hour window and a running weekly window: a reading the warmup skips on. */
+    async function cacheRow(accountId: string): Promise<void> {
+        const home = mkdtempSync(join(tmpdir(), "warmup-cache-"));
+        homes.push(home);
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+        __resetUsagePollStorage();
+        const row: AccountUsageSnapshot = {
+            provider: "anthropic-sub",
+            accountId,
+            accountName: "side",
+            fetchedAt: new Date().toISOString(),
+            limits: [],
+            absentLimits: [{ key: "five_hour", kind: "session" }],
+            native: { five_hour: null, seven_day: { utilization: 20, resets_at: inDays(3) } },
+        };
+        await usagePollStorage().putCacheFile(
+            snapshotsCacheKey("anthropic-sub"),
+            { fetchedAt: Date.now(), accounts: [row] },
+            USAGE_CACHE_TTL
+        );
+    }
+
+    async function warm(): Promise<{ via: string; skipped?: string; generic: number }> {
+        let generic = 0;
+        const outcome = await anthropicWarmup(
+            account(PAIR),
+            {
+                generic: async () => {
+                    generic += 1;
+                },
+            },
+            { loadLongLived: async () => undefined }
+        );
+        return { ...outcome, generic };
+    }
+
+    test("a row a deleted account left under the same name never skips its replacement's warmup", async () => {
+        await cacheRow("acc_deleted");
+        expect(await warm()).toEqual({ via: "oauth", generic: 1 });
+    });
+
+    test("negative control: the account's own row, or a row written before rows carried an id, still skips", async () => {
+        await cacheRow("acc_side");
+        expect(await warm()).toMatchObject({
+            via: "none",
+            skipped: expect.stringContaining("no 5-hour limit"),
+            generic: 0,
+        });
+
+        await cacheRow("");
+        expect(await warm()).toMatchObject({ via: "none", generic: 0 });
     });
 });

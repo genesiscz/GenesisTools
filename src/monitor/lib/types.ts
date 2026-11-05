@@ -1,3 +1,4 @@
+import type { ChannelName } from "@genesiscz/utils/notifications";
 /** One version for the CLI `--version` and the server `/healthz`. */
 export const MONITOR_VERSION = "1.1.0";
 
@@ -115,8 +116,21 @@ export interface WatcherInput {
     mutedUntil?: string | null;
 }
 
-export const NOTIFY_CHANNELS = ["system", "say", "telegram", "webhook"] as const;
+/**
+ * The notification channels in display order. A literal, because the monitor web UI imports this file and the channel
+ * table (`CHANNELS` in `@genesiscz/utils/notifications`) runs server code; the check below fails the compile when the
+ * table gains a channel this list lacks.
+ */
+export const NOTIFY_CHANNELS = [
+    "system",
+    "say",
+    "telegram",
+    "webhook",
+    "phone",
+] as const satisfies readonly ChannelName[];
 export type NotifyChannel = (typeof NOTIFY_CHANNELS)[number];
+const EVERY_CHANNEL_LISTED: [Exclude<ChannelName, NotifyChannel>] extends [never] ? true : never = true;
+void EVERY_CHANNEL_LISTED;
 
 /** One named destination in the notification library, e.g. "Slack #ops" or "Samantha, loud". */
 export interface NotifyTarget {

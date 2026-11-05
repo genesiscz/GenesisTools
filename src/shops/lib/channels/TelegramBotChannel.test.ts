@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { TelegramBotChannel } from "@app/shops/lib/channels/TelegramBotChannel";
 import type { NotificationPayload } from "@app/shops/lib/channels/types";
+import type { NotificationEvent } from "@genesiscz/utils/notifications";
 
 const PAYLOAD: NotificationPayload = {
     notification: {
@@ -28,20 +29,18 @@ const PAYLOAD: NotificationPayload = {
 };
 
 interface SendCall {
-    chatId: string | number;
-    text: string;
-    parseMode?: string;
+    event: NotificationEvent;
+    target: { botToken: string; chatId: string };
 }
 
-function makeChannel(args: { chatId?: string; sendImpl?: (a: SendCall) => Promise<{ ok: true; message_id: number }> }) {
+function makeChannel(args: { chatId?: string; ok?: boolean }) {
     const calls: SendCall[] = [];
     const channel = new TelegramBotChannel({
         chatId: args.chatId ?? "123",
-        client: {
-            sendMessage: async (a: SendCall) => {
-                calls.push(a);
-                return args.sendImpl ? args.sendImpl(a) : { ok: true as const, message_id: 1 };
-            },
+        botToken: "123:abc",
+        post: async (event, target) => {
+            calls.push({ event, target });
+            return args.ok === false ? { ok: false } : { ok: true };
         },
     });
     return { channel, calls };
@@ -69,19 +68,15 @@ describe("TelegramBotChannel", () => {
         const { channel, calls } = makeChannel({ chatId: "555" });
         const result = await channel.dispatch(PAYLOAD);
         expect(result).toEqual({ channel: "telegram", delivered: true });
-        expect(calls[0].chatId).toBe("555");
-        expect(calls[0].text).toContain("Ritter Sport");
-        expect(calls[0].text).toContain("https://www.rohlik.cz/30");
+        expect(calls[0].target).toEqual({ botToken: "123:abc", chatId: "555" });
+        expect(calls[0].event.title).toContain("Ritter Sport");
+        expect(calls[0].event.message).toContain("https://www.rohlik.cz/30");
     });
 
     it("dispatch returns delivered:false + error on send failure", async () => {
-        const { channel } = makeChannel({
-            sendImpl: async () => {
-                throw new Error("401 Unauthorized");
-            },
-        });
+        const { channel } = makeChannel({ ok: false });
         const result = await channel.dispatch(PAYLOAD);
         expect(result.delivered).toBe(false);
-        expect(result.error).toContain("401 Unauthorized");
+        expect(result.error).toContain("did not accept");
     });
 });

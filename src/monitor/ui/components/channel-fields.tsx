@@ -13,7 +13,7 @@ import {
     SelectValue,
 } from "@genesiscz/utils/ui/components/select";
 import { Switch } from "@genesiscz/utils/ui/components/switch";
-import { MonitorSmartphone, Send, Volume2, Webhook } from "lucide-react";
+import { MonitorSmartphone, Send, Smartphone, Volume2, Webhook } from "lucide-react";
 
 export type ChannelDraft = Record<string, string | boolean>;
 
@@ -68,6 +68,13 @@ export const CHANNEL_SPECS: Record<
         icon: Webhook,
         fields: [{ key: "url", label: "URL", placeholder: "https://hooks.example.com/…" }],
         booleans: [],
+    },
+    phone: {
+        title: "Phone (push)",
+        blurb: `A push to every phone that opened the DevDashboard app against this Mac. The APNs key is set with \`${toolCommand("notify phone apns")}\`.`,
+        icon: Smartphone,
+        fields: [],
+        booleans: [{ key: "text", label: "Show the message on the lock screen" }],
     },
 };
 

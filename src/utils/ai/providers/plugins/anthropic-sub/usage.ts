@@ -18,9 +18,9 @@ import type { Severity } from "./limits";
 import { absentLimitsOf, normalizeLimits, normalizeSpend } from "./limits";
 import { isHeaderReading, isQuotaHeaderFailure } from "./quota-headers";
 import { anthropicRanker } from "./rank";
-import { previousUsageOf } from "./snapshot-usage";
+import { previousUsageOf, upgradeCachedSnapshot } from "./snapshot-usage";
 
-export { previousUsageOf, snapshotToAccountUsage } from "./snapshot-usage";
+export { previousUsageOf, snapshotToAccountUsage, upgradeCachedSnapshot } from "./snapshot-usage";
 
 import { calendarDay, nextRenewalDate } from "./subscription";
 
@@ -271,4 +271,5 @@ export const anthropicUsage: AccountUsageFeature = {
     // the gated read anyway.
     pollsWhileGated: (account, gate) =>
         longLivedCredentialUsable(account.credentials) && !isQuotaHeaderFailure(gate.reason),
+    upgradeCached: upgradeCachedSnapshot,
 };

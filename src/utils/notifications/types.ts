@@ -25,11 +25,37 @@ export interface SayChannelConfig {
     provider?: string;
 }
 
+/**
+ * APNs token auth for a real phone (a simulator needs none: `xcrun simctl push` delivers to it). The key file is the
+ * `.p8` App Store Connect gives once; the topic defaults to the app's bundle id.
+ */
+export interface PhoneApnsConfig {
+    teamId?: string;
+    keyId?: string;
+    keyPath?: string;
+    topic?: string;
+}
+
+/**
+ * Push to the phones that registered with this Mac (`POST /api/push/devices`). Each device record names how it is
+ * reached (APNs or the simulator), so the transport is a property of the device, not of this config.
+ */
+export interface PhoneChannelConfig {
+    enabled: boolean;
+    /**
+     * Whether the prompt and the options go on the lock screen. Apple carries the payload; off sends the label and
+     * the project only (the buttons work either way, their tokens are sealed to the device).
+     */
+    text?: boolean;
+    apns?: PhoneApnsConfig;
+}
+
 export interface ChannelConfigs {
     system: SystemChannelConfig;
     telegram: TelegramChannelConfig;
     webhook: WebhookChannelConfig;
     say: SayChannelConfig;
+    phone: PhoneChannelConfig;
 }
 
 export type ChannelName = keyof ChannelConfigs;
@@ -48,12 +74,7 @@ export interface NotifyGlobalConfig {
 }
 
 /** Merged result -- global + app overrides applied */
-export interface ResolvedChannels {
-    system: SystemChannelConfig;
-    telegram: TelegramChannelConfig;
-    webhook: WebhookChannelConfig;
-    say: SayChannelConfig;
-}
+export type ResolvedChannels = ChannelConfigs;
 
 export interface NotificationEvent {
     app: string;
@@ -82,6 +103,10 @@ export interface NotificationEvent {
      * `tools notify` exit code) sets it; pollers that re-post an undelivered event must not.
      */
     requireConfirmed?: boolean;
+    /** What the phone channel shows beside the alert: one-tap answers and the thread it groups under. */
+    phone?: PhoneNoticeExtras;
+    /** Breaks through Focus where the channel can (the phone's time-sensitive level). */
+    timeSensitive?: boolean;
     /**
      * Per-call channel allow-list. When set, only these channels may fire for
      * this event (still subject to each channel being enabled in config). When
@@ -89,3 +114,53 @@ export interface NotificationEvent {
      */
     only?: ChannelName[];
 }
+
+/** The phone-only part of an event (nested by the channel that reads it). */
+export interface PhoneNoticeExtras {
+    /** Groups the notices of one session on the lock screen (APNs `thread-id`). */
+    thread?: string;
+    /**
+     * One button per option letter. Each answers through the act door (`POST /api/act`) with its token, which is sealed
+     * to each device before it leaves the Mac.
+     */
+    answers?: { letters: string[]; recommended?: string; tokens: Record<string, string> };
+}
+
+/** What one channel did with one event. */
+export interface ChannelReceipt {
+    /** The channel accepted the event, or had nothing to send (switched off, no target). */
+    ok: boolean;
+    /** Why it did not send, or what it sent to (a phone channel names its devices). */
+    detail?: string;
+}
+
+/** The kind of a field a user may set on a channel (`tools monitor notify set`, the monitor settings page). */
+export type ChannelFieldKind = "string" | "boolean";
+
+/**
+ * One notification channel: everything a caller needs to know about it. The dispatcher, Monitor, the notify wizard and
+ * the shops channels read {@link ChannelTable}, so a new channel is one entry and the compiler names every place that
+ * must learn about it.
+ */
+export interface ChannelDefinition<K extends ChannelName> {
+    name: K;
+    label: string;
+    defaults: ChannelConfigs[K];
+    /** The flat fields a user may set (`enabled` included); nested settings have their own command. */
+    fields: Readonly<Record<string, ChannelFieldKind>>;
+    /** Fields that never leave this process (masked in every view). */
+    secretKeys: readonly string[];
+    /** Why a switched-on channel cannot send (no token, no device); undefined when it can. */
+    unusable(config: ChannelConfigs[K]): string | undefined;
+    /** One line for a list, secrets masked. */
+    describe(config: ChannelConfigs[K]): string;
+    /** Sends one event. Never throws. A switched-off channel answers `{ ok: true }` without sending. */
+    post(event: NotificationEvent, config: ChannelConfigs[K]): Promise<ChannelReceipt>;
+    /**
+     * Takes a posted notice back by its stable id (`NotificationEvent.id`), switched on or not, since a notice posted
+     * before a switch-off still shows. True when something was taken back. Never throws.
+     */
+    retract(noticeId: string, config: ChannelConfigs[K]): Promise<boolean>;
+}
+
+export type ChannelTable = { readonly [K in ChannelName]: ChannelDefinition<K> };

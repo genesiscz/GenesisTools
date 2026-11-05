@@ -72,9 +72,8 @@ mock.module("@genesiscz/utils/ai/AIConfig", () => ({
     },
 }));
 
-const { classifyAnthropicFailure, pollAnthropicAccount, snapshotToAccountUsage, toLimitWindows } = await import(
-    "./usage"
-);
+const { anthropicUsage, classifyAnthropicFailure, pollAnthropicAccount, snapshotToAccountUsage, toLimitWindows } =
+    await import("./usage");
 const { mergeHeaderReading, QUOTA_PROBE_FALLBACK_MODEL, QUOTA_PROBE_MODEL, QUOTA_PROBE_URL, usageFromQuotaHeaders } =
     await import("./quota-headers");
 const { failureSnapshot } = await import("@genesiscz/utils/ai/usage-poll/poll");
@@ -493,5 +492,61 @@ describe("an account without a 5-hour limit", () => {
         expect(sent).toEqual([QUOTA_PROBE_FALLBACK_MODEL]);
         expect(later.limits.map((window) => window.key)).toEqual(["seven_day", "seven_day_fable"]);
         expect(later.absentLimits).toEqual(ABSENT);
+    });
+
+    it("a cached row an older build wrote with a made-up 0 % five_hour window is read back without it", () => {
+        /** What a build before 2026-11-01 cached for a header reading without the 5h headers. */
+        const native = {
+            five_hour: { utilization: 0, resets_at: null },
+            seven_day: WEEKLY,
+            quota: {
+                source: "headers",
+                fiveHourStatus: null,
+                sevenDayStatus: "allowed",
+                representativeClaim: "seven_day",
+            },
+        };
+        const old: AccountUsageSnapshot = {
+            provider: "anthropic-sub",
+            accountId: "acc_work",
+            accountName: "work",
+            fetchedAt: "2026-10-31T20:00:00.000Z",
+            limits: [
+                { key: "five_hour", label: "Session (5h)", kind: "session", percentUsed: 0 },
+                { key: "seven_day", label: "Week (all)", kind: "weekly", percentUsed: 11 },
+            ],
+            native,
+        };
+        const upgrade = anthropicUsage.upgradeCached;
+
+        if (!upgrade) {
+            throw new Error("anthropic-sub declares no upgradeCached");
+        }
+
+        const upgraded = upgrade(old);
+
+        expect(upgraded.limits.map((window) => window.key)).toEqual(["seven_day"]);
+        expect(upgraded.absentLimits).toEqual(ABSENT);
+        expect(snapshotToAccountUsage(old).absentLimits).toEqual(ABSENT);
+        expect(upgrade(upgraded)).toBe(upgraded);
+    });
+
+    it("negative control: a cached idle 5-hour window of an account that has one stays a 0 % window", () => {
+        const native = {
+            five_hour: { utilization: 0, resets_at: null },
+            seven_day: WEEKLY,
+            quota: { source: "headers", fiveHourStatus: "allowed", sevenDayStatus: "allowed" },
+        };
+        const idle: AccountUsageSnapshot = {
+            provider: "anthropic-sub",
+            accountId: "acc_work",
+            accountName: "work",
+            fetchedAt: "2026-10-31T20:00:00.000Z",
+            limits: [{ key: "five_hour", label: "Session (5h)", kind: "session", percentUsed: 0 }],
+            native,
+        };
+
+        expect(anthropicUsage.upgradeCached?.(idle)).toBe(idle);
+        expect(snapshotToAccountUsage(idle).absentLimits).toBeUndefined();
     });
 });

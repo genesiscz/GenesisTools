@@ -1,59 +1,34 @@
 import { logger } from "@genesiscz/utils/logger";
 import {
-    dispatchSay,
-    dispatchSystem,
-    dispatchTelegram,
-    dispatchWebhook,
+    CHANNELS,
+    type ChannelConfigs,
+    type ChannelName,
     type NotificationEvent,
-    type SayChannelConfig,
-    type SystemChannelConfig,
-    type TelegramChannelConfig,
-    type WebhookChannelConfig,
 } from "@genesiscz/utils/notifications";
-import { type NotifyTarget, webhookHost } from "./types";
+import type { NotifyTarget } from "./types";
 
 export const NOTIFY_APP = "monitor";
 
+/** A target's stored config is a loose bag checked against the channel's field list on write; here it is that config. */
+function configOf<K extends ChannelName>(channel: K, target: NotifyTarget): ChannelConfigs[K] {
+    return { ...CHANNELS[channel].defaults, ...target.config, enabled: true } as ChannelConfigs[K];
+}
+
+function describeAs<K extends ChannelName>(channel: K, target: NotifyTarget): string {
+    return CHANNELS[channel].describe(configOf(channel, target));
+}
+
 /** One-line human summary of a target's config, secrets masked. */
 export function describeTarget(target: NotifyTarget): string {
-    const config = target.config;
+    return describeAs(target.channel, target);
+}
 
-    switch (target.channel) {
-        case "system":
-            return [
-                config.title,
-                config.sound ? `sound ${config.sound}` : null,
-                config.ignoreDnD ? "bypasses DnD" : null,
-            ]
-                .filter(Boolean)
-                .join(" · ");
-        case "say":
-            return [
-                config.voice ? `voice ${config.voice}` : "default voice",
-                config.provider ? `via ${config.provider}` : null,
-            ]
-                .filter(Boolean)
-                .join(" · ");
-        case "telegram":
-            return `chat ${config.chatId ?? "?"} · token ${config.botToken ? "set" : "missing"}`;
-        case "webhook":
-            return webhookHost(config.url) ?? "no url";
-    }
+async function sendAs<K extends ChannelName>(channel: K, target: NotifyTarget, event: NotificationEvent) {
+    return (await CHANNELS[channel].post(event, configOf(channel, target))).ok;
 }
 
 function sendToChannel(target: NotifyTarget, event: NotificationEvent): Promise<boolean> {
-    const config = { ...target.config, enabled: true };
-
-    switch (target.channel) {
-        case "system":
-            return dispatchSystem(event, config as SystemChannelConfig);
-        case "say":
-            return dispatchSay(event.message, config as SayChannelConfig);
-        case "telegram":
-            return dispatchTelegram(event, config as TelegramChannelConfig);
-        case "webhook":
-            return dispatchWebhook(event, config as WebhookChannelConfig);
-    }
+    return sendAs(target.channel, target, event);
 }
 
 /**

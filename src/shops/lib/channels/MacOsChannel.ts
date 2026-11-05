@@ -1,69 +1,28 @@
-import { existsSync } from "node:fs";
 import type { DispatchResult, NotificationChannel, NotificationPayload } from "@app/shops/lib/channels/types";
-import { logger } from "@genesiscz/utils/logger";
-
-const log = logger.child({ component: "MacOsChannel" });
-
-interface SpawnHandle {
-    exited: Promise<number | null>;
-}
+import { CHANNELS, type ChannelReceipt, type NotificationEvent } from "@genesiscz/utils/notifications";
 
 export interface MacOsChannelOptions {
-    terminalNotifierPath?: string | null;
-    osascriptPath?: string | null;
-    spawn?: (cmd: string[]) => SpawnHandle;
+    /** Sends the banner; the shared system channel (GenesisTools.app, else terminal-notifier) by default. Tests pass a spy. */
+    post?: (event: NotificationEvent) => Promise<ChannelReceipt>;
+    /** Why the banner cannot go out on this machine; undefined when it can. */
+    unusable?: () => string | undefined;
 }
 
-const DEFAULT_TERMINAL_NOTIFIER_PATHS = ["/opt/homebrew/bin/terminal-notifier", "/usr/local/bin/terminal-notifier"];
+const SYSTEM = { ...CHANNELS.system.defaults, enabled: true };
 
-const DEFAULT_OSASCRIPT_PATH = "/usr/bin/osascript";
-
-function defaultSpawn(cmd: string[]): SpawnHandle {
-    const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
-    return { exited: proc.exited };
-}
-
-function probePath(candidates: string[]): string | null {
-    for (const p of candidates) {
-        if (existsSync(p)) {
-            return p;
-        }
-    }
-
-    return null;
-}
-
-function escapeAS(s: string): string {
-    return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
+/** The shops banner, posted through the one system channel of the notification table. */
 export class MacOsChannel implements NotificationChannel {
     readonly name = "macos" as const;
-    private readonly terminalNotifierPath: string | null;
-    private readonly osascriptPath: string | null;
-    private readonly spawn: (cmd: string[]) => SpawnHandle;
+    private readonly post: (event: NotificationEvent) => Promise<ChannelReceipt>;
+    private readonly unusable: () => string | undefined;
 
     constructor(opts: MacOsChannelOptions = {}) {
-        this.terminalNotifierPath =
-            opts.terminalNotifierPath !== undefined
-                ? opts.terminalNotifierPath
-                : probePath(DEFAULT_TERMINAL_NOTIFIER_PATHS);
-        this.osascriptPath =
-            opts.osascriptPath !== undefined
-                ? opts.osascriptPath
-                : existsSync(DEFAULT_OSASCRIPT_PATH)
-                  ? DEFAULT_OSASCRIPT_PATH
-                  : null;
-        this.spawn = opts.spawn ?? defaultSpawn;
-        if (!this.available()) {
-            log.warn(
-                "MacOsChannel disabled: neither terminal-notifier nor osascript found. Install terminal-notifier via 'brew install terminal-notifier' for native banners."
-            );
-        }
+        this.post = opts.post ?? ((event) => CHANNELS.system.post(event, SYSTEM));
+        this.unusable = opts.unusable ?? (() => CHANNELS.system.unusable(SYSTEM));
     }
 
     available(): boolean {
-        return this.terminalNotifierPath !== null || this.osascriptPath !== null;
+        return this.unusable() === undefined;
     }
 
     async dispatch(payload: NotificationPayload): Promise<DispatchResult> {
@@ -71,39 +30,16 @@ export class MacOsChannel implements NotificationChannel {
             return { channel: "macos", delivered: false };
         }
 
-        const url = payload.buyUrl ?? `http://localhost:3073${payload.detailUrl}`;
-        const cmd = this.terminalNotifierPath
-            ? [
-                  this.terminalNotifierPath,
-                  "-title",
-                  payload.title,
-                  "-message",
-                  payload.body,
-                  "-open",
-                  url,
-                  "-group",
-                  `shops-${payload.notification.master_product_id}`,
-              ]
-            : [
-                  this.osascriptPath ?? "/usr/bin/osascript",
-                  "-e",
-                  `display notification "${escapeAS(payload.body)}" with title "${escapeAS(payload.title)}"`,
-              ];
+        const receipt = await this.post({
+            app: "shops",
+            title: payload.title,
+            message: payload.body,
+            open: payload.buyUrl ?? `http://localhost:3073${payload.detailUrl}`,
+            group: `shops-${payload.notification.master_product_id}`,
+        });
 
-        try {
-            const handle = this.spawn(cmd);
-            const code = await handle.exited;
-            if (code === 0) {
-                return { channel: "macos", delivered: true };
-            }
-
-            return { channel: "macos", delivered: false, error: `exit ${code ?? "null"}` };
-        } catch (err) {
-            return {
-                channel: "macos",
-                delivered: false,
-                error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
-            };
-        }
+        return receipt.ok
+            ? { channel: "macos", delivered: true }
+            : { channel: "macos", delivered: false, error: receipt.detail ?? "the system channel did not post it" };
     }
 }

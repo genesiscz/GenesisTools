@@ -2,6 +2,7 @@ import {
     type AccountUsageSnapshot,
     absentLimitText,
     hasAbsentLimit,
+    snapshotOfAccount,
 } from "@genesiscz/utils/ai/providers/account-features";
 import { readSnapshotsCache, type SnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -46,9 +47,7 @@ export function budgetsFromSnapshots(
     snapshots: readonly AccountUsageSnapshot[]
 ): AccountBudget[] {
     return accounts.map((account) => {
-        const snapshot = snapshots.find(
-            (entry) => entry.accountId === account.id || entry.accountName === account.name
-        );
+        const snapshot = snapshotOfAccount(snapshots, account);
         const session = snapshot?.limits.find((window) => window.kind === "session");
         const weekly = snapshot?.limits.find((window) => window.kind === "weekly" && !window.scopeModel);
 

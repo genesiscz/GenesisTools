@@ -53,6 +53,8 @@ function describeTargetConfig(target: NotifyTarget): string {
             return `chat ${config.chatId ?? "?"}`;
         case "webhook":
             return typeof config.urlHost === "string" ? config.urlHost : config.urlSet ? "url set" : "no url";
+        case "phone":
+            return config.text === false ? "every registered phone · text off" : "every registered phone";
     }
 }
 
