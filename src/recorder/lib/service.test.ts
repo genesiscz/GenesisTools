@@ -421,6 +421,33 @@ describe("the recorder service", () => {
         expect(service.sessions.size).toBe(0);
     });
 
+    // Regression test: 2026-11-05 recorder service review, finding 12 — a service edit without an open session told nobody
+    test("an edit and an undo through the service without an open session tell every subscriber; no change tells none", async () => {
+        const { service } = await serviceFixture();
+        const path = editFixture("rs-no-session-event-");
+        const watcher = await connect(service.entry);
+        const heard: RpcNotification[] = [];
+        watcher.onNotification((notification) => heard.push(notification));
+        await watcher.call<unknown>("subscribe", { events: ["project.changed"] });
+        const agent = await connect(service.entry);
+        await agent.call<unknown>("hello", hello("client"));
+
+        await agent.call<unknown>("edit.apply", { path, ops: [{ op: "volume", volume: 0.4 }] });
+        await agent.call<unknown>("edit.apply", { path, ops: [{ op: "volume", volume: 0.4 }] });
+        await agent.call<unknown>("edit.undo", { path });
+        const revisionOf = (notification: RpcNotification) => Reflect.get(Object(notification.params), "revision");
+        await waitUntil(
+            "the undo's project.changed",
+            () => heard.some((notification) => revisionOf(notification) === 3),
+            1_000
+        );
+
+        expect(heard.map((notification) => [notification.method, revisionOf(notification)])).toEqual([
+            ["project.changed", 2],
+            ["project.changed", 3],
+        ]);
+    });
+
     test("a host method reaches the connected host and its answer, progress and cancel go both ways", async () => {
         const { service, faceRuns } = await serviceFixture({ saveDelayMs: 10_000 });
         const path = editFixture("rs-host-");

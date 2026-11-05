@@ -71,6 +71,11 @@ export interface OpenedProject {
     warnings?: string[];
     /** An undo: the ops of the change it took back, in the order they ran. */
     undone?: string[];
+    /**
+     * `editProject` and `undoEdit` on the file: true when they saved a revision. Absent when an open session made the
+     * change, since the session tells its subscribers itself.
+     */
+    saved?: boolean;
 }
 
 /** The movie a recording argument names: the folder's movie, or the movie an edit file points at. */
@@ -338,7 +343,7 @@ export async function editProject(
     for (let replay = 0; ; replay++) {
         if (!edit.changed) {
             log.debug({ path: opened.path, ops: ops.map((op) => op.op) }, "edit changed nothing, not saved");
-            return { path: opened.path, project: opened.project, fresh: false, warnings: edit.warnings };
+            return { path: opened.path, project: opened.project, fresh: false, warnings: edit.warnings, saved: false };
         }
 
         const base = opened;
@@ -391,6 +396,7 @@ export async function editProject(
         path: opened.path,
         project: saved,
         fresh: false,
+        saved: true,
         ...(edit.removedIdleUs.length ? { removedIdleUs: edit.removedIdleUs } : {}),
         ...(edit.loudness ? { loudness: edit.loudness } : {}),
         ...(edit.warnings.length ? { warnings: edit.warnings } : {}),
@@ -700,7 +706,7 @@ export async function undoEdit(value: string): Promise<OpenedProject> {
 
     atomicWriteFileSync(undoPath(opened.path), SafeJSON.stringify({ steps: rest }));
     log.debug({ path: opened.path, revision: saved.revision, left: rest.length, ops: last.ops }, "edit undone");
-    return { path: opened.path, project: saved, fresh: false, undone: last.ops ?? [] };
+    return { path: opened.path, project: saved, fresh: false, undone: last.ops ?? [], saved: true };
 }
 
 export { EXPORT_FORMATS, type ExportFormat };

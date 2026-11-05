@@ -6,6 +6,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { claimPidFile, clearPidFile } from "@genesiscz/utils/process/pidfile";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
+import type { EditProject } from "@genesiscz/utils/recording-editor/project";
 import type { RpcCallContext } from "@genesiscz/utils/rpc/peer";
 import { type RpcConnection, RpcSocketServer } from "@genesiscz/utils/rpc/socket-server";
 import { RPC_ERRORS, RpcError } from "@genesiscz/utils/screen-recorder/control";
@@ -14,7 +15,7 @@ import { RECORDING_EVENT, RECORDINGS_CHANGED } from "@genesiscz/utils/screen-rec
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
 import { editPathOf, editProject, setEditOwner, undoEdit, withEditCancel } from "./edit";
-import { type EditSession, EditSessions } from "./edit-session";
+import { type EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import { ConnectedAppHost, type HeadlessDeps, HeadlessHost, type HostCallContext, type RecorderHost } from "./host";
 import { listLibrary } from "./library";
 import { searchLibrary } from "./moments";
@@ -179,6 +180,16 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
         onChange: (change) => server?.emit("project.changed", { ...change }),
         saveDelayMs: options.saveDelayMs,
     });
+
+    /** An edit saved to the file with no open session: subscribers hear it as they hear a session's change. */
+    const fileChanged = (saved: { path: string; project: EditProject }, connection: Connection): void => {
+        const change: ProjectChanged = {
+            path: saved.path,
+            revision: saved.project.revision,
+            by: saved.project.updatedBy ?? byOf(connection),
+        };
+        server?.emit("project.changed", { ...change });
+    };
 
     const sessionOf = (path: string): EditSession => {
         const session = sessions.get(editPathOf(path));
@@ -357,6 +368,11 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             }
 
             const opened = await editProject(params.path, params.ops, { baseRevision: params.baseRevision });
+
+            if (opened.saved) {
+                fileChanged(opened, connection);
+            }
+
             return {
                 revision: opened.project.revision,
                 project: opened.project,
@@ -379,6 +395,11 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             }
 
             const undone = await undoEdit(params.path);
+
+            if (undone.saved) {
+                fileChanged(undone, connection);
+            }
+
             return { revision: undone.project.revision, project: undone.project, undone: undone.undone ?? [] };
         },
         "edit.redo": async (params, { connection }: HandlerContext) => {
