@@ -616,7 +616,18 @@ export class TestPlans {
         const created = await this.rest.createTestCase(operations);
 
         if (input.suite) {
-            await this.rest.addTestCases(input.suite.planId, input.suite.suiteId, [created.id]);
+            try {
+                const added = await this.rest.addTestCases(input.suite.planId, input.suite.suiteId, [created.id]);
+                if (!added.some((item) => item.workItem.id === created.id)) {
+                    throw new Error("The suite response did not include the created test case");
+                }
+            } catch (error) {
+                throw new Error(
+                    `Test Case ${created.id} was created but could not be added to suite ${input.suite.suiteId}. ` +
+                        `Retry with: tools azure-devops testplan suite add ${input.suite.planId} ${input.suite.suiteId} --cases ${created.id} --confirm`,
+                    { cause: error }
+                );
+            }
         }
 
         return {
