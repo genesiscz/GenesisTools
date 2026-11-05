@@ -55,7 +55,7 @@ export async function applyEdit(
 
     log.debug({ value, ops: ops.map((op) => op.op), socket: entry.socket }, "edit through the recorder service");
     const answer = await withServiceClient(entry, (client) =>
-        client.call<ServiceEditAnswer>("edit.apply", { path: callerPath(value), ops }, { timeoutMs: EDIT_CALL_TIMEOUT_MS })
+        client.call<ServiceEditAnswer>("edit.apply", { path: callerPath(value), ops: ops.map((op) => "file" in op && typeof op.file === "string" ? { ...op, file: resolve(op.file) } : op) }, { timeoutMs: EDIT_CALL_TIMEOUT_MS })
     );
     return openedOf(value, answer);
 }
@@ -135,6 +135,10 @@ export function serviceRoutedMovie<T extends { recording: string }>(
                 }
 
                 const { params, signal } = paramsOf(method, args);
+
+                if (typeof params.file === "string") {
+                    params.file = resolve(params.file);
+                }
                 log.debug(
                     { method: method.name, recording: target.recording },
                     "movie call through the recorder service"
