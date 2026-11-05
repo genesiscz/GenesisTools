@@ -130,7 +130,9 @@ function minutesOf(clock: unknown): number | null {
         return null;
     }
 
-    return Number(match[1]) * 60 + Number(match[2]);
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    return hours <= 23 && minutes <= 59 ? hours * 60 + minutes : null;
 }
 
 /** Whether `now` falls in the quiet hours, read in the local zone; a span over midnight wraps. */
