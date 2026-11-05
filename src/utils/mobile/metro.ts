@@ -63,7 +63,9 @@ export async function metroStatus(port: number): Promise<MetroStatus> {
 /** Starts Metro for the app on the port unless one already answers there. */
 export async function startMetro(options: { port: number; appDir: string; timeoutMs?: number }): Promise<MetroStatus> {
     if (await metroRunning(options.port)) {
-        return metroStatus(options.port);
+        throw new Error(
+            `Metro already listens on :${options.port}; stop it or choose a different port because its project cannot be verified`
+        );
     }
 
     await startDetached(metroService(options), {
