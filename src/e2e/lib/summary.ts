@@ -123,18 +123,21 @@ export interface TestChange {
 
 /** Every test whose state differs between two runs, the new failures first. */
 export function compareRuns(before: RunSummary, after: RunSummary): TestChange[] {
-    const states = (summary: RunSummary) =>
-        new Map(
-            summary.specs.flatMap((spec) =>
-                spec.tests.map(
-                    (test) =>
-                        [
-                            `${test.project ? `${test.project} > ` : ""}${spec.spec.path} > ${test.suite} > ${test.title}`,
-                            test.state,
-                        ] as const
-                )
-            )
-        );
+    const states = (summary: RunSummary) => {
+        const result = new Map<string, E2eTestState>();
+
+        for (const spec of summary.specs) {
+            for (const test of spec.tests) {
+                const key = `${test.project ? `${test.project} > ` : ""}${spec.spec.path} > ${test.suite} > ${test.title}`;
+
+                if (result.get(key) !== "failed") {
+                    result.set(key, test.state);
+                }
+            }
+        }
+
+        return result;
+    };
     const a = states(before);
     const b = states(after);
     const keys = [...new Set([...a.keys(), ...b.keys()])];
