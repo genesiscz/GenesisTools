@@ -1292,3 +1292,13 @@ test("video evidence rejects directories before hashing", async () => {
         })
     ).rejects.toThrow("Choose a local video file up to 1 GiB");
 });
+
+test("a still trim keeps the image already on screen for each display", async () => {
+    const result = await new RecordingEditor().run({
+        source: { file: recordingFolder() },
+        steps: [{ kind: "trim", from: 0.25, to: 0.75 }, { kind: "frames" }],
+    }).done;
+    expect(result.stills).toHaveLength(2);
+    expect(result.stills?.map((frame) => frame.atUs)).toEqual([0, 0]);
+    expect(result.frames).toHaveLength(2);
+});

@@ -517,9 +517,21 @@ function compile(options: {
                         if (!ctx.state.video) {
                             const fromUs = window.fromUs ?? 0;
                             const toUs = window.toUs ?? Number.POSITIVE_INFINITY;
-                            const stills = (ctx.state.stills ?? [])
-                                .filter((frame) => frame.atUs >= fromUs && frame.atUs <= toUs)
-                                .map((frame) => ({ ...frame, atUs: frame.atUs - fromUs }));
+                            const byDisplay = Map.groupBy(ctx.state.stills ?? [], (frame) => frame.displayId);
+                            const stills = [...byDisplay.values()]
+                                .flatMap((frames) => {
+                                    const predecessor = frames.findLast((frame) => frame.atUs < fromUs);
+                                    const selected = frames.filter(
+                                        (frame) => frame.atUs >= fromUs && frame.atUs <= toUs
+                                    );
+                                    return [
+                                        ...(predecessor && !selected.some((frame) => frame.atUs === fromUs)
+                                            ? [{ ...predecessor, atUs: 0 }]
+                                            : []),
+                                        ...selected.map((frame) => ({ ...frame, atUs: frame.atUs - fromUs })),
+                                    ];
+                                })
+                                .sort((a, b) => a.atUs - b.atUs);
                             return { ...ctx.state, stills, window: {}, frames: undefined };
                         }
 
