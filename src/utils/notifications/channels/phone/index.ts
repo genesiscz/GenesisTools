@@ -114,7 +114,8 @@ async function sendToDevice({
         if (result.ok) {
             await deps.devices.update((devices) => {
                 const current = devices[device.id];
-                if (current && sameRoute(current.route, device.route)) {
+                // A newer registration (another seenAt) or another route came in meanwhile: this result is not its.
+                if (current && current.seenAt === device.seenAt && sameRoute(current.route, device.route)) {
                     devices[device.id] = { ...current, route: flipped.route };
                 }
             });
@@ -125,7 +126,7 @@ async function sendToDevice({
         log.info({ device: device.id, reason: result.reason }, "a phone unregistered; it is dropped");
         await deps.devices.update((devices) => {
             const current = devices[device.id];
-            if (current && sameRoute(current.route, device.route)) {
+            if (current && current.seenAt === device.seenAt && sameRoute(current.route, device.route)) {
                 delete devices[device.id];
             }
         });
