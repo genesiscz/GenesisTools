@@ -2,6 +2,7 @@ import { type DashboardClient, ENDPOINTS, type HealthDto, type WakeRelayDto } fr
 import { SafeJSON } from "@genesiscz/utils/json";
 import { queryOptions } from "@tanstack/react-query";
 import type { RelayStore } from "@/features/wake/relay-store";
+import { timeoutSignal } from "@/lib/abort-timeout";
 
 export const wakeKeys = { relay: ["wake", "relay"] as const, health: ["wake", "health"] as const };
 
@@ -78,7 +79,7 @@ export async function sendWake(
         return { sent: false, detail: relay?.note ?? "No wakeup relay is set for this Mac." };
     }
 
-    const signal = AbortSignal.timeout(10_000);
+    const signal = timeoutSignal(10_000);
 
     try {
         const response = await fetchFn(request.url, { ...request.init, signal });
