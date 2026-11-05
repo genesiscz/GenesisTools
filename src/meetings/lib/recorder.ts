@@ -142,6 +142,17 @@ export function framesOnDisk(framesDir: string): { frames: number; bytes: number
 /** The displays of a piece: moved to the shared capture session (`@genesiscz/utils/screen-recorder/targets`). */
 export { pieceTargets };
 
+/**
+ * The recording ended on failed captures or an error. Its record, its state file and its notice are written already;
+ * the rejection makes the recorder process (`record run`) report the failure too.
+ */
+export class RecorderFailedError extends Error {
+    constructor(readonly state: RecorderState) {
+        super(state.warning ?? `the recording stopped: ${state.stopReason}`);
+        this.name = "RecorderFailedError";
+    }
+}
+
 export interface RecorderNote {
     title: string;
     message: string;
@@ -227,6 +238,7 @@ export async function runRecorder(options: {
     const record = store.read(meetingId);
 
     const claim = await claimRecorderPid(files.pid);
+    let final: RecorderState;
     const stateFile = new RecorderStateFile<RecorderState>({
         state: files.state,
         last: join(folder, "recorder-last.json"),
@@ -511,7 +523,7 @@ export async function runRecorder(options: {
             { meetingId, frames: state.frames, bytes: state.bytes, stopReason: state.stopReason },
             "recording stopped"
         );
-        return state;
+        final = state;
 
         async function finishRecording(): Promise<void> {
             state.stopReason ??= "requested";
@@ -621,6 +633,12 @@ export async function runRecorder(options: {
     } finally {
         claim.release();
     }
+
+    if (final.stopReason === "failed" || final.stopReason === "error") {
+        throw new RecorderFailedError(final);
+    }
+
+    return final;
 }
 
 /** The live displays of a recorder state, for `record status`. */

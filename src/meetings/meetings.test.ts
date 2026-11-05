@@ -44,7 +44,14 @@ import {
     splitQuestion,
 } from "./lib/questions";
 import { rawMeeting } from "./lib/raw";
-import { meetingLiveId, pieceTargets, type RecorderNote, recorderFiles, runRecorder } from "./lib/recorder";
+import {
+    meetingLiveId,
+    pieceTargets,
+    RecorderFailedError,
+    type RecorderNote,
+    recorderFiles,
+    runRecorder,
+} from "./lib/recorder";
 import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from "./lib/screen";
 import { framesMatching, ocrRowSchema, renderScreenBoxes } from "./lib/screen-boxes";
 import { showText } from "./lib/show-text";
@@ -2243,7 +2250,7 @@ describe("the meetings recorder loop", () => {
                 });
             }
         );
-        const state = await runRecorder({
+        const { state, rejected } = await runRecorder({
             store,
             meetingId: created.id,
             capture,
@@ -2275,7 +2282,16 @@ describe("the meetings recorder loop", () => {
                 pieceSec: 1,
                 failurePauseMs: options.failurePauseMs ?? 0,
             },
-        });
+        }).then(
+            (done) => ({ state: done, rejected: undefined }),
+            (error: unknown) => {
+                if (error instanceof RecorderFailedError) {
+                    return { state: error.state, rejected: error };
+                }
+
+                throw error;
+            }
+        );
         const folder = store.folder(created.id);
         return {
             store,
@@ -2286,6 +2302,7 @@ describe("the meetings recorder loop", () => {
             seenLive,
             answers,
             notified,
+            rejected,
             folder,
             saved: store.read(created.id),
         };
@@ -2326,6 +2343,7 @@ describe("the meetings recorder loop", () => {
             { from: expect.any(String), to: expect.any(String), stopReason: "requested" },
         ]);
         expect(run.notes).toEqual([]);
+        expect(run.rejected).toBeUndefined();
         expect(run.seenLive).toEqual(["meeting recording"]);
         expect(listLiveRecordings(run.liveDir)).toEqual([]);
         expect(recordingSummary(run.saved!).join("\n")).toContain("Built-in (1) 2, External (4) 1");
@@ -2655,6 +2673,17 @@ describe("the meetings recorder loop", () => {
         expect(run.notes[0]?.message).toContain("record start --meeting");
     });
 
+    test("exhausted capture retries persist failure without capturing a frame, and the recorder reports the failure", async () => {
+        const run = await recordWith({ displays: [[builtIn]], steps: ["fail", "fail", "fail"] });
+
+        expect(run.rejected).toBeInstanceOf(RecorderFailedError);
+        expect(run.rejected?.message).toContain("capture failed 3 times in a row");
+        expect(run.recorder.requests).toHaveLength(3);
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "failed", frames: 0 });
+        expect(existsSync(recorderFiles(run.store).pid)).toBe(false);
+        expect(existsSync(recorderFiles(run.store).state)).toBe(false);
+    });
+
     test("a recording that ended on failed captures refuses a pause or a change during its finish, shows it is stopping, and still takes a stop", async () => {
         let liveState: string | undefined;
         const run = await recordWith({
@@ -2683,6 +2712,7 @@ describe("the meetings recorder loop", () => {
         const run = await recordWith({ displays: [[builtIn]], steps: ["frames"], failOnJpeg: true });
 
         expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "error" });
+        expect(run.rejected?.message).toContain("disk full");
         expect(run.saved?.recording?.warning).toContain("disk full");
         expect(run.notes).toHaveLength(1);
         expect(listLiveRecordings(run.liveDir)).toEqual([]);
@@ -3548,8 +3578,12 @@ test("recorder failure persists a terminal state before releasing ownership", as
         meetingId: record.id,
         display: 1,
         capture: meetingsConfigSchema.parse({}).global.capture,
-    });
-    expect(failed.stopReason).toBe("error");
+    }).then(
+        () => undefined,
+        (error: unknown) => error
+    );
+    expect(failed).toBeInstanceOf(RecorderFailedError);
+    expect(failed).toMatchObject({ state: { stopReason: "error" } });
     expect(store.read(record.id)?.recording).toMatchObject({
         status: "stopped",
         stopReason: "error",

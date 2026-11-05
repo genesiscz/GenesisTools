@@ -152,7 +152,8 @@ to and stop reason: `requested`, `paused`, `failed`, `error`), `frames` and `byt
 those of an earlier start), `displays` (id, name, frames), `backend`, `displayPolicy` and `warning`. Records from
 before the schema still read. Three failed pieces in a row stop the recorder with `stopReason: "failed"`; any other
 error stops it with `"error"`; both always write the stop and post "Screen recording stopped" once per failure
-episode, for recordings a person started too. A recording without a frame says so in its warning. `show` prints
+episode, for recordings a person started too, and the recorder process (`record run`) then exits 1. A recording
+without a frame says so in its warning. `show` prints
 the recording's state, frames per display, spans and warning.
 
 ### Autostart
