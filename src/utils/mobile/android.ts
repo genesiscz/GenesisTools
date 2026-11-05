@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { type BoundedCommandResult, boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { type DetachedService, startDetached, stopDetached } from "./service";
 
@@ -263,7 +264,11 @@ export async function launchPackage(options: {
     const { serial, packageName, activity } = options;
 
     if (activity) {
-        await adbOrThrow(serial, ["shell", "am", "start", "-W", "-n", `${packageName}/${activity}`], 60_000);
+        await adbOrThrow(
+            serial,
+            ["shell", shellCommandLine(["am", "start", "-W", "-n", `${packageName}/${activity}`])],
+            60_000
+        );
         return;
     }
 
@@ -283,14 +288,7 @@ export async function openAndroidUrl(options: { serial: string; url: string; pac
     const target = options.packageName ? [options.packageName] : [];
     await adbOrThrow(options.serial, [
         "shell",
-        "am",
-        "start",
-        "-W",
-        "-a",
-        "android.intent.action.VIEW",
-        "-d",
-        options.url,
-        ...target,
+        shellCommandLine(["am", "start", "-W", "-a", "android.intent.action.VIEW", "-d", options.url, ...target]),
     ]);
 }
 
