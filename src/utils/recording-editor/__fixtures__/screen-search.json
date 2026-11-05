@@ -208,5 +208,65 @@
                 }
             ]
         }
+    ],
+    "proxyHitsAbout": "What findOnScreen prints for query: each hit is a span the proxy movie really shows the frame (framesForPlan), so the display-4 frame captured at 4 s is listed from 10 s, when the plan switches to display 4, with its boxes. hits above is the older per-frame shape that the editor's Swift tests still decode.",
+    "proxyHits": [
+        {
+            "sec": 0,
+            "untilSec": 9,
+            "displayId": 1,
+            "file": "frames/0001.jpg",
+            "lines": [
+                "API token: sk-123"
+            ],
+            "shown": true,
+            "boxes": [
+                {
+                    "text": "API token: sk-123",
+                    "x": 0.1,
+                    "y": 0.35,
+                    "width": 0.4,
+                    "height": 0.05
+                }
+            ]
+        },
+        {
+            "sec": 10,
+            "untilSec": 12.5,
+            "displayId": 4,
+            "file": "frames/0002.jpg",
+            "lines": [
+                "Token rotation"
+            ],
+            "shown": true,
+            "boxes": [
+                {
+                    "text": "Token rotation",
+                    "x": 0.5,
+                    "y": 0.446,
+                    "width": 0.3,
+                    "height": 0.054
+                }
+            ]
+        },
+        {
+            "sec": 12.5,
+            "untilSec": 14.5,
+            "displayId": 4,
+            "file": "frames/0004.jpg",
+            "lines": [
+                "Tokén list"
+            ],
+            "shown": true,
+            "boxes": [
+                {
+                    "text": "Tokén list",
+                    "x": 0.2,
+                    "y": 0.725,
+                    "width": 0.25,
+                    "height": 0.045
+                }
+            ]
+        }
     ]
 }

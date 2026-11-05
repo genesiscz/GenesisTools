@@ -260,34 +260,43 @@ describe("the movie of a recording folder", () => {
     }
 });
 
+/** The shared fixture's meeting folder; `ranges` replaces its display plan. */
+function screenFolder(ranges?: Array<{ fromUs: number; toUs: number; displayId: number }>): string {
+    const folder = mkdtempSync(join(tmpdir(), "gt-screen-"));
+    mkdirSync(join(folder, "frames"));
+
+    // The first 33 bytes of a PNG of each display's size: enough for imageSize, which reads only the header.
+    for (const frame of screenSearch.recording.manifest.frames) {
+        const [width, height] = screenSearch.recording.frameSizes[String(frame.displayId) as "1" | "4"];
+        const header = Buffer.alloc(33);
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+        header.writeUInt32BE(13, 8);
+        header.write("IHDR", 12, "ascii");
+        header.writeUInt32BE(width, 16);
+        header.writeUInt32BE(height, 20);
+        header.writeUInt8(8, 24);
+        header.writeUInt8(6, 25);
+        writeFileSync(join(folder, frame.file), header);
+    }
+
+    writeFileSync(join(folder, "recording.json"), SafeJSON.stringify(screenSearch.recording.manifest));
+    writeFileSync(
+        join(folder, "ocr.jsonl"),
+        screenSearch.recording.ocr.map((row) => SafeJSON.stringify(row)).join("\n")
+    );
+    writeFileSync(
+        join(folder, "proxy.json"),
+        SafeJSON.stringify(ranges ? { ...screenSearch.recording.plan, ranges } : screenSearch.recording.plan)
+    );
+    return folder;
+}
+
 // The editor's Find tab decodes these hits (RecorderEditTests.swift), so it reads what find-screen prints.
 describe("text on the screen", () => {
-    it("finds the shared fixture's hits: accents ignored, the shown display's line boxes placed in the letterboxed picture", () => {
-        const folder = mkdtempSync(join(tmpdir(), "gt-screen-"));
-        mkdirSync(join(folder, "frames"));
+    it("finds the shared fixture's hits: accents ignored, each listed where the proxy movie shows it, boxes placed in the letterboxed picture", () => {
+        const folder = screenFolder();
 
-        // The first 33 bytes of a PNG of each display's size: enough for imageSize, which reads only the header.
-        for (const frame of screenSearch.recording.manifest.frames) {
-            const [width, height] = screenSearch.recording.frameSizes[String(frame.displayId) as "1" | "4"];
-            const header = Buffer.alloc(33);
-            Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
-            header.writeUInt32BE(13, 8);
-            header.write("IHDR", 12, "ascii");
-            header.writeUInt32BE(width, 16);
-            header.writeUInt32BE(height, 20);
-            header.writeUInt8(8, 24);
-            header.writeUInt8(6, 25);
-            writeFileSync(join(folder, frame.file), header);
-        }
-
-        writeFileSync(join(folder, "recording.json"), SafeJSON.stringify(screenSearch.recording.manifest));
-        writeFileSync(
-            join(folder, "ocr.jsonl"),
-            screenSearch.recording.ocr.map((row) => SafeJSON.stringify(row)).join("\n")
-        );
-        writeFileSync(join(folder, "proxy.json"), SafeJSON.stringify(screenSearch.recording.plan));
-
-        expect(findOnScreen(folder, screenSearch.query)).toEqual(screenSearch.hits);
+        expect(findOnScreen(folder, screenSearch.query)).toEqual(screenSearch.proxyHits);
         expect(findOnScreen(folder, "   ")).toEqual([]);
         expect(findOnScreen(folder, "token", { limit: 1 })).toHaveLength(1);
 
@@ -306,6 +315,38 @@ describe("text on the screen", () => {
         expect(hidden.redactions?.map((part) => [part.startUs, part.endUs, part.x, part.y])).toEqual([
             [0, 9_000_000, 0.1, 0.35],
         ]);
+    });
+
+    it("lists a text captured while another display showed when the proxy switches to its display", () => {
+        const hits = findOnScreen(screenFolder(), "token rotation");
+
+        expect(hits.map((hit) => [hit.sec, hit.untilSec, hit.shown])).toEqual([[10, 12.5, true]]);
+        expect(hits[0].boxes).toHaveLength(1);
+    });
+
+    it("ends a hit where the proxy leaves its display and lists each time the proxy comes back", () => {
+        const back = screenFolder([
+            { fromUs: 0, toUs: 5_000_000, displayId: 1 },
+            { fromUs: 5_000_000, toUs: 7_000_000, displayId: 4 },
+            { fromUs: 7_000_000, toUs: 12_500_001, displayId: 1 },
+        ]);
+
+        expect(findOnScreen(back, "sprint board").map((hit) => [hit.file, hit.sec, hit.untilSec])).toEqual([
+            ["frames/0001.jpg", 0, 5],
+            ["frames/0001.jpg", 7, 9],
+            ["frames/0003.jpg", 9, 14.5],
+        ]);
+        expect(findOnScreen(back, "token rotation").map((hit) => [hit.sec, hit.untilSec, hit.shown])).toEqual([
+            [5, 7, true],
+        ]);
+    });
+
+    it("lists a text of a display the plan never shows as not shown, without boxes", () => {
+        const only1 = screenFolder([{ fromUs: 0, toUs: 12_500_001, displayId: 1 }]);
+
+        expect(
+            findOnScreen(only1, "token rotation").map((hit) => [hit.sec, hit.untilSec, hit.shown, hit.boxes])
+        ).toEqual([[4, 12.5, false, []]]);
     });
 
     it("places a frame box in the proxy picture as the scale and pad of the video filter do", () => {

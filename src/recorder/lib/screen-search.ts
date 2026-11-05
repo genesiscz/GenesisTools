@@ -5,7 +5,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { foldText, imageSize } from "@genesiscz/utils/macos/ocr-boxes";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { z } from "zod";
-import { boxInProxy, proxyCanvas, readDisplayPlan } from "./proxy";
+import { boxInProxy, type DisplayRange, framesForPlan, proxyCanvas, readDisplayPlan } from "./proxy";
 
 const { log } = logger.scoped("recorder-screen-search");
 
@@ -107,6 +107,33 @@ function displaySizes(folder: string, frames: ReadonlyArray<{ file: string; disp
 }
 
 /**
+ * When the proxy movie shows each frame: the spans of `framesForPlan`'s schedule, a frame ending where the next shown
+ * frame begins (the last at `endUs`). A frame the movie never shows has no entry. A frame can show more than once,
+ * because the plan may leave its display and come back before the display's next frame.
+ */
+function visibleSpans(
+    frames: ReadonlyArray<{ file: string; atMs: number; displayId?: number }>,
+    ranges: readonly DisplayRange[],
+    endUs: number
+): Map<string, Array<{ fromUs: number; toUs: number }>> {
+    const schedule = framesForPlan(
+        frames.map((frame) => ({ path: frame.file, atUs: frame.atMs * 1000, displayId: frame.displayId })),
+        ranges
+    );
+    const spans = new Map<string, Array<{ fromUs: number; toUs: number }>>();
+
+    for (const [index, shown] of schedule.entries()) {
+        const toUs = schedule[index + 1]?.atUs ?? endUs;
+
+        if (toUs > shown.atUs) {
+            spans.set(shown.path, [...(spans.get(shown.path) ?? []), { fromUs: shown.atUs, toUs }]);
+        }
+    }
+
+    return spans;
+}
+
+/**
  * Where a text was on the screen in a frames recording (a library recording with OCR, or a meeting): every frame whose
  * OCR holds `query` (without case and diacritics), with its time on the recording's clock, how long it shows, and the
  * matching lines' boxes over the proxy movie, oldest first.
@@ -138,6 +165,8 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
             .map(([, size]) => size)
     );
     const lastMs = frames.at(-1)?.atMs ?? 0;
+    const endUs = (lastMs + 2000) * 1000;
+    const visible = plan ? visibleSpans(frames, plan.ranges, endUs) : undefined;
     const hits: ScreenHit[] = [];
 
     for (const [index, frame] of frames.entries()) {
@@ -148,16 +177,12 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
             continue;
         }
 
-        const atUs = frame.atMs * 1000;
-        const range = plan?.ranges.find(
-            (one, at) => atUs >= one.fromUs && (atUs < one.toUs || at === plan.ranges.length - 1)
-        );
-        const shown = !plan || frame.displayId === undefined || range?.displayId === frame.displayId;
         const next = frames.slice(index + 1).find((later) => later.displayId === frame.displayId);
         const size = sizes.get(frame.displayId);
         const boxes =
-            shown && size
-                ? (read?.blocks ?? [])
+            size === undefined
+                ? []
+                : (read?.blocks ?? [])
                       .filter((block) => foldText(block.text).includes(wanted))
                       .map((block) => {
                           const placed = boxInProxy(
@@ -177,17 +202,36 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
                               width: micro(placed.width),
                               height: micro(placed.height),
                           };
-                      })
-                : [];
-        hits.push({
-            sec: frame.atMs / 1000,
-            untilSec: (next?.atMs ?? lastMs + 2000) / 1000,
+                      });
+        const spans =
+            visible && frame.displayId !== undefined
+                ? (visible.get(frame.file) ?? [])
+                : [{ fromUs: frame.atMs * 1000, toUs: undefined }];
+        const common = {
             ...(frame.displayId !== undefined ? { displayId: frame.displayId } : {}),
             file: frame.file,
             lines,
-            shown,
-            boxes,
-        });
+        };
+
+        if (spans.length === 0) {
+            hits.push({
+                sec: frame.atMs / 1000,
+                untilSec: (next?.atMs ?? lastMs + 2000) / 1000,
+                ...common,
+                shown: false,
+                boxes: [],
+            });
+        }
+
+        for (const span of spans) {
+            hits.push({
+                sec: span.fromUs / 1_000_000,
+                untilSec: (span.toUs ?? (next?.atMs ?? lastMs + 2000) * 1000) / 1_000_000,
+                ...common,
+                shown: true,
+                boxes,
+            });
+        }
 
         if (hits.length >= limit) {
             break;
