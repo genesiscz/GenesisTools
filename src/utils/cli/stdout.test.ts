@@ -1,7 +1,7 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import { skip } from "@genesiscz/utils/test/skip";
-import { printLn, writeStdout } from "./stdout";
+import { printLn, writeStdout, writeStdoutStrict } from "./stdout";
 
 const FIXTURE = join(import.meta.dir, "__fixtures__/stdout-fixture.ts");
 
@@ -93,6 +93,15 @@ describe("writeStdout on a closed pipe", () => {
 
         try {
             await expect(writeStdout("skeleton\n")).resolves.toBeUndefined();
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    it("reports a closed pipe to delivery-sensitive callers", async () => {
+        const spy = failingWrite("EPIPE");
+        try {
+            await expect(writeStdoutStrict("event\n")).rejects.toMatchObject({ code: "EPIPE" });
         } finally {
             spy.mockRestore();
         }

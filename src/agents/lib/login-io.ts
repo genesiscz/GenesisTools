@@ -1,5 +1,5 @@
 import { asResult } from "@genesiscz/utils/cli/result";
-import { writeStdout } from "@genesiscz/utils/cli/stdout";
+import { writeStdoutStrict } from "@genesiscz/utils/cli/stdout";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { FriendlyError } from "./errors";
 import type { AgentMode, AgentRecord } from "./types";
@@ -69,5 +69,5 @@ export function formatReadyEvent(record: AgentRecord, session: string, mode: Age
 
 export async function writeLoginJsonLine(value: unknown): Promise<void> {
     const text = typeof value === "string" ? value : SafeJSON.stringify(value, { strict: true });
-    await writeStdout(asResult(text));
+    await writeStdoutStrict(asResult(text));
 }
