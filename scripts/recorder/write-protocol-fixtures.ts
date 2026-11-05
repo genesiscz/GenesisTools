@@ -1,14 +1,15 @@
 #!/usr/bin/env bun
 /**
  * Writes the recorder protocol fixtures the Swift tests read, from the TypeScript source of truth:
- * `src/recorder/lib/__fixtures__/service-protocol.schemas.json` (protocolJsonSchemas).
+ * `src/recorder/lib/__fixtures__/service-protocol.schemas.json` (protocolJsonSchemas) and
+ * `src/recorder/lib/__fixtures__/editor-golden.json` (editorGolden: example ops, edits, op tags, hello's methods).
  * `src/recorder/lib/service.test.ts` fails when a committed file differs from what this writes.
  *
  * Run: bun scripts/recorder/write-protocol-fixtures.ts
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { protocolJsonSchemas } from "@app/recorder/lib/protocol-fixtures";
+import { editorGolden, protocolJsonSchemas } from "@app/recorder/lib/protocol-fixtures";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 
@@ -16,6 +17,7 @@ const FIXTURES = join(import.meta.dir, "..", "..", "src", "recorder", "lib", "__
 
 const files: Record<string, unknown> = {
     "service-protocol.schemas.json": protocolJsonSchemas(),
+    "editor-golden.json": editorGolden(),
 };
 
 for (const [name, content] of Object.entries(files)) {

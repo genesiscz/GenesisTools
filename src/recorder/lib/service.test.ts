@@ -18,6 +18,7 @@ import {
 } from "@genesiscz/utils/screen-recorder/control";
 import { callRecorder, LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import type { z } from "zod";
+import goldenFixture from "./__fixtures__/editor-golden.json";
 import fixture from "./__fixtures__/service-protocol.json";
 import schemasFixture from "./__fixtures__/service-protocol.schemas.json";
 import * as edits from "./edit";
@@ -26,7 +27,7 @@ import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
 import { EDITOR_TABS } from "./library";
 import { applyEdit, serviceRoutedMovie, undoLastEdit } from "./movie-client";
-import { protocolJsonSchemas } from "./protocol-fixtures";
+import { editorGolden, protocolJsonSchemas } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
 import { hostStill, ServiceHost } from "./service-client";
 import {
@@ -1028,6 +1029,22 @@ describe("the protocol fixture the Swift host tests read", () => {
 
     test("the JSON Schema file is what the zod schemas make (bun scripts/recorder/write-protocol-fixtures.ts)", () => {
         expect(SafeJSON.parse(SafeJSON.stringify(protocolJsonSchemas()), { strict: true })).toEqual(schemasFixture);
+    });
+
+    test("the editor golden file is what the TypeScript side makes (bun scripts/recorder/write-protocol-fixtures.ts)", () => {
+        expect(SafeJSON.parse(SafeJSON.stringify(editorGolden()), { strict: true })).toEqual(goldenFixture);
+    });
+
+    test("the golden file has an example of every op tag, and its methods are what a live service's hello lists", async () => {
+        const golden = editorGolden();
+        const examples = new Set(golden.ops.map((op) => Object(op).op));
+        expect(golden.opTags.filter((tag) => !examples.has(tag))).toEqual([]);
+        expect(new Set(golden.opTags).size).toBe(golden.opTags.length);
+
+        const { service } = await serviceFixture();
+        const client = await connect(service.entry);
+        const answer = await client.call<{ methods: string[] }>("hello", hello("client"));
+        expect(answer.methods).toEqual(golden.methods);
     });
 
     const schemasOf = (method: string) =>

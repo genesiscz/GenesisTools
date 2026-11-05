@@ -127,3 +127,118 @@ final class RecorderProtocolTests: XCTestCase {
         try XCTUnwrap(JSONSerialization.jsonObject(with: JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])) as? NSObject)
     }
 }
+
+/// The golden fixture TypeScript writes (`editor-golden.json`, scripts/recorder/write-protocol-fixtures.ts): its ops and
+/// edits read here and write back as TypeScript wrote them, the Swift op enum names every zod op tag, and every service
+/// method the editor window calls is one the live service's `hello` lists.
+final class RecorderGoldenTests: XCTestCase {
+    private func golden() throws -> [String: Any] { try RecorderFixtures.object("editor-golden.json") }
+
+    /// A JSON value as Foundation reads it, so two writers' numbers (2 and 2.0) and key orders compare equal.
+    private func json(_ data: Data) throws -> NSObject {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? NSObject)
+    }
+
+    func testEveryGoldenOpDecodesAndWritesBackAsTheTypeScriptSideWroteIt() throws {
+        let ops = try XCTUnwrap(golden()["ops"] as? [[String: Any]])
+        XCTAssertGreaterThan(ops.count, 50)
+        for op in ops {
+            let written = try JSONSerialization.data(withJSONObject: op)
+            let decoded = try JSONDecoder().decode(EditOp.self, from: written)
+            XCTAssertEqual(decoded.tag, op["op"] as? String)
+            XCTAssertEqual(try json(JSONEncoder().encode(decoded)), try json(written), "\(op["op"] ?? "?") reads and writes back unchanged")
+        }
+    }
+
+    func testEveryGoldenEditDecodesAndWritesBackUnchanged() throws {
+        let projects = try XCTUnwrap(golden()["projects"] as? [[String: Any]])
+        XCTAssertEqual(projects.count, 4)
+        for entry in projects {
+            let name = try XCTUnwrap(entry["name"] as? String)
+            let written = try JSONSerialization.data(withJSONObject: try XCTUnwrap(entry["project"]))
+            let decoded = try EditProject.decode(written)
+            XCTAssertNil(Self.difference(try json(decoded.encoded()), try json(written)), name)
+        }
+    }
+
+    /// The first path where two JSON values differ ("camera.hidden[1].lane: nil against \"lane4\""), or nil.
+    private static func difference(_ swift: Any?, _ typescript: Any?, at path: String = "") -> String? {
+        switch (swift, typescript) {
+        case let (a as [String: Any], b as [String: Any]):
+            for key in Set(a.keys).union(b.keys).sorted() {
+                if let found = difference(a[key], b[key], at: path.isEmpty ? key : "\(path).\(key)") { return found }
+            }
+            return nil
+        case let (a as [Any], b as [Any]):
+            guard a.count == b.count else { return "\(path): \(a.count) items against \(b.count)" }
+            for (index, pair) in zip(a, b).enumerated() {
+                if let found = difference(pair.0, pair.1, at: "\(path)[\(index)]") { return found }
+            }
+            return nil
+        case let (a as NSNumber, b as NSNumber):
+            // A boolean is a boolean on both sides; a number may come back as a decimal of the same double.
+            let boolean = CFBooleanGetTypeID()
+            let flags = (CFGetTypeID(a) == boolean, CFGetTypeID(b) == boolean)
+            if flags.0 || flags.1 {
+                return flags.0 && flags.1 && a == b ? nil : "\(path): Swift writes \(a) where TypeScript wrote \(b)"
+            }
+            return abs(a.doubleValue - b.doubleValue) <= 1e-12 * max(1, abs(b.doubleValue)) ? nil : "\(path): Swift writes \(a) where TypeScript wrote \(b)"
+        case let (a as NSObject, b as NSObject):
+            return a == b ? nil : "\(path): Swift writes \(a) where TypeScript wrote \(b)"
+        case (nil, nil):
+            return nil
+        default:
+            return "\(path): Swift writes \(swift.map { "\($0)" } ?? "nothing") where TypeScript wrote \(typescript.map { "\($0)" } ?? "nothing")"
+        }
+    }
+
+    /// The comparison the golden edits lean on finds a real difference: a key one side lacks, another number, a boolean
+    /// written as a number, a list of another length; and it lets the same double printed two ways through.
+    func testTheGoldenComparisonNamesTheFirstDifference() throws {
+        let typescript = try json(Data(#"{"a":0.035,"b":{"c":[1,2]},"d":true}"#.utf8))
+        XCTAssertNil(Self.difference(try json(Data(#"{"a":0.035000000000000003,"b":{"c":[1,2.0]},"d":true}"#.utf8)), typescript))
+        XCTAssertEqual(Self.difference(try json(Data(#"{"a":0.035,"b":{"c":[1,2]}}"#.utf8)), typescript),
+                       "d: Swift writes nothing where TypeScript wrote 1")
+        XCTAssertNotNil(Self.difference(try json(Data(#"{"a":0.036,"b":{"c":[1,2]},"d":true}"#.utf8)), typescript))
+        XCTAssertNotNil(Self.difference(try json(Data(#"{"a":0.035,"b":{"c":[1,2]},"d":1}"#.utf8)), typescript))
+        XCTAssertEqual(Self.difference(try json(Data(#"{"a":0.035,"b":{"c":[1]},"d":true}"#.utf8)), typescript),
+                       "b.c: 1 items against 2")
+    }
+
+    func testTheSwiftOpEnumNamesEveryZodOpTagOneForOne() throws {
+        let tags = try XCTUnwrap(golden()["opTags"] as? [String])
+        XCTAssertEqual(EditOp.tags.sorted(), tags.sorted())
+        XCTAssertEqual(Set(EditOp.tags).count, EditOp.tags.count, "one case per tag")
+    }
+
+    /// Reads the editor's sources for the service methods it names: `movie("<name>"`, `ask("<name>"`,
+    /// `commentCall("<name>"` (the REPL's `movie.<name>`), and every `"session.…"`, `"edit.…"` or `"gesture.…"` literal.
+    func testEveryServiceMethodTheEditorWindowCallsIsOneThatHelloLists() throws {
+        let methods = Set(try XCTUnwrap(golden()["methods"] as? [String]))
+        let editor = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/Parts/Recorder/Editor")
+        let files = try FileManager.default.contentsOfDirectory(at: editor, includingPropertiesForKeys: nil).filter { $0.pathExtension == "swift" }
+        let repl = try NSRegularExpression(pattern: #"\b(?:movie|ask|commentCall)\((?:\w+ \? )?"(\w+)"(?: : "(\w+)")?"#)
+        let own = try NSRegularExpression(pattern: #""((?:session|edit|gesture)\.[A-Za-z]+)""#)
+        var called = Set<String>()
+        for file in files {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            let range = NSRange(text.startIndex..., in: text)
+            for match in repl.matches(in: text, range: range) {
+                for group in 1...2 {
+                    if let found = Range(match.range(at: group), in: text) { called.insert("movie.\(text[found])") }
+                }
+            }
+            for match in own.matches(in: text, range: range) {
+                if let found = Range(match.range(at: 1), in: text) { called.insert(String(text[found])) }
+            }
+        }
+        // The reading itself works: these are calls the window certainly makes.
+        for known in ["session.open", "session.close", "edit.apply", "edit.undo", "edit.redo", "gesture.begin", "gesture.preview",
+                      "gesture.commit", "gesture.cancel", "movie.switchDisplay", "movie.undoDisplaySwitch", "movie.redoDisplaySwitch",
+                      "movie.comment", "movie.findOnScreen"] {
+            XCTAssertTrue(called.contains(known), "the source scan found no \(known)")
+        }
+        XCTAssertEqual(called.subtracting(methods).sorted(), [], "methods the window calls that the service does not list")
+    }
+}
