@@ -40,6 +40,11 @@ export function registerReport(program: Command): void {
             const dir = await runDirOf(options, run);
             const summary = readSummary(dir);
 
+            // The exit status follows the run, whatever the output format.
+            if (!summary.ok) {
+                process.exitCode = 1;
+            }
+
             if (options.json) {
                 out.result(summary);
                 return;
@@ -47,10 +52,6 @@ export function registerReport(program: Command): void {
 
             const markdown = join(dir, "summary.md");
             out.print(existsSync(markdown) ? readFileSync(markdown, "utf8") : formatSummary(summary));
-
-            if (!summary.ok) {
-                process.exitCode = 1;
-            }
         });
 
     withConfig(
@@ -69,6 +70,11 @@ export function registerReport(program: Command): void {
                 const newer = readSummary(await runDirOf(options, after ?? "latest"));
                 const changes = compareRuns(older, newer);
 
+                // A newly failed test fails the command, also with --json.
+                if (changes.some((change) => change.after === "failed")) {
+                    process.exitCode = 1;
+                }
+
                 if (options.json) {
                     out.result({ before: older.runDir, after: newer.runDir, changes });
                     return;
@@ -83,10 +89,6 @@ export function registerReport(program: Command): void {
                 for (const change of changes) {
                     const line = `${change.test}: ${change.before} → ${change.after}`;
                     change.after === "failed" ? ui.err(line) : ui.dim(line);
-                }
-
-                if (changes.some((change) => change.after === "failed")) {
-                    process.exitCode = 1;
                 }
             }
         );
