@@ -955,7 +955,13 @@ async function withDenoisedSource<T>(opened: OpenedProject, render: (editPath: s
     try {
         const copy = join(scratch, "denoised.edit.json");
         const { denoise: _denoise, ...audio } = opened.project.audio;
-        writeProject(copy, { ...opened.project, source: { ...opened.project.source, video: cleaned.path }, audio });
+        const camera = opened.project.camera;
+        writeProject(copy, {
+            ...opened.project,
+            source: { ...opened.project.source, video: cleaned.path },
+            ...(camera ? { camera: { ...camera, file: resolve(dirname(source), camera.file) } } : {}),
+            audio,
+        });
         return await render(copy);
     } finally {
         await rm(scratch, { recursive: true, force: true });
