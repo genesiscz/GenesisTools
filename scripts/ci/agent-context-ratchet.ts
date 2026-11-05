@@ -10,9 +10,7 @@
  * (`AGENT_ENV_SCRUBBERS`), not listed here.
  */
 
-export const RAW_AGENT_ENV_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/utils/claude/peer-sender.ts", // CLAUDE_CODE_SESSION_ID: take the session from whoIsCallingHere(), keep the socket and pid reads
-]);
+export const RAW_AGENT_ENV_RATCHET: ReadonlySet<string> = new Set<string>([]);
 
 export const RAW_TERMINAL_ENV_RATCHET: ReadonlySet<string> = new Set<string>([]);
 

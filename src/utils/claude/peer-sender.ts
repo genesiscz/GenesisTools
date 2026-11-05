@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { whoIsCalling } from "@genesiscz/utils/agent/identity";
+import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import {
     claudeSessionsDir,
@@ -164,9 +166,15 @@ function registryName(pid: string, dir: string): string | null {
     }
 }
 
+/** The runtime agent a Claude Code session reports, from its harness driver. */
+const CLAUDE_AGENT = harnessDriver("claude").parts.host.agent;
+
 export interface PeerSenderSources {
-    /** One environment variable; the process environment by default. */
-    variable?: (name: string) => string | undefined;
+    /**
+     * This process's environment (the live one by default). The session comes from it through the identity module,
+     * the messaging socket and the harness pid by name.
+     */
+    env?: NodeJS.ProcessEnv;
     /** The Claude session registry (`~/.claude/sessions`). */
     sessionsDir?: string;
     /** The transcript path of a Claude session id, or null; the shared transcript resolver by default. */
@@ -176,11 +184,15 @@ export interface PeerSenderSources {
 /**
  * The Claude Code session this process runs under, as the sender of a peer message: its id, its own socket, its
  * registry name and its permission class. Null outside a Claude Code session, or in one without a messaging socket:
- * a script cannot attest anything, so its messages stay plain.
+ * a script cannot attest anything, so its messages stay plain. The session is the identity module's answer over THIS
+ * process's env (`origin: "local"`), never a request scope's remote caller, because the socket and the pid it attests
+ * are this process's own.
  */
 export async function currentClaudeSender(sources: PeerSenderSources = {}): Promise<PeerSender | null> {
-    const variable = sources.variable ?? ((name: string) => env.getTrimmed(name));
-    const sessionId = variable("CLAUDE_CODE_SESSION_ID");
+    const environment = sources.env ?? env.getProcessEnv();
+    const variable = (name: string) => environment[name]?.trim() || undefined;
+    const caller = whoIsCalling({ origin: "local", env: environment });
+    const sessionId = caller.agent === CLAUDE_AGENT ? (caller.sessionId ?? undefined) : undefined;
     const socketPath = variable("CLAUDE_CODE_MESSAGING_SOCKET");
 
     if (!sessionId || !socketPath) {
