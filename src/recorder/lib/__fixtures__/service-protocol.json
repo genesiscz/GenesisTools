@@ -1,0 +1,1692 @@
+{
+  "protocol": 1,
+  "about": "One real request and reply per recorder service method (src/recorder/lib/service-protocol.ts), captured from the TypeScript service with a fake host; paths are invented. The Swift host tests decode these; src/recorder/lib/service.test.ts checks every one against the method's schemas.",
+  "examples": [
+    {
+      "method": "hello",
+      "direction": "host→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "hello",
+        "params": {
+          "role": "host",
+          "protocol": 1,
+          "pid": 4242,
+          "answers": [
+            "window.open",
+            "window.show",
+            "window.list",
+            "render.still",
+            "render.sheet",
+            "render.export",
+            "render.snapshot",
+            "camera.start",
+            "camera.stop"
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocol": 1,
+          "methods": [
+            "hello",
+            "session.open",
+            "session.close",
+            "edit.apply",
+            "edit.undo",
+            "edit.redo",
+            "gesture.begin",
+            "gesture.preview",
+            "gesture.commit",
+            "gesture.cancel",
+            "subscribe",
+            "window.open",
+            "window.show",
+            "window.list",
+            "render.still",
+            "render.sheet",
+            "render.export",
+            "render.snapshot",
+            "camera.start",
+            "camera.stop",
+            "movie.info",
+            "movie.check",
+            "movie.fix",
+            "movie.split",
+            "movie.cut",
+            "movie.keep",
+            "movie.speed",
+            "movie.zoom",
+            "movie.unzoom",
+            "movie.redact",
+            "movie.unredact",
+            "movie.text",
+            "movie.untext",
+            "movie.retime",
+            "movie.fixLine",
+            "movie.replaceWords",
+            "movie.fixLines",
+            "movie.unfixLine",
+            "movie.autoZoom",
+            "movie.titleMarkers",
+            "movie.annotateClicks",
+            "movie.volume",
+            "movie.mute",
+            "movie.unmute",
+            "movie.apply",
+            "movie.undo",
+            "movie.shape",
+            "movie.arrow",
+            "movie.unshape",
+            "movie.music",
+            "movie.spotlight",
+            "movie.addLane",
+            "movie.removeLane",
+            "movie.moveLane",
+            "movie.moveToLane",
+            "movie.range",
+            "movie.reset",
+            "movie.clicks",
+            "movie.keys",
+            "movie.captions",
+            "movie.cursor",
+            "movie.motion",
+            "movie.camera",
+            "movie.cameraHide",
+            "movie.cameraShow",
+            "movie.frame",
+            "movie.removeIdle",
+            "movie.polish",
+            "movie.cutWords",
+            "movie.cutFillers",
+            "movie.denoise",
+            "movie.normalize",
+            "movie.export",
+            "movie.subtitles",
+            "movie.transcript",
+            "movie.poster",
+            "movie.sheet",
+            "movie.itemsAt",
+            "movie.still",
+            "movie.find",
+            "movie.switchDisplay",
+            "movie.findOnScreen",
+            "movie.markers",
+            "movie.comments",
+            "movie.comment",
+            "movie.resolveComment",
+            "movie.uncomment",
+            "movie.importComments",
+            "movie.copy",
+            "movie.reveal",
+            "movie.trash",
+            "movie.rename",
+            "movie.chapters",
+            "movie.shortcuts",
+            "movie.show",
+            "movies.list",
+            "movies.search"
+          ],
+          "version": "ff9dfa1c480f"
+        }
+      }
+    },
+    {
+      "method": "hello",
+      "direction": "host→service",
+      "note": "a second host while the first is connected: hostTaken",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "hello",
+        "params": {
+          "role": "host",
+          "protocol": 1,
+          "pid": 4343,
+          "answers": [
+            "window.open",
+            "window.show",
+            "window.list",
+            "render.still",
+            "render.sheet",
+            "render.export",
+            "render.snapshot",
+            "camera.start",
+            "camera.stop"
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "error": {
+          "code": 1012,
+          "message": "another recorder host is connected (pid 4242)"
+        }
+      }
+    },
+    {
+      "method": "hello",
+      "direction": "client→service",
+      "note": "another protocol: protocolMismatch",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "hello",
+        "params": {
+          "role": "client",
+          "protocol": 2,
+          "pid": 4343
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "error": {
+          "code": 1011,
+          "message": "the recorder service speaks protocol 1, not 2"
+        }
+      }
+    },
+    {
+      "method": "hello",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "hello",
+        "params": {
+          "role": "client",
+          "protocol": 1,
+          "pid": 4444
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "protocol": 1,
+          "methods": [
+            "hello",
+            "session.open",
+            "session.close",
+            "edit.apply",
+            "edit.undo",
+            "edit.redo",
+            "gesture.begin",
+            "gesture.preview",
+            "gesture.commit",
+            "gesture.cancel",
+            "subscribe",
+            "window.open",
+            "window.show",
+            "window.list",
+            "render.still",
+            "render.sheet",
+            "render.export",
+            "render.snapshot",
+            "camera.start",
+            "camera.stop",
+            "movie.info",
+            "movie.check",
+            "movie.fix",
+            "movie.split",
+            "movie.cut",
+            "movie.keep",
+            "movie.speed",
+            "movie.zoom",
+            "movie.unzoom",
+            "movie.redact",
+            "movie.unredact",
+            "movie.text",
+            "movie.untext",
+            "movie.retime",
+            "movie.fixLine",
+            "movie.replaceWords",
+            "movie.fixLines",
+            "movie.unfixLine",
+            "movie.autoZoom",
+            "movie.titleMarkers",
+            "movie.annotateClicks",
+            "movie.volume",
+            "movie.mute",
+            "movie.unmute",
+            "movie.apply",
+            "movie.undo",
+            "movie.shape",
+            "movie.arrow",
+            "movie.unshape",
+            "movie.music",
+            "movie.spotlight",
+            "movie.addLane",
+            "movie.removeLane",
+            "movie.moveLane",
+            "movie.moveToLane",
+            "movie.range",
+            "movie.reset",
+            "movie.clicks",
+            "movie.keys",
+            "movie.captions",
+            "movie.cursor",
+            "movie.motion",
+            "movie.camera",
+            "movie.cameraHide",
+            "movie.cameraShow",
+            "movie.frame",
+            "movie.removeIdle",
+            "movie.polish",
+            "movie.cutWords",
+            "movie.cutFillers",
+            "movie.denoise",
+            "movie.normalize",
+            "movie.export",
+            "movie.subtitles",
+            "movie.transcript",
+            "movie.poster",
+            "movie.sheet",
+            "movie.itemsAt",
+            "movie.still",
+            "movie.find",
+            "movie.switchDisplay",
+            "movie.findOnScreen",
+            "movie.markers",
+            "movie.comments",
+            "movie.comment",
+            "movie.resolveComment",
+            "movie.uncomment",
+            "movie.importComments",
+            "movie.copy",
+            "movie.reveal",
+            "movie.trash",
+            "movie.rename",
+            "movie.chapters",
+            "movie.shortcuts",
+            "movie.show",
+            "movies.list",
+            "movies.search"
+          ],
+          "version": "ff9dfa1c480f"
+        }
+      }
+    },
+    {
+      "method": "subscribe",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "subscribe",
+        "params": {
+          "events": [
+            "project.changed",
+            "window.changed"
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "events": [
+            "project.changed",
+            "window.changed"
+          ]
+        }
+      }
+    },
+    {
+      "method": "session.open",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "session.open",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "result": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "project": {
+            "version": 1,
+            "source": {
+              "video": "/Users/alice/.genesis-tools/recordings/library/talk/screen.mp4",
+              "durationUs": 12000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 12000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 1,
+            "updatedBy": "agent"
+          },
+          "revision": 1
+        }
+      }
+    },
+    {
+      "method": "project.changed",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "project.changed",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "revision": 2,
+          "by": "agent"
+        }
+      }
+    },
+    {
+      "method": "edit.apply",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "edit.apply",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "ops": [
+            {
+              "op": "volume",
+              "volume": 0.5
+            }
+          ],
+          "baseRevision": 1
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "result": {
+          "revision": 2,
+          "project": {
+            "version": 1,
+            "source": {
+              "video": "/Users/alice/.genesis-tools/recordings/library/talk/screen.mp4",
+              "durationUs": 12000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 12000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 0.5,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 2,
+            "updatedBy": "agent"
+          }
+        }
+      }
+    },
+    {
+      "method": "edit.apply",
+      "direction": "client→service",
+      "note": "an older baseRevision: staleRevision",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "edit.apply",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "ops": [
+            {
+              "op": "volume",
+              "volume": 0.4
+            }
+          ],
+          "baseRevision": 1
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "error": {
+          "code": 1016,
+          "message": "the edit is at revision 2 (by agent), not 1"
+        }
+      }
+    },
+    {
+      "method": "project.changed",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "project.changed",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "revision": 3,
+          "by": "agent"
+        }
+      }
+    },
+    {
+      "method": "edit.undo",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "edit.undo",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "result": {
+          "revision": 3,
+          "project": {
+            "version": 1,
+            "source": {
+              "video": "/Users/alice/.genesis-tools/recordings/library/talk/screen.mp4",
+              "durationUs": 12000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 12000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 1,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 3,
+            "updatedBy": "agent"
+          },
+          "undone": [
+            "volume"
+          ]
+        }
+      }
+    },
+    {
+      "method": "project.changed",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "project.changed",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "revision": 4,
+          "by": "agent"
+        }
+      }
+    },
+    {
+      "method": "edit.redo",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "edit.redo",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "result": {
+          "revision": 4,
+          "project": {
+            "version": 1,
+            "source": {
+              "video": "/Users/alice/.genesis-tools/recordings/library/talk/screen.mp4",
+              "durationUs": 12000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 12000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 0.5,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 4,
+            "updatedBy": "agent"
+          },
+          "redone": [
+            "volume"
+          ]
+        }
+      }
+    },
+    {
+      "method": "edit.redo",
+      "direction": "client→service",
+      "note": "nothing left to redo: nothingToRedo",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "edit.redo",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "error": {
+          "code": 1018,
+          "message": "nothing to redo in this edit"
+        }
+      }
+    },
+    {
+      "method": "gesture.begin",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 12,
+        "method": "gesture.begin",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "gesture": "drag-1"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 12,
+        "result": {
+          "project": {
+            "version": 1,
+            "source": {
+              "video": "/Users/alice/.genesis-tools/recordings/library/talk/screen.mp4",
+              "durationUs": 12000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 12000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 0.5,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 4,
+            "updatedBy": "agent"
+          },
+          "revision": 4
+        }
+      }
+    },
+    {
+      "method": "gesture.preview",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 13,
+        "method": "gesture.preview",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "gesture": "drag-1",
+          "ops": [
+            {
+              "op": "speed",
+              "from": 2,
+              "to": 4,
+              "factor": 2
+            }
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 13,
+        "result": {
+          "project": {
+            "version": 1,
+            "source": {
+              "video": "/Users/alice/.genesis-tools/recordings/library/talk/screen.mp4",
+              "durationUs": 12000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 2000000,
+                "speed": 1
+              },
+              {
+                "id": "c041f760a",
+                "fromUs": 2000000,
+                "toUs": 4000000,
+                "speed": 2
+              },
+              {
+                "id": "c0e48a263",
+                "fromUs": 4000000,
+                "toUs": 12000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 0.5,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 4,
+            "updatedBy": "agent"
+          }
+        }
+      }
+    },
+    {
+      "method": "project.changed",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "project.changed",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "revision": 5,
+          "by": "agent"
+        }
+      }
+    },
+    {
+      "method": "gesture.commit",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 14,
+        "method": "gesture.commit",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "gesture": "drag-1"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 14,
+        "result": {
+          "revision": 5,
+          "project": {
+            "version": 1,
+            "source": {
+              "video": "/Users/alice/.genesis-tools/recordings/library/talk/screen.mp4",
+              "durationUs": 12000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 2000000,
+                "speed": 1
+              },
+              {
+                "id": "caac372dd",
+                "fromUs": 2000000,
+                "toUs": 4000000,
+                "speed": 2
+              },
+              {
+                "id": "cf226ca72",
+                "fromUs": 4000000,
+                "toUs": 12000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 0.5,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 5,
+            "updatedBy": "agent"
+          }
+        }
+      }
+    },
+    {
+      "method": "gesture.begin",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 15,
+        "method": "gesture.begin",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "gesture": "drag-2"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 15,
+        "result": {
+          "project": {
+            "version": 1,
+            "source": {
+              "video": "/Users/alice/.genesis-tools/recordings/library/talk/screen.mp4",
+              "durationUs": 12000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 2000000,
+                "speed": 1
+              },
+              {
+                "id": "caac372dd",
+                "fromUs": 2000000,
+                "toUs": 4000000,
+                "speed": 2
+              },
+              {
+                "id": "cf226ca72",
+                "fromUs": 4000000,
+                "toUs": 12000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 0.5,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 5,
+            "updatedBy": "agent"
+          },
+          "revision": 5
+        }
+      }
+    },
+    {
+      "method": "gesture.cancel",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 16,
+        "method": "gesture.cancel",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "gesture": "drag-2"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 16,
+        "result": {
+          "project": {
+            "version": 1,
+            "source": {
+              "video": "/Users/alice/.genesis-tools/recordings/library/talk/screen.mp4",
+              "durationUs": 12000000,
+              "width": 1920,
+              "height": 1080
+            },
+            "clips": [
+              {
+                "id": "c1",
+                "fromUs": 0,
+                "toUs": 2000000,
+                "speed": 1
+              },
+              {
+                "id": "caac372dd",
+                "fromUs": 2000000,
+                "toUs": 4000000,
+                "speed": 2
+              },
+              {
+                "id": "cf226ca72",
+                "fromUs": 4000000,
+                "toUs": 12000000,
+                "speed": 1
+              }
+            ],
+            "zooms": [],
+            "audio": {
+              "include": true,
+              "volume": 0.5,
+              "mutedTracks": []
+            },
+            "export": {
+              "codec": "h264",
+              "maxHeight": 0,
+              "output": ""
+            },
+            "revision": 5,
+            "updatedBy": "agent"
+          },
+          "revision": 5
+        }
+      }
+    },
+    {
+      "method": "session.close",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 17,
+        "method": "session.close",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 17,
+        "result": {
+          "closed": true
+        }
+      }
+    },
+    {
+      "method": "window.open",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 18,
+        "method": "window.open",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "focus": true,
+          "atSeconds": 3,
+          "tab": "zoom"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 18,
+        "result": {
+          "opened": true,
+          "window": 4711
+        }
+      }
+    },
+    {
+      "method": "window.show",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 19,
+        "method": "window.show",
+        "params": {
+          "which": "library",
+          "focus": false
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 19,
+        "result": {
+          "shown": true
+        }
+      }
+    },
+    {
+      "method": "window.list",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 20,
+        "method": "window.list",
+        "params": {}
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 20,
+        "result": {
+          "front": {
+            "path": "/Users/alice/.genesis-tools/recordings/library/talk",
+            "title": "Talk",
+            "window": 4711
+          },
+          "open": [
+            {
+              "path": "/Users/alice/.genesis-tools/recordings/library/talk",
+              "title": "Talk",
+              "window": 4711
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "render.still",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 21,
+        "method": "render.still",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "atSeconds": 2,
+          "out": "/Users/alice/.genesis-tools/recordings/library/talk/still.png"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 21,
+        "result": {
+          "ok": true,
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/still.png",
+          "width": 1920,
+          "height": 1080,
+          "atSeconds": 2
+        }
+      }
+    },
+    {
+      "method": "render.sheet",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 22,
+        "method": "render.sheet",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "times": [
+            0,
+            4,
+            8
+          ],
+          "out": "/Users/alice/.genesis-tools/recordings/library/talk/sheet.png"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 22,
+        "result": {
+          "ok": true,
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/sheet.png",
+          "width": 1800,
+          "height": 700,
+          "times": [
+            0,
+            4,
+            8
+          ]
+        }
+      }
+    },
+    {
+      "method": "render.export",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 23,
+        "method": "render.export",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "out": "/Users/alice/.genesis-tools/recordings/library/talk/Talk.mp4"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 23,
+        "result": {
+          "ok": true,
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/Talk.mp4",
+          "bytes": 1234567,
+          "seconds": 3.21
+        }
+      }
+    },
+    {
+      "method": "render.snapshot",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 24,
+        "method": "render.snapshot",
+        "params": {
+          "out": "/Users/alice/.genesis-tools/recordings/library/talk/editor.png",
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "tab": "zoom",
+          "part": [
+            2,
+            6
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 24,
+        "result": {
+          "ok": true,
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/editor.png",
+          "method": "windowServer"
+        }
+      }
+    },
+    {
+      "method": "camera.start",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 25,
+        "method": "camera.start",
+        "params": {
+          "folder": "/Users/alice/.genesis-tools/recordings/library/talk"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 25,
+        "result": {
+          "started": true
+        }
+      }
+    },
+    {
+      "method": "camera.start",
+      "direction": "client→service",
+      "note": "macOS denied the camera: cameraDenied",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 26,
+        "method": "camera.start",
+        "params": {
+          "folder": "/Users/alice/.genesis-tools/recordings/library/talk-denied"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 26,
+        "error": {
+          "code": 1014,
+          "message": "Camera access is off for GenesisTools (System Settings → Privacy & Security → Camera)"
+        }
+      }
+    },
+    {
+      "method": "camera.start",
+      "direction": "client→service",
+      "note": "another app holds the camera: cameraBusy",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 27,
+        "method": "camera.start",
+        "params": {
+          "folder": "/Users/alice/.genesis-tools/recordings/library/talk-busy"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 27,
+        "error": {
+          "code": 1015,
+          "message": "the camera records FaceTime already"
+        }
+      }
+    },
+    {
+      "method": "camera.stop",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 28,
+        "method": "camera.stop",
+        "params": {
+          "folder": "/Users/alice/.genesis-tools/recordings/library/talk"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 28,
+        "result": {
+          "stopped": true
+        }
+      }
+    },
+    {
+      "method": "movie.split",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 29,
+        "method": "movie.split",
+        "params": {
+          "recording": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "at": 6
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 29,
+        "result": {
+          "summary": "11 s long (source 12 s), 4 clips, 0 zooms, 0 hidden parts, 0 spotlights, 0 texts, 0 shapes, captions off, frame off, music none, click rings off, 0 edited caption lines",
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "revision": 6,
+          "updatedBy": "agent",
+          "video": "/Users/alice/.genesis-tools/recordings/library/talk/screen.mp4",
+          "sourceSeconds": 12,
+          "outputSeconds": 11,
+          "clips": [
+            {
+              "id": "c1",
+              "from": 0,
+              "to": 2,
+              "speed": 1
+            },
+            {
+              "id": "caac372dd",
+              "from": 2,
+              "to": 4,
+              "speed": 2
+            },
+            {
+              "id": "cf226ca72",
+              "from": 4,
+              "to": 6,
+              "speed": 1
+            },
+            {
+              "id": "cf9af5907",
+              "from": 6,
+              "to": 12,
+              "speed": 1
+            }
+          ],
+          "zooms": [],
+          "audio": {
+            "include": true,
+            "volume": 0.5,
+            "mutedTracks": []
+          },
+          "export": {
+            "codec": "h264",
+            "maxHeight": 0,
+            "output": ""
+          },
+          "clicks": null,
+          "frame": null,
+          "redactions": [],
+          "cursor": null,
+          "captions": null,
+          "keys": null,
+          "transcriptFixes": 0,
+          "motion": {
+            "blur": 0.5
+          },
+          "camera": null,
+          "shapes": [],
+          "texts": [],
+          "lanes": [
+            {
+              "id": "zooms",
+              "kinds": [
+                "zoom"
+              ],
+              "items": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "movies.search",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 30,
+        "method": "movies.search",
+        "params": {
+          "text": "talk"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 30,
+        "result": []
+      }
+    },
+    {
+      "method": "window.changed",
+      "direction": "host→service",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "window.changed",
+        "params": {
+          "front": {
+            "path": "/Users/alice/.genesis-tools/recordings/library/talk",
+            "title": "Talk",
+            "window": 4711
+          },
+          "open": [
+            {
+              "path": "/Users/alice/.genesis-tools/recordings/library/talk",
+              "title": "Talk",
+              "window": 4711
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "window.open",
+      "direction": "service→host",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "window.open",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "focus": true,
+          "atSeconds": 3,
+          "tab": "zoom"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "opened": true,
+          "window": 4711
+        }
+      }
+    },
+    {
+      "method": "window.show",
+      "direction": "service→host",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "window.show",
+        "params": {
+          "which": "library",
+          "focus": false
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "shown": true
+        }
+      }
+    },
+    {
+      "method": "window.list",
+      "direction": "service→host",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "window.list",
+        "params": {}
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "front": {
+            "path": "/Users/alice/.genesis-tools/recordings/library/talk",
+            "title": "Talk",
+            "window": 4711
+          },
+          "open": [
+            {
+              "path": "/Users/alice/.genesis-tools/recordings/library/talk",
+              "title": "Talk",
+              "window": 4711
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "render.still",
+      "direction": "service→host",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "render.still",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "atSeconds": 2,
+          "out": "/Users/alice/.genesis-tools/recordings/library/talk/still.png"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "ok": true,
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/still.png",
+          "width": 1920,
+          "height": 1080,
+          "atSeconds": 2
+        }
+      }
+    },
+    {
+      "method": "render.sheet",
+      "direction": "service→host",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "render.sheet",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "times": [
+            0,
+            4,
+            8
+          ],
+          "out": "/Users/alice/.genesis-tools/recordings/library/talk/sheet.png"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "ok": true,
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/sheet.png",
+          "width": 1800,
+          "height": 700,
+          "times": [
+            0,
+            4,
+            8
+          ]
+        }
+      }
+    },
+    {
+      "method": "$/progress",
+      "direction": "host→service",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "$/progress",
+        "params": {
+          "id": 6,
+          "fraction": 0.42,
+          "label": "export"
+        }
+      }
+    },
+    {
+      "method": "render.export",
+      "direction": "service→host",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "render.export",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "out": "/Users/alice/.genesis-tools/recordings/library/talk/Talk.mp4"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "result": {
+          "ok": true,
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/Talk.mp4",
+          "bytes": 1234567,
+          "seconds": 3.21
+        }
+      }
+    },
+    {
+      "method": "render.snapshot",
+      "direction": "service→host",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "render.snapshot",
+        "params": {
+          "out": "/Users/alice/.genesis-tools/recordings/library/talk/editor.png",
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json",
+          "tab": "zoom",
+          "part": [
+            2,
+            6
+          ]
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "result": {
+          "ok": true,
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/editor.png",
+          "method": "windowServer"
+        }
+      }
+    },
+    {
+      "method": "camera.start",
+      "direction": "service→host",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "camera.start",
+        "params": {
+          "folder": "/Users/alice/.genesis-tools/recordings/library/talk"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "result": {
+          "started": true
+        }
+      }
+    },
+    {
+      "method": "camera.start",
+      "direction": "service→host",
+      "note": "the host refuses",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "camera.start",
+        "params": {
+          "folder": "/Users/alice/.genesis-tools/recordings/library/talk-denied"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "error": {
+          "code": 1014,
+          "message": "Camera access is off for GenesisTools (System Settings → Privacy & Security → Camera)"
+        }
+      }
+    },
+    {
+      "method": "camera.start",
+      "direction": "service→host",
+      "note": "the host refuses",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "camera.start",
+        "params": {
+          "folder": "/Users/alice/.genesis-tools/recordings/library/talk-busy"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "error": {
+          "code": 1015,
+          "message": "the camera records FaceTime already"
+        }
+      }
+    },
+    {
+      "method": "camera.stop",
+      "direction": "service→host",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "camera.stop",
+        "params": {
+          "folder": "/Users/alice/.genesis-tools/recordings/library/talk"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "result": {
+          "stopped": true
+        }
+      }
+    },
+    {
+      "method": "$/progress",
+      "direction": "service→client",
+      "note": "the host's progress, passed on with the caller's request id",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "$/progress",
+        "params": {
+          "id": 23,
+          "fraction": 0.42,
+          "label": "export"
+        }
+      }
+    },
+    {
+      "method": "$/cancel",
+      "direction": "client→service",
+      "note": "the caller gives up: the service answers 1013 and sends $/cancel to the host for its own request id",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "$/cancel",
+        "params": {
+          "id": 23
+        }
+      }
+    },
+    {
+      "method": "$/cancel",
+      "direction": "client→service",
+      "note": "the reply to a cancelled request",
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 23,
+        "error": {
+          "code": 1013,
+          "message": "cancelled"
+        }
+      }
+    },
+    {
+      "method": "window.changed",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "window.changed",
+        "params": {
+          "front": {
+            "path": "/Users/alice/.genesis-tools/recordings/library/talk",
+            "title": "Talk",
+            "window": 4711
+          },
+          "open": [
+            {
+              "path": "/Users/alice/.genesis-tools/recordings/library/talk",
+              "title": "Talk",
+              "window": 4711
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

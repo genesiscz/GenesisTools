@@ -226,6 +226,11 @@ export class EditSession {
             ...this.undoSteps.slice(0, depth),
             { before: first.before, afterRevision: last.afterRevision, ops: added.flatMap((step) => step.ops ?? []) },
         ];
+
+        // Nothing waits for a save: the undo file gets the collapsed history now.
+        if (this.unsaved.length === 0 && this.diskRevision !== null) {
+            writeUndoSteps(this.path, this.undoSteps);
+        }
     }
 
     /** Starts a drag: its previews apply to the edit as it is, and only its commit changes it. */

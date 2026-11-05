@@ -1,0 +1,363 @@
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { classifyPid } from "@genesiscz/utils/process-identity";
+import { editOpSchema, editProjectSchema } from "@genesiscz/utils/recording-editor/project";
+import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
+import { liveSocketPath } from "@genesiscz/utils/screen-recorder/live";
+import { z } from "zod";
+import { EDITOR_TABS } from "./library";
+
+/**
+ * The recorder service's protocol: newline-delimited JSON-RPC 2.0 on `<recordings>/service.sock`, both directions on
+ * one connection (the live recordings' framing). The service answers the edit methods; the host (GenesisTools.app's
+ * recorder face) answers the window, render and camera methods, which the service forwards to it for any client.
+ * `__fixtures__/service-protocol.json` holds one example request and reply per method; the Swift host tests read it.
+ */
+
+const { log } = logger.scoped("recorder-service");
+
+export const SERVICE_PROTOCOL = 1;
+
+/** `<genesis-tools root>/recordings`: the library's parent, where `service.json` and the socket live. */
+export function recorderServiceDir(): string {
+    return dirname(recordingsLibraryDir());
+}
+
+export function serviceSocketPath(dir: string): string {
+    return liveSocketPath(dir, "service");
+}
+
+export function serviceEntryPath(dir: string): string {
+    return join(dir, "service.json");
+}
+
+export function servicePidPath(dir: string): string {
+    return join(dir, "service.pid");
+}
+
+/** `service.json`: where the running service listens. */
+export const serviceEntrySchema = z.object({
+    version: z.literal(1),
+    protocol: z.number().int(),
+    pid: z.number().int().positive(),
+    /** The service's command line when it wrote the entry, so a recycled pid reads as gone. */
+    pidCommand: z.string().optional(),
+    socket: z.string(),
+    startedAt: z.string(),
+    /** When the service started, in ms; a module of the repo changed after it makes the service exit. */
+    codeStamp: z.number(),
+});
+export type ServiceEntry = z.infer<typeof serviceEntrySchema>;
+
+/** The running service named in `service.json`, or undefined when there is none or its process is gone. */
+export function readLiveService(dir = recorderServiceDir()): ServiceEntry | undefined {
+    const path = serviceEntryPath(dir);
+
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    try {
+        const entry = serviceEntrySchema.parse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
+        const status = classifyPid(entry.pid, entry.pidCommand).status;
+        return status === "live" || status === "unverified" ? entry : undefined;
+    } catch (error) {
+        log.debug({ error, path }, "service.json does not read; no service");
+        return undefined;
+    }
+}
+
+export const ROLES = ["host", "client"] as const;
+export type ServiceRole = (typeof ROLES)[number];
+
+export const helloParamsSchema = z.object({
+    role: z.enum(ROLES),
+    protocol: z.number().int(),
+    pid: z.number().int().positive(),
+    /** A host: the host methods it answers. */
+    answers: z.array(z.string()).optional(),
+});
+export const helloAnswerSchema = z.object({
+    protocol: z.number().int(),
+    methods: z.array(z.string()),
+    version: z.string(),
+});
+
+const path = z.string().min(1);
+const ops = z.array(editOpSchema).min(1);
+/** Output seconds as `{ from, to }`, `[from, to]` or `"from-to"`, as the host's `--snapshot` takes `part` and `range`. */
+export const spanSchema = z.union([
+    z.object({ from: z.number(), to: z.number() }),
+    z.tuple([z.number(), z.number()]),
+    z.string().regex(/^\d+(\.\d+)?-\d+(\.\d+)?$/),
+]);
+const project = { project: editProjectSchema, revision: z.number().int().nonnegative() };
+const editAnswer = z.object({
+    ...project,
+    warnings: z.array(z.string()).optional(),
+    removedIdleUs: z.array(z.tuple([z.number(), z.number()])).optional(),
+    loudness: z.object({ measuredLufs: z.number().nullable(), volume: z.number() }).optional(),
+});
+const windowRow = z.object({ path: z.string(), title: z.string(), window: z.number().int() });
+export const windowStateSchema = z.object({ front: windowRow.optional(), open: z.array(windowRow) });
+
+/** The methods the service answers itself; `subscribe` is the transport's. */
+export const serviceApi = defineApi({
+    id: "recorder-service",
+    global: "service",
+    title: "Recorder service",
+    summary: "The one owner of the recordings' edits while it runs, and the way to the recorder host.",
+    methods: [
+        defineMethod({
+            name: "hello",
+            params: helloParamsSchema,
+            result: helloAnswerSchema,
+            doc: "Names the connection's role; a host then answers the host methods. Another protocol is refused (1011), and a second host while the first is connected (1012).",
+            effect: "read",
+        }),
+        defineMethod({
+            name: "session.open",
+            params: z.object({ path }),
+            result: z.object({ path, ...project }),
+            doc: "Opens (or holds once more) the edit session of a recording; the connection holds it until session.close or its end.",
+            effect: "read",
+        }),
+        defineMethod({
+            name: "session.close",
+            params: z.object({ path }),
+            result: z.object({ closed: z.boolean() }),
+            doc: "Lets go of the connection's hold; the last hold saves and closes the session.",
+            effect: "read",
+        }),
+        defineMethod({
+            name: "edit.apply",
+            params: z.object({ path, ops, baseRevision: z.number().int().nonnegative().optional() }),
+            result: editAnswer,
+            doc: "Applies ops as one change and one undo step; baseRevision refuses (1016) when the edit is at another revision.",
+            effect: "reversible",
+        }),
+        defineMethod({
+            name: "edit.undo",
+            params: z.object({ path }),
+            result: editAnswer.extend({ undone: z.array(z.string()) }),
+            doc: "Puts the edit back as it was before its last change.",
+            effect: "reversible",
+        }),
+        defineMethod({
+            name: "edit.redo",
+            params: z.object({ path }),
+            result: editAnswer.extend({ redone: z.array(z.string()) }),
+            doc: "Makes the last undone change again; it needs an open session.",
+            effect: "reversible",
+        }),
+        defineMethod({
+            name: "gesture.begin",
+            params: z.object({ path, gesture: z.string().min(1) }),
+            result: z.object(project),
+            doc: "Starts a drag on an open session.",
+            effect: "read",
+        }),
+        defineMethod({
+            name: "gesture.preview",
+            params: z.object({ path, gesture: z.string().min(1), ops }),
+            result: z.object({ project: editProjectSchema, superseded: z.literal(true).optional() }),
+            doc: "The edit with the drag's ops applied, unsaved; each preview's ops replace the last one's.",
+            effect: "read",
+        }),
+        defineMethod({
+            name: "gesture.commit",
+            params: z.object({ path, gesture: z.string().min(1) }),
+            result: editAnswer,
+            doc: "Makes the drag's last preview one change and one undo step.",
+            effect: "reversible",
+        }),
+        defineMethod({
+            name: "gesture.cancel",
+            params: z.object({ path, gesture: z.string().min(1) }),
+            result: z.object(project),
+            doc: "Ends the drag with no change.",
+            effect: "read",
+        }),
+    ],
+});
+
+/** The methods the host answers; the service forwards them for any client, and answers some without a host. */
+export const hostApi = defineApi({
+    id: "recorder-host",
+    global: "host",
+    title: "Recorder host",
+    summary: "What GenesisTools.app's recorder face does for the service: windows, renders, the camera.",
+    methods: [
+        defineMethod({
+            name: "window.open",
+            params: z.object({
+                path,
+                focus: z.boolean().optional(),
+                atSeconds: z.number().nonnegative().optional(),
+                tab: z.enum(EDITOR_TABS).optional(),
+            }),
+            result: z.object({ opened: z.literal(true), window: z.number().int() }),
+            doc: "Opens (or brings back) the editor window of an edit; window is its window number.",
+            effect: "read",
+        }),
+        defineMethod({
+            name: "window.show",
+            params: z.object({ which: z.enum(["library", "picker"]), focus: z.boolean().optional() }),
+            result: z.object({ shown: z.literal(true) }),
+            doc: "Shows the recordings library or the capture picker.",
+            effect: "read",
+        }),
+        defineMethod({
+            name: "window.list",
+            params: z.object({}),
+            result: windowStateSchema,
+            doc: "The editor windows: each recording folder, its title and window number, and the one in front.",
+            effect: "read",
+        }),
+        defineMethod({
+            name: "render.still",
+            params: z.object({
+                path,
+                atSeconds: z.number().nonnegative().optional(),
+                out: z.string().optional(),
+                full: z.boolean().optional(),
+            }),
+            result: z.object({
+                ok: z.literal(true),
+                path: z.string(),
+                width: z.number(),
+                height: z.number(),
+                atSeconds: z.number().optional(),
+            }),
+            doc: "One frame of the edit as it exports, at output seconds; full renders at the export's size.",
+            effect: "read",
+        }),
+        defineMethod({
+            name: "render.sheet",
+            params: z.object({ path, times: z.array(z.number().nonnegative()).min(1), out: z.string().optional() }),
+            result: z.object({
+                ok: z.literal(true),
+                path: z.string(),
+                width: z.number(),
+                height: z.number(),
+                times: z.array(z.number()).optional(),
+            }),
+            doc: "Those frames of the edit (output seconds) on one picture.",
+            effect: "read",
+        }),
+        defineMethod({
+            name: "render.export",
+            params: z.object({ path, out: z.string().optional() }),
+            result: z.object({ ok: z.literal(true), path: z.string(), bytes: z.number(), seconds: z.number() }),
+            doc: 'Renders the edit as a movie; the host sends $/progress { id, fraction, label: "export" } and stops on $/cancel.',
+            effect: "reversible",
+        }),
+        defineMethod({
+            name: "render.snapshot",
+            params: z
+                .object({
+                    out: z.string().min(1),
+                    path: z.string().optional(),
+                    edit: z.string().optional(),
+                    library: z.boolean().optional(),
+                    picker: z.boolean().optional(),
+                    shortcuts: z.boolean().optional(),
+                    filter: z.string().optional(),
+                    width: z.number().positive().optional(),
+                    height: z.number().positive().optional(),
+                    atSeconds: z.number().nonnegative().optional(),
+                    tab: z.enum(EDITOR_TABS).optional(),
+                    selectZoom: z.number().int().nonnegative().optional(),
+                    selectClip: z.number().int().nonnegative().optional(),
+                    part: spanSchema.optional(),
+                    range: spanSchema.optional(),
+                    comment: z.number().int().nonnegative().optional(),
+                })
+                .refine((params) => params.path || params.edit || params.library || params.picker, {
+                    message: "render.snapshot needs path (an edit), library or picker",
+                }),
+            result: z.object({ ok: z.literal(true), path: z.string(), method: z.string() }),
+            doc: "A picture of a recorder window as it would look: an edit's editor, the library or the picker.",
+            effect: "read",
+        }),
+        defineMethod({
+            name: "camera.start",
+            params: z.object({ folder: path }),
+            result: z.object({ started: z.literal(true) }),
+            doc: "Starts the camera bubble for a recording folder; 1014 when macOS denies the camera, 1015 when it is busy.",
+            effect: "reversible",
+        }),
+        defineMethod({
+            name: "camera.stop",
+            params: z.object({ folder: path }),
+            result: z.object({ stopped: z.boolean() }),
+            doc: "Stops the camera bubble of a recording folder.",
+            effect: "reversible",
+        }),
+    ],
+});
+
+export type HostMethod = (typeof hostApi)["methods"][number]["name"];
+type HostMethodNamed<M extends HostMethod> = Extract<(typeof hostApi)["methods"][number], { name: M }>;
+export type HostParams<M extends HostMethod> = z.output<HostMethodNamed<M>["params"]>;
+export type HostResult<M extends HostMethod> = z.output<HostMethodNamed<M>["result"]>;
+
+export const HOST_METHODS: readonly HostMethod[] = hostApi.methods.map((method) => method.name);
+
+export function isHostMethod(name: string): name is HostMethod {
+    return HOST_METHODS.some((method) => method === name);
+}
+
+/** A host method's descriptor, for its params and result schemas. */
+export function hostMethod<M extends HostMethod>(name: M): HostMethodNamed<M> {
+    const method = hostApi.methods.find((candidate): candidate is HostMethodNamed<M> => candidate.name === name);
+
+    if (!method) {
+        throw new Error(`no host method ${name}`);
+    }
+
+    return method;
+}
+
+type HostSchemas = {
+    [M in HostMethod]: { params: z.ZodType<HostParams<M>>; result: z.ZodType<HostResult<M>> };
+};
+
+/** Each host method's schemas, by name, so a call typed by its method parses its params and its answer. */
+export const HOST_SCHEMAS: HostSchemas = {
+    "window.open": hostMethod("window.open"),
+    "window.show": hostMethod("window.show"),
+    "window.list": hostMethod("window.list"),
+    "render.still": hostMethod("render.still"),
+    "render.sheet": hostMethod("render.sheet"),
+    "render.export": hostMethod("render.export"),
+    "render.snapshot": hostMethod("render.snapshot"),
+    "camera.start": hostMethod("camera.start"),
+    "camera.stop": hostMethod("camera.stop"),
+};
+
+/** How long one host call may take; each `$/progress` starts it again. */
+export const HOST_TIMEOUT_MS: Record<HostMethod, number> = {
+    "window.open": 30_000,
+    "window.show": 30_000,
+    "window.list": 10_000,
+    "render.still": 120_000,
+    "render.sheet": 120_000,
+    "render.export": 30 * 60_000,
+    "render.snapshot": 120_000,
+    "camera.start": 30_000,
+    "camera.stop": 10_000,
+};
+
+/** Notifications: the service sends `project.changed`, the host `window.changed` (the service passes it on). */
+export const SERVICE_EVENTS = ["project.changed", "window.changed"] as const;
+
+/** The protocol's fingerprint, which `hello` answers: a change of the method list is a new version. */
+export function protocolVersion(methods: readonly string[]): string {
+    const text = `${SERVICE_PROTOCOL}\n${[...methods].sort().join("\n")}`;
+    return createHash("sha1").update(text).digest("hex").slice(0, 12);
+}

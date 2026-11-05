@@ -94,6 +94,45 @@ const EDITOR_VIDEO_LIMITS: VideoProbeLimits = {
     maxPixels: 48_000_000,
 };
 
+/**
+ * An open edit session of this process (the recorder service's), seen from the file functions below: while one
+ * holds an edit, they read and change it through the session, so a REPL or CLI call the service makes never writes
+ * past the window's unsaved changes. Its changes are saved at once (`flush`), so the file a caller reads next is
+ * current.
+ */
+export interface OwnedEdit {
+    readonly current: { project: EditProject; revision: number };
+    readonly undoDepth: number;
+    apply(
+        ops: readonly EditOp[],
+        options: { by: string }
+    ): Promise<{
+        project: EditProject;
+        warnings?: string[];
+        removedIdleUs?: Array<[number, number]>;
+        loudness?: { measuredLufs: number | null; volume: number };
+    }>;
+    undo(options: { by: string }): Promise<{ project: EditProject; undone: string[] }>;
+    collapseUndo(depth: number): void;
+    flush(): void;
+}
+
+/** Who holds edits open in this process; none outside the recorder service. */
+export interface EditOwner {
+    sessionOf(editPath: string): OwnedEdit | undefined;
+}
+
+let editOwner: EditOwner | undefined;
+
+/** The recorder service registers its sessions here while it runs, and clears them when it stops. */
+export function setEditOwner(owner: EditOwner | undefined): void {
+    editOwner = owner;
+}
+
+function ownedEdit(editPath: string): OwnedEdit | undefined {
+    return editOwner?.sessionOf(editPath);
+}
+
 /** The edit file of a recording argument, whether or not it exists yet. */
 export function editPathOf(value: string): string {
     const resolved = resolveRecording(value);
@@ -103,6 +142,11 @@ export function editPathOf(value: string): string {
 export async function openProject(value: string): Promise<OpenedProject> {
     const resolved = resolveRecording(value);
     const path = editPathOf(value);
+    const owned = ownedEdit(path);
+
+    if (owned) {
+        return { path, project: owned.current.project, fresh: false };
+    }
 
     if (existsSync(path)) {
         return { path, project: inItsFolder(path, readProject(path)), fresh: false };
@@ -238,6 +282,15 @@ export async function computeEdit({
  * op that fails leaves the file as it was and names the op.
  */
 export async function editProject(value: string, ops: readonly EditOp[]): Promise<OpenedProject> {
+    const path = editPathOf(value);
+    const owned = ownedEdit(path);
+
+    if (owned) {
+        const answer = await owned.apply(ops, { by: "agent" });
+        owned.flush();
+        return { path, fresh: false, ...answer };
+    }
+
     let opened = await openProject(value);
     let edit = await computeEdit({ project: opened.project, ops, fresh: opened.fresh });
 
@@ -457,11 +510,19 @@ export function pushUndo({
 
 /** How many steps the edit has to undo now. */
 export function undoDepth(editPath: string): number {
-    return readUndo(editPath).length;
+    return ownedEdit(editPath)?.undoDepth ?? readUndo(editPath).length;
 }
 
 /** Makes every step pushed since the undo had `depth` steps into one, so a multi-step change undoes at once. */
 export function collapseUndo(editPath: string, depth: number): void {
+    const owned = ownedEdit(editPath);
+
+    if (owned) {
+        owned.collapseUndo(depth);
+        owned.flush();
+        return;
+    }
+
     const steps = readUndo(editPath);
     const added = steps.slice(depth);
     const first = added[0];
@@ -492,6 +553,14 @@ export function collapseUndo(editPath: string, depth: number): void {
  * someone else's work.
  */
 export async function undoEdit(value: string): Promise<OpenedProject> {
+    const owned = ownedEdit(editPathOf(value));
+
+    if (owned) {
+        const answer = await owned.undo({ by: "agent" });
+        owned.flush();
+        return { path: editPathOf(value), project: answer.project, fresh: false, undone: answer.undone };
+    }
+
     const opened = await openProject(value);
     const steps = readUndo(opened.path);
     const last = steps.at(-1);

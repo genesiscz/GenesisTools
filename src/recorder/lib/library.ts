@@ -142,7 +142,8 @@ export async function ensureRecorderPart(onStep?: (line: string) => void): Promi
     await buildApp({ onStep, parts: { add: ["recorder"] } });
 }
 
-const editorWindowSchema = z.object({ path: z.string(), title: z.string() });
+/** One editor window: its recording folder, title and (from a build with the recorder host) its window number. */
+const editorWindowSchema = z.object({ path: z.string(), title: z.string(), window: z.number().int().optional() });
 const editorOpenSchema = z.object({
     version: z.literal(1),
     pid: z.number().int().optional(),
@@ -215,20 +216,42 @@ export async function waitForEditorOpen({ timeoutMs }: { timeoutMs: number }): P
     throw new Error(`No recording came to the front in the editor within ${Math.round(timeoutMs / 1000)} s.`);
 }
 
-/** Opens the recordings library window, where a double-click opens a recording in the editor. */
-export function openLibraryWindow({ focus = true }: { focus?: boolean } = {}): void {
-    const args = ["-n", ...(focus ? [] : ["-g"]), genesisAppBundlePath(), "--args", "--recorder", "--library"];
-
-    if (!focus) {
-        args.push("--no-focus");
-    }
-
-    log.debug({ args }, "recorder: open the library");
+/** Runs `open` with these arguments; throws with its message when it fails. */
+export function openWithApp(args: string[]): void {
+    log.debug({ args }, "recorder: open the app");
     const result = spawnSync("open", args, { encoding: "utf8" });
 
     if (result.status !== 0) {
         throw new Error(`open failed (${result.status}): ${(result.stderr || result.error?.message || "").trim()}`);
     }
+}
+
+/** The `open` arguments of a recorder window: a new process that hands them to the running recorder face. */
+function recorderOpenArgs(focus: boolean, faceArgs: string[]): string[] {
+    return [
+        "-n",
+        ...(focus ? [] : ["-g"]),
+        genesisAppBundlePath(),
+        "--args",
+        "--recorder",
+        ...faceArgs,
+        ...(focus ? [] : ["--no-focus"]),
+    ];
+}
+
+/** The `open` arguments of the library window, or of the capture picker. */
+export function recorderWindowArgs(which: "library" | "picker", { focus = true }: { focus?: boolean } = {}): string[] {
+    return recorderOpenArgs(focus, [which === "library" ? "--library" : "--picker"]);
+}
+
+/** The `open` arguments that start the recorder face in the background with no window (its menu and services). */
+export function recorderFaceArgs(): string[] {
+    return ["-g", genesisAppBundlePath(), "--args", "--recorder"];
+}
+
+/** Opens the recordings library window, where a double-click opens a recording in the editor. */
+export function openLibraryWindow({ focus = true }: { focus?: boolean } = {}): void {
+    openWithApp(recorderWindowArgs("library", { focus }));
 }
 
 /** Opens the editor through Launch Services; a running recorder takes the request. */
@@ -236,34 +259,28 @@ export function openLibraryWindow({ focus = true }: { focus?: boolean } = {}): v
 export const EDITOR_TABS = ["zoom", "clip", "hide", "text", "style", "cursor", "captions", "audio", "export"] as const;
 export type EditorTab = (typeof EDITOR_TABS)[number];
 
-/** Opens the editor window on `path`; `atSeconds` (output time) and `tab` place it at a moment and a panel. */
-export function openEditor(
-    path: string,
-    { focus = true, atSeconds, tab }: { focus?: boolean; atSeconds?: number; tab?: EditorTab } = {}
-): void {
-    const args = ["-n", ...(focus ? [] : ["-g"]), genesisAppBundlePath(), "--args", "--recorder", "--edit", path];
-
-    if (!focus) {
-        args.push("--no-focus");
-    }
-
-    if (atSeconds !== undefined) {
-        args.push("--at", String(atSeconds));
-    }
-
-    if (tab) {
-        args.push("--tab", tab);
-    }
-
-    log.debug({ args }, "recorder: open the editor");
-    const result = spawnSync("open", args, { encoding: "utf8" });
-
-    if (result.status !== 0) {
-        throw new Error(`open failed (${result.status}): ${(result.stderr || result.error?.message || "").trim()}`);
-    }
+export interface EditorPlace {
+    focus?: boolean;
+    atSeconds?: number;
+    tab?: EditorTab;
 }
 
-const stillAnswerSchema = z.object({
+/** The `open` arguments of the editor window on `path`. */
+export function editorOpenArgs(path: string, { focus = true, atSeconds, tab }: EditorPlace = {}): string[] {
+    return recorderOpenArgs(focus, [
+        "--edit",
+        path,
+        ...(atSeconds !== undefined ? ["--at", String(atSeconds)] : []),
+        ...(tab ? ["--tab", tab] : []),
+    ]);
+}
+
+/** Opens the editor window on `path`; `atSeconds` (output time) and `tab` place it at a moment and a panel. */
+export function openEditor(path: string, place: EditorPlace = {}): void {
+    openWithApp(editorOpenArgs(path, place));
+}
+
+export const stillAnswerSchema = z.object({
     ok: z.boolean(),
     path: z.string().optional(),
     width: z.number().optional(),
@@ -272,7 +289,7 @@ const stillAnswerSchema = z.object({
 });
 export type StillAnswer = z.infer<typeof stillAnswerSchema>;
 
-const exportAnswerSchema = z.object({
+export const exportAnswerSchema = z.object({
     ok: z.boolean(),
     path: z.string().optional(),
     bytes: z.number().optional(),
@@ -281,10 +298,52 @@ const exportAnswerSchema = z.object({
 });
 export type ExportAnswer = z.infer<typeof exportAnswerSchema>;
 
-/**
- * Runs a headless step of the app's recorder face (`--export`, `--still`) and reads the one JSON line it prints
- * last; an exit without one becomes `{ ok: false }` with the end of its output.
- */
+/** What one headless run of the recorder face printed, and how it exited. */
+export interface FaceRun {
+    code: number;
+    stdout: string;
+    stderr: string;
+}
+
+/** Runs the app's recorder face headless (`--export`, `--still`, `--snapshot`); `signal` ends the run. */
+export async function runFaceProcess(argv: string[], signal?: AbortSignal): Promise<FaceRun> {
+    const binary = join(genesisAppBundlePath(), "Contents/MacOS/GenesisTools");
+    log.debug({ binary, argv }, "recorder: headless face run");
+    const child = spawn(binary, argv, { stdio: ["ignore", "pipe", "pipe"], ...(signal ? { signal } : {}) });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+        log.debug({ error, argv }, "recorder: the face run ended with an error");
+    });
+    const code = await new Promise<number>((done) => child.on("close", (status) => done(status ?? 1)));
+    return { code, stdout, stderr };
+}
+
+/** The one JSON line a face run printed last; an exit without one becomes `{ ok: false }` with the end of its output. */
+export function faceAnswer<T extends { ok: boolean; error?: string }>(
+    run: FaceRun,
+    schema: z.ZodType<T>,
+    what: string
+): T | { ok: false; error: string } {
+    const line = run.stdout.trim().split("\n").at(-1) ?? "";
+    const parsed = schema.safeParse(parseOrUndefined(line));
+
+    if (parsed.success) {
+        log.debug({ code: run.code, answer: parsed.data }, `recorder: ${what} finished`);
+        return parsed.data;
+    }
+
+    log.warn({ code: run.code, stdout: run.stdout, stderr: run.stderr }, `recorder: ${what} printed no answer`);
+    return { ok: false, error: `the ${what} exited ${run.code}: ${(run.stderr || run.stdout).trim().slice(-400)}` };
+}
+
+/** Runs a headless step of the app's recorder face and reads the one JSON line it prints last. */
 async function runRecorderFace<T extends { ok: boolean; error?: string }>({
     argv,
     schema,
@@ -294,28 +353,7 @@ async function runRecorderFace<T extends { ok: boolean; error?: string }>({
     schema: z.ZodType<T>;
     what: string;
 }): Promise<T | { ok: false; error: string }> {
-    const binary = join(genesisAppBundlePath(), "Contents/MacOS/GenesisTools");
-    log.debug({ binary, argv }, `recorder: headless ${what}`);
-    const child = spawn(binary, argv, { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString();
-    });
-    const code = await new Promise<number>((done) => child.on("close", (status) => done(status ?? 1)));
-    const line = stdout.trim().split("\n").at(-1) ?? "";
-    const parsed = schema.safeParse(parseOrUndefined(line));
-
-    if (parsed.success) {
-        log.debug({ code, answer: parsed.data }, `recorder: ${what} finished`);
-        return parsed.data;
-    }
-
-    log.warn({ code, stdout, stderr }, `recorder: ${what} printed no answer`);
-    return { ok: false, error: `the ${what} exited ${code}: ${(stderr || stdout).trim().slice(-400)}` };
+    return faceAnswer(await runFaceProcess(argv), schema, what);
 }
 
 function parseOrUndefined(line: string): unknown {
@@ -327,36 +365,33 @@ function parseOrUndefined(line: string): unknown {
     }
 }
 
-/** One frame of the edit as it exports (zoom, clicks, frame style), from a headless run of the recorder face. */
-export function stillOfEdit({
-    path,
-    atSeconds,
-    out,
-    full = false,
-}: {
+export interface StillRequest {
     path: string;
     atSeconds: number;
-    out: string;
+    /** Absent: a temporary file the face names in its answer. */
+    out?: string;
     /** The export's size (a poster frame) instead of the 1080 pixel preview. */
     full?: boolean;
-}) {
-    return runRecorderFace({
-        argv: [
-            "--recorder",
-            "--still",
-            path,
-            "--at",
-            String(atSeconds),
-            "--out",
-            resolve(out),
-            ...(full ? ["--full"] : []),
-        ],
-        schema: stillAnswerSchema,
-        what: "still",
-    });
 }
 
-const sheetAnswerSchema = z.object({
+export function stillArgv({ path, atSeconds, out, full = false }: StillRequest): string[] {
+    return [
+        "--recorder",
+        "--still",
+        path,
+        "--at",
+        String(atSeconds),
+        ...(out ? ["--out", resolve(out)] : []),
+        ...(full ? ["--full"] : []),
+    ];
+}
+
+/** One frame of the edit as it exports (zoom, clicks, frame style), from a headless run of the recorder face. */
+export function stillOfEdit(request: StillRequest) {
+    return runRecorderFace({ argv: stillArgv(request), schema: stillAnswerSchema, what: "still" });
+}
+
+export const sheetAnswerSchema = z.object({
     ok: z.boolean(),
     path: z.string().optional(),
     width: z.number().optional(),
@@ -366,13 +401,17 @@ const sheetAnswerSchema = z.object({
 });
 export type SheetAnswer = z.infer<typeof sheetAnswerSchema>;
 
+export function sheetArgv({ path, times, out }: { path: string; times: number[]; out?: string }): string[] {
+    return ["--recorder", "--sheet", path, "--times", times.join(","), ...(out ? ["--out", resolve(out)] : [])];
+}
+
 /** Several frames of an edit (OUTPUT seconds) on one picture in rows of three, each labelled with its time. */
-export function sheetOfEdit({ path, times, out }: { path: string; times: number[]; out: string }) {
-    return runRecorderFace({
-        argv: ["--recorder", "--sheet", path, "--times", times.join(","), "--out", resolve(out)],
-        schema: sheetAnswerSchema,
-        what: "sheet",
-    });
+export function sheetOfEdit(request: { path: string; times: number[]; out: string }) {
+    return runRecorderFace({ argv: sheetArgv(request), schema: sheetAnswerSchema, what: "sheet" });
+}
+
+export function exportArgv(path: string, out?: string): string[] {
+    return ["--recorder", "--export", path, "--json", ...(out ? ["--out", resolve(out)] : [])];
 }
 
 /**
@@ -380,9 +419,64 @@ export function sheetOfEdit({ path, times, out }: { path: string; times: number[
  * recorder face, so an agent's export is the movie the window would export.
  */
 export function exportEdit(path: string, out?: string): Promise<ExportAnswer> {
-    return runRecorderFace({
-        argv: ["--recorder", "--export", path, "--json", ...(out ? ["--out", resolve(out)] : [])],
-        schema: exportAnswerSchema,
-        what: "export",
-    });
+    return runRecorderFace({ argv: exportArgv(path, out), schema: exportAnswerSchema, what: "export" });
+}
+
+/** A picture of a recorder window as it would look (`--snapshot`): an edit's editor, the library or the picker. */
+export interface SnapshotRequest {
+    out: string;
+    /** The edit whose editor window is drawn; absent with `library` or `picker`. */
+    path?: string;
+    library?: boolean;
+    picker?: boolean;
+    width?: number;
+    height?: number;
+    atSeconds?: number;
+    tab?: EditorTab;
+    selectZoom?: number;
+    selectClip?: number;
+    part?: { from: number; to: number };
+    range?: { from: number; to: number };
+    comment?: number;
+    /** The library's search text. */
+    filter?: string;
+    /** The picker with its Shortcuts section open. */
+    shortcuts?: boolean;
+}
+
+export function snapshotArgv(request: SnapshotRequest): string[] {
+    const pair = (flag: string, value: number | string | undefined) =>
+        value === undefined ? [] : [flag, String(value)];
+    const span = (flag: string, value: { from: number; to: number } | undefined) =>
+        value ? [flag, `${value.from}-${value.to}`] : [];
+    return [
+        "--recorder",
+        ...(request.path ? ["--edit", request.path] : []),
+        ...(request.library ? ["--library"] : []),
+        ...(request.picker ? ["--picker"] : []),
+        "--snapshot",
+        resolve(request.out),
+        ...pair("--width", request.width),
+        ...pair("--height", request.height),
+        ...pair("--at", request.atSeconds),
+        ...pair("--tab", request.tab),
+        ...pair("--select-zoom", request.selectZoom),
+        ...pair("--select-clip", request.selectClip),
+        ...span("--part", request.part),
+        ...span("--range", request.range),
+        ...pair("--comment", request.comment),
+        ...pair("--filter", request.filter),
+        ...(request.shortcuts ? ["--shortcuts"] : []),
+    ];
+}
+
+/** A snapshot run prints no answer line: it worked when it exited 0 and the picture is there. */
+export function snapshotAnswer(run: FaceRun, out: string): { ok: true; path: string } | { ok: false; error: string } {
+    const path = resolve(out);
+
+    if (run.code === 0 && existsSync(path)) {
+        return { ok: true, path };
+    }
+
+    return { ok: false, error: `the snapshot exited ${run.code}: ${(run.stderr || run.stdout).trim().slice(-400)}` };
 }

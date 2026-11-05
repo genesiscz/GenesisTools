@@ -20,6 +20,7 @@ import { renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { Command, Option } from "commander";
+import { registerServeCommand } from "./commands/serve";
 import { demoScriptSchema, runDemo, scriptSteps } from "./lib/demo";
 import {
     EXPORT_FORMATS,
@@ -1285,5 +1286,7 @@ program
             process.exitCode = 1;
         }
     });
+
+registerServeCommand(program);
 
 await runTool(program, { tool: "recorder" });

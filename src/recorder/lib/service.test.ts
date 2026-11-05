@@ -1,11 +1,26 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import type { RpcProgress } from "@genesiscz/utils/rpc/peer";
+import { type RpcNotification, RpcSocketClient, type RpcSocketClientOptions } from "@genesiscz/utils/rpc/socket-client";
 import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
+import fixture from "./__fixtures__/service-protocol.json";
 import { readUndoSteps, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
+import type { HeadlessDeps } from "./host";
+import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
+import {
+    HOST_METHODS,
+    hostApi,
+    readLiveService,
+    SERVICE_EVENTS,
+    SERVICE_PROTOCOL,
+    type ServiceEntry,
+    serviceApi,
+} from "./service-protocol";
+import { moviesApi } from "./toolset";
 
 const closing: Array<() => void> = [];
 
@@ -143,3 +158,328 @@ describe("an edit session", () => {
         expect(readProject(path).audio.volume).toBe(0.7);
     });
 });
+
+/** A service on a scratch folder whose face and `open` are stubs: no app starts. */
+async function serviceFixture(options: Partial<RecorderServiceOptions> = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "rs-"));
+    const opened: string[][] = [];
+    const faceRuns: string[][] = [];
+    const headless: Partial<HeadlessDeps> = {
+        runFace: async (argv) => {
+            faceRuns.push(argv);
+            return {
+                code: 0,
+                stdout: `{"ok":true,"path":"/tmp/headless-still.png","width":640,"height":360}\n`,
+                stderr: "",
+            };
+        },
+        open: (args) => opened.push(args),
+        editorState: () => null,
+        ...options.headless,
+    };
+    const start = await startRecorderService({ dir, idleMs: 0, hostWaitMs: 60, ...options, headless });
+
+    if (start.status !== "started") {
+        throw new Error("the fixture service did not start");
+    }
+
+    closing.push(() => start.service.stop("test"));
+    return { dir, service: start.service, opened, faceRuns };
+}
+
+async function connect(entry: ServiceEntry, onRequest?: RpcSocketClientOptions["onRequest"]) {
+    const client = await RpcSocketClient.connect({
+        socket: entry.socket,
+        logScope: "recorder-service-test",
+        label: "recorder service",
+        ...(onRequest ? { onRequest } : {}),
+    });
+    closing.push(() => client.close());
+    return client;
+}
+
+function hello(role: "host" | "client", answers?: string[]) {
+    return { role, protocol: SERVICE_PROTOCOL, pid: process.pid, ...(answers ? { answers } : {}) };
+}
+
+describe("the recorder service", () => {
+    test("hello names the methods, refuses another protocol (1011) and a second host (1012); a second start finds the first", async () => {
+        const { dir, service } = await serviceFixture();
+        expect(readLiveService(dir)?.socket).toBe(service.entry.socket);
+
+        const second = await startRecorderService({ dir, idleMs: 0 });
+        expect(second.status).toBe("running");
+
+        const client = await connect(service.entry);
+        const answer = await client.call<{ protocol: number; methods: string[]; version: string }>(
+            "hello",
+            hello("client")
+        );
+        expect(answer.protocol).toBe(SERVICE_PROTOCOL);
+        expect(answer.methods).toEqual(
+            expect.arrayContaining([
+                "edit.apply",
+                "gesture.preview",
+                "subscribe",
+                "render.still",
+                "camera.start",
+                "movie.split",
+                "movies.search",
+            ])
+        );
+        await expect(client.call<unknown>("hello", { ...hello("client"), protocol: 2 })).rejects.toMatchObject({
+            code: RPC_ERRORS.protocolMismatch,
+        });
+
+        const host = await connect(service.entry);
+        await host.call<unknown>("hello", hello("host"));
+        const rival = await connect(service.entry);
+        await expect(rival.call<unknown>("hello", hello("host"))).rejects.toMatchObject({ code: RPC_ERRORS.hostTaken });
+
+        // A host whose connection went may be replaced.
+        host.close();
+        await Bun.sleep(20);
+        await rival.call<unknown>("hello", hello("host"));
+    });
+
+    test("a client's edit is saved at once and every subscriber hears project.changed; the window's waits for its save", async () => {
+        const { service } = await serviceFixture({ saveDelayMs: 10_000 });
+        const path = editFixture("rs-edit-");
+        const watcher = await connect(service.entry);
+        const heard: RpcNotification[] = [];
+        watcher.onNotification((notification) => heard.push(notification));
+        await watcher.call<unknown>("subscribe", { events: ["project.changed"] });
+
+        const window = await connect(service.entry);
+        await window.call<unknown>("hello", hello("host"));
+        await window.call<unknown>("session.open", { path });
+        await window.call<unknown>("edit.apply", { path, ops: [{ op: "volume", volume: 0.5 }], baseRevision: 1 });
+        expect(readProject(path).audio.volume).toBe(1);
+
+        const agent = await connect(service.entry);
+        await agent.call<unknown>("hello", hello("client"));
+        const applied = await agent.call<{ revision: number }>("edit.apply", {
+            path,
+            ops: [{ op: "text", from: 1, to: 2, text: "agent" }],
+        });
+        const saved = readProject(path);
+        expect(saved.revision).toBe(applied.revision);
+        expect(saved.audio.volume).toBe(0.5);
+        expect(saved.texts?.map((text) => text.text)).toEqual(["agent"]);
+
+        await expect(
+            window.call<unknown>("edit.apply", { path, ops: [{ op: "volume", volume: 0.2 }], baseRevision: 1 })
+        ).rejects.toMatchObject({ code: RPC_ERRORS.staleRevision });
+        await agent.call<unknown>("edit.undo", { path });
+        await agent.call<unknown>("edit.redo", { path });
+        await Bun.sleep(10);
+        expect(
+            heard.map((notification) => [notification.method, Reflect.get(Object(notification.params), "by")])
+        ).toEqual([
+            ["project.changed", "editor"],
+            ["project.changed", "agent"],
+            ["project.changed", "agent"],
+            ["project.changed", "agent"],
+        ]);
+
+        // The window's connection ends: its session saves and closes.
+        window.close();
+        await Bun.sleep(20);
+        expect(service.sessions.size).toBe(0);
+    });
+
+    test("a host method reaches the connected host and its answer, progress and cancel go both ways", async () => {
+        const { service, faceRuns } = await serviceFixture({ saveDelayMs: 10_000 });
+        const path = editFixture("rs-host-");
+        const seen: Array<{ method: string; revision: number }> = [];
+        let exportAborted = false;
+        const host = await connect(service.entry, async ({ method, params }, context) => {
+            seen.push({ method, revision: readProject(path).revision });
+
+            if (method === "render.export") {
+                context.progress({ fraction: 0.5, label: "export" });
+                await new Promise((resolve) => context.signal.addEventListener("abort", resolve, { once: true }));
+                exportAborted = true;
+                return { ok: true, path: "/tmp/never.mp4", bytes: 1, seconds: 1 };
+            }
+
+            return {
+                ok: true,
+                path: "/tmp/fixture-still.png",
+                width: 1920,
+                height: 1080,
+                atSeconds: Reflect.get(Object(params), "atSeconds"),
+            };
+        });
+        await host.call<unknown>("hello", hello("host", ["render.still", "render.export"]));
+
+        // The window's unsaved change reaches the file before the host renders it.
+        const window = await connect(service.entry);
+        await window.call<unknown>("session.open", { path });
+        await window.call<unknown>("hello", hello("client"));
+        const owner = service.sessions.get(path);
+        await owner?.apply([{ op: "volume", volume: 0.3 }], { by: "editor" });
+
+        const repl = await connect(service.entry);
+        expect(await repl.call<unknown>("render.still", { path, atSeconds: 2 })).toEqual({
+            ok: true,
+            path: "/tmp/fixture-still.png",
+            width: 1920,
+            height: 1080,
+            atSeconds: 2,
+        });
+        expect(seen).toEqual([{ method: "render.still", revision: 2 }]);
+        expect(faceRuns).toEqual([]);
+
+        const updates: RpcProgress[] = [];
+        const controller = new AbortController();
+        const exporting = repl.call(
+            "render.export",
+            { path },
+            {
+                signal: controller.signal,
+                onProgress: (update) => {
+                    updates.push(update);
+                    controller.abort();
+                },
+            }
+        );
+        await expect(exporting).rejects.toMatchObject({ code: RPC_ERRORS.cancelled });
+        await Bun.sleep(20);
+        expect(updates).toEqual([{ fraction: 0.5, label: "export" }]);
+        expect(exportAborted).toBe(true);
+    });
+
+    test("without a host, renders run the headless face, windows open through the app's arguments, and the camera says why not", async () => {
+        const { service, faceRuns, opened } = await serviceFixture({
+            headless: {
+                editorState: () => ({
+                    version: 1,
+                    updatedAt: "",
+                    open: [{ path: "/rec/talk", title: "Talk", window: 7 }],
+                }),
+            },
+        });
+        const client = await connect(service.entry);
+
+        expect(
+            await client.call<unknown>("render.still", {
+                path: "/rec/talk/screen.edit.json",
+                atSeconds: 1,
+                out: "/tmp/s.png",
+            })
+        ).toEqual({
+            ok: true,
+            path: "/tmp/headless-still.png",
+            width: 640,
+            height: 360,
+        });
+        expect(faceRuns[0]).toEqual([
+            "--recorder",
+            "--still",
+            "/rec/talk/screen.edit.json",
+            "--at",
+            "1",
+            "--out",
+            "/tmp/s.png",
+        ]);
+        expect(await client.call<unknown>("window.open", { path: "/rec/talk/screen.edit.json", focus: false })).toEqual(
+            {
+                opened: true,
+                window: 7,
+            }
+        );
+        expect(opened[0]).toEqual(
+            expect.arrayContaining(["--recorder", "--edit", "/rec/talk/screen.edit.json", "--no-focus"])
+        );
+        expect(await client.call<unknown>("window.list", {})).toEqual({
+            open: [{ path: "/rec/talk", title: "Talk", window: 7 }],
+        });
+        await expect(client.call<unknown>("camera.start", { folder: "/rec/talk" })).rejects.toMatchObject({
+            code: RPC_ERRORS.hostUnavailable,
+        });
+        expect(opened.at(-1)).toEqual(expect.arrayContaining(["-g", "--args", "--recorder"]));
+        await expect(client.call<unknown>("render.snapshot", { out: "/tmp/x.png" })).rejects.toMatchObject({
+            code: RPC_ERRORS.invalidParams,
+        });
+    });
+
+    test("it exits when idle, and when a loaded module of its source changed since its start", async () => {
+        const idle = await serviceFixture({ idleMs: 30, checkEveryMs: 15 });
+        expect(await Promise.race([idle.service.stopped, Bun.sleep(1_000).then(() => "still running")])).toBe("idle");
+        expect(readLiveService(idle.dir)).toBeUndefined();
+
+        // The module cache names real paths, and the temporary folder is a symlink on macOS.
+        const source = realpathSync(mkdtempSync(join(tmpdir(), "rs-src-")));
+        const module = join(source, "loaded.ts");
+        writeFileSync(module, "export const loaded = true;\n");
+        await import(module);
+        const changing = await serviceFixture({ sourceRoot: source, checkEveryMs: 15 });
+        const later = new Date(Date.now() + 60_000);
+        utimesSync(module, later, later);
+        expect(await Promise.race([changing.service.stopped, Bun.sleep(1_000).then(() => "still running")])).toBe(
+            "code-changed"
+        );
+    });
+});
+
+describe("the protocol fixture the Swift host tests read", () => {
+    const schemasOf = (method: string) =>
+        [...serviceApi.methods, ...hostApi.methods].find((each) => each.name === method) ??
+        moviesApi.handles
+            .find((handle) => handle.name === "Movie")
+            ?.methods.map((each) => ({ ...each, name: `movie.${each.name}` }))
+            .find((each) => each.name === method);
+
+    test("every example fits its method's schemas, and every method, event and error code has one", () => {
+        for (const example of fixture.examples) {
+            const schemas = schemasOf(example.method);
+            const request = "request" in example ? example.request : undefined;
+            const reply = "reply" in example ? example.reply : undefined;
+
+            if (schemas && request && "params" in request) {
+                const { recording: _recording, ...params } = Object(request.params);
+                const input = example.method.startsWith("movie.") ? params : request.params;
+                expect({ method: example.method, ok: schemas.params.safeParse(input).success }).toEqual({
+                    method: example.method,
+                    ok: true,
+                });
+            }
+
+            if (schemas && reply && "result" in reply) {
+                expect({ method: example.method, ok: schemas.result.safeParse(reply.result).success }).toEqual({
+                    method: example.method,
+                    ok: true,
+                });
+            }
+        }
+
+        const named = new Set(fixture.examples.map((example) => example.method));
+        const wanted = [
+            ...serviceApi.methods.map((method) => method.name),
+            ...HOST_METHODS,
+            ...SERVICE_EVENTS,
+            "subscribe",
+            "$/progress",
+            "$/cancel",
+        ];
+        expect(wanted.filter((method) => !named.has(method))).toEqual([]);
+        const codes = fixture.examples.flatMap((example) => {
+            const code = "reply" in example ? example.reply?.error?.code : undefined;
+            return code === undefined ? [] : [code];
+        });
+        expect([...new Set(codes)].sort()).toEqual(
+            [
+                RPC_ERRORS.protocolMismatch,
+                RPC_ERRORS.hostTaken,
+                RPC_ERRORS.cancelled,
+                RPC_ERRORS.cameraDenied,
+                RPC_ERRORS.cameraBusy,
+                RPC_ERRORS.staleRevision,
+                RPC_ERRORS.nothingToRedo,
+            ].sort()
+        );
+    });
+});
+
+export type { RecorderService };

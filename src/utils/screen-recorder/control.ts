@@ -40,12 +40,20 @@ export const RPC_ERRORS = {
     lastDisplay: 1005,
     unsupported: 1006,
     unknownDevice: 1007,
+    /** The recorder service's `hello`: another protocol, or a second host while the first is connected. */
+    protocolMismatch: 1011,
+    hostTaken: 1012,
     /** A `$/cancel` stopped the request; the transport answers it (`@genesiscz/utils/rpc`). */
     cancelled: RPC_CANCELLED,
+    /** The host's `camera.start`: macOS denied the camera, or another app holds it. */
+    cameraDenied: 1014,
+    cameraBusy: 1015,
     /** The recorder service's edit sessions: another writer changed the edit, or a call named an older revision. */
     staleRevision: 1016,
     nothingToUndo: 1017,
     nothingToRedo: 1018,
+    /** A host method no connected host answered, and no headless way does it (the camera). */
+    hostUnavailable: 1019,
 } as const;
 
 export { RpcError };
