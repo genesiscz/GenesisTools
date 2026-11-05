@@ -25,12 +25,10 @@ export function describeTarget(target: NotifyTarget): string {
 }
 
 async function sendAs<K extends ChannelName>(channel: K, target: NotifyTarget, event: NotificationEvent) {
-    const config = configOf(channel, target);
-    if (channel === "phone") {
-        const global = (await notificationsConfig.load()).channels.phone;
-        Object.assign(config, { apns: global.apns, when: global.when });
-    }
-    return (await CHANNELS[channel].post(event, config)).ok;
+    // Every channel starts from the resolved settings (the phone's APNs keys and its when rules, a bot token), and
+    // the target's own fields win.
+    const resolved = await notificationsConfig.getChannels(NOTIFY_APP);
+    return (await CHANNELS[channel].post(event, { ...resolved[channel], ...target.config, enabled: true })).ok;
 }
 
 function sendToChannel(target: NotifyTarget, event: NotificationEvent): Promise<boolean> {
