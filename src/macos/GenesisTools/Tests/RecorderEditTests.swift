@@ -343,16 +343,13 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(TimelineMap.sourceTime(atOutput: 99_000_000, in: edit), 9_000_000, "past the end is the last frame")
     }
 
-    func testSplitMakesTwoClipsAndRefusesAtAnEdge() throws {
-        let edit = project([.init(id: "a", fromUs: 0, toUs: 4_000_000, speed: 2)])
-        let split = try XCTUnwrap(TimelineMap.split(edit, atOutput: 1_000_000))
-
-        XCTAssertEqual(split.clips.map(\.fromUs), [0, 2_000_000])
-        XCTAssertEqual(split.clips.map(\.toUs), [2_000_000, 4_000_000])
-        XCTAssertEqual(split.clips.map(\.speed), [2, 2])
-        XCTAssertNotEqual(split.clips[0].id, split.clips[1].id)
-        XCTAssertEqual(split.outputDurationUs, edit.outputDurationUs, "a split changes nothing that plays")
-        XCTAssertNil(TimelineMap.split(edit, atOutput: 0))
+    /// The scissors button and S offer a split only inside a clip; the split itself is the service's `split` op.
+    func testASplitIsOfferedOnlyInsideAClip() {
+        let edit = project([.init(id: "a", fromUs: 0, toUs: 4_000_000, speed: 2), .init(id: "b", fromUs: 6_000_000, toUs: 8_000_000)])
+        XCTAssertTrue(TimelineMap.canSplit(edit, atOutput: 1_000_000))
+        XCTAssertFalse(TimelineMap.canSplit(edit, atOutput: 0), "the start of the movie")
+        XCTAssertFalse(TimelineMap.canSplit(edit, atOutput: 2_000_000), "the edge between two clips")
+        XCTAssertFalse(TimelineMap.canSplit(edit, atOutput: 99_000_000), "past the end")
     }
 
     func testAFollowingPartCentresOnTheCursorInsideThePicture() {
@@ -429,46 +426,6 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(TimelineMap.snap(0, to: [], toleranceUs: 70_000))
     }
 
-    func testCuttingAPartSplitsTheClipItFallsInAndKeepsSpeeds() throws {
-        let edit = project([.init(id: "a", fromUs: 0, toUs: 4_000_000), .init(id: "b", fromUs: 6_000_000, toUs: 10_000_000, speed: 2)])
-        // 1 s to 5 s of output: the end of a (1-4 s) and the first second of b (source 6-8 s at 2x).
-        let cut = try XCTUnwrap(TimelineMap.cut(edit, fromOut: 1_000_000, toOut: 5_000_000))
-        XCTAssertEqual(cut.clips.map(\.fromUs), [0, 8_000_000])
-        XCTAssertEqual(cut.clips.map(\.toUs), [1_000_000, 10_000_000])
-        XCTAssertEqual(cut.clips.map(\.speed), [1, 2])
-        XCTAssertEqual(cut.outputDurationUs, edit.outputDurationUs - 4_000_000)
-        let inside = try XCTUnwrap(TimelineMap.cut(edit, fromOut: 1_000_000, toOut: 2_000_000))
-        XCTAssertEqual(inside.clips.count, 3, "a part inside a clip makes it two")
-        XCTAssertEqual(Set(inside.clips.map(\.id)).count, 3, "the new piece has its own id")
-        XCTAssertNil(TimelineMap.cut(edit, fromOut: 0, toOut: edit.outputDurationUs), "something has to stay")
-    }
-
-    func testTrimToPlayheadCutsOneSideAndKeepsTheFrame() throws {
-        let edit = project([.init(id: "a", fromUs: 0, toUs: 2_000_000), .init(id: "b", fromUs: 4_000_000, toUs: 8_000_000, speed: 2)])
-        let (start, startPlayhead) = try XCTUnwrap(TimelineMap.trimToPlayhead(edit, atOutput: 3_000_000, side: .start))
-
-        XCTAssertEqual(start.clips[1].fromUs, 6_000_000)
-        XCTAssertEqual(startPlayhead, 2_000_000, "the frame under the playhead now plays where the clip starts")
-        XCTAssertEqual(TimelineMap.sourceTime(atOutput: startPlayhead, in: start), 6_000_000)
-        let (end, endPlayhead) = try XCTUnwrap(TimelineMap.trimToPlayhead(edit, atOutput: 1_000_000, side: .end))
-        XCTAssertEqual(end.clips[0].toUs, 1_000_000)
-        XCTAssertEqual(endPlayhead, 1_000_000)
-        XCTAssertEqual(end.clips[1], edit.clips[1], "the other clip stays")
-        XCTAssertNil(TimelineMap.trimToPlayhead(edit, atOutput: 2_000_000, side: .start), "a clip's edge trims nothing")
-    }
-
-    func testDeleteKeepsTheLastClipAndTrimStaysInsideTheSource() throws {
-        let edit = project([.init(id: "a", fromUs: 0, toUs: 3_000_000), .init(id: "b", fromUs: 3_000_000, toUs: 10_000_000)])
-        let deleted = try XCTUnwrap(TimelineMap.delete(edit, clip: "a"))
-
-        XCTAssertEqual(deleted.clips.map(\.id), ["b"])
-        XCTAssertNil(TimelineMap.delete(deleted, clip: "b"))
-        let trimmed = try XCTUnwrap(TimelineMap.trim(edit, clip: "b", toUs: 99_000_000))
-        XCTAssertEqual(trimmed.clips[1].toUs, 10_000_000)
-        let squeezed = try XCTUnwrap(TimelineMap.trim(edit, clip: "a", fromUs: 3_500_000))
-        XCTAssertEqual(squeezed.clips[0].fromUs, 3_000_000 - TimelineMap.minimumClipUs)
-    }
-
     func testEffectLanesPlaceItemsKeepThemThroughLaneChangesAndReadTheCLIShape() throws {
         var edit = project([EditProject.Clip(id: "a", fromUs: 0, toUs: 4_000_000), EditProject.Clip(id: "b", fromUs: 4_000_000, toUs: 10_000_000, speed: 2)],
                            zooms: [EditProject.Zoom(id: "z1", startUs: 0, endUs: 1_000_000)])
@@ -477,20 +434,13 @@ final class RecorderEditTests: XCTestCase {
         // Never saved: the zoom lane, then an automatic lane per family; the 2× clip has no lane that holds speed.
         XCTAssertEqual(EffectLanes.resolve(edit).map { "\($0.id):\($0.items.map(\.id))" }, ["zooms:[\"z1\"]", "auto-hide:[\"r1\"]", "auto-text:[\"t1\"]"])
 
-        let (added, lane) = EffectLanes.addLane(edit, kinds: [.zoom, .speed])
-        XCTAssertEqual(lane, "lane4")
-        XCTAssertEqual(EffectLanes.resolve(added).last?.items.map(\.id), ["b"], "a speed lane shows the clip played at 2×")
-        // Moving the new lane to the top keeps the zoom on the lane it was pinned to.
-        let moved = EffectLanes.moveLane(added, id: lane, by: -3)
-        XCTAssertEqual(EffectLanes.resolve(moved).map(\.id), ["lane4", "zooms", "auto-hide", "auto-text"])
-        XCTAssertEqual(EffectLanes.resolve(moved)[1].items.map(\.id), ["z1"])
-        let onNew = try XCTUnwrap(EffectLanes.moveToLane(moved, item: "z1", lane: lane))
-        XCTAssertEqual(EffectLanes.resolve(onNew)[0].items.map(\.id), ["z1", "b"])
-        XCTAssertNil(EffectLanes.moveToLane(onNew, item: "r1", lane: lane), "a lane takes only the kinds it holds")
-        // Removing it hands the zoom back to the zoom lane.
-        let removed = EffectLanes.removeLane(onNew, id: lane)
-        XCTAssertNil(removed.zooms[0].lane)
-        XCTAssertEqual(EffectLanes.resolve(removed)[0].items.map(\.id), ["z1"])
+        // A lane that holds speed (the lane ops are the service's, lanes.ts) shows the clip played at 2×, and an item
+        // pinned to a lane shows there.
+        edit.lanes = [EffectLane(id: "lane4", kinds: [.zoom, .speed])] + EffectLanes.resolve(edit).map(\.lane)
+        XCTAssertEqual(EffectLanes.resolve(edit).first?.items.map(\.id), ["z1", "b"], "the first lane that holds zooms takes z1")
+        edit.zooms[0].lane = "zooms"
+        XCTAssertEqual(EffectLanes.resolve(edit).map { "\($0.id):\($0.items.map(\.id))" },
+                       ["lane4:[\"b\"]", "zooms:[\"z1\"]", "auto-hide:[\"r1\"]", "auto-text:[\"t1\"]"])
 
         // The CLI writes kinds and lane ids as lanes.ts does; the window reads them and writes the same keys back.
         let json = #"{"version":1,"source":{"video":"/tmp/x.mp4","durationUs":10000000,"width":1920,"height":1080},"clips":[{"id":"a","fromUs":0,"toUs":10000000,"speed":1}],"audio":{"include":true,"volume":1,"mutedTracks":[]},"export":{"codec":"h264","maxHeight":0,"output":""},"zooms":[{"id":"z1","startUs":0,"endUs":1000000,"scale":1.5,"mode":"manual","focusX":0.5,"focusY":0.5,"easeInMs":450,"easeOutMs":450,"lane":"top"}],"lanes":[{"id":"top","kinds":["zoom","text"],"name":"Intro"}],"revision":3}"#
@@ -499,14 +449,6 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(EffectLanes.resolve(decoded).map(\.lane.title), ["Intro"])
         let written = try XCTUnwrap(JSONSerialization.jsonObject(with: decoded.encoded()) as? [String: Any])
         XCTAssertEqual((written["zooms"] as? [[String: Any]])?.first?["lane"] as? String, "top")
-    }
-
-    func testASpeedRangeSplitsTheClipAtBothEndsAndSpeedsOnlyTheMiddle() throws {
-        let edit = project([EditProject.Clip(id: "a", fromUs: 0, toUs: 10_000_000)])
-        let fast = try XCTUnwrap(TimelineMap.speed(edit, fromOut: 2_000_000, toOut: 4_000_000, speed: 2))
-        XCTAssertEqual(fast.clips.map { [$0.fromUs, $0.toUs] }, [[0, 2_000_000], [2_000_000, 4_000_000], [4_000_000, 10_000_000]])
-        XCTAssertEqual(fast.clips.map(\.speed), [1, 2, 1])
-        XCTAssertEqual(fast.outputDurationUs, 9_000_000)
     }
 
     func testARecordingOffersItsQuickActionsAndAMeetingNeverOffersTheTrash() {
@@ -531,7 +473,8 @@ final class RecorderEditTests: XCTestCase {
         let url = ReviewComments.url(forVideo: folder.appendingPathComponent("screen.mp4").path)
         XCTAssertEqual(url.lastPathComponent, "comments.jsonl")
         XCTAssertEqual(ReviewComments.url(forVideo: "/movies/talk.mov").path, "/movies/talk.comments.jsonl")
-        // Lines as src/utils/recording-editor/comments.ts writes them, one that does not parse, then the window's own.
+        // Lines as src/utils/recording-editor/comments.ts writes them (the window's comments go through it too), one
+        // that does not parse, then a removal.
         let cli = """
         {"id":"m1","atUs":5000000,"text":"Too fast","author":"alice","at":"2026-11-04T10:00:00.000Z"}
         {"id":"m2","atUs":1000000,"toUs":2000000,"text":"Cut this","at":"2026-11-04T10:00:01.000Z"}
@@ -542,12 +485,9 @@ final class RecorderEditTests: XCTestCase {
         try Data(cli.utf8).write(to: url)
         XCTAssertEqual(ReviewComments.read(url).map(\.id), ["m2", "m1"])
         XCTAssertEqual(ReviewComments.read(url).last?.isResolved, true)
-        var removed = try XCTUnwrap(ReviewComments.read(url).first)
-        removed.deleted = true
-        try ReviewComments.append(removed, to: url)
-        XCTAssertEqual(ReviewComments.read(url).map(\.id), ["m1"])
-        let last = try XCTUnwrap(String(contentsOf: url, encoding: .utf8).split(separator: "\n").last)
-        XCTAssertTrue(last.contains("\"deleted\":true") && last.contains("\"toUs\":2000000"), String(last))
+        let removal = #"{"id":"m2","atUs":1000000,"toUs":2000000,"text":"Cut this","deleted":true,"at":"2026-11-04T10:00:03.000Z"}"#
+        try Data((cli + removal + "\n").utf8).write(to: url)
+        XCTAssertEqual(ReviewComments.read(url).map(\.id), ["m1"], "a removal line hides the comment")
     }
 
     /// The rules of the Audio tab's noise reduction are the `denoise` op's (recording-editor.test.ts); the window keeps
@@ -559,16 +499,6 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(decoded.denoise?.trackReductionDb, ["1": 20])
         let written = try XCTUnwrap(String(data: JSONEncoder().encode(decoded), encoding: .utf8))
         XCTAssertTrue(written.contains(#""trackReductionDb":{"1":20}"#), written)
-    }
-
-    func testZoomsNeverOverlap() throws {
-        let edit = project([.init(id: "a", fromUs: 0, toUs: 10_000_000)])
-        let (first, firstID) = try XCTUnwrap(TimelineMap.addZoom(edit, startUs: 1_000_000, endUs: 3_000_000, scale: 2))
-        let (second, _) = try XCTUnwrap(TimelineMap.addZoom(first, startUs: 2_000_000, endUs: 4_000_000, scale: 2))
-
-        XCTAssertEqual(second.zooms.map(\.startUs), [1_000_000, 3_000_000], "the overlapping zoom moves after the first")
-        let moved = try XCTUnwrap(TimelineMap.moveZoom(second, zoom: firstID, startUs: 2_500_000, endUs: 4_500_000))
-        XCTAssertLessThanOrEqual(moved.zooms[0].endUs, moved.zooms[1].startUs)
     }
 
     func testTheZoomEasesInHoldsAndKeepsItsViewInsideTheFrame() {

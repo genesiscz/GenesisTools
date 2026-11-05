@@ -179,6 +179,27 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(service.sentOps.last as NSDictionary?, ["op": "retime", "id": "z1", "by": 0.2] as NSDictionary)
     }
 
+    /// [ and ] with no item selected cut the clip under the playhead from its start (or to its end) as a `cut` op in
+    /// source seconds, and the playhead lands on the frame it showed; at a clip's edge nothing is sent.
+    func testTrimToThePlayheadOfAClipSendsACutOfItsSourceAndKeepsTheFrame() {
+        let clips = [EditProject.Clip(id: "a", fromUs: 0, toUs: 2_000_000), EditProject.Clip(id: "b", fromUs: 4_000_000, toUs: 8_000_000, speed: 2)]
+        let model = model(clips: clips, rules: { project, _ in
+            // The service's answer: b starts where the playhead was, 6 s of the source.
+            var next = project
+            next.clips[1].fromUs = 6_000_000
+            return next
+        })
+        model.seek(3_000_000)
+        model.trimToPlayhead(.start)
+        XCTAssertEqual(service.sentOps.last as NSDictionary?, ["op": "cut", "from": 4, "to": 6] as NSDictionary)
+        XCTAssertEqual(model.clock.outUs, 2_000_000, "the frame under the playhead now plays where the clip starts")
+        XCTAssertEqual(TimelineMap.sourceTime(atOutput: model.clock.outUs, in: model.project), 6_000_000)
+
+        model.seek(2_000_000)
+        model.trimToPlayhead(.start)
+        XCTAssertEqual(service.count("edit.apply"), 1, "a clip's edge trims nothing")
+    }
+
     func testAClickOnTheSecondClipSelectsThatClip() {
         let model = model(clips: [EditProject.Clip(id: "a", fromUs: 0, toUs: 4_000_000), EditProject.Clip(id: "b", fromUs: 4_000_000, toUs: 10_000_000)])
         let width: CGFloat = 1000

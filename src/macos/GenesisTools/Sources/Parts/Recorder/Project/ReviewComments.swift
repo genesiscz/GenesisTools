@@ -42,28 +42,6 @@ enum ReviewComments {
         }
         return latest.values.filter { $0.deleted != true }.sorted { ($0.atUs, $0.at) < ($1.atUs, $1.at) }
     }
-
-    /// Appends one line; the file is made when it is missing.
-    static func append(_ comment: ReviewComment, to url: URL) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        var data = try encoder.encode(comment)
-        data.append(0x0A)
-        if !FileManager.default.fileExists(atPath: url.path) {
-            try data.write(to: url)
-            return
-        }
-        let handle = try FileHandle(forWritingTo: url)
-        defer { try? handle.close() }
-        try handle.seekToEnd()
-        try handle.write(contentsOf: data)
-    }
-
-    static func now() -> String {
-        ISO8601DateFormatter.withFraction.string(from: Date())
-    }
-
-    static func newID() -> String { "m" + String(UUID().uuidString.prefix(8)).lowercased() }
 }
 
 /// The comments of the open edit, read when it opens and again whenever the file changes (an agent's comment shows
@@ -79,26 +57,6 @@ final class ReviewCommentsStore {
     init(video: String) {
         url = ReviewComments.url(forVideo: video)
         comments = ReviewComments.read(url)
-    }
-
-    func add(atUs: Int64, toUs: Int64?, text: String) throws {
-        let comment = ReviewComment(id: ReviewComments.newID(), atUs: atUs, toUs: toUs.flatMap { $0 > atUs ? $0 : nil },
-                                    text: String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2000)),
-                                    author: NSFullUserName().isEmpty ? nil : NSFullUserName(), at: ReviewComments.now())
-        try ReviewComments.append(comment, to: url)
-        reload()
-    }
-
-    func update(_ id: String, _ change: (inout ReviewComment) -> Void) throws {
-        guard var comment = comments.first(where: { $0.id == id }) else { return }
-        change(&comment)
-        comment.at = ReviewComments.now()
-        try ReviewComments.append(comment, to: url)
-        reload()
-    }
-
-    func remove(_ id: String) throws {
-        try update(id) { $0.deleted = true }
     }
 
     func reload() {

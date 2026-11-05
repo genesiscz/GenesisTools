@@ -89,12 +89,10 @@ final class CameraBubbleTests: XCTestCase {
         XCTAssertEqual(item?.kind, .cameraHide)
         // No saved lane holds camera parts: an automatic lane of their own follows the zoom lane.
         XCTAssertEqual(EffectLanes.resolve(project).map(\.lane.id), ["zooms", "auto-cameraHide"])
-        let (withLane, laneID) = EffectLanes.addLane(project, kinds: [.cameraHide], name: "Camera")
-        let moved = EffectLanes.moveToLane(withLane, item: "k1", lane: laneID)
-        XCTAssertEqual(moved?.camera?.hidden.first?.lane, laneID)
-        XCTAssertNil(EffectLanes.moveToLane(withLane, item: "k1", lane: "zooms"), "the zoom lane does not hold camera parts")
-        let removed = EffectLanes.removeLane(moved ?? withLane, id: laneID)
-        XCTAssertNotEqual(removed.camera?.hidden.first?.lane, laneID, "a part whose lane is gone goes back to a lane that holds it")
+        // A part on a lane the CLI's lane ops made (lanes.ts) shows there; the lane ops are the service's.
+        project.lanes = [EffectLane(id: "zooms", kinds: [.zoom]), EffectLane(id: "lane2", kinds: [.cameraHide], name: "Camera")]
+        project.camera?.hidden[0].lane = "lane2"
+        XCTAssertEqual(EffectLanes.resolve(project).map { "\($0.lane.title):\($0.items.map(\.id))" }, ["Zooms:[]", "Camera:[\"k1\"]"])
     }
 
     func testCameraTimeLeavesThePausedTimeOut() {
@@ -102,34 +100,25 @@ final class CameraBubbleTests: XCTestCase {
         XCTAssertEqual(CameraMovieWriter.presentationSeconds(uptime: 99, first: 100, pausedTotal: 0), 0)
     }
 
-    /// The camera op's cases in camera-ops.json, as the TypeScript test applies them: the editor writes the same edit.json.
-    func testTheCameraChangeAppliesTheSharedCasesAsTheTypeScriptOpDoes() throws {
+    /// The bubbles the TypeScript camera op writes for camera-ops.json's cases (recording-editor.test.ts applies them)
+    /// read here and write back unchanged, so a window that draws them keeps every field.
+    func testTheBubblesOfTheSharedCameraCasesReadAndWriteBackUnchanged() throws {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("utils/recording-editor/__fixtures__/camera-ops.json")
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         let cases = try XCTUnwrap(root["cases"] as? [[String: Any]])
         XCTAssertEqual(cases.count, 6)
+        var bubbles = 0
         for item in cases {
             let name = try XCTUnwrap(item["name"] as? String)
-            var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 1920, height: 1080, cursor: nil, recording: nil)
-            if let before = item["before"] as? [String: Any] {
-                project.camera = try JSONDecoder().decode(EditProject.Camera.self, from: JSONSerialization.data(withJSONObject: before))
-            }
-            let op = try JSONSerialization.data(withJSONObject: try XCTUnwrap(item["op"]))
-            let next = try project.applying(JSONDecoder().decode(EditProject.CameraChange.self, from: op))
-            guard let after = item["after"] as? NSDictionary else {
-                XCTAssertNil(next.camera, name)
-                continue
-            }
-            let written = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(next.camera)) as? NSDictionary)
+            guard let after = item["after"] as? NSDictionary else { continue }
+            let camera = try JSONDecoder().decode(EditProject.Camera.self, from: JSONSerialization.data(withJSONObject: after))
+            let written = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(camera)) as? NSDictionary)
             XCTAssertEqual(written, after, name)
+            bubbles += 1
         }
-    }
-
-    func testACameraChangeOnAnEditWithoutACameraNeedsTheFile() {
-        let project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 1920, height: 1080, cursor: nil, recording: nil)
-        XCTAssertThrowsError(try project.applying(.init(show: false)))
+        XCTAssertGreaterThan(bubbles, 3, "most cases end with a bubble")
     }
 
     func testADragPutsTheCentreInsideTheCanvasAndAResizeKeepsTheOpRange() {

@@ -1,7 +1,8 @@
 import Foundation
 
-/// The edits that change which parts of the source play: pure functions over a project, so the window, the
-/// renderer and the tests agree on one mapping from output time (what plays) to source time (the movie).
+/// The mapping from output time (what plays) to source time (the movie), so the window, the renderer and the tests
+/// read the clips the same way. The edits that change the clips (split, cut, speed, trim, delete) are the recorder
+/// service's ops (src/utils/recording-editor/project.ts and item-ops.ts); the window only sends them.
 enum TimelineMap {
     struct Placed: Equatable {
         var clip: EditProject.Clip
@@ -78,69 +79,6 @@ enum TimelineMap {
         return sourceUs - placed.clip.fromUs >= minimumClipUs && placed.clip.toUs - sourceUs >= minimumClipUs
     }
 
-    /// Splits the clip under `outUs` in two; nil when the point is at a clip's edge (nothing to split).
-    static func split(_ project: EditProject, atOutput outUs: Int64) -> EditProject? {
-        guard let placed = clip(atOutput: outUs, in: project) else { return nil }
-        let sourceUs = sourceTime(atOutput: outUs, in: project)
-        guard sourceUs - placed.clip.fromUs >= minimumClipUs, placed.clip.toUs - sourceUs >= minimumClipUs else { return nil }
-        var next = project
-        var left = placed.clip
-        var right = placed.clip
-        left.toUs = sourceUs
-        right.fromUs = sourceUs
-        right.id = EditProject.newID("c")
-        next.clips.replaceSubrange(placed.index...placed.index, with: [left, right])
-        return next
-    }
-
-    /// Cuts what plays from `fromOut` to `toOut` (output microseconds) out of the edit: each clip keeps its pieces
-    /// before and after the range, at its speed, and a clip the range falls inside becomes two. Nil when nothing plays
-    /// there, or when nothing would be left.
-    static func cut(_ project: EditProject, fromOut: Int64, toOut: Int64) -> EditProject? {
-        guard toOut > fromOut else { return nil }
-        var clips: [EditProject.Clip] = []
-        var removed = false
-        for placed in placed(project) {
-            let clip = placed.clip
-            guard fromOut < placed.outEndUs, toOut > placed.outStartUs else {
-                clips.append(clip)
-                continue
-            }
-            removed = true
-            let source = { (outUs: Int64) in clip.fromUs + Int64((Double(outUs - placed.outStartUs) * clip.speed).rounded()) }
-            if fromOut > placed.outStartUs {
-                var before = clip
-                before.toUs = min(clip.toUs, source(fromOut))
-                if before.toUs - before.fromUs >= minimumClipUs { clips.append(before) }
-            }
-            if toOut < placed.outEndUs {
-                var after = clip
-                after.fromUs = max(clip.fromUs, source(toOut))
-                if clips.contains(where: { $0.id == after.id }) { after.id = EditProject.newID("c") }
-                if after.toUs - after.fromUs >= minimumClipUs { clips.append(after) }
-            }
-        }
-        guard removed, !clips.isEmpty else { return nil }
-        var next = project
-        next.clips = clips
-        return next
-    }
-
-    /// What plays from `fromOut` to `toOut` (output microseconds) at `speed`: the clips are split at both ends and the
-    /// ones inside take the speed, as the `speed` op does (`speedRange` in src/utils/recording-editor/project.ts).
-    /// Nil when nothing plays there.
-    static func speed(_ project: EditProject, fromOut: Int64, toOut: Int64, speed: Double) -> EditProject? {
-        guard toOut > fromOut else { return nil }
-        var next = split(project, atOutput: fromOut) ?? project
-        next = split(next, atOutput: toOut) ?? next
-        // A split point maps through a rounded source time, so the new edges may sit a microsecond off.
-        let slack: Int64 = 1_000
-        let inside = placed(next).filter { $0.outStartUs >= fromOut - slack && $0.outEndUs <= toOut + slack }
-        guard !inside.isEmpty else { return nil }
-        for placed in inside { next.clips[placed.index].speed = min(16, max(0.25, speed)) }
-        return next
-    }
-
     /// The target closest to `us` within `toleranceUs`, or nil when none is that close (the drag goes where the
     /// pointer is).
     static func snap(_ us: Int64, to targets: [Int64], toleranceUs: Int64) -> Int64? {
@@ -149,81 +87,8 @@ enum TimelineMap {
         return nearest
     }
 
-    /// Removes a clip (cuts its part of the source); the last clip cannot go.
-    static func delete(_ project: EditProject, clip id: String) -> EditProject? {
-        guard project.clips.count > 1, let index = project.clips.firstIndex(where: { $0.id == id }) else { return nil }
-        var next = project
-        next.clips.remove(at: index)
-        return next
-    }
-
-    /// Moves one edge of a clip, kept inside the source and inside its neighbours' source ranges in order.
-    static func trim(_ project: EditProject, clip id: String, fromUs: Int64? = nil, toUs: Int64? = nil) -> EditProject? {
-        guard let index = project.clips.firstIndex(where: { $0.id == id }) else { return nil }
-        var next = project
-        var clip = next.clips[index]
-        if let fromUs { clip.fromUs = max(0, min(fromUs, clip.toUs - minimumClipUs)) }
-        if let toUs { clip.toUs = min(project.source.durationUs, max(toUs, clip.fromUs + minimumClipUs)) }
-        next.clips[index] = clip
-        return next
-    }
-
     /// Which side of the playhead a trim keeps: `[` keeps what follows it, `]` what came before.
     enum TrimSide { case start, end }
-
-    /// Trims the clip under `outUs` so it starts (`.start`) or ends (`.end`) at the playhead, and the output time
-    /// the playhead's frame then plays at; nil at a clip's edge.
-    static func trimToPlayhead(_ project: EditProject, atOutput outUs: Int64, side: TrimSide) -> (EditProject, Int64)? {
-        guard let placed = clip(atOutput: outUs, in: project) else { return nil }
-        let sourceUs = sourceTime(atOutput: outUs, in: project)
-        guard sourceUs - placed.clip.fromUs >= minimumClipUs, placed.clip.toUs - sourceUs >= minimumClipUs else { return nil }
-        var next = project
-        switch side {
-        case .start:
-            next.clips[placed.index].fromUs = sourceUs
-            return (next, placed.outStartUs)
-        case .end:
-            next.clips[placed.index].toUs = sourceUs
-            return (next, outUs)
-        }
-    }
-
-    static func setSpeed(_ project: EditProject, clip id: String, speed: Double) -> EditProject? {
-        guard let index = project.clips.firstIndex(where: { $0.id == id }) else { return nil }
-        var next = project
-        next.clips[index].speed = min(16, max(0.25, speed))
-        return next
-    }
-
-    /// Adds a zoom over a source range; a range that overlaps another zoom is moved after it, or refused.
-    static func addZoom(_ project: EditProject, startUs: Int64, endUs: Int64, scale: Double) -> (EditProject, String)? {
-        let length = max(endUs - startUs, 500_000)
-        var start = max(0, startUs)
-        for zoom in project.zooms.sorted(by: { $0.startUs < $1.startUs }) where start < zoom.endUs && start + length > zoom.startUs {
-            start = zoom.endUs
-        }
-        let end = min(project.source.durationUs, start + length)
-        guard end - start >= 200_000, !project.zooms.contains(where: { start < $0.endUs && end > $0.startUs }) else { return nil }
-        var next = project
-        let zoom = EditProject.Zoom(id: EditProject.newID("z"), startUs: start, endUs: end, scale: scale)
-        next.zooms.append(zoom)
-        next.zooms.sort { $0.startUs < $1.startUs }
-        return (next, zoom.id)
-    }
-
-    /// Moves or resizes a zoom inside the source without overlapping its neighbours.
-    static func moveZoom(_ project: EditProject, zoom id: String, startUs: Int64, endUs: Int64) -> EditProject? {
-        guard let index = project.zooms.firstIndex(where: { $0.id == id }) else { return nil }
-        let others = project.zooms.filter { $0.id != id }
-        let lower = others.filter { $0.endUs <= project.zooms[index].startUs }.map(\.endUs).max() ?? 0
-        let upper = others.filter { $0.startUs >= project.zooms[index].endUs }.map(\.startUs).min() ?? project.source.durationUs
-        let start = max(lower, min(startUs, upper - 200_000))
-        let end = min(upper, max(endUs, start + 200_000))
-        var next = project
-        next.zooms[index].startUs = start
-        next.zooms[index].endUs = end
-        return next
-    }
 }
 
 /// How far the view is zoomed in at a source time: the zoom's scale reached over `easeInMs` with an ease-out

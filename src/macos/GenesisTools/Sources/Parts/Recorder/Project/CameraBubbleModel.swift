@@ -131,9 +131,9 @@ extension EditProject {
 
 extension EditProject {
     /// The `camera` edit op (src/utils/recording-editor/project.ts `cameraOpSchema`), the one `movie.camera(...)` and
-    /// `tools recorder edit` send. The editor's drag and Style controls change the bubble only through it, so edit.json is
-    /// the same from every door; camera-ops.json holds the cases both sides are tested on.
-    struct CameraChange: Decodable, Equatable {
+    /// `tools recorder edit` send. The editor's drag and Style controls change the bubble only through it, and the
+    /// recorder service applies it, so edit.json is the same from every door (camera-ops.json holds its cases).
+    struct CameraChange: Equatable {
         var file: String?
         var show: Bool?
         var corner: CameraCorner?
@@ -164,41 +164,6 @@ extension EditProject {
         /// The op's ranges: the TypeScript side refuses a value outside them, the editor holds a drag inside them.
         static let sizeRange = 0.08...0.6
         static let offsetRange = -600_000...600_000
-    }
-
-    enum CameraChangeError: LocalizedError {
-        case noCamera
-
-        var errorDescription: String? {
-            #"this edit has no camera yet; give the camera movie with { op: "camera", file: "camera.mov" }"#
-        }
-    }
-
-    /// The edit with `change` applied as project.ts applies the `camera` op.
-    func applying(_ change: CameraChange) throws -> EditProject {
-        var next = self
-        if change.enabled == false {
-            next.camera = nil
-            return next
-        }
-        guard let file = change.file ?? camera?.file else { throw CameraChangeError.noCamera }
-        var bubble = camera ?? Camera(file: file)
-        bubble.file = file
-        if let show = change.show { bubble.show = show }
-        if let corner = change.corner { bubble.corner = corner }
-        if let x = change.x { bubble.x = min(1, max(0, x)) }
-        if let y = change.y { bubble.y = min(1, max(0, y)) }
-        if change.x != nil || change.y != nil { bubble.corner = .custom }
-        if let size = change.size {
-            bubble.size = min(CameraChange.sizeRange.upperBound, max(CameraChange.sizeRange.lowerBound, size))
-        }
-        if let shape = change.shape { bubble.shape = shape }
-        if let mirror = change.mirror { bubble.mirror = mirror }
-        if let offset = change.offsetMs {
-            bubble.offsetMs = min(CameraChange.offsetRange.upperBound, max(CameraChange.offsetRange.lowerBound, offset))
-        }
-        next.camera = bubble
-        return next
     }
 }
 
