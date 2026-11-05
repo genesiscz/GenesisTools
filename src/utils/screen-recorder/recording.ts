@@ -11,6 +11,7 @@ import {
     RpcError,
     type StopAnswer,
 } from "./control";
+import { DisplayBook, type DisplayInterval } from "./display-book";
 import { type RecordingFinish, runRecordingFinish } from "./finish";
 import { type LiveEntry, type LiveEntryChange, type LiveEvent, LiveRecordingServer } from "./live";
 import {
@@ -107,7 +108,12 @@ export interface RecorderHooks {
     onResumed?: () => void;
     /** After each piece that did not end the recording. */
     afterPiece?: () => void;
-    /** What the kind does with each capture (its frames, its errors, its files). */
+    /** The recorded displays changed, or an interval opened or closed (a state file follows them). */
+    onDisplays?: () => void;
+    /**
+     * What the kind does with each capture (its frames, its errors, its files), after the core kept its display
+     * intervals.
+     */
     captures: Omit<PieceCapturesOptions["hooks"], "onLive">;
 }
 
@@ -146,9 +152,14 @@ export interface RecorderConfig<S> {
         title: string;
         folder: string;
         dir?: string;
-        /** The displays the entry names before the first capture. */
+        /**
+         * The displays the entry names, which the kind then keeps up to date. Without it the entry names the displays
+         * of the running captures.
+         */
         displays?: () => Array<{ id: number; name: string }>;
     };
+    /** What an earlier run of the same recording saw: its display intervals and the names of its displays. */
+    history?: { intervals?: readonly DisplayInterval[]; names?: Iterable<[number, string]> };
     pieces: {
         dir: string;
         /** The length of one piece; at most `MAX_CAPTURE_SECONDS`. */
@@ -179,6 +190,8 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     readonly jobs: JobRegistry;
     /** The captures of the running piece. */
     readonly captures: PieceCaptures;
+    /** Which displays it records and when. */
+    readonly displayBook: DisplayBook;
     /** Settles once the finish and the socket's close have ended, whoever stopped the recording. */
     readonly finished: Promise<StopAnswer>;
     private session?: ManagedRecording;
@@ -207,6 +220,8 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         );
         void this.answered.promise.catch(() => undefined);
         this.pieceSec = this.pieceLength();
+        this.displayBook = new DisplayBook(config.history);
+        const kind = config.hooks.captures;
         this.captures = new PieceCaptures({
             capture: (request, signal) => this.managed().capture(request, signal),
             pieceDir: config.pieces.dir,
@@ -214,14 +229,70 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             audio: config.pieces.audio,
             audioOwnership: config.pieces.audioOwnership,
             hooks: {
-                ...config.hooks.captures,
+                // The displays first: opening the interval saves the kind's state, which then names every display.
+                onStart: (capture) => {
+                    this.syncDisplays();
+                    this.openDisplay(capture, capture.target.displayId);
+                    // The interval ends when the capture is told to stop, not when its post-processing ends.
+                    capture.controller.signal.addEventListener("abort", () => this.closeDisplay(capture), {
+                        once: true,
+                    });
+                    kind.onStart?.(capture);
+                },
+                onFrame: (capture, frame) => {
+                    if (!capture.controller.signal.aborted) {
+                        this.openDisplay(capture, frame.displayId ?? capture.target.displayId);
+                    }
+
+                    kind.onFrame?.(capture, frame);
+                },
                 onLive: (_capture, channel) => {
                     if (this.phase === "paused") {
                         channel.pause();
                     }
                 },
+                onResult: (capture, result) => {
+                    this.displayBook.align(capture, result);
+                    this.closeDisplay(capture);
+                    return kind.onResult?.(capture, result) ?? Promise.resolve(undefined);
+                },
+                onError: (capture, error, outcome) => {
+                    this.closeDisplay(capture);
+                    kind.onError?.(capture, error, outcome);
+                },
+                onSettled: kind.onSettled,
             },
         });
+    }
+
+    /** The recorded displays follow the running captures. */
+    syncDisplays(): void {
+        const before = this.displayBook.recorded?.map((one) => one.id).join(",") ?? "";
+
+        if (!this.displayBook.sync(this.captures.running)) {
+            return;
+        }
+
+        const recorded = this.displayBook.recorded ?? [];
+        log.info({ from: before, to: recorded.map((one) => one.id).join(",") }, "recorded displays changed");
+
+        if (!this.config.live.displays) {
+            this.update({ displays: recorded });
+        }
+
+        this.config.hooks.onDisplays?.();
+    }
+
+    /** The capture records `displayId` from now (a start, a live switch, a frame of another display). */
+    openDisplay(capture: SessionCapture, displayId: number): void {
+        if (this.displayBook.open(capture, displayId)) {
+            this.config.hooks.onDisplays?.();
+        }
+    }
+
+    private closeDisplay(capture: SessionCapture): void {
+        this.displayBook.close(capture);
+        this.config.hooks.onDisplays?.();
     }
 
     /** Opens the live socket and starts recording; the finish follows when the captures end. */
