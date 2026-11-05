@@ -449,7 +449,14 @@ async function exportStep(
         }
 
         const list = ctx.claim(join(dir, `export-${step.format}.ffconcat`));
-        await Bun.write(list, concatList(frames.map((frame) => ({ path: frame.path, atUs: frame.actualUs }))));
+        const timeline = frames.map((frame) => ({ path: frame.path, atUs: frame.requestedUs ?? frame.actualUs }));
+        const last = timeline[timeline.length - 1].atUs;
+        const endpoint = ctx.state.window.toUs;
+        const sampled = frames.some((frame) => frame.requestedUs !== undefined);
+        const sourceEnd = sampled
+            ? Math.max(...(ctx.state.stills ?? []).map((frame) => frame.atUs)) + 1
+            : last + 1_000_000;
+        await Bun.write(list, concatList(timeline, Math.max(1, (endpoint ?? sourceEnd) - last)));
         await runVideoCommand({
             command: exportFramesArgv({ list, output, format: step.format }),
             signal: ctx.signal,

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { OverwriteInputError } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
@@ -1315,4 +1315,21 @@ test("a grid refuses frames invalidated by a transformation", async () => {
             }).done
         ).rejects.toThrow("A grid needs current frames");
     }
+});
+
+test.skipIf(skip.integration)("sampled still exports preserve duplicate samples and the range endpoint", async () => {
+    const result = await new RecordingEditor().run({
+        source: { file: recordingFolder() },
+        steps: [
+            { kind: "range", from: 0, to: 4 },
+            { kind: "frames", fps: 2, displays: [1] },
+            { kind: "export", format: "mp4" },
+        ],
+    }).done;
+    const list = readFileSync(join(dirname(result.exports[0].path), "export-mp4.ffconcat"), "utf8");
+    const durations = list
+        .split("\n")
+        .filter((line) => line.startsWith("duration "))
+        .map((line) => Number(line.slice(9)));
+    expect(durations).toEqual(Array(8).fill(0.5));
 });
