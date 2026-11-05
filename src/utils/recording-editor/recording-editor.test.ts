@@ -322,7 +322,7 @@ test("still sampling advances through irregular changes and can be cancelled", a
             source: { file: source },
             steps: [
                 { kind: "range", from: 0, to: 10000 },
-                { kind: "frames", fps: 60 },
+                { kind: "frames", fps: 30 },
             ],
         },
         { signal: controller.signal, receipts: false }
