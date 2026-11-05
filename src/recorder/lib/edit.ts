@@ -94,9 +94,15 @@ const EDITOR_VIDEO_LIMITS: VideoProbeLimits = {
     maxPixels: 48_000_000,
 };
 
+/** The edit file of a recording argument, whether or not it exists yet. */
+export function editPathOf(value: string): string {
+    const resolved = resolveRecording(value);
+    return resolved.endsWith(".json") ? resolved : projectPathFor(movieFor(resolved));
+}
+
 export async function openProject(value: string): Promise<OpenedProject> {
     const resolved = resolveRecording(value);
-    const path = resolved.endsWith(".json") ? resolved : projectPathFor(movieFor(resolved));
+    const path = editPathOf(value);
 
     if (existsSync(path)) {
         return { path, project: inItsFolder(path, readProject(path)), fresh: false };
@@ -152,25 +158,50 @@ export function inItsFolder(path: string, project: EditProject): EditProject {
     };
 }
 
+/** What a list of ops did to a project, before anything is saved. */
+export interface ComputedEdit {
+    /** The project after the ops; its revision is the input's. */
+    project: EditProject;
+    /** False when the ops left the project as it was (a second annotateClicks); nothing is saved then. */
+    changed: boolean;
+    /** The facts each op was applied with, in order, so the same ops can be applied again without measuring. */
+    facts: OpFacts[];
+    removedIdleUs: Array<[number, number]>;
+    loudness?: { measuredLufs: number | null; volume: number };
+    warnings: string[];
+}
+
 /**
- * Applies ops in order to the file as it is now (the window may have saved since the last read) and saves once. One
- * op that fails leaves the file as it was and names the op.
+ * Applies ops in order to `project`, measuring what each needs first (idle stretches, the loudness, the transcript).
+ * One op that fails throws and names the op. `facts` replays ops measured before (a rebase onto a newer file).
  */
-export async function editProject(value: string, ops: readonly EditOp[]): Promise<OpenedProject> {
-    const opened = await openProject(value);
-    let next = opened.project;
+export async function computeEdit({
+    project,
+    ops,
+    fresh,
+    facts: known,
+}: {
+    project: EditProject;
+    ops: readonly EditOp[];
+    /** The project has no file yet: it changes, and is saved, even when the ops change nothing. */
+    fresh: boolean;
+    facts?: readonly OpFacts[];
+}): Promise<ComputedEdit> {
+    let next = project;
     const removedIdleUs: Array<[number, number]> = [];
+    const facts: OpFacts[] = [];
     let loudness: { measuredLufs: number | null; volume: number } | undefined;
-    const warnings = ops.flatMap((op) => opTimeWarnings(op, opened.project.source.durationUs));
+    const warnings = ops.flatMap((op) => opTimeWarnings(op, project.source.durationUs));
 
     for (const [index, op] of ops.entries()) {
         try {
-            const facts = await probeFacts(next, op);
-            next = applyOp(next, op, facts);
-            removedIdleUs.push(...(facts.idleUs ?? []).map(([from, to]): [number, number] => [from, to]));
+            const measured = known?.[index] ?? (await probeFacts(next, op));
+            next = applyOp(next, op, measured);
+            facts.push(measured);
+            removedIdleUs.push(...(measured.idleUs ?? []).map(([from, to]): [number, number] => [from, to]));
 
-            if (facts.loudnessLufs !== undefined) {
-                loudness = { measuredLufs: facts.loudnessLufs, volume: next.audio.volume };
+            if (measured.loudnessLufs !== undefined) {
+                loudness = { measuredLufs: measured.loudnessLufs, volume: next.audio.volume };
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -181,39 +212,55 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
     }
 
     // Ops that change nothing (a second annotateClicks, a fix to the same words) save no revision and no undo step.
-    if (!opened.fresh && SafeJSON.stringify(next) === SafeJSON.stringify(opened.project)) {
-        log.debug({ path: opened.path, ops: ops.map((op) => op.op) }, "edit changed nothing, not saved");
+    if (!fresh && SafeJSON.stringify(next) === SafeJSON.stringify(project)) {
         return {
-            path: opened.path,
-            project: opened.project,
-            fresh: false,
+            project,
+            changed: false,
+            facts,
+            removedIdleUs,
+            ...(loudness ? { loudness } : {}),
             warnings: [...warnings, "nothing changed, so nothing was saved"],
         };
     }
 
     // An item whose whole time this edit cut never shows any more: say so now, not only in check().
-    const hiddenBefore = new Set(neverShown(opened.project).map((issue) => issue.item));
+    const hiddenBefore = new Set(neverShown(project).map((issue) => issue.item));
     warnings.push(
         ...neverShown(next)
             .filter((issue) => !hiddenBefore.has(issue.item))
             .map((issue) => `${issue.message}${issue.fix ? `; ${issue.fix} removes it` : ""}`)
     );
+    return { project: next, changed: true, facts, removedIdleUs, ...(loudness ? { loudness } : {}), warnings };
+}
 
-    const saved = writeProject(opened.path, next);
+/**
+ * Applies ops in order to the file as it is now (the window may have saved since the last read) and saves once. One
+ * op that fails leaves the file as it was and names the op.
+ */
+export async function editProject(value: string, ops: readonly EditOp[]): Promise<OpenedProject> {
+    const opened = await openProject(value);
+    const edit = await computeEdit({ project: opened.project, ops, fresh: opened.fresh });
+
+    if (!edit.changed) {
+        log.debug({ path: opened.path, ops: ops.map((op) => op.op) }, "edit changed nothing, not saved");
+        return { path: opened.path, project: opened.project, fresh: false, warnings: edit.warnings };
+    }
+
+    const saved = writeProject(opened.path, edit.project);
     pushUndo({
         editPath: opened.path,
         before: opened.project,
         afterRevision: saved.revision,
         ops: ops.map((op) => op.op),
     });
-    log.debug({ path: opened.path, ops: ops.map((op) => op.op), warnings }, "edit applied");
+    log.debug({ path: opened.path, ops: ops.map((op) => op.op), warnings: edit.warnings }, "edit applied");
     return {
         path: opened.path,
         project: saved,
         fresh: false,
-        ...(removedIdleUs.length ? { removedIdleUs } : {}),
-        ...(loudness ? { loudness } : {}),
-        ...(warnings.length ? { warnings } : {}),
+        ...(edit.removedIdleUs.length ? { removedIdleUs: edit.removedIdleUs } : {}),
+        ...(edit.loudness ? { loudness: edit.loudness } : {}),
+        ...(edit.warnings.length ? { warnings: edit.warnings } : {}),
     };
 }
 
@@ -331,28 +378,36 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
     return {};
 }
 
-/** At most this many steps are kept to undo; the oldest goes first. */
-const UNDO_STEPS = 30;
+/** At most this many steps are kept in the undo file; the oldest goes first. */
+export const UNDO_STEPS = 30;
 
-const undoFileSchema = z.object({
-    steps: z
-        .array(
-            z.object({
-                before: editProjectSchema,
-                afterRevision: z.number().int().nonnegative(),
-                /** The ops of the change; absent in a file from before it was kept. */
-                ops: z.array(z.string()).optional(),
-            })
-        )
-        .default([]),
+const undoStepSchema = z.object({
+    before: editProjectSchema,
+    afterRevision: z.number().int().nonnegative(),
+    /** The ops of the change; absent in a file from before it was kept. */
+    ops: z.array(z.string()).optional(),
 });
+/** One change to undo: the edit as it was before it, and the revision the change saved. */
+export type UndoStep = z.infer<typeof undoStepSchema>;
+
+const undoFileSchema = z.object({ steps: z.array(undoStepSchema).default([]) });
 
 /** `<edit>.undo.json` beside the edit: the agent's and the CLI's undo steps, so an undo outlives one process. */
 function undoPath(editPath: string): string {
     return editPath.replace(/\.json$/, ".undo.json");
 }
 
-function readUndo(editPath: string): z.infer<typeof undoFileSchema>["steps"] {
+/** The undo file's steps, oldest first; a file that does not read is no steps. */
+export function readUndoSteps(editPath: string): UndoStep[] {
+    return readUndo(editPath);
+}
+
+/** Replaces the undo file's steps (the newest `UNDO_STEPS` of them). */
+export function writeUndoSteps(editPath: string, steps: readonly UndoStep[]): void {
+    atomicWriteFileSync(undoPath(editPath), SafeJSON.stringify({ steps: steps.slice(-UNDO_STEPS) }));
+}
+
+function readUndo(editPath: string): UndoStep[] {
     const path = undoPath(editPath);
 
     if (!existsSync(path)) {

@@ -42,6 +42,10 @@ export const RPC_ERRORS = {
     unknownDevice: 1007,
     /** A `$/cancel` stopped the request; the transport answers it (`@genesiscz/utils/rpc`). */
     cancelled: RPC_CANCELLED,
+    /** The recorder service's edit sessions: another writer changed the edit, or a call named an older revision. */
+    staleRevision: 1016,
+    nothingToUndo: 1017,
+    nothingToRedo: 1018,
 } as const;
 
 export { RpcError };
