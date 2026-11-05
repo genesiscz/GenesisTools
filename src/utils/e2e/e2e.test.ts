@@ -123,6 +123,7 @@ describe("spec environment", () => {
         expect(playwrightState("interrupted")).toBe("failed");
         expect(playwrightTestResult(test as Pick<TestCase, "title" | "titlePath">, result as TestResult)).toEqual({
             suite: "Checkout",
+            project: "chromium",
             title: "pays",
             state: "failed",
             durationMs: 30_000,

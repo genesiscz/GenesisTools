@@ -18,6 +18,7 @@ export function playwrightTestResult(test: Pick<TestCase, "title" | "titlePath">
 
     return {
         suite,
+        project: test.titlePath()[1] || undefined,
         title: test.title,
         state,
         durationMs: result.duration,
