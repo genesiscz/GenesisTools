@@ -87,7 +87,10 @@ async function fixture(items: Record<string, unknown>[]) {
     );
     const logPath = join(store.folder(meeting.id), ANSWER_LOG_FILE);
     const ledger: Correction[] = [];
-    const session = (adapter: ListenAdapter, extra: { only?: string; budget?: number; join?: boolean } = {}) =>
+    const session = (
+        adapter: ListenAdapter,
+        extra: { only?: string; budget?: number; join?: boolean; ledger?: (corrections: Correction[]) => void } = {}
+    ) =>
         new ListenSession({
             store,
             meeting,
@@ -99,7 +102,7 @@ async function fixture(items: Record<string, unknown>[]) {
             listenBelow: 0.6,
             ...(extra.join ? { joinRunningRound: true } : {}),
             split: { transcript: async () => transcript },
-            ledger: (corrections) => ledger.push(...corrections),
+            ledger: extra.ledger ?? ((corrections) => ledger.push(...corrections)),
         });
     const read = (): MeetingRecord => store.read(meeting.id)!;
     const item = (id: string) => read().items.find((entry) => entry.id === id);
@@ -108,6 +111,39 @@ async function fixture(items: Record<string, unknown>[]) {
 }
 
 describe("listen session", () => {
+    test("ledger failure closes the round and can be retried without duplicate round-end", async () => {
+        const fx = await fixture([]);
+        let calls = 0;
+        const session = fx.session(new ScriptedAdapter([]), {
+            ledger: () => {
+                if (++calls === 1) {
+                    throw new Error("ledger full");
+                }
+            },
+        });
+        await expect(session.run()).rejects.toThrow("ledger full");
+        expect(fx.events()).toEqual(["round-start", "round-end"]);
+        session.end("done");
+        session.end("done");
+        expect(calls).toBe(2);
+        expect(fx.events()).toEqual(["round-start", "round-end"]);
+    });
+
+    test("ledger failure does not replace the adapter error", async () => {
+        const fx = await fixture([question("i1")]);
+        const adapter = new ScriptedAdapter([]);
+        adapter.ask = async () => {
+            throw new Error("adapter failed");
+        };
+        const session = fx.session(adapter, {
+            ledger: () => {
+                throw new Error("ledger full");
+            },
+        });
+        await expect(session.run()).rejects.toThrow("adapter failed");
+        expect(fx.events()).toEqual(["round-start", "round-end"]);
+    });
+
     test("an adapter failure records an aborted round and preserves the error", async () => {
         const { session, logPath } = await fixture([question("i1")]);
         const error = new Error("clip unavailable");

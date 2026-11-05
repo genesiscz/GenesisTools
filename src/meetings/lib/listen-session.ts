@@ -197,6 +197,8 @@ export class ListenSession {
     private micShare?: Promise<MicShare | undefined>;
     private ownsRound = false;
     private ended = false;
+    private ledgerWritten = false;
+    private roundEnded = false;
 
     constructor(private readonly options: ListenSessionOptions) {}
 
@@ -258,12 +260,18 @@ export class ListenSession {
                 await this.decide(question, outcome);
             }
         } catch (error) {
-            reason = "aborted";
+            try {
+                this.end("aborted");
+            } catch (finalizationError) {
+                log.error(
+                    { error: finalizationError },
+                    "listen finalization failed after an earlier error; end can be retried"
+                );
+            }
             throw error;
-        } finally {
-            this.end(reason);
         }
 
+        this.end(reason);
         return reason;
     }
 
@@ -273,16 +281,25 @@ export class ListenSession {
             return;
         }
 
-        this.ended = true;
-        (this.options.ledger ?? appendCorrections)(this.steps.flatMap((step) => step.corrections));
         const open = openQuestions(this.current()).length;
         const decided = this.decidedCount();
 
-        if (this.ownsRound) {
-            this.log({ event: "round-end", at: new Date().toISOString(), reason, asked: decided, open });
+        try {
+            if (!this.ledgerWritten) {
+                (this.options.ledger ?? appendCorrections)(this.steps.flatMap((step) => step.corrections));
+                this.ledgerWritten = true;
+            }
+        } finally {
+            if (!this.roundEnded) {
+                if (this.ownsRound) {
+                    this.log({ event: "round-end", at: new Date().toISOString(), reason, asked: decided, open });
+                }
+                this.roundEnded = true;
+            }
         }
 
         this.options.adapter.note({ kind: "ended", reason, decided, open, budget: this.options.budget });
+        this.ended = true;
     }
 
     private start(): void {
