@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { CallerHost, ContextEnricher } from "@genesiscz/utils/agent/identity/types";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
-import { readT3Thread, t3Home } from "@genesiscz/utils/t3code/thread-env";
+import { readT3Thread, T3_CALLER_ENV_KEYS, t3Home } from "@genesiscz/utils/t3code/thread-env";
 
 const { log } = logger.scoped("agent-context");
 const prof = profiler.scope("agent-context");
@@ -85,6 +85,7 @@ export function readT3ThreadDetails(threadId: string, homeDir: string): Partial<
 /** The T3 Code host of a caller: the thread id for free, its details only for the `host` facet. */
 export const t3codeCallerEnricher: ContextEnricher<"t3code"> = {
     id: "t3code",
+    envKeys: () => T3_CALLER_ENV_KEYS,
     enrich: ({ env, facets }) => {
         const threadId = readT3Thread(env);
 

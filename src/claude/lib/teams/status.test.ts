@@ -1,15 +1,8 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { psEnvValue } from "@genesiscz/utils/ai/account-env";
 import { logger } from "@genesiscz/utils/logger";
 import * as tmuxBin from "@genesiscz/utils/tmux/bin";
 import { statusOf } from "./discover";
-import {
-    __setPsRunnerForTest,
-    listLiveTeammateProcesses,
-    type PsResult,
-    type PsRunner,
-    readProcessEnvKeys,
-} from "./status";
+import { __setPsRunnerForTest, listLiveTeammateProcesses, type PsResult, type PsRunner } from "./status";
 import type { TeamMemberConfig, TeammateTranscriptRef } from "./types";
 
 function psOk(stdout: string): PsResult {
@@ -36,20 +29,6 @@ function withPsRunner<T>(runner: (cmd: string[]) => PsResult, fn: () => T): T {
                 const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
                 return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] }] : [];
             });
-        },
-        environment: (pid) => {
-            const result = runner(["ps", "eww", "-p", String(pid)]);
-            if (result.exitCode !== 0) {
-                return null;
-            }
-            const values: Record<string, string> = {};
-            for (const match of result.stdout.matchAll(/(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=/g)) {
-                const value = psEnvValue(result.stdout, match[1]);
-                if (value !== undefined) {
-                    values[match[1]] = value;
-                }
-            }
-            return values;
         },
     };
     __setPsRunnerForTest(reader);
@@ -235,38 +214,5 @@ describe("statusOf does not report a teammate dead on a failed scan", () => {
         expect(statusOf({ isLead: false, live, transcript: TRANSCRIPT, member: MEMBER, scanFailed: true })).toBe(
             "running"
         );
-    });
-});
-
-describe("readProcessEnvKeys falls back rather than inventing an account", () => {
-    test("reads the requested key from a successful ps", () => {
-        // 🛑 The account is the LAST `KEY=` word, and the line ends in a newline, which is the
-        // shape `ps eww -p <pid>` always produces and the shape the reader used to answer
-        // `undefined` for (review round 4). Put another `KEY=` after it and this test passes
-        // against a reader that cannot read the codex or grok launchers' environment at all.
-        const keys = withPsRunner(
-            () => psOk("  PID TTY  OTHER=x TOOLS_CLAUDE_ACCOUNT=work laptop\n"),
-            () => readProcessEnvKeys(4242, ["TOOLS_CLAUDE_ACCOUNT"])
-        );
-
-        expect(keys).toEqual({ TOOLS_CLAUDE_ACCOUNT: "work laptop" });
-    });
-
-    test("a nonzero exit yields no keys, so callers fall back to the default account", () => {
-        const keys = withPsRunner(
-            () => psFail(),
-            () => readProcessEnvKeys(4242, ["TOOLS_CLAUDE_ACCOUNT"])
-        );
-
-        expect(keys).toEqual({});
-    });
-
-    test("a missing key is simply absent", () => {
-        const keys = withPsRunner(
-            () => psOk("  PID TTY  SOMETHING_ELSE=1\n"),
-            () => readProcessEnvKeys(4242, ["TOOLS_CLAUDE_ACCOUNT"])
-        );
-
-        expect(keys).toEqual({});
     });
 });

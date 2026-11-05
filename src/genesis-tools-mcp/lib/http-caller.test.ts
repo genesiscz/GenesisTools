@@ -11,6 +11,7 @@ import type { ResolvedCaller } from "./http-caller";
 // replaced by a table the tests fill in, and restored after the file, so nothing here touches a real process.
 const realSocketOwner = await import("@genesiscz/utils/process/socket-owner");
 const realProcessCwd = await import("@genesiscz/utils/process/cwd");
+const realProcesses = await import("@genesiscz/utils/process/processes");
 
 interface FakeProcess {
     pid: number;
@@ -18,6 +19,8 @@ interface FakeProcess {
     startSec: number;
     openFiles: string[];
     cwd: string | null;
+    /** The process's own environment; absent reads as none. */
+    env?: Record<string, string>;
 }
 
 let fakeProcesses: FakeProcess[] = [];
@@ -36,10 +39,19 @@ mock.module("@genesiscz/utils/process/cwd", () => ({
     ...realProcessCwd,
     readProcessCwd: (pid: number) => fakeProcesses.find((row) => row.pid === pid)?.cwd ?? null,
 }));
+mock.module("@genesiscz/utils/process/processes", () => ({
+    ...realProcesses,
+    // The named keys of a fake process's env, as the real reader picks them (processes.test.ts pins its trimming).
+    readProcessEnvKeys: (pid: number, keys: readonly string[]) => {
+        const environment = fakeProcesses.find((row) => row.pid === pid)?.env ?? {};
+        return Object.fromEntries(keys.flatMap((key) => (environment[key] ? [[key, environment[key]]] : [])));
+    },
+}));
 
 afterAll(() => {
     mock.module("@genesiscz/utils/process/socket-owner", () => realSocketOwner);
     mock.module("@genesiscz/utils/process/cwd", () => realProcessCwd);
+    mock.module("@genesiscz/utils/process/processes", () => realProcesses);
 });
 
 const { callerSessionReadable, resolveCallerFromPeer } = await import("./http-caller");
@@ -93,6 +105,7 @@ describe("characterization: who the gateway says the caller is", () => {
             cwd: "/fixture/project",
             pid: 4101,
             processName: "claude",
+            env: {},
         });
     });
 
@@ -155,6 +168,7 @@ describe("characterization: who the gateway says the caller is", () => {
             cwd: "/fixture/project",
             pid: 4201,
             processName: "codex",
+            env: {},
         });
     });
 
@@ -184,6 +198,7 @@ describe("characterization: who the gateway says the caller is", () => {
             cwd: "/fixture/project",
             pid: 4301,
             processName: "grok",
+            env: {},
         });
     });
 
@@ -210,11 +225,19 @@ describe("characterization: who the gateway says the caller is", () => {
             cwd: "/fixture/project",
             pid: 4601,
             processName: "node",
+            env: {},
         });
     });
 
     it("no owner, or several unnamed owners, is an unknown caller with nothing filled in", () => {
-        const nobody: ResolvedCaller = { agent: "unknown", sessionId: null, cwd: null, pid: null, processName: null };
+        const nobody: ResolvedCaller = {
+            agent: "unknown",
+            sessionId: null,
+            cwd: null,
+            pid: null,
+            processName: null,
+            env: {},
+        };
         fakeProcesses = [];
         loopbackOwners = [];
         expect(resolveCallerFromPeer({ ...PEER })).toEqual(nobody);
@@ -367,6 +390,55 @@ describe("a remote caller never takes the gateway's own env, terminal or account
             expect(identity.account).toBeUndefined();
             expect(identity.host).toBeUndefined();
             expect(identity.process?.pid).toBe(5001);
+        });
+    });
+
+    it("a peer's own account, terminals and T3 thread come from ITS env, read only by the enrichers' key names", () => {
+        const id = "01a0f4fc-171d-7c30-9679-ee00633dee2d";
+        fakeProcesses = [
+            {
+                pid: 5003,
+                name: "codex",
+                startSec: 1_800_000_000,
+                openFiles: [`/fixture/.codex/sessions/2026/11/05/rollout-2026-11-05T01-00-00-${id}.jsonl`],
+                cwd: "/fixture/project",
+                env: {
+                    [accountEnvVar("codex")]: "side",
+                    [accountEnvVar("claude")]: "work",
+                    CMUX_SURFACE_ID: "peer-surface",
+                    CMUX_WORKSPACE_ID: "peer-workspace",
+                    TMUX_PANE: "%2",
+                    T3CODE_THREAD_ID: "thread:peer",
+                    OTHER_TOKEN: "fixture-secret",
+                },
+            },
+        ];
+        loopbackOwners = [5003];
+
+        withGatewayEnv(() => {
+            const peer = resolveCallerFromPeer(PEER);
+            // Only what an enricher reads for a Codex caller: its own account stamp, never Claude's, and no token.
+            expect(peer.env).toEqual({
+                [accountEnvVar("codex")]: "side",
+                CMUX_SURFACE_ID: "peer-surface",
+                CMUX_WORKSPACE_ID: "peer-workspace",
+                TMUX_PANE: "%2",
+                T3CODE_THREAD_ID: "thread:peer",
+            });
+
+            const identity = whoIsCalling({ origin: "remote", caller: peer });
+            expect(identity).toMatchObject({ agent: "codex", sessionId: id });
+            expect(identity.account).toEqual({ harness: "codex", account: "side", proxyTarget: null });
+            expect(identity.terminal).toEqual({
+                cmux: { surfaceId: "peer-surface", workspaceId: "peer-workspace", tabId: null },
+                tmux: { pane: "%2" },
+            });
+            expect(identity.host).toEqual({ app: "t3code", threadId: "thread:peer" });
+            expect(identity.sources).toMatchObject({
+                account: "account",
+                "terminal.cmux": "cmux",
+                "host.threadId": "t3code",
+            });
         });
     });
 

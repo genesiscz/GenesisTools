@@ -48,6 +48,7 @@ import {
     readListedName,
     readProcess,
     readProcessEnvironment,
+    readProcessEnvKeys,
     readProcessesWithUsage,
     readProcessUsages,
     userName,
@@ -1346,4 +1347,24 @@ test("Linux open socket names normalize wildcard addresses for port descriptor m
             spy.mockRestore();
         }
     }
+});
+
+// Moved from src/claude/lib/teams/status.test.ts with the function (2026-11-05): the same three cases, and a reader
+// that throws is now the reader's own failure, since readProcessEnvironment never throws.
+describe("readProcessEnvKeys falls back rather than inventing an account", () => {
+    test("reads the requested key, its trailing newline cut", () => {
+        const environment = () => ({ OTHER: "x", TOOLS_CLAUDE_ACCOUNT: "work laptop\n" });
+        expect(readProcessEnvKeys(4242, ["TOOLS_CLAUDE_ACCOUNT"], environment)).toEqual({
+            TOOLS_CLAUDE_ACCOUNT: "work laptop",
+        });
+    });
+
+    test("an unreadable environment yields no keys, so callers fall back to the default account", () => {
+        expect(readProcessEnvKeys(4242, ["TOOLS_CLAUDE_ACCOUNT"], () => null)).toEqual({});
+    });
+
+    test("a missing or empty key is simply absent", () => {
+        const environment = () => ({ SOMETHING_ELSE: "1", TMUX_PANE: "" });
+        expect(readProcessEnvKeys(4242, ["TOOLS_CLAUDE_ACCOUNT", "TMUX_PANE"], environment)).toEqual({});
+    });
 });

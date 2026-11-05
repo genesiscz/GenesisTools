@@ -3,8 +3,10 @@ import type { PeerSessionPart } from "@genesiscz/utils/harness/parts";
 import { logger } from "@genesiscz/utils/logger";
 import { runtimeAgentOfCommand } from "@genesiscz/utils/process/classify";
 import { readProcessCwd } from "@genesiscz/utils/process/cwd";
+import { readProcessEnvKeys } from "@genesiscz/utils/process/processes";
 import { findLoopbackClientPids, type ProcessInfo, readProcessInfo } from "@genesiscz/utils/process/socket-owner";
 import { profiler } from "@genesiscz/utils/profile";
+import { callerEnvKeys } from "./enrichers";
 import { envHosts } from "./env";
 import type { CallerAgent, PeerQuery, ScopedCaller } from "./types";
 
@@ -15,6 +17,8 @@ const prof = profiler.scope("agent-context");
 export interface PeerCaller extends ScopedCaller {
     pid: number | null;
     processName: string | null;
+    /** The keys the enrichers read, from THIS process's own env (`callerEnvKeys`); `{}` when none was readable. */
+    env: Readonly<Record<string, string>>;
 }
 
 /** The host chain's order (outer host first), used to pick among several host processes on one socket. */
@@ -47,7 +51,7 @@ export function callerSessionReadable(agent: CallerAgent): boolean {
     return peerPartOf(agent)?.supported === true;
 }
 
-const UNKNOWN: PeerCaller = { agent: "unknown", sessionId: null, cwd: null, pid: null, processName: null };
+const UNKNOWN: PeerCaller = { agent: "unknown", sessionId: null, cwd: null, pid: null, processName: null, env: {} };
 
 interface Candidate {
     info: ProcessInfo;
@@ -94,12 +98,19 @@ export function readPeerCaller(query: PeerQuery): PeerCaller {
             );
         }
 
+        // The caller's account stamp, terminals and host thread come from ITS env, by the enrichers' own key names.
+        const env = readProcessEnvKeys(
+            chosen.info.pid,
+            callerEnvKeys({ agent: chosen.agent, sessionId: chosen.sessionId })
+        );
+
         return {
             agent: chosen.agent,
             sessionId: chosen.sessionId,
             cwd: readProcessCwd(chosen.info.pid),
             pid: chosen.info.pid,
             processName: chosen.info.name,
+            env,
         };
     });
 }

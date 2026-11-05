@@ -39,7 +39,7 @@ const MAX_COMMAND_CHARS = 240;
  * Who is calling, from one input, through one precedence rule (`CALLER_SOURCES`). The env-only path (no facets) reads
  * the given environment and nothing else: no file, no process, no spawn. Each costly fact is filled only for its
  * facet. A remote caller (`origin: "remote"`) has no environment here, so none of this process's env, terminal or
- * account reaches it. `sources` replaces the precedence list in a test.
+ * account reaches it; only the keys its request scope read from the caller's own process do (`ScopedCaller.env`). `sources` replaces the precedence list in a test.
  */
 export function whoIsCalling(
     input: CallerInput,
@@ -439,10 +439,13 @@ function compose(input: CallerInput, options: WhoIsCallingOptions, sources: read
         }
     }
 
-    if (input.origin === "local") {
+    // A local caller's env is ours; a remote caller's is only what the request read from its own process.
+    const enricherEnv = input.origin === "local" ? input.env : input.caller?.env;
+
+    if (enricherEnv) {
         enrichIdentity(
             identity,
-            { caller: { agent: identity.agent, sessionId: identity.sessionId }, env: input.env, facets },
+            { caller: { agent: identity.agent, sessionId: identity.sessionId }, env: enricherEnv, facets },
             given
         );
     }

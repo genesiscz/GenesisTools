@@ -1,8 +1,14 @@
-import { accountOfEnv } from "@genesiscz/utils/ai/account-env";
+import { accountEnvVar, accountOfEnv } from "@genesiscz/utils/ai/account-env";
 import { harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { logger } from "@genesiscz/utils/logger";
 import { t3codeCallerEnricher } from "@genesiscz/utils/t3code/caller-enricher";
-import { type CallerTerminals, readTerminalInto, TERMINAL_ENRICHERS, TERMINAL_IDS } from "./terminals";
+import {
+    type CallerTerminals,
+    readTerminalInto,
+    TERMINAL_ENRICHERS,
+    TERMINAL_ENV_KEYS,
+    TERMINAL_IDS,
+} from "./terminals";
 import type {
     AgentIdentity,
     CallerHost,
@@ -22,6 +28,10 @@ const { log } = logger.scoped("agent-context");
  */
 export const accountCallerEnricher: ContextEnricher<"account"> = {
     id: "account",
+    envKeys: (caller) => {
+        const harness = harnessOfRuntimeAgent(caller.agent);
+        return harness ? [accountEnvVar(harness)] : [];
+    },
     enrich: ({ caller, env }) => {
         const harness = harnessOfRuntimeAgent(caller.agent);
 
@@ -40,6 +50,7 @@ export const accountCallerEnricher: ContextEnricher<"account"> = {
  */
 export const terminalCallerEnricher: ContextEnricher<"terminal"> = {
     id: "terminal",
+    envKeys: () => TERMINAL_ENV_KEYS,
     enrich: ({ env }) => {
         const terminals: CallerTerminals = {};
 
@@ -70,6 +81,12 @@ const ENRICHERS: { readonly [Id in EnricherId]: ContextEnricher<Id> } = {
     t3code: t3codeCallerEnricher,
     account: accountCallerEnricher,
 };
+
+/** Every variable an enricher reads for this caller, each once: what a remote caller's process env is read for. */
+export function callerEnvKeys(caller: EnricherView["caller"]): string[] {
+    const ids = Object.keys(ENRICHERS) as EnricherId[];
+    return [...new Set(ids.flatMap((id) => ENRICHERS[id].envKeys(caller)))];
+}
 
 /** Whether a host slot carries more than its env thread id: the details only the host's own store gives. */
 function hasHostDetails(host: CallerHost): boolean {

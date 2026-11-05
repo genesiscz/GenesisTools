@@ -566,6 +566,30 @@ export function readProcessEnvironment(pid: number): Record<string, string> | nu
     return environment;
 }
 
+/**
+ * Only the requested keys of a process's environment, each value with its trailing whitespace cut and an empty one left
+ * out. A missing or unreadable environment gives `{}`, so whatever the caller attributes from it stays unknown (the
+ * teams view's account, the gateway's remote caller). `environment` replaces the reader in a test.
+ */
+export function readProcessEnvKeys(
+    pid: number,
+    keys: readonly string[],
+    environment: (pid: number) => Record<string, string> | null = readProcessEnvironment
+): Record<string, string> {
+    const all = environment(pid);
+    const found: Record<string, string> = {};
+
+    for (const key of keys) {
+        const value = all?.[key]?.trimEnd();
+
+        if (value) {
+            found[key] = value;
+        }
+    }
+
+    return found;
+}
+
 /** The executable's path (the image name on Windows); null when the process is gone or the OS withholds it. */
 export function readExecutablePath(pid: number): string | null {
     switch (processPlatform()) {

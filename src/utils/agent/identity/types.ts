@@ -212,7 +212,10 @@ export interface EnricherSlots {
 
 export type EnricherId = keyof EnricherSlots;
 
-/** What an enricher may look at: the chosen caller (read-only), the local environment and the facets asked for. */
+/**
+ * What an enricher may look at: the chosen caller (read-only), the caller's environment (a local caller's own, or the
+ * keys a request read from a remote caller's process) and the facets asked for.
+ */
 export interface EnricherView {
     readonly caller: Readonly<Pick<AgentIdentity, "agent" | "sessionId">>;
     readonly env: NodeJS.ProcessEnv;
@@ -226,5 +229,10 @@ export interface EnricherView {
  */
 export interface ContextEnricher<Id extends EnricherId> {
     readonly id: Id;
+    /**
+     * The variables `enrich` reads for this caller, by name. A remote caller's env is read from its own process by
+     * exactly these names (the gateway's peer), so a new enricher reaches a remote caller with no other edit.
+     */
+    envKeys(caller: EnricherView["caller"]): readonly string[];
     enrich(view: EnricherView): EnricherSlots[Id] | undefined;
 }
