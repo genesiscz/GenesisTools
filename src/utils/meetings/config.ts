@@ -287,6 +287,10 @@ const assignSchema = z.object({
         .default(10),
 });
 
+/** What an export does with a note that holds edits: see `global.export.ifEdited`. */
+export const EXPORT_IF_EDITED = ["beside", "refuse", "replace"] as const;
+export type ExportIfEdited = (typeof EXPORT_IF_EDITED)[number];
+
 const storedConfigSchema = z
     .object({
         /** A newer version than this code writes still reads: its keys this code knows, the rest stay in the file. */
@@ -312,6 +316,16 @@ const storedConfigSchema = z
                     })
                     .prefault({}),
                 assign: assignSchema.prefault({}),
+                export: z
+                    .object({
+                        /**
+                         * What `meetings export` does when the note it would replace holds edits the last export did
+                         * not write: `beside` writes the new note next to it, `refuse` writes nothing, `replace`
+                         * overwrites the edits.
+                         */
+                        ifEdited: z.enum(EXPORT_IF_EDITED).default("beside"),
+                    })
+                    .prefault({}),
             })
             .prefault({}),
         /** The known projects. `--project` with a new name adds one here. */

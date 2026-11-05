@@ -304,6 +304,11 @@ export const meetingRecordSchema = z.object({
         .optional(),
     recording: recordingBlockSchema.optional(),
     assign: assignSchema.optional(),
+    /**
+     * The notes `meetings export` wrote, one per file: the sha256 of what it wrote, so the next export can tell an
+     * untouched note (replaced) from one a person edited (kept).
+     */
+    exports: z.array(z.object({ path: z.string().min(1), sha256: z.string().min(1), at: isoTime })).optional(),
     /** One line per command that changed the record. Never rewritten. */
     history: z.array(historySchema).default([]),
 });

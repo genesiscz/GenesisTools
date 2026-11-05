@@ -18,7 +18,7 @@ import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { OCR_BOX_LEVELS } from "@genesiscz/utils/macos/ocr-boxes";
-import { MeetingsConfigStore, mergeLabels } from "@genesiscz/utils/meetings/config";
+import { EXPORT_IF_EDITED, MeetingsConfigStore, mergeLabels } from "@genesiscz/utils/meetings/config";
 import { ITEM_STATUSES, type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import {
@@ -315,11 +315,17 @@ const screenTimelineMethod = defineMethod({
 });
 const exportMethod = defineMethod({
     name: "export",
-    params: z.object({ to: z.string().min(1).optional(), dryRun: z.boolean().optional() }).strict(),
+    params: z
+        .object({
+            to: z.string().min(1).optional(),
+            dryRun: z.boolean().optional(),
+            ifEdited: z.enum(EXPORT_IF_EDITED).optional(),
+        })
+        .strict(),
     result: z.unknown(),
-    resultName: "{ path, folder, bytes, replaced, written }",
+    resultName: "{ path, folder, bytes, action, replaced, kept?, written }",
     effect: "reversible",
-    doc: "Write the polished transcript (play links, dictionary, confirmed items) into the project's export folder, or `to`.",
+    doc: "Write the polished transcript (play links, dictionary, confirmed items) into the project's export folder, or `to`. An edited note is kept: ifEdited beside (the config's default), refuse or replace.",
 });
 
 const recordingSettings = defineMethod({
@@ -854,6 +860,7 @@ export class MeetingsToolset extends ReplToolset {
                     record: current(),
                     config: await new MeetingsConfigStore().read(),
                     ...(parsed.to ? { to: parsed.to } : {}),
+                    ...(parsed.ifEdited ? { ifEdited: parsed.ifEdited } : {}),
                     dryRun: parsed.dryRun === true,
                 });
             },
