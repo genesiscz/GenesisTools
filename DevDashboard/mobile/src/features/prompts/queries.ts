@@ -1,4 +1,5 @@
 import { type DashboardClient, ENDPOINTS, type PreparedPromptDto } from "@dd/contract";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { queryOptions } from "@tanstack/react-query";
 
 /** One saved prompt as the Mac lists it (`listPrompts` in `src/hub/lib/prompts.ts`). */
@@ -56,7 +57,7 @@ export function prepareQuery(
             client.call(ENDPOINTS.gatewayPromptPrepare, {
                 name: input.name,
                 ...(input.session ? { session: input.session } : {}),
-                vars: JSON.stringify(input.vars),
+                vars: SafeJSON.stringify(input.vars),
             }),
     });
 }
