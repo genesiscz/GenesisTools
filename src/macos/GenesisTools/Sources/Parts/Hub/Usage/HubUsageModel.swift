@@ -51,7 +51,7 @@ enum HubUsageSection: String, CaseIterable, Identifiable {
     /// The doors a section reads. The Limits section reads the most: the table, the lanes and their markers.
     func doors(_ settings: UsageSettings) -> [HubUsageDoorKey] {
         switch self {
-        case .limits: return [.limits, .series, .health, .spikes, .alerts, .advise]
+        case .limits: return [.limits, .series, .health, .spikes, .alerts, .advise, .drift]
         case .spend: return [.pivot]
         case .waste: return [.waste]
         case .attribution: return [.attribution]
