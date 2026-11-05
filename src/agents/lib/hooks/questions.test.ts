@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +17,32 @@ import { hasOpenDialogRecords, QUESTION_TOOL_MATCHER } from "./questions-gate";
 import { applySetting } from "./set-config";
 
 describe("the questions feature", () => {
+    it("closes an inherited-session dialog through the hook entrypoint", () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-question-entry-"));
+        const agents = join(home, ".genesis-tools", "agents");
+        mkdirSync(agents, { recursive: true });
+        writeFileSync(
+            join(agents, "hooks.json"),
+            SafeJSON.stringify({ questions: { harnesses: { claude: true }, notify: false } })
+        );
+        const run = (event: string) =>
+            spawnSync(process.execPath, [join(import.meta.dir, "../../bin/hook-question.ts")], {
+                input: SafeJSON.stringify({
+                    hook_event_name: event,
+                    tool_name: "AskUserQuestion",
+                    tool_use_id: "q1",
+                    tool_input: { questions: [{ question: "Continue?" }] },
+                }),
+                env: { GENESIS_TOOLS_HOME: home, CLAUDE_CODE_SESSION_ID: "inherited", HOME: home },
+                encoding: "utf8",
+            });
+        expect(run("PreToolUse").status).toBe(0);
+        const root = join(agents, "dialogs");
+        expect(openQuestions("claude", "inherited", root)).toHaveLength(1);
+        expect(run("PostToolUse").status).toBe(0);
+        expect(openQuestions("claude", "inherited", root)).toHaveLength(0);
+    });
+
     function settingsFile(body: unknown): string {
         const path = join(mkdtempSync(join(tmpdir(), "gt-hooks-questions-")), "settings.json");
         writeFileSync(path, SafeJSON.stringify(body));
