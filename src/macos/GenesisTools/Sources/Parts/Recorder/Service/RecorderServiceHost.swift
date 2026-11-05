@@ -22,6 +22,8 @@ final class RecorderServiceHost {
         static let hostTaken = 1012
         static let cameraDenied = 1014
         static let cameraBusy = 1015
+        /// `window.close`: the editor window has a drag not saved yet, or an export running.
+        static let windowBusy = 1021
     }
 
     struct Timing {

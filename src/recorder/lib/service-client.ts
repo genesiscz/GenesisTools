@@ -92,6 +92,17 @@ export async function hostOpenEditor(path: string, place: EditorPlace = {}): Pro
     });
 }
 
+/**
+ * Closes the editor window of an edit (`path`) or of a window number, through the host. A window with a drag not saved
+ * yet or an export running refuses (`RPC_ERRORS.windowBusy`); `closed: false` when no window shows it.
+ */
+export async function hostCloseEditor(target: { path?: string; window?: number }): Promise<HostResult<"window.close">> {
+    return recorderHost().call("window.close", {
+        ...(target.path !== undefined ? { path: target.path } : {}),
+        ...(target.window !== undefined ? { window: target.window } : {}),
+    });
+}
+
 /** One frame of the edit, through the host; the answer has the headless face's shape (`ok`, or `error`). */
 export async function hostStill(request: StillRequest): Promise<StillAnswer> {
     try {

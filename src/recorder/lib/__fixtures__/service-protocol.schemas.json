@@ -378,6 +378,17 @@
         "type": "object",
         "properties": {}
       },
+      "window.close": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/__schema14"
+          },
+          "window": {
+            "$ref": "#/$defs/__schema15"
+          }
+        }
+      },
       "render.still": {
         "type": "object",
         "properties": {
@@ -409,7 +420,7 @@
             "minItems": 1,
             "type": "array",
             "items": {
-              "$ref": "#/$defs/__schema14"
+              "$ref": "#/$defs/__schema16"
             }
           },
           "out": {
@@ -439,52 +450,52 @@
         "type": "object",
         "properties": {
           "out": {
-            "$ref": "#/$defs/__schema15"
-          },
-          "path": {
-            "$ref": "#/$defs/__schema16"
-          },
-          "edit": {
             "$ref": "#/$defs/__schema17"
           },
-          "library": {
+          "path": {
             "$ref": "#/$defs/__schema18"
           },
-          "picker": {
+          "edit": {
             "$ref": "#/$defs/__schema19"
           },
-          "shortcuts": {
+          "library": {
             "$ref": "#/$defs/__schema20"
           },
-          "filter": {
+          "picker": {
             "$ref": "#/$defs/__schema21"
           },
-          "width": {
+          "shortcuts": {
             "$ref": "#/$defs/__schema22"
           },
-          "height": {
+          "filter": {
             "$ref": "#/$defs/__schema23"
           },
-          "atSeconds": {
+          "width": {
             "$ref": "#/$defs/__schema24"
           },
-          "tab": {
+          "height": {
             "$ref": "#/$defs/__schema25"
           },
-          "selectZoom": {
+          "atSeconds": {
             "$ref": "#/$defs/__schema26"
           },
-          "selectClip": {
+          "tab": {
             "$ref": "#/$defs/__schema27"
           },
-          "part": {
+          "selectZoom": {
             "$ref": "#/$defs/__schema28"
           },
-          "range": {
+          "selectClip": {
+            "$ref": "#/$defs/__schema29"
+          },
+          "part": {
             "$ref": "#/$defs/__schema30"
           },
+          "range": {
+            "$ref": "#/$defs/__schema32"
+          },
           "comment": {
-            "$ref": "#/$defs/__schema31"
+            "$ref": "#/$defs/__schema33"
           }
         },
         "required": [
@@ -532,6 +543,7 @@
       "window.open",
       "window.show",
       "window.list",
+      "window.close",
       "render.still",
       "render.sheet",
       "render.export",
@@ -1734,10 +1746,10 @@
                 "maximum": 9007199254740991
               },
               "from": {
-                "$ref": "#/$defs/__schema3"
+                "$ref": "#/$defs/__schema6"
               },
               "to": {
-                "$ref": "#/$defs/__schema3"
+                "$ref": "#/$defs/__schema6"
               },
               "padMs": {
                 "type": "integer",
@@ -2460,44 +2472,52 @@
         "$ref": "#/$defs/__schema6"
       },
       "__schema14": {
+        "$ref": "#/$defs/__schema0"
+      },
+      "__schema15": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+      },
+      "__schema16": {
         "type": "number",
         "minimum": 0
       },
-      "__schema15": {
+      "__schema17": {
         "type": "string",
         "minLength": 1
       },
-      "__schema16": {
-        "type": "string"
-      },
-      "__schema17": {
-        "type": "string"
-      },
       "__schema18": {
-        "type": "boolean"
+        "type": "string"
       },
       "__schema19": {
-        "type": "boolean"
+        "type": "string"
       },
       "__schema20": {
         "type": "boolean"
       },
       "__schema21": {
-        "type": "string"
+        "type": "boolean"
       },
       "__schema22": {
-        "type": "number",
-        "exclusiveMinimum": 0
+        "type": "boolean"
       },
       "__schema23": {
-        "type": "number",
-        "exclusiveMinimum": 0
+        "type": "string"
       },
       "__schema24": {
         "type": "number",
-        "minimum": 0
+        "exclusiveMinimum": 0
       },
       "__schema25": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "__schema26": {
+        "type": "number",
+        "minimum": 0
+      },
+      "__schema27": {
         "type": "string",
         "enum": [
           "zoom",
@@ -2512,20 +2532,20 @@
           "find"
         ]
       },
-      "__schema26": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 9007199254740991
-      },
-      "__schema27": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 9007199254740991
-      },
       "__schema28": {
-        "$ref": "#/$defs/__schema29"
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
       },
       "__schema29": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "__schema30": {
+        "$ref": "#/$defs/__schema31"
+      },
+      "__schema31": {
         "anyOf": [
           {
             "type": "object",
@@ -2562,10 +2582,10 @@
           }
         ]
       },
-      "__schema30": {
-        "$ref": "#/$defs/__schema29"
+      "__schema32": {
+        "$ref": "#/$defs/__schema31"
       },
-      "__schema31": {
+      "__schema33": {
         "type": "integer",
         "minimum": 0,
         "maximum": 9007199254740991
@@ -2951,6 +2971,23 @@
         ],
         "additionalProperties": false
       },
+      "window.close": {
+        "type": "object",
+        "properties": {
+          "closed": {
+            "type": "boolean"
+          },
+          "window": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "closed"
+        ],
+        "additionalProperties": false
+      },
       "render.still": {
         "type": "object",
         "properties": {
@@ -3100,6 +3137,7 @@
       "window.open",
       "window.show",
       "window.list",
+      "window.close",
       "render.still",
       "render.sheet",
       "render.export",

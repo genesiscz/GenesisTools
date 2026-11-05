@@ -543,6 +543,24 @@ final class RecorderTimelineTests: XCTestCase {
         return EditorModel.on(service, store: ProjectStore(url: own.appendingPathComponent("edit.json")))
     }
 
+    // The lead's list of 2026-11-05 07:55, item 1: window.close closes the editor its path names, and refuses while a
+    // drag is not saved yet, since closing would drop the drag.
+    func testAnEditorWithADragNotSavedYetRefusesToCloseAndItsPathIsItsFolderEditOrMovie() {
+        let model = cameraModel()
+        XCTAssertNil(EditorWindows.closeRefusal(of: model))
+        model.changeCamera(.init(size: 0.3))
+        XCTAssertTrue(EditorWindows.closeRefusal(of: model)?.contains("drag") == true, "an open drag refuses the close")
+        model.finishGesture()
+        XCTAssertNil(EditorWindows.closeRefusal(of: model), "the drag is saved: the window may close")
+
+        let folder = model.store.url.deletingLastPathComponent().path
+        XCTAssertTrue(EditorWindows.names(model, folder))
+        XCTAssertTrue(EditorWindows.names(model, folder + "/"))
+        XCTAssertTrue(EditorWindows.names(model, model.store.url.path))
+        XCTAssertTrue(EditorWindows.names(model, model.project.source.video))
+        XCTAssertFalse(EditorWindows.names(model, folder + "-other"))
+    }
+
     // Regression test: 2026-11-05 review of the editor gaps, R1.1, on the edit path. The undo's answer took the last
     // step off the list, and a drag that ended before the answer was that step: the drag could not be undone and the
     // zoom came back as a redo.

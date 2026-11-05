@@ -35,6 +35,8 @@ tools recorder edit                              # no recording: a list in a ter
 tools recorder library                           # the recordings library window; a double-click opens the editor
 tools recorder opened [--wait [S]] [--json]      # the recordings the editor shows, ▶ the one in front; --wait
                                                  # blocks until a recording comes to the front and prints its folder
+tools recorder window close <recording> [--window N] [--json]  # close its editor window as the close button does;
+                                                 # refused (1021) while a drag is not saved yet or an export runs
 tools recorder project <recording>               # the edit as JSON (source seconds)
 tools recorder apply <recording> '<op or [ops]>' # change the edit; - reads the ops from stdin
 tools recorder export <recording> [--format mp4|gif|webm] [--from T] [--to T] [--out FILE] [--json]
@@ -304,6 +306,7 @@ await m.still(2.5);                         // shows the frame as it will export
 await m.sheet({ count: 6 });                // six frames over the whole edit on one picture, each with its time
 await m.poster({ at: 4 });                  // that frame at the export's full size: <name>-poster.png
 await m.show({ at: 2.5, tab: "text" });     // opens the editor window there, behind the front window
+await m.closeEditor();                      // closes it again: { closed, window }
 await m.export({ format: "gif" });
 await m.polish();                           // removeIdle, autoZoom, normalize, a frame; steps: [{ step, done, note }]
 await m.spotlight({ from: 2, to: 6, rect: { x: 0.5, y: 0, width: 0.5, height: 0.5 } });  // dims all but the rect

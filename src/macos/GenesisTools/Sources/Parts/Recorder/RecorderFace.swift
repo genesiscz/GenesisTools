@@ -226,6 +226,43 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         return window
     }
 
+    /// Closes the editor `path` names (`names`) or window number `window`, as its close button does, and answers the
+    /// window's number; nil when no editor shows it. A window that must not close now (`closeRefusal`) is refused with
+    /// `windowBusy`, never closed half-way: no alert, no dropped drag, no stopped export.
+    func close(path: String?, window number: Int?) throws -> Int? {
+        let entry = open.values.first { entry in
+            if let number { return entry.0.windowNumber == number }
+            return path.map { Self.names(entry.1, $0) } ?? false
+        }
+        guard let (window, model, _) = entry else { return nil }
+        if let refusal = Self.closeRefusal(of: model) {
+            throw LiveRecordingRPCClient.Failure.remote(code: RecorderServiceHost.Code.windowBusy, message: refusal)
+        }
+        let closed = window.windowNumber
+        HubPerf.log("recorder.editor: closing \(model.title) for window.close")
+        window.close()
+        return closed
+    }
+
+    /// Why the editor of `model` must not close now, or nil: a drag whose last step is not saved yet, an export running.
+    static func closeRefusal(of model: EditorModel) -> String? {
+        if model.gesture != nil {
+            return "the editor window of \(model.title) has a drag that is not saved yet; let it finish, then close it"
+        }
+        if model.canCancelExport {
+            return "the editor window of \(model.title) is exporting the movie; closing it would stop the export"
+        }
+        return nil
+    }
+
+    /// Whether `path` names the editor of `model`: its recording folder, its edit file or its movie.
+    static func names(_ model: EditorModel, _ path: String) -> Bool {
+        let given = URL(fileURLWithPath: path).standardizedFileURL.path
+        let edit = model.store.url.standardizedFileURL
+        return given == edit.deletingLastPathComponent().path || given == edit.path
+            || given == URL(fileURLWithPath: model.project.source.video).standardizedFileURL.path
+    }
+
     /// `{ front?, open: [{ path, title, window }] }`: the editor's windows, `window` being each one's window number
     /// (what `window.open` answers). The recorder host's `window.list` and `window.changed` carry it as is.
     func openState() -> [String: Any] {

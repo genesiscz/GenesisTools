@@ -56,6 +56,8 @@ export const RPC_ERRORS = {
     hostUnavailable: 1019,
     /** The recorder service's `recording.call`: no live recording with that id is registered with it. */
     unknownRecording: 1020,
+    /** The host's `window.close`: the editor window has a drag not saved yet, or an export running. */
+    windowBusy: 1021,
 } as const;
 
 export { RpcError };

@@ -1056,6 +1056,46 @@
       }
     },
     {
+      "method": "window.close",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 31,
+        "method": "window.close",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 31,
+        "result": {
+          "closed": true,
+          "window": 4711
+        }
+      }
+    },
+    {
+      "method": "window.close",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 32,
+        "method": "window.close",
+        "params": {
+          "window": 4712
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 32,
+        "error": {
+          "code": 1021,
+          "message": "the editor window of Talk has a drag that is not saved yet; let it finish, then close it"
+        }
+      }
+    },
+    {
       "method": "render.still",
       "direction": "client→service",
       "request": {
@@ -1435,6 +1475,46 @@
               "window": 4711
             }
           ]
+        }
+      }
+    },
+    {
+      "method": "window.close",
+      "direction": "service→host",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 12,
+        "method": "window.close",
+        "params": {
+          "path": "/Users/alice/.genesis-tools/recordings/library/talk/screen.edit.json"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 12,
+        "result": {
+          "closed": true,
+          "window": 4711
+        }
+      }
+    },
+    {
+      "method": "window.close",
+      "direction": "service→host",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 13,
+        "method": "window.close",
+        "params": {
+          "window": 4712
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 13,
+        "error": {
+          "code": 1021,
+          "message": "the editor window of Talk has a drag that is not saved yet; let it finish, then close it"
         }
       }
     },

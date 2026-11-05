@@ -14,6 +14,7 @@ import {
     type RecorderStatus,
     type RecordingMarker,
     RPC_ERRORS,
+    RpcError,
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
 import { callRecorder, LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
@@ -29,7 +30,7 @@ import { EDITOR_TABS } from "./library";
 import { applyEdit, serviceRoutedMovie, undoLastEdit } from "./movie-client";
 import { editorGolden, protocolJsonSchemas } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
-import { hostStill, ServiceHost } from "./service-client";
+import { hostCloseEditor, hostStill, ServiceHost } from "./service-client";
 import {
     HOST_METHODS,
     hostApi,
@@ -712,6 +713,59 @@ describe("the REPL's and the CLI's way to the service", () => {
         ]);
     });
 
+    // The lead's list of 2026-11-05 07:55, item 1: an agent that opened an editor window had no way to close it, so a
+    // live check pressed the close button through accessibility.
+    test("closeEditor and the CLI's close reach the host's window.close, and a busy window's coded refusal comes back", async () => {
+        const { service } = await serviceFixture();
+        const path = editFixture("rs-close-");
+        const asked: unknown[] = [];
+        const host = await connect(service.entry, async ({ method, params }) => {
+            asked.push({ method, params });
+
+            if (asked.length === 2) {
+                throw new RpcError(RPC_ERRORS.windowBusy, "the editor window has a drag that is not saved yet");
+            }
+
+            return { closed: true, window: 7 };
+        });
+        await host.call<unknown>("hello", hello("host", ["window.close"]));
+
+        expect(await new Movie(path).closeEditor()).toEqual({ closed: true, window: 7 });
+        await expect(hostCloseEditor({ path })).rejects.toMatchObject({ code: RPC_ERRORS.windowBusy });
+        expect(asked).toEqual([
+            { method: "window.close", params: { path } },
+            { method: "window.close", params: { path } },
+        ]);
+    });
+
+    test("without a host, window.close answers closed: false for a window nobody lists, and refuses one editor-open.json lists", async () => {
+        const { service } = await serviceFixture({
+            headless: {
+                editorState: () => ({
+                    version: 1,
+                    updatedAt: "",
+                    open: [{ path: "/rec/talk", title: "Talk", window: 7 }],
+                }),
+            },
+        });
+        const client = await connect(service.entry);
+
+        expect(await client.call<unknown>("window.close", { path: "/rec/other/screen.edit.json" })).toEqual({
+            closed: false,
+        });
+        await expect(
+            client.call<unknown>("window.close", { path: "/rec/talk/screen.edit.json" })
+        ).rejects.toMatchObject({
+            code: RPC_ERRORS.hostUnavailable,
+        });
+        await expect(client.call<unknown>("window.close", { window: 7 })).rejects.toMatchObject({
+            code: RPC_ERRORS.hostUnavailable,
+        });
+        await expect(client.call<unknown>("window.close", {})).rejects.toMatchObject({
+            code: RPC_ERRORS.invalidParams,
+        });
+    });
+
     test("a REPL Movie's edit goes into the window's open session through the service, and runs locally without one", async () => {
         const { dir, service } = await serviceFixture({ saveDelayMs: 10_000 });
         const path = editFixture("rs-movie-");
@@ -1111,6 +1165,7 @@ describe("the protocol fixture the Swift host tests read", () => {
                 RPC_ERRORS.staleRevision,
                 RPC_ERRORS.nothingToRedo,
                 RPC_ERRORS.unknownRecording,
+                RPC_ERRORS.windowBusy,
             ].sort()
         );
     });

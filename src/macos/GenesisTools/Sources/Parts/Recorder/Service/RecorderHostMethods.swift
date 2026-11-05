@@ -10,12 +10,15 @@ protocol RecorderHostFace: AnyObject {
     func showPicker()
     /// `{ front?, open: [{ path, title, window }] }`, the rows editor-open.json holds.
     func openWindows() -> [String: Any]
+    /// Closes the editor `path` names (its folder, edit or movie) or window number `window`, and answers its number;
+    /// nil when no editor shows it. Throws `Code.windowBusy` while the window has a drag not saved yet or an export.
+    func closeEditor(path: String?, window: Int?) throws -> Int?
     func startCamera(folder: URL) async -> CameraBubble.StartAnswer
     func stopCamera(folder: URL) -> Bool
 }
 
 /// The methods the recorder host answers for the recorder service (the plan's "Methods the host answers"):
-/// `window.open`, `window.show`, `window.list`, `render.still`, `render.sheet`, `render.export`, `render.snapshot`,
+/// `window.open`, `window.show`, `window.list`, `window.close`, `render.still`, `render.sheet`, `render.export`, `render.snapshot`,
 /// `camera.start` and `camera.stop`. Each runs on the main actor and calls the code the face already has; renders
 /// answer the fields the headless `--still`, `--sheet`, `--export --json` and `--snapshot` runs print.
 enum RecorderHostMethods {
@@ -44,6 +47,16 @@ enum RecorderHostMethods {
                 return ["shown": true]
             },
             "window.list": method { _ in face.openWindows() },
+            "window.close": method { request in
+                let params = Params(request)
+                let path = try params.optionalPath("path")
+                let window = params.int("window")
+                guard path != nil || window != nil else {
+                    throw invalid("window.close needs path (a recording folder, its edit or its movie) or window (a number window.list names)")
+                }
+                guard let closed = try face.closeEditor(path: path, window: window) else { return ["closed": false] }
+                return ["closed": true, "window": closed]
+            },
             "render.still": method { request in
                 let params = Params(request)
                 return try await RecorderRenders.still(source: try params.path("path"), atSeconds: params.number("atSeconds") ?? 0,
@@ -223,6 +236,7 @@ final class LiveRecorderFace: RecorderHostFace {
     func showLibrary(focus: Bool) { LibraryWindow.shared.show(focus: focus) }
     func showPicker() { CapturePicker.shared.show() }
     func openWindows() -> [String: Any] { EditorWindows.shared.openState() }
+    func closeEditor(path: String?, window: Int?) throws -> Int? { try EditorWindows.shared.close(path: path, window: window) }
     func startCamera(folder: URL) async -> CameraBubble.StartAnswer { await CameraBubble.shared.start(folder: folder) }
     func stopCamera(folder: URL) -> Bool { CameraBubble.shared.stop(folder: folder) }
 }

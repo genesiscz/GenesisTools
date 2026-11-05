@@ -227,6 +227,18 @@ export const hostApi = defineApi({
             effect: "read",
         }),
         defineMethod({
+            name: "window.close",
+            params: z
+                .object({ path: path.optional(), window: z.number().int().positive().optional() })
+                .refine((params) => params.path !== undefined || params.window !== undefined, {
+                    message:
+                        "window.close needs path (a recording folder, its edit or its movie) or window (a number window.list names)",
+                }),
+            result: z.object({ closed: z.boolean(), window: z.number().int().optional() }),
+            doc: "Closes the editor window of an edit (path) or a window number, as its close button does; closed: false when none shows it. 1021 while the window has a drag not saved yet or an export running; 1019 when a window is open but no host is connected to close it.",
+            effect: "reversible",
+        }),
+        defineMethod({
             name: "render.still",
             params: z.object({
                 path,
@@ -340,6 +352,7 @@ export const HOST_SCHEMAS: HostSchemas = {
     "window.open": hostMethod("window.open"),
     "window.show": hostMethod("window.show"),
     "window.list": hostMethod("window.list"),
+    "window.close": hostMethod("window.close"),
     "render.still": hostMethod("render.still"),
     "render.sheet": hostMethod("render.sheet"),
     "render.export": hostMethod("render.export"),
@@ -353,6 +366,7 @@ export const HOST_TIMEOUT_MS: Record<HostMethod, number> = {
     "window.open": 30_000,
     "window.show": 30_000,
     "window.list": 10_000,
+    "window.close": 10_000,
     "render.still": 120_000,
     "render.sheet": 120_000,
     "render.export": 30 * 60_000,

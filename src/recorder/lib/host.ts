@@ -138,7 +138,7 @@ function spanOf(value: z.infer<typeof spanSchema> | undefined): { from: number; 
 
 /** The recording folder an edit path names, as the editor's window rows do. */
 function folderOf(path: string): string {
-    return basename(path).endsWith(".json") ? dirname(path) : path;
+    return /\.(json|mp4|mov)$/i.test(basename(path)) ? dirname(path) : path;
 }
 
 type HeadlessTable = {
@@ -170,6 +170,21 @@ const HEADLESS: HeadlessTable = {
             ...(state?.front ? { front: row(state.front) } : {}),
             open: (state?.open ?? []).map(row),
         };
+    },
+    "window.close": async (deps, params) => {
+        const listed = (deps.editorState()?.open ?? []).find((each) =>
+            params.window !== undefined ? each.window === params.window : each.path === folderOf(params.path ?? "")
+        );
+
+        // The windows are the app's: with no host connected, a window the editor lists cannot be reached.
+        if (listed) {
+            throw new RpcError(
+                RPC_ERRORS.hostUnavailable,
+                `the editor window of ${listed.path} is open, but the app's recorder face is not connected to the recorder service, so it cannot be closed from here`
+            );
+        }
+
+        return { closed: false };
     },
     "render.still": async (deps, params, context) =>
         faceResult({

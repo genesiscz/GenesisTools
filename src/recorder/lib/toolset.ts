@@ -85,7 +85,7 @@ import { serviceRoutedMovie } from "./movie-client";
 import { copyRecording, revealRecording, trashRecording } from "./quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./review";
 import { findOnScreen, type ScreenHit } from "./screen-search";
-import { hostOpenEditor, hostSheet, hostStill } from "./service-client";
+import { hostCloseEditor, hostOpenEditor, hostSheet, hostStill } from "./service-client";
 import { parseStartFlags, type RecordOptions, readStartArgs, recordOptionsSchema, startArgsOf } from "./start-options";
 
 const { log } = logger.scoped("recorder-toolset");
@@ -907,6 +907,14 @@ const movieMethods = [
             .strict(),
         result: z.unknown(),
         doc: 'Opens the edit in the recorder window (behind the front window unless focus: true), at OUTPUT seconds `at` and on the inspector `tab` ("zoom", "clip", "hide", "text", "style", "cursor", "captions", "audio", "export"), so you can show the user a moment.',
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "closeEditor",
+        params: z.object({}).strict(),
+        result: z.unknown(),
+        resultName: "{ closed, window? }",
+        doc: "Closes the edit's recorder window, as its close button does (show() opens it); closed: false when no window shows it. Refused (1021) while the window has a drag not saved yet or an export running.",
         effect: "reversible",
     }),
 ];
@@ -1918,6 +1926,10 @@ export class Movie {
             ...(options.at === undefined ? {} : { at: options.at }),
             ...(options.tab ? { tab: options.tab } : {}),
         };
+    }
+
+    async closeEditor() {
+        return hostCloseEditor({ path: (await openProject(this.recording)).path });
     }
 }
 

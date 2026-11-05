@@ -140,10 +140,20 @@ private final class FakeFace: RecorderHostFace {
     var camera: CameraBubble.StartAnswer = .started
     var cameraFolders: [String] = []
     var windows: [String: Any] = ["open": [["path": "/r/demo", "title": "Demo", "window": 41]], "front": ["path": "/r/demo", "title": "Demo", "window": 41]]
+    var closed: [(path: String?, window: Int?)] = []
 
     func openEditor(path: String, focus: Bool, atSeconds: Double?, tab: InspectorTab?) async throws -> Int {
         opened.append((path, focus, atSeconds, tab))
         return 41
+    }
+
+    /// Window 41 shows every path but /r/none; window 4712 has a drag not saved yet, as the fixture's refusal says.
+    func closeEditor(path: String?, window: Int?) throws -> Int? {
+        closed.append((path, window))
+        if window == 4712 {
+            throw LiveRecordingRPCClient.Failure.remote(code: RecorderServiceHost.Code.windowBusy, message: "a drag is not saved yet")
+        }
+        return path == "/r/none" ? nil : 41
     }
 
     func showLibrary(focus: Bool) { shown.append("library:\(focus)") }
@@ -253,7 +263,7 @@ final class RecorderServiceHostTests: XCTestCase {
         XCTAssertEqual((hello["protocol"] as? NSNumber)?.intValue, 1)
         XCTAssertEqual((hello["pid"] as? NSNumber)?.intValue, 4242)
         XCTAssertEqual(hello["answers"] as? [String], ["camera.start", "camera.stop", "render.export", "render.sheet", "render.snapshot",
-                                                        "render.still", "window.list", "window.open", "window.show"])
+                                                        "render.still", "window.close", "window.list", "window.open", "window.show"])
         _ = try service.line { $0["method"] as? String == "window.changed" }
         XCTAssertEqual(connectedCalls, 1)
     }
@@ -354,6 +364,24 @@ final class RecorderServiceHostTests: XCTestCase {
         let list = try await result(23, "window.list")
         XCTAssertEqual(((list["open"] as? [[String: Any]])?.first?["window"] as? NSNumber)?.intValue, 41)
         XCTAssertEqual((list["front"] as? [String: Any])?["path"] as? String, "/r/demo")
+    }
+
+    // The lead's list of 2026-11-05 07:55, item 1: an agent could open an editor window but not close it.
+    func testWindowCloseClosesThroughTheFaceAndAnswersItsCodedRefusal() async throws {
+        _ = try await connectedHost()
+        let closed = try await result(30, "window.close", ["path": "/tmp/../tmp/rec/edit.json"])
+        XCTAssertEqual(closed["closed"] as? Bool, true)
+        XCTAssertEqual((closed["window"] as? NSNumber)?.intValue, 41)
+        XCTAssertEqual(face.closed.first?.path, "/tmp/rec/edit.json")
+        let none = try await result(31, "window.close", ["path": "/r/none"])
+        XCTAssertEqual(none["closed"] as? Bool, false)
+        XCTAssertNil(none["window"])
+        let busy = try await ask(32, "window.close", ["window": 4712])
+        XCTAssertEqual(errorCode(busy), 1021)
+        XCTAssertEqual(face.closed.last?.window, 4712)
+        let neither = try await ask(33, "window.close")
+        XCTAssertEqual(errorCode(neither), -32602)
+        XCTAssertEqual(face.closed.count, 3, "a call that names no window reaches none")
     }
 
     func testTheEditorsOpenStateCarriesNoWindowsWhenNoneIsOpen() {

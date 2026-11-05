@@ -52,7 +52,7 @@ import { type DisplayRange, PROXY_DISPLAY_POLICIES, type ProxyDisplay, parseDisp
 import { copyRecording, revealRecording, trashRecording } from "./lib/quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./lib/review";
 import { findOnScreen } from "./lib/screen-search";
-import { hostOpenEditor } from "./lib/service-client";
+import { hostCloseEditor, hostOpenEditor } from "./lib/service-client";
 import {
     countdownSecondsOf,
     defaultStartTarget,
@@ -935,6 +935,56 @@ program
 
             await ensureRecorderPart((line) => out.printlnErr(line));
             await hostOpenEditor(path, { focus: flags.focus !== false, atSeconds, tab });
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+const windowCommand = program
+    .command("window")
+    .description(
+        `The recorder's editor windows: \`edit\` opens one, \`opened\` lists them, \`window close\` closes one`
+    );
+
+windowCommand
+    .command("close")
+    .description(
+        "Close a recording's editor window, as its close button does; refused while the window has a drag not saved yet or an export running"
+    )
+    .argument(
+        "[recording]",
+        "a library id, `last`, `open` (the one in front), a recording folder, a movie or an edit.json"
+    )
+    .option(
+        "--window <number>",
+        `the window number ${toolCommand("recorder opened --json")} lists, instead of a recording`
+    )
+    .option("--json", "print the answer as JSON")
+    .action(async (given: string | undefined, flags: { window?: string; json?: boolean }) => {
+        try {
+            if (given === undefined && flags.window === undefined) {
+                throw new Error(
+                    `name the recording, or --window <number>; ${toolCommand("recorder opened")} lists the open ones`
+                );
+            }
+
+            if (flags.window !== undefined && !/^\d+$/.test(flags.window)) {
+                throw new Error(`--window takes a window number, not "${flags.window}"`);
+            }
+
+            const answer = await hostCloseEditor(
+                flags.window !== undefined ? { window: Number(flags.window) } : { path: resolveRecording(given ?? "") }
+            );
+
+            if (flags.json) {
+                out.result(answer);
+                return;
+            }
+
+            out.println(
+                answer.closed ? `Closed editor window ${answer.window ?? ""}`.trim() : "No editor window shows it."
+            );
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
