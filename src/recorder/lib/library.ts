@@ -45,19 +45,24 @@ export function movieOf(folder: string): string | undefined {
 
 /** Every library recording, newest first. */
 export function listLibrary(options: string | { root?: string; limit?: number } = {}): LibraryRow[] {
-    const { root = recordingsLibraryDir(), limit = Infinity } = typeof options === "string" ? { root: options } : options;
+    const { root = recordingsLibraryDir(), limit = Infinity } =
+        typeof options === "string" ? { root: options } : options;
     if (!existsSync(root)) {
         return [];
     }
 
     const rows: LibraryRow[] = [];
 
-    const folders = readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => {
-        const match = /^(?:library|video)-(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/.exec(entry.name);
-        const time = match ? new Date(`${match[1]}T${match[2]}:${match[3]}:${match[4]}`).getTime()
-            : statSync(join(root, entry.name)).birthtimeMs;
-        return { name: entry.name, time };
-    }).sort((a, b) => b.time - a.time || b.name.localeCompare(a.name));
+    const folders = readdirSync(root, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => {
+            const match = /^(?:library|video)-(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/.exec(entry.name);
+            const time = match
+                ? new Date(`${match[1]}T${match[2]}:${match[3]}:${match[4]}`).getTime()
+                : statSync(join(root, entry.name)).birthtimeMs;
+            return { name: entry.name, time };
+        })
+        .sort((a, b) => b.time - a.time || b.name.localeCompare(a.name));
 
     for (const { name } of folders) {
         if (rows.length >= Math.max(0, limit)) {
@@ -132,8 +137,7 @@ export function resolveRecording(value: string, { alive }: { alive?: (pid: numbe
         }
     }
 
-    const known = listLibrary({ limit: 5 })
-        .map((row) => row.id);
+    const known = listLibrary({ limit: 5 }).map((row) => row.id);
     throw new Error(
         `No recording "${value}": not a path and not a library id. Newest ids: ${known.join(", ") || "none"} (or "last").`
     );

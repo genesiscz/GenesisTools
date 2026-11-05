@@ -343,11 +343,11 @@ export class EditSession {
         try {
             withPathArbitrationSync(this.path, () => {
                 this.syncWithDisk();
-    
+
                 if (this.unsaved.length === 0) {
                     return;
                 }
-    
+
                 this.diskText = saveAt(this.path, this.project);
                 writeUndoSteps(this.path, this.undoSteps);
                 this.unsaved = [];
@@ -585,7 +585,9 @@ export class EditSessions {
 
     private closeWhenFree(path: string, deadline: number): void {
         const entry = this.open.get(path);
-        if (!entry || entry.holders > 0) { return; }
+        if (!entry || entry.holders > 0) {
+            return;
+        }
         try {
             entry.session.close();
             this.open.delete(path);
@@ -610,9 +612,11 @@ export class EditSessions {
     }
 
     closeAll(): void {
-        for (const [path, { session }] of this.open) {
+        for (const [path] of this.open) {
             const entry = this.open.get(path);
-            if (entry) { entry.holders = 0; }
+            if (entry) {
+                entry.holders = 0;
+            }
             this.closeWhenFree(path, Date.now() + 10_000);
         }
     }

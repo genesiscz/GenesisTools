@@ -3,12 +3,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFile
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
 import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
-import { applyOp, wholeProject } from "@genesiscz/utils/recording-editor/project";
+import { applyOp, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
+import { EditSessions } from "./edit-session";
 import { displaySwitchDepth, keepingSwitchStep, keptPlan, stepDisplaySwitch } from "./frames-movie";
-import { editorOpenStatePath, movieOf, readEditorOpenState, resolveRecording } from "./library";
+import { editorOpenStatePath, listLibrary, movieOf, readEditorOpenState, resolveRecording } from "./library";
 import {
     boxInProxy,
     chosenPlan,
@@ -509,4 +511,45 @@ describe("a recording's quick actions", () => {
         await expect(trashRecording(meeting, { roots })).rejects.toThrow("holds the whole meeting");
         expect(existsSync(join(meeting, "meeting.json"))).toBe(true);
     });
+});
+
+it("retains a released dirty session until its busy save can finish", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "edit-busy-"));
+    const path = join(folder, "edit.json");
+    writeProject(
+        path,
+        wholeProject({ video: join(folder, "screen.mp4"), durationUs: 1_000_000, width: 640, height: 480 })
+    );
+    const sessions = new EditSessions({ onChange: () => undefined, saveDelayMs: 100 });
+    const session = await sessions.hold(path);
+    await session.apply([{ op: "volume", volume: 0.4 }], { by: "fixture" });
+    await tryWithPathArbitration(path, async () => {
+        sessions.release(path);
+        expect(sessions.size).toBe(1);
+        expect(session.dirty).toBe(true);
+    });
+    await Bun.sleep(250);
+    expect(sessions.size).toBe(0);
+    expect(SafeJSON.parse(readFileSync(path, "utf8")).audio.volume).toBe(0.4);
+});
+
+it("a library limit leaves older manifests unparsed", () => {
+    const root = mkdtempSync(join(tmpdir(), "library-bound-"));
+    const newest = join(root, "video-2026-11-05_10-00-00-new");
+    const oldest = join(root, "video-2026-01-01_10-00-00-old");
+    mkdirSync(newest);
+    mkdirSync(oldest);
+    writeFileSync(join(oldest, "recording.json"), "{broken");
+    writeFileSync(
+        join(newest, "recording.json"),
+        SafeJSON.stringify({
+            version: 1,
+            id: "new",
+            title: "new",
+            startedAt: "2026-11-05T10:00:00Z",
+            displays: [],
+            frames: [],
+        })
+    );
+    expect(listLibrary({ root, limit: 1 }).map((row) => row.id)).toEqual(["new"]);
 });
