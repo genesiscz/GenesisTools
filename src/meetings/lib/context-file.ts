@@ -15,8 +15,11 @@ export interface ContextFileText {
     warning?: string;
 }
 
+/** One git read; a stalled git (a hung filesystem, a lock) counts as no historical version, like any other failure. */
+const GIT_TIMEOUT_MS = 10_000;
+
 function git(cwd: string, args: string[]): string | undefined {
-    const run = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+    const run = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", timeout: GIT_TIMEOUT_MS });
     return run.exitCode === 0 ? run.stdout.toString() : undefined;
 }
 
