@@ -964,6 +964,19 @@ describe("UsageLimitsDb", () => {
             expect(mem.getSeries({ from: FROM, to: TO, kinds: [] })).toEqual([]);
         });
 
+        test("scope changes preserve distinct histories and close prior availability", () => {
+            for (const [hour, scopeModel, percent] of [[6, null, 30], [8, "fable", 12], [10, null, 5]] as const) {
+                mem.recordSnapshotV2("work", "primary", percent, `2026-11-01T${String(hour).padStart(2, "0")}:00:00.000Z`, {
+                    provider: "anthropic-sub", kind: "weekly", scopeModel, resetsAt: null, severity: null,
+                });
+            }
+            const entries = mem.getSeries({ from: FROM, to: TO, keys: ["primary"], agg: "raw" });
+            expect(entries.map((entry) => [entry.scopeModel, entry.points.map((point) => point.percent)])).toEqual([
+                [null, [30, 5]], ["fable", [12]],
+            ]);
+            expect(entries[0].availability[0].to).toBe("2026-11-01T08:00:00.000Z");
+        });
+
         test("minmax bins split on absence and kind re-entry within one bucket", () => {
             const store = new UsageLimitsDb(":memory:");
             const at = (minute: number) => `2026-11-01T04:${String(minute).padStart(2, "0")}:00.000Z`;

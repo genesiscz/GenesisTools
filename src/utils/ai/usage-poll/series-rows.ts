@@ -118,7 +118,7 @@ export function groupSeriesRows(rows: readonly SeriesRow[]): SeriesGroup[] {
         }
 
         const kind = row.kind ?? carried;
-        const id = `${run}\u0000${kind ?? ""}`;
+        const id = `${run}\u0000${kind ?? ""}\u0000${row.scopeModel ?? ""}`;
         let group = groups.get(id);
 
         if (!group) {
@@ -127,7 +127,7 @@ export function groupSeriesRows(rows: readonly SeriesRow[]): SeriesGroup[] {
                 account: row.account,
                 key: row.key,
                 kind,
-                scopeModel: null,
+                scopeModel: row.scopeModel,
                 rows: [],
                 ends: [],
             };
@@ -139,10 +139,6 @@ export function groupSeriesRows(rows: readonly SeriesRow[]): SeriesGroup[] {
         }
 
         previous = group;
-
-        if (row.scopeModel !== null) {
-            group.scopeModel = row.scopeModel;
-        }
 
         group.rows.push(row);
     }
