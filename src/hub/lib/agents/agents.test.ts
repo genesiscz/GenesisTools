@@ -654,6 +654,24 @@ describe("spawn prompts: previews in the list, the whole prompt from the one-age
         expect(promptPreview(null)).toBeNull();
     });
 
+    test("a preview of a long prompt is the same as folding the whole prompt, whitespace at the cut included", () => {
+        const whole = (prompt: string) => {
+            const folded = prompt.replace(/\s+/g, " ").trim();
+            return folded.length > 200 ? `${folded.slice(0, 199)}…` : folded;
+        };
+        const prompts = [
+            `${" ".repeat(5_000)}start ${"word ".repeat(2_000)}`,
+            `${"a".repeat(200)}${" ".repeat(3_000)}`,
+            `${"a".repeat(199)}\n\n${"b".repeat(5_000)}`,
+            `${"x ".repeat(399)}${"\t".repeat(2_000)}end`,
+            `${"word\n".repeat(160)}`,
+            `${" ".repeat(801)}${"a".repeat(201)}`,
+        ];
+        for (const prompt of prompts) {
+            expect(promptPreview(prompt)).toBe(whole(prompt));
+        }
+    });
+
     test("the list form drops every full prompt, nested ones too, and keeps the previews", () => {
         const { teams, row } = fixture();
         const listed = withoutFullPrompts(readParent(row, [], teams, { now: NOW }).children);

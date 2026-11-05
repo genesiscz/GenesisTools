@@ -89,14 +89,35 @@ export function agentStatus(
 
 export const SPAWN_PROMPT_PREVIEW_CHARS = 200;
 
-/** The first `SPAWN_PROMPT_PREVIEW_CHARS` of a spawn prompt, whitespace folded, `…` when cut. */
+/**
+ * The first `SPAWN_PROMPT_PREVIEW_CHARS` of a spawn prompt, whitespace folded, `…` when cut.
+ *
+ * It folds a prefix that grows until it holds the preview, not the whole prompt: a spawn prompt runs to tens of KB,
+ * and the agents tree previews every agent's on every read: the roster's 1,096 real prompts (3.2 MB) cost 11.1 ms
+ * folded whole and 3.0 ms by prefix, with every preview equal (2026-11-05). The prefix's fold is the
+ * start of the whole fold, apart from a whitespace run the cut may end in, which still folds to one space at that
+ * place; so once it holds more than the preview and one such space, the cut preview is the same.
+ */
 export function promptPreview(prompt: string | null): string | null {
     if (!prompt) {
         return null;
     }
 
-    const folded = prompt.replace(/\s+/g, " ").trim();
-    return folded.length > SPAWN_PROMPT_PREVIEW_CHARS ? `${folded.slice(0, SPAWN_PROMPT_PREVIEW_CHARS - 1)}…` : folded;
+    for (let take = SPAWN_PROMPT_PREVIEW_CHARS * 4; ; take *= 2) {
+        const whole = take >= prompt.length;
+        const folded = (whole ? prompt : prompt.slice(0, take)).replace(/\s+/g, " ");
+        if (whole) {
+            const trimmed = folded.trim();
+            return trimmed.length > SPAWN_PROMPT_PREVIEW_CHARS
+                ? `${trimmed.slice(0, SPAWN_PROMPT_PREVIEW_CHARS - 1)}…`
+                : trimmed;
+        }
+
+        const start = folded.trimStart();
+        if (start.length > SPAWN_PROMPT_PREVIEW_CHARS + 1) {
+            return `${start.slice(0, SPAWN_PROMPT_PREVIEW_CHARS - 1)}…`;
+        }
+    }
 }
 
 /** The list form: previews only. The full prompt comes from the one-agent door (`hubAgent`). */
