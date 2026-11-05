@@ -55,6 +55,7 @@ export class RecorderStateFile<T> {
 /** The meeting record's recording block as the recorder keeps it: the spans, and the start, pause and resume. */
 export class RecordingRecord {
     readonly spans: RecordingSpan[];
+    private statusWrites: Promise<void> = Promise.resolve();
 
     constructor(
         private readonly store: MeetingStore,
@@ -122,14 +123,25 @@ export class RecordingRecord {
         });
     }
 
+    /** Finalization waits for status/history writes before publishing the stopped record. */
+    async settleStatuses(): Promise<void> {
+        await this.statusWrites;
+    }
+
     /** Writes the pause (or the resume) in the background; a failed write is logged, the recording goes on. */
     markStatus(status: "paused" | "recording"): void {
         const change = status === "paused" ? "paused" : "resumed";
-        void this.update(change, (recording) => {
-            recording.status = status;
-            recording.spans = this.spans;
-        }).catch((err: unknown) =>
-            log.warn({ err }, `${status === "paused" ? "pause" : "resume"} not written to the record`)
-        );
+        const spans = this.spans.map((span) => ({ ...span }));
+        this.statusWrites = this.statusWrites
+            .then(() =>
+                this.update(change, (recording) => {
+                    recording.status = status;
+                    recording.spans = spans;
+                })
+            )
+            .then(() => undefined)
+            .catch((err: unknown) =>
+                log.warn({ err }, `${status === "paused" ? "pause" : "resume"} not written to the record`)
+            );
     }
 }

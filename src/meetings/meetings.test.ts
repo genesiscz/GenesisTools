@@ -71,6 +71,7 @@ import {
 } from "./lib/questions";
 import { rawMeeting } from "./lib/raw";
 import { runRecorder } from "./lib/recorder";
+import { RecordingRecord } from "./lib/recorder-adapters";
 import {
     meetingLiveId,
     RecorderFailedError,
@@ -4574,4 +4575,34 @@ test("recovered assignment choices keep the saved calendar order and folder", ()
     expect(question.items.find((item) => item.id === "folder")?.promptMarkdown).toContain("Saved folder");
     expect(SafeJSON.stringify(question)).not.toContain("New entry");
     expect(SafeJSON.stringify(question)).not.toContain("New folder");
+});
+test("finalization drains a blocked resume write in pause/resume order", async () => {
+    const store = new MeetingStore(new Storage("status-write-order"));
+    const record = await store.create(
+        { title: "Status fixture", start: meeting.start, createdBy: "new" },
+        { command: "new", change: "fixture" }
+    );
+    const update = store.update.bind(store);
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    store.update = async (...args: Parameters<typeof update>) => {
+        if (args[1].change === "resumed") {
+            entered.resolve();
+            await release.promise;
+        }
+        return update(...args);
+    };
+    const recording = new RecordingRecord(store, record.id, []);
+    recording.markStatus("paused");
+    recording.markStatus("recording");
+    let settled = false;
+    const done = recording.settleStatuses().then(() => {
+        settled = true;
+    });
+    await entered.promise;
+    expect(settled).toBe(false);
+    release.resolve();
+    await done;
+    expect(store.read(record.id)?.history.map((entry) => entry.change)).toEqual(["fixture", "paused", "resumed"]);
+    expect(store.read(record.id)?.recording?.status).toBe("recording");
 });

@@ -237,6 +237,7 @@ export class MeetingRun {
      * disk, the sound files, the display intervals and the source's clock. A failed run notifies once.
      */
     async summary(recording: FrameRecording<string[]>): Promise<void> {
+        await this.recordingRecord.settleStatuses();
         const { store, meetingId, state } = this;
         state.stopReason ??= "requested";
 
