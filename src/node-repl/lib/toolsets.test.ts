@@ -569,11 +569,11 @@ describe("recorder and editor toolsets", () => {
         const { editor } = (await toolset.load(ctx)) as { editor: { open(source: string): Clip } };
         expect(() => Reflect.apply(editor.open, editor, [{ recording: "x" }])).toThrow("editor.open(source: string)");
         const clip = editor.open(recording.folder);
-        expect(() => Reflect.apply(clip.speed, clip, ["fast"])).toThrow("editor.Clip.speed(factor: number)");
+        expect(() => Reflect.apply(clip.speed, clip, ["fast"])).toThrow("editor.Clip.speed(factor: number");
         const trimmedJob = clip.trim({ from: 0, to: 0.1 });
         const trimmed = await trimmedJob.done;
         expect(await trimmedJob).toBe(trimmed);
-        expect(() => Reflect.apply(trimmed.speed, trimmed, ["fast"])).toThrow("editor.Clip.speed(factor: number)");
+        expect(() => Reflect.apply(trimmed.speed, trimmed, ["fast"])).toThrow("editor.Clip.speed(factor: number");
         const framesJob = clip.frames({ changeOnly: true, threshold: 2 });
         const events: string[] = [];
         framesJob.on("progress", (event) => events.push(`${event.step} ${event.done}/${event.total} ${event.unit}`));
@@ -732,7 +732,7 @@ describe("meetings toolset", () => {
         const engine = new ReplEngine({ toolsets: ["meetings"] });
         try {
             const opened = await engine.run(
-                `const meeting = meetings.open({ ref: ${SafeJSON.stringify(created.id)} }); 1`
+                `const meeting = meetings.open(${SafeJSON.stringify(created.id)}); 1`
             );
             expect(opened.error).toBeUndefined();
             const added = await engine.run(

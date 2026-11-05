@@ -11,17 +11,10 @@
  *  - die when CDP dies (health probe), not when someone remembers.
  */
 import { chmodSync, existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import {
-    attemptStaleTakeover,
-    buildPidRecord,
-    clearPidFile,
-    inspectPidFile,
-    serializePidRecord,
-} from "@genesiscz/utils/process/pidfile";
+import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { CdpDeadlineError, Conn, localDebuggerUrl } from "./cdp.ts";
 import type { CaptureChannel, RecordedEvent } from "./channels.ts";
@@ -383,10 +376,6 @@ export function waitUntilRecorderDone(opts: {
     });
 }
 
-function errCode(err: unknown): string | undefined {
-    return (err as NodeJS.ErrnoException).code;
-}
-
 /**
  * Remove `recorder.pid.stale-*` temp files whose creating process is dead —
  * residue of a takeover that crashed between rename and cleanup. The creator's
@@ -433,50 +422,24 @@ export function sweepDeadTakeoverTemps(pidPath: string): void {
 }
 
 /**
- * Claim the recorder pidfile atomically via the shared pidfile protocol
- * (async `wx` create + rename-verify stale takeover — see
- * `attemptStaleTakeover` in src/utils/process/pidfile.ts). A live OR
- * unverified foreign owner fails fast: `unverified` means the pid is ALIVE
- * but the OS would not name it (the normal Windows answer), and stealing an
- * alive recorder's claim is exactly the double-parser failure this exists to
- * prevent. Only EEXIST enters the recovery path — permission/disk faults
- * surface as themselves. Exported for the concurrency test.
+ * Claim the recorder pidfile through the shared claim (`claimPidFile` in src/utils/process/pidfile.ts: an async `wx`
+ * create, then the content-verified stale takeover). A live OR unverified foreign owner fails fast: `unverified`
+ * means the pid is ALIVE but the OS would not name it (the normal Windows answer), and stealing an alive recorder's
+ * claim is exactly the double-parser failure this exists to prevent. Only EEXIST enters the recovery path, so
+ * permission and disk faults surface as themselves. Exported for the concurrency test.
  */
 export async function claimRecorderPidfile(pidPath: string, port: number): Promise<void> {
     sweepDeadTakeoverTemps(pidPath);
+    const claim = await claimPidFile(pidPath);
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-            await writeFile(pidPath, serializePidRecord(buildPidRecord()), { flag: "wx" });
-
-            return;
-        } catch (err) {
-            if (errCode(err) !== "EEXIST") {
-                throw err;
-            }
-        }
-
-        const state = inspectPidFile(pidPath);
-        if ((state.status === "live" || state.status === "unverified") && state.pid !== process.pid) {
-            throw new Error(`recorder already up on ${port} (pid ${state.pid}). Stop it: record --port ${port} --stop`);
-        }
-
-        let staleContent: string | null = null;
-        try {
-            staleContent = readFileSync(pidPath, "utf8");
-        } catch (err) {
-            log.debug({ err, pidPath }, "stale pidfile vanished; retrying fresh create");
-            continue;
-        }
-
-        if (await attemptStaleTakeover(pidPath, staleContent)) {
-            return;
-        }
-
-        log.debug({ attempt, port }, "lost pidfile takeover round; re-checking");
+    if (claim.status === "held") {
+        const owner = "pid" in claim.state ? claim.state.pid : "unknown";
+        throw new Error(`recorder already up on ${port} (pid ${owner}). Stop it: record --port ${port} --stop`);
     }
 
-    throw new Error(`lost the recorder claim race on ${port}; another instance is recording`);
+    if (claim.status === "lost") {
+        throw new Error(`lost the recorder claim race on ${port}; another instance is recording`);
+    }
 }
 
 export async function connectBrowser(

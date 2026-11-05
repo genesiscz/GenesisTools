@@ -158,9 +158,13 @@ json2md([{ h2: "Results" }, { table: { rows } }]);
 jsonToMarkdown(anyJson, { title: "Report" });
 ```
 
-Blocks: `h1`–`h6`, `heading`, `p`, `blockquote`, `callout`, `ul`, `ol`, `tasks`, `dl`, `code`,
+Blocks: `h1`–`h6`, `heading`, `p`, `blockquote`, `callout`, `speech`, `ul`, `ol`, `tasks`, `dl`, `code`,
 `table`, `link`, `img`, `hr`, `details`, `mermaid`, `badges`, `raw`, `nl`, `custom`. A block is
 a single-key object; two keys is an error rather than a silent concatenation.
+
+`speech` is one paragraph of a spoken record, `**Speaker:** \`01:05\`<sup>[play](url)</sup> text`:
+`{ speech: { speaker?, time?, play?, text } }`. A paragraph that continues a turn leaves `speaker` out. `callout`
+takes `labelCase: "lower"` for `[!warning]` where the default is `[!WARNING]`.
 
 One row set at several column subsets:
 

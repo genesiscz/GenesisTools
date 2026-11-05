@@ -44,10 +44,10 @@ export interface ApiDescriptor {
     notes?: readonly string[];
 }
 
-/** Keeps the schemas' types for the caller while checking the descriptor's shape. */
-export function defineMethod<P extends z.ZodType, R extends z.ZodType>(
-    method: MethodDescriptor<P, R>
-): MethodDescriptor<P, R> {
+/** Keeps the schemas' types and the literal name for the caller while checking the descriptor's shape. */
+export function defineMethod<P extends z.ZodType, R extends z.ZodType, const N extends string = string>(
+    method: MethodDescriptor<P, R> & { name: N }
+): MethodDescriptor<P, R> & { name: N } {
     return method;
 }
 

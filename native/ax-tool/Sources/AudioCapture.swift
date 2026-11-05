@@ -202,6 +202,7 @@ private final class AudioTrack {
                                     muted: muted)
             }
         } else {
+            // An earlier movie warning must not hide the sidecar's own failure; repeats of it are dropped.
             let category = "the \(source.rawValue) sidecar refused audio:"
             appendCaptureFailure("\(category) \(sidecar?.error?.localizedDescription ?? "no error reported")",
                                  category: category, to: &failures)

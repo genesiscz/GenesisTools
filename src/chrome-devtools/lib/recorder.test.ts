@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { attemptStaleTakeover, writePidFile } from "@genesiscz/utils/process/pidfile";
@@ -291,6 +291,19 @@ describe("claimRecorderPidfile (single-winner atomic claim)", () => {
             writePidFile(path, { pid: dead });
             await claimRecorderPidfile(path, 9999);
             expect(readFileSync(path, "utf8")).toContain(String(process.pid));
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test("characterization (pid claim): an unreadable pidfile is taken over", async () => {
+        const dir = tmp();
+        const path = join(dir, "recorder.pid");
+        try {
+            writeFileSync(path, "not a pid");
+            await claimRecorderPidfile(path, 9999);
+            expect(readFileSync(path, "utf8")).toContain(String(process.pid));
+            expect(readdirSync(dir)).toEqual(["recorder.pid"]);
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }

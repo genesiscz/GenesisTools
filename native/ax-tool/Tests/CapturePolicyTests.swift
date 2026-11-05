@@ -227,6 +227,21 @@ final class DisplayChangeTests: XCTestCase {
         XCTAssertEqual(focusDisplay(window: nil, mouse: nil, displays: displays), 1)
         XCTAssertNil(focusDisplay(window: nil, mouse: nil, displays: []))
     }
+
+    func testFollowingTakesWhicheverMovedLastThePointerOrTheFocus() {
+        var state = FollowState()
+        XCTAssertEqual(state.next(pointer: 1, focus: 2), 1, "the first tick takes the pointer's display")
+        XCTAssertEqual(state.next(pointer: 1, focus: 2), 1, "nothing moved, so it stays")
+        XCTAssertEqual(state.next(pointer: 1, focus: 1), 1)
+        XCTAssertEqual(state.next(pointer: 1, focus: 2), 2, "a window on display 2 took the focus")
+        XCTAssertEqual(state.next(pointer: 1, focus: 2), 2, "the pointer did not move, so the focus's display stays")
+        XCTAssertEqual(state.next(pointer: 2, focus: 2), 2)
+        XCTAssertEqual(state.next(pointer: 1, focus: 2), 1, "the pointer went back to display 1")
+        XCTAssertEqual(state.next(pointer: nil, focus: 2), 1, "a pointer on no display changes nothing")
+        let displays = [DisplayFrame(id: 1, bounds: CGRect(x: 0, y: 0, width: 100, height: 100))]
+        XCTAssertEqual(displayUnder(CGPoint(x: 50, y: 50), displays: displays), 1)
+        XCTAssertNil(displayUnder(CGPoint(x: 500, y: 50), displays: displays))
+    }
 }
 
 final class CaptureCommandTests: XCTestCase {

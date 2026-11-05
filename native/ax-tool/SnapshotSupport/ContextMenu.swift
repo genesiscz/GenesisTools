@@ -286,12 +286,18 @@ public func contextMenuNotSeenMessage(delivery: String) -> String {
 /// second), and it does not help a label that ticks faster than a read, or a window slow enough that
 /// one read spends the whole second. Text width is not a target identity: no row's role, value,
 /// height or position on the other axis moved, and a static text takes no action that its width
-/// could misdirect. Anything else still refuses, because the screenshot must show the tree it is
-/// issued with.
+/// could misdirect.
+///
+/// A row that takes no action may also change its value, its label and its x: a playing movie's
+/// clock and playhead change on every read, and `see` refused the recorder editor for as long as it
+/// played (2026-11-04). Such a row is never an `act` target that a stale key could misdirect, and an
+/// actionable neighbour whose `targetKey` folds in the changed text changes too, so it still refuses.
+/// Anything else still refuses, because the screenshot must show the tree it is issued with.
 public func toleratedObservationDrift(before: [[String: Any]], after: [[String: Any]]) -> [[String: Any]]? {
     guard before.count == after.count else { return nil }
 
-    let tolerated: Set<String> = ["width", "x"]
+    let textLayout: Set<String> = ["width", "x"]
+    let passiveChange: Set<String> = ["x", "width", "AXValue", "AXDescription", "AXTitle", "stableKey", "targetKey"]
     var changes: [[String: Any]] = []
     for index in before.indices {
         let fields = Set(before[index].keys).union(after[index].keys).filter { key in
@@ -302,14 +308,20 @@ public func toleratedObservationDrift(before: [[String: Any]], after: [[String: 
             continue
         }
 
-        guard fields.isSubset(of: tolerated), fields.contains("width"),
-              before[index]["role"] as? String == "AXStaticText",
-              after[index]["role"] as? String == "AXStaticText" else { return nil }
+        let staticText = before[index]["role"] as? String == "AXStaticText" && after[index]["role"] as? String == "AXStaticText"
+        let layoutOnly = staticText && fields.isSubset(of: textLayout) && fields.contains("width")
+        let passive = isPassiveRow(before[index]) && isPassiveRow(after[index]) && fields.isSubset(of: passiveChange)
+        guard layoutOnly || passive else { return nil }
 
         changes.append(["index": index, "fields": fields.sorted()])
     }
 
     return changes.isEmpty ? nil : changes
+}
+
+/// A row with no Accessibility action (a label, a clock, a playhead drawn by the app).
+private func isPassiveRow(_ row: [String: Any]) -> Bool {
+    (row["actions"] as? [String])?.isEmpty ?? true
 }
 
 /// The app's open context menu: the first `AXMenu` found breadth-first under `app`, never descending

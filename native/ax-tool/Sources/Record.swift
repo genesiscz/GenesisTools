@@ -46,7 +46,8 @@ struct RecordOptions {
     let maxFrames: Int
     /// `--display-id`: the CGDirectDisplayID to record in screen mode; wins over `--screen-index`.
     let displayID: CGDirectDisplayID?
-    /// `--follow-focus`: record the display holding the frontmost app's focused window, switching live.
+    /// `--follow-focus`: record the display the pointer moved to or the focused window moved to, whichever moved last,
+    /// switching live.
     let followFocus: Bool
     /// `--max-long-side`: the longer side of a kept frame in pixels, at most.
     let maxLongSide: Int?
@@ -973,7 +974,11 @@ func cmdCaptureScreen() {
     default:
         if let id = options.displayID {
             display = displayForID(id)
-        } else if options.followFocus, let id = currentFocusDisplay() {
+        } else if options.followFocus,
+                  let id = displayUnder(CGEvent(source: nil)?.location,
+                                        displays: activeDisplays().map { DisplayFrame(id: $0.id, bounds: $0.bounds) })
+                      ?? currentFocusDisplay() {
+            // It starts on the screen with the pointer, as the follow rule's first tick does.
             display = displayGeometry(id)
         } else {
             display = displayForScreenIndex(options.screenIndex ?? 0)
@@ -1024,7 +1029,8 @@ func cmdCaptureScreen() {
     let activeInterval = frameInterval(fps: options.activeFps)
     configuration.minimumFrameInterval = CMTime(value: activeInterval.value, timescale: activeInterval.timescale)
     configuration.queueDepth = 5
-    configuration.showsCursor = true
+    // The editor draws the cursor again from the track (`--cursor-shapes`), smoothed and scaled.
+    configuration.showsCursor = !CommandLine.arguments.contains("--hide-cursor")
     configuration.backgroundColor = options.selection.transparent ? captureClearColor : captureOpaqueColor
     if #available(macOS 14.0, *) {
         configuration.ignoreShadowsSingleWindow = true
@@ -1077,12 +1083,28 @@ func cmdCaptureScreen() {
         }
         CGDisplayRegisterReconfigurationCallback(displayReconfigurationCallback, nil)
     }
+    // The rectangle the cursor track is relative to, in global points: the window as it moves, the region, or the
+    // recorded display (which a switch or follow-focus changes). The loop's 0.25 s tick keeps it current.
+    let trackedRect = LockedRect(windowTarget?.bounds ?? options.region ?? sourceRect.map {
+        $0.offsetBy(dx: display.bounds.minX, dy: display.bounds.minY)
+    } ?? display.bounds)
+    var cursorTrack: CursorTrackWriter?
+    if let path = argValue("--cursor-track") {
+        cursorTrack = CursorTrackWriter(path: path, shapes: argValue("--cursor-shapes")) { trackedRect.value }
+        if CommandLine.arguments.contains("--shortcuts") { cursorTrack?.watchShortcuts() }
+        if cursorTrack == nil { recorder.warn("the cursor track \(path) could not be created") }
+    }
     let started = Date()
+    host.cursorTrack = cursorTrack
+    cursorTrack?.start(at: started)
     let cancelled = runRecordingLoop(duration: options.duration) {
         if let target = windowTarget,
            let rows = CGWindowListCopyWindowInfo([.optionIncludingWindow], target.id) as? [[CFString: Any]],
            let raw = rows.first?[kCGWindowBounds] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw) {
             indicator.update([bounds])
+            trackedRect.value = bounds
+        } else if options.mode == "screen", sourceRect == nil {
+            trackedRect.value = host.display.bounds
         }
         guard options.mode == "screen" else { return recorder.failure == nil && !host.stopRequested }
 
@@ -1093,6 +1115,7 @@ func cmdCaptureScreen() {
         displayReconfigurationHandler = nil
     }
     indicator.close()
+    cursorTrack?.stop()
     recorder.stopHeartbeat()
     let streamFailure = recorder.failure
     if streamFailure == nil {
@@ -1180,6 +1203,10 @@ func cmdCaptureScreen() {
     if let videoOut = options.videoOut {
         data["videoOut"] = videoOut
     }
+    if let cursorTrack {
+        data["cursorTrack"] = ["path": cursorTrack.path, "samples": cursorTrack.samples, "clicks": cursorTrack.clicks,
+                               "shapes": cursorTrack.shapeCount, "shortcuts": cursorTrack.shortcuts]
+    }
     if let windowTarget {
         data["window"] = ["id": windowTarget.id, "x": windowTarget.bounds.minX, "y": windowTarget.bounds.minY,
                           "width": windowTarget.bounds.width, "height": windowTarget.bounds.height]
@@ -1262,6 +1289,7 @@ private final class ScreenStreamHost {
     private var deadTicks = 0
 
     let audio: NativeAudio?
+    var cursorTrack: CursorTrackWriter?
     /// `set-max-long-side` replaces `--max-long-side`.
     private var maxLongSide: Int?
     /// The size in points the stream records: the display in screen mode, else the window or region.
@@ -1284,6 +1312,8 @@ private final class ScreenStreamHost {
     }
 
     private var excludedWindowIDs: Set<CGWindowID> { indicator.windowIDs.union(options.selection.excludedWindowIDs) }
+    /// Which display `--follow-focus` records: the pointer's or the focused window's, whichever moved last.
+    private var followState = FollowState()
 
     /// One 250 ms check of a screen recording. False ends the recording.
     func tick() -> Bool {
@@ -1317,6 +1347,7 @@ private final class ScreenStreamHost {
             let paused = command == .pause
             recorder.setPaused(paused)
             audio?.setPaused(paused)
+            cursorTrack?.setPaused(paused)
             CaptureEvents.emit(["event": "state", "state": paused ? "paused" : "recording"])
         case .mute(let source), .unmute(let source):
             let muted: Bool
@@ -1388,6 +1419,7 @@ private final class ScreenStreamHost {
             return
         }
         let stream = self.stream
+        // A refused update restores the shared configuration, so the next update does not carry the rejected device.
         Task { @MainActor in
             let configuration = recorder.changeConfiguration { _ in }
             let previous = configuration.microphoneCaptureDeviceID
@@ -1395,10 +1427,8 @@ private final class ScreenStreamHost {
                 try await updateCaptureConfiguration(from: previous, to: deviceId, set: { value in
                     _ = self.recorder.changeConfiguration { $0.microphoneCaptureDeviceID = value }
                 }, apply: { try await stream.updateConfiguration(configuration) })
-                DispatchQueue.main.async {
-                    self.micDevice = deviceId
-                    self.emitSettings()
-                }
+                self.micDevice = deviceId
+                self.emitSettings()
             } catch {
                 CaptureEvents.error("failed", "the stream refused the microphone \(deviceId): \(error.localizedDescription)")
             }
@@ -1412,6 +1442,7 @@ private final class ScreenStreamHost {
         }
         let size = recordOutputSize(options, points: pointSize, scale: display.scale, maxLongSide: px)
         let stream = self.stream
+        // The reported size and the resize marker change only after the stream took the new size.
         Task { @MainActor in
             let configuration = recorder.changeConfiguration { _ in }
             let previous = (configuration.width, configuration.height)
@@ -1450,7 +1481,10 @@ private final class ScreenStreamHost {
 
     @available(macOS 14.0, *)
     private func follow() {
-        guard !switching, let target = currentFocusDisplay() else { return }
+        guard !switching else { return }
+        let displays = activeDisplays().map { DisplayFrame(id: $0.id, bounds: $0.bounds) }
+        let pointer = displayUnder(CGEvent(source: nil)?.location, displays: displays)
+        guard let target = followState.next(pointer: pointer, focus: currentFocusDisplay()) else { return }
         let lost = displayLost || !displayIsActive(display.id)
         if recorder.failure != nil {
             if lost {

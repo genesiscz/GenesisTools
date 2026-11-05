@@ -18,7 +18,46 @@ export type JsonSchema = {
     additionalProperties?: boolean | JsonSchema;
     default?: unknown;
     title?: string;
+    minimum?: number;
+    maximum?: number;
+    exclusiveMinimum?: number;
+    exclusiveMaximum?: number;
 };
+
+/**
+ * A number's bounds as the reader needs them: `(0–0.3)`, `(≥0.5)`, `(>0)`. Without them an agent learned a limit only
+ * from the error of its first wrong call (blind test 2026-11-04).
+ */
+function rangeText(raw: JsonSchema): string {
+    // zod's .int() bounds every integer by the safe range, which says nothing to a reader.
+    const real = (value: number | undefined) =>
+        value !== undefined && Math.abs(value) < Number.MAX_SAFE_INTEGER ? value : undefined;
+    const schema = {
+        minimum: real(raw.minimum),
+        maximum: real(raw.maximum),
+        exclusiveMinimum: real(raw.exclusiveMinimum),
+        exclusiveMaximum: real(raw.exclusiveMaximum),
+    };
+    const low = schema.minimum ?? schema.exclusiveMinimum;
+    const high = schema.maximum ?? schema.exclusiveMaximum;
+
+    if (
+        low !== undefined &&
+        high !== undefined &&
+        schema.exclusiveMinimum === undefined &&
+        schema.exclusiveMaximum === undefined
+    ) {
+        return ` (${low}–${high})`;
+    }
+
+    const parts = [
+        schema.minimum !== undefined ? `≥${schema.minimum}` : undefined,
+        schema.exclusiveMinimum !== undefined ? `>${schema.exclusiveMinimum}` : undefined,
+        schema.maximum !== undefined ? `≤${schema.maximum}` : undefined,
+        schema.exclusiveMaximum !== undefined ? `<${schema.exclusiveMaximum}` : undefined,
+    ].filter(Boolean);
+    return parts.length > 0 ? ` (${parts.join(", ")})` : "";
+}
 
 /** The JSON Schema of one side of a schema; `{}` (any) where zod cannot express it (a function, a custom type). */
 export function jsonSchemaOf(schema: z.ZodType, io: "input" | "output" = "input"): JsonSchema {
@@ -34,8 +73,15 @@ function literal(value: unknown): string {
     return typeof value === "string" ? `"${value}"` : String(value);
 }
 
-/** A compact TypeScript spelling of a JSON Schema, cut to `…` below `depth` levels. */
+/**
+ * A compact TypeScript spelling of a JSON Schema, cut to `…` below `depth` levels. A schema with a title (zod
+ * `.meta({ title })`) is written as that name, which the API's notes define once (`SourceTime`, `OutputTime`).
+ */
 export function typeText(schema: JsonSchema, depth = 3): string {
+    if (schema.title) {
+        return schema.title;
+    }
+
     if (schema.const !== undefined) {
         return literal(schema.const);
     }
@@ -65,7 +111,7 @@ export function typeText(schema: JsonSchema, depth = 3): string {
             return "string";
         case "integer":
         case "number":
-            return "number";
+            return `number${rangeText(schema)}`;
         case "boolean":
             return "boolean";
         case "null":
@@ -155,8 +201,19 @@ export function renderDocs(api: ApiDescriptor): string {
         lines.push("", ...renderHandle(handle));
     }
 
-    if (api.notes?.length) {
-        lines.push("", ...api.notes.map((note) => `Note: ${note}`));
+    const methods = [...api.methods, ...(api.handles ?? []).flatMap((handle) => handle.methods)];
+    const positional = methods.find((method) => (method.positional?.length ?? 0) > 1);
+
+    if (api.notes?.length || positional) {
+        lines.push("", ...(api.notes ?? []).map((note) => `Note: ${note}`));
+    }
+
+    if (positional?.positional) {
+        // The REPL binding takes both forms (src/utils/repl/toolset.ts); say so once, with a real method.
+        const names = positional.positional.join(", ");
+        lines.push(
+            `Note: a method with positional parameters also takes one object of their names: ${positional.name}(${names}) or ${positional.name}({ ${names} }).`
+        );
     }
 
     return lines.join("\n");

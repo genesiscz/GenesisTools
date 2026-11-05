@@ -86,6 +86,19 @@ public func coordinateStaleRefusal(_ error: Error, windowStableKey: String?) -> 
             + "actionable; or run see again")
 }
 
+/// The refusal an `--element` act gets when the tree moved since `see`. A window that never holds
+/// still (a playing movie's clock and playhead, a countdown) made every see→act pair stale, and "run see
+/// again" only repeated the loop (recorder editor, 2026-11-04). The element can be found again by its
+/// identity, so the refusal names the flags that do that.
+public func elementStaleRefusal(_ error: Error) -> Error {
+    guard case SnapshotError.refusal(.staleObservation, let message) = error,
+          message == SnapshotToken.changedMessage else { return error }
+
+    return SnapshotError.refusal(.staleObservation,
+        "UI changed since see (a clock, a playing movie, a live list). Pass --target-key <the element's stableKey "
+            + "from see> --revalidate-scope element to find the same element in the current tree; or run see again")
+}
+
 public enum SnapshotRefusal: String, Codable {
     case staleObservation = "stale_observation"
     case scopeChanged = "scope_changed"

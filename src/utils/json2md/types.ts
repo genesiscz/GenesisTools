@@ -196,6 +196,25 @@ export interface CalloutBlock {
     title?: string;
     /** Obsidian foldable callout: `+` open, `-` collapsed. */
     fold?: "open" | "closed";
+    /** How the kind is written inside `[!…]`. Default `upper`; both spellings are the same callout to GitHub and Obsidian. */
+    labelCase?: "upper" | "lower";
+}
+
+/**
+ * One paragraph of a spoken record: who says it, when, and what.
+ *
+ * Rendered as `**Speaker:** \`01:05\`<sup>[play](url)</sup> text`. A paragraph that continues a turn leaves `speaker`
+ * out. A text that opens with a quote block (`>`) moves under the label, so the quote starts on its own line.
+ */
+export interface SpeechBlock {
+    /** The bold label before the text. */
+    speaker?: string;
+    /** The moment, shown in code, for example `01:05`. */
+    time?: string;
+    /** A link that plays the moment, written after the time as a superscript. Needs `time`. */
+    play?: string;
+    /** The words said. Blank lines around a paragraph break are collapsed and the ends are trimmed. */
+    text: string;
 }
 
 export interface DefinitionEntry {
@@ -255,6 +274,7 @@ export type Block =
     | { p: string | string[] }
     | { blockquote: string | string[] }
     | { callout: CalloutBlock }
+    | { speech: SpeechBlock }
     | { ul: ListInput[] }
     | { ol: ListInput[] }
     | { tasks: ListInput[] }

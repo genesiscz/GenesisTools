@@ -58,6 +58,20 @@ final class ContextMenuWindowTests: XCTestCase {
          kCGWindowLayer as String: NSNumber(value: layer)]
     }
 
+    func testAMenuDigestIgnoresADisabledRowsTickingTextButNotAnEnabledRowsChange() throws {
+        let rows: [[String: Any]] = [["role": "AXMenuItem", "AXEnabled": "0", "AXTitle": "Control session · 0:12"],
+                                     ["role": "AXMenuItem", "AXEnabled": "1", "AXTitle": "Add Marker"]]
+        var ticked = rows
+        ticked[0]["AXTitle"] = "Control session · 0:13"
+        XCTAssertEqual(try menuSnapshotDigest(rows), try menuSnapshotDigest(ticked))
+        var renamed = rows
+        renamed[1]["AXTitle"] = "Delete Recording"
+        XCTAssertNotEqual(try menuSnapshotDigest(rows), try menuSnapshotDigest(renamed))
+        var enabled = rows
+        enabled[0]["AXEnabled"] = "1"
+        XCTAssertNotEqual(try menuSnapshotDigest(rows), try menuSnapshotDigest(enabled))
+    }
+
     func testOnlyTheAppsOwnMenuLayerWindowsCount() {
         let windows = [window(1, pid: 42, layer: 0), window(2, pid: 42, layer: 101), window(3, pid: 7, layer: 101),
                        window(4, pid: 42, layer: 25)]
@@ -349,11 +363,11 @@ final class MenuInventorySurfaceTests: XCTestCase {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("Sources/MenuControl.swift"), encoding: .utf8)
 
-        XCTAssertTrue(source.contains("if command == \"menu-see\", input[index] == \"--menu-bar-only\""))
-        XCTAssertTrue(source.contains("parsed[\"--menu-bar-only\"] = \"true\""))
+        XCTAssertTrue(source.contains("if command == \"menu-see\", [\"--menu-bar-only\", \"--extras\"].contains(input[index])"))
+        XCTAssertTrue(source.contains("parsed[input[index]] = \"true\""))
         XCTAssertTrue(source.contains("let contextMenu: Bool? = input[\"--menu-bar-only\"] == \"true\" ? false : token.map { $0.contextMenu == true }"))
         XCTAssertTrue(source.contains("if rootTitle == nil, contextMenu != false"))
-        XCTAssertTrue(source.contains("contextMenu: contextMenu, source: menuReadSource()"))
+        XCTAssertTrue(source.contains("contextMenu: contextMenu, extras: extras, source: menuReadSource()"))
     }
 }
 
@@ -433,6 +447,27 @@ final class ContextMenuTokenTests: XCTestCase {
         XCTAssertTrue(pressed)
     }
 
+    // A status item's menu opens while another app stays in front, like a context menu.
+    func testAStatusItemTokenRoundTripsAndNeedsNothingInFront() throws {
+        let token = MenuSnapshotToken(pid: 4, launch: 1, depth: 40, digest: "d", created: 1, extras: true)
+        let decoded = try JSONDecoder().decode(MenuSnapshotToken.self, from: JSONEncoder().encode(token))
+
+        XCTAssertEqual(decoded.extras, true)
+        XCTAssertNil(decoded.contextMenu)
+        XCTAssertTrue(decoded.needsNoFrontmost)
+        let pressed = try dispatchMenuAction(token: decoded, pid: 4, launch: 1, digest: "d", element: 1, count: 3, now: 2,
+                                             frontmost: false, enabled: true, action: { true })
+        XCTAssertTrue(pressed)
+    }
+
+    func testAnOlderTokenIsNoStatusItemToken() throws {
+        let json = #"{"version":1,"surface":"menu","pid":4,"launch":1,"depth":40,"digest":"d","created":1}"#
+        let decoded = try JSONDecoder().decode(MenuSnapshotToken.self, from: Data(json.utf8))
+
+        XCTAssertNil(decoded.extras)
+        XCTAssertFalse(decoded.needsNoFrontmost)
+    }
+
     func testAMenuBarPressStillNeedsTheAppInFront() {
         let token = MenuSnapshotToken(pid: 4, launch: 1, depth: 40, digest: "d", created: 1)
 
@@ -467,6 +502,16 @@ final class CoordinateStaleRefusalTests: XCTestCase {
         XCTAssertEqual((coordinateStaleRefusal(scope, windowStableKey: "k") as? SnapshotError)?.category, .scopeChanged)
     }
 
+    func testAnElementActOnAChangedTreeNamesTheIdentityFlags() {
+        let error = elementStaleRefusal(SnapshotError.refusal(.staleObservation, SnapshotToken.changedMessage))
+
+        XCTAssertTrue(error.localizedDescription.hasPrefix("UI changed"))
+        XCTAssertTrue(error.localizedDescription.contains("--target-key"))
+        XCTAssertTrue(error.localizedDescription.contains("--revalidate-scope element"))
+        let other = SnapshotError.refusal(.missingTarget, "element index outside snapshot")
+        XCTAssertEqual(elementStaleRefusal(other).localizedDescription, other.localizedDescription)
+    }
+
     func testTheTokenRefusesAChangedTreeWithTheMessageTheRewriteMatches() {
         let token = SnapshotToken(pid: 4, launch: 1, window: 9, depth: 5, digest: "old", created: 1)
 
@@ -497,12 +542,26 @@ final class ObservationDriftTests: XCTestCase {
         XCTAssertNotNil(toleratedObservationDrift(before: [window, text(99, x: 300)], after: [window, text(129, x: 270)]))
     }
 
-    func testAChangedValueIsNotTolerated() {
-        XCTAssertNil(toleratedObservationDrift(before: [window, text(99)], after: [window, text(129, value: "saved 4 min ago")]))
+    // A playing movie's clock ticks and its playhead moves; neither takes an action.
+    func testAPassiveRowThatChangesItsValueAndPositionIsTolerated() {
+        XCTAssertNotNil(toleratedObservationDrift(before: [window, text(99)], after: [window, text(99, value: "saved 4 min ago")]))
+        XCTAssertNotNil(toleratedObservationDrift(before: [window, text(99, x: 10)], after: [window, text(99, x: 30)]))
     }
 
-    func testAnXMoveAloneIsNotTolerated() {
-        XCTAssertNil(toleratedObservationDrift(before: [window, text(99, x: 10)], after: [window, text(99, x: 30)]))
+    func testAChangedValueThatReachesAnActionableNeighbourIsNotTolerated() {
+        var button = text(60, value: "Play")
+        button["role"] = "AXButton"
+        button["actions"] = ["AXPress"]
+        var moved = button
+        moved["targetKey"] = "folded the new clock text"
+
+        XCTAssertNil(toleratedObservationDrift(before: [window, text(99), button], after: [window, text(99, value: "00:01.3"), moved]))
+    }
+
+    func testARoleChangeIsNotTolerated() {
+        var after = text(99)
+        after["role"] = "AXButton"
+        XCTAssertNil(toleratedObservationDrift(before: [window, text(99)], after: [window, after]))
     }
 
     func testAButtonWidthChangeIsNotTolerated() {
@@ -510,6 +569,8 @@ final class ObservationDriftTests: XCTestCase {
         var after = text(129)
         before["role"] = "AXButton"
         after["role"] = "AXButton"
+        before["actions"] = ["AXPress"]
+        after["actions"] = ["AXPress"]
 
         XCTAssertNil(toleratedObservationDrift(before: [window, before], after: [window, after]))
     }

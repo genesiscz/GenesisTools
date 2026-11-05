@@ -487,7 +487,7 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
     }
     if let toleratedDrift {
         // The rows and the token describe the FIRST read; the screenshot may show either width.
-        output["observationTolerated"] = ["reason": "static text width changed between the reads around the screenshot",
+        output["observationTolerated"] = ["reason": "only rows that take no action (a label's width, a clock, a playhead) changed between the reads around the screenshot",
                                           "changes": toleratedDrift]
     }
     if !tree.truncatedAt.isEmpty {
@@ -1139,7 +1139,7 @@ func cmdAct(appName _: String) {
         _ = try dispatchToken.validate(pid: pid, launch: launch, window: Int(window.id), digest: tree.digest,
                                element: elementIndex, count: tree.elements.count, now: Date().timeIntervalSince1970)
     } catch {
-        workflowFailure(rawCoords == nil ? error
+        workflowFailure(rawCoords == nil ? elementStaleRefusal(error)
             : coordinateStaleRefusal(error, windowStableKey: tree.rows.first?["stableKey"] as? String))
     }
     let element = tree.elements[elementIndex]
