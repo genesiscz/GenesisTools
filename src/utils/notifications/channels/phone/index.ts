@@ -165,7 +165,7 @@ export function createPhoneChannel(deps: PhoneChannelDeps): ChannelDefinition<"p
             if (hold) {
                 // Skipped, not queued: the Mac's banner shows it, and the phone does not get it later.
                 log.info({ id: event.id, hold }, "phone alert skipped");
-                return { ok: true, detail: `skipped, not sent later: ${hold}` };
+                return { ok: true, suppressed: hold, detail: `skipped, not sent later: ${hold}` };
             }
 
             try {

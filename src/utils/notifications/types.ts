@@ -143,6 +143,7 @@ export interface PhoneNoticeExtras {
 
 /** What one channel did with one event. */
 export interface ChannelReceipt {
+    suppressed?: string;
     /** The channel accepted the event, or had nothing to send (switched off, no target). */
     ok: boolean;
     /** Why it did not send, or what it sent to (a phone channel names its devices). */

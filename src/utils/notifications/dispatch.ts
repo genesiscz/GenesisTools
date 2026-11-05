@@ -59,7 +59,8 @@ export async function dispatchNotification(event: NotificationEvent): Promise<bo
             const name = CHANNEL_NAMES[i];
             // The system channel records itself in postNotification, with the backend it used.
             if (name !== "system" && allows(name) && channels[name].enabled) {
-                const unusable = unusableReason(name, channels);
+                const unusable =
+                    unusableReason(name, channels) ?? (r.status === "fulfilled" ? r.value.suppressed : undefined);
                 await recordNotification({
                     source: event.app,
                     channel: name,
