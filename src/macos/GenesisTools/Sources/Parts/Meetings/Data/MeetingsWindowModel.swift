@@ -152,7 +152,7 @@ final class MeetingsWindowModel {
     /// A read overview lands: the list shows it, and a selection it no longer holds moves to the first row.
     func receive(_ value: MeetingsOverview) {
         overview = .loaded(value)
-        if selectedMeetingID == nil || meeting(selectedMeetingID ?? "") == nil {
+        if selectedMeetingID == nil {
             select(visibleMeetings.first?.id)
         }
     }
