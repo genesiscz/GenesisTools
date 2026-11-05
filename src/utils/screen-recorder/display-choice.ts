@@ -212,19 +212,26 @@ export class PolicyDisplays implements DisplayChoice {
 }
 
 /**
- * The library recording's displays: a fixed list of ids (`main`, `all`, ids, an index; `follow-focus` records every
- * display), resolved when it is chosen. An unknown id is refused, and every change restarts the running piece.
+ * The library recording's displays: a fixed list of ids (`main`, `all`, ids, an index), resolved when it is chosen, or
+ * `follow-focus`, one capture that follows the focused display. An unknown id is refused, and every change restarts
+ * the running piece.
  */
 export class ChosenDisplays implements DisplayChoice {
     chosen: number[] = [];
     /** The displays as the recorder listed them last. */
     known: DisplayInfo[] = [];
+    /** `follow-focus` was chosen: the one capture follows the focused display, starting on the main one. */
+    followFocus = false;
 
     /**
      * The ids a mode or a list means for the known displays. More than one is refused when the recorder records one
      * display at a time, so a start or a change asks for one display instead of losing the others silently.
      */
     pick(mode: DisplayMode | number[], recorder: FrameRecorder): number[] {
+        if (mode === "follow-focus" && !recorder.supports.followFocus) {
+            throw new RpcError(RPC_ERRORS.unsupported, "this recorder cannot follow focus");
+        }
+
         const ids = pickDisplayIds(mode, this.known);
 
         if (ids.length > 1 && !recorder.supports.parallelCaptures) {
@@ -234,6 +241,8 @@ export class ChosenDisplays implements DisplayChoice {
             );
         }
 
+        // Set only once the pick is accepted, so a refused one leaves the running choice as it was.
+        this.followFocus = mode === "follow-focus";
         return ids;
     }
 
@@ -246,6 +255,12 @@ export class ChosenDisplays implements DisplayChoice {
     }
 
     targets(recording: DisplayHost): PieceTarget[] {
+        if (this.followFocus) {
+            return this.chosen
+                .slice(0, 1)
+                .map((displayId) => ({ target: { kind: "follow-focus" }, displayId, label: "the focused display" }));
+        }
+
         const ids = recording.recorder.supports.parallelCaptures ? this.chosen : this.chosen.slice(0, 1);
         return ids.map((displayId) => this.targetOf(displayId));
     }

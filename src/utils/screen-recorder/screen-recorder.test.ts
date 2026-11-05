@@ -1481,7 +1481,7 @@ describe("characterization: what a library recording asks its recorder for", () 
         } as Parameters<typeof startRecording>[0] & { recorder: FrameRecorder });
     };
 
-    test("stage 2: main, all, ids (deduplicated), an index, an unknown id, and follow-focus records every display", async () => {
+    test("stage 2: main, all, ids (deduplicated), an index, an unknown id, and follow-focus refused without the recorder's support", async () => {
         const shown = async (displays: "all" | "main" | number[]) => {
             const recording = await start(new ScriptRecorder(), { displays });
             const status = await recording.status();
@@ -1498,7 +1498,9 @@ describe("characterization: what a library recording asks its recorder for", () 
 
         const recording = await start(new ScriptRecorder());
         expect((await recording.setDisplayMode(1)).chosen).toEqual([4]);
-        expect((await recording.setDisplayMode("follow-focus")).chosen).toEqual([1, 4]);
+        // Follow-focus is one capture that follows the focus; a recorder that cannot leaves the choice as it was.
+        await expect(recording.setDisplayMode("follow-focus")).rejects.toMatchObject({ code: RPC_ERRORS.unsupported });
+        expect((await recording.status()).displays.map((one) => one.id)).toEqual([4]);
         expect((await recording.setDisplayMode("main")).chosen).toEqual([1]);
         await recording.stop();
     });

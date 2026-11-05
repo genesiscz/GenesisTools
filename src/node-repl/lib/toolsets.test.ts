@@ -856,6 +856,35 @@ describe("recorder and editor toolsets", () => {
         }
     });
 
+    test("follow-focus records one capture that follows the focus, and a recorder without it refuses", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-focus-rec-"));
+        const liveDir = join(root, "live");
+        const plain = await startRecording({ recorder: new FakeRecorder(), liveDir, folder: join(root, "plain") });
+        try {
+            await expect(plain.setDisplayMode("follow-focus")).rejects.toThrow("cannot follow focus");
+        } finally {
+            await plain.stop();
+        }
+
+        const recorder = new ControlledRecorder();
+        recorder.supports.followFocus = true;
+        const first = recorder.next();
+        const recording = await startRecording({ recorder, liveDir, folder: join(root, "focus") });
+        try {
+            expect((await first).target).toEqual({ kind: "display", displayId: 1 });
+            const focused = recorder.next();
+            await recording.setDisplayMode("follow-focus");
+            expect((await focused).target).toEqual({ kind: "follow-focus" });
+            expect((await recording.status()).displays.map((display) => display.id)).toEqual([1]);
+            // Leaving follow-focus restarts the capture on a fixed display.
+            const fixed = recorder.next();
+            await recording.setDisplayMode("main");
+            expect((await fixed).target).toEqual({ kind: "display", displayId: 1 });
+        } finally {
+            await recording.stop();
+        }
+    });
+
     test("a finalized recording reports and publishes stopped", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-stopped-rec-"));
         const liveDir = join(root, "live");

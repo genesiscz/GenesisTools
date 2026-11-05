@@ -5,7 +5,7 @@ import type { CaptureTarget, DisplayInfo } from "./types";
 /**
  * Which displays a capture session records. Two rules live here, one per client, because they differ on purpose:
  * `pieceTargets` (the meetings recorder) falls back to the main display and says why, and can follow the focused
- * display; `pickDisplayIds` (the library recording) refuses an unknown id and records every display for follow-focus.
+ * display; `pickDisplayIds` (the library recording) refuses an unknown id.
  */
 
 /** One display as a capture target, with the label notes and warnings use. */
@@ -106,16 +106,16 @@ function pickTargets(options: {
 }
 
 /**
- * The library recording's displays for a mode: every display for `all` and for `follow-focus` (it records them all
- * rather than following), the main one, the one at an index (none when nothing is there), or the given ids without
- * repeats. An id that is not connected is refused.
+ * The library recording's displays for a mode: every display for `all`, the main one (also for `follow-focus`, whose
+ * one capture starts there and follows the focus), the one at an index (none when nothing is there), or the given ids
+ * without repeats. An id that is not connected is refused.
  */
 export function pickDisplayIds(mode: DisplayMode | number[], displays: DisplayInfo[]): number[] {
-    if (mode === "all" || mode === "follow-focus") {
+    if (mode === "all") {
         return displays.map((display) => display.id);
     }
 
-    if (mode === "main") {
+    if (mode === "main" || mode === "follow-focus") {
         const main = mainDisplay(displays);
         return main ? [main.id] : [];
     }
