@@ -76,6 +76,10 @@ describe("runners", () => {
 
     it("runs Playwright with the results reporter and the artifacts in the spec's folder", async () => {
         const project = fixtureProject("playwright");
+        writeFileSync(
+            join(project.dir, "playwright.config.ts"),
+            `export default { globalSetup: ["./seed.ts", "./auth.ts"], globalTeardown: ["./clean.ts"], reporter: [["junit"]] };`
+        );
         const target = await RUNNERS.playwright.prepare({
             project,
             runner: { kind: "playwright", config: "playwright.config.ts", baseUrl: "http://127.0.0.1:5173" },
@@ -91,6 +95,10 @@ describe("runners", () => {
         const wrapper = command[command.indexOf("--config") + 1];
         expect(readFileSync(wrapper, "utf8")).toContain("playwright-reporter.ts");
         expect(readFileSync(wrapper, "utf8")).toContain("original.reporter");
+        const composed = (await import(wrapper)).default;
+        expect(composed.globalSetup).toEqual([join(project.dir, "seed.ts"), join(project.dir, "auth.ts")]);
+        expect(composed.globalTeardown).toEqual([join(project.dir, "clean.ts")]);
+        expect(composed.reporter[0]).toEqual(["junit"]);
         expect(command).toContain("--output=/runs/x/agents.flow/artifacts");
     });
 });
@@ -134,6 +142,21 @@ describe("run loop", () => {
         expect(readFileSync(join(runDir, "summary.md"), "utf8")).toContain("- FAIL pairing.flow: 0/1 passed, exit 1");
         expect(existsSync(summary.specs[0].log)).toBe(true);
         expect(summary.specs[0].dir).not.toBe(summary.specs[1].dir);
+        let prepared = false;
+        await expect(
+            runE2e({
+                project,
+                specs: listSpecs(project),
+                runDir,
+                flags: {},
+                extraEnv: {},
+                prepare: async () => {
+                    prepared = true;
+                    throw new Error("must not prepare a reused folder");
+                },
+            })
+        ).rejects.toThrow();
+        expect(prepared).toBe(false);
     });
 });
 
