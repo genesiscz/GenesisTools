@@ -44,7 +44,10 @@ describe("the questions feature", () => {
             return result;
         };
         const root = join(agents, "dialogs");
-        for (const [id, sessionId] of [["q1", undefined], ["q2", ""]] as const) {
+        for (const [id, sessionId] of [
+            ["q1", undefined],
+            ["q2", ""],
+        ] as const) {
             expect(run("PreToolUse", id, sessionId).status).toBe(0);
             expect(openQuestions("claude", "inherited", root)).toHaveLength(1);
             expect(run("PostToolUse", id, sessionId).status).toBe(0);
