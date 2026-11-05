@@ -132,7 +132,7 @@ export async function findCommand(session: string, text: string | undefined, opt
 
         // A session T3 Code runs has its chat in T3 Code, not in a terminal: its thread is opened there. T3 Code cannot
         // be asked to scroll to a turn, so the thread opens where the user left it.
-        const t3 = await openT3ThreadOfSession(session);
+        const t3 = await openT3ThreadOfSession({ sessionId: session, activate: opts.activate !== false });
         if (t3?.opened) {
             out.println(
                 `${pc.green("✓")} opened its T3 Code thread "${t3.title}"` +
