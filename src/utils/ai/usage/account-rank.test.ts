@@ -152,6 +152,13 @@ describe("the ranker each provider declares", () => {
         );
     });
 
+    it("does not invent session absence for an incomplete cached snapshot", () => {
+        const { native: _native, ...cached } = claude("work", 10, 90);
+        cached.limits = cached.limits.filter((window) => window.key !== "five_hour");
+        expect(usageFromWindows(cached)).toBeUndefined();
+        expect(rankAccounts([cached], { now: NOW })[0].why).not.toContain("no 5h limit");
+    });
+
     it("a cached Claude snapshot takes its week from seven_day even when the OAuth week comes first", () => {
         const live = claude("work", 10, 90);
         const oauth: LimitWindow = {
