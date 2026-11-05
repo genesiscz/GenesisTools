@@ -15,7 +15,8 @@ organization serves: its `area`, `resourceName`, `routeTemplate`, `minVersion`, 
 server routes with.
 
 ```bash
-DIR=/tmp/cc/<project>/<session>/ado-api   # scratch folder
+# Replace PROJECT and SESSION with your scratch project and session names.
+DIR=/tmp/cc/PROJECT/SESSION/ado-api
 mkdir -p "$DIR"
 TOKEN=$(az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv)
 curl -sS -X OPTIONS \
