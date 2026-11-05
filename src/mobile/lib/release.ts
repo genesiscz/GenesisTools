@@ -174,7 +174,7 @@ export async function runRelease(
 
     for (const [index, step] of plan.steps.entries()) {
         onStep(step, index);
-        const logPath = join(outDir, `${String(index + 1).padStart(2, "0")}-${step.command[0]}.log`);
+        const logPath = join(outDir, `${String(index + 1).padStart(2, "0")}.log`);
         const sink = createWriteStream(logPath);
         log.debug({ command: step.command.join(" "), cwd: step.cwd, logPath }, "release step");
 
