@@ -6,18 +6,11 @@ import Foundation
 /// arguments, and the host starts a part's face only through here. A build without the part answers with a message
 /// that names the command adding it, instead of failing to link.
 package enum AppParts {
-    /// Which part serves each face flag. The same table as `APP_PARTS` in parts.ts.
-    static let partOfFace: [String: String] = [
-        "--hub": "hub",
-        "--review": "hub",
-        "--widget": "widget",
-        "--features": "features",
-        // The old name of the settings face, from the time Clicky owned the window: relaunch records and scripts.
-        "--clicky": "features",
-        "--markdown": "markdown",
-        "--recorder": "recorder",
-        "--meetings": "meetings",
-    ]
+    /// Which part serves each face flag and alias: the face declarations (AppFaces), whose source is `APP_PARTS` in
+    /// parts.ts.
+    static let partOfFace: [String: String] = Dictionary(
+        AppFaces.declared.flatMap { face in face.part.map { part in face.flags.map { ($0, part) } } ?? [] },
+        uniquingKeysWith: { first, _ in first })
 
     nonisolated(unsafe) private static var faces: [String: ([String]) -> Never] = [:]
     nonisolated(unsafe) private static var linkedParts: Set<String> = []

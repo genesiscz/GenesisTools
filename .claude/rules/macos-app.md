@@ -53,6 +53,13 @@ links (`Parts.swift`) and calls `runHost()`.
 - A new part: one target in Package.swift, one block in `Sources/GenesisTools/Parts.swift`, one row in parts.ts. A part
   with settings pages adds its plug-in in Parts.swift and `requires: ["features"]` in both tables (a build makes the
   window with it; `requires` never adds a code link).
+- A new face is one entry in its part's `faces` in parts.ts (`AppFace`: `flag`, `aliases`, `window`, `reopen`, `quit`)
+  and its run closure in the part's `AppParts.register` line. The host never lists faces by hand: `AppParts.partOfFace`,
+  `FaceRecord.isWindowFace`, `PartQuit.faceNames` and `faceOrder` read `AppFaces.declared`, which
+  `bun scripts/native/app-faces.ts --write` (and every build) writes into `Sources/Host/AppFaces+Declared.swift`, and
+  the rebuild's `windowFaceKind` reads the same entry. permissions.test.ts fails when that file, the declarations and the
+  Parts.swift registrations drift apart. Staging (`NativeStaging`) and `LinkRelay.mayRunAgain` still name their few
+  faces in code: a new face touches them only to ship behind staging or to run itself again behind a fresh relay.
 - Moving a part to another repository: its folder, its plug-in line in Parts.swift and its row in both tables. What it
   uses from the host and the kit must then be `public`, because `package` access stops at the package border.
 

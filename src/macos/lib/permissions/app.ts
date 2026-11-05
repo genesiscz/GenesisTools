@@ -46,6 +46,7 @@ import {
     unpackClickyLibrary,
 } from "../clicky-library";
 import { type ShareBundleResourcesReport, shareBundleResources } from "./bundle-resources";
+import { SWIFT_FACE_TABLE_PATH, syncSwiftFaceTable } from "./face-table";
 import {
     ALL_PART_IDS,
     APP_PARTS,
@@ -682,6 +683,12 @@ async function buildAppSteps(
     // The parts already installed, plus what the caller adds (parts.ts). Each set builds in its own scratch folder,
     // and Package.swift links the part targets `GENESIS_APP_PARTS` names. `--manifest-cache local` keeps the
     // evaluated manifest inside that folder, so a manifest read for one set never answers for another.
+    // The host reads its faces from a Swift file generated from the declarations in parts.ts (face-table.ts): a face
+    // added there reaches this binary without a hand-written Swift copy.
+    if (syncSwiftFaceTable()) {
+        step(`wrote ${SWIFT_FACE_TABLE_PATH} from the face declarations in parts.ts`);
+    }
+
     const parts = partsForBuild({ installed: installedParts(readManifest()), ...options?.parts });
     const scratchPath = appScratchPath(parts);
     const partsLabel = parts.length > 0 ? `parts ${parts.join(", ")}` : "host only";

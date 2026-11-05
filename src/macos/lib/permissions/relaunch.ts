@@ -5,6 +5,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath, genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
 import type { ProcessEntry } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { faceOfFirstArgument, type WindowFaceKind } from "./parts";
 
 /**
  * Faces that survive a rebuild. `reapStaleAppFaces` kills every face of the replaced bundle, and a review or
@@ -19,8 +20,7 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
  * record falls back to the `ps` line, with the words after a flag joined back into one value.
  */
 
-/** The settings window, the hub, a review, the edge-panel widget, Clicky (the feature settings host), the recorder and the Meetings window. */
-export type WindowFaceKind = "hub" | "review" | "settings" | "widget" | "features" | "recorder" | "meetings";
+export type { WindowFaceKind };
 
 export interface WindowFace {
     pid: number;
@@ -58,47 +58,17 @@ export function facesRecordDir(): string {
     return join(genesisAppDir(), "faces");
 }
 
-/** Which window a face's argv opens, or null for every face that must not be relaunched. */
+/**
+ * Which window a face's argv opens, or null for every face that must not be relaunched: the faces whose declaration
+ * has a `reopen` name (parts.ts). --rpc, --notify, --mic and --capsule end on their own, a link router must never be
+ * kept alive, and the link relay comes back through `RelaunchCapture.relay`.
+ */
 export function windowFaceKind(argv: string[]): WindowFaceKind | null {
     if (argv.some((arg) => SCRIPTED_FLAGS.has(arg))) {
         return null;
     }
 
-    const first = argv[0] ?? "";
-
-    if (first === "" || first === "--window" || first.startsWith("-psn_")) {
-        return "settings";
-    }
-
-    if (first === "--hub") {
-        return "hub";
-    }
-
-    if (first === "--review") {
-        return "review";
-    }
-
-    if (first === "--widget") {
-        return "widget";
-    }
-
-    // The recorder hosts its menu bar item and the live recordings' controls, so a rebuild brings it back.
-    if (first === "--recorder") {
-        return "recorder";
-    }
-
-    if (first === "--meetings") {
-        return "meetings";
-    }
-
-    // `--clicky` is the old name of the feature settings face: a face started by an older build still carries it.
-    if (first === "--features" || first === "--clicky") {
-        return "features";
-    }
-
-    // --rpc, --notify, --mic, --capsule end on their own; a link router must never be kept alive; the link relay
-    // comes back through `RelaunchCapture.relay`.
-    return null;
+    return faceOfFirstArgument(argv[0] ?? "")?.reopen ?? null;
 }
 
 /**
