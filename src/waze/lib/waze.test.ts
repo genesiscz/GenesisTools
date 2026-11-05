@@ -325,6 +325,21 @@ function fakeTransport(
     };
 }
 
+test("a long Retry-After fails without delaying the next request", async () => {
+    let refused = true;
+    const transport = fakeTransport({
+        answer: () => refused
+            ? { status: 429, body: "rate limited", retryAfter: "3600", retried: false }
+            : { status: 200, body: '{"alerts":[],"jams":[]}', retried: false },
+    });
+    const client = new WazeClient(transport, { minIntervalMs: 0 });
+    const box = { top: 1, bottom: 0, left: 0, right: 1 };
+    await expect(client.georss(box)).rejects.toThrow("HTTP 429");
+    refused = false;
+    expect(await client.georss(box)).toEqual({ alerts: [], jams: [] });
+    expect(transport.seen).toHaveLength(2);
+});
+
 function road(name: string, withVignette: boolean): RouteAlternative {
     return {
         source: "waze",
