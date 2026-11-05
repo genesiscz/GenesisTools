@@ -117,12 +117,21 @@ export function useSteerComposer(sessionKey: string, store: DraftStore = kvDraft
 
     useEffect(() => {
         void reload().then(flush);
-        return onlineManager.subscribe((online) => {
+        const unsubscribeOnline = onlineManager.subscribe((online) => {
             if (online) {
                 void flush();
             }
         });
-    }, [reload, flush]);
+        const unsubscribeRecovery = queryClient.getQueryCache().subscribe((event) => {
+            if (event.type === "updated" && event.action.type === "success" && event.query.queryKey[0] === "agents") {
+                void flush();
+            }
+        });
+        return () => {
+            unsubscribeOnline();
+            unsubscribeRecovery();
+        };
+    }, [reload, flush, queryClient]);
 
     const submit = useCallback(
         async (text: string, timing: AgentSendTiming) => {
