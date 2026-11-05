@@ -273,6 +273,26 @@ describe("writes", () => {
         ).rejects.toThrow("added none");
     });
 
+    test("case creation reports the created ID when suite attachment fails", async () => {
+        for (const response of [
+            () => ({ value: [] }),
+            () => {
+                throw new Error("offline");
+            },
+        ]) {
+            const transport = new FakeTransport([
+                ["POST /wit/workitems/$Test%20Case", () => ({ id: 500, rev: 1, fields: {} })],
+                ["POST /testplan/Plans/10/Suites/12/TestCase", response],
+            ]);
+            await expect(
+                new TestPlans(transport, CONFIG).createTestCase(
+                    { title: "Pay", suite: { planId: 10, suiteId: 12 } },
+                    true
+                )
+            ).rejects.toThrow("suite add 10 12 --cases 500 --confirm");
+        }
+    });
+
     test("an outcome by test case id sets every point of that test case", async () => {
         const point = (id: number, testCaseId: number) => ({
             id,
