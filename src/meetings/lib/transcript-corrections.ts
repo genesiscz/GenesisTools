@@ -127,7 +127,7 @@ export function correctionsOf(
         (opts.withSuggested === true &&
             item.status === "suggested" &&
             (item.confidence === undefined || item.confidence >= applyAbove));
-    const used = record.items.filter(applies);
+    const used = record.items.filter(applies).sort((a, b) => Number(a.status === "confirmed") - Number(b.status === "confirmed"));
     const passages = opts.withSuggested
         ? unclearPassages(record, { below: applyAbove, applied: applies })
         : unclearPassages(record, { below: config.global.suggest.listenBelow });
@@ -140,7 +140,7 @@ export function correctionsOf(
     // A joined word makes the two lines one voice: the line before the cut takes the voice a range gives the line
     // after it, because joins apply before ranges and that range would no longer reach it.
     const voiceAt = (label: string, atSec: number) =>
-        ranges.find(
+        ranges.findLast(
             (range) =>
                 range.label === label &&
                 range.fromSec - JOIN_SLACK_SEC <= atSec &&

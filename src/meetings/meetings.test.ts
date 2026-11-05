@@ -2088,3 +2088,13 @@ test("listening answers replace quoted and meaning-marked terms", () => {
         expect(applyCorrections([line("Alice", 12, "old")], corrections)[0]?.text).toBe("new");
     }
 });
+
+test("confirmed attribution wins over later overlapping suggestions", () => {
+    const range = { kind: "speaker-range", label: "Unknown", fromSec: 0, toSec: 20, rules: [], suggestedAt: meeting.start };
+    const draft = meetingRecordSchema.parse({ ...record, items: [
+        { ...range, id: "i1", status: "confirmed", speaker: "Alice" },
+        { ...range, id: "i2", status: "suggested", speaker: "Bob", confidence: 1 },
+    ] });
+    const corrections = correctionsOf(draft, meetingsConfigSchema.parse({}), { format: "md", withSuggested: true });
+    expect(applyCorrections([line("Unknown", 10, "Hello")], corrections)[0]?.speaker).toBe("Alice");
+});
