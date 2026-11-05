@@ -31,7 +31,7 @@ export interface BundleState {
 const UPDATERS: Array<{ prefix: string; pattern: RegExp }> = [
     { prefix: "brave", pattern: /BraveUpdater|BraveSoftwareUpdate/ },
     { prefix: "chrome", pattern: /GoogleUpdater|GoogleSoftwareUpdate|Keystone/ },
-    { prefix: "edge", pattern: /EdgeUpdater|Microsoft AutoUpdate/ },
+    { prefix: "edge", pattern: /EdgeUpdater/ },
 ];
 
 export function updaterPattern(browser: BrowserId): RegExp | null {

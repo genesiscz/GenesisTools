@@ -22,7 +22,7 @@ import {
     verifyRestart,
     verifyRestartTwice,
 } from "./restart.ts";
-import { type BundleState, formatUpdateWait, parseShortVersion, waitForUpdateOnQuit } from "./update-on-quit.ts";
+import { type BundleState, formatUpdateWait, parseShortVersion, updaterPattern, waitForUpdateOnQuit } from "./update-on-quit.ts";
 
 const HOME = "/home/tester";
 
@@ -492,6 +492,11 @@ describe("update on quit", () => {
         expect(r.settled).toBe(false);
         expect(r.waitedMs).toBe(60_000);
         expect(formatUpdateWait(r, { appName: "Brave Browser" }).join("\n")).toContain("still being updated after 60s");
+    });
+
+    test("Edge does not wait on generic Microsoft AutoUpdate processes", () => {
+        expect(updaterPattern("edge")?.test("/Applications/Microsoft AutoUpdate.app/Contents/MacOS/msupdate")).toBe(false);
+        expect(updaterPattern("edge")?.test("/Applications/EdgeUpdater.app/Contents/MacOS/EdgeUpdater")).toBe(true);
     });
 
     test("the version comes from Info.plist's CFBundleShortVersionString", () => {
