@@ -525,8 +525,8 @@ export async function postDecisions(
     });
     const poster = toRuntimeContext(identity);
     const harnessSession = poster.agent !== "unknown" && poster.sessionId ? poster.sessionId : null;
-    // The pane the agent runs in, when it runs in cmux: the hub opens it and `send` types there. A remote caller
-    // has no terminal here, so the gateway's own pane is never stamped on its decisions.
+    // The pane the agent runs in, when it runs in cmux: the hub opens it and `send` types there. A remote caller's
+    // pane comes from its own process env (the gateway reads it from the peer), never the gateway's own pane.
     const cmuxSurface = input.cmuxSurface ?? identity.terminal?.cmux?.surfaceId;
     const requested = input.sessionId?.trim() ?? "";
     // A live harness owns the session. A typed id is only for a human CLI or a test.

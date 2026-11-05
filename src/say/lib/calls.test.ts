@@ -82,11 +82,18 @@ function request(overrides: Partial<SayCallRequest> = {}): SayCallRequest {
     };
 }
 
+/** The caller row of an environment and a fixed process chain, as the identity module composes them. */
+function callerOfChain(chain: AncestryFrame[], environment: NodeJS.ProcessEnv = {}): CallerContext {
+    const identity = whoIsCalling(
+        { origin: "local", env: environment },
+        { facets: ["process"], processChain: () => chain }
+    );
+    return callerContextOf(identity, { callerPid: 1 });
+}
+
 /** The agent the call log records for a caller whose environment names none, from a process chain alone. */
 function agentOfChain(chain: AncestryFrame[]): string {
-    const identity = whoIsCalling({ origin: "local", env: {} });
-    identity.process = { pid: 1000, ancestry: chain };
-    return callerContextOf(identity, { callerPid: 1 }).agent;
+    return callerOfChain(chain).agent;
 }
 
 describe("process ancestry", () => {
@@ -495,9 +502,17 @@ describe("characterization: the caller `tools say` records", () => {
         expect((await captureWith({ GROK_SESSION_ID: "g1", TOOLS_GROK_ACCOUNT: "shop" })).account).toBe("shop");
     });
 
-    test("another harness's stamp is no account, and a caller the environment does not name has none", async () => {
+    // Changed 2026-11-05 (gap 6 of the W4 completeness note): the parent chain names a caller the environment does
+    // not, inside the identity module, before the account is read, so that caller gets its harness's stamp. It had none.
+    test("another harness's stamp is no account; a caller only its parent chain names gets that harness's", async () => {
         expect((await captureWith({ GROK_SESSION_ID: "g1", TOOLS_CLAUDE_ACCOUNT: "work" })).account).toBeNull();
-        expect((await captureWith({ TOOLS_CLAUDE_ACCOUNT: "work" })).account).toBeNull();
+        const stamped = { TOOLS_CLAUDE_ACCOUNT: "work" };
+        expect(callerOfChain([{ pid: 2, command: "/bin/zsh" }], stamped).account).toBeNull();
+        expect(callerOfChain([{ pid: 2, command: "/Users/x/.bun/bin/claude --resume" }], stamped)).toMatchObject({
+            agent: "claude-code",
+            sessionId: null,
+            account: "work",
+        });
     });
 
     // Changed 2026-11-04 (defect 4 of the W1 list: a label read for Codex, which has none): a Codex caller's label is

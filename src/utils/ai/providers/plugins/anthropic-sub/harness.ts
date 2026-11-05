@@ -58,6 +58,7 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             effortEnvKey: "CLAUDE_EFFORT",
             // A Claude subagent runs under its parent's CLAUDE_CODE_SESSION_ID.
             sessionIsExecutingThread: false,
+            rootSessionEnvKey: null,
             detects: isClaude,
             resolve: resolveClaudeContext,
         },

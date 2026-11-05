@@ -1,7 +1,8 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { agentSessionIds, resolveAgentHost } from "@genesiscz/utils/agent/host";
+import { agentSessionIds } from "@genesiscz/utils/agent/host";
+import { whoIsCalling } from "@genesiscz/utils/agent/identity";
 import { readTerminalApp } from "@genesiscz/utils/agent/identity/terminal";
 import { untilAborted } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
@@ -741,7 +742,10 @@ export function nativeEnvironment(note?: string): NodeJS.ProcessEnv {
  * stays off. An explicit GENESIS_CONTROL_FOREGROUND_GUARD in the environment wins either way.
  */
 export function foregroundGuardEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-    if (environment.GENESIS_CONTROL_FOREGROUND_GUARD !== undefined || !resolveAgentHost(environment).isInAgent) {
+    if (
+        environment.GENESIS_CONTROL_FOREGROUND_GUARD !== undefined ||
+        !whoIsCalling({ origin: "local", env: environment }).isInAgent
+    ) {
         return {};
     }
 

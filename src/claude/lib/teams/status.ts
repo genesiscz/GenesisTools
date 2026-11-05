@@ -1,6 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { isAgentProcess, runsAgent } from "@genesiscz/utils/process/classify";
-import { listProcesses, readProcessEnvironment } from "@genesiscz/utils/process/processes";
+import { listProcesses } from "@genesiscz/utils/process/processes";
 import { profiler } from "@genesiscz/utils/profile";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import type { LiveTeammateProcess, TeamMemberView } from "./types";
@@ -21,7 +21,6 @@ export interface PsResult {
 
 export interface PsRunner {
     processes: () => PsRow[] | null;
-    environment: (pid: number) => Record<string, string> | null;
 }
 
 const defaultPsRunner: PsRunner = {
@@ -31,12 +30,11 @@ const defaultPsRunner: PsRunner = {
             ? null
             : entries.map((entry) => ({ pid: entry.pid, ppid: entry.ppid, command: entry.command ?? "" }));
     },
-    environment: readProcessEnvironment,
 };
 
 let psRunner: PsRunner = defaultPsRunner;
 
-/** Test seam for process-table and environment reads. */
+/** Test seam for process-table reads. */
 export function __setPsRunnerForTest(runner: PsRunner | null): void {
     psRunner = runner ?? defaultPsRunner;
 }
@@ -70,25 +68,8 @@ function flagValue(cmd: string, flag: string): string | undefined {
     return m?.[1];
 }
 
-/**
- * Read only the requested environment keys from the process layer. A missing or
- * unreadable environment leaves account attribution unknown.
- */
-export function readProcessEnvKeys(pid: number, keys: string[]): Record<string, string> {
-    const out: Record<string, string> = {};
-    try {
-        const environment = psRunner.environment(pid);
-        for (const key of keys) {
-            const value = environment?.[key]?.trimEnd();
-            if (value) {
-                out[key] = value;
-            }
-        }
-    } catch (error) {
-        logger.debug({ error, pid }, "[teams] process environment unavailable; account attribution skipped");
-    }
-    return out;
-}
+/** The one reader of a process's env keys lives in src/utils/process; the teams view (and its test mock) reach it here. */
+export { readProcessEnvKeys } from "@genesiscz/utils/process/processes";
 
 interface TmuxPaneRow {
     session: string;

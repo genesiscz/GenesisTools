@@ -53,6 +53,9 @@ export const codexHarness: HarnessDriver<"codex"> = {
             effortEnvKey: null,
             // Every shell gets the id of the thread that runs it, a native subagent's own thread included.
             sessionIsExecutingThread: true,
+            // The root session the root and its subagent threads share; equal to CODEX_THREAD_ID in a root session's
+            // shell (two recorded runs on this Mac, 2026-11-04). A subagent shell's pair was not recorded live yet.
+            rootSessionEnvKey: "CODEX_SESSION_ID",
             detects: isCodex,
             resolve: resolveCodexContext,
         },

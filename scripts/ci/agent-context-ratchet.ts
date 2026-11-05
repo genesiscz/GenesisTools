@@ -10,10 +10,7 @@
  * (`AGENT_ENV_SCRUBBERS`), not listed here.
  */
 
-export const RAW_AGENT_ENV_RATCHET: ReadonlySet<string> = new Set<string>([
-    "src/utils/ai/active-processes.ts", // T3CODE_CLI_PATH, T3CODE_THREAD_ID: move AGENT_HOST_MARKERS into src/utils/t3code
-    "src/utils/claude/peer-sender.ts", // CLAUDE_CODE_SESSION_ID: take the session from whoIsCallingHere(), keep the socket and pid reads
-]);
+export const RAW_AGENT_ENV_RATCHET: ReadonlySet<string> = new Set<string>([]);
 
 export const RAW_TERMINAL_ENV_RATCHET: ReadonlySet<string> = new Set<string>([]);
 

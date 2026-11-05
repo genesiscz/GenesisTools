@@ -107,6 +107,54 @@ describe("whoIsCalling: one precedence rule", () => {
     });
 });
 
+// Codex gives every shell CODEX_SESSION_ID (the root session, shared by the root and its subagent threads) and
+// CODEX_THREAD_ID (the thread that runs the shell), codex-rs protocol shell_environment.rs. Recorded on this Mac: a root
+// session's shell had both equal (two runs, 2026-11-04); a subagent's rollout keeps its own thread as `id` and the
+// root as `session_id` (2026-11-01). A subagent's shell env was NOT recorded live: these tests pin the documented rule.
+describe("the Codex subagent thread", () => {
+    it("a thread that is not the root session is a subagent: its own thread is its session and its subagent id", () => {
+        const identity = whoIsCalling(local({ CODEX_SESSION_ID: "root-1", CODEX_THREAD_ID: "thread-1" }));
+
+        expect(identity).toMatchObject({ agent: "codex", sessionId: "thread-1", subagentId: "thread-1" });
+        expect(identity.sources).toMatchObject({ sessionId: "env", subagentId: "env" });
+    });
+
+    it("the root thread, a blank root and another harness name no subagent", () => {
+        expect(
+            whoIsCalling(local({ CODEX_SESSION_ID: "root-1", CODEX_THREAD_ID: "root-1" })).subagentId
+        ).toBeUndefined();
+        expect(whoIsCalling(local({ CODEX_SESSION_ID: "  ", CODEX_THREAD_ID: "thread-1" })).subagentId).toBeUndefined();
+        expect(whoIsCalling(local({ CODEX_THREAD_ID: "thread-1" })).subagentId).toBeUndefined();
+        // Claude is the outer host: the Codex variables it passed on describe nobody it is.
+        expect(
+            whoIsCalling(
+                local({ CLAUDE_CODE_SESSION_ID: "c1", CODEX_SESSION_ID: "root-1", CODEX_THREAD_ID: "thread-1" })
+            ).subagentId
+        ).toBeUndefined();
+    });
+
+    it("the subagent's transcript and model are its own thread's rollout, not the root's", () => {
+        const home = scratch("codex-sub-home-");
+        const day = join(home, "sessions", "2026", "11", "04");
+        const meta = (id: string, root: string) =>
+            `${SafeJSON.stringify({ type: "session_meta", payload: { id, session_id: root } })}\n`;
+        const turn = (model: string) => `${SafeJSON.stringify({ type: "turn_context", payload: { model } })}\n`;
+        const rootId = "01a1a847-802d-7082-9d2c-db4ff4272969";
+        const threadId = "01a195d5-8f1b-78f0-9c7c-24d0dd290d30";
+        put(join(day, `rollout-2026-11-04T09-00-00-${rootId}.jsonl`), meta(rootId, rootId) + turn("root-model"));
+        const own = put(
+            join(day, `rollout-2026-11-04T09-05-00-${threadId}.jsonl`),
+            meta(threadId, rootId) + turn("sub-model")
+        );
+        const identity = whoIsCalling(
+            local({ CODEX_SESSION_ID: rootId, CODEX_THREAD_ID: threadId, CODEX_HOME: home }),
+            { facets: ["model"], now: new Date(2026, 10, 4, 12, 0, 0) }
+        );
+
+        expect(identity).toMatchObject({ subagentId: threadId, transcriptPath: own, model: "sub-model" });
+    });
+});
+
 describe("whoIsCalling: a remote caller", () => {
     const gatewayEnv = {
         CLAUDE_CODE_SESSION_ID: "gateway-own",
@@ -206,6 +254,43 @@ describe("enrichers: terminals, host and account, each in its own slot", () => {
         expect(identity).toMatchObject({ agent: "claude-code", sessionId: "c1" });
     });
 
+    // Characterization (2026-11-05, before the terminal table): every terminal present at once, each under its own
+    // source path, the terminal app with its program and session ids, and a given `terminal` reads none of them.
+    it("characterization: cmux, tmux and the terminal app each keep their own slot and source", () => {
+        const identity = whoIsCalling(
+            local({
+                CMUX_SURFACE_ID: "surface-2",
+                CMUX_TAB_ID: " tab-2 ",
+                TMUX_PANE: "%4",
+                TERM_PROGRAM: " iTerm.app ",
+                ITERM_SESSION_ID: "w0t1p0:fixture",
+                TERM_SESSION_ID: "",
+                WEZTERM_PANE: "7",
+            })
+        );
+
+        expect(identity.terminal).toEqual({
+            cmux: { surfaceId: "surface-2", workspaceId: null, tabId: "tab-2" },
+            tmux: { pane: "%4" },
+            app: { program: "iTerm.app", itermSessionId: "w0t1p0:fixture", termSessionId: null },
+        });
+        expect(identity.sources).toMatchObject({
+            "terminal.cmux": "cmux",
+            "terminal.tmux": "tmux",
+            "terminal.app": "terminal",
+        });
+        expect(whoIsCalling(local({ TERM_SESSION_ID: "t-1" })).terminal).toEqual({
+            app: { program: null, itermSessionId: null, termSessionId: "t-1" },
+        });
+
+        const given = whoIsCalling(local({ CMUX_SURFACE_ID: "surface-2", TMUX_PANE: "%4" }), {
+            overrides: { terminal: { tmux: { pane: "%given" } } },
+        });
+        expect(given.terminal).toEqual({ tmux: { pane: "%given" } });
+        expect(given.sources).toMatchObject({ terminal: "override" });
+        expect(given.sources["terminal.cmux"]).toBeUndefined();
+    });
+
     it("the account is the caller's own harness stamp, an account or a proxy target", () => {
         const codex = whoIsCalling(local({ CODEX_THREAD_ID: "t1", [accountEnvVar("codex")]: "work laptop" }));
         expect(codex.account).toEqual({ harness: "codex", account: "work laptop", proxyTarget: null });
@@ -222,6 +307,49 @@ describe("enrichers: terminals, host and account, each in its own slot", () => {
         ).toBeUndefined();
         expect(whoIsCalling(local({ [accountEnvVar("claude")]: "work" })).account).toBeUndefined();
         expect(whoIsCalling(local({ CODEX_THREAD_ID: "t1", [accountEnvVar("codex")]: "  " })).account).toBeUndefined();
+    });
+});
+
+describe("the process facet: the agent the parent chain names", () => {
+    const chain = [
+        { pid: 30, command: "/bin/zsh -c tools say hi" },
+        { pid: 20, command: "/opt/homebrew/bin/codex exec" },
+        { pid: 10, command: "/Users/x/.bun/bin/claude --resume" },
+    ];
+    const processChain = () => chain;
+
+    it("names a local caller no source names, below the env: the nearest agent, its account, no session", () => {
+        const identity = whoIsCalling(local({ [accountEnvVar("codex")]: "side" }), {
+            facets: ["process"],
+            processChain,
+        });
+
+        expect(identity).toMatchObject({ agent: "codex", sessionId: null, isInAgent: true });
+        expect(identity.account).toEqual({ harness: "codex", account: "side", proxyTarget: null });
+        expect(identity.process).toEqual({ pid: process.pid, ancestry: chain });
+        expect(identity.sources).toMatchObject({ agent: "process", isInAgent: "process", account: "account" });
+    });
+
+    it("never replaces an agent a source named, needs the process facet, and a chain of shells names nobody", () => {
+        expect(whoIsCalling(local({ GROK_SESSION_ID: "g1" }), { facets: ["process"], processChain }).agent).toBe(
+            "grok"
+        );
+        expect(whoIsCalling(local({}), { processChain }).agent).toBe("unknown");
+        const shells = () => [{ pid: 30, command: "/bin/zsh" }];
+        expect(whoIsCalling(local({}), { facets: ["process"], processChain: shells })).toMatchObject({
+            agent: "unknown",
+            isInAgent: false,
+        });
+    });
+
+    it("a remote caller the gateway could not name stays unnamed: its chain is no evidence of who called", () => {
+        const identity = whoIsCalling(
+            { origin: "remote", caller: { agent: "unknown", sessionId: null, cwd: null, pid: 4242 } },
+            { facets: ["process"], processChain }
+        );
+
+        expect(identity.agent).toBe("unknown");
+        expect(identity.process?.pid).toBe(4242);
     });
 });
 

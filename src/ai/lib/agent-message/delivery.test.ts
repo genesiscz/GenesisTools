@@ -425,7 +425,7 @@ test("the sender is the Claude Code session in the environment: registry name, o
             CLAUDE_PID: "4242",
             CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/cc-socks/4242.sock",
         };
-        const sources = { variable: (name: string) => vars[name], sessionsDir: dir };
+        const sources = { env: vars, sessionsDir: dir };
 
         expect(await currentClaudeSender({ ...sources, transcriptOf: async () => transcript })).toEqual({
             ...LEAD,
@@ -448,10 +448,25 @@ test("the sender is the Claude Code session in the environment: registry name, o
         const transcriptOf = async (): Promise<string | null> => {
             throw new Error("must not be reached");
         };
-        expect(await currentClaudeSender({ variable: () => undefined, sessionsDir: dir, transcriptOf })).toBeNull();
+        expect(await currentClaudeSender({ env: {}, sessionsDir: dir, transcriptOf })).toBeNull();
         expect(
             await currentClaudeSender({
-                variable: (name) => (name === "CLAUDE_CODE_SESSION_ID" ? LEAD.sessionId : undefined),
+                env: { CLAUDE_CODE_SESSION_ID: LEAD.sessionId },
+                sessionsDir: dir,
+                transcriptOf,
+            })
+        ).toBeNull();
+        // A blank session is none, and a Codex thread with a Claude socket is no Claude sender.
+        expect(
+            await currentClaudeSender({
+                env: { ...vars, CLAUDE_CODE_SESSION_ID: "  " },
+                sessionsDir: dir,
+                transcriptOf,
+            })
+        ).toBeNull();
+        expect(
+            await currentClaudeSender({
+                env: { CODEX_THREAD_ID: "t-1", CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/cc-socks/4242.sock" },
                 sessionsDir: dir,
                 transcriptOf,
             })

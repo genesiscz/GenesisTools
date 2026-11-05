@@ -8,7 +8,7 @@ import {
     readProcessEnvironment,
     readProcessUsages,
 } from "@genesiscz/utils/process/processes";
-import { readT3Thread } from "@genesiscz/utils/t3code/thread-env";
+import { T3_HOST_MARKERS } from "@genesiscz/utils/t3code/host-markers";
 import { accountEnvVar, accountFromEnv } from "./account-env";
 
 /**
@@ -53,22 +53,21 @@ export interface AgentHost {
     id?: string;
 }
 
-/**
- * The apps that host agent sessions, each recognised by a variable it sets on the agents it starts; the first row
- * whose variable is set wins. `carriesId`: the value is the host's id for the session. T3 Code sets its thread on a
- * Claude child only; a Codex app-server or a Grok ACP process serves its threads without one, and every child gets
- * `T3CODE_CLI_PATH` (checked 2026-11-01). A new host is rows here (and in the pin hook's copy).
- */
-const AGENT_HOST_MARKERS: readonly {
+/** One variable a host app sets on the agents it starts. `carriesId`: the value is the host's id for the session. */
+export interface AgentHostMarker {
     kind: string;
     envKey: string;
     carriesId: boolean;
     /** The host subject's own reader of the value, when it has one, so the identity and this table read it alike. */
     read?: (environment: NodeJS.ProcessEnv) => string | undefined;
-}[] = [
-    { kind: "t3", envKey: "T3CODE_THREAD_ID", carriesId: true, read: readT3Thread },
-    { kind: "t3", envKey: "T3CODE_CLI_PATH", carriesId: false },
-];
+}
+
+/**
+ * The apps that host agent sessions, each recognised by a variable it sets on the agents it starts; the first row
+ * whose variable is set wins. Each host's rows live in its own folder (T3 Code: `src/utils/t3code/host-markers.ts`),
+ * so a new host is its rows there, one spread here, and the pin hook's copy.
+ */
+const AGENT_HOST_MARKERS: readonly AgentHostMarker[] = [...T3_HOST_MARKERS];
 
 /** Every host kind a pin or a process row can name, each once: the closed value set of a `--host` flag. */
 export const AGENT_HOST_KINDS: readonly string[] = [...new Set(AGENT_HOST_MARKERS.map((marker) => marker.kind))];

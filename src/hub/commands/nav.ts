@@ -1,10 +1,9 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createBuildProgressDisplay } from "@app/macos/lib/permissions/swift-progress";
-import { agentSessionIds } from "@genesiscz/utils/agent/host";
+import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { env } from "@genesiscz/utils/env";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -47,7 +46,7 @@ function isFolder(path: string): boolean {
 
 /** The calling agent's own session, so an agent need not pass `--from`. */
 function callerSession(): string | undefined {
-    return agentSessionIds(env.getProcessEnv())[0]?.id;
+    return whoIsCallingHere().sessionId ?? undefined;
 }
 
 function actorFlag(value: string | undefined, fallback: NavActor): NavActor | null {

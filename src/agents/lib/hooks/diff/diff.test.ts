@@ -41,7 +41,7 @@ import {
 } from "../diff-log";
 import { isDeleted, statusEntries, untrackedFilesIn } from "../git";
 import { callDir, claimsRoot, sessionDir } from "../paths";
-import type { HookPayload } from "../payload";
+import { type HookPayload, parseHookPayload } from "../payload";
 import { readOnlyCommand, recordTouches } from "./attribution";
 import { beforeCopier, beforeCopy, leftOutOfCapture } from "./before";
 import { type CaptureResult, capturePre, captureRoots, harnessOwnFile } from "./capture";
@@ -84,6 +84,7 @@ import {
     renamesIn,
     runDiffPost,
     silentReason,
+    turnOf,
 } from "./run";
 import { createSyntaxEngineLoader, languageOf, syntaxRows } from "./syntax";
 import { resolvePalette } from "./theme";
@@ -6425,5 +6426,52 @@ describe("the misfires of 2026-10-14", () => {
                 "budget-bgtaskC.ts",
             ]);
         }
+    });
+});
+
+// Characterization (2026-11-05, before turnOf reads the typed turn): the key every stored change row's `turn` holds.
+// 21,287 stored Claude rows carry the prompt id (`prompt_id`, the transcript's `promptId`), Codex rows its
+// `turn_id`, Grok rows its `promptId`; none of this Mac's 117 Copilot sessions has a change log.
+describe("turnOf: the turn key of a stored change row", () => {
+    function payloadOf(raw: Record<string, unknown>): HookPayload {
+        const payload = parseHookPayload(SafeJSON.stringify(raw));
+
+        if (!payload) {
+            throw new Error("the fixture payload did not parse");
+        }
+
+        return payload;
+    }
+
+    it("each harness's own turn field, then the call id, then unknown", () => {
+        const claude = {
+            hook_event_name: "PostToolUse",
+            session_id: "c1",
+            tool_use_id: "toolu_1",
+            prompt_id: "p-claude",
+        };
+        // A real Codex payload names its model on every event and a rollout (or null) transcript.
+        const codex = {
+            hook_event_name: "PostToolUse",
+            session_id: "x1",
+            tool_use_id: "call_1",
+            turn_id: "t-codex",
+            model: "codex-model",
+            transcript_path: null,
+        };
+        const grok = { hookEventName: "PostToolUse", sessionId: "g1", toolUseId: "call-1", promptId: "p-grok" };
+
+        expect(turnOf(payloadOf(claude))).toBe("p-claude");
+        expect(turnOf(payloadOf(codex))).toBe("t-codex");
+        expect(turnOf(payloadOf(grok))).toBe("p-grok");
+        expect(turnOf(payloadOf({ hook_event_name: "PostToolUse", session_id: "c1", tool_use_id: "toolu_2" }))).toBe(
+            "toolu_2"
+        );
+        expect(turnOf(payloadOf({ hook_event_name: "PostToolUse", session_id: "c1", prompt_id: "" }))).toBe("unknown");
+    });
+
+    it("changed on purpose: a Copilot payload's turn stays in raw, so its row is keyed by its call", () => {
+        const copilot = { hookEventName: "postToolUse", sessionId: "p1", toolUseId: "call-p1", turnId: "t-copilot" };
+        expect(turnOf(payloadOf(copilot))).toBe("call-p1");
     });
 });

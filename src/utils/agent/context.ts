@@ -21,6 +21,13 @@ export interface CallerCore {
 export interface ScopedCaller extends CallerCore {
     cwd: string | null;
     sourceMessage?: SourceMessage;
+    /** The caller's process, when the request knows it (the gateway's connection owner): the `process` facet starts here. */
+    pid?: number | null;
+    /**
+     * The variables the enrichers read, read from the caller's OWN process (its account stamp, terminal ids and host
+     * thread), never this server's environment. Absent when the request could not read them.
+     */
+    env?: Readonly<Record<string, string>>;
 }
 
 /**

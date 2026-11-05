@@ -2144,16 +2144,12 @@ function attributionContext({
     };
 }
 
-function turnOf(payload: HookPayload): string {
-    for (const key of ["turnId", "turn_id", "promptId", "prompt_id"]) {
-        const value = payload.raw[key];
-
-        if (typeof value === "string" && value.length > 0) {
-            return value;
-        }
-    }
-
-    return payload.toolUseId ?? "unknown";
+/**
+ * The turn a change row is keyed by: the typed turn id (each harness's own field, `HookPayloadDialect.turnIdField`),
+ * else the call's id, else "unknown". A Copilot payload's turn stays in `raw`, so its row is keyed by its call.
+ */
+export function turnOf(payload: HookPayload): string {
+    return payload.turnId ?? payload.toolUseId ?? "unknown";
 }
 
 /** The before and after bytes one chunk of `recordBashEdits` may hold at once. */

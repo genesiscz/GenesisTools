@@ -1,4 +1,4 @@
-import type { ContextEnricher, TerminalApp } from "./types";
+import type { TerminalApp } from "./types";
 
 function trimmed(value: string | undefined): string | null {
     return value?.trim() || null;
@@ -18,8 +18,3 @@ export function readTerminalApp(env: NodeJS.ProcessEnv): TerminalApp | undefined
 
     return app.program || app.itermSessionId || app.termSessionId ? app : undefined;
 }
-
-export const terminalAppCallerEnricher: ContextEnricher<"terminal"> = {
-    id: "terminal",
-    enrich: ({ env }) => readTerminalApp(env),
-};

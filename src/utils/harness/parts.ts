@@ -195,6 +195,12 @@ export interface HostResolver {
      * identity owned by one such thread refuses a shell of another (`src/agents/lib/thread-owner.ts`).
      */
     readonly sessionIsExecutingThread: boolean;
+    /**
+     * The variable that names the ROOT session a native subagent's thread belongs to, beside the thread's own session
+     * variable (Codex's `CODEX_SESSION_ID`, codex-rs protocol shell_environment.rs), or null. When both are set and
+     * differ, the shell runs in a subagent thread, so its thread is the caller's subagent id.
+     */
+    readonly rootSessionEnvKey: string | null;
     detects(env: NodeJS.ProcessEnv): boolean;
     resolve(env: NodeJS.ProcessEnv): Partial<AgentRuntimeContext>;
 }
@@ -254,6 +260,14 @@ export interface HookFacts {
      * (`readers/<harness>-model.ts`), here so a hook or the failure log reads it without loading a reader.
      */
     currentModel(transcriptPath: string): string | null;
+    /**
+     * The transcript of one of a session's subagents, from the session's transcript and the subagent's id. A Claude
+     * subagent's hook names the MAIN session's `transcript_path` (code.claude.com/docs/en/hooks, SubagentStop), and
+     * Claude keeps the subagent's own beside it (`<session>/subagents/agent-<id>.jsonl`), so its hook reads the
+     * subagent's model, not the parent's. Null where the lead's path names no such file: a Codex subagent thread has
+     * its own rollout, found by the thread id its shell carries, and no Grok subagent id was established.
+     */
+    subagentTranscript(sessionTranscript: string, subagentId: string): string | null;
     /** Its shell honours a bare zsh glob qualifier such as `(N)`, so the guard allows `zsh-glob-qualifier` there. */
     readonly honoursBareGlobQualifier: boolean;
     /** It renders a hook message with ANSI colour and in full, so the diff hook shows its diffs there. */
@@ -312,7 +326,7 @@ export interface HookPayloadDialect {
      * SessionStart). A model field on another event names a harness that sends it everywhere.
      */
     readonly modelEvents: "every" | readonly string[];
-    /** The field that names the turn (Codex `turn_id`, Grok `promptId`), or null when its payloads carry none. */
+    /** The field that names the turn (Claude `prompt_id`, Codex `turn_id`, Grok `promptId`), or null when its payloads carry none. */
     readonly turnIdField: string | null;
     /** The field that names the subagent that made the call (Claude `agent_id`), or null. */
     readonly subagentIdField: string | null;

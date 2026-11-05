@@ -34,6 +34,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { findInFiles, Lang, type NapiConfig, parse, type SgNode } from "@ast-grep/napi";
+import { TERMINAL_ENV_KEYS, TERMINAL_ENV_PREFIXES } from "@genesiscz/utils/agent/identity/terminals";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     AGENT_BINARY_TABLE_RATCHET,
@@ -421,7 +422,10 @@ function readsHookPayload(node: SgNode, statusline = false): boolean {
 
 const AGENT_ENV_KEY =
     "CLAUDE_CODE_SESSION_ID|CLAUDECODE|CODEX_THREAD_ID|CODEX_SESSION_ID|CODEX_TOOL_CALL_ID|GROK_SESSION_ID|COPILOT_AGENT_SESSION_ID|AI_AGENT|CLAUDE_EFFORT|T3CODE_[A-Z0-9_]+";
-const TERMINAL_ENV_KEY = "CMUX_[A-Z0-9_]+|TMUX_PANE|TMUX|TERM_PROGRAM|ITERM_SESSION_ID|TERM_SESSION_ID";
+/** Every terminal's variables, from the identity's terminal table: a new terminal's row extends this rule. */
+const TERMINAL_ENV_KEY = [...TERMINAL_ENV_PREFIXES.map((prefix) => `${prefix}[A-Z0-9_]+`), ...TERMINAL_ENV_KEYS].join(
+    "|"
+);
 /** `TOOLS_CLAUDE_ACCOUNT`, and the same name built from a value: `TOOLS_${provider}_ACCOUNT`. */
 const ACCOUNT_ENV_KEY = "TOOLS_(?:[A-Z]+|\\$\\{[^}]*\\})_ACCOUNT";
 /** Node kinds that carry a bare key name: `env.KEY`, `{ KEY: v }`, `{ KEY }` and `const { KEY } = env`. */
@@ -977,11 +981,12 @@ const RULES: Rule[] = [
         severity: "error",
         message:
             "Do not name a terminal's environment variable (CMUX_*, TMUX_PANE, TERM_PROGRAM, ITERM_SESSION_ID, ...) outside " +
-            "src/utils/cmux/, src/utils/tmux/, src/utils/env/ and the agent identity module's terminal part " +
-            "(src/utils/agent/identity/). scripts/ci/agent-context-ratchet.ts lists the files not migrated yet.",
+            "src/utils/cmux/, src/utils/tmux/, src/utils/env/, a terminal's reader (src/utils/<terminal>/caller-enricher.ts) " +
+            "and the agent identity module (src/utils/agent/identity/, whose terminals.ts lists every terminal's keys). " +
+            "scripts/ci/agent-context-ratchet.ts lists the files not migrated yet.",
         onlyIn: AGENT_CONTEXT_SCOPE,
         allowedIn: new RegExp(
-            `${/^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/cmux\/|src\/utils\/tmux\/|src\/utils\/env\/|src\/utils\/agent\/identity\/)/.source}|${AGENT_ENV_SCRUBBERS.source}`
+            `${/^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/cmux\/|src\/utils\/tmux\/|src\/utils\/env\/|src\/utils\/agent\/identity\/|src\/utils\/[\w-]+\/caller-enricher\.ts$)/.source}|${AGENT_ENV_SCRUBBERS.source}`
         ),
         allowedFiles: RAW_TERMINAL_ENV_RATCHET,
     },

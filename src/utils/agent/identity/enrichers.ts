@@ -1,10 +1,14 @@
-import { accountOfEnv } from "@genesiscz/utils/ai/account-env";
+import { accountEnvVar, accountOfEnv } from "@genesiscz/utils/ai/account-env";
 import { harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
-import { cmuxCallerEnricher } from "@genesiscz/utils/cmux/caller-enricher";
 import { logger } from "@genesiscz/utils/logger";
 import { t3codeCallerEnricher } from "@genesiscz/utils/t3code/caller-enricher";
-import { tmuxCallerEnricher } from "@genesiscz/utils/tmux/caller-enricher";
-import { terminalAppCallerEnricher } from "./terminal";
+import {
+    type CallerTerminals,
+    readTerminalInto,
+    TERMINAL_ENRICHERS,
+    TERMINAL_ENV_KEYS,
+    TERMINAL_IDS,
+} from "./terminals";
 import type {
     AgentIdentity,
     CallerHost,
@@ -24,6 +28,10 @@ const { log } = logger.scoped("agent-context");
  */
 export const accountCallerEnricher: ContextEnricher<"account"> = {
     id: "account",
+    envKeys: (caller) => {
+        const harness = harnessOfRuntimeAgent(caller.agent);
+        return harness ? [accountEnvVar(harness)] : [];
+    },
     enrich: ({ caller, env }) => {
         const harness = harnessOfRuntimeAgent(caller.agent);
 
@@ -37,18 +45,48 @@ export const accountCallerEnricher: ContextEnricher<"account"> = {
 };
 
 /**
+ * Every terminal of `TERMINAL_ENRICHERS` the environment names, each read on its own: a failed reader leaves the
+ * other terminals.
+ */
+export const terminalCallerEnricher: ContextEnricher<"terminal"> = {
+    id: "terminal",
+    envKeys: () => TERMINAL_ENV_KEYS,
+    enrich: ({ env }) => {
+        const terminals: CallerTerminals = {};
+
+        for (const id of TERMINAL_IDS) {
+            try {
+                readTerminalInto(id, env, terminals);
+            } catch (error) {
+                log.debug(
+                    { error, terminal: id },
+                    "agent-context: a terminal reader failed; the other terminals stand"
+                );
+            }
+        }
+
+        return Object.keys(terminals).length > 0 ? terminals : undefined;
+    },
+};
+
+/**
  * Every enricher, one per subject, in a static table: no discovery, no registration. Each writes only its own slot
- * (`place`), so cmux and tmux sit side by side and neither can touch the caller's harness or session.
+ * (`place`), so no enricher can touch the caller's harness or session. The terminals are one enricher over their own
+ * table (`TERMINAL_ENRICHERS`), so cmux and tmux sit side by side and a new terminal is a row there.
  * A custom-env enricher (named fields from the caller's env, validated, never a dump of entries) would be one more
  * entry here; none is built yet.
  */
 const ENRICHERS: { readonly [Id in EnricherId]: ContextEnricher<Id> } = {
-    cmux: cmuxCallerEnricher,
-    tmux: tmuxCallerEnricher,
-    terminal: terminalAppCallerEnricher,
+    terminal: terminalCallerEnricher,
     t3code: t3codeCallerEnricher,
     account: accountCallerEnricher,
 };
+
+/** Every variable an enricher reads for this caller, each once: what a remote caller's process env is read for. */
+export function callerEnvKeys(caller: EnricherView["caller"]): string[] {
+    const ids = Object.keys(ENRICHERS) as EnricherId[];
+    return [...new Set(ids.flatMap((id) => ENRICHERS[id].envKeys(caller)))];
+}
 
 /** Whether a host slot carries more than its env thread id: the details only the host's own store gives. */
 function hasHostDetails(host: CallerHost): boolean {
@@ -66,25 +104,16 @@ const PLACE: {
         put: (identity: AgentIdentity, value: EnricherSlots[Id]) => void;
     };
 } = {
-    cmux: {
-        field: "terminal",
-        put: (identity, value) => {
-            identity.terminal = { ...identity.terminal, cmux: value };
-            identity.sources["terminal.cmux"] = "cmux";
-        },
-    },
-    tmux: {
-        field: "terminal",
-        put: (identity, value) => {
-            identity.terminal = { ...identity.terminal, tmux: value };
-            identity.sources["terminal.tmux"] = "tmux";
-        },
-    },
     terminal: {
         field: "terminal",
         put: (identity, value) => {
-            identity.terminal = { ...identity.terminal, app: value };
-            identity.sources["terminal.app"] = "terminal";
+            identity.terminal = { ...identity.terminal, ...value };
+
+            for (const id of TERMINAL_IDS) {
+                if (value[id] !== undefined) {
+                    identity.sources[`terminal.${id}`] = TERMINAL_ENRICHERS[id].source;
+                }
+            }
         },
     },
     t3code: {

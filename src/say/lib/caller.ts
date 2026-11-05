@@ -1,10 +1,5 @@
 import { basename } from "node:path";
-import {
-    type AgentIdentity,
-    type CallerAgent,
-    type CallerProcess,
-    whoIsCalling,
-} from "@genesiscz/utils/agent/identity";
+import { type AgentIdentity, type CallerProcess, whoIsCalling } from "@genesiscz/utils/agent/identity";
 import { env } from "@genesiscz/utils/env";
 import { runtimeAgentOfCommand } from "@genesiscz/utils/process/classify";
 import { profiler } from "@genesiscz/utils/profile";
@@ -51,22 +46,6 @@ function argv0Basename(command: string): string {
 /** Is this frame an agent running a session (a harness or Copilot; not an MCP door or a helper binary)? */
 function isAgentFrame(command: string): boolean {
     return runtimeAgentOfCommand(command) !== null;
-}
-
-/**
- * The agent running the frame nearest to the caller, by the shared process classification, when the environment did
- * not say: a harness, or Copilot. cursor-agent has no runtime agent name, so it names none.
- */
-function agentOfAncestry(frames: AncestryFrame[]): CallerAgent {
-    for (const frame of frames) {
-        const agent = runtimeAgentOfCommand(frame.command);
-
-        if (agent) {
-            return agent;
-        }
-    }
-
-    return "unknown";
 }
 
 function isLauncherFrame(base: string, command: string): boolean {
@@ -134,15 +113,16 @@ export function describeAncestry(frames: AncestryFrame[]): string {
 }
 
 /**
- * The call log's caller row from an identity (the process facet filled). The agent is the identity's, or, when the
- * environment named none, the one the process chain names. The terminal and account come from the identity's own
- * facets: a blank value is no value, and an account is the one the caller's harness was launched as.
+ * The call log's caller row from an identity (the process facet filled). The agent is the identity's: with the process
+ * facet, a caller the environment does not name is named by its parent chain there, and gets that harness's account.
+ * The terminal and account come from the identity's own facets: a blank value is no value, and an account is the one
+ * the caller's harness was launched as.
  */
 export function callerContextOf(identity: AgentIdentity, extra: { callerPid: number }): CallerContext {
     const ancestry = identity.process?.ancestry ?? [];
 
     return {
-        agent: identity.agent !== "unknown" ? identity.agent : agentOfAncestry(ancestry),
+        agent: identity.agent,
         sessionId: identity.sessionId,
         aiAgent: identity.aiAgent,
         account: identity.account?.account ?? null,

@@ -9,6 +9,8 @@ export const grokHooks: HookFacts = {
     // `~/.claude/settings.json` says nothing about the model a Grok session runs (2026-09-16: every grok row read "sonnet").
     settingsModel: false,
     currentModel: grokCurrentModel,
+    // No Grok subagent id was established (2026-11-04 harness research), so no file belongs to one.
+    subagentTranscript: () => null,
     honoursBareGlobQualifier: true,
     // 🛑 Grok cannot show a diff. Observed 2026-09-22 on a real PostToolUse message: it prints the escape sequences as
     // literal text (`[1mUpdated` with the ESC byte eaten), and it cuts the message after about 200 characters, ending

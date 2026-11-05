@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { resolve } from "node:path";
 import { ensureSessionDir, sessionPaths } from "@app/agents/lib/paths";
-import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
+import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
+import { assignedSessionId } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { type CheckoutKind, checkoutKindSync } from "@genesiscz/utils/git/worktree";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -300,9 +301,7 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSpa
     // Assigned first, host second: a nested worker that preferred its own host
     // id would put its children in a swarm its parent is not in.
     const rendezvousSession =
-        options.rendezvousSession ??
-        assignedSessionId(env.getProcessEnv()) ??
-        resolveAgentHost(env.getProcessEnv()).sessionId;
+        options.rendezvousSession ?? assignedSessionId(env.getProcessEnv()) ?? whoIsCallingHere().sessionId;
     const agentsEnabled = options.agents ?? true;
     if (agentsEnabled && !rendezvousSession) {
         throw new Error(

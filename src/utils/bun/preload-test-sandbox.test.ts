@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { AGENT_SESSION_KEYS, ASSIGNED_SESSION_KEYS } from "@genesiscz/utils/agent/host";
+import { TERMINAL_ENV_KEYS } from "@genesiscz/utils/agent/identity/terminals";
 import { accountEnvVar, embedAccountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import { env } from "@genesiscz/utils/env";
@@ -174,6 +175,15 @@ describe("the ambient agent env is removed before the first test", () => {
         }
 
         for (const key of ASSIGNED_SESSION_KEYS) {
+            expect(isAmbientAgentEnvKey(key), key).toBe(true);
+        }
+
+        // The terminals' keys (characterized 2026-11-05 before the terminal table): every cmux and iTerm variable,
+        // the tmux socket and pane, and the terminal program and session.
+        const terminalKeys = ["CMUX_SOCKET_PATH", "CMUX_BUNDLE_ID", "ITERM_PROFILE", "ITERM_SESSION_ID", "TMUX"];
+
+        // ...and every key a terminal row names, so a new terminal's row is removed here with no edit of this file.
+        for (const key of [...terminalKeys, ...TERMINAL_ENV_KEYS, "TERM_PROGRAM", "TERM_SESSION_ID", "CMUX_TAB_ID"]) {
             expect(isAmbientAgentEnvKey(key), key).toBe(true);
         }
 

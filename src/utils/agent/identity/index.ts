@@ -3,6 +3,7 @@ import { readCachedHistoryTitle } from "@genesiscz/utils/agent-sessions/cached-t
 import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import { harnessDriver, harnessOfRuntimeAgent, harnessPluginId } from "@genesiscz/utils/ai/providers/harness-index";
 import { logger } from "@genesiscz/utils/logger";
+import { runtimeAgentOfCommand } from "@genesiscz/utils/process/classify";
 import { resolveAncestorCwd } from "@genesiscz/utils/process/cwd";
 import { ancestry, readExecutablePath } from "@genesiscz/utils/process/processes";
 import { profiler } from "@genesiscz/utils/profile";
@@ -13,6 +14,7 @@ import type {
     AgentIdentity,
     CallerAgent,
     CallerInput,
+    CallerProcess,
     CallerReading,
     CallerSource,
     FactSource,
@@ -37,7 +39,7 @@ const MAX_COMMAND_CHARS = 240;
  * Who is calling, from one input, through one precedence rule (`CALLER_SOURCES`). The env-only path (no facets) reads
  * the given environment and nothing else: no file, no process, no spawn. Each costly fact is filled only for its
  * facet. A remote caller (`origin: "remote"`) has no environment here, so none of this process's env, terminal or
- * account reaches it. `sources` replaces the precedence list in a test.
+ * account reaches it; only the keys its request scope read from the caller's own process do (`ScopedCaller.env`). `sources` replaces the precedence list in a test.
  */
 export function whoIsCalling(
     input: CallerInput,
@@ -350,7 +352,16 @@ function dropRetargetedFacts(
     }
 }
 
-function readProcess(identity: AgentIdentity, input: CallerInput): void {
+function parentChain(pid: number): CallerProcess["ancestry"] {
+    return ancestry(pid, MAX_ANCESTRY_DEPTH)
+        .filter((entry) => entry.pid > 1 && entry.pid !== pid)
+        .map((entry) => ({
+            pid: entry.pid,
+            command: (entry.command ?? readExecutablePath(entry.pid) ?? "").slice(0, MAX_COMMAND_CHARS),
+        }));
+}
+
+function readProcess(identity: AgentIdentity, input: CallerInput, options: WhoIsCallingOptions): void {
     const pid = input.origin === "local" ? process.pid : identity.process?.pid;
 
     if (pid === undefined) {
@@ -358,17 +369,33 @@ function readProcess(identity: AgentIdentity, input: CallerInput): void {
     }
 
     try {
-        const chain = prof.measure("identity.process", () =>
-            ancestry(pid, MAX_ANCESTRY_DEPTH)
-                .filter((entry) => entry.pid > 1 && entry.pid !== pid)
-                .map((entry) => ({
-                    pid: entry.pid,
-                    command: (entry.command ?? readExecutablePath(entry.pid) ?? "").slice(0, MAX_COMMAND_CHARS),
-                }))
-        );
+        const chain = prof.measure("identity.process", () => (options.processChain ?? parentChain)(pid));
         setFact(identity, "process", { pid, ancestry: chain }, "process");
     } catch (error) {
         log.debug({ error, pid }, "agent-context: could not read the caller's process ancestry");
+    }
+}
+
+/**
+ * Below every source, for the `process` facet of a LOCAL caller only: when no source named an agent, the nearest agent
+ * process of the parent chain does (a shell an agent started with `env -i`, a command whose session variable was
+ * cleared). It names no session. It runs before the enrichers, so that agent's harness account is read. A remote
+ * caller's chain is not used: the gateway already judged the connection's owner, and a parent of it is no caller.
+ */
+function readAncestryAgent(identity: AgentIdentity): void {
+    if (identity.agent !== "unknown" || !identity.process) {
+        return;
+    }
+
+    for (const frame of identity.process.ancestry) {
+        const agent = runtimeAgentOfCommand(frame.command);
+
+        if (agent) {
+            setFact(identity, "agent", agent, "process");
+            setFact(identity, "isInAgent", true, "process");
+            log.debug({ agent, pid: frame.pid }, "agent-context: the parent chain names the caller");
+            return;
+        }
     }
 }
 
@@ -405,13 +432,20 @@ function compose(input: CallerInput, options: WhoIsCallingOptions, sources: read
     readTranscriptAndModel({ identity, input, options, facets, given });
 
     if (facets.has("process")) {
-        readProcess(identity, input);
+        readProcess(identity, input, options);
+
+        if (input.origin === "local") {
+            readAncestryAgent(identity);
+        }
     }
 
-    if (input.origin === "local") {
+    // A local caller's env is ours; a remote caller's is only what the request read from its own process.
+    const enricherEnv = input.origin === "local" ? input.env : input.caller?.env;
+
+    if (enricherEnv) {
         enrichIdentity(
             identity,
-            { caller: { agent: identity.agent, sessionId: identity.sessionId }, env: input.env, facets },
+            { caller: { agent: identity.agent, sessionId: identity.sessionId }, env: enricherEnv, facets },
             given
         );
     }

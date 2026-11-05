@@ -12,6 +12,9 @@ export function readT3Thread(env: NodeJS.ProcessEnv): string | undefined {
     return id ? id : undefined;
 }
 
+/** The variables the T3 Code readers look at: the thread, and the home whose store holds its details. */
+export const T3_CALLER_ENV_KEYS = ["T3CODE_THREAD_ID", "T3CODE_HOME"] as const;
+
 /** T3 Code's home: `T3CODE_HOME` when the caller's environment names one, else `~/.t3`. */
 export function t3Home(env: NodeJS.ProcessEnv, home = homedir()): string {
     return env.T3CODE_HOME?.trim() || join(home, ".t3");

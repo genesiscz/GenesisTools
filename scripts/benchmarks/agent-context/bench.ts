@@ -16,7 +16,8 @@
  * caller's transcript lookup, the say caller's ancestry walk, the gateway's peer lookup and the hook payload parser.
  * The numbers describe the shell or agent that runs the bench: run it from a Claude session for the Claude shape.
  */
-import { loadavg } from "node:os";
+import { loadavg, tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseHookPayload } from "@app/agents/lib/hooks/payload";
 import {
     type BaselineMetrics,
@@ -66,7 +67,7 @@ function buildGatherers(): Gatherer[] {
         tool_name: "Bash",
         tool_input: { command: "ls" },
         session_id: "00000000-0000-4000-8000-000000000000",
-        transcript_path: "/tmp/cc/agent-context-bench/transcript.jsonl",
+        transcript_path: join(tmpdir(), "agent-context-bench", "transcript.jsonl"),
         cwd: process.cwd(),
     });
 

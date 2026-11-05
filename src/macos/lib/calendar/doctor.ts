@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { execPath } from "node:process";
 import type { CalendarInfo, SourceInfo } from "@genesiscz/darwinkit";
 import { ensureBinary } from "@genesiscz/darwinkit";
+import { readTerminalApp } from "@genesiscz/utils/agent/identity/terminal";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
@@ -180,7 +181,10 @@ export async function runCalendarDoctor(opts: CalendarDoctorOptions = {}): Promi
     const hasCalendarUsageString =
         plistPath && existsSync(plistPath) ? plistHasKey(plistPath, CALENDAR_USAGE_KEY) : null;
 
-    const hostApp = { bundleId: env.device.getHostBundleIdentifier(), termProgram: env.device.getTermProgram() };
+    const hostApp = {
+        bundleId: env.device.getHostBundleIdentifier(),
+        termProgram: readTerminalApp(env.getProcessEnv())?.program ?? undefined,
+    };
     const tcc = readTccCalendarRows();
     const client = thisProcessTccClient();
     const mayRead = opts.requestAccess === true || tccDecisionRecorded(tcc, client);
