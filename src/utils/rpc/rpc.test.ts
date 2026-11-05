@@ -183,3 +183,37 @@ test("RPC frames are bounded across fragments and normal lines still decode", ()
     lines.push(Buffer.alloc(8 * 1024 * 1024, 97));
     expect(() => lines.push(Buffer.from("a"))).toThrow("exceeds");
 });
+
+test("an oversized socket frame ends both adapters and removes the server connection", async () => {
+    const socket = join(mkdtempSync(join(tmpdir(), "rpc-limit-")), "s.sock");
+    let closes = 0;
+    const server = new RpcSocketServer({
+        socket,
+        state: () => ({}),
+        call: async () => null,
+        logScope: "rpc-test",
+        label: "rpc limit",
+        onClose: () => {
+            closes++;
+        },
+    });
+    opened.push({
+        close: () => {
+            server.endConnections();
+            server.stopListening();
+        },
+    });
+    const client = await connect(socket);
+    const closed = Promise.withResolvers<void>();
+    let notifications = 0;
+    client.onClose(() => {
+        notifications++;
+        closed.resolve();
+    });
+    client.notify("oversized", { text: "a".repeat(8 * 1024 * 1024) });
+    await closed.promise;
+    expect(client.closed).toBe(true);
+    expect(server.connections).toHaveLength(0);
+    expect(closes).toBe(1);
+    expect(notifications).toBe(1);
+});

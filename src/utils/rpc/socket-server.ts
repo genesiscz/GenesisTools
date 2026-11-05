@@ -109,7 +109,14 @@ export class RpcSocketServer<S> {
                     this.open.add(socket.data);
                     options.onOpen?.(socket.data);
                 },
-                data: (socket, chunk) => socket.data.peer.receive(chunk),
+                data: (socket, chunk) => {
+                    try {
+                        socket.data.peer.receive(chunk);
+                    } catch (error) {
+                        this.forget(socket.data, error instanceof Error ? error.message : String(error));
+                        socket.end();
+                    }
+                },
                 drain: (socket) => socket.data.peer.flush(),
                 close: (socket) => this.forget(socket.data, "the connection closed"),
                 error: (socket, error) => {

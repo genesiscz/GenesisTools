@@ -55,7 +55,14 @@ export class RpcSocketClient {
         opened.socket = await Bun.connect({
             unix: options.socket,
             socket: {
-                data: (_socket, chunk) => peer.receive(chunk),
+                data: (socket, chunk) => {
+                    try {
+                        peer.receive(chunk);
+                    } catch (error) {
+                        opened.end(error instanceof Error ? error.message : String(error));
+                        socket.end();
+                    }
+                },
                 drain: () => peer.flush(),
                 close: () => opened.end(options.closedMessage ?? `the ${options.label} closed the connection`),
                 error: (_socket, error) => opened.end(error.message),

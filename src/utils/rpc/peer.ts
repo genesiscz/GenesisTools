@@ -187,12 +187,8 @@ export class RpcPeer {
             return;
         }
 
-        try {
-            for (const line of this.lines.push(chunk)) {
-                this.receiveLine(line);
-            }
-        } catch (error) {
-            this.close(error instanceof Error ? error.message : String(error));
+        for (const line of this.lines.push(chunk)) {
+            this.receiveLine(line);
         }
     }
 
