@@ -17,6 +17,16 @@ describe.skipIf(skip.onWindows)("writeStdout", () => {
         expect(out.length).toBe(300001);
     });
 
+    it("exits quietly when a real pipe reader closes", async () => {
+        const proc = Bun.spawn(["bash", "-o", "pipefail", "-c", 'bun run "$1" 300000 | head -c 1', "test", FIXTURE], {
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const stderr = await new Response(proc.stderr).text();
+        expect(await proc.exited).toBe(0);
+        expect(stderr).toBe("");
+    });
+
     // A second test used to pin the MOTIVATION: plain `console.log` of the same
     // payload truncated through a pipe. It was dropped because a bare script
     // delivers all 300001 bytes on bun 1.3.14, but the truncation is NOT gone.
