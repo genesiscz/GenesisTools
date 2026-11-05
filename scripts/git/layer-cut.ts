@@ -46,6 +46,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { Glob } from "bun";
 import { checkSubject } from "./commit-scopes";
+import { diagnose, lockStamp as wrapperLockStamp, STAMP_FILE } from "../test-deps";
 import { loadTable } from "./layer-cut-tables/load";
 import type { CutBranch, DerivedFile } from "./layer-cut-tables/types";
 
@@ -669,7 +670,11 @@ function errorKey(error: TsError): string {
 }
 
 async function run(params: { cmd: string[]; cwd: string; log: string }): Promise<{ exitCode: number; text: string }> {
-    const proc = Bun.spawn(params.cmd, { cwd: params.cwd, stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(params.cmd, {
+        cwd: params.cwd,
+        env: { ...process.env, GENESIS_TOOLS_TEST_INSTALL_POLICY: "isolated" },
+        stdout: "pipe", stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
@@ -780,6 +785,10 @@ export class ScratchTree {
             }
 
             this.assertOwnedClean();
+        }
+
+        if (diagnose(this.dir) === null) {
+            writeFileSync(join(this.dir, "node_modules", STAMP_FILE), wrapperLockStamp(this.dir));
         }
 
         this.lockStamp = stamp;
@@ -1406,6 +1415,11 @@ async function runChecks(params: {
         }
 
         if (options.tests && folders.length > 0) {
+            const wrapper = readFileSync(join(scratchTree.dir, "scripts/test.ts"), "utf8");
+            if (!wrapper.includes("GENESIS_TOOLS_TEST_INSTALL_POLICY")) {
+                throw new Error("checked tree test wrapper lacks isolated install policy; update its scripts/test.ts before verification");
+            }
+
             const tests = await run({ cmd: ["bun", "scripts/test.ts", ...folders], cwd: scratchTree.dir, log });
             const summary = summarizeTests(tests.text);
             checks.tests.set(branch.name, {

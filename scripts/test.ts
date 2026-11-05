@@ -32,6 +32,9 @@ import { descendantsOf, reap } from "./test-reap";
 
 const ROOT = dirname(import.meta.dir);
 const STAMP = join(ROOT, "node_modules", STAMP_FILE);
+// Cut verification must not run lifecycle scripts or repair a frozen lock by rewriting it.
+const isolatedInstall = process.env.GENESIS_TOOLS_TEST_INSTALL_POLICY === "isolated";
+const INSTALL_COMMAND = ["bun", "install", ...(isolatedInstall ? ["--ignore-scripts", "--frozen-lockfile"] : [])];
 
 function warn(message: string): void {
     process.stderr.write(`\x1b[33m[test] ${message}\x1b[0m\n`);
@@ -50,7 +53,7 @@ async function stampMatches(): Promise<boolean> {
 async function install(reason: string): Promise<void> {
     warn(`${reason} — running bun install`);
 
-    const proc = Bun.spawn(["bun", "install"], { cwd: ROOT, stdio: ["inherit", "inherit", "inherit"] });
+    const proc = Bun.spawn(INSTALL_COMMAND, { cwd: ROOT, env: process.env, stdio: ["inherit", "inherit", "inherit"] });
     const code = await proc.exited;
 
     if (code === 0) {
@@ -63,6 +66,10 @@ async function install(reason: string): Promise<void> {
     // the tests import actually landed. Re-check the tree instead of assuming:
     // blocking a green suite over an unrelated postinstall would make this guard
     // worse than the problem it prevents.
+    if (isolatedInstall) {
+        process.exit(code);
+    }
+
     const stillBroken = diagnose(ROOT);
 
     if (stillBroken) {
@@ -108,10 +115,10 @@ for (const rel of SUBPROJECTS) {
     }
 
     warn(`${rel}: ${subBroken} — running bun install`);
-    const proc = Bun.spawn(["bun", "install"], { cwd: dir, stdio: ["inherit", "inherit", "inherit"] });
+    const proc = Bun.spawn(INSTALL_COMMAND, { cwd: dir, env: process.env, stdio: ["inherit", "inherit", "inherit"] });
     const code = await proc.exited;
 
-    if (code !== 0 && diagnose(dir, [])) {
+    if (code !== 0 && (isolatedInstall || diagnose(dir, []))) {
         process.stderr.write(
             `\x1b[31m[test] ${rel}: bun install failed (exit ${code}) and node_modules is still missing\x1b[0m\n`
         );
