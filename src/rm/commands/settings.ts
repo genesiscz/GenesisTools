@@ -46,6 +46,7 @@ const SETTINGS = [
     "grace-scratch",
     "sweep-every",
     "sweep-linger",
+    "disk-reserve-mb",
     "trash-root",
     "disable-preset",
     "enable-preset",
@@ -118,6 +119,8 @@ export function applyRmSetting(config: RmConfig, key: Setting, value: string): R
             return { ...config, ownFilesFromBash: yesNo(value) };
         case "tmp-small-mb":
             return { ...config, tmpSmallMB: megabytesOption(value) };
+        case "disk-reserve-mb":
+            return { ...config, diskReserveMB: megabytesOption(value) };
         case "tmp-small-exclude":
             return { ...config, tmpSmallExcluded: [...new Set([...config.tmpSmallExcluded, absoluteFolder(value)])] };
         case "tmp-small-include": {

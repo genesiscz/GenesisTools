@@ -32,6 +32,7 @@ import {
     RM_SESSION_ROOT_HOURS,
     type RmCaller,
     type RmMeasuredItem,
+    RmPartialMoveError,
     type RmRememberChoice,
     type RmRequest,
     type RmRequestMeasurements,
@@ -39,6 +40,7 @@ import {
     type RmRoot,
     type RmRuleContext,
     type RmTarget,
+    readRmLedger,
     recheckAfterWait,
     recordRmMeasurement,
     requestBatchIds,
@@ -83,10 +85,54 @@ export function copyLost(target: RmRequestTarget): boolean {
     return targetLiveState(target) === "copy-lost";
 }
 
+/**
+ * A path an approval has nothing left to act on: its aside copy is gone, or it was never set aside and it is gone
+ * (c2suua's `bench/run1`, 2026-11-05, kept its request pending as "it does not exist" at every approve).
+ */
+export function nothingLeft(target: RmRequestTarget): boolean {
+    const state = targetLiveState(target);
+    return state === "copy-lost" || state === "gone";
+}
+
+/**
+ * Each path an earlier approval of `requestId` moved to the trash, with its batch. Such a run stopped before it saved
+ * the decision (m888au, 2026-11-04 01:31: an EACCES after three moves), so the request still names those copies.
+ */
+function earlierApprovalMoves(requestId: string): Map<string, string | undefined> {
+    const rule = `${APPROVED_RULE_PREFIX}${requestId}`;
+    const moves = new Map<string, string | undefined>();
+
+    for (const entry of readRmLedger()) {
+        if (entry.action === "move" && entry.rule === rule && entry.path) {
+            moves.set(entry.path, entry.batchId);
+        }
+    }
+
+    return moves;
+}
+
 /** Prints and logs the paths of `request` whose aside copies an approval found gone; it decides them no further. */
 export function reportLostCopies(request: RmRequest, lost: readonly RmRequestTarget[], caller: RmCaller | null): void {
+    const movedBefore = lost.some((target) => target.stored) ? earlierApprovalMoves(request.id) : new Map();
+
     for (const target of lost) {
-        out.println(pc.yellow(`gone ${target.path}: its set-aside copy was ${LOST_COPY_CAUSE} (${target.stored})`));
+        if (target.stored === undefined) {
+            out.println(pc.yellow(`gone ${target.path}: it no longer exists`));
+            appendRmLedger({
+                action: "lost",
+                requestId: request.id,
+                caller,
+                path: target.path,
+                reason: "the path was already gone at the approval",
+            });
+            continue;
+        }
+
+        const batch = movedBefore.get(target.path);
+        const cause = movedBefore.has(target.path)
+            ? `moved to the trash by an earlier approval of ${request.id} that stopped before it saved the decision${batch ? ` (batch ${batch})` : ""}`
+            : LOST_COPY_CAUSE;
+        out.println(pc.yellow(`gone ${target.path}: its set-aside copy was ${cause} (${target.stored})`));
         appendRmLedger({
             action: "lost",
             requestId: request.id,
@@ -902,31 +948,54 @@ export function approveDelete(input: {
     const byTarget = new Map(approved.map((entry) => [entry.target, entry]));
     const refused = new Set<ApproveEntry>();
     const graceMinutes = disposalGraceMinutes(choices.disposal);
-    const batch = moveToTrash(
-        [
-            ...approved.map(({ wanted, target }) => ({
-                target,
-                rule: `${APPROVED_RULE_PREFIX}${request.id}`,
-                original: wanted.path,
-                bytes: wanted.bytes ?? input.sizes?.get(wanted.path),
-            })),
-        ],
-        {
-            config: ctx.config,
-            caller: request.caller,
-            graceMinutes,
-            hooks: input.hooks,
-            onRefused: (move, reason) => {
-                out.println(pc.red(`refuse ${move.original ?? move.target.path}: ${reason}`));
-                const entry = byTarget.get(move.target);
+    let batch: TrashBatch | null;
 
-                if (entry) {
-                    refused.add(entry);
-                    input.onRefused?.(entry, reason);
-                }
-            },
+    try {
+        batch = moveToTrash(
+            [
+                ...approved.map(({ wanted, target }) => ({
+                    target,
+                    rule: `${APPROVED_RULE_PREFIX}${request.id}`,
+                    original: wanted.path,
+                    bytes: wanted.bytes ?? input.sizes?.get(wanted.path),
+                })),
+            ],
+            {
+                config: ctx.config,
+                caller: request.caller,
+                graceMinutes,
+                hooks: input.hooks,
+                onRefused: (move, reason) => {
+                    out.println(pc.red(`refuse ${move.original ?? move.target.path}: ${reason}`));
+                    const entry = byTarget.get(move.target);
+
+                    if (entry) {
+                        refused.add(entry);
+                        input.onRefused?.(entry, reason);
+                    }
+                },
+            }
+        );
+    } catch (error) {
+        if (!(error instanceof RmPartialMoveError)) {
+            throw error;
         }
-    );
+
+        // Some ticked paths reached the trash before the move stopped. They are approved and on record, so the
+        // request never names copies the trash took as lost (m888au, 2026-11-04 01:31); the rest stays pending.
+        batch = error.batch;
+        const moved = new Set(batch.items.map((item) => item.original));
+        const reason = `the move stopped: ${error.cause instanceof Error ? error.cause.message : String(error.cause)}`;
+
+        for (const entry of approved) {
+            if (!refused.has(entry) && !moved.has(entry.wanted.path)) {
+                out.println(pc.red(`refuse ${entry.wanted.path}: ${reason}`));
+                refused.add(entry);
+                input.onRefused?.(entry, reason);
+            }
+        }
+    }
+
     const back = putBack(
         denied.map((entry) => entry.wanted),
         ctx.caller,

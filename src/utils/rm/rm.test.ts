@@ -58,6 +58,7 @@ import {
     isTrashRootName,
     isTrustedDialogProgram,
     itemGitState,
+    keepDiskReserve,
     ledgerAgent,
     listBatches,
     listRmRequests,
@@ -74,6 +75,7 @@ import {
     moveAside,
     moveToTrash,
     newBatchId,
+    notMovableReason,
     PERSON_DIALOGS,
     parseRmConfig,
     pathPresent,
@@ -101,6 +103,7 @@ import {
     recordRmMeasurement,
     recoverAsideJournals,
     refreshWaitingRmData,
+    releaseDiskReserveIfFull,
     rememberOptions,
     removeStaleLock,
     renameNoReplace,
@@ -3576,5 +3579,63 @@ describe("tmp-small never deletes inside a staging root", () => {
         const sibling = dir("staged-root-tmp", "work-other");
         file(join(sibling, "tiny.txt"));
         expect(verdictOf(sibling, c)).toEqual({ kind: "allow", rule: "tmp-small" });
+    });
+});
+describe("a path this user cannot move", () => {
+    // Root moves anything, so the refusal cannot happen there (a CI container may run as root).
+    test.skipIf(process.getuid?.() === 0)(
+        "a file in a folder this user may not change is refused when asked for, not left to a request",
+        () => {
+            const locked = dir("not-movable", "locked");
+            const path = file(join(locked, "held.bin"));
+            chmodSync(locked, 0o555);
+
+            try {
+                expect(notMovableReason(resolveTarget(path, base))).toBe(
+                    `this user may not change the folder it is in (${locked}), so it cannot be moved`
+                );
+                expect(verdictOf(path, ctx())).toEqual({ kind: "deny", rule: "not-movable" });
+            } finally {
+                chmodSync(locked, 0o755);
+            }
+
+            expect(notMovableReason(resolveTarget(path, base))).toBeNull();
+        }
+    );
+});
+
+describe("the disk reserve for a full disk", () => {
+    const MB = 1024 * 1024;
+    const roomy = () => 100 * 1024 * MB;
+
+    test("is made with real blocks only while the disk has room beside it, and removed when turned off", () => {
+        const path = join(dir("disk-reserve"), "disk-reserve.bin");
+
+        expect(keepDiskReserve({ megabytes: 1, path, free: () => 1024 * MB }).action).toBe("kept");
+        expect(existsSync(path)).toBe(false);
+        expect(keepDiskReserve({ megabytes: 1, path, free: roomy })).toMatchObject({ action: "made", bytes: MB });
+
+        const stats = statSync(path);
+        expect(stats.size).toBe(MB);
+        // A sparse file would hold no blocks, and its release would free nothing.
+        expect(stats.blocks * 512).toBeGreaterThanOrEqual(MB);
+        expect(keepDiskReserve({ megabytes: 1, path, free: roomy }).action).toBe("kept");
+        expect(keepDiskReserve({ megabytes: 0, path, free: roomy })).toEqual({ action: "removed", bytes: MB });
+        expect(existsSync(path)).toBe(false);
+    });
+
+    test("a run on a nearly full disk deletes it before it writes, and a run with room keeps it", () => {
+        const path = join(dir("disk-reserve-full"), "disk-reserve.bin");
+        keepDiskReserve({ megabytes: 1, path, free: roomy });
+
+        expect(releaseDiskReserveIfFull({ path, free: () => 200 * MB }).action).toBe("kept");
+        expect(existsSync(path)).toBe(true);
+        expect(releaseDiskReserveIfFull({ path, free: () => 3 * MB })).toEqual({
+            action: "released",
+            bytes: MB,
+            free: 3 * MB,
+        });
+        expect(existsSync(path)).toBe(false);
+        expect(releaseDiskReserveIfFull({ path, free: () => 3 * MB })).toEqual({ action: "kept", free: null });
     });
 });

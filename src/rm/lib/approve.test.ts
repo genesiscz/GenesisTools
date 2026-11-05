@@ -19,6 +19,7 @@ import {
     type ApprovalItemUpdate,
     type ApprovalPrompt,
     appApproveParams,
+    appendRmLedger,
     createRmRequest,
     defaultRmConfig,
     defaultRuleContext,
@@ -3006,5 +3007,183 @@ describe("the settings views", () => {
         expect(describePolicy({ grace: { otherMinutes: 240 } })).toContain(
             "grace: presets as configured, own scratch as configured, others 240 min"
         );
+    });
+});
+describe("a move that cannot finish", () => {
+    const choices = { selected: null, disposal: "trash" as const, remember: "once" as const, note: null };
+
+    test("a path the rename refuses (root's file in a sticky folder) stays pending, the rest of the batch moves", () => {
+        const request = asideRequest("rename-refused");
+        const entries = entriesOf(request);
+        const refused: Array<{ path: string; reason: string }> = [];
+        let renames = 0;
+        const { batch } = approveDelete({
+            ctx: context(),
+            request,
+            approved: entries,
+            denied: [],
+            choices,
+            onRefused: (entry, reason) => refused.push({ path: entry.wanted.path, reason }),
+            hooks: {
+                beforeRename: () => {
+                    renames++;
+
+                    if (renames === 1) {
+                        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+                    }
+                },
+            },
+        });
+
+        expect(refused).toEqual([
+            { path: entries[0]?.wanted.path ?? "", reason: "this user may not move it (EACCES)" },
+        ]);
+        expect(batch?.items.map((item) => item.original)).toEqual([entries[1]?.wanted.path]);
+        expect(existsSync(entries[0]?.target.path ?? "")).toBe(true);
+        expect(
+            readRmLedger().some(
+                (entry) =>
+                    entry.action === "refuse" && entry.rule === "not-movable" && entry.path === entries[0]?.wanted.path
+            )
+        ).toBe(true);
+    });
+
+    test("a move that stops halfway records what reached the trash, so those copies never read as lost", () => {
+        const request = asideRequest("move-stopped");
+        const entries = entriesOf(request);
+        const refused: Array<{ path: string; reason: string }> = [];
+        let renames = 0;
+        const { batch } = approveDelete({
+            ctx: context(),
+            request,
+            approved: entries,
+            denied: [],
+            choices,
+            onRefused: (entry, reason) => refused.push({ path: entry.wanted.path, reason }),
+            hooks: {
+                beforeRename: () => {
+                    renames++;
+
+                    if (renames === 2) {
+                        throw new Error("the volume went away");
+                    }
+                },
+            },
+        });
+
+        expect(batch?.items.map((item) => item.original)).toEqual([entries[0]?.wanted.path]);
+        expect(refused).toEqual([
+            { path: entries[1]?.wanted.path ?? "", reason: "the move stopped: the volume went away" },
+        ]);
+    });
+
+    test("an in-place path that no longer exists closes as gone instead of keeping its request pending", async () => {
+        const kept = file(join(base, "gone-in-place", "kept.txt"));
+        const vanished = file(join(base, "gone-in-place", "vanished.txt"));
+        const request = createRmRequest({
+            kind: "delete",
+            caller: AGENT,
+            cwd: base,
+            reason: null,
+            targets: [vanished, kept].map((path) => ({
+                path,
+                kind: "file" as const,
+                rule: "default",
+                reason: "asked",
+            })),
+        });
+        renameSync(vanished, join(base, "gone-in-place-elsewhere.txt"));
+        const printed: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
+            printed.push(stripAnsi(String(raw ?? "")));
+        });
+        const exitCode = process.exitCode;
+
+        try {
+            await approveMany([request.id], context(), {
+                ask: async () => ({ approved: true, via: "touch-id", choices, deniedByPerson: false }),
+                kickDrainer: () => undefined,
+            });
+
+            expect(printed).toContain(`gone ${vanished}: it no longer exists`);
+            expect(printed.join("\n")).not.toContain("it does not exist");
+            expect(loadRmRequest(request.id)?.status).toBe("approved");
+            expect(process.exitCode ?? 0).toBe(0);
+        } finally {
+            println.mockRestore();
+            process.exitCode = exitCode;
+        }
+    });
+
+    test("a copy an earlier approval moved before it stopped is named as such, not as tmp_cleaner's", async () => {
+        const request = asideRequest("moved-before");
+        const [moved, kept] = request.targets;
+
+        if (!moved?.stored || !kept?.stored) {
+            throw new Error("expected two aside copies");
+        }
+
+        const trashed = join(base, "moved-before-in-trash.txt");
+        renameSync(moved.stored, trashed);
+        appendRmLedger({
+            action: "move",
+            path: moved.path,
+            stored: trashed,
+            batchId: "20261104-003154-1-abcd",
+            rule: `approved ${request.id}`,
+            caller: PERSON,
+        });
+        const printed: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
+            printed.push(stripAnsi(String(raw ?? "")));
+        });
+        const exitCode = process.exitCode;
+
+        try {
+            await approveMany([request.id], context(), {
+                ask: async () => ({ approved: true, via: "touch-id", choices, deniedByPerson: false }),
+                kickDrainer: () => undefined,
+            });
+
+            expect(printed).toContain(
+                `gone ${moved.path}: its set-aside copy was moved to the trash by an earlier approval of ${request.id} ` +
+                    `that stopped before it saved the decision (batch 20261104-003154-1-abcd) (${moved.stored})`
+            );
+            expect(loadRmRequest(request.id)?.status).toBe("approved");
+        } finally {
+            println.mockRestore();
+            process.exitCode = exitCode;
+        }
+    });
+
+    test("in a window of several requests, one that fails is named and the next one is still decided", async () => {
+        const first = asideRequest("window-fails-first");
+        const second = asideRequest("window-fails-second");
+        const printed: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((raw?: unknown) => {
+            printed.push(stripAnsi(String(raw ?? "")));
+        });
+        const exitCode = process.exitCode;
+        let kicks = 0;
+
+        try {
+            await approveMany([first.id, second.id], context(), {
+                ask: async () => ({ approved: true, via: "touch-id", choices, deniedByPerson: false }),
+                kickDrainer: () => {
+                    kicks++;
+
+                    if (kicks === 1) {
+                        throw new Error("the drainer could not start");
+                    }
+                },
+            });
+
+            expect(printed.join("\n")).toContain(`request ${first.id} failed: the drainer could not start`);
+            expect(loadRmRequest(second.id)?.status).toBe("approved");
+            expect(process.exitCode).toBe(1);
+        } finally {
+            println.mockRestore();
+            process.exitCode = exitCode;
+        }
     });
 });

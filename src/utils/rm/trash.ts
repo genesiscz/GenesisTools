@@ -35,7 +35,7 @@ import {
     renameNoReplace,
     VOLUME_TRASH_DIR,
 } from "./paths";
-import { type RmCaller, type RmTarget, type RmTargetKind, targetChangeReason } from "./rules";
+import { notMovableReason, type RmCaller, type RmTarget, type RmTargetKind, targetChangeReason } from "./rules";
 
 export interface TrashItem {
     original: string;
@@ -354,6 +354,12 @@ export function moveToTrash(requests: readonly MoveRequest[], options: MoveOptio
                     refuseUnavailable({ request, reason: error.message, options });
                     continue;
                 }
+
+                if (error instanceof RmNotMovableError) {
+                    refuseNotMovable({ request, reason: error.message, options });
+                    continue;
+                }
+
                 if (!(error instanceof RmTargetChangedError)) {
                     throw error;
                 }
@@ -423,7 +429,17 @@ function moveOne(context: {
     try {
         renameVerified(request.target, item.stored, context.options.hooks);
     } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EXDEV") {
+        const code = (error as NodeJS.ErrnoException).code;
+
+        // The trash folder was just made, so a refused rename is the item's own folder: root's file in a sticky
+        // folder, or a folder this user may not change. That item stays where it is; the batch goes on.
+        if (code === "EACCES" || code === "EPERM") {
+            throw new RmNotMovableError(notMovableReason(request.target) ?? `this user may not move it (${code})`, {
+                cause: error,
+            });
+        }
+
+        if (code !== "EXDEV") {
             throw error;
         }
 
@@ -533,6 +549,9 @@ function inTrash<T>(step: () => T): T {
 
 class RmTrashUnavailableError extends Error {}
 
+/** The item's own folder refused the rename (EACCES, EPERM): the path stays where it is, the batch goes on. */
+class RmNotMovableError extends Error {}
+
 /** A path that stays in place, why, and the move's options (its `onRefused` and caller). */
 interface MoveRefusal {
     request: MoveRequest;
@@ -574,6 +593,18 @@ function refuseChanged({ request, reason, options }: MoveRefusal): void {
         action: "refuse",
         path: request.original ?? request.target.path,
         rule: "target-changed",
+        reason,
+        caller: options.caller,
+    });
+    options.onRefused?.(request, reason);
+}
+
+function refuseNotMovable({ request, reason, options }: MoveRefusal): void {
+    logger.warn({ path: request.target.path, reason }, "rm: this user cannot move the path");
+    appendRmLedger({
+        action: "refuse",
+        path: request.original ?? request.target.path,
+        rule: "not-movable",
         reason,
         caller: options.caller,
     });

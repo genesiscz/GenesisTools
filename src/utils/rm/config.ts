@@ -142,6 +142,12 @@ export interface RmConfig extends RmPolicy {
      * paths are all gone, and it keeps running `lingerMinutes` after the trash emptied while requests wait.
      */
     sweep: { everyMinutes: number; lingerMinutes: number };
+    /**
+     * Megabytes held in `disk-reserve.bin` for a full disk (0: none). A `tools rm` run on a disk with under 64 MB
+     * free deletes it first, so the run can write its locks, records and ledger lines; the daily pass makes it again.
+     * The machine's, like `approval`, never a profile's.
+     */
+    diskReserveMB: number;
 }
 
 export function rmDataDir(...segments: string[]): string {
@@ -166,6 +172,7 @@ export function defaultRmConfig(): RmConfig {
         approval: "auto",
         notify: { onRequest: "inbox", onFailure: "inbox", askMinMB: 10 },
         sweep: { everyMinutes: 5, lingerMinutes: 60 },
+        diskReserveMB: 128,
         askAction: "aside",
         asideUnsaved: false,
         allowSessionScratch: true,
@@ -309,6 +316,7 @@ function validateRmConfig(value: unknown): void {
         approval: isRmApproval,
         notify,
         sweep,
+        diskReserveMB: nonnegative,
         trashRoot: isTrashRootName,
         roots: (v) => Array.isArray(v) && v.every(root),
         customPresets: (v) => Array.isArray(v) && v.every(preset),
@@ -477,6 +485,7 @@ export function parseRmConfig(raw: unknown): RmConfig {
                     : defaults.sweep.everyMinutes,
             lingerMinutes: minutes(sweep.lingerMinutes, defaults.sweep.lingerMinutes),
         },
+        diskReserveMB: minutes(raw.diskReserveMB, defaults.diskReserveMB),
         askAction: isAskAction(raw.askAction) ? raw.askAction : defaults.askAction,
         asideUnsaved: bool(raw.asideUnsaved, defaults.asideUnsaved),
         allowSessionScratch: bool(raw.allowSessionScratch, defaults.allowSessionScratch),

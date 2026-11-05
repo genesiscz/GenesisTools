@@ -47,6 +47,7 @@ const SHOWN_SETTINGS: ReadonlyArray<{ key: string; value: (config: RmConfig) => 
     { key: "grace-scratch", value: (c) => `${c.grace.scratchMinutes} min` },
     { key: "sweep-every", value: (c) => `${c.sweep.everyMinutes} min` },
     { key: "sweep-linger", value: (c) => `${c.sweep.lingerMinutes} min` },
+    { key: "disk-reserve-mb", value: (c) => (c.diskReserveMB > 0 ? `${c.diskReserveMB} MB` : "off") },
     { key: "trash-root", value: (c) => c.trashRoot },
     { key: "enable-preset", value: (c) => list(c.enabledPresets) },
     { key: "disable-preset", value: (c) => list(c.disabledPresets) },
