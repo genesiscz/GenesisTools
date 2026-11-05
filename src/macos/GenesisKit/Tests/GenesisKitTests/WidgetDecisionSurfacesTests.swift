@@ -929,7 +929,9 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         let rep = try KitShots.render(view, size: size, name: "outcome-markdown")
         let text = try recognizedText(try XCTUnwrap(rep.cgImage)).replacingOccurrences(of: "\n", with: " ")
         XCTAssertTrue(text.contains("empty it now"), text)
-        XCTAssertTrue(text.contains("one tools rm ask approval"), "the code span reads as its words: \(text)")
+        // Vision reads the monospaced "rm" as "Im" on macOS 27.2 (2026-11-05); either reading proves the words are drawn.
+        XCTAssertTrue(text.contains("one tools rm ask approval") || text.contains("one tools Im ask approval"),
+                      "the code span reads as its words: \(text)")
         XCTAssertFalse(text.contains("`"), "no backtick is drawn: \(text)")
     }
 
