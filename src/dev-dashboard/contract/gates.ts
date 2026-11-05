@@ -16,7 +16,8 @@ export interface GateRmRequestDto {
     id: string;
     reason: string | null;
     paths: Array<{ path: string; bytes?: number; reason: string }>;
-    expiresAt: string;
+    /** Null for a request whose files already wait aside: it never expires. */
+    expiresAt: string | null;
 }
 
 export interface GateWaitDto {
