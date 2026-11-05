@@ -238,6 +238,13 @@ export function propagateAnswer(
         question.confidence = lowest;
 
         if (lowest >= options.listenBelow) {
+            for (const item of record.items) {
+                if (item.kind === "speaker-range" && question.decides.includes(item.id)) {
+                    item.status = "confirmed";
+                    item.decidedAt = options.now;
+                }
+            }
+
             question.status = "rejected";
             question.decidedAt = options.now;
             question.comment = `settled by the answer to ${answered.id}`;

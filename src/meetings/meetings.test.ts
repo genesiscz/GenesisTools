@@ -1090,6 +1090,48 @@ describe("questions (R2.3)", () => {
         ).toEqual([["i5"], ["i6"]]);
     });
 
+    test("settled propagation confirms the decided speaker range", () => {
+        const record = withItems([
+            { ...range, confidence: 0.4 },
+            {
+                id: "q1",
+                kind: "question",
+                status: "confirmed",
+                about: "speaker",
+                fromSec: 120,
+                toSec: 146,
+                question: "Who?",
+                choices: ["Carol Example"],
+                decides: [],
+                signature: "same",
+                rules: [],
+                suggestedAt: now,
+                evidence: { labels: ["Speaker 5"] },
+            },
+            {
+                id: "q2",
+                kind: "question",
+                status: "suggested",
+                about: "speaker",
+                fromSec: 120,
+                toSec: 146,
+                question: "Who?",
+                choices: ["Carol Example"],
+                decides: ["i1"],
+                signature: "same",
+                rules: [],
+                suggestedAt: now,
+                evidence: { labels: ["Speaker 5"] },
+            },
+        ]);
+        const answered = record.items[1]!;
+        if (answered.kind !== "question") {
+            throw new Error("missing question");
+        }
+        expect(propagateAnswer(record, answered, { answer: "Carol Example", listenBelow: 0.6, now })).toEqual(["q2"]);
+        expect(record.items[0]).toMatchObject({ status: "confirmed", speaker: "Carol Example", decidedAt: now });
+    });
+
     test("an answer keeps other passages open even with the same signature, and two voices split per line", () => {
         const ask = (id: string, decides: string[]) => ({
             id,
