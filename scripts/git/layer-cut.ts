@@ -73,6 +73,11 @@ const DERIVED = new Set(CUT.flatMap((branch) => (branch.derived ?? []).map((deri
 const IMPORT_DEPTH = 3;
 const CUT_REF_PREFIX = table.refPrefix;
 const ZERO_SHA = "0000000000000000000000000000000000000000";
+/**
+ * The repo's own patch step (the root postinstall). `bun install --ignore-scripts` skips it, so the scratch tree runs
+ * it by itself: without the @opentui/solid types patch every src/doctor TUI file failed with TS2322 (2026-11-05).
+ */
+const PATCH_SCRIPT = "scripts/apply-patches.ts";
 
 interface Options {
     unified: string;
@@ -729,7 +734,9 @@ export function checkProjects(files: string[], tree: Map<string, TreeEntry>): st
 export function installStamp(tree: Map<string, TreeEntry>): string {
     return [...tree]
         .filter(([file]) =>
-            /(^|\/)(package\.json|bun\.lockb?|package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$/.test(file)
+            /(^|\/)(package\.json|bun\.lockb?|package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$|^patches\/|^scripts\/apply-patches\.ts$/.test(
+                file
+            )
         )
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([file, entry]) => `${file}:${entry.sha}`)
@@ -803,6 +810,19 @@ export class ScratchTree {
             });
             if (install.exitCode !== 0) {
                 throw new Error(`bun install failed in ${dir}: ${install.text.slice(-400)}`);
+            }
+
+            this.assertOwnedClean();
+        }
+
+        if (existsSync(join(this.dir, PATCH_SCRIPT))) {
+            const patched = await run({
+                cmd: ["bun", PATCH_SCRIPT],
+                cwd: this.dir,
+                log: join(this.logDir, `apply-patches-${commit.slice(0, 10)}.log`),
+            });
+            if (patched.exitCode !== 0) {
+                throw new Error(`${PATCH_SCRIPT} failed in the scratch tree: ${patched.text.slice(-400)}`);
             }
 
             this.assertOwnedClean();

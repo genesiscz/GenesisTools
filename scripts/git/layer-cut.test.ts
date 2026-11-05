@@ -65,9 +65,14 @@ test("project discovery includes mobile configs for selected mobile files", () =
 test("install invalidation covers workspace manifests and standalone project locks", () => {
     const entry = { mode: "100644", sha: "before" };
     const tree = new Map(
-        ["bun.lock", "src/utils/package.json", "DevDashboard/mobile/package.json", "DevDashboard/mobile/bun.lock"].map(
-            (file) => [file, entry]
-        )
+        [
+            "bun.lock",
+            "src/utils/package.json",
+            "DevDashboard/mobile/package.json",
+            "DevDashboard/mobile/bun.lock",
+            "patches/fixture@1.0.0.patch",
+            "scripts/apply-patches.ts",
+        ].map((file) => [file, entry])
     );
     const initial = installStamp(tree);
     for (const file of [...tree.keys()].filter((file) => file !== "bun.lock")) {
@@ -120,6 +125,11 @@ test("cut preserves foreign refs and checks recorded tests without resolving a m
     for (const file of ["test.ts", "test-args.ts", "test-deps.ts", "test-reap.ts"]) {
         writeFileSync(join(root, "scripts", file), readFileSync(join(import.meta.dir, "..", file)));
     }
+    // The repo's patch step, which `bun install --ignore-scripts` skips: the cut must run it in its scratch tree.
+    writeFileSync(
+        join(root, "scripts", "apply-patches.ts"),
+        'await Bun.write("node_modules/.fixture-patched", "yes");\n'
+    );
     mkdirSync(join(root, "src/utils/process"), { recursive: true });
     writeFileSync(
         join(root, "src/utils/process/process-basics.ts"),
@@ -193,6 +203,7 @@ test("cut preserves foreign refs and checks recorded tests without resolving a m
     expect(git("config", "--local", "--list")).not.toBe(configBefore);
     const checks = SafeJSON.parse(readFileSync(join(scratch, "checks.json"), "utf8"));
     expect(checks.tests["feat/fixture"].folders).toEqual(["src/widget"]);
+    expect(readFileSync(join(checked, "node_modules", ".fixture-patched"), "utf8")).toBe("yes");
 });
 
 test("--table requires a module path", async () => {
