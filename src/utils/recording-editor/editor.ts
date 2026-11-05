@@ -524,7 +524,13 @@ function compile(options: {
                         if (!ctx.state.video) {
                             const fromUs = window.fromUs ?? 0;
                             const toUs = window.toUs ?? Number.POSITIVE_INFINITY;
-                            const byDisplay = Map.groupBy(ctx.state.stills ?? [], (frame) => frame.displayId);
+                            // A plain map: the dev-dashboard UI typechecks this file against ES2023, which has no grouping helper on Map.
+                            const byDisplay = new Map<number | undefined, NonNullable<typeof ctx.state.stills>>();
+
+                            for (const frame of ctx.state.stills ?? []) {
+                                byDisplay.set(frame.displayId, [...(byDisplay.get(frame.displayId) ?? []), frame]);
+                            }
+
                             const stills = [...byDisplay.values()]
                                 .flatMap((frames) => {
                                     const predecessor = frames.findLast((frame) => frame.atUs < fromUs);
