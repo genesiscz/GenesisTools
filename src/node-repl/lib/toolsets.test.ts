@@ -140,6 +140,8 @@ class ControlledRecorder extends FakeRecorder {
     finish: () => void = () => undefined;
     announce?: (request: CaptureRequest) => void;
     canMute = true;
+    /** Runs inside a live display switch, before it answers. */
+    onSwitch?: () => Promise<void>;
 
     override async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
         this.requests.push(request);
@@ -150,7 +152,7 @@ class ControlledRecorder extends FakeRecorder {
         request.hooks?.onLive?.({
             pause: () => undefined,
             resume: () => undefined,
-            switchDisplay: async () => undefined,
+            switchDisplay: async () => this.onSwitch?.(),
             ...(this.canMute ? { mute: async () => undefined } : {}),
         });
         this.announce?.(request);
@@ -1062,6 +1064,32 @@ test("library capture reuses readiness completed during startup", async () => {
     } finally {
         gate.resolve();
         await recording.stop();
+    }
+});
+
+test("a completed display switch cannot replace the next capture's ownership", async () => {
+    const root = mkdtempSync(join(tmpdir(), "switch-ownership-"));
+    const recorder = new ControlledRecorder();
+    const first = recorder.next();
+    const recording = await startRecording({ recorder, folder: join(root, "rec"), liveDir: join(root, "live") });
+    await first;
+    // The capture ends while the switch is in flight, and the next piece's capture starts before it answers.
+    recorder.onSwitch = async () => {
+        const next = recorder.next();
+        recorder.finish();
+        await next;
+    };
+
+    try {
+        const selection = await recording.switchDisplay(4);
+        expect(selection.applied).toBe("restart");
+        expect(selection.chosen).toEqual([4]);
+        const restarted = await recorder.next().catch(() => undefined);
+        expect(restarted?.target).toEqual({ kind: "display", displayId: 4 });
+    } finally {
+        const stopped = recording.stop();
+        recorder.finish();
+        await withTimeout(stopped, 2_000);
     }
 });
 
