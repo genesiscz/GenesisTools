@@ -2,7 +2,7 @@ import { join } from "node:path";
 import * as clack from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
-import { logger } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { LISTEN_PLAYERS, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
 import { type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
@@ -329,7 +329,7 @@ async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: List
         path,
         fromStart: opts.fromStart === true,
         timeoutMs: minutes * 60_000,
-        write: (line) => process.stdout.write(`${line}\n`),
+        write: (line) => out.print(`${line}\n`),
     });
 }
 
