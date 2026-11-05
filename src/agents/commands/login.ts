@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { asResult } from "@genesiscz/utils/cli/result";
-import { writeStdout } from "@genesiscz/utils/cli/stdout";
+import { writeStdoutStrict } from "@genesiscz/utils/cli/stdout";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -328,12 +328,12 @@ function isDeliverable(event: FeedEvent, active: ActiveLogin): boolean {
 
 async function writeFeedEvent(active: ActiveLogin, event: FeedEvent, position: BatchPosition): Promise<void> {
     if (active.format === "monitor") {
-        await writeStdout(asResult(formatEventMonitor(event, active.names, position)));
+        await writeStdoutStrict(asResult(formatEventMonitor(event, active.names, position)));
         return;
     }
 
     if (active.format === "pretty") {
-        await writeStdout(asResult(formatEventPretty(event)));
+        await writeStdoutStrict(asResult(formatEventPretty(event)));
         return;
     }
 
@@ -343,7 +343,7 @@ async function writeFeedEvent(active: ActiveLogin, event: FeedEvent, position: B
 /** The ready and timeout lines are JSON in every format; `monitor` puts its headline first. */
 async function writeLoginLine(active: ActiveLogin, line: LoginReadyEvent | LoginTimeoutEvent): Promise<void> {
     if (active.format === "monitor") {
-        await writeStdout(asResult(formatEventMonitor(line, active.names)));
+        await writeStdoutStrict(asResult(formatEventMonitor(line, active.names)));
         return;
     }
 
@@ -689,7 +689,15 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
 }
 
 export async function runLogin(opts: LoginOpts): Promise<void> {
-    await runWithFriendlyErrors(() => runLoginImpl(opts));
+    await runWithFriendlyErrors(async () => {
+        try {
+            await runLoginImpl(opts);
+        } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "EPIPE")) {
+                throw error;
+            }
+        }
+    });
 }
 
 export function registerLoginCommand(program: Command): void {

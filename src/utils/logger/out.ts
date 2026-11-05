@@ -4,7 +4,7 @@ import { isQuietOutput } from "@genesiscz/utils/cli/output-mode";
 import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner";
 import { asResult } from "@genesiscz/utils/cli/result";
 import { writeStderr } from "@genesiscz/utils/cli/stderr";
-import { writeStdout } from "@genesiscz/utils/cli/stdout";
+import { writeStdout, writeStdoutStrict } from "@genesiscz/utils/cli/stdout";
 import { getBackend } from "@genesiscz/utils/prompts/p/backend";
 import type { SelectValue } from "@genesiscz/utils/prompts/p/types";
 import { type Logger, logger } from "../logger";
@@ -117,7 +117,7 @@ function emitTo(stream: "stdout" | "stderr", text: string): void {
         return;
     }
 
-    (stream === "stdout" ? writeStdout : writeStderr)(text).catch((err) => {
+    (stream === "stdout" ? writeStdoutStrict : writeStderr)(text).catch((err) => {
         if (closedStreams.has(stream)) {
             return;
         }

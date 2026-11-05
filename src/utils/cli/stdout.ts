@@ -9,19 +9,42 @@
  * action handler returns. `fs.writeSync(1, ...)` is not a safe replacement here;
  * it can throw EAGAIN on Bun's non-blocking pipe fd.
  */
-export async function writeStdout(text: string): Promise<void> {
+function isBrokenPipe(error: unknown): boolean {
+    return error instanceof Error && "code" in error && error.code === "EPIPE";
+}
+
+let listening = false;
+
+/** Write output whose delivery must be acknowledged by the caller. */
+export async function writeStdoutStrict(text: string): Promise<void> {
+    if (!listening) {
+        listening = true;
+        // Bun can emit the error after invoking the write callback.
+        process.stdout.on("error", (error) => {
+            if (!isBrokenPipe(error)) {
+                throw error;
+            }
+        });
+    }
     await new Promise<void>((resolve, reject) => {
         process.stdout.write(text, (error?: Error | null) => {
-            // EPIPE: the reader closed the pipe (`tools ts skeleton … | head`), so there is nobody left to deliver to.
-            // That is the reader's choice, not a failure of this tool; rejecting turned it into an unhandled crash.
-            if (error && !("code" in error && error.code === "EPIPE")) {
+            if (error) {
                 reject(error);
-                return;
+            } else {
+                resolve();
             }
-
-            resolve();
         });
     });
+}
+
+export async function writeStdout(text: string): Promise<void> {
+    try {
+        await writeStdoutStrict(text);
+    } catch (error) {
+        if (!isBrokenPipe(error)) {
+            throw error;
+        }
+    }
 }
 
 export async function printLn(text: string | string[] = ""): Promise<void> {
