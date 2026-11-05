@@ -284,11 +284,15 @@ const QUESTION_SOURCES: ReadonlySet<string> = new Set<OpenQuestionSource>([
     "registry",
 ]);
 
-function isRecordedCaller(value: unknown): boolean {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+/** A JSON object, never an array or null. */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isRecordedCaller(caller: unknown): boolean {
+    if (!isPlainRecord(caller)) {
         return false;
     }
-    const caller = value as Record<string, unknown>;
     const optionalString = (v: unknown) => v === undefined || typeof v === "string";
     const nullableString = (v: unknown) => v === null || typeof v === "string";
     if (
@@ -298,10 +302,10 @@ function isRecordedCaller(value: unknown): boolean {
         return false;
     }
     if (caller.account !== undefined) {
-        if (typeof caller.account !== "object" || caller.account === null || Array.isArray(caller.account)) {
+        const account = caller.account;
+        if (!isPlainRecord(account)) {
             return false;
         }
-        const account = caller.account as Record<string, unknown>;
         if (
             typeof account.harness !== "string" ||
             !isAccountProviderAlias(account.harness) ||
@@ -312,10 +316,10 @@ function isRecordedCaller(value: unknown): boolean {
         }
     }
     if (caller.host !== undefined) {
-        if (typeof caller.host !== "object" || caller.host === null || Array.isArray(caller.host)) {
+        const host = caller.host;
+        if (!isPlainRecord(host)) {
             return false;
         }
-        const host = caller.host as Record<string, unknown>;
         if (
             host.app !== "t3code" ||
             typeof host.threadId !== "string" ||
@@ -328,12 +332,11 @@ function isRecordedCaller(value: unknown): boolean {
 }
 
 /** A stored record of the right shape, including optional fields. */
-function isOpenQuestion(value: unknown): value is OpenQuestion {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+function isOpenQuestion(record: unknown): record is OpenQuestion {
+    if (!isPlainRecord(record)) {
         return false;
     }
 
-    const record = value as Record<string, unknown>;
     return (
         typeof record.provider === "string" &&
         typeof record.sessionId === "string" &&
