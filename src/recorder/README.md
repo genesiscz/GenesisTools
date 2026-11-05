@@ -35,7 +35,8 @@ tools recorder proxy <recording> [--display most-change|ID] [--window S] [--swit
                                                  # the display that changed most (default; proxy.json is the plan),
                                                  # or one display; a meeting also gets its transcript as captions
                                                  # with the speakers' names
-tools recorder find-screen <recording> <text>    # where a text was on the screen (OCR), at source seconds
+tools recorder find-screen <recording> <text>    # where a text was on the screen (OCR), at source seconds; the
+                                                 # editor's Find tab (⌘F) runs it and a click goes to the moment
 tools recorder words <recording> [--at T]       # each transcript line's words as cut-words splits and times them
 tools recorder cut-words <recording> --at T --words "you know" [--occurrence N] [--dry-run]  # cut words out of the
                                                  # line at T: every place, or with --occurrence only the Nth

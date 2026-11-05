@@ -29,6 +29,7 @@ enum EditorMenu {
         EditorCommand(title: "Delete Selection", key: "\u{8}", label: "⌫") { $0.deleteSelection() },
         EditorCommand(title: "Deselect", key: "\u{1b}", label: "Esc") { $0.selection = .none; $0.timelineRange = nil },
         EditorCommand(title: "Duplicate", key: "d", modifiers: .command, label: "⌘D") { $0.duplicateSelection() },
+        EditorCommand(title: "Find on Screen…", key: "f", modifiers: .command, label: "⌘F") { $0.tab = .find },
     ]
 
     static let timeline: [EditorCommand] = [

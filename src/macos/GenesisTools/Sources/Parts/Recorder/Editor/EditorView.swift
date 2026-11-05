@@ -108,6 +108,7 @@ private struct InspectorView: View {
                 case .export: ExportInspector(model: model)
                 case .hide: HideInspector(model: model)
                 case .text: TextInspector(model: model)
+                case .find: ScreenFindInspector(model: model)
                 }
             }
             // A fixed width, so a wide row wraps or truncates instead of moving the column's left edge.

@@ -32,7 +32,7 @@ extension InspectorTab {
 }
 
 enum InspectorTab: String, CaseIterable, Identifiable {
-    case zoom, clip, hide, text, style, cursor, captions, audio, export
+    case zoom, clip, hide, text, style, cursor, captions, audio, export, find
     var id: String { rawValue }
 
     var symbol: String {
@@ -46,6 +46,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .captions: "captions.bubble"
         case .audio: "speaker.wave.2"
         case .export: "square.and.arrow.up"
+        case .find: "text.magnifyingglass"
         }
     }
 
@@ -60,6 +61,7 @@ enum InspectorTab: String, CaseIterable, Identifiable {
         case .captions: "Captions and Shortcuts"
         case .audio: "Audio"
         case .export: "Export"
+        case .find: "Find on Screen"
         }
     }
 }
@@ -123,6 +125,15 @@ final class EditorModel {
     var isReadingLineWords = false
     /// A cut by the transcript runs in `tools recorder apply`; its buttons wait for it.
     var isCuttingTranscript = false
+    /// The Find tab's search of the text on the screen (EditorScreenFind.swift): the query, the moments it found (nil
+    /// before a search), and why a search failed.
+    var screenQuery = ""
+    var screenHits: [ScreenHit]?
+    var isSearchingScreen = false
+    var screenSearchFailure: String?
+    /// The moment last clicked in the Find tab.
+    var selectedScreenHit: Int?
+    @ObservationIgnored var screenSearchRevision = 0
     /// Edit ops this window runs through `tools recorder apply`: their saved edit is this window's own change, so it is
     /// adopted without the banner of an outside edit.
     @ObservationIgnored private var ownOpsRunning = 0

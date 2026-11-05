@@ -111,6 +111,60 @@ final class RecorderTranscriptCutViewTests: XCTestCase {
     }
 }
 
+/// The Find tab with the moments find-screen printed for the shared meeting fixture.
+@MainActor
+final class RecorderScreenFindViewTests: XCTestCase {
+    private var folder: URL!
+
+    override func setUp() async throws {
+        folder = FileManager.default.temporaryDirectory.appendingPathComponent("screen-find-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() async throws {
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    private func model() -> EditorModel {
+        let project = EditProject.whole(video: folder.appendingPathComponent("proxy.mp4").path, durationUs: 15_000_000,
+                                        width: 1920, height: 1080, cursor: nil, recording: nil)
+        return EditorModel(project: project, store: ProjectStore(url: folder.appendingPathComponent("edit.json")))
+    }
+
+    func testTheFindTabListsEachMomentWithItsDisplayAndAClickGoesThere() throws {
+        let model = model()
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: SharedEditorFixture.url("screen-search.json"))) as? [String: Any])
+        let hits = try JSONDecoder().decode([ScreenHit].self, from: JSONSerialization.data(withJSONObject: try XCTUnwrap(fixture["hits"])))
+        model.displayPlan = DisplayPlan(policy: "most-change", windowSec: 10,
+                                        ranges: [.init(fromUs: 0, toUs: 10_000_000, displayId: 1), .init(fromUs: 10_000_000, toUs: 15_000_000, displayId: 4)],
+                                        displays: [(1, "Built-in Retina Display"), (4, "Studio")])
+        model.screenQuery = "token"
+        model.screenHits = hits
+        XCTAssertEqual(hits.map(\.shown), [true, false, true])
+        XCTAssertEqual(hits.map(\.sourceUs), [0, 4_000_000, 12_500_000])
+
+        let image = try EditorShots.write(ScreenFindInspector(model: model).padding(18), name: "find-on-screen", width: 300)
+        let text = try EditorShots.text(image).lowercased()
+        for word in ["find on screen", "3 moments", "api token: sk-123", "studio, not shown then", "00:12.5", "tokén list"] {
+            XCTAssertTrue(text.contains(word), "\(word) missing from: \(text)")
+        }
+
+        model.goToScreenHit(2)
+        XCTAssertEqual(model.selectedScreenHit, 2)
+        XCTAssertEqual(model.clock.outUs, 12_500_000, "the playhead goes to the moment")
+    }
+
+    func testAMovieWithoutARecordingSaysWhyItHasNoScreenText() throws {
+        let model = model()
+        model.screenQuery = "token"
+        model.screenSearchFailure = EditorModel.screenSearchProblem(stderr: "/x has no recording.json; make the proxy first\n", status: 1)
+        XCTAssertTrue(model.screenSearchFailure?.hasPrefix("This movie has no screen text.") == true)
+        XCTAssertEqual(EditorModel.screenSearchProblem(stderr: "boom\nthe last line\n", status: 2), "The search did not run: the last line")
+        let image = try EditorShots.write(ScreenFindInspector(model: model).padding(18), name: "find-on-screen-no-text", width: 300)
+        XCTAssertTrue(try EditorShots.text(image).lowercased().contains("no screen text"))
+    }
+}
+
 final class RecorderEditTests: XCTestCase {
     /// The word pick reads what `tools recorder words` prints and sends the place of the picked words, as the
     /// `cutWords` op numbers them (it cuts every run of the same folded words).

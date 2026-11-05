@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
+import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
 import { keptPlan } from "./frames-movie";
 import { editorOpenStatePath, movieOf, readEditorOpenState, resolveRecording } from "./library";
 import { framesForPlan, overrideRanges, planMostChange, proxyVideoFilter } from "./proxy";
 import { currentGif, isMeetingFolder, meetingOf, shareableMovie, trashRecording } from "./quick-actions";
+import { findOnScreen } from "./screen-search";
 
 function writeState(state: Record<string, unknown>): void {
     mkdirSync(dirname(editorOpenStatePath()), { recursive: true });
@@ -175,6 +177,24 @@ describe("the movie of a recording folder", () => {
             expect(name(shareableMovie(folder))).toBe(item.shareable);
         });
     }
+});
+
+// The editor's Find tab decodes these hits (RecorderEditTests.swift), so it reads what find-screen prints.
+describe("text on the screen", () => {
+    it("finds the shared fixture's hits: accents ignored, each frame on the shown display or not", () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-screen-"));
+        mkdirSync(join(folder, "frames"));
+        writeFileSync(join(folder, "recording.json"), SafeJSON.stringify(screenSearch.recording.manifest));
+        writeFileSync(
+            join(folder, "ocr.jsonl"),
+            screenSearch.recording.ocr.map((row) => SafeJSON.stringify(row)).join("\n")
+        );
+        writeFileSync(join(folder, "proxy.json"), SafeJSON.stringify(screenSearch.recording.plan));
+
+        expect(findOnScreen(folder, screenSearch.query)).toEqual(screenSearch.hits);
+        expect(findOnScreen(folder, "   ")).toEqual([]);
+        expect(findOnScreen(folder, "token", { limit: 1 })).toHaveLength(1);
+    });
 });
 
 describe("a recording's quick actions", () => {
