@@ -21,6 +21,7 @@ import {
     isRecorderMethod,
     RECORDER_DISPATCH,
     RECORDER_METHODS,
+    RECORDER_STATES,
     RecorderControl,
     type RecorderMethod,
     type RecorderSettingsPatch,
@@ -39,7 +40,7 @@ const { log } = logger.scoped("live-recordings");
 
 export const LIVE_COMMANDS = ["pause", "resume", "stop"] as const;
 export type LiveCommand = (typeof LIVE_COMMANDS)[number];
-export const LIVE_STATES = ["recording", "paused", "stopping"] as const;
+export const LIVE_STATES = RECORDER_STATES;
 export type LiveState = (typeof LIVE_STATES)[number];
 export const LIVE_EVENTS = ["state", "frame", "displays", "warning", "progress", "ended"] as const;
 export type LiveEvent = (typeof LIVE_EVENTS)[number];
