@@ -1,0 +1,104 @@
+{
+    "about": "The camera op (project.ts cameraOpSchema) on a bubble, as TypeScript applies it. The Swift editor's CameraChange is tested against the same cases (Tests/CameraBubbleTests.swift), so edit.json is the same from either door.",
+    "cases": [
+        {
+            "name": "the first op places the bubble with the defaults",
+            "before": null,
+            "op": { "op": "camera", "file": "camera.mov" },
+            "after": {
+                "file": "camera.mov",
+                "offsetMs": 0,
+                "show": true,
+                "corner": "bottomRight",
+                "x": 0.88,
+                "y": 0.82,
+                "size": 0.24,
+                "shape": "circle",
+                "mirror": true,
+                "margin": 0.035,
+                "hidden": []
+            }
+        },
+        {
+            "name": "a drag sets the centre and makes the corner custom",
+            "before": { "file": "camera.mov", "corner": "topLeft" },
+            "op": { "op": "camera", "x": 0.3, "y": 0.45 },
+            "after": {
+                "file": "camera.mov",
+                "offsetMs": 0,
+                "show": true,
+                "corner": "custom",
+                "x": 0.3,
+                "y": 0.45,
+                "size": 0.24,
+                "shape": "circle",
+                "mirror": true,
+                "margin": 0.035,
+                "hidden": []
+            }
+        },
+        {
+            "name": "size and shape keep the place",
+            "before": { "file": "camera.mov", "corner": "topLeft" },
+            "op": { "op": "camera", "size": 0.4, "shape": "rounded" },
+            "after": {
+                "file": "camera.mov",
+                "offsetMs": 0,
+                "show": true,
+                "corner": "topLeft",
+                "x": 0.88,
+                "y": 0.82,
+                "size": 0.4,
+                "shape": "rounded",
+                "mirror": true,
+                "margin": 0.035,
+                "hidden": []
+            }
+        },
+        {
+            "name": "a corner pick, mirror and show",
+            "before": { "file": "camera.mov", "corner": "custom", "x": 0.2, "y": 0.2 },
+            "op": { "op": "camera", "corner": "bottomLeft", "mirror": false, "show": false },
+            "after": {
+                "file": "camera.mov",
+                "offsetMs": 0,
+                "show": false,
+                "corner": "bottomLeft",
+                "x": 0.2,
+                "y": 0.2,
+                "size": 0.24,
+                "shape": "circle",
+                "mirror": false,
+                "margin": 0.035,
+                "hidden": []
+            }
+        },
+        {
+            "name": "hidden parts stay through a move",
+            "before": {
+                "file": "camera.mov",
+                "hidden": [{ "id": "kabc12345", "startUs": 1000000, "endUs": 2000000, "lane": "auto-cameraHide" }]
+            },
+            "op": { "op": "camera", "x": 0.5, "y": 0.5, "offsetMs": 120 },
+            "after": {
+                "file": "camera.mov",
+                "offsetMs": 120,
+                "show": true,
+                "corner": "custom",
+                "x": 0.5,
+                "y": 0.5,
+                "size": 0.24,
+                "shape": "circle",
+                "mirror": true,
+                "margin": 0.035,
+                "hidden": [{ "id": "kabc12345", "startUs": 1000000, "endUs": 2000000, "lane": "auto-cameraHide" }]
+            }
+        },
+        {
+            "name": "enabled false removes the bubble",
+            "before": { "file": "camera.mov", "size": 0.3 },
+            "op": { "op": "camera", "enabled": false },
+            "after": null
+        }
+    ]
+}

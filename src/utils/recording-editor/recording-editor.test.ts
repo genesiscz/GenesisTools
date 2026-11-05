@@ -10,6 +10,7 @@ import {
     bubbleRect,
     bubbleShowsAt,
     CAMERA_SIDECAR,
+    cameraBubbleSchema,
     readCameraSidecar,
 } from "@genesiscz/utils/recording-editor/camera";
 import { checkProject, fixOps } from "@genesiscz/utils/recording-editor/check";
@@ -26,6 +27,7 @@ import {
     annotateClicks,
     applyOp,
     autoZoom,
+    cameraOpSchema,
     describeProject,
     editProjectSchema,
     findInTranscript,
@@ -47,6 +49,7 @@ import { prepareVideoEvidence } from "@genesiscz/utils/video/evidence";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { createCanvas } from "@napi-rs/canvas";
 import { ZodError } from "zod";
+import cameraOps from "./__fixtures__/camera-ops.json";
 import legacyEvidence from "./__fixtures__/legacy-evidence.json";
 import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema } from "./denoise";
 import { RecordingEditor } from "./editor";
@@ -1133,6 +1136,15 @@ describe("camera bubble", () => {
         expect(applyOp(project, { op: "camera", enabled: false }).camera).toBeUndefined();
         expect(() => applyOp(wholeProject(source), { op: "camera", show: false })).toThrow("has no camera yet");
     });
+
+    // The Swift editor's drag and Style controls apply the same cases (CameraBubbleTests.swift), so edit.json matches.
+    for (const item of cameraOps.cases) {
+        test(`shared camera op case: ${item.name}`, () => {
+            const before = item.before ? cameraBubbleSchema.parse(item.before) : undefined;
+            const project = applyOp({ ...wholeProject(source), camera: before }, cameraOpSchema.parse(item.op));
+            expect<unknown>(project.camera ?? null).toEqual(item.after);
+        });
+    }
 
     test("hidden ranges join, split on a show, and decide where the bubble draws", () => {
         let project = applyOp(wholeProject(source), { op: "camera", file: "camera.mov" });

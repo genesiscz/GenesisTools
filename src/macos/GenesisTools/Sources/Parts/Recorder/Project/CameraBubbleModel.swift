@@ -128,3 +128,114 @@ extension EditProject {
         }
     }
 }
+
+extension EditProject {
+    /// The `camera` edit op (src/utils/recording-editor/project.ts `cameraOpSchema`), the one `movie.camera(...)` and
+    /// `tools recorder edit` send. The editor's drag and Style controls change the bubble only through it, so edit.json is
+    /// the same from every door; camera-ops.json holds the cases both sides are tested on.
+    struct CameraChange: Decodable, Equatable {
+        var file: String?
+        var show: Bool?
+        var corner: CameraCorner?
+        /// The centre as fractions of the canvas; setting either makes the corner custom.
+        var x: Double?
+        var y: Double?
+        var size: Double?
+        var shape: CameraShape?
+        var mirror: Bool?
+        var offsetMs: Int?
+        /// false removes the bubble from the edit (the camera movie stays).
+        var enabled: Bool?
+
+        init(file: String? = nil, show: Bool? = nil, corner: CameraCorner? = nil, x: Double? = nil, y: Double? = nil,
+             size: Double? = nil, shape: CameraShape? = nil, mirror: Bool? = nil, offsetMs: Int? = nil, enabled: Bool? = nil) {
+            self.file = file
+            self.show = show
+            self.corner = corner
+            self.x = x
+            self.y = y
+            self.size = size
+            self.shape = shape
+            self.mirror = mirror
+            self.offsetMs = offsetMs
+            self.enabled = enabled
+        }
+
+        /// The op's ranges: the TypeScript side refuses a value outside them, the editor holds a drag inside them.
+        static let sizeRange = 0.08...0.6
+        static let offsetRange = -600_000...600_000
+    }
+
+    enum CameraChangeError: LocalizedError {
+        case noCamera
+
+        var errorDescription: String? {
+            #"this edit has no camera yet; give the camera movie with { op: "camera", file: "camera.mov" }"#
+        }
+    }
+
+    /// The edit with `change` applied as project.ts applies the `camera` op.
+    func applying(_ change: CameraChange) throws -> EditProject {
+        var next = self
+        if change.enabled == false {
+            next.camera = nil
+            return next
+        }
+        guard let file = change.file ?? camera?.file else { throw CameraChangeError.noCamera }
+        var bubble = camera ?? Camera(file: file)
+        bubble.file = file
+        if let show = change.show { bubble.show = show }
+        if let corner = change.corner { bubble.corner = corner }
+        if let x = change.x { bubble.x = min(1, max(0, x)) }
+        if let y = change.y { bubble.y = min(1, max(0, y)) }
+        if change.x != nil || change.y != nil { bubble.corner = .custom }
+        if let size = change.size {
+            bubble.size = min(CameraChange.sizeRange.upperBound, max(CameraChange.sizeRange.lowerBound, size))
+        }
+        if let shape = change.shape { bubble.shape = shape }
+        if let mirror = change.mirror { bubble.mirror = mirror }
+        if let offset = change.offsetMs {
+            bubble.offsetMs = min(CameraChange.offsetRange.upperBound, max(CameraChange.offsetRange.lowerBound, offset))
+        }
+        next.camera = bubble
+        return next
+    }
+}
+
+/// The preview's drag and resize of the bubble as camera changes. A view of the canvas at any size maps by fractions,
+/// because the bubble's place and side are fractions of the canvas.
+enum CameraPlacement {
+    /// The bubble centred at `center` (view points), held where the whole bubble shows, as the renderer draws it.
+    static func moved(_ camera: EditProject.Camera, center: CGPoint, in view: CGSize) -> EditProject.CameraChange {
+        let half = camera.rect(canvas: view).width / 2
+        let x = min(view.width - half, max(half, center.x)) / max(1, view.width)
+        let y = min(view.height - half, max(half, center.y)) / max(1, view.height)
+        return .init(x: Double(x), y: Double(y))
+    }
+
+    /// The grip that sizes the bubble sits on the corner that faces into the canvas, so dragging it out grows the bubble
+    /// toward the pointer: away from the anchoring corner, or the bottom right of a bubble placed by its centre.
+    static func grip(_ corner: EditProject.CameraCorner) -> (x: CGFloat, y: CGFloat) {
+        switch corner {
+        case .bottomRight: return (-1, -1)
+        case .bottomLeft: return (1, -1)
+        case .topRight: return (-1, 1)
+        case .topLeft, .custom: return (1, 1)
+        }
+    }
+
+    /// The side after dragging the grip by `translation` from a bubble of side `start`. A corner bubble keeps its far
+    /// corner, so the grip moves with the side; a centred one grows both ways, so the grip moves half as far.
+    static func side(start: CGFloat, translation: CGSize, corner: EditProject.CameraCorner) -> CGFloat {
+        let grip = grip(corner)
+        let along = (grip.x * translation.width + grip.y * translation.height) / 2
+        return start + (corner == .custom ? 2 * along : along)
+    }
+
+    /// The bubble with a side of `side` view points, inside the op's size range.
+    static func resized(_ camera: EditProject.Camera, side: CGFloat, in view: CGSize) -> EditProject.CameraChange {
+        let size = Double(side / max(1, min(view.width, view.height)))
+        let range = EditProject.CameraChange.sizeRange
+        return .init(size: min(range.upperBound, max(range.lowerBound, size)))
+    }
+}

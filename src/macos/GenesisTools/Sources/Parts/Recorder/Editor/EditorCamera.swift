@@ -54,3 +54,15 @@ extension EditorModel {
         apply(next, rebuildMovie: false)
     }
 }
+
+extension EditorModel {
+    /// The bubble's place, size, shape or visibility through the camera op (`EditProject.applying`), one undo step per
+    /// drag or slider move. An edit without a camera says how to get one instead.
+    func changeCamera(_ change: EditProject.CameraChange) {
+        do {
+            apply(try project.applying(change), rebuildMovie: false)
+        } catch {
+            show(error.localizedDescription, error: false)
+        }
+    }
+}

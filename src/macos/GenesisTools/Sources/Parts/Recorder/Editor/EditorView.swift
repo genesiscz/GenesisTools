@@ -117,7 +117,7 @@ private struct InspectorView: View {
     }
 }
 
-private struct SectionLabel: View {
+struct SectionLabel: View {
     let text: String
     var value: String?
 
@@ -134,7 +134,7 @@ private struct SectionLabel: View {
 }
 
 /// A switch at the right edge of the inspector with its label on the left, like the rows of System Settings.
-private struct SwitchRow: View {
+struct SwitchRow: View {
     let title: String
     @Binding var isOn: Bool
 
@@ -512,6 +512,10 @@ private struct StyleInspector: View {
                     .accessibilityLabel("Corners")
                     .accessibilityIdentifier("recorder.style.corners")
                 SwitchRow("Shadow", isOn: Binding(get: { frame.shadow }, set: { on in model.setLooks { $0.frame?.shadow = on } }))
+            }
+            if model.project.camera != nil {
+                Divider().padding(.vertical, 4)
+                CameraBubbleSection(model: model)
             }
         }
     }
@@ -1670,6 +1674,8 @@ private struct PreviewView: View {
             .overlay {
                 if model.tab == .hide && !model.isPlaying {
                     HiddenPartHandles(model: model, clock: model.clock)
+                } else if model.tab == .style && !model.isPlaying && model.project.camera != nil {
+                    CameraBubbleHandle(model: model, clock: model.clock)
                 } else if model.tab == .text && !model.isPlaying {
                     ZStack {
                         TextHandles(model: model, clock: model.clock)

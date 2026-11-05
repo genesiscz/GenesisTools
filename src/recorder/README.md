@@ -192,7 +192,12 @@ of its own, "Camera Bubble", unless one is added for it), in source times, with 
 saved before the lanes gets an id from each part's start. Ops: `{"op":"camera", corner?, x?, y?, size?, shape?, mirror?, show?, offsetMs?, file?, enabled?}`,
 `{"op":"cameraHide","from":3,"to":4,"lane":"lane3"}`, `{"op":"cameraShow","from":3,"to":3.5}`, and `retime` and
 `moveToLane` by the part's id; the REPL has `m.camera({…})`,
-`m.cameraHide(from, to)` and `m.cameraShow(from, to)`. The renderer (preview and export) draws it. `tools recorder
+`m.cameraHide(from, to)` and `m.cameraShow(from, to)`. The renderer (preview and export) draws it. In the editor, the
+Style tab outlines the bubble on the preview (dashed where it is hidden): drag it to move it, drag the grip on its inner
+corner to size it, and pick its corner, size, shape and mirror in the tab's "Camera bubble" section. Each of these sends
+the same `camera` op (Swift `EditProject.CameraChange`; both sides are tested on
+`src/utils/recording-editor/__fixtures__/camera-ops.json`), so `edit.json` is the same from every door, and a drag is
+one undo step. `tools recorder
 start --camera` asks for the camera without the picker: then the face records it with no preview on screen, because
 nothing would keep the preview out of the movie.
 

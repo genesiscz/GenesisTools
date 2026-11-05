@@ -395,9 +395,11 @@ final class EditorModel {
         if a.transcript != b.transcript { parts.append("transcript") }
         if a.motion != b.motion { parts.append("motion") }
         if a.lanes != b.lanes { parts.append("lanes") }
+        if a.camera != b.camera { parts.append("camera") }
         // A count change (an add or a delete) is its own step, never part of a drag.
         if (a.zooms.count, a.redactions?.count, a.texts?.count, a.shapes?.count, a.clips.count)
-            != (b.zooms.count, b.redactions?.count, b.texts?.count, b.shapes?.count, b.clips.count) { parts.append("count") }
+            != (b.zooms.count, b.redactions?.count, b.texts?.count, b.shapes?.count, b.clips.count)
+            || (a.camera == nil, a.camera?.hidden.count) != (b.camera == nil, b.camera?.hidden.count) { parts.append("count") }
         return parts
     }
 
