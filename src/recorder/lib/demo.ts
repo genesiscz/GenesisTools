@@ -2,6 +2,7 @@ import { execTool } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import type { EditOp } from "@genesiscz/utils/recording-editor/project";
 import { z } from "zod";
+import { recordOptionsSchema } from "./start-options";
 
 const { log } = logger.scoped("recorder-demo");
 
@@ -298,20 +299,8 @@ export const demoScriptStepSchema = z
 export const demoScriptSchema = z
     .object({
         title: z.string().optional(),
-        record: z
-            .object({
-                audio: z.array(z.enum(["system", "mic"])).optional(),
-                display: z.number().int().min(0).optional(),
-                app: z.string().optional(),
-                window: z.array(z.number().int()).optional(),
-                fps: z.number().min(1).max(120).optional(),
-                camera: z.boolean().optional(),
-                /** false: no floating controls and no red border (they never show in the movie either way). */
-                controls: z.boolean().optional(),
-                indicator: z.boolean().optional(),
-            })
-            .strict()
-            .default({}),
+        /** The options of movies.record() (the flags of tools recorder start). */
+        record: recordOptionsSchema.default({}),
         edit: demoEditSchema.partial().optional(),
         settleSeconds: z.number().min(0).max(30).optional(),
         holdSeconds: z.number().min(0).max(60).optional(),

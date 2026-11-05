@@ -541,7 +541,7 @@ export const MEDIA_KEY_SCRIPTS: Record<string, string> = {
 // (from live debugging, do not "simplify"): CALayer.setBackgroundColor hangs
 // the runtime — use NSPanel.setBackgroundColor; orderFrontRegardless/close are
 // silent no-ops without the () call parens.
-function countdownOverlayScript(sec: number): string {
+function countdownOverlayScript(sec: number, hint: string): string {
     return `ObjC.import('Cocoa'); ObjC.import('CoreGraphics');
 function run() {
   var app = $.NSApplication.sharedApplication;
@@ -564,18 +564,40 @@ function run() {
   panel.setContentView(label);
   panel.orderFrontRegardless();
   for (var i = ${sec}; i >= 1; i--) {
-    label.setStringValue('Recording in ' + i + '\\u2026 don\\u0027t move the mouse');
+    label.setStringValue('Recording in ' + i + '\\u2026 ' + ${SafeJSON.stringify(hint)});
     $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(1.0));
   }
   panel.close();
 }`;
 }
 
-/** Returns early when `signal` aborts, taking the overlay down with it. */
-export async function runCountdown(sec: number, signal?: AbortSignal): Promise<void> {
+/** What a countdown says: on stderr after `<who>: recording in N…`, and in the overlay after `Recording in N…`. */
+export interface CountdownText {
+    who: string;
+    line: string;
+    overlay: string;
+}
+
+const CAPTURE_COUNTDOWN: CountdownText = {
+    who: "capture-with-actions",
+    line: "don't move mouse/keyboard",
+    overlay: "don't move the mouse",
+};
+
+/** How long the overlay may take to close after the last tick (osascript starts late, so it ends late). */
+const OVERLAY_CLOSE_MS = 1_500;
+
+/**
+ * Returns early when `signal` aborts, taking the overlay down with it. Otherwise it returns once the overlay is
+ * closed (at most 1.5 s after the last tick), so a capture that starts next does not record it.
+ */
+export async function runCountdown(
+    sec: number,
+    { signal, text = CAPTURE_COUNTDOWN }: { signal?: AbortSignal; text?: CountdownText } = {}
+): Promise<void> {
     // overlay runs detached and paces itself; stderr ticks are the guaranteed channel
     const overlay = Bun.spawn(
-        wrapWithGenesisApp(["osascript", "-l", "JavaScript", "-e", countdownOverlayScript(sec)]),
+        wrapWithGenesisApp(["osascript", "-l", "JavaScript", "-e", countdownOverlayScript(sec, text.overlay)]),
         {
             stdout: "ignore",
             stderr: "ignore",
@@ -584,7 +606,7 @@ export async function runCountdown(sec: number, signal?: AbortSignal): Promise<v
     overlay.unref();
 
     for (let i = sec; i >= 1; i--) {
-        console.error(`capture-with-actions: recording in ${i}… don't move mouse/keyboard`);
+        console.error(`${text.who}: recording in ${i}… ${text.line}`);
         try {
             await abortableSleep(1000, signal);
         } catch (error) {
@@ -595,6 +617,13 @@ export async function runCountdown(sec: number, signal?: AbortSignal): Promise<v
             overlay.kill();
             return;
         }
+    }
+
+    const closed = await Promise.race([overlay.exited.then(() => true), Bun.sleep(OVERLAY_CLOSE_MS).then(() => false)]);
+
+    if (!closed) {
+        logger.debug({ pid: overlay.pid }, "the countdown overlay did not close in time; killing it");
+        overlay.kill();
     }
 }
 

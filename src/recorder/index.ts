@@ -1,12 +1,5 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import {
-    defaultRecordingTarget,
-    listRecordingTargets,
-    parseRegionTarget,
-    parseWindowIdList,
-    type RecordingTarget,
-} from "@app/control/lib/recording-targets";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -19,7 +12,7 @@ import { FILLER_WORDS } from "@genesiscz/utils/recording-editor/transcript-cuts"
 import { renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
-import { Command, Option } from "commander";
+import { Command } from "commander";
 import { registerServeCommand } from "./commands/serve";
 import { demoScriptSchema, runDemo, scriptSteps } from "./lib/demo";
 import {
@@ -57,35 +50,11 @@ import { copyRecording, revealRecording, trashRecording } from "./lib/quick-acti
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./lib/review";
 import { findOnScreen } from "./lib/screen-search";
 import { hostOpenEditor } from "./lib/service-client";
+import { defaultStartTarget, parseStartFlags, type StartFlags, withStartOptions } from "./lib/start-options";
 import { Movie, movieDemoDriver } from "./lib/toolset";
-import { recordVideo, VIDEO_RECORDING_MAX_SECONDS } from "./lib/video-recording";
+import { recordVideo } from "./lib/video-recording";
 
 const { log } = logger.scoped("recorder");
-const AUDIO_SOURCES = ["system", "mic"] as const;
-type AudioSource = (typeof AUDIO_SOURCES)[number];
-
-interface StartFlags {
-    audio?: string;
-    startGate?: string;
-    micDevice?: string;
-    fps?: string;
-    idleFps?: string;
-    threshold?: string;
-    region?: string;
-    excludeWindowIds?: string;
-    camera?: boolean;
-    display?: string;
-    window?: string;
-    app?: string;
-    title?: string;
-    maxSeconds?: string;
-    indicator?: boolean;
-    systemCursor?: boolean;
-    shortcuts?: boolean;
-    controls?: boolean;
-    open?: boolean;
-    json?: boolean;
-}
 
 /** `--display`: `most-change` or a display id. */
 function parseProxyDisplay(raw: string): ProxyDisplay {
@@ -145,63 +114,6 @@ function parseSubtitleFormat(raw: string): SubtitleFormat {
 function editorTab(raw: string | boolean): EditorTab | null {
     const found = EDITOR_TABS.find((tab) => tab === raw);
     return found ?? null;
-}
-
-function parseAudio(raw: string | undefined): AudioSource[] | undefined {
-    if (raw === undefined) {
-        return undefined;
-    }
-
-    const sources = raw
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean);
-    const unknown = sources.filter((value) => !AUDIO_SOURCES.includes(value as AudioSource));
-
-    if (unknown.length > 0) {
-        throw new Error(`--audio takes system, mic or system,mic (got "${raw}")`);
-    }
-
-    return sources as AudioSource[];
-}
-
-function bounded(raw: string | undefined, name: string, min: number, max: number): number | undefined {
-    if (raw === undefined) {
-        return undefined;
-    }
-
-    const value = Number(raw);
-
-    if (!Number.isFinite(value) || value < min || value > max) {
-        throw new Error(`${name} takes a number from ${min} to ${max} (got "${raw}")`);
-    }
-
-    return value;
-}
-
-async function targetOf(flags: StartFlags): Promise<RecordingTarget> {
-    if (flags.region) {
-        return parseRegionTarget(flags.region);
-    }
-
-    if (flags.window) {
-        return { kind: "window", windowIds: flags.window.split(",").map(Number) };
-    }
-
-    if (flags.app) {
-        return { kind: "app", app: flags.app };
-    }
-
-    if (flags.display !== undefined) {
-        return { kind: "display", screenIndex: bounded(flags.display, "--display", 0, 16) ?? 0 };
-    }
-
-    // By default the recording follows the screen in use: the one the pointer or the focused window moved to last.
-    const targets = await listRecordingTargets();
-    const main = targets.displays.find((display) => display.isPrimary) ?? targets.displays[0];
-    return main
-        ? { kind: "display", screenIndex: main.index, follow: true }
-        : (defaultRecordingTarget(targets, new Set()) ?? { kind: "display", screenIndex: 0 });
 }
 
 /** The live recording a control command means: the one named, else the only one, else the newest. */
@@ -271,95 +183,49 @@ const program = new Command()
         "Screen recordings with a movie editor: record the screen, a window or an app with audio and the cursor, then cut, zoom and export in the recorder window or from the command line"
     );
 
-program
-    .command("start")
-    .description(
-        "Record a movie into the recordings library (screen.mp4 with audio tracks, cursor.jsonl, recording.json). Runs until the stop command, the menu bar item, the floating controls, Ctrl-C or --max-seconds; pausing leaves the paused time out of the movie"
-    )
-    .option("--audio <sources>", "audio tracks: system, mic, or system,mic")
-    .option("--mic-device <uid>", "the microphone (an id from `ax-tool audio-devices`; needs --audio mic)")
-    .option("--fps <n>", "frames per second while something moves, 1–120", "60")
-    .option("--idle-fps <n>", "frames per second while nothing moves, 0.1–5 (by default the movie keeps --fps)")
-    .option("--threshold <percent>", "how much of the picture must change to leave the idle rate, 0–100 (default 0.5)")
-    .option(
-        "--display <index>",
-        "record only this display (NSScreen order); by default the recording follows the pointer and the focus to whichever screen is in use"
-    )
-    .option("--window <ids>", "record these windows (CG window ids, comma separated)")
-    .option("--app <name>", "record this app's windows (name, bundle id or pid)")
-    .option("--region <x,y,w,h>", "record this area of a display, in screen points from the top-left corner")
-    .option("--exclude-window-ids <ids>", "leave these windows out of the movie (CG window ids, comma separated)")
-    .option(
-        "--camera",
-        "record the camera beside the screen into camera.mov (the recorder face records it; the editor draws the bubble)"
-    )
-    .option("--title <text>", "the recording's title in the library and the menu")
-    .option("--max-seconds <n>", `stop after this long, 1–${VIDEO_RECORDING_MAX_SECONDS}`)
-    .option("--no-indicator", "no red border around what is recorded (never in the movie either way)")
-    .option(
-        "--no-shortcuts",
-        "do not keep the ⌘/⌃ shortcuts pressed (by default they go into the cursor track for the keys overlay; plain typing never does)"
-    )
-    .option(
-        "--system-cursor",
-        "keep the system cursor in the movie (by default it stays out and the editor draws it: smoothed, any size)"
-    )
-    .option("--no-controls", "do not open the floating controls")
-    .option("--open", "open the editor when the recording stops")
-    .option("--json", "events and the result as JSON lines on stdout")
-    .addOption(new Option("--start-gate <path>", "the start gate of a caller that waits for this recording").hideHelp())
-    .action(async (flags: StartFlags) => {
-        try {
-            const target = await targetOf(flags);
-            const result = await recordVideo({
-                target,
-                title: flags.title,
-                fps: bounded(flags.fps, "--fps", 1, 120),
-                idleFps: bounded(flags.idleFps, "--idle-fps", 0.1, 5),
-                threshold: bounded(flags.threshold, "--threshold", 0, 100),
-                excludeWindowIds: parseWindowIdList(flags.excludeWindowIds, "--exclude-window-ids"),
-                camera: flags.camera === true,
-                audio: parseAudio(flags.audio),
-                micDevice: flags.micDevice,
-                maxSeconds: bounded(flags.maxSeconds, "--max-seconds", 1, VIDEO_RECORDING_MAX_SECONDS),
-                indicator: flags.indicator,
-                systemCursor: flags.systemCursor,
-                shortcuts: flags.shortcuts,
-                panel: flags.controls !== false,
-                startGate: flags.startGate,
-                emit: (event) => {
-                    if (flags.json) {
-                        out.print(`${SafeJSON.stringify(event)}\n`);
-                    } else if (event.event === "state") {
-                        out.printlnErr(`${event.state} (${event.reason}) · ${Math.round(event.elapsedMs / 1000)} s`);
-                    } else if (event.event === "error") {
-                        out.printlnErr(`error: ${event.message}`);
-                    }
-                },
-            });
+withStartOptions(
+    program
+        .command("start")
+        .description(
+            "Record a movie into the recordings library (screen.mp4 with audio tracks, cursor.jsonl, recording.json). Runs until the stop command, the menu bar item, the floating controls, Ctrl-C or --max-seconds; pausing leaves the paused time out of the movie"
+        )
+).action(async (flags: StartFlags) => {
+    try {
+        const request = parseStartFlags(flags);
+        const result = await recordVideo({
+            ...request,
+            target: request.target ?? (await defaultStartTarget()),
+            emit: (event) => {
+                if (flags.json) {
+                    out.print(`${SafeJSON.stringify(event)}\n`);
+                } else if (event.event === "state") {
+                    out.printlnErr(`${event.state} (${event.reason}) · ${Math.round(event.elapsedMs / 1000)} s`);
+                } else if (event.event === "error") {
+                    out.printlnErr(`error: ${event.message}`);
+                }
+            },
+        });
 
-            if (flags.json) {
-                out.print(`${SafeJSON.stringify({ event: "result", ...result })}\n`);
-            } else {
-                out.println(
-                    result.movie ? `${result.outcome}: ${result.movie}` : `${result.outcome}: ${result.folder}`
-                );
-            }
+        if (flags.json) {
+            out.print(`${SafeJSON.stringify({ event: "result", ...result })}\n`);
+        } else {
+            out.println(result.movie ? `${result.outcome}: ${result.movie}` : `${result.outcome}: ${result.folder}`);
+        }
 
-            if (result.outcome === "failed") {
-                process.exitCode = 1;
-            }
-
-            if (flags.open && result.movie) {
-                await ensureRecorderPart((line) => out.printlnErr(line));
-                openEditor(result.folder);
-            }
-        } catch (error) {
-            log.debug({ error }, "recorder start failed");
-            out.printlnErr(error instanceof Error ? error.message : String(error));
+        if (result.outcome === "failed") {
             process.exitCode = 1;
         }
-    });
+
+        if (flags.open && result.movie) {
+            await ensureRecorderPart((line) => out.printlnErr(line));
+            openEditor(result.folder);
+        }
+    } catch (error) {
+        log.debug({ error }, "recorder start failed");
+        out.printlnErr(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
+    }
+});
 
 for (const method of ["stop", "pause", "resume", "status"] as const) {
     program

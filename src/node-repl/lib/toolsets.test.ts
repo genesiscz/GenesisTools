@@ -22,13 +22,21 @@ import {
     recordingFolderOf,
     spreadTimes,
 } from "@app/recorder/lib/moments";
-import { MoviesToolset } from "@app/recorder/lib/toolset";
+import {
+    DEFAULT_COUNTDOWN_SECONDS,
+    parseStartFlags,
+    readStartArgs,
+    type StartRequest,
+} from "@app/recorder/lib/start-options";
+import { type MovieRecorderStart, MoviesToolset, moviesApi } from "@app/recorder/lib/toolset";
+import { RecordingStartCancelled, recordVideo } from "@app/recorder/lib/video-recording";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as ocr from "@genesiscz/utils/macos/ocr";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { closeStartGate, startGatePath } from "@genesiscz/utils/process/start-gate";
 import transcriptCuts from "@genesiscz/utils/recording-editor/__fixtures__/transcript-cuts.json";
 import transcriptWordsFixture from "@genesiscz/utils/recording-editor/__fixtures__/transcript-words.json";
 import { RecordingEditor } from "@genesiscz/utils/recording-editor/editor";
@@ -1182,4 +1190,146 @@ test("shutdown prevents a worker timer from starting another recording during fi
         await shutdown;
         await engine.shutdown();
     }
+});
+
+describe("movies.record() takes the options of tools recorder start", () => {
+    /** A fake `tools recorder start`: the CLI's own flag parse, then a live movie entry, as the real one makes. */
+    function fakeRecorder() {
+        const started: StartRequest[] = [];
+        const servers: LiveRecordingServer[] = [];
+        const start: MovieRecorderStart = (args) => {
+            expect(args.slice(0, 2)).toEqual(["recorder", "start"]);
+            const request = parseStartFlags(readStartArgs(args.slice(2)));
+            started.push(request);
+            servers.push(
+                new LiveRecordingServer({
+                    id: `movie-start-${process.pid}-${started.length}`,
+                    kind: "movie",
+                    title: request.title ?? "Screen recording",
+                    folder: join(mkdtempSync(join(tmpdir(), "movie-start-")), `video-${started.length}`),
+                    control: new SettingsControl(),
+                })
+            );
+        };
+        const close = () => {
+            for (const server of servers.splice(0)) {
+                server.close();
+            }
+        };
+        return { start, started, close };
+    }
+
+    test("an area, the idle rate, the threshold, the countdown, the cursor, the shortcuts and the microphone reach the recorder", async () => {
+        const fake = fakeRecorder();
+        const { movies } = (await new MoviesToolset(fake.start).load(ctx)) as {
+            movies: { record(options: unknown): Promise<{ folder?: string }> };
+        };
+
+        try {
+            const recording = await movies.record({
+                region: "10,20,300,200",
+                fps: 30,
+                idleFps: 1,
+                threshold: 2.5,
+                countdown: 4,
+                systemCursor: true,
+                shortcuts: false,
+                audio: ["mic"],
+                micDevice: "BuiltInMicrophoneDevice",
+                excludeWindowIds: [41, 42],
+                title: "Area demo",
+                maxSeconds: 90,
+                controls: false,
+                indicator: false,
+            });
+            expect(recording.folder).toContain("/video-1");
+            expect(fake.started).toHaveLength(1);
+            expect(fake.started[0]).toMatchObject({
+                target: { kind: "region", x: 10, y: 20, width: 300, height: 200 },
+                fps: 30,
+                idleFps: 1,
+                threshold: 2.5,
+                countdownSeconds: 4,
+                systemCursor: true,
+                shortcuts: false,
+                audio: ["mic"],
+                micDevice: "BuiltInMicrophoneDevice",
+                excludeWindowIds: [41, 42],
+                title: "Area demo",
+                maxSeconds: 90,
+                panel: false,
+                indicator: false,
+            });
+            expect(fake.started[0].startGate).toEndWith(".gate");
+
+            // countdown: true is the picker's 3 s; nothing named records the screen in use.
+            await movies.record({ countdown: true });
+            expect(fake.started[1]).toMatchObject({ countdownSeconds: DEFAULT_COUNTDOWN_SECONDS, target: undefined });
+        } finally {
+            fake.close();
+        }
+    });
+
+    test("an option the CLI would refuse is refused before anything starts, with the CLI's message", async () => {
+        const fake = fakeRecorder();
+        const { movies } = (await new MoviesToolset(fake.start).load(ctx)) as {
+            movies: { record(options: unknown): Promise<unknown> };
+        };
+        // The schema check throws at the call, the CLI's parse inside the promise: both must refuse.
+        const record = (options: unknown) => Promise.resolve().then(() => movies.record(options));
+
+        await expect(record({ threshold: 120 })).rejects.toThrow("threshold");
+        await expect(record({ countdown: 11 })).rejects.toThrow("countdown");
+        await expect(record({ idleFps: 0 })).rejects.toThrow("idleFps");
+        await expect(record({ region: "10,20,300" })).rejects.toThrow("--region takes x,y,width,height");
+        await expect(record({ micDevice: "BuiltInMicrophoneDevice" })).rejects.toThrow(
+            "--mic-device needs --audio mic"
+        );
+        expect(fake.started).toHaveLength(0);
+        expect(() => parseStartFlags(readStartArgs(["--countdown", "2.5"]))).toThrow(
+            "--countdown takes a whole number from 1 to 10"
+        );
+        expect(() => parseStartFlags(readStartArgs(["--window", "12,x"]))).toThrow("--window takes CG window ids");
+    });
+
+    test("describe() lists every start option with its limits", () => {
+        const docs = renderDocs(moviesApi);
+        const line = docs.split("\n").find((text) => text.includes("movies.record(")) ?? "";
+
+        for (const field of [
+            "region?: string",
+            "idleFps?: number (0.1–5)",
+            "threshold?: number (0–100)",
+            "countdown?: boolean | number (1–10)",
+            "systemCursor?: boolean",
+            "shortcuts?: boolean",
+            "micDevice?: string",
+            "excludeWindowIds?: number (>0)[]",
+            "display?: number (0–16)",
+        ]) {
+            expect(line).toContain(field);
+        }
+    });
+
+    test("the countdown runs after the slow part and before the start gate, so a caller that gave up still cancels", async () => {
+        const gates = mkdtempSync(join(tmpdir(), "countdown-gate-"));
+        const gate = startGatePath(gates);
+        expect(await closeStartGate(gate)).toEqual({ status: "cancelled" });
+        const order: string[] = [];
+
+        await expect(
+            recordVideo({
+                target: { kind: "display", screenIndex: 0 },
+                startGate: gate,
+                countdownSeconds: 2,
+                prepare: async () => {
+                    order.push("prepare");
+                },
+                countdown: async (seconds) => {
+                    order.push(`countdown ${seconds}`);
+                },
+            })
+        ).rejects.toBeInstanceOf(RecordingStartCancelled);
+        expect(order).toEqual(["prepare", "countdown 2"]);
+    });
 });

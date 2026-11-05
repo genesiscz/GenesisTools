@@ -7,10 +7,11 @@ All three edit one file, `edit.json`, so each sees the others' changes.
 ## Commands
 
 ```bash
-tools recorder start [--audio system,mic] [--title T] [--max-seconds N]
+tools recorder start [--audio system,mic] [--mic-device UID] [--title T] [--max-seconds N]
                      [--display I | --window IDS | --app NAME | --region X,Y,W,H]
-                     [--fps N] [--idle-fps N] [--threshold PCT] [--camera] [--exclude-window-ids IDS]
-                     [--system-cursor] [--no-controls] [--no-indicator] [--open] [--json]
+                     [--fps N] [--idle-fps N] [--threshold PCT] [--countdown [S]] [--camera]
+                     [--exclude-window-ids IDS] [--system-cursor] [--no-shortcuts] [--no-controls]
+                     [--no-indicator] [--open] [--json]
 tools recorder demo <script.json | -> [--no-export]  # a finished demo from a JSON script of steps (below)
 tools recorder stop|pause|resume|status [id]     # the newest live recording, or the id given
 tools recorder mark <label> [id]                 # a marker at this moment (a movie, frames or meeting recording); the editor and movie.markers() show it
@@ -193,6 +194,13 @@ stop, pause and mark keys" is on. `GenesisTools --recorder --picker` opens it; w
 
 An area is `--region x,y,width,height` in global screen points from the top-left corner (CoreGraphics), recorded in
 ax-tool's region mode. `--idle-fps` and `--threshold` reach the capture; without them a movie keeps one rate.
+`--countdown [seconds]` (1 to 10, bare 3) counts down on screen and on stderr before the recording starts, as the
+picker does; it runs after ax-tool is ready, so the last second is the start.
+
+The flags, their limits and their parse live once in `lib/start-options.ts`: `tools recorder start` declares them
+there, and `movies.record()` takes the same options in camelCase (`region`, `idleFps`, `threshold`, `countdown`,
+`systemCursor`, `shortcuts`, `micDevice`, `excludeWindowIds`, …), writes them as those flags and runs the same parse
+before it starts the CLI, so a wrong value fails in the REPL with the CLI's message.
 
 ## Camera bubble
 
@@ -281,6 +289,7 @@ await m.polish();                           // removeIdle, autoZoom, normalize, 
 await m.spotlight({ from: 2, to: 6, rect: { x: 0.5, y: 0, width: 0.5, height: 0.5 } });  // dims all but the rect
 await m.undo();                             // { undone: ["redact"], stepsLeft, … }
 const r = await movies.record({ maxSeconds: 30, audio: ["system"] }); /* … */ const movie = await r.stop();
+const area = await movies.record({ region: "0,0,1280,800", idleFps: 1, threshold: 1, countdown: 3 });
 ```
 
 `movies.record()` starts `tools recorder start` in its own process and waits up to 120 s for it to record. The two race

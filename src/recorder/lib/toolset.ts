@@ -75,6 +75,7 @@ import { copyRecording, revealRecording, trashRecording } from "./quick-actions"
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./review";
 import { findOnScreen, type ScreenHit } from "./screen-search";
 import { hostOpenEditor, hostSheet, hostStill } from "./service-client";
+import { parseStartFlags, type RecordOptions, readStartArgs, recordOptionsSchema, startArgsOf } from "./start-options";
 
 const { log } = logger.scoped("recorder-toolset");
 
@@ -102,31 +103,11 @@ const zoomSchema = z
         lane: z.string().optional(),
     })
     .strict();
-const recordSchema = z
-    .object({
-        audio: z.array(z.enum(["system", "mic"])).optional(),
-        title: z.string().optional(),
-        maxSeconds: z
-            .number()
-            .min(1)
-            .max(4 * 60 * 60)
-            .optional(),
-        display: z.number().int().min(0).optional(),
-        app: z.string().optional(),
-        window: z.array(z.number().int()).optional(),
-        fps: z.number().min(1).max(120).optional(),
-        controls: z.boolean().optional(),
-        /** The red border around what is recorded (never in the movie). */
-        indicator: z.boolean().optional(),
-        /** Records the camera beside the screen (camera.mov); the recorder face records it, the edit draws the bubble. */
-        camera: z.boolean().optional(),
-    })
-    .strict();
 
 const demoParamsSchema = z
     .object({
         title: z.string().optional(),
-        record: recordSchema.optional(),
+        record: recordOptionsSchema.optional(),
         steps: z
             .array(
                 z.object({
@@ -990,10 +971,10 @@ export const moviesApi = defineApi({
         }),
         defineMethod({
             name: "record",
-            params: recordSchema,
+            params: recordOptionsSchema,
             result: z.unknown(),
             resultName: "MovieRecording",
-            doc: "Starts a movie recording of the main display (or display, app, window) in its own process.",
+            doc: `Starts a movie recording in its own process: the screen in use (it follows the pointer), or display (an index), app, window (CG ids) or region ("x,y,width,height" in points). The options are the flags of ${toolCommand("recorder start")} with the same limits: fps, idleFps (the rate while nothing moves), threshold (the % that must change to leave it), countdown (seconds on screen before it records; true is 3), systemCursor, shortcuts (false: no keys overlay), micDevice (with audio: ["mic"]), excludeWindowIds, camera (needs the menu bar recorder running), controls, indicator, maxSeconds, title.`,
             effect: "reversible",
         }),
         defineMethod({
@@ -1974,50 +1955,28 @@ export class MovieRecording {
     }
 }
 
-/** Starts `tools recorder start` in its own process (a REPL reset must not end a recording) and waits for its entry. */
-async function record(options: z.infer<typeof recordSchema>, ctx?: ToolsetContext): Promise<MovieRecording> {
+/** How `movies.record()` starts `tools recorder start <args>`: detached, so a REPL reset does not end the recording. */
+export type MovieRecorderStart = (args: string[]) => void;
+
+const startDetached: MovieRecorderStart = (args) => {
+    spawnToolDetached(args, { reparent: true });
+};
+
+/** Starts `tools recorder start` in its own process and waits for its entry. */
+async function record({
+    options,
+    ctx,
+    start = startDetached,
+}: {
+    options: RecordOptions;
+    ctx?: ToolsetContext;
+    start?: MovieRecorderStart;
+}): Promise<MovieRecording> {
+    const flags = startArgsOf(options);
+    // The CLI's own parse, here: the child runs detached, so a refusal there would only show as a start that timed out.
+    parseStartFlags(readStartArgs(flags));
     const before = new Set(listLiveRecordings().map((entry) => entry.id));
-    const args = ["recorder", "start"];
-
-    if (options.audio?.length) {
-        args.push("--audio", options.audio.join(","));
-    }
-
-    if (options.title) {
-        args.push("--title", options.title);
-    }
-
-    if (options.maxSeconds !== undefined) {
-        args.push("--max-seconds", String(options.maxSeconds));
-    }
-
-    if (options.display !== undefined) {
-        args.push("--display", String(options.display));
-    }
-
-    if (options.app) {
-        args.push("--app", options.app);
-    }
-
-    if (options.window?.length) {
-        args.push("--window", options.window.join(","));
-    }
-
-    if (options.fps !== undefined) {
-        args.push("--fps", String(options.fps));
-    }
-
-    if (options.controls === false) {
-        args.push("--no-controls");
-    }
-
-    if (options.indicator === false) {
-        args.push("--no-indicator");
-    }
-
-    if (options.camera) {
-        args.push("--camera");
-    }
+    const args = ["recorder", "start", ...flags];
 
     // The recorder passes this gate right before it records; when the wait below ends first, it closes the gate, so a
     // recorder that starts later records nothing instead of running with no one to stop it.
@@ -2027,7 +1986,7 @@ async function record(options: z.infer<typeof recordSchema>, ctx?: ToolsetContex
     const gate = startGatePath(gates);
     args.push("--start-gate", gate);
     log.info({ args }, "movie recording requested");
-    spawnToolDetached(args, { reparent: true });
+    start(args);
     const outcome = await awaitStart({
         gate,
         find: () =>
@@ -2070,10 +2029,10 @@ async function record(options: z.infer<typeof recordSchema>, ctx?: ToolsetContex
 const markerAnswer = z.object({ atMs: z.number() });
 
 /** The demo driver on a real movie recording: `tools recorder start` in its own process, the edit, the export. */
-export function movieDemoDriver(options: z.infer<typeof recordSchema>, ctx?: ToolsetContext): DemoDriver {
+export function movieDemoDriver(options: RecordOptions, ctx?: ToolsetContext): DemoDriver {
     return {
         async start() {
-            const recording = await record(options, ctx);
+            const recording = await record({ options, ctx });
             return {
                 mark: async (label: string) => markerAnswer.parse(await recording.mark(label)),
                 stop: async () => {
@@ -2130,12 +2089,17 @@ async function recordDemo(options: z.input<typeof demoParamsSchema> & { steps: D
 export class MoviesToolset extends ReplToolset {
     readonly api = moviesApi;
 
+    /** `start` is how record() starts `tools recorder start`; a test passes a fake recorder. */
+    constructor(private readonly start: MovieRecorderStart = startDetached) {
+        super();
+    }
+
     async bootstrap(ctx: ToolsetContext): Promise<Record<string, unknown>> {
         return {
             movies: {
                 list: (options: { limit?: number } = {}) => listLibrary().slice(0, options.limit ?? 20),
                 open: (recording: string) => serviceRoutedMovie(new Movie(recording, ctx), movieMethods),
-                record: (options: z.infer<typeof recordSchema> = {}) => record(options, ctx),
+                record: (options: RecordOptions = {}) => record({ options, ctx, start: this.start }),
                 demo: (options: z.input<typeof demoParamsSchema> & { steps: DemoStep[] }) => recordDemo(options, ctx),
                 search: (text: string) => searchLibrary(text),
             },

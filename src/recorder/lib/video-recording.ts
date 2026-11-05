@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { runCountdown } from "@app/control/lib/peekaboo";
 import { cursorTrackPath, ffmpegSegmentJoiner, nativeSegmentRecorder } from "@app/control/lib/recording-native";
 import { RecordingSession, type RecordingSessionEvent } from "@app/control/lib/recording-session";
 import { SessionRecorderControl } from "@app/control/lib/recording-session-control";
@@ -18,11 +19,9 @@ import {
 } from "@genesiscz/utils/screen-recorder/library";
 import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { CAMERA_MOVIE } from "./library";
+import { VIDEO_RECORDING_MAX_SECONDS } from "./start-options";
 
 const { log } = logger.scoped("recorder-video");
-
-/** The longest video recording `tools recorder start` takes: four hours, in 180 s segments. */
-export const VIDEO_RECORDING_MAX_SECONDS = 4 * 60 * 60;
 
 export interface VideoRecordingOptions {
     target: RecordingTarget;
@@ -55,7 +54,16 @@ export interface VideoRecordingOptions {
     startGate?: string;
     /** The slow part before the gate; default ax-tool's build, which a fresh checkout does first. */
     prepare?: () => Promise<unknown>;
+    /** Seconds counted down on screen right before it records (after the slow part), as the capture picker does. */
+    countdownSeconds?: number;
+    /** Shows the countdown; default an overlay near the pointer and a line a second on stderr. */
+    countdown?: (seconds: number) => Promise<void>;
 }
+
+const showCountdown = (seconds: number) =>
+    runCountdown(seconds, {
+        text: { who: "recorder", line: "switch to what you record", overlay: "switch to what you record" },
+    });
 
 /** The caller that started this recording gave up waiting before it could start (its start gate was closed). */
 export class RecordingStartCancelled extends Error {
@@ -95,12 +103,24 @@ async function writeManifest(folder: string, manifest: RecordingManifest): Promi
  */
 export async function recordVideo(options: VideoRecordingOptions): Promise<VideoRecordingResult> {
     const gate = options.startGate;
+    const countdownSeconds = options.countdownSeconds ?? 0;
 
-    if (!gate) {
+    if (!gate && countdownSeconds === 0) {
         return recordPassed(options);
     }
 
     await (options.prepare ?? ensureBinaryAsync)();
+
+    // After the slow part, so the last second of the countdown is the start; before the gate, so a caller that gives
+    // up during it still cancels the start.
+    if (countdownSeconds > 0) {
+        log.info({ seconds: countdownSeconds }, "counting down before the recording");
+        await (options.countdown ?? showCountdown)(countdownSeconds);
+    }
+
+    if (!gate) {
+        return recordPassed(options);
+    }
 
     if ((await passStartGate(gate)).status === "cancelled") {
         log.warn({ gate }, "the caller gave up waiting before the recording could start; not recording");
