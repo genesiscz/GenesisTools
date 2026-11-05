@@ -278,16 +278,23 @@ describe("android", () => {
 
 it("streams verbose build output without the captured-output ceiling", async () => {
     let bytes = 0;
+    let active = 0;
+    let peak = 0;
     const result = await boundedCommand({
         command: [process.execPath, "-e", "process.stdout.write('x'.repeat(5 * 1024 * 1024))"],
         timeoutMs: 10_000,
         streamOnly: true,
-        onStdout: (chunk) => {
+        onStdout: async (chunk) => {
+            active++;
+            peak = Math.max(peak, active);
+            await Bun.sleep(1);
             bytes += chunk.byteLength;
+            active--;
         },
     });
     expect(result.status).toBe(0);
     expect(bytes).toBe(5 * 1024 * 1024);
+    expect(peak).toBe(1);
     expect(result.stdout.length).toBeLessThanOrEqual(16_384);
 });
 
@@ -308,4 +315,18 @@ it("quotes a deep link as one remote shell argument before adb receives it", asy
     } finally {
         spy.mockRestore();
     }
+});
+
+it("retains diagnostic text before a separate final write", async () => {
+    const result = await boundedCommand({
+        command: [
+            process.execPath,
+            "-e",
+            "process.stdout.write('useful error'); setTimeout(() => process.stdout.write('\\n'), 50)",
+        ],
+        timeoutMs: 10_000,
+        streamOnly: true,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("useful error\n");
 });
