@@ -1,15 +1,24 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
+import { jsDescription } from "../mcp/server";
 import { ReplEngine, resultMessage } from "./engine";
+import { parseToolsetList, toolsetCliHelp } from "./toolsets";
 
 // The MCP server renders a js_add_node_module_dir result with this. A timeout or a worker exit
 // reports through `error` with an EMPTY `text`, so reading `text` alone answered those failures
 // with a blank string — an isError response carrying no reason at all.
+it("CLI help renders registered descriptor methods and handles", () => {
+    const help = toolsetCliHelp();
+    expect(help).toContain("recorder.start(options?:");
+    expect(help).toContain("recording.stop(");
+    expect(help).toContain("editor.open(source: string)");
+});
+
 describe("resultMessage", () => {
     it("returns the output on success", () => {
         expect(resultMessage({ ok: true, text: "module directory registered", error: undefined })).toBe(
@@ -101,7 +110,7 @@ describe("ReplEngine", () => {
 
     it("reset drops every binding", async () => {
         await engine.run("let keep = 1");
-        engine.reset();
+        await engine.reset();
         const result = await engine.run("typeof keep");
         expect(result.text).toBe("undefined");
     });
@@ -182,25 +191,135 @@ describe("bounded command ownership", () => {
     });
 });
 
-it("worker resources reset before preparing a queued turn after timeout", async () => {
-    class OwnedEngine extends ReplEngine {
-        generation = 0;
-        protected override onWorkerStopped = () => {
-            this.generation++;
-        };
-        protected override prepareCode = (code: string) => code.replace("EPOCH", String(this.generation));
-    }
-    const engine = new OwnedEngine();
+const FIXTURE = join(import.meta.dir, "__fixtures__", "counter-toolset.ts");
+const PNG_1X1 = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64"
+);
+
+describe("toolsets", () => {
+    it("the shared loader validates toolset arguments before invoking their implementation", async () => {
+        const engine = new ReplEngine({ toolsets: ["editor"] });
+        try {
+            const result = await engine.run("editor.open({ recording: 'x' })");
+            expect(result.ok).toBe(false);
+            expect(result.error).toContain("editor.open(source: string)");
+            expect(result.error).not.toContain('The "path" property');
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
+    it("preload once per spawn outside the turn timeout, again after a respawn, and dispose on reset", async () => {
+        const log = join(mkdtempSync(join(tmpdir(), "node-repl-toolset-")), "dispose.log");
+        // The fixture's bootstrap sleeps 200 ms; a 100 ms turn budget still passes because preload has its own.
+        const engine = new ReplEngine({ toolsets: [`${FIXTURE}#CounterToolset`], defaultTimeoutMs: 100 });
+        try {
+            const first = await engine.run("counter.pid");
+            expect(first.ok).toBe(true);
+            await engine.run(`counter.logTo(${SafeJSON.stringify(log)})`);
+            const scratch = (await engine.run("counter.scratch")).text.replace(/'/g, "");
+            expect(existsSync(scratch)).toBe(true);
+            expect((await engine.run("globalThis.counterBootstraps")).text).toBe("1");
+            expect((await engine.run("globalThis.counterBootstraps")).text).toBe("1");
+
+            await engine.reset();
+            expect(readFileSync(log, "utf8")).toBe("disposed\n");
+            expect(existsSync(scratch)).toBe(false);
+            const after = await engine.run("[counter.pid, globalThis.counterBootstraps]");
+            expect(after.ok).toBe(true);
+            expect(after.text).not.toContain(first.text);
+            expect(after.text).toContain("1 ]");
+
+            const overrun = await engine.run("while (true) {}", 50);
+            expect(overrun.ok).toBe(false);
+            const respawned = await engine.run("globalThis.counterBootstraps");
+            expect(respawned.text).toBe("1");
+        } finally {
+            await engine.shutdown();
+        }
+    }, 20_000);
+
+    it("a preload that throws answers the turn with the reason and retries on the next turn", async () => {
+        const engine = new ReplEngine({ toolsets: [`${FIXTURE}#BrokenToolset`] });
+        try {
+            const result = await engine.run("1 + 1");
+            expect(result.ok).toBe(false);
+            expect(result.error).toContain("toolset preload failed: the native backend is missing");
+            expect((await engine.run("1 + 1")).error).toContain("toolset preload failed");
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
+    it("help() lists the loaded toolsets from their descriptors and show() returns an image", async () => {
+        const engine = new ReplEngine({ toolsets: [`${FIXTURE}#CounterToolset`] });
+        try {
+            const list = await engine.run("help()");
+            expect(list.text).toContain("counter: Counts the preloads of this worker. counter.logTo(path)");
+            const docs = await engine.run('help("counter")');
+            expect(docs.text).toContain("- counter.logTo(path: string) → unknown [reversible]");
+            expect((await engine.run('help("nope")')).error).toContain('No toolset "nope" is loaded');
+
+            const shown = await engine.run(
+                `await show(Buffer.from(${SafeJSON.stringify(PNG_1X1.toString("base64"))}, "base64")); "ok"`
+            );
+            expect(shown.ok).toBe(true);
+            expect(shown.images.map((image) => image.mimeType)).toEqual(["image/png"]);
+            expect(existsSync(shown.images[0].path)).toBe(true);
+            const path = shown.images[0].path;
+            const byPath = await engine.run(
+                `await show(${SafeJSON.stringify(path)}); await show({ path: ${SafeJSON.stringify(path)} })`
+            );
+            expect(byPath.images).toHaveLength(2);
+            expect((await engine.run('await show(Buffer.from("not an image"))')).error).toContain("not a PNG");
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
+    it("an engine without toolsets still has help and show", async () => {
+        const engine = new ReplEngine();
+        try {
+            expect((await engine.run("help()")).text).toContain("No toolsets are loaded");
+        } finally {
+            engine.dispose();
+        }
+    });
+
+    it("the registry refuses an unknown toolset and names the known ones", () => {
+        expect(() => parseToolsetList("computer,nope")).toThrow("Unknown toolset nope; known: computer");
+        expect(parseToolsetList(" computer , computer ")).toEqual(["computer"]);
+    });
+
+    it("the js description lists each preloaded toolset's one line", () => {
+        expect(jsDescription([])).not.toContain("Preloaded globals");
+        expect(jsDescription(["counter: Counts. counter.logTo(path)"])).toContain(
+            "Preloaded globals, built once per worker (help(name) for the full API):\n- counter: Counts. counter.logTo(path)"
+        );
+    });
+});
+
+it("reset interrupts an active turn and cancels turns queued before it", async () => {
+    const engine = new ReplEngine();
+    await engine.run("1");
+    const running = engine.run("await new Promise(() => {})", 60000);
+    const queued = engine.run("globalThis.shouldNotRun = true");
+    let reset: Promise<void> | undefined;
     try {
-        const first = engine.run("while (true) {}", 50);
-        const next = engine.run("EPOCH");
-        expect((await first).ok).toBe(false);
-        const result = await next;
-        expect(result.ok).toBe(true);
-        expect(result.text).toBe("1");
-        expect(engine.generation).toBe(1);
+        reset = engine.reset();
+        await Promise.race([
+            reset,
+            Bun.sleep(500).then(() => {
+                throw new Error("reset waited for the active turn");
+            }),
+        ]);
+        expect((await running).ok).toBe(false);
+        expect((await queued).ok).toBe(false);
+        expect((await engine.run("typeof globalThis.shouldNotRun")).text).toContain("undefined");
     } finally {
         engine.dispose();
+        await reset;
+        engine.dispose();
     }
-    expect(engine.generation).toBe(2);
 });
