@@ -227,6 +227,16 @@ describe("the parsed journal", () => {
         expect((await loadPins({ readOnly: true, provider: "codex" })).get("shared")?.account).toBe("work");
     });
 
+    test("mutating a returned pin and its host cannot change the cached journal", async () => {
+        await recordPin(pin({ sessionId: "s1", account: "work", host: { kind: "t3", id: "original" } }));
+        const changed = (await loadPins({ readOnly: true })).get("s1")!;
+        changed.account = "personal";
+        changed.host!.id = "changed";
+        const next = (await loadPins({ readOnly: true })).get("s1");
+        expect(next?.account).toBe("work");
+        expect(next?.host?.id).toBe("original");
+    });
+
     test("a caller that changes its map does not change the next answer", async () => {
         await recordPin(pin({ sessionId: "s1" }));
         const first = await loadPins({ readOnly: true });
