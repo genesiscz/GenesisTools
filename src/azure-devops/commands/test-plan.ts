@@ -92,14 +92,21 @@ function collect(value: string, previous: string[]): string[] {
 }
 
 /** Prints a read result as markdown (and saves the snapshot) or as JSON. */
-export async function show<T>(
-    options: FormatOptions,
-    subcommand: string[],
-    data: T,
-    markdown: (data: T) => string,
-    snapshot?: SnapshotName,
-    writeSnapshot: typeof saveSnapshot = saveSnapshot
-): Promise<void> {
+export async function show<T>({
+    options,
+    subcommand,
+    data,
+    markdown,
+    snapshot,
+    writeSnapshot = saveSnapshot,
+}: {
+    options: FormatOptions;
+    subcommand: string[];
+    data: T;
+    markdown: (data: T) => string;
+    snapshot?: SnapshotName;
+    writeSnapshot?: typeof saveSnapshot;
+}): Promise<void> {
     const format = pick(options.format, FORMATS, "--format", subcommand);
 
     if (!format) {
@@ -258,7 +265,7 @@ export function registerTestPlanCommand(program: Command, caseService: typeof se
     ).action(async (options: FormatOptions & { name?: string; owner?: string; active?: boolean }) => {
         const { plans } = service();
         const list = await plans.listPlans({ name: options.name, owner: options.owner, activeOnly: options.active });
-        await show(options, ["testplan", "list"], list, renderPlanList);
+        await show({ options, subcommand: ["testplan", "list"], data: list, markdown: renderPlanList });
     });
 
     withSave(
@@ -270,7 +277,13 @@ export function registerTestPlanCommand(program: Command, caseService: typeof se
         const { plans, org } = service();
         const ref = parsePlanRef(input, org);
         const plan = await plans.planDetails(ref);
-        await show(options, ["testplan", "show"], plan, renderPlan, `plan-${plan.id}`);
+        await show({
+            options,
+            subcommand: ["testplan", "show"],
+            data: plan,
+            markdown: renderPlan,
+            snapshot: `plan-${plan.id}`,
+        });
     });
 
     withFormat(
@@ -300,7 +313,7 @@ export function registerTestPlanCommand(program: Command, caseService: typeof se
             planId: positiveInt(options.plan, "--plan"),
             top: positiveInt(options.top, "--top"),
         });
-        await show(options, ["testplan", "search"], hits, renderSearch);
+        await show({ options, subcommand: ["testplan", "search"], data: hits, markdown: renderSearch });
     });
 
     withConfirm(withPlanFields(testplan.command("create").description("Create a test plan"))).action(
@@ -383,7 +396,13 @@ function registerSuiteCommands(testplan: Command): void {
         const { plans, org } = service();
         const ref = suiteRefOf(planArg, suiteArg, org);
         const details = await plans.suiteDetails(ref);
-        await show(options, ["testplan", "suite", "show"], details, renderSuite, `suite-${ref.planId}-${ref.suiteId}`);
+        await show({
+            options,
+            subcommand: ["testplan", "suite", "show"],
+            data: details,
+            markdown: renderSuite,
+            snapshot: `suite-${ref.planId}-${ref.suiteId}`,
+        });
     });
 
     withConfirm(
@@ -544,7 +563,7 @@ function registerPointCommands(testplan: Command): void {
         const points = await plans.points(suiteRefOf(planArg, suiteArg, org), {
             testCaseId: positiveInt(options.case, "--case"),
         });
-        await show(options, ["testplan", "points"], points, renderPoints);
+        await show({ options, subcommand: ["testplan", "points"], data: points, markdown: renderPoints });
     });
 
     withConfirm(
@@ -606,7 +625,13 @@ function registerCaseCommands(testplan: Command, caseService: typeof service): v
         const { plans, org } = service();
         const id = resolveWorkItemId(input, org);
         const details = await plans.testCase(id);
-        await show(options, ["testplan", "case", "show"], details, renderTestCase, `case-${id}`);
+        await show({
+            options,
+            subcommand: ["testplan", "case", "show"],
+            data: details,
+            markdown: renderTestCase,
+            snapshot: `case-${id}`,
+        });
     });
 
     withConfirm(

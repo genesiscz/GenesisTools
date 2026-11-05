@@ -105,11 +105,39 @@ describe("refs", () => {
             writes.push(`${name}:${markdown}`);
             return "snapshot";
         };
-        await show({ format: "md" }, [], { id: 1 }, () => "rendered", "plan-1", save);
-        await show({ format: "json" }, [], { id: 1 }, () => "rendered", "plan-1", save);
+        await show({
+            options: { format: "md" },
+            subcommand: [],
+            data: { id: 1 },
+            markdown: () => "rendered",
+            snapshot: "plan-1",
+            writeSnapshot: save,
+        });
+        await show({
+            options: { format: "json" },
+            subcommand: [],
+            data: { id: 1 },
+            markdown: () => "rendered",
+            snapshot: "plan-1",
+            writeSnapshot: save,
+        });
         expect(writes).toEqual([]);
-        await show({ format: "md", save: true }, [], { id: 1 }, () => "rendered", "plan-1", save);
-        await show({ format: "json", save: true }, [], { id: 1 }, () => "rendered", "plan-1", save);
+        await show({
+            options: { format: "md", save: true },
+            subcommand: [],
+            data: { id: 1 },
+            markdown: () => "rendered",
+            snapshot: "plan-1",
+            writeSnapshot: save,
+        });
+        await show({
+            options: { format: "json", save: true },
+            subcommand: [],
+            data: { id: 1 },
+            markdown: () => "rendered",
+            snapshot: "plan-1",
+            writeSnapshot: save,
+        });
         expect(writes).toEqual(["plan-1:rendered", "plan-1:rendered"]);
     });
     test("reads a plan and suite from a pasted URL, and refuses another organization", () => {
