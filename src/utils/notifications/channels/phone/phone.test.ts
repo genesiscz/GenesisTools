@@ -143,6 +143,32 @@ describe("phone channel", () => {
         expect(store.devices).toEqual({});
     });
 
+    test("an old transport response cannot replace or remove a newly registered route", async () => {
+        for (const result of [{ ok: false, reason: "gone", gone: true } as const, { ok: true } as const]) {
+            const original = device({ kind: "apns", token: "old", environment: "production" });
+            const store = memoryPhoneDeviceStore({ "phone-1": original });
+            let release!: (result: PushResult) => void;
+            let started!: () => void;
+            const entered = new Promise<void>((resolve) => { started = resolve; });
+            let calls = 0;
+            const send = async (): Promise<PushResult> => {
+                calls++;
+                if (result.ok && calls === 1) {
+                    return { ok: false, reason: "wrong environment", otherEnvironment: true };
+                }
+                started();
+                return new Promise((resolve) => { release = resolve; });
+            };
+            const channel = createPhoneChannel({ devices: store, transports: { apns: { send }, simctl: { send } }, keys: async () => macKeys, presence: AWAY });
+            const pending = channel.post(decisionEvent, { enabled: true });
+            await entered;
+            store.devices["phone-1"] = device({ kind: "apns", token: "new", environment: "production" });
+            release(result);
+            await pending;
+            expect(store.devices["phone-1"].route).toEqual({ kind: "apns", token: "new", environment: "production" });
+        }
+    });
+
     test("retract sends a silent push that names the notice, to every device", async () => {
         const store = memoryPhoneDeviceStore({
             "phone-1": device({ kind: "simctl", udid: "SIM-1" }),
