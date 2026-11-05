@@ -1297,7 +1297,10 @@ export async function widgetSnapshot({
                 continue;
             }
             if (!recorded.has(provider)) {
-                recorded.set(provider, sources.dialogSessions?.(provider));
+                recorded.set(
+                    provider,
+                    await read("dialogSessions", () => sources.dialogSessions?.(provider), undefined, false)
+                );
             }
             if (recorded.get(provider)?.has(session.target.sessionId) === false) {
                 dialogBySession.set(session.key, []);
