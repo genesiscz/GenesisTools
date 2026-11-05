@@ -32,6 +32,7 @@ import type {
     TestSuiteDetails,
 } from "@app/azure-devops/lib/test-plans/types";
 import type { AzureConfig, JsonPatchOperation } from "@app/azure-devops/types";
+import { escapeWiqlValue } from "@app/azure-devops/wiql-builder";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
@@ -159,10 +160,6 @@ function flattenFields(entries: readonly Record<string, unknown>[] | undefined):
 /** `System.AssignedTo` in a list is `Name <mail>`; the name part reads better. */
 function personName(value: string | undefined): string | undefined {
     return value?.replace(/\s*<[^>]+>\s*$/, "") || undefined;
-}
-
-function escapeWiql(text: string): string {
-    return text.replace(/'/g, "''");
 }
 
 /**
@@ -384,7 +381,7 @@ export class TestPlans {
             const wiql =
                 "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project" +
                 ` AND [System.WorkItemType] = 'Test Case'` +
-                ` AND ([System.Title] CONTAINS '${escapeWiql(needle)}'${idClause})` +
+                ` AND ([System.Title] CONTAINS '${escapeWiqlValue(needle)}'${idClause})` +
                 " ORDER BY [System.ChangedDate] DESC";
             const ids = await this.rest.queryIds(wiql, top);
             const items = await this.rest.getWorkItems(ids, [F.title, F.state]);
