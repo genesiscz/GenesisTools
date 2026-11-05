@@ -30,7 +30,7 @@ final class CameraFeed: @unchecked Sendable {
 
     /// Nil when the edit has no camera, the movie is missing or has no video (logged).
     static func make(project: EditProject) async -> CameraFeed? {
-        guard let camera = project.camera, camera.show || !camera.hidden.isEmpty else { return nil }
+        guard let camera = project.camera else { return nil }
         let url = camera.movieURL(video: project.source.video)
         guard FileManager.default.fileExists(atPath: url.path) else {
             HubPerf.log("recorder: camera movie \(url.path) is missing; no bubble")
