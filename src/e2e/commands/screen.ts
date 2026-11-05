@@ -43,7 +43,11 @@ export function registerScreen(program: Command): void {
         .action(async (target: string, options: ScreenOptions) => {
             const project = await loadProject(options);
             const mobile = await loadMobileProject({
-                config: options.mobile ? resolve(options.mobile) : undefined,
+                config: options.mobile
+                    ? resolve(options.mobile)
+                    : project.config.runner.kind === "wdio" && project.config.runner.mobile
+                      ? resolve(project.dir, project.config.runner.mobile)
+                      : undefined,
                 cwd: project.dir,
             });
             const { bundleId } = iosApp(mobile);
