@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { type JobInfo, JobRegistry } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -21,18 +20,15 @@ import {
     type DisplayEntry,
     type DisplayMode,
     type DisplaySelection,
-    RecorderControl,
     type RecorderMethod,
     type RecorderSettings,
     type RecorderSettingsPatch,
-    type RecorderState,
     type RecorderStatus,
     RPC_ERRORS,
     RpcError,
     type SettingsAnswer,
     type StopAnswer,
 } from "./control";
-import { runRecordingFinish } from "./finish";
 import {
     type FrameNaming,
     FrameOutput,
@@ -42,8 +38,9 @@ import {
     ocrSinkFor,
 } from "./frame-output";
 import { RECORDING_MANIFEST, type RecordingManifest, recordingsLibraryDir } from "./library";
-import { LiveRecordingServer, liveRecordingId } from "./live";
-import { PieceCaptures, patchChange, type SessionCapture } from "./session";
+import { liveRecordingId } from "./live";
+import { FrameRecording } from "./recording";
+import { patchChange, type SessionCapture } from "./session";
 import { displayTarget, type PieceTarget, pickDisplayIds } from "./targets";
 import {
     type AudioTrack,
@@ -52,47 +49,9 @@ import {
     type CaptureResult,
     type DisplayInfo,
     type FrameRecorder,
-    type LiveCapture,
-    MAX_CAPTURE_SECONDS,
 } from "./types";
 
 const { log } = logger.scoped("screen-recorder-start");
-
-export interface ManagedRecordingOptions {
-    /** Readiness the caller already established, so a capture does not prepare the same recorder twice. */
-    readiness?: Promise<void>;
-    recorder: FrameRecorder;
-    session: ConstructorParameters<typeof LiveRecordingServer>[0];
-}
-
-export class ManagedRecording {
-    readonly live: LiveRecordingServer;
-    private readiness?: Promise<void>;
-
-    constructor(private readonly options: ManagedRecordingOptions) {
-        this.live = new LiveRecordingServer(options.session);
-        this.readiness = options.readiness;
-    }
-
-    ready(): Promise<void> {
-        this.readiness ??= this.options.recorder.available().then((available) => {
-            if (!available.ok) {
-                throw new CaptureError(
-                    "unavailable",
-                    `the ${this.options.recorder.id} recorder is not available: ${available.reason}`
-                );
-            }
-        });
-        return this.readiness;
-    }
-
-    async capture(...args: Parameters<FrameRecorder["capture"]>): ReturnType<FrameRecorder["capture"]> {
-        args[1]?.throwIfAborted();
-        await this.ready();
-        args[1]?.throwIfAborted();
-        return this.options.recorder.capture(...args);
-    }
-}
 
 export interface StartRecordingOptions {
     recorder: FrameRecorder;
@@ -176,48 +135,123 @@ function stamp(date: Date): string {
  * the change-aware frame recorder, sound when the recorder has it, controlled over the live recording socket like
  * every other recorder. Post-processing (moving the frames and tracks into place, the manifest) is one job.
  */
-export class LibraryRecording extends RecorderControl {
-    readonly kind = "library";
-    readonly methods = METHODS;
+export class LibraryRecording extends FrameRecording<number> {
     readonly id: string;
     readonly folder: string;
-    readonly startedAt = new Date();
-    private server?: LiveRecordingServer;
-    private session?: ManagedRecording;
-    private readonly jobs = new JobRegistry((event) => this.server?.emit("progress", { ...event }));
     private settings: RecorderSettings;
     private audio: AudioState;
-    private state: RecorderState = "recording";
     private chosen: number[] = [];
     private known: DisplayInfo[] = [];
-    /** The captures of the running piece (shared capture coordination). */
-    private readonly captures: PieceCaptures;
-    private readonly running: Map<number, SessionCapture>;
-    /** The length of the piece that starts now. */
-    private pieceSec = 0;
     private readonly pending: PendingFrame[] = [];
     private readonly tracks: Array<AudioTrack & { displayId: number; startedAtMs: number }> = [];
     private readonly warnings: string[] = [];
-
-    private stopRequested = false;
     private discarded = false;
     /** The folder was made by this recording's start; only then may discard move it to the trash. */
     private ownsFolder = false;
-    private readonly completion = Promise.withResolvers<StopAnswer>();
-    /** Settles once post-processing and the live server's cleanup have finished, whoever stopped the recording. */
-    readonly finished = this.completion.promise;
-    private wake?: () => void;
-    private loop?: Promise<void>;
-    private finishing?: { job: string; done: Promise<StopAnswer> };
     private readonly output: FrameOutput;
     private readonly flush: FrameFlush;
 
     constructor(private readonly options: StartRecordingOptions) {
-        super();
         // Two recordings started in one second must not share an id, a socket or a folder.
-        this.id = options.id ?? liveRecordingId("library", `${stamp(this.startedAt)}-${randomUUID()}`);
-        void this.finished.catch((error: unknown) => log.debug({ error, id: this.id }, "recording completion failed"));
-        this.folder = options.folder ?? recordingsLibraryDir(this.id);
+        const id = options.id ?? liveRecordingId("library", `${stamp(new Date())}-${randomUUID()}`);
+        const folder = options.folder ?? recordingsLibraryDir(id);
+        super({
+            kind: "library",
+            methods: METHODS,
+            recorder: options.recorder,
+            // start() checks the recorder's availability; the captures reuse that answer.
+            readiness: Promise.resolve(),
+            live: {
+                id,
+                title: options.title ?? id,
+                folder,
+                dir: options.liveDir,
+                displays: () => this.recordedDisplays(),
+            },
+            pieces: {
+                dir: join(folder, ".pieces"),
+                sec: options.pieceSec ?? 60,
+                maxMs: (options.maxDurationSec ?? 600) * 1000,
+                // Every capture records the sound, without the muted sources.
+                audioOwnership: "every",
+                request: () => ({
+                    activeFps: this.settings.activeFps,
+                    idleFps: this.settings.idleFps,
+                    thresholdPercent: this.settings.threshold,
+                    maxLongSidePx: this.settings.maxLongSide,
+                    heartbeatSec: this.settings.heartbeatSec || undefined,
+                }),
+                audio: () => {
+                    const sources = this.audio.sources.filter((source) => !this.audio.muted[source]);
+                    return sources.length > 0 ? { sources, micDeviceId: this.audio.micDevice } : undefined;
+                },
+                targets: () =>
+                    (options.recorder.supports.parallelCaptures ? this.chosen : this.chosen.slice(0, 1)).map(
+                        (displayId) => this.targetOf(displayId)
+                    ),
+                failures: {
+                    max: 3,
+                    pauseMs: 0,
+                    verdict: ({ outcome, error }) => {
+                        if (error !== undefined) {
+                            throw error;
+                        }
+
+                        return outcome && outcome.frames > 0 ? "recorded" : "failed";
+                    },
+                    gaveUp: () => this.warn("three captures in a row recorded nothing; the recording ends"),
+                },
+            },
+            whileStopping: "answered",
+            hooks: {
+                // Anything a piece throws ends the recording; the finish still keeps what it recorded.
+                onError: (error) => {
+                    log.error({ error, id }, "the library recording stopped on an error");
+                    this.warn(
+                        `the recording stopped on an error: ${error instanceof Error ? error.message : String(error)}`
+                    );
+                },
+                captures: {
+                    onFrame: (entry, frame) => this.onFrame(entry, frame),
+                    onResult: (entry, result) => this.onResult(entry, result),
+                    onError: (entry, error) => {
+                        const displayId = entry.startDisplayId;
+                        log.warn({ error, displayId }, "a capture of the library recording failed");
+
+                        if (!(error instanceof CaptureError && error.kind === "display-missing")) {
+                            this.warn(
+                                `display ${displayId}: ${error instanceof Error ? error.message : String(error)}`
+                            );
+                        }
+                    },
+                },
+            },
+            finish: {
+                kind: "finalize",
+                initial: 0,
+                capturesStep: "captures",
+                steps: [
+                    { name: "frames", run: (ctx) => this.keepFrames(ctx) },
+                    {
+                        name: "manifest",
+                        run: async (ctx) => {
+                            this.writeManifest();
+                            return ctx.state;
+                        },
+                    },
+                ],
+                answer: (frames, job) => ({
+                    state: "stopped",
+                    outcome: this.discarded ? "discarded" : "done",
+                    job,
+                    frames,
+                    notes: [...this.warnings],
+                }),
+                closeReason: () => "stopped",
+            },
+        });
+        this.id = id;
+        this.folder = folder;
         this.settings = {
             activeFps: options.fps ?? 2,
             idleFps: options.idleFps ?? 0.5,
@@ -233,47 +267,15 @@ export class LibraryRecording extends RecorderControl {
         this.audio = { sources, muted: { mic: false, system: false }, micDevice: options.audio?.micDeviceId };
         const frames = options.frames ?? {};
         this.flush = frames.flush ?? "finish";
-        this.captures = new PieceCaptures({
-            capture: (request, signal) => this.session!.capture(request, signal),
-            pieceDir: join(this.folder, ".pieces"),
-            request: () => ({
-                durationSec: this.pieceSec,
-                activeFps: this.settings.activeFps,
-                idleFps: this.settings.idleFps,
-                thresholdPercent: this.settings.threshold,
-                maxLongSidePx: this.settings.maxLongSide,
-                heartbeatSec: this.settings.heartbeatSec || undefined,
-            }),
-            // Every capture records the sound, without the muted sources.
-            audio: () => {
-                const sources = this.audio.sources.filter((source) => !this.audio.muted[source]);
-                return sources.length > 0 ? { sources, micDeviceId: this.audio.micDevice } : undefined;
-            },
-            audioOwnership: "every",
-            hooks: {
-                onFrame: (_entry, frame) => this.onFrame(_entry, frame),
-                onLive: (entry, live) => this.onLive(entry, live),
-                onResult: (entry, result) => this.onResult(entry, result),
-                onError: (entry, error) => {
-                    const displayId = entry.startDisplayId;
-                    log.warn({ error, displayId }, "a capture of the library recording failed");
-
-                    if (!(error instanceof CaptureError && error.kind === "display-missing")) {
-                        this.warn(`display ${displayId}: ${error instanceof Error ? error.message : String(error)}`);
-                    }
-                },
-            },
-        });
-        this.running = this.captures.running;
         this.output = new FrameOutput({
-            folder: this.folder,
+            folder,
             naming: frames.naming ?? "elapsed",
             format:
                 frames.format === "jpeg" ? { kind: "jpeg", quality: frames.jpegQuality ?? 0.75 } : { kind: "original" },
             convert: options.deps?.convert,
             ocr: {
                 settings: () => this.settings.ocr,
-                sink: ocrSinkFor(options.ocrSink ?? "sidecar", this.folder),
+                sink: ocrSinkFor(options.ocrSink ?? "sidecar", folder),
                 recognize: options.deps?.recognize,
                 onError: (error, path) => this.warn(`OCR failed for ${basename(path)}: ${String(error)}`),
             },
@@ -305,27 +307,7 @@ export class LibraryRecording extends RecorderControl {
         mkdirSync(this.folder);
         this.ownsFolder = true;
         mkdirSync(join(this.folder, "frames"));
-        // start() checked the recorder's availability above; the captures reuse that answer.
-        this.session = startRecording({
-            recorder,
-            readiness: Promise.resolve(),
-            session: {
-                id: this.id,
-                kind: this.kind,
-                title: this.options.title ?? this.id,
-                folder: this.folder,
-                displays: this.recordedDisplays(),
-                control: this,
-                dir: this.options.liveDir,
-            },
-        });
-        this.server = this.session.live;
-        this.loop = this.run();
-        void this.loop
-            .then(() => this.stop({ wait: false }))
-            .catch((error: unknown) => {
-                log.warn({ error, id: this.id }, "library recording automatic stop failed");
-            });
+        this.open();
         log.info({ id: this.id, displays: this.chosen, recorder: recorder.id }, "library recording started");
         return this;
     }
@@ -343,57 +325,12 @@ export class LibraryRecording extends RecorderControl {
 
     private warn(message: string): void {
         this.warnings.push(message);
-        this.server?.update({ warning: message });
+        this.update({ warning: message });
         log.warn({ id: this.id }, message);
     }
 
     private restartCaptures(): void {
         this.captures.abortAll();
-    }
-
-    private async run(): Promise<void> {
-        const maxMs = (this.options.maxDurationSec ?? 600) * 1000;
-        const pieceSec = Math.min(this.options.pieceSec ?? 60, MAX_CAPTURE_SECONDS);
-
-        try {
-            await this.capturePieces({ maxMs, pieceSec });
-        } catch (error) {
-            // Anything a piece throws ends the recording; the finish still keeps what it recorded.
-            log.error({ error, id: this.id }, "the library recording stopped on an error");
-            this.warn(`the recording stopped on an error: ${error instanceof Error ? error.message : String(error)}`);
-        }
-
-        this.stopRequested = true;
-    }
-
-    private async capturePieces({ maxMs, pieceSec }: { maxMs: number; pieceSec: number }): Promise<void> {
-        let failures = 0;
-
-        while (!this.stopRequested && Date.now() - this.startedAt.getTime() < maxMs) {
-            if (this.state === "paused") {
-                await new Promise<void>((resolve) => {
-                    const timer = setTimeout(resolve, Math.max(0, maxMs - (Date.now() - this.startedAt.getTime())));
-                    this.wake = () => {
-                        clearTimeout(timer);
-                        resolve();
-                    };
-                });
-                this.wake = undefined;
-                continue;
-            }
-
-            const parallel = this.options.recorder.supports.parallelCaptures;
-            const targets = parallel ? this.chosen : this.chosen.slice(0, 1);
-            const remainingSec = Math.max(1, Math.ceil((maxMs - (Date.now() - this.startedAt.getTime())) / 1000));
-            this.pieceSec = Math.min(pieceSec, remainingSec);
-            const outcome = await this.captures.runPiece(targets.map((displayId) => this.targetOf(displayId)));
-            failures = outcome.frames > 0 ? 0 : failures + 1;
-
-            if (failures >= 3) {
-                this.warn("three captures in a row recorded nothing; the recording ends");
-                break;
-            }
-        }
     }
 
     private targetOf(displayId: number): PieceTarget {
@@ -411,30 +348,8 @@ export class LibraryRecording extends RecorderControl {
     private onFrame(entry: SessionCapture, frame: CapturedFrame): void {
         const at = new Date().toISOString();
         entry.streamed += 1;
-        this.server?.update({ frames: this.liveFrames(), lastFrameAt: at });
-        this.server?.emit("frame", { displayId: frame.displayId ?? entry.startDisplayId, at, file: frame.path });
-    }
-
-    private onLive(entry: SessionCapture, live: LiveCapture): void {
-        // The request left the muted sources out, so this finds a source muted between the start and now.
-        const sources = entry.audio ? this.audio.sources.filter((source) => !this.audio.muted[source]) : [];
-
-        for (const source of sources.filter((source) => this.audio.muted[source])) {
-            if (!live.mute) {
-                entry.controller.abort();
-                this.warn(`the capture cannot mute ${source}; restarting without it`);
-                continue;
-            }
-
-            void live.mute(source, true).catch((error: unknown) => {
-                entry.controller.abort();
-                this.warn(`could not mute ${source}: ${String(error)}`);
-            });
-        }
-
-        if (this.state === "paused") {
-            live.pause();
-        }
+        this.update({ frames: this.liveFrames(), lastFrameAt: at });
+        this.emit("frame", { displayId: frame.displayId ?? entry.startDisplayId, at, file: frame.path });
     }
 
     /** A capture's frames into the pending list (written now with `flush: "piece"`); false when it kept none. */
@@ -461,7 +376,7 @@ export class LibraryRecording extends RecorderControl {
             }
 
             entry.streamed = 0;
-            this.server?.update({ frames: this.liveFrames() });
+            this.update({ frames: this.liveFrames() });
             return result.frames.length > 0;
         } catch (error) {
             log.warn({ error, displayId }, "a capture of the library recording failed");
@@ -470,8 +385,8 @@ export class LibraryRecording extends RecorderControl {
         }
     }
 
-    async status(): Promise<RecorderStatus> {
-        const entry = this.server?.current;
+    override async status(): Promise<RecorderStatus> {
+        const entry = this.entry;
         return {
             kind: this.kind,
             title: this.options.title ?? this.id,
@@ -482,88 +397,6 @@ export class LibraryRecording extends RecorderControl {
             warning: this.warnings.at(-1),
             folder: this.folder,
         };
-    }
-
-    async pause(): Promise<{ state: RecorderState }> {
-        if (this.stopRequested) {
-            throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is stopping");
-        }
-
-        if (this.state === "paused") {
-            throw new RpcError(RPC_ERRORS.alreadyPaused, "the recording is already paused");
-        }
-
-        this.state = "paused";
-        this.captures.pause();
-
-        this.server?.update({ state: "paused" });
-        return { state: "paused" };
-    }
-
-    async resume(): Promise<{ state: RecorderState }> {
-        if (this.state !== "paused" || this.stopRequested) {
-            throw new RpcError(RPC_ERRORS.notPaused, "the recording is not paused");
-        }
-
-        this.state = "recording";
-        this.captures.resume();
-
-        this.wake?.();
-        this.server?.update({ state: "recording" });
-        return { state: "recording" };
-    }
-
-    async stop(options: { wait?: boolean } = {}): Promise<StopAnswer> {
-        if (!this.finishing) {
-            this.stopRequested = true;
-            this.state = "stopping";
-            this.server?.update({ state: "stopping" });
-            this.restartCaptures();
-            this.wake?.();
-            const finish = runRecordingFinish<number>({
-                jobs: this.jobs,
-                kind: "finalize",
-                initial: 0,
-                steps: [
-                    {
-                        name: "captures",
-                        run: async () => {
-                            await this.loop;
-                            return 0;
-                        },
-                    },
-                    { name: "frames", run: (ctx) => this.keepFrames(ctx) },
-                    {
-                        name: "manifest",
-                        run: async (ctx) => {
-                            this.writeManifest();
-                            return ctx.state;
-                        },
-                    },
-                ],
-                answer: (frames, job) => ({
-                    state: "stopped",
-                    outcome: this.discarded ? "discarded" : "done",
-                    job,
-                    frames,
-                    notes: [...this.warnings],
-                }),
-                close: () => this.server?.close("stopped"),
-            });
-            // The stop settles once the socket is closed.
-            const done = finish.closed.then(() => finish.answer);
-            void done.catch((error: unknown) =>
-                log.warn({ error, id: this.id }, "library recording post-processing failed")
-            );
-            void done.then(this.completion.resolve, this.completion.reject);
-            this.finishing = { job: finish.job, done };
-        }
-
-        if (options.wait === false) {
-            return { state: "stopping", job: this.finishing.job };
-        }
-
-        return this.finishing.done;
     }
 
     override async discard(): Promise<StopAnswer> {
@@ -666,7 +499,7 @@ export class LibraryRecording extends RecorderControl {
 
     private choose(next: number[]): DisplaySelection {
         this.chosen = next;
-        this.server?.update({ displays: this.recordedDisplays() });
+        this.update({ displays: this.recordedDisplays() });
         this.restartCaptures();
         return { mode: "all", chosen: next, applied: "restart" };
     }
@@ -714,7 +547,7 @@ export class LibraryRecording extends RecorderControl {
             only.target = this.targetOf(to);
             this.running.set(to, only);
             this.chosen = [to];
-            this.server?.update({ displays: this.recordedDisplays() });
+            this.update({ displays: this.recordedDisplays() });
             return { mode: "all", chosen: [to], applied: "live" };
         }
 
@@ -723,10 +556,6 @@ export class LibraryRecording extends RecorderControl {
 
     override async setDisplayMode(mode: DisplayMode): Promise<DisplaySelection> {
         return { ...this.choose(this.pick(mode)), mode };
-    }
-
-    override async listJobs(): Promise<JobInfo[]> {
-        return this.jobs.list();
     }
 
     override async listAudioDevices(): Promise<AudioDevices> {
@@ -809,14 +638,6 @@ export class LibraryRecording extends RecorderControl {
 }
 
 /** Starts a library recording and returns it once its live socket listens. */
-export function startRecording(options: ManagedRecordingOptions): ManagedRecording;
-export function startRecording(options: StartRecordingOptions): Promise<LibraryRecording>;
-export function startRecording(
-    options: StartRecordingOptions | ManagedRecordingOptions
-): Promise<LibraryRecording> | ManagedRecording {
-    if ("session" in options) {
-        return new ManagedRecording(options);
-    }
-
+export function startRecording(options: StartRecordingOptions): Promise<LibraryRecording> {
     return new LibraryRecording(options).start();
 }
