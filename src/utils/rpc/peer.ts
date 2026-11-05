@@ -70,10 +70,28 @@ export class LineBuffer {
     private readonly decoder = new TextDecoder();
 
     push(chunk: Uint8Array): string[] {
-        this.pending += this.decoder.decode(chunk, { stream: true });
-        const lines = this.pending.split("\n");
-        this.pending = lines.pop() ?? "";
-        return lines.map((line) => line.replace(/\r$/, "")).filter((line) => line.trim());
+        const parts = this.decoder.decode(chunk, { stream: true }).split("\n");
+        const lines: string[] = [];
+
+        for (const [index, part] of parts.entries()) {
+            if (Buffer.byteLength(this.pending) + Buffer.byteLength(part) > 8 * 1024 * 1024) {
+                this.pending = "";
+                throw new Error("RPC frame exceeds 8 MiB");
+            }
+
+            this.pending += part;
+
+            if (index < parts.length - 1) {
+                const line = this.pending.replace(/\r$/, "");
+                this.pending = "";
+
+                if (line.trim()) {
+                    lines.push(line);
+                }
+            }
+        }
+
+        return lines;
     }
 }
 
@@ -160,8 +178,16 @@ export class RpcPeer {
 
     /** Bytes from the socket. */
     receive(chunk: Uint8Array): void {
-        for (const line of this.lines.push(chunk)) {
-            this.receiveLine(line);
+        if (this.closed) {
+            return;
+        }
+
+        try {
+            for (const line of this.lines.push(chunk)) {
+                this.receiveLine(line);
+            }
+        } catch (error) {
+            this.close(error instanceof Error ? error.message : String(error));
         }
     }
 
