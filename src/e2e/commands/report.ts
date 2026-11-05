@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -8,8 +8,8 @@ import { loadProject, type ProjectOptions, withConfig } from "../lib/project";
 import { compareRuns, formatSummary, readSummary } from "../lib/summary";
 
 /** A run folder from what a person types: a path, a stamp under the project's runs, `latest`, or `previous`. */
-async function runDirOf(options: ProjectOptions, run: string | undefined): Promise<string> {
-    if (run && (isAbsolute(run) || run.includes("/")) && existsSync(run)) {
+export async function runDirOf(options: ProjectOptions, run: string | undefined): Promise<string> {
+    if (run && run !== "latest" && run !== "previous" && existsSync(join(run, "summary.json"))) {
         return resolve(run);
     }
 

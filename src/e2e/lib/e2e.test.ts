@@ -455,3 +455,16 @@ it("starts device logging only after preparation succeeds and stops it at finish
         }
     }
 });
+
+it("recognizes an existing single-component relative run directory", async () => {
+    const folder = join(root, "artifacts");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "summary.json"), "{}");
+    const previous = process.cwd();
+    try {
+        process.chdir(root);
+        expect(realpathSync(await runDirOf({}, "artifacts"))).toBe(realpathSync(folder));
+    } finally {
+        process.chdir(previous);
+    }
+});
