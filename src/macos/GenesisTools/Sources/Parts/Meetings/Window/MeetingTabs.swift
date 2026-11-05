@@ -324,7 +324,7 @@ struct ItemsTab: View {
                                 ForEach(decided) { item in
                                     ItemRow(item: item, busy: detail.isBusy("reopen.\(item.id)"), selected: selected == item.id,
                                             play: { detail.play(at: $0) },
-                                            decide: nil, reopen: item.kind == "question" ? nil : { detail.reopen(item) })
+                                            decide: nil, reopen: item.kind == "question" ? nil : { detail.reopen(item, token: nil) })
                                         .equatable()
                                         .tag(item.id)
                                 }

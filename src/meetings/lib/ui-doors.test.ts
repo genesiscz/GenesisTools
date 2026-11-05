@@ -445,6 +445,37 @@ describe("reopen", () => {
     });
 });
 
+describe("undo of a decision", () => {
+    async function meetingWith(items: MeetingRecord["items"]) {
+        const { meetings } = stores();
+        const created = await meetings.create(
+            { title: "Harbor sync", start: "2026-11-05T08:00:00.000Z", createdBy: "new", items },
+            { command: "test", change: "fixture" }
+        );
+        return { meetings, created };
+    }
+
+    test("an Undo names its decision, and is refused once another decision changed the item", async () => {
+        const { meetings, created } = await meetingWith([
+            { kind: "term", id: "i1", status: "suggested", heard: "Viky", proposed: "wiki", rules: [], suggestedAt },
+        ]);
+        const confirmed = await decideItems({ store: meetings, record: created, status: "confirmed", ids: ["i1"] });
+        expect(typeof confirmed.token).toBe("string");
+        // Another terminal rejects the item before the window's Undo is pressed.
+        const rejected = await decideItems({ store: meetings, record: created, status: "rejected", ids: ["i1"] });
+
+        await expect(
+            reopenItems({ store: meetings, record: created, ids: ["i1"], token: confirmed.token })
+        ).rejects.toMatchObject({ code: "item-changed" });
+        expect(meetings.read(created.id)?.items[0]?.status).toBe("rejected");
+
+        // The newer decision's own Undo is not stale.
+        expect(
+            (await reopenItems({ store: meetings, record: created, ids: ["i1"], token: rejected.token })).reopened
+        ).toEqual(["i1"]);
+    });
+});
+
 describe("window", () => {
     test("the open arguments name the face, the place, the meeting and the tab; no focus opens it behind", () => {
         expect(windowOpenArgs({ place: { project: "side.quest" }, meeting: "m1", tab: "items" }, "/A.app")).toEqual([

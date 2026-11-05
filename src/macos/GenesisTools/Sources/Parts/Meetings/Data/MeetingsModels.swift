@@ -412,6 +412,16 @@ struct PhraseTest: Decodable, Equatable {
     let suggestions: [Suggestion]
 }
 
+// MARK: - A decision (`tools meetings confirm|reject <id> <items> --json`)
+
+struct DecideResult: Decodable, Equatable {
+    struct Skip: Decodable, Equatable { let id: String; let reason: String }
+    let decided: [String]
+    /// What `reopen --token` takes; nil from a CLI older than it.
+    let token: String?
+    let skipped: [Skip]
+}
+
 // MARK: - Export (`tools meetings export <id> --json`)
 
 struct ExportResult: Decodable, Equatable {

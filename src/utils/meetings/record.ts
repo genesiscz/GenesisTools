@@ -74,6 +74,21 @@ const itemBase = {
     evidence: z.record(z.string(), z.unknown()).optional(),
     suggestedAt: isoTime,
     decidedAt: isoTime.optional(),
+    /**
+     * The confirm or reject that decided the item: its token, which an Undo names (`reopen --token`), and the fields
+     * it changed as they were before, which the Undo puts back.
+     */
+    decision: z
+        .object({
+            token: z.string().min(1),
+            previous: z.object({
+                status: z.enum(ITEM_STATUSES),
+                decidedAt: isoTime.optional(),
+                speaker: z.string().optional(),
+                proposed: z.string().optional(),
+            }),
+        })
+        .optional(),
 };
 
 /** A suggestion a rule made and a person decides: confirm or reject. */

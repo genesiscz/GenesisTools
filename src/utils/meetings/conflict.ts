@@ -9,6 +9,8 @@ export const MEETINGS_CONFLICT_CODES = [
     "export-edited",
     /** The export target is a symlink or not a plain file inside the chosen folder. */
     "export-unsafe-path",
+    /** An item was decided again since the decision an Undo names (`reopen --token`). */
+    "item-changed",
 ] as const;
 export type MeetingsConflictCode = (typeof MEETINGS_CONFLICT_CODES)[number];
 

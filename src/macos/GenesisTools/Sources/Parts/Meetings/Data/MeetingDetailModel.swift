@@ -166,19 +166,19 @@ final class MeetingDetailModel {
     func decide(_ item: MeetingItem, confirm: Bool, speaker: String? = nil) {
         guard !busyItems.contains(item.id) else { return }
         busyItems.insert(item.id)
-        var args = [confirm ? "confirm" : "reject", id, item.id]
+        var args = [confirm ? "confirm" : "reject", id, item.id, "--json"]
         if let speaker { args += ["--speaker", speaker] }
         Task {
             defer { busyItems.remove(item.id) }
             do {
-                _ = try await MeetingsCLI.run(args)
+                let result = try await MeetingsCLI.json(DecideResult.self, args)
                 mark(item.id, status: confirm ? "confirmed" : "rejected")
                 reloadRecord()
                 window?.loadOverview()
                 var note = MeetingsNotice(text: "\(confirm ? "Confirmed" : "Rejected") \(MeetingsWords.itemTitle(item))", tone: .success)
                 note.actionTitle = "Undo"
                 note.actionSymbol = "arrow.uturn.backward"
-                note.action = { [weak model = self] in model?.reopen(item) }
+                note.action = { [weak model = self] in model?.reopen(item, token: result.token) }
                 notice = note
                 scheduleUndoExpiry(for: note.id)
                 if confirm { transcript = .idle; if tab == .transcript { loadTranscript() } }
@@ -188,10 +188,33 @@ final class MeetingDetailModel {
         }
     }
 
+    /// `reopen`'s arguments: the token names the decision this Undo takes back, so the CLI refuses it once another
+    /// window or the terminal decided the item again.
+    static func reopenArgs(meeting: String, item: String, token: String?) -> [String] {
+        ["reopen", meeting, item] + (token.map { ["--token", $0] } ?? [])
+    }
+
     /// The Undo of a confirm or a reject: `tools meetings reopen`.
-    func reopen(_ item: MeetingItem) {
-        change("reopen.\(item.id)", ["reopen", id, item.id], done: "Suggested again: \(MeetingsWords.itemTitle(item))",
-               reloadTranscript: true) { [weak model = self] in model?.mark(item.id, status: "suggested") }
+    func reopen(_ item: MeetingItem, token: String?) {
+        let key = "reopen.\(item.id)"
+        guard !busy.contains(key) else { return }
+        busy.insert(key)
+        Task {
+            defer { busy.remove(key) }
+            do {
+                _ = try await MeetingsCLI.run(Self.reopenArgs(meeting: id, item: item.id, token: token))
+                notice = MeetingsNotice(text: "Suggested again: \(MeetingsWords.itemTitle(item))", tone: .success)
+            } catch let failure as MeetingsCLI.Failure where failure.code == "item-changed" {
+                notice = MeetingsNotice(text: "Not undone: this item was decided again in another window or the terminal.",
+                                        more: failure.detail, tone: .error)
+            } catch {
+                notice = .failure(error) { [weak model = self] in model?.reopen(item, token: token) }
+            }
+            reloadRecord()
+            window?.loadOverview()
+            transcript = .idle
+            if tab == .transcript { loadTranscript() }
+        }
     }
 
     /// Moves a decided item to its new group at once; the reload that follows brings the saved record.

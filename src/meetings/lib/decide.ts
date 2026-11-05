@@ -1,12 +1,18 @@
+import { randomUUID } from "node:crypto";
+import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { questionIdOf, questionLabel } from "./questions";
 import { TOOL } from "./shared";
 import { ledgerEntryFor } from "./transcript-corrections";
 
-/** What a confirm or reject did: the items it decided, and each one it left with the reason and how to decide it. */
+/**
+ * What a confirm or reject did: the items it decided, and each one it left with the reason and how to decide it.
+ * `token` names this decision: its Undo (`reopen --token`) is refused once another decision changed the item.
+ */
 export interface DecideResult {
     decided: string[];
+    token?: string;
     /** `needs`: what decides it, a `speaker` or `proposed` value, or an answer by ear (`listen`). */
     skipped: Array<{ id: string; reason: string; needs: "speaker" | "proposed" | "listen" }>;
 }
@@ -81,6 +87,7 @@ export async function decideItems(options: {
     }
 
     const now = new Date().toISOString();
+    const token = randomUUID();
     const ledger: Correction[] = [];
     await store.update(
         record.id,
@@ -91,6 +98,15 @@ export async function decideItems(options: {
                     continue;
                 }
 
+                item.decision = {
+                    token,
+                    previous: {
+                        status: item.status,
+                        ...(item.decidedAt ? { decidedAt: item.decidedAt } : {}),
+                        ...(item.kind === "speaker-range" && item.speaker ? { speaker: item.speaker } : {}),
+                        ...(item.kind === "term" && item.proposed ? { proposed: item.proposed } : {}),
+                    },
+                };
                 item.status = status;
                 item.decidedAt = now;
 
@@ -115,24 +131,11 @@ export async function decideItems(options: {
         }
     );
     appendCorrections(ledger);
-    return { decided: deciding.map((item) => item.id), skipped };
+    return { decided: deciding.map((item) => item.id), token, skipped };
 }
 
-/**
- * Puts decided items back to suggested: the Undo of a confirm or a reject. A question is never reopened here, because
- * its answer also decided other items; `listen` reopens its own answers. The corrections ledger is append-only, so a
- * confirm's ledger line stays; it counts as one confirmation for `dictionary suggest`.
- */
-export async function reopenItems(options: {
-    store: MeetingStore;
-    record: MeetingRecord;
-    ids: string[];
-}): Promise<{ reopened: string[]; skipped: Array<{ id: string; reason: string }> }> {
-    const { store } = options;
-    // The saved record decides: the one passed in may be older than a confirm made since.
-    const record = store.read(options.record.id) ?? options.record;
-    const picked = pickItems(record, options.ids);
-    const skipped = picked.flatMap((item) => {
+function reopenSkips(record: MeetingRecord, picked: MeetingItem[]): Array<{ id: string; reason: string }> {
+    return picked.flatMap((item) => {
         if (item.kind === "question") {
             return [
                 {
@@ -144,18 +147,56 @@ export async function reopenItems(options: {
 
         return item.status === "suggested" ? [{ id: item.id, reason: "it is not decided" }] : [];
     });
-    const reopening = picked.filter((item) => !skipped.some((skip) => skip.id === item.id)).map((item) => item.id);
+}
 
-    if (reopening.length > 0) {
-        await store.update(record.id, { command: "reopen", change: reopening.join(" ") }, (current) => {
-            for (const item of current.items) {
-                if (reopening.includes(item.id)) {
-                    item.status = "suggested";
-                    delete item.decidedAt;
-                }
-            }
-        });
+/**
+ * Puts decided items back to suggested: the Undo of a confirm or a reject. A question is never reopened here, because
+ * its answer also decided other items; `listen` reopens its own answers. The corrections ledger is append-only, so a
+ * confirm's ledger line stays; it counts as one confirmation for `dictionary suggest`. `token` names the decision
+ * being undone (a `DecideResult.token`): when another decision changed one of the items since, nothing is reopened
+ * (`item-changed`). The items are checked again under the record's lock.
+ */
+export async function reopenItems(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    ids: string[];
+    token?: string;
+}): Promise<{ reopened: string[]; skipped: Array<{ id: string; reason: string }> }> {
+    const { store, token } = options;
+    // The saved record decides: the one passed in may be older than a confirm made since.
+    const record = store.read(options.record.id) ?? options.record;
+    const before = reopenSkips(record, pickItems(record, options.ids));
+
+    if (before.length === options.ids.length) {
+        return { reopened: [], skipped: before };
     }
 
-    return { reopened: reopening, skipped };
+    let reopened: string[] = [];
+    let skipped = before;
+    await store.update(record.id, { command: "reopen", change: options.ids.join(" ") }, (current) => {
+        const picked = pickItems(current, options.ids);
+        skipped = reopenSkips(current, picked);
+        const reopening = picked.filter((item) => !skipped.some((skip) => skip.id === item.id));
+
+        if (token) {
+            const changed = reopening.filter((item) => item.decision?.token !== token);
+
+            if (changed.length > 0) {
+                throw new MeetingsConflictError(
+                    "item-changed",
+                    `${changed.map((item) => `${item.id} (${item.status} now)`).join(", ")} was decided again after the decision this Undo names; nothing was reopened`
+                );
+            }
+        }
+
+        for (const item of reopening) {
+            item.status = "suggested";
+            delete item.decidedAt;
+            delete item.decision;
+        }
+
+        reopened = reopening.map((item) => item.id);
+    });
+
+    return { reopened, skipped };
 }

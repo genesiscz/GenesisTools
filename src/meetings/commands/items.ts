@@ -364,7 +364,7 @@ async function decide(
     status: "confirmed" | "rejected",
     ref: string,
     ids: string[],
-    opts: { speaker?: string; proposed?: string; minConfidence?: string }
+    opts: { speaker?: string; proposed?: string; minConfidence?: string; json?: boolean }
 ): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
@@ -391,6 +391,12 @@ async function decide(
             proposed: opts.proposed,
         });
 
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            process.exitCode = result.decided.length === 0 && result.skipped.length > 0 ? 1 : 0;
+            return;
+        }
+
         for (const skip of result.skipped) {
             ui.warn(`${skip.id}: ${skip.reason}${flagOf[skip.needs]}`);
         }
@@ -400,13 +406,15 @@ async function decide(
             return;
         }
 
-        ui.ok(`${status} ${result.decided.join(" ")} in ${record.id}`);
+        ui.ok(
+            `${status} ${result.decided.join(" ")} in ${record.id} (undo: ${TOOL} reopen ${record.id} ${result.decided.join(" ")} --token ${result.token})`
+        );
     } catch (err) {
         fail(errorText(err).replace(/^minConfidence/, "--min-confidence"));
     }
 }
 
-async function reopen(ref: string, ids: string[], opts: { json?: boolean }): Promise<void> {
+async function reopen(ref: string, ids: string[], opts: { token?: string; json?: boolean }): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
 
@@ -415,7 +423,7 @@ async function reopen(ref: string, ids: string[], opts: { json?: boolean }): Pro
     }
 
     try {
-        const result = await reopenItems({ store, record, ids });
+        const result = await reopenItems({ store, record, ids, ...(opts.token ? { token: opts.token } : {}) });
 
         if (opts.json) {
             out.result(SafeJSON.stringify(result, null, 2));
@@ -654,9 +662,13 @@ export function registerItemCommands(program: Command): void {
             .option("--min-confidence <0..1>", "every suggested item at or above this confidence")
             .option("--speaker <name>", "confirm: whose voice a speaker range is")
             .option("--proposed <text>", "confirm: the right spelling of a term, when the proposal is wrong")
+            .option("--json", "print { decided, token, skipped } as JSON (the token is what reopen --token takes)")
             .action(
-                (ref: string, ids: string[], opts: { speaker?: string; proposed?: string; minConfidence?: string }) =>
-                    decide(status, ref, ids, opts)
+                (
+                    ref: string,
+                    ids: string[],
+                    opts: { speaker?: string; proposed?: string; minConfidence?: string; json?: boolean }
+                ) => decide(status, ref, ids, opts)
             );
     }
 
@@ -665,6 +677,10 @@ export function registerItemCommands(program: Command): void {
         .argument("<meeting>", MEETING_REF)
         .argument("<items...>", "item ids: i1 i2 …")
         .description("Put confirmed or rejected items back to suggested: the Undo of confirm and reject")
+        .option(
+            "--token <token>",
+            "the decision to undo (confirm/reject --json prints it): refused with [item-changed] when another decision changed an item since"
+        )
         .option("--json", "print { reopened, skipped } as JSON")
         .action(reopen);
 

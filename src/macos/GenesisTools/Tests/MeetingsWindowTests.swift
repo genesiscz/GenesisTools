@@ -192,4 +192,13 @@ final class MeetingsWindowTests: XCTestCase {
         """.utf8))
         XCTAssertEqual(old.noticeText, "Replaced m.md", "a CLI without action still reads")
     }
+
+    func testAnUndoNamesTheDecisionItTakesBack() throws {
+        let result = try JSONDecoder().decode(DecideResult.self, from: Data("""
+        {"decided":["i1"],"token":"t-1","skipped":[]}
+        """.utf8))
+        XCTAssertEqual(MeetingDetailModel.reopenArgs(meeting: "m", item: "i1", token: result.token),
+                       ["reopen", "m", "i1", "--token", "t-1"])
+        XCTAssertEqual(MeetingDetailModel.reopenArgs(meeting: "m", item: "i1", token: nil), ["reopen", "m", "i1"])
+    }
 }
