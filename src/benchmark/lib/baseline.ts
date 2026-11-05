@@ -28,6 +28,27 @@ export interface Baseline {
     hostname: string;
     metrics: BaselineMetrics;
     notes?: string;
+    /**
+     * The runs measured against this baseline, oldest first: each commit that changed the numbers and what it
+     * measured, so the file shows the whole history of a fix and not only its "before". Absent in a file from before
+     * 2026-11-05, which reads as no runs.
+     */
+    runs?: BaselineRun[];
+}
+
+/** One measured run after the baseline: the code it measured, the change it measures, and the numbers. */
+export interface BaselineRun {
+    /** ISO 8601. */
+    capturedAt: string;
+    /** The measured code's commit (`git rev-parse --short HEAD` unless the caller measured another one). */
+    commit: string;
+    loadAvg: number[];
+    hostname: string;
+    metrics: BaselineMetrics;
+    /** The change the run measures, in a few words: `snapshot indexes by id, agent and transcript`. */
+    change?: string;
+    /** How it was measured, when it differs from the bench's own default (runs, rounds, statistic). */
+    notes?: string;
 }
 
 export interface BaselineDelta {
@@ -97,7 +118,8 @@ async function currentCommit(): Promise<string> {
 
 /**
  * Write the "before" numbers for a fix, so the "after" run has something to
- * argue with. Overwrites an existing baseline of the same name.
+ * argue with. Overwrites an existing baseline of the same name, keeping its runs: they are the evidence of the
+ * earlier fixes.
  */
 export async function recordBaseline(input: {
     name: string;
@@ -109,6 +131,7 @@ export async function recordBaseline(input: {
     const dir = input.dir ?? defaultDir();
     mkdirSync(dir, { recursive: true });
 
+    const runs = (await readBaseline(input.name, { dir: input.dir }))?.runs;
     const baseline: Baseline = {
         name: input.name,
         capturedAt: new Date().toISOString(),
@@ -117,11 +140,47 @@ export async function recordBaseline(input: {
         hostname: hostname(),
         metrics: input.metrics,
         ...(input.notes === undefined ? {} : { notes: input.notes }),
+        ...(runs?.length ? { runs } : {}),
     };
 
     await Bun.write(path, `${SafeJSON.stringify(baseline, null, 4)}\n`);
     log.debug({ path, metrics: Object.keys(input.metrics).length }, "baseline recorded");
     return baseline;
+}
+
+/**
+ * Append one measured run to a named baseline's history (`runs`, oldest first). The baseline must exist: a run
+ * without a "before" to read against proves nothing. `commit` and `capturedAt` default to HEAD and now; a driver that
+ * measured an older commit passes them.
+ */
+export async function recordRun(input: {
+    name: string;
+    metrics: BaselineMetrics;
+    change?: string;
+    notes?: string;
+    commit?: string;
+    capturedAt?: string;
+    loadAvg?: number[];
+    dir?: string;
+}): Promise<BaselineRun> {
+    const baseline = await readBaseline(input.name, { dir: input.dir });
+    if (!baseline) {
+        throw new Error(`No baseline "${input.name}" to add a run to; record it first with --baseline.`);
+    }
+
+    const run: BaselineRun = {
+        capturedAt: input.capturedAt ?? new Date().toISOString(),
+        commit: input.commit ?? (await currentCommit()),
+        loadAvg: input.loadAvg ?? loadavg(),
+        hostname: hostname(),
+        metrics: input.metrics,
+        ...(input.change === undefined ? {} : { change: input.change }),
+        ...(input.notes === undefined ? {} : { notes: input.notes }),
+    };
+    const updated: Baseline = { ...baseline, runs: [...(baseline.runs ?? []), run] };
+    await Bun.write(baselinePath(input.name, { dir: input.dir }), `${SafeJSON.stringify(updated, null, 4)}\n`);
+    log.debug({ name: input.name, runs: updated.runs?.length }, "baseline run recorded");
+    return run;
 }
 
 /** Read a named baseline, or null when it was never recorded. */

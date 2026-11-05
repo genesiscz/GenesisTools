@@ -10,11 +10,14 @@
  * It only reads: the roster cache, the widget state, the question database and the decision log.
  *
  *   bun scripts/benchmarks/widget/snapshot.ts [--runs 9] [--baseline [name]] [--compare [name]] [--dump <file>]
+ *       [--record-run <change>] [--json]
+ *
+ * `--record-run` appends this run to the baseline's history with HEAD's commit and the change it measures.
  *
  * `--dump` writes the last snapshot (pretty JSON) for a parity diff between two commits on the same data.
  */
 
-import { compareToBaseline, formatComparison, recordBaseline } from "@app/benchmark/lib";
+import { compareToBaseline, formatComparison, recordBaseline, recordRun } from "@app/benchmark/lib";
 import { readWarmStartRoster } from "@app/hub/lib/widget/roster-cache";
 import { realWidgetSources, widgetSnapshot } from "@app/hub/lib/widget/snapshot";
 import { runTool } from "@genesiscz/utils/cli";
@@ -51,73 +54,97 @@ const program = new Command()
     .option("--baseline [name]", "record the result as a baseline")
     .option("--compare [name]", "compare the result with a baseline")
     .option("--dump <file>", "write the last snapshot as JSON")
-    .action(async (options: { runs: number; baseline?: string | true; compare?: string | true; dump?: string }) => {
-        const roster = await readWarmStartRoster();
-        if (!roster) {
-            throw new Error("no widget roster cache to start from: run the widget once (`tools hub widget watch`)");
-        }
+    .option("--record-run <change>", "append this run to the baseline's history, naming the change it measures")
+    .option("--json", "print the metrics and the check value as JSON")
+    .action(
+        async (options: {
+            runs: number;
+            baseline?: string | true;
+            compare?: string | true;
+            dump?: string;
+            recordRun?: string;
+            json?: boolean;
+        }) => {
+            const roster = await readWarmStartRoster();
+            if (!roster) {
+                throw new Error("no widget roster cache to start from: run the widget once (`tools hub widget watch`)");
+            }
 
-        const sources = {
-            ...realWidgetSources,
-            sessions: async () => roster.rows,
-            agents: async () => roster.agents,
-            rosterStatus: () => ({ loading: false, error: undefined }),
-        };
-        const take = () => widgetSnapshot({ refresh: false, warm: 16, sources });
-        const loadBefore = uptime();
-        for (let index = 0; index < 2; index++) {
-            await take();
-        }
+            const sources = {
+                ...realWidgetSources,
+                sessions: async () => roster.rows,
+                agents: async () => roster.agents,
+                rosterStatus: () => ({ loading: false, error: undefined }),
+            };
+            const take = () => widgetSnapshot({ refresh: false, warm: 16, sources });
+            const loadBefore = uptime();
+            for (let index = 0; index < 2; index++) {
+                await take();
+            }
 
-        const cpu: number[] = [];
-        const wall: number[] = [];
-        let check = "";
-        let last: Awaited<ReturnType<typeof take>> | undefined;
-        for (let index = 0; index < options.runs; index++) {
-            const start = process.cpuUsage();
-            const startedAt = performance.now();
-            const snapshot = await take();
-            last = snapshot;
-            wall.push(performance.now() - startedAt);
-            const used = process.cpuUsage(start);
-            cpu.push((used.user + used.system) / 1000);
-            const value = `sessions=${snapshot.sessions.length} bytes=${SafeJSON.stringify(snapshot, { strict: true }).length}`;
-            check = check && check !== value ? `${check} (varies: ${value})` : value;
-        }
+            const cpu: number[] = [];
+            const wall: number[] = [];
+            let check = "";
+            let last: Awaited<ReturnType<typeof take>> | undefined;
+            for (let index = 0; index < options.runs; index++) {
+                const start = process.cpuUsage();
+                const startedAt = performance.now();
+                const snapshot = await take();
+                last = snapshot;
+                wall.push(performance.now() - startedAt);
+                const used = process.cpuUsage(start);
+                cpu.push((used.user + used.system) / 1000);
+                const value = `sessions=${snapshot.sessions.length} bytes=${SafeJSON.stringify(snapshot, { strict: true }).length}`;
+                check = check && check !== value ? `${check} (varies: ${value})` : value;
+            }
 
-        const metrics = { snapshotCpuMs: median(cpu), snapshotWallMs: median(wall) };
-        out.println(
-            [
-                `roster: ${roster.rows.length} rows, ${roster.agents.parents.length} parents`,
-                `cpu per snapshot ms: ${cpu.map((value) => value.toFixed(0)).join(" ")} (median ${metrics.snapshotCpuMs.toFixed(0)})`,
-                `wall per snapshot ms: ${wall.map((value) => value.toFixed(0)).join(" ")} (median ${metrics.snapshotWallMs.toFixed(0)})`,
-                `check: ${check}`,
-                `load before: ${loadBefore}`,
-                `load after: ${uptime()}`,
-            ].join("\n")
-        );
-        if (options.dump && last) {
-            await Bun.write(options.dump, SafeJSON.stringify(last, null, 2));
-        }
+            const metrics = { snapshotCpuMs: median(cpu), snapshotWallMs: median(wall) };
+            if (options.json) {
+                out.println(SafeJSON.stringify({ metrics, cpu, check, loadBefore, loadAfter: uptime() }) ?? "");
+            }
 
-        const name = (value: string | true) => (value === true ? NAME : value);
-        if (options.baseline) {
-            await recordBaseline({
-                name: name(options.baseline),
-                metrics,
-                notes: `runs=${options.runs} | ${check} | ${uptime()}`,
-            });
-        }
+            out.println(
+                [
+                    `roster: ${roster.rows.length} rows, ${roster.agents.parents.length} parents`,
+                    `cpu per snapshot ms: ${cpu.map((value) => value.toFixed(0)).join(" ")} (median ${metrics.snapshotCpuMs.toFixed(0)})`,
+                    `wall per snapshot ms: ${wall.map((value) => value.toFixed(0)).join(" ")} (median ${metrics.snapshotWallMs.toFixed(0)})`,
+                    `check: ${check}`,
+                    `load before: ${loadBefore}`,
+                    `load after: ${uptime()}`,
+                ].join("\n")
+            );
+            if (options.dump && last) {
+                await Bun.write(options.dump, SafeJSON.stringify(last, null, 2));
+            }
 
-        if (options.compare) {
-            const comparison = await compareToBaseline({
-                name: name(options.compare),
-                metrics,
-                tolerancePct: 50,
-                lowerIsBetter: Object.keys(metrics),
-            });
-            out.println(formatComparison(comparison));
+            const name = (value: string | true) => (value === true ? NAME : value);
+            if (options.baseline) {
+                await recordBaseline({
+                    name: name(options.baseline),
+                    metrics,
+                    notes: `runs=${options.runs} | ${check} | ${uptime()}`,
+                });
+            }
+
+            if (options.compare) {
+                const comparison = await compareToBaseline({
+                    name: name(options.compare),
+                    metrics,
+                    tolerancePct: 50,
+                    lowerIsBetter: Object.keys(metrics),
+                });
+                out.println(formatComparison(comparison));
+            }
+
+            if (options.recordRun) {
+                await recordRun({
+                    name: options.compare ? name(options.compare) : NAME,
+                    metrics,
+                    change: options.recordRun,
+                    notes: `runs=${options.runs} | ${check} | ${uptime()}`,
+                });
+            }
         }
-    });
+    );
 
 await runTool(program, { tool: "benchmark" });

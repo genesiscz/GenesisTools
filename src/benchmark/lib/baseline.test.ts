@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { baselinePath, compareToBaseline, formatComparison, readBaseline, recordBaseline } from "./baseline";
+import { baselinePath, compareToBaseline, formatComparison, readBaseline, recordBaseline, recordRun } from "./baseline";
 
 const DIR = mkdtempSync(join(tmpdir(), "gt-benchmark-baseline-"));
 const TOLERANCE = 10;
@@ -44,6 +44,36 @@ describe("record and read", () => {
 
     test("returns null for a name that was never recorded", async () => {
         expect(await readBaseline("never-recorded", { dir: DIR })).toBeNull();
+    });
+});
+
+describe("the run history", () => {
+    test("each run is appended with its commit and change, and a re-recorded baseline keeps them", async () => {
+        await recordBaseline({ name: "history", metrics: { cpuMs: 150 }, dir: DIR });
+        await recordRun({
+            name: "history",
+            metrics: { cpuMs: 70 },
+            change: "an index",
+            commit: "1111111111",
+            dir: DIR,
+        });
+        await recordRun({ name: "history", metrics: { cpuMs: 40 }, change: "a cache", dir: DIR });
+        const read = await readBaseline("history", { dir: DIR });
+        expect(read?.metrics).toEqual({ cpuMs: 150 });
+        expect(read?.runs?.map((run) => [run.commit, run.metrics.cpuMs, run.change])).toEqual([
+            ["1111111111", 70, "an index"],
+            [read?.runs?.[1]?.commit ?? "", 40, "a cache"],
+        ]);
+        expect(read?.runs?.[1]?.commit).toMatch(/^([0-9a-f]{7,}|unknown)$/);
+
+        await recordBaseline({ name: "history", metrics: { cpuMs: 45 }, dir: DIR });
+        expect((await readBaseline("history", { dir: DIR }))?.runs).toHaveLength(2);
+    });
+
+    test("a run needs a baseline to read against", async () => {
+        await expect(recordRun({ name: "no-such-baseline", metrics: { cpuMs: 1 }, dir: DIR })).rejects.toThrow(
+            "No baseline"
+        );
     });
 });
 
