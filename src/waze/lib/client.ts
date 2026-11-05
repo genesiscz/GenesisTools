@@ -27,6 +27,7 @@ export const DEFAULT_MIN_INTERVAL_MS = 150;
  * token: on 2026-11-01, after about 150 requests in 15 minutes, every token in a fresh tab got 403 for a few minutes,
  * while a tab open for longer got through on its second token.
  */
+const MAX_RETRY_DELAY_MS = 20_000;
 const RETRY_DELAYS_MS: Record<number, number[]> = {
     403: [3_000, 8_000],
     429: [2_000, 5_000, 10_000, 20_000],
@@ -191,6 +192,9 @@ export class WazeClient {
             const delays = RETRY_DELAYS_MS[response.status];
             if (delays && attempt < delays.length) {
                 const header = Number(response.retryAfter);
+                if (header > MAX_RETRY_DELAY_MS / 1000) {
+                    throw new WazeHttpError(response.status, req.path, response.body);
+                }
                 const delay = Number.isFinite(header) && header > 0 ? header * 1000 : (delays[attempt] ?? 20_000);
                 log.debug(
                     { path: req.path.split("?")[0], status: response.status, attempt, delay },
