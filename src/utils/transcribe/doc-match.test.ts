@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { docIdentifiers, docLines, findReadAloud, findSpokenIdentifiers } from "./doc-match";
+import { docIdentifiers, docLines, findReadAloud, findSpokenIdentifiers, restatesSpokenWords } from "./doc-match";
+import { keepsHeardWords } from "./terms";
 
 const doc = [
     "# Proposals",
@@ -97,5 +98,38 @@ describe("findSpokenIdentifiers", () => {
         });
 
         expect(found.map((match) => match.entry)).toEqual([1, 3]);
+    });
+});
+
+describe("restatesSpokenWords", () => {
+    test("a plain code name made of the said words only restates them", () => {
+        expect(restatesSpokenWords("entity data", "EntityData")).toBe(true);
+        expect(restatesSpokenWords("lead template", "leadTemplate")).toBe(true);
+        expect(restatesSpokenWords("tile DTO", "TileDto")).toBe(true);
+    });
+
+    test("a path, a member chain, a constant code or an unsaid word adds something", () => {
+        expect(restatesSpokenWords("lomeno type", "/{type}")).toBe(false);
+        expect(restatesSpokenWords("product data offer section", "ProductData.offerSection")).toBe(false);
+        expect(restatesSpokenWords("no projection", "NO_PROJECTION")).toBe(false);
+        expect(restatesSpokenWords("list DTO", "ProductListDto")).toBe(false);
+    });
+});
+
+describe("keepsHeardWords", () => {
+    const doc = (term: string) => ({ term, source: "context" });
+
+    test("a code name or another case of the same word keeps the heard words", () => {
+        expect(keepsHeardWords("employee only", doc("employeesOnly"))).toBe(true);
+        expect(keepsHeardWords("document list item", doc("DocumentListItemDto"))).toBe(true);
+        expect(keepsHeardWords("referenci", doc("Reference"))).toBe(true);
+        expect(keepsHeardWords("sekcí", doc("Sekce"))).toBe(true);
+    });
+
+    test("a cut word, a casing fix and a misheard word are still replacements", () => {
+        expect(keepsHeardWords("katal", doc("Katalog"))).toBe(false);
+        expect(keepsHeardWords("jdz", { term: "JDZ", source: "dictionary" })).toBe(false);
+        expect(keepsHeardWords("chess benefit", { term: "čez benefit", source: "dictionary" })).toBe(false);
+        expect(keepsHeardWords("jako skripty", { term: "JavaScript", source: "glossary" })).toBe(false);
     });
 });

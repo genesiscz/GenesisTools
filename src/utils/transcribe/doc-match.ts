@@ -335,6 +335,21 @@ export function docIdentifiers(markdown: string): string[] {
     );
 }
 
+/**
+ * The identifier only writes the heard words in code form (`EntityData` for "entity data", `leadTemplate` for "lead
+ * template"): one camelCase, PascalCase or kebab name made of exactly the said words. A path, a member chain
+ * (`ProductData.offerSection`), a CONSTANT_CODE or a name with words nobody said adds something, so it is no restatement.
+ */
+export function restatesSpokenWords(heard: string, identifier: string): boolean {
+    if (/[/.{}?=_[\]]/.test(identifier.replace(/\[\]$/, "")) || identifier === identifier.toUpperCase()) {
+        return false;
+    }
+
+    const said = words(heard).map((word) => word.norm);
+    const parts = words(identifier).map((word) => word.norm);
+    return parts.length > 0 && said.length === parts.length && said.every((word, index) => word === parts[index]);
+}
+
 /** Words that join the parts of a spoken path and are not part of it. */
 const PATH_JOINERS = new Set(["lomeno", "slash", "tecka", "dot", "rovna", "se", "otaznik"]);
 /** Words that mark the next word as a path part, so one word is enough: "lomeno type". */

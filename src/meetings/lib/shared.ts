@@ -1,5 +1,6 @@
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import * as p from "@genesiscz/utils/prompts/p";
 
 export const TOOL = "tools meetings";
@@ -46,6 +47,11 @@ export function fail(message: string): void {
     process.exitCode = 1;
 }
 
+/** The error's sentence; a conflict leads with its code (`[export-edited] …`), which the window reads. */
 export function errorText(err: unknown): string {
+    if (err instanceof MeetingsConflictError) {
+        return `[${err.code}] ${err.message}`;
+    }
+
     return err instanceof Error ? err.message : String(err);
 }

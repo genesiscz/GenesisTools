@@ -1,14 +1,21 @@
 import { type JobInfo, JobRegistry, type ProgressEvent } from "@genesiscz/utils/jobs";
 import { logger } from "@genesiscz/utils/logger";
 import {
+    type AudioSource,
     type RecorderState as ControlState,
     type DisplayEntry,
     type DisplaySelection,
+    OCR_READ_DEFAULTS,
     RecorderControl,
     type RecorderMethod,
+    type RecorderSettings,
+    type RecorderSettingsPatch,
     type RecorderStatus,
+    type RecordingMarker,
     RPC_ERRORS,
     RpcError,
+    refuseMarker,
+    type SettingsAnswer,
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
 import { parseDisplayList } from "@genesiscz/utils/screen-recorder/displays";
@@ -19,6 +26,38 @@ import { type AxResult, runAxAsync } from "./runner";
 const { log } = logger.scoped("control-recording-session-control");
 
 const SCREENS_TIMEOUT_MS = 5_000;
+
+const SESSION_METHODS: readonly RecorderMethod[] = [
+    "status",
+    "pause",
+    "resume",
+    "stop",
+    "discard",
+    "restart",
+    "target.switch",
+    "displays.list",
+    "displays.switch",
+    "jobs.list",
+    "marker.add",
+];
+
+/** The settings keys a movie keeps as they are, and why; `settings.set` refuses them by name. */
+type MovieFixedKey = "maxLongSide" | "heartbeatSec" | "ocr";
+
+const MOVIE_FIXED: Record<MovieFixedKey, string> = {
+    maxLongSide: "a movie keeps the full size of what it records",
+    heartbeatSec: "a movie has no heartbeat: its rates decide every frame",
+    ocr: "a movie reads no text",
+};
+
+const MOVIE_FIXED_KEYS: readonly MovieFixedKey[] = ["maxLongSide", "heartbeatSec", "ocr"];
+
+/** What a movie answers for the keys it keeps: no size cap below the largest, no heartbeat, no OCR. */
+const MOVIE_FIXED_SETTINGS: Pick<RecorderSettings, MovieFixedKey> = {
+    maxLongSide: 16_384,
+    heartbeatSec: 0,
+    ocr: { enabled: false, languages: ["en-US"], minChars: 0, ...OCR_READ_DEFAULTS },
+};
 
 const CONTROL_STATE: Record<RecordingState, ControlState> = {
     starting: "recording",
@@ -34,21 +73,16 @@ const CONTROL_STATE: Record<RecordingState, ControlState> = {
  */
 export class SessionRecorderControl extends RecorderControl {
     readonly kind = "control-session";
-    readonly methods: readonly RecorderMethod[] = [
-        "status",
-        "pause",
-        "resume",
-        "stop",
-        "discard",
-        "restart",
-        "target.switch",
-        "displays.list",
-        "displays.switch",
-        "jobs.list",
-    ];
+    /** The session's methods, and `settings.get`/`settings.set` when the session has movie rates. */
+    readonly methods: readonly RecorderMethod[];
+    /** The moments marked while it records, at their movie time. */
+    readonly markers: RecordingMarker[] = [];
     private state: ControlState = "recording";
     private target: RecordingTarget;
     private warning?: string;
+    private elapsedMs = 0;
+    private limitMs?: number;
+    private segments = 0;
     private readonly jobs: JobRegistry;
     private finishJob?: string;
 
@@ -59,9 +93,13 @@ export class SessionRecorderControl extends RecorderControl {
             title?: string;
             onProgress?: (event: ProgressEvent) => void;
             screens?: () => Promise<AxResult>;
+            /** The movie's sound, for `settings.get`; a movie mutes nothing. */
+            audio?: { sources: AudioSource[]; micDevice?: string };
         }
     ) {
         super();
+        this.methods = session.currentRates() ? [...SESSION_METHODS, "settings.get", "settings.set"] : SESSION_METHODS;
+        this.audio = options.audio ?? { sources: [] };
         this.target = options.target;
         this.title = options.title ?? describeRecordingTarget(options.target);
         this.jobs = new JobRegistry(options.onProgress);
@@ -70,12 +108,71 @@ export class SessionRecorderControl extends RecorderControl {
 
     private readonly title: string;
     private readonly screens: () => Promise<AxResult>;
+    private readonly audio: { sources: AudioSource[]; micDevice?: string };
+
+    /** The movie's rates and threshold, and the keys it keeps as they are (`fixed`, with why). */
+    override async getSettings(): Promise<SettingsAnswer> {
+        const rates = this.session.currentRates();
+
+        if (!rates) {
+            return super.getSettings();
+        }
+
+        return {
+            settings: { ...rates, ...MOVIE_FIXED_SETTINGS },
+            audio: {
+                sources: this.audio.sources,
+                muted: { mic: false, system: false },
+                ...(this.audio.micDevice ? { micDevice: this.audio.micDevice } : {}),
+            },
+            fixed: MOVIE_FIXED,
+        };
+    }
+
+    /** Changes the movie's rates and threshold (`activeFps`, `idleFps`, `threshold`); the next segment records with them. */
+    override async setSettings(patch: RecorderSettingsPatch): Promise<SettingsAnswer> {
+        const rates = this.session.currentRates();
+
+        if (!rates) {
+            return super.setSettings(patch);
+        }
+
+        const kept = MOVIE_FIXED_KEYS.filter((key) => patch[key] !== undefined);
+
+        if (kept.length > 0) {
+            throw new RpcError(
+                RPC_ERRORS.unsupported,
+                `a movie recording keeps ${kept.join(", ")} as they are (${kept.map((key) => MOVIE_FIXED[key]).join("; ")}); it changes activeFps, idleFps and threshold`
+            );
+        }
+
+        const activeFps = patch.activeFps ?? rates.activeFps;
+        // A single-rate movie (equal rates) stays single-rate when only its active rate changes: 60/60 to 120 is 120/120,
+        // never 120/60, which the capture refuses as an idle rate above 5.
+        const singleRate = patch.idleFps === undefined && rates.idleFps === rates.activeFps;
+        // ax-tool never records the idle rate above the active one (Record.swift setFrameRates).
+        const idleFps = singleRate ? activeFps : Math.min(patch.idleFps ?? rates.idleFps, activeFps);
+        const applied = await this.session.retune({
+            activeFps,
+            idleFps,
+            threshold: patch.threshold ?? rates.threshold,
+        });
+        return { ...(await this.getSettings()), applied };
+    }
 
     /** Every session event passes here, so the state and target stay what the session says. */
     observe(event: RecordingSessionEvent): void {
         if (event.event === "state") {
             this.state = CONTROL_STATE[event.state];
             this.target = event.target;
+            this.elapsedMs = event.elapsedMs;
+            this.limitMs = event.limitMs;
+            this.segments = event.segments;
+        } else if (event.event === "elapsed") {
+            this.elapsedMs = event.elapsedMs;
+            this.limitMs = event.limitMs;
+        } else if (event.event === "segment") {
+            this.segments = Math.max(this.segments, event.index);
         } else if (event.event === "error") {
             this.warning = event.message;
         }
@@ -88,8 +185,22 @@ export class SessionRecorderControl extends RecorderControl {
             state: this.state,
             displays: [],
             frames: 0,
+            elapsedMs: this.elapsedMs,
+            segments: this.segments,
+            ...(this.limitMs === undefined ? {} : { limitMs: this.limitMs }),
             ...(this.warning ? { warning: this.warning } : {}),
         };
+    }
+
+    async addMarker(label: string): Promise<RecordingMarker> {
+        if (this.state !== "recording") {
+            refuseMarker(this.state);
+        }
+
+        const marker = { atMs: Math.round(this.session.elapsedMs()), label };
+        this.markers.push(marker);
+        log.debug({ marker }, "recording marker added");
+        return marker;
     }
 
     async pause(): Promise<{ state: ControlState }> {
@@ -117,8 +228,11 @@ export class SessionRecorderControl extends RecorderControl {
 
         const job = this.jobs.task<string>("join", async (ctx) => {
             ctx.progress({ done: 0, total: 1, unit: "steps", message: "joining the segments" });
+
+            // A save that failed leaves the session paused with a warning; the stop fails and can be sent again.
             try {
                 await this.session.command({ cmd: "stop" });
+
                 if (this.state === "paused") {
                     throw new Error(this.warning ?? "The recording could not be saved; stop can be retried.");
                 }
@@ -126,6 +240,7 @@ export class SessionRecorderControl extends RecorderControl {
                 this.finishJob = undefined;
                 throw error;
             }
+
             const outcome = await this.session.finished;
             ctx.progress({ done: 1, total: 1, unit: "steps", message: outcome });
             return outcome;
@@ -201,16 +316,20 @@ export class SessionRecorderControl extends RecorderControl {
     }
 }
 
-/** One stdin command of the session, as the same RecorderControl call the socket makes. */
+/** The last queued command of each control; the next one starts when it has settled. */
 const commandQueues = new WeakMap<RecorderControl, Promise<void>>();
 
+/**
+ * One stdin command of the session, as the same RecorderControl call the socket makes, queued behind the commands
+ * before it: a pause and a resume sent together each check the state the one before left.
+ */
 export function applyRecordingCommand(control: RecorderControl, command: RecordingCommand): Promise<void> {
     const next = (commandQueues.get(control) ?? Promise.resolve()).then(() =>
         dispatchRecordingCommand(control, command)
     );
     commandQueues.set(
         control,
-        next.catch((error) => {
+        next.catch((error: unknown) => {
             log.debug({ error }, "queued recording command refused");
         })
     );

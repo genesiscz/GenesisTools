@@ -46,6 +46,8 @@ export interface AudioTrack {
     peakDbfs?: number;
     /** `[fromMs, toMs]` on the audio file's timeline while the source was muted. */
     mutedSpans: Array<[number, number]>;
+    /** What went wrong with this track (its sidecar did not start or finish); a track without `path` lost its sound. */
+    warnings?: string[];
 }
 
 /** A running capture that takes commands while it records, without a restart. */
@@ -91,7 +93,6 @@ export interface CaptureResult {
     endedEarly?: CaptureEnding;
     stats?: Record<string, number>;
     tracks?: AudioTrack[];
-    warnings?: string[];
 }
 
 export const CAPTURE_ERROR_KINDS = ["display-missing", "no-permission", "unavailable", "timeout", "failed"] as const;

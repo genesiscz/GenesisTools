@@ -4,15 +4,19 @@
 import AppKit
 
 let interval = Double(CommandLine.arguments.dropFirst().first ?? "2") ?? 2
+
 func sceneSize(_ screen: NSSize) -> NSSize {
-    // Four percent of the full display stays safely above the one percent sampling threshold.
+    // Four percent of the full display stays well above the one percent sampling threshold.
     NSSize(width: screen.width * 0.2, height: screen.height * 0.2)
 }
-if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--geometry" {
-    let size = sceneSize(NSSize(width: Double(CommandLine.arguments[2])!, height: Double(CommandLine.arguments[3])!))
+
+if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--geometry",
+   let width = Double(CommandLine.arguments[2]), let height = Double(CommandLine.arguments[3]) {
+    let size = sceneSize(NSSize(width: width, height: height))
     print("\(size.width) \(size.height)")
     exit(0)
 }
+
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 

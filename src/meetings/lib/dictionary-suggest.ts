@@ -45,9 +45,14 @@ export function suggestDictionary(options: {
     };
 
     const repeats = new Map<string, { correction: Correction; count: number }>();
-    const evidence = new Set<string>();
+    /**
+     * One confirmation per meeting item: confirming the same item again is not a second, independent sighting. The
+     * ledger is read in order, so an Undo's retraction withdraws the item's confirmation until a later line confirms it.
+     */
+    const evidence = new Map<string, Correction>();
 
     for (const correction of options.corrections) {
+        // Only a fix confirmed for every line teaches the dictionary; a line-only fix or an older unscoped one does not.
         if (
             correction.kind !== "term" ||
             correction.scope !== "everywhere" ||
@@ -56,18 +61,21 @@ export function suggestDictionary(options: {
             continue;
         }
 
-        const key = `${correction.heard}\n${correction.fixed}`;
         const identity = [correction.meeting, correction.item, correction.heard, correction.fixed]
             .map((part) => `${part.length}:${part}`)
             .join("");
 
-        if (evidence.has(identity)) {
-            continue;
+        if (correction.retracted) {
+            evidence.delete(identity);
+        } else if (!evidence.has(identity)) {
+            evidence.set(identity, correction);
         }
+    }
 
-        evidence.add(identity);
+    for (const correction of evidence.values()) {
+        const key = `${correction.heard}\n${correction.fixed}`;
         const seen = repeats.get(key);
-        repeats.set(key, { correction, count: (seen?.count ?? 0) + 1 });
+        repeats.set(key, { correction: seen?.correction ?? correction, count: (seen?.count ?? 0) + 1 });
     }
 
     for (const { correction, count } of repeats.values()) {

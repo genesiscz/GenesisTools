@@ -13,7 +13,7 @@ import { formatClock } from "@genesiscz/utils/transcribe/render";
 import { type Presence, sameName } from "@genesiscz/utils/transcribe/speakers";
 import { citesPoint, keyWords, type SummaryPoint } from "@genesiscz/utils/transcribe/summary";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
-import { ledgerEntryFor } from "./transcript-corrections";
+import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
 
 export type { HeardContext } from "@genesiscz/utils/transcribe/lines";
 
@@ -446,6 +446,11 @@ export function answerQuestion(
     }
 
     const answer = options.answer.trim();
+
+    if (!answer) {
+        throw new Error(`An empty answer decides nothing: answer ${id} with a name or a word, or "${NONE_OF_THESE}"`);
+    }
+
     const none = answer.toLowerCase() === NONE_OF_THESE;
     question.status = "confirmed";
     question.answer = answer;
@@ -463,9 +468,11 @@ export function answerQuestion(
         }
 
         item.decidedAt = options.now;
+        const prior = ledgerEntryFor(record, item, options.now);
 
         if (none) {
             item.status = "rejected";
+            ledger.push(...decisionLedger(prior, undefined));
             continue;
         }
 
@@ -481,11 +488,7 @@ export function answerQuestion(
             delete item.meaning;
         }
 
-        const entry = ledgerEntryFor(record, item, options.now);
-
-        if (entry) {
-            ledger.push(entry);
-        }
+        ledger.push(...decisionLedger(prior, ledgerEntryFor(record, item, options.now)));
     }
 
     return ledger;

@@ -60,12 +60,13 @@ const nativeFrame = z.object({
     motionBoxes: z.array(z.tuple([z.number(), z.number(), z.number(), z.number()])).optional(),
 });
 const nativeTrack = z.object({
-    warnings: z.array(z.string()).default([]),
     source: z.enum(AUDIO_SOURCES),
     path: z.string().optional(),
     durationMs: z.number().default(0),
     peakDbfs: z.number().nullable().optional(),
     mutedSpans: z.array(z.tuple([z.number(), z.number()])).default([]),
+    /** Why the track's sidecar failed or lost sound (a full disk, a failed writer); it then has no `path`. */
+    warnings: z.array(z.string()).default([]),
 });
 const nativeResult = z.object({
     data: z.object({
@@ -319,6 +320,10 @@ export class NativeLiveCapture implements LiveCapture {
         reject: (error: Error) => void;
         timer: ReturnType<typeof setTimeout>;
     };
+    /** The settings command in flight; the next one waits for its answer. */
+    private settingsQueue: Promise<void> = Promise.resolve();
+    /** A command the recorder never answered: the answers no longer pair with the commands, so every later one fails. */
+    private settingsFailure?: Error;
 
     constructor(
         private readonly write: (text: string) => void,
@@ -347,10 +352,10 @@ export class NativeLiveCapture implements LiveCapture {
         }
     }
 
-    /** One command whose answer is the recorder's next `settings` event, or its next `error` event. */
-    private settingsQueue: Promise<void> = Promise.resolve();
-    private settingsFailure?: Error;
-
+    /**
+     * One command whose answer is the recorder's next `settings` event, or its next `error` event. The commands go out
+     * one at a time: an answer names no command, so a second one sent before the first answer would take that answer.
+     */
     private settingsCommand(
         command: Record<string, unknown>,
         answer: "settings" | "muted" = "settings"
@@ -403,7 +408,6 @@ export class NativeLiveCapture implements LiveCapture {
             clearTimeout(this.pendingSwitch.timer);
             this.pendingSwitch.reject(new CaptureError("failed", "another switch replaced this one"));
         }
-
         return new Promise<void>((resolve, reject) => {
             const timer = setTimeout(() => {
                 if (this.pendingSwitch?.timer === timer) {
@@ -432,12 +436,14 @@ export class NativeLiveCapture implements LiveCapture {
         }
 
         let raw: unknown;
+
         try {
             raw = SafeJSON.parse(line, { strict: true });
         } catch (error) {
             log.debug({ error }, "recorder stderr line is not an event");
             return;
         }
+
         const parsed = controlEvent.safeParse(raw);
 
         if (!parsed.success) {
@@ -624,7 +630,6 @@ export class NativeFrameRecorder extends FrameRecorder {
         } catch (error) {
             log.debug({ error }, "native capture result is incomplete; trying frame salvage");
         }
-
         const parsed = nativeResult.safeParse(json);
 
         if (run.exitCode === 0 && parsed.success) {
@@ -645,9 +650,6 @@ export class NativeFrameRecorder extends FrameRecorder {
             return {
                 startedAtMs: first && firstMtime !== undefined ? firstMtime - first.timestampMs : spawnedAt,
                 frames: kept,
-                warnings: (tracks ?? []).flatMap((track) =>
-                    track.warnings.map((warning) => `${track.source}: ${warning}`)
-                ),
                 ...(ending ? { endedEarly: ending } : {}),
                 ...(stats ? { stats } : {}),
                 ...(tracks
@@ -658,6 +660,7 @@ export class NativeFrameRecorder extends FrameRecorder {
                               durationMs: track.durationMs,
                               ...(typeof track.peakDbfs === "number" ? { peakDbfs: track.peakDbfs } : {}),
                               mutedSpans: track.mutedSpans,
+                              ...(track.warnings.length > 0 ? { warnings: track.warnings } : {}),
                           })),
                       }
                     : {}),

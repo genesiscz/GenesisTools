@@ -6,8 +6,9 @@ import { type MeetingsConfig, MeetingsConfigStore, type SourceSettings } from "@
 import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
 import { type LiveRecording, MEETING_SOURCE_IDS, type MeetingSourceId } from "@genesiscz/utils/meetings/sources";
 import { localTime } from "@genesiscz/utils/transcribe/render";
+import { assignSweep, hasOpenAssignSteps } from "./assign";
 import { linkSource } from "./link";
-import { readRecorderState } from "./recorder";
+import { readRecorderState } from "./recorder-shared";
 import { pruneCapturesDaily } from "./retention";
 import { meetingSource } from "./sources";
 import {
@@ -172,17 +173,22 @@ async function refreshEnded(options: {
 
     if (record?.end || now >= Date.parse(auto.refreshUntil)) {
         const active = readAuto(store);
+
+        // A pending refresh that finished leaves the active recording alone.
         if (active?.sourceMeetingId === auto.sourceMeetingId && active.meetingId === auto.meetingId) {
             clearAuto(store);
         }
+
         return true;
     }
+
     return false;
 }
 
 /**
- * One look: the watched source records and nothing else is recording, so start (and post a notification); the recording the
- * watcher started has ended or gone silent, so stop it. A recording a person started is never stopped here.
+ * One look: the watched source records and nothing else is recording, so start (and post a notification); the meeting of the
+ * recording the watcher started has ended, so stop it. Silence never stops it: a listener who stays quiet is still in the
+ * meeting. A recording a person started is never stopped here.
  */
 
 export async function watchOnce(
@@ -197,6 +203,7 @@ export async function watchOnce(
         const recorder = deps.recorder();
         const auto = readAuto(store);
 
+        // Turning autostart off ends the recording it started; a manual recording is left alone.
         if (
             recorder.running &&
             auto?.meetingId &&
@@ -227,11 +234,15 @@ export async function watchOnce(
     const source = await deps.source();
     const pendingRefreshes = readPendingRefreshes(store);
     const remaining: AutoRecording[] = [];
+
     for (const pending of pendingRefreshes) {
-        if (!(await refreshEnded({ store, deps, sourceId: pending.sourceId ?? source.id, auto: pending, now }))) {
+        const done = await refreshEnded({ store, deps, sourceId: pending.sourceId ?? source.id, auto: pending, now });
+
+        if (!done) {
             remaining.push(pending);
         }
     }
+
     if (remaining.length !== pendingRefreshes.length) {
         writePendingRefreshes(store, remaining);
     }
@@ -257,9 +268,8 @@ export async function watchOnce(
         }
 
         const ended = !live || live.sourceMeetingId !== auto.sourceMeetingId;
-        const silent = live ? now - Date.parse(live.liveChangedAt) > settings.stopAfterSilenceSec * 1000 : true;
 
-        if (!ended && !silent) {
+        if (!ended) {
             return "recording";
         }
 
@@ -272,14 +282,15 @@ export async function watchOnce(
             "--started-at",
             auto.recorderStartedAt!,
         ]);
-        log.info({ meeting: auto.meetingId, exitCode: result.exitCode, ended, silent }, "auto recording stopped");
+        log.info({ meeting: auto.meetingId, exitCode: result.exitCode }, "auto recording stopped: its meeting ended");
 
         // Not stopped yet: the next look tries again, and still knows the recording is its own.
         if (!result.success || deps.recorder().running) {
             return "failed";
         }
 
-        if (ended && auto.meetingId) {
+        // The meeting ended: its record is refreshed from the source for a while, so the ended meeting's text lands.
+        if (auto.meetingId) {
             const pending = {
                 ...auto,
                 sourceId: source.id,
@@ -375,7 +386,10 @@ export async function watchOnce(
     return "started";
 }
 
-/** Once a day: the frames and OCR of meetings past `capture.retentionDays` go to the trash. Never fails a look. */
+/**
+ * Once a day: the frames, OCR and editor files of meetings past `capture.retentionDays` go to the trash. Never fails
+ * a look.
+ */
 async function pruneOldCaptures(store: MeetingStore): Promise<void> {
     try {
         const config = await new MeetingsConfigStore().read();
@@ -394,7 +408,11 @@ async function pruneOldCaptures(store: MeetingStore): Promise<void> {
     }
 }
 
-/** The watcher loop: one look every 15 s until a signal, and the capture retention pass once a day. */
+/**
+ * The watcher loop: one look every 15 s until a signal, then the "ask each time" sweep (a question for each ended
+ * meeting without a project, and the answers applied), and the capture retention pass once a day. With autoRecord
+ * off it still runs while a project question or a folder step waits, since only the sweep reads those back.
+ */
 export async function watchLoop(store: MeetingStore): Promise<void> {
     let stopped = false;
     const stop = () => {
@@ -410,9 +428,11 @@ export async function watchLoop(store: MeetingStore): Promise<void> {
             log.warn({ err }, "watch tick failed");
             return "failed" as const;
         });
+        // After the look, so a meeting the look just refreshed from its source is asked about at once.
+        await assignSweep(store).catch((err: unknown) => log.warn({ err }, "assign sweep failed"));
 
-        if (result === "disabled") {
-            log.info("autoRecord is off; the watcher ends");
+        if (result === "disabled" && !hasOpenAssignSteps(store)) {
+            log.info("autoRecord is off and no project question waits; the watcher ends");
             break;
         }
 

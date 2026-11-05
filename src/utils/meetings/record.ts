@@ -7,6 +7,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { dictionaryLevelSchema } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
+import { calendarEntrySchema, calendarPersonSchema } from "./calendar-entry";
 import { projectNameSchema } from "./config";
 import { CHANNEL_LAYOUTS } from "./energy";
 import { MEETING_PLATFORM_IDS } from "./platform";
@@ -37,6 +38,8 @@ const calendarSchema = z.object({
     start: isoTime.optional(),
     end: isoTime.optional(),
     attendees: z.array(z.string()).default([]),
+    /** The attendees with their emails, when the calendar gives them. `attendees` keeps the names for older readers. */
+    people: z.array(calendarPersonSchema).optional(),
     conferenceUrl: z.string().optional(),
 });
 
@@ -71,6 +74,21 @@ const itemBase = {
     evidence: z.record(z.string(), z.unknown()).optional(),
     suggestedAt: isoTime,
     decidedAt: isoTime.optional(),
+    /**
+     * The confirm or reject that decided the item: its token, which an Undo names (`reopen --token`), and the fields
+     * it changed as they were before, which the Undo puts back.
+     */
+    decision: z
+        .object({
+            token: z.string().min(1),
+            previous: z.object({
+                status: z.enum(ITEM_STATUSES),
+                decidedAt: isoTime.optional(),
+                speaker: z.string().optional(),
+                proposed: z.string().optional(),
+            }),
+        })
+        .optional(),
 };
 
 /** A suggestion a rule made and a person decides: confirm or reject. */
@@ -160,6 +178,7 @@ const recordingSpanSchema = z.object({
     stopReason: z.enum(RECORDING_STOP_REASONS).optional(),
 });
 export type RecordingSpan = z.infer<typeof recordingSpanSchema>;
+/** One stretch a display was captured: a live switch or a follow-focus frame on another display starts the next. */
 export const recordingDisplaySpanSchema = recordingSpanSchema.extend({ displayId: z.number() });
 export type RecordingDisplaySpan = z.infer<typeof recordingDisplaySpanSchema>;
 
@@ -191,17 +210,65 @@ export const recordingBlockSchema = z
         clock: z.object({ source: z.string(), startedAt: isoTime }).optional(),
         /** When the failure notice of the current failure episode was posted; cleared by a piece that recorded. */
         failureNotifiedAt: isoTime.optional(),
+        /**
+         * The moments marked while it recorded (`marker.add`), over all its starts, at their wall-clock time; the
+         * meeting's recording.json gets them at their movie time.
+         */
+        markers: z.array(z.object({ at: isoTime, label: z.string() })).optional(),
     })
     .loose();
 export type RecordingBlock = z.infer<typeof recordingBlockSchema>;
 
 const historySchema = z.object({ at: isoTime, command: z.string(), change: z.string() });
 
+/** The states of one question in the decision inbox. */
+export const ASK_OUTCOMES = ["pending", "applied", "cancelled", "timeout", "failed"] as const;
+
+/**
+ * How the meeting got its project: the one question asked for it in the decision inbox, with what it offered, and the
+ * Wispr folder step after the answer. Only `src/meetings/lib/assign.ts` writes it.
+ */
+const assignSchema = z.object({
+    ask: z
+        .object({
+            formId: z.string().min(1),
+            askedAt: isoTime,
+            outcome: z.enum(ASK_OUTCOMES).default("pending"),
+            answeredAt: isoTime.optional(),
+            /** Why posting failed; the next sweep after ten minutes asks again. */
+            error: z.string().optional(),
+            /** The ranked proposals the question listed, each with its reasons as text. */
+            proposals: z.array(z.object({ project: z.string(), score: z.number(), reasons: z.array(z.string()) })),
+            /** The calendar entries that overlapped the meeting; the answer picks one by its place here. */
+            calendars: z.array(calendarEntrySchema).default([]),
+            /** The source folder the meeting was in that no project had; the answer may pair it. */
+            folder: z.object({ source: z.string(), folder: z.string() }).optional(),
+        })
+        .optional(),
+    /**
+     * The meeting's project has a folder in the source and the meeting is in none: the owner moves it by hand (no
+     * source can be changed from here), and the next sync that sees it in a folder asks to pair that folder.
+     */
+    folder: z
+        .object({
+            source: z.string(),
+            project: z.string(),
+            state: z.enum(["waiting", "asked", "paired", "declined"]),
+            since: isoTime,
+            folder: z.string().optional(),
+            formId: z.string().optional(),
+        })
+        .optional(),
+});
+export type MeetingAssign = z.infer<typeof assignSchema>;
+
 export const meetingRecordSchema = z.object({
     version: z.literal(1).default(1),
     id: z.string().min(1),
     title: z.string(),
     project: projectNameSchema.optional(),
+    /** Labels inside the project ("Checkout 2.0"): a meeting has one project and any labels. */
+    labels: z.array(z.string().trim().min(1)).default([]),
     start: isoTime,
     end: isoTime.optional(),
     createdAt: isoTime,
@@ -258,6 +325,12 @@ export const meetingRecordSchema = z.object({
         })
         .optional(),
     recording: recordingBlockSchema.optional(),
+    assign: assignSchema.optional(),
+    /**
+     * The notes `meetings export` wrote, one per file: the sha256 of what it wrote, so the next export can tell an
+     * untouched note (replaced) from one a person edited (kept).
+     */
+    exports: z.array(z.object({ path: z.string().min(1), sha256: z.string().min(1), at: isoTime })).optional(),
     /** One line per command that changed the record. Never rewritten. */
     history: z.array(historySchema).default([]),
 });
@@ -333,25 +406,43 @@ export class MeetingStore {
 
     /** Every readable record, newest first. A record that does not parse is logged and left out. */
     list(): MeetingRecord[] {
-        if (!existsSync(this.root)) {
-            return [];
-        }
+        return this.listBounded({}).records;
+    }
 
+    /** Folder dates bound discovery before JSON hydration. A record whose start is edited after creation keeps
+     * its folder date for this bound. One day of margin covers local/UTC time-zone differences. Undated folders
+     * are treated as today and read. `olderMeetings` counts excluded record folders without parsing their JSON. */
+    listBounded({ since, limit }: { since?: Date; limit?: number }): {
+        records: MeetingRecord[];
+        olderMeetings: number;
+    } {
         const records: MeetingRecord[] = [];
-
-        for (const entry of readdirSync(this.root, { withFileTypes: true })) {
-            if (!entry.isDirectory() || !existsSync(this.path(entry.name))) {
+        let olderMeetings = 0;
+        if (!existsSync(this.root)) {
+            return { records, olderMeetings };
+        }
+        const cutoff = since ? new Date(since.getTime() - 86_400_000).toISOString().slice(0, 10) : undefined;
+        const folders = readdirSync(this.root, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && existsSync(this.path(entry.name)))
+            .map((entry) => ({
+                id: entry.name,
+                day: /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}/.test(entry.name) ? entry.name.slice(0, 10) : undefined,
+            }))
+            .sort((a, b) => (b.day ?? "9999").localeCompare(a.day ?? "9999") || b.id.localeCompare(a.id));
+        for (const folder of folders) {
+            if (cutoff && folder.day && folder.day < cutoff) {
+                olderMeetings++;
                 continue;
             }
-
-            const record = this.read(entry.name);
-
+            if (limit !== undefined && records.length >= Math.max(0, limit)) {
+                continue;
+            }
+            const record = this.read(folder.id);
             if (record) {
                 records.push(record);
             }
         }
-
-        return records.sort((a, b) => b.start.localeCompare(a.start));
+        return { records: records.sort((a, b) => b.start.localeCompare(a.start)), olderMeetings };
     }
 
     read(id: string): MeetingRecord | undefined {
@@ -466,8 +557,11 @@ export class MeetingStore {
             history: [{ at: now, command: change.command, change: change.change }],
         });
 
+        // The folder is the reservation: a plain mkdir fails with EEXIST when another process took the id first.
+        // Meetings hold screen captures and transcripts, so only the owner may read them.
         mkdirSync(this.root, { recursive: true, mode: 0o700 });
         chmodSync(this.root, 0o700);
+
         for (let n = 2; ; n += 1) {
             try {
                 mkdirSync(this.folder(id), { mode: 0o700 });
@@ -476,12 +570,12 @@ export class MeetingStore {
                 if (!(err instanceof Error) || !("code" in err) || err.code !== "EEXIST") {
                     throw err;
                 }
+
                 id = `${base}-${n}`;
             }
         }
 
         record.id = id;
-
         await this.storage.withFileLock({ file: this.path(id), fn: async () => this.write(record) });
         log.debug({ id, createdBy: record.createdBy }, "meeting created");
         return record;
@@ -508,7 +602,28 @@ export class MeetingStore {
         });
     }
 
+    /**
+     * Names a diarization label for this meeting. The label's own name removes the rename, so the transcript shows
+     * the source label again.
+     */
+    async renameSpeaker(id: string, label: string, name: string): Promise<MeetingRecord> {
+        const trimmed = name.trim();
+
+        if (!trimmed) {
+            throw new Error(`a rename of ${label} needs a name`);
+        }
+
+        return this.update(id, { command: "speakers rename", change: `${label} → ${trimmed}` }, (current) => {
+            if (trimmed === label) {
+                delete current.speakers.labels[label];
+            } else {
+                current.speakers.labels[label] = trimmed;
+            }
+        });
+    }
+
     private write(record: MeetingRecord): void {
+        // A store made before the owner-only rule is tightened at its next write.
         chmodSync(this.root, 0o700);
         chmodSync(this.folder(record.id), 0o700);
         atomicWriteFileSync(this.path(record.id), `${SafeJSON.stringify(record, null, 4)}\n`, { mode: 0o600 });

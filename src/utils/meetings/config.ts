@@ -1,5 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
-import { AUDIO_SOURCES } from "@genesiscz/utils/screen-recorder/control";
+import { OCR_READS } from "@genesiscz/utils/macos/ocr";
+import { FILLER_WORDS, type FillerLists } from "@genesiscz/utils/recording-editor/transcript-cuts";
+import { AUDIO_SOURCES, OCR_REGIONS } from "@genesiscz/utils/screen-recorder/control";
 import { FRAME_RECORDER_IDS, type FrameRecorderId } from "@genesiscz/utils/screen-recorder/types";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
@@ -11,6 +13,15 @@ import {
     type ResolvedDictionary,
 } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
+import { MeetingsConflictError } from "./conflict";
+import {
+    addPairings,
+    type PairedBy,
+    type PersonRef,
+    pairedPersonSchema,
+    removeEntryPairings,
+    samePerson,
+} from "./people";
 import { MEETING_SOURCE_IDS, type MeetingSourceId } from "./sources";
 
 const { log } = logger.scoped("meetings-config");
@@ -25,17 +36,29 @@ export const projectNameSchema = z
 
 const strings = z.array(z.string().trim().min(1)).default([]);
 
-/** The config shape this code writes. Version 1 files are migrated on the first read (`migrateMeetingsConfig`). */
-export const MEETINGS_CONFIG_VERSION = 2;
+/** The config shape this code writes. Older files are migrated on the first read (`migrateMeetingsConfig`). */
+export const MEETINGS_CONFIG_VERSION = 3;
 
-/** How a meeting finds its project from the calendar. A source's own facts (Wispr folders) sit in `sources.<id>.match`. */
+/**
+ * How a meeting finds its project, by the facts every meeting has: its calendar entry, its title and its people. A
+ * source's own facts (Wispr folders) sit in `sources.<id>.match`.
+ */
 const projectMatchSchema = z.object({
-    calendar: z.object({ calendars: strings, titles: strings }).optional(),
+    /** Apple Calendar names: an entry in one of them puts the meeting in this project. */
+    calendar: z.object({ calendars: strings }).optional(),
+    /** Words of the meeting title (version 2 kept them as `calendar.titles`). */
+    title: z.object({ words: strings }).optional(),
+    /** People paired with this project, each with the sources that paired them. One person can be in several projects. */
+    people: z.array(pairedPersonSchema).default([]),
 });
 
 const projectSchema = z.object({
     dictionary: dictionaryLevelSchema.optional(),
     match: projectMatchSchema.optional(),
+    /** Labels a meeting of this project can carry, to group meetings finer than a project (shop: "Checkout 2.0"). */
+    labels: strings,
+    /** Where `meetings export` writes this project's polished meeting notes (a vault folder). Unset: it asks. */
+    export: z.object({ folder: z.string().trim().min(1) }).optional(),
 });
 
 export const DISPLAY_POLICIES = ["all", "follow-focus", "main"] as const;
@@ -81,10 +104,26 @@ const captureSchema = z.object({
     idleFps: z.number().positive().default(0.1),
     /** The share of the screen that must change for a new frame (0 to 1). */
     threshold: z.number().min(0).max(1).default(0.02),
+    /** How the kept frames are read by OCR. Tile reads improve small-text recall on wide displays. */
+    ocr: z
+        .object({
+            /** The OCR-only change threshold (0 to 1): a kept frame that changed less keeps the previous frame's text. */
+            threshold: z.number().min(0).max(1).default(0),
+            /** A kept frame whose changed area holds no text, now or before, keeps the previous frame's text. */
+            skipTextless: z.boolean().default(false),
+            /** `frame` reads each kept frame whole; `changed` reads only its changed area and keeps the rest. */
+            region: z.enum(OCR_REGIONS).default("frame"),
+            /** Whole-frame reads or overlapping region tiles without language correction. */
+            read: z.enum(OCR_READS).default("tiles"),
+        })
+        .prefault({}),
     jpegQuality: z.number().min(0.1).max(1).default(0.75),
     /** The longest side of a frame in pixels. Smaller text than this keeps is lost to OCR on a large display. */
     resolutionCap: z.number().int().min(640).max(8192).default(2880),
-    /** The watcher expires frames, OCR and recorded audio this many days after the newest capture-file timestamp; the meeting record stays. */
+    /**
+     * The watcher moves a meeting's frames, OCR and recorded sound (`frames/`, `ocr.jsonl`, `audio/`, `audio.jsonl`) to the
+     * trash this many days after its newest capture file; the meeting record stays.
+     */
     retentionDays: z.number().int().positive().default(30),
     recorders: recordersSchema.prefault({}),
 });
@@ -98,10 +137,11 @@ const sourceBaseShape = {
     autoRecord: z
         .object({
             enabled: z.boolean().default(false),
-            /** A recording is live while its live transcript changed this recently. */
+            /**
+             * A recording is live while its live transcript changed this recently; this only starts a recording. One
+             * stops when the source ends the meeting, never on silence (an older file's `stopAfterSilenceSec` is ignored).
+             */
             liveWithinSec: z.number().int().positive().default(30),
-            /** Stop when the live transcript has been silent this long. */
-            stopAfterSilenceSec: z.number().int().positive().default(120),
             /** Post a notification when a recording starts by itself. */
             notify: z.boolean().default(true),
         })
@@ -162,9 +202,27 @@ const summarySchema = z.object({
 interface LanguageDefaults {
     ocr: string[];
     render: { unclearLabel: string; readAloudLabel: string; lineLabel: string };
+    fillers: { sounds: string[]; words: string[] };
 }
 
 const label = z.string().trim().min(1);
+
+/**
+ * The filler words of one language, in the two levels the editor's `cutFillers` knows: `sounds` are never words
+ * ("ehm"), `words` are fillers that are also real words ("jako" is "as" in "stejně jako"), cut only at level `all`.
+ */
+function fillersSchema(defaults: { sounds: string[]; words: string[] }) {
+    return z.object({
+        sounds: z.array(label).default(defaults.sounds),
+        words: z.array(label).default(defaults.words),
+    });
+}
+
+/** The default lists of a language the code ships (`FILLER_WORDS`), copied so a caller cannot change the table. */
+function shippedFillers(code: string): { sounds: string[]; words: string[] } {
+    const list = FILLER_WORDS[code];
+    return { sounds: [...(list?.sounds ?? [])], words: [...(list?.words ?? [])] };
+}
 
 /** One spoken language: the Vision OCR languages for screen frames, the transcript's labels, and its word check. */
 function languageSchema(defaults: LanguageDefaults) {
@@ -182,6 +240,8 @@ function languageSchema(defaults: LanguageDefaults) {
             .prefault({}),
         /** The spell provider of this language's word check (`hunspell`, `hunspell-cc0`, `macos`); unset is the default one. */
         wordCheck: label.optional(),
+        /** The words `recorder cut-fillers` cuts for a transcript in this language (the editor's `cutFillers` op). */
+        fillers: fillersSchema(defaults.fillers).prefault({}),
     });
 }
 
@@ -190,7 +250,11 @@ const customLanguageSchema = z.object({
     ocr: z.array(label).min(1),
     render: z.object({ unclearLabel: label, readAloudLabel: label, lineLabel: label }),
     wordCheck: label.optional(),
+    /** A level left out is the shipped list of that code (`FILLER_WORDS`), or none for a code the editor has no list for. */
+    fillers: z.object({ sounds: z.array(label).optional(), words: z.array(label).optional() }).optional(),
 });
+
+type LanguageBlock = z.output<ReturnType<typeof languageSchema>>;
 
 /** One block per spoken language. A new one is a block here (or in the file, with every key) and a class in the word check. */
 const languagesSchema = z
@@ -198,19 +262,67 @@ const languagesSchema = z
         cs: languageSchema({
             ocr: ["cs-CZ", "en-US"],
             render: { unclearLabel: "nejasné", readAloudLabel: "čte z", lineLabel: "ř." },
+            fillers: shippedFillers("cs"),
         }).prefault({}),
         sk: languageSchema({
             ocr: ["sk-SK", "cs-CZ", "en-US"],
             render: { unclearLabel: "nejasné", readAloudLabel: "číta z", lineLabel: "r." },
+            fillers: shippedFillers("sk"),
         }).prefault({}),
     })
-    .catchall(customLanguageSchema);
+    .catchall(customLanguageSchema)
+    // Filled here, not by each reader: `config show` (the Settings window) then lists what a cut removes, `en` included,
+    // and a write of one level keeps the other level's shipped list. Writes edit the raw file, so nothing is stored.
+    .transform(({ cs, sk, ...custom }): Record<string, LanguageBlock> & { cs: LanguageBlock; sk: LanguageBlock } => {
+        const filled: Record<string, LanguageBlock> = {};
 
-export type LanguageSettings = z.infer<typeof customLanguageSchema>;
+        for (const [code, block] of Object.entries(custom)) {
+            const shipped = shippedFillers(code);
+            filled[code] = {
+                ...block,
+                fillers: {
+                    sounds: block.fillers?.sounds ?? shipped.sounds,
+                    words: block.fillers?.words ?? shipped.words,
+                },
+            };
+        }
+
+        return { ...filled, cs, sk };
+    });
+
+export type LanguageSettings = LanguageBlock;
+
+/** How a meeting without a project gets one. */
+const assignSchema = z.object({
+    /** Ask in the decision inbox once for each meeting that has no project when its sources have linked. */
+    ask: z.boolean().default(true),
+    /** The watcher asks about meetings that started this recently; an older one is asked with `meetings assign ask`. */
+    lookbackHours: z.number().int().positive().default(48),
+    /** The most ranked project proposals one question lists. */
+    maxProposals: z.number().int().min(1).max(20).default(5),
+    /** A calendar entry counts as the meeting's when it overlaps it, or starts this many minutes before or after it. */
+    calendarSlackMin: z.number().int().min(0).max(120).default(15),
+    /** Calendar entries that start this many hours before a meeting can still cover it (never less than the slack). */
+    calendarLookbehindHours: z.number().int().min(0).max(48).default(3),
+    /** A meeting waits this many days for the owner to move it into a source folder (Wispr); then the folder step ends. */
+    folderWaitDays: z.number().int().positive().max(365).default(14),
+    /** A project question whose post failed is posted again after this many minutes, so a broken inbox is not hit on every look. */
+    retryFailedMin: z
+        .number()
+        .int()
+        .positive()
+        .max(24 * 60)
+        .default(10),
+});
+
+/** What an export does with a note that holds edits: see `global.export.ifEdited`. */
+export const EXPORT_IF_EDITED = ["beside", "refuse", "replace"] as const;
+export type ExportIfEdited = (typeof EXPORT_IF_EDITED)[number];
 
 const storedConfigSchema = z
     .object({
-        version: z.literal(MEETINGS_CONFIG_VERSION).default(MEETINGS_CONFIG_VERSION),
+        /** A newer version than this code writes still reads: its keys this code knows, the rest stay in the file. */
+        version: z.number().int().min(MEETINGS_CONFIG_VERSION).default(MEETINGS_CONFIG_VERSION),
         global: z
             .object({
                 dictionary: dictionaryLevelSchema.prefault({}),
@@ -227,6 +339,19 @@ const storedConfigSchema = z
                         applyAbove: z.number().min(0).max(1).default(0.5),
                         /** Questions one `items suggest` run makes at most, speakers and terms together; the rest stay marked. */
                         questionCap: z.number().int().min(1).max(500).default(12),
+                        /** `skip`: no meaning after words a plain code name only restates ("entity data" `EntityData`). */
+                        restatedIdentifiers: z.enum(["skip", "mark"]).default("skip"),
+                    })
+                    .prefault({}),
+                assign: assignSchema.prefault({}),
+                export: z
+                    .object({
+                        /**
+                         * What `meetings export` does when the note it would replace holds edits the last export did
+                         * not write: `beside` writes the new note next to it, `refuse` writes nothing, `replace`
+                         * overwrites the edits.
+                         */
+                        ifEdited: z.enum(EXPORT_IF_EDITED).default("beside"),
                     })
                     .prefault({}),
             })
@@ -254,16 +379,11 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Moves a version 1 config to the version 2 places, in place: `global.render` to `languages.<language>.render`,
- * `global.playback.listen.budget` to `global.suggest.questionCap` and `global.playback.listen.roundCap`, and
- * `projects.<p>.match.wisprflow.folders` to `sources.wisprflow.match.<p>.folders`. A key already in its new place
- * wins. Returns whether anything changed; a version 2 config is left alone.
+ * Version 1 to 2: `global.render` to `languages.<language>.render`, `global.playback.listen.budget` to
+ * `global.suggest.questionCap` and `global.playback.listen.roundCap`, and `projects.<p>.match.wisprflow.folders` to
+ * `sources.wisprflow.match.<p>.folders`. A key already in its new place wins.
  */
-export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
-    if (typeof raw.version === "number" && raw.version >= MEETINGS_CONFIG_VERSION) {
-        return false;
-    }
-
+function migrateToV2(raw: Record<string, unknown>): void {
     const global = isObject(raw.global) ? raw.global : undefined;
 
     if (global && isObject(global.render)) {
@@ -298,7 +418,48 @@ export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
             delete settings.match;
         }
     }
+}
 
+/**
+ * Version 2 to 3: `projects.<p>.match.calendar.titles` to `projects.<p>.match.title.words`, since the words test the
+ * meeting title from any source, not the calendar. Words already in the new place stay first; the old ones fill in.
+ */
+function migrateToV3(raw: Record<string, unknown>): void {
+    for (const settings of Object.values(isObject(raw.projects) ? raw.projects : {})) {
+        const match = isObject(settings) && isObject(settings.match) ? settings.match : undefined;
+        const calendar = match && isObject(match.calendar) ? match.calendar : undefined;
+
+        if (!match || !calendar || !Array.isArray(calendar.titles)) {
+            continue;
+        }
+
+        const title = objectAt(match, "title");
+        const words = Array.isArray(title.words) ? title.words : [];
+        title.words = [...new Set([...words, ...calendar.titles])];
+        delete calendar.titles;
+
+        if (Object.keys(calendar).length === 0) {
+            delete match.calendar;
+        }
+    }
+}
+
+/**
+ * Moves an older config to the current places, in place, one version step at a time. A file without a version is
+ * version 1. Returns whether anything changed; a current config is left alone, so a second run changes nothing.
+ */
+export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
+    const version = typeof raw.version === "number" ? raw.version : 1;
+
+    if (version >= MEETINGS_CONFIG_VERSION) {
+        return false;
+    }
+
+    if (version < 2) {
+        migrateToV2(raw);
+    }
+
+    migrateToV3(raw);
     raw.version = MEETINGS_CONFIG_VERSION;
     return true;
 }
@@ -327,6 +488,25 @@ export function languageSettings(config: Pick<StoredConfig, "global" | "language
     }
 
     return block;
+}
+
+/**
+ * The filler lists the editor cuts with: the shipped list of each code (`FILLER_WORDS`, so `en` works without a
+ * block), each replaced by the `fillers` of the same code in `languages`. A custom language without `fillers` keeps
+ * the shipped list of its code, or has none.
+ */
+export function fillerListsOf(languages: MeetingsConfig["languages"]): FillerLists {
+    const lists: FillerLists = { ...FILLER_WORDS };
+
+    for (const [code, block] of Object.entries(languages)) {
+        const own = block?.fillers;
+
+        if (own) {
+            lists[code] = { sounds: own.sounds, words: own.words };
+        }
+    }
+
+    return lists;
 }
 
 /** What a recorder takes beyond the shared capture policy: its own block of `capture.recorders`. */
@@ -370,7 +550,7 @@ export function matchProjects(config: MeetingsConfig, facts: ProjectMatchFacts):
                 calendar !== undefined &&
                 (match?.calendar?.calendars ?? []).some((one) => one.toLowerCase() === calendar);
             const byTitle =
-                title !== "" && (match?.calendar?.titles ?? []).some((word) => title.includes(word.toLowerCase()));
+                title !== "" && (match?.title?.words ?? []).some((word) => title.includes(word.toLowerCase()));
 
             return byFolder || byCalendar || byTitle;
         })
@@ -408,7 +588,7 @@ export class MeetingsConfigStore {
 
     /**
      * The config with every default filled in. A missing file is the defaults; an invalid one throws with each issue.
-     * A version 1 file is rewritten in the version 2 shape once, under the lock.
+     * An older file is rewritten in the current shape once, under the lock.
      */
     async read(): Promise<MeetingsConfig> {
         let raw = (await this.storage.getConfig<Record<string, unknown>>()) ?? {};
@@ -476,22 +656,63 @@ export class MeetingsConfigStore {
         return added;
     }
 
-    /** Adds or replaces the entry for `entry.value` in one dictionary level. */
-    async putDictionaryEntry(scope: DictionaryScope, entry: DictionaryEntry): Promise<MeetingsConfig> {
-        return this.putDictionaryEntries(scope, [entry]);
+    /**
+     * Adds or replaces the entry for `entry.value` in one dictionary level. `ifAbsent`: only add it; an entry with that
+     * value in the level (made again since an Undo's remove) is refused with `dictionary-exists`.
+     */
+    async putDictionaryEntry(
+        scope: DictionaryScope,
+        entry: DictionaryEntry,
+        options: { ifAbsent?: boolean } = {}
+    ): Promise<MeetingsConfig> {
+        return this.putDictionaryEntries(scope, [entry], options);
     }
 
-    /** Adds or replaces several entries in one level, in one write. */
-    async putDictionaryEntries(scope: DictionaryScope, added: DictionaryEntry[]): Promise<MeetingsConfig> {
+    /** Adds or replaces several entries in one level, in one write. `ifAbsent`: see `putDictionaryEntry`. */
+    async putDictionaryEntries(
+        scope: DictionaryScope,
+        added: DictionaryEntry[],
+        options: { ifAbsent?: boolean } = {}
+    ): Promise<MeetingsConfig> {
         const values = new Set(added.map((entry) => entry.value));
 
         return this.update((raw) => {
             const level = dictionaryAt(raw, scope);
             const entries = Array.isArray(level.entries) ? (level.entries as Array<{ value?: unknown }>) : [];
+            const present = options.ifAbsent
+                ? entries.find((existing) => typeof existing.value === "string" && values.has(existing.value))
+                : undefined;
+
+            if (present) {
+                throw new MeetingsConflictError(
+                    "dictionary-exists",
+                    `${String(present.value)} is in the ${scope.kind === "project" ? `project ${scope.project}` : "global"} dictionary again; it was left as it is`
+                );
+            }
+
             level.entries = [
                 ...entries.filter((existing) => typeof existing.value !== "string" || !values.has(existing.value)),
                 ...added,
             ];
+        });
+    }
+
+    /**
+     * Replaces the entry for `previous` with `entry` (a renamed entry is a new value) in one write, in its place. The
+     * whole config must still validate, so a refused entry leaves `previous` as it was.
+     */
+    async replaceDictionaryEntry(
+        scope: DictionaryScope,
+        previous: string,
+        entry: DictionaryEntry
+    ): Promise<MeetingsConfig> {
+        return this.update((raw) => {
+            const level = dictionaryAt(raw, scope);
+            const entries = Array.isArray(level.entries) ? (level.entries as Array<{ value?: unknown }>) : [];
+            const at = entries.findIndex((existing) => existing.value === previous);
+            const kept = entries.filter((existing) => existing.value !== previous && existing.value !== entry.value);
+            kept.splice(at === -1 ? kept.length : Math.min(at, kept.length), 0, entry);
+            level.entries = kept;
         });
     }
 
@@ -530,6 +751,116 @@ export class MeetingsConfigStore {
 
         return removed;
     }
+
+    /** Adds and removes known labels of a project; the project joins the known ones. Returns its labels. */
+    async setProjectLabels(project: string, change: { add?: string[]; remove?: string[] }): Promise<string[]> {
+        projectNameSchema.parse(project);
+        const config = await this.update((raw) => {
+            const settings = objectAt(objectAt(raw, "projects"), project);
+            const remove = new Set((change.remove ?? []).map((label) => label.trim().toLowerCase()));
+            const current = stringList(settings.labels).filter((label) => !remove.has(label.toLowerCase()));
+            const added = (change.add ?? []).map((label) => label.trim()).filter((label) => label.length > 0);
+            settings.labels = mergeLabels(current, added);
+        });
+
+        return config.projects[project]?.labels ?? [];
+    }
+
+    /** Pairs people with a project through one source (a calendar entry or a manual pairing). */
+    async pairPeople(options: { project: string; people: PersonRef[]; by: PairedBy }): Promise<MeetingsConfig> {
+        projectNameSchema.parse(options.project);
+
+        return this.update((raw) => {
+            const match = objectAt(objectAt(objectAt(raw, "projects"), options.project), "match");
+            match.people = addPairings(rawPeople(match.people), options.people, options.by);
+        });
+    }
+
+    /** Removes the pairings one calendar entry made, in every project; a person another source pairs stays. */
+    async unpairEntry(
+        entryId: string
+    ): Promise<Array<{ project: string; name: string; email?: string; left: boolean }>> {
+        const removed: Array<{ project: string; name: string; email?: string; left: boolean }> = [];
+
+        await this.update((raw) => {
+            for (const [project, settings] of Object.entries(objectAt(raw, "projects"))) {
+                const match = isObject(settings) && isObject(settings.match) ? settings.match : undefined;
+
+                if (!match || match.people === undefined) {
+                    continue;
+                }
+
+                const result = removeEntryPairings(rawPeople(match.people), entryId);
+                match.people = result.people;
+                removed.push(...result.removed.map((person) => ({ project, ...person })));
+            }
+        });
+
+        log.debug({ entryId, removed: removed.length }, "calendar entry unpaired");
+        return removed;
+    }
+
+    /** Removes a person from a project, whatever paired them. Returns false when they were not paired with it. */
+    async unpairPerson(project: string, person: PersonRef): Promise<boolean> {
+        let removed = false;
+
+        await this.update((raw) => {
+            const settings = objectAt(raw, "projects")[project];
+            const match = isObject(settings) && isObject(settings.match) ? settings.match : undefined;
+
+            if (!match) {
+                return;
+            }
+
+            const people = rawPeople(match.people);
+            const kept = people.filter((existing) => !samePerson(existing, person));
+            removed = kept.length !== people.length;
+            match.people = kept;
+        });
+
+        return removed;
+    }
+
+    /** Pairs a source's folder with a project: a meeting in it then goes to the project. False when it was paired. */
+    async addSourceFolder(source: MeetingSourceId, project: string, folder: string): Promise<boolean> {
+        projectNameSchema.parse(project);
+        let added = false;
+
+        await this.update((raw) => {
+            objectAt(objectAt(raw, "projects"), project);
+            const match = objectAt(objectAt(objectAt(objectAt(raw, "sources"), source), "match"), project);
+            const folders = stringList(match.folders);
+            added = !folders.some((known) => known.toLowerCase() === folder.toLowerCase());
+            match.folders = added ? [...folders, folder] : folders;
+        });
+
+        return added;
+    }
+}
+
+function stringList(value: unknown): string[] {
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+/** Labels in their first spelling, compared without case. */
+export function mergeLabels(current: string[], added: string[]): string[] {
+    const merged = [...current];
+
+    for (const label of added) {
+        if (!merged.some((known) => known.toLowerCase() === label.toLowerCase())) {
+            merged.push(label);
+        }
+    }
+
+    return merged;
+}
+
+function rawPeople(value: unknown): z.infer<typeof pairedPersonSchema>[] {
+    if (value === undefined) {
+        return [];
+    }
+
+    return z.array(pairedPersonSchema).parse(value);
 }
 
 function objectAt(parent: Record<string, unknown>, key: string): Record<string, unknown> {

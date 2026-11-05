@@ -385,7 +385,7 @@ export async function runCapturePlanWithSignal({
 
     throwIfCancelled("during focus");
     if (cap.countdownSec && cap.countdownSec > 0) {
-        await runCountdown(Math.min(cap.countdownSec, 10), signal);
+        await runCountdown(Math.min(cap.countdownSec, 10), { signal });
     }
 
     throwIfCancelled("before the recorder started");

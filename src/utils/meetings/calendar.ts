@@ -1,5 +1,7 @@
+import { macosCalendarDoctorCommand } from "@genesiscz/utils/genesis-tools/tools/system";
 import { logger } from "@genesiscz/utils/logger";
 import { MacCalendar } from "@genesiscz/utils/macos/apple-calendar";
+import type { CalendarLookup } from "./calendar-entry";
 import type { MeetingCalendar } from "./record";
 
 const { log } = logger.scoped("meetings-calendar");
@@ -44,5 +46,55 @@ export async function calendarAround(start: Date): Promise<MeetingCalendar | und
     } catch (err) {
         log.warn({ err }, "calendar lookup failed; the meeting gets no calendar entry");
         return undefined;
+    }
+}
+
+/**
+ * The Apple Calendar entries that start in the range (Outlook and Teams accounts synced into macOS Calendar), all-day
+ * entries left out. It reads the grant status first and never shows the macOS dialog, so a missing grant answers
+ * `ok: false` with the fix, never an empty list. darwinkit gives no attendees, so `people` stays empty; a source's own
+ * calendar (Wispr Flow) gives them for the same entry.
+ */
+export async function appleCalendarEntries(range: { from: Date; to: Date }): Promise<CalendarLookup> {
+    const from = "apple-calendar";
+
+    if (process.platform !== "darwin") {
+        return { ok: false, from, reason: "Apple Calendar exists only on macOS" };
+    }
+
+    try {
+        const auth = await MacCalendar.authorizationStatus();
+
+        if (auth.status !== "fullAccess") {
+            log.info({ status: auth.status }, "calendar not read: no full access");
+            return {
+                ok: false,
+                from,
+                reason: `Calendar access is "${auth.status}", not full access`,
+                fix: `${macosCalendarDoctorCommand()}, then grant GenesisTools.app Full Access to Calendars`,
+            };
+        }
+
+        const events = await MacCalendar.listEvents({ from: range.from, to: range.to });
+        log.debug({ events: events.length, from: range.from.toISOString() }, "apple calendar entries");
+        return {
+            ok: true,
+            from,
+            entries: events
+                .filter((event) => !event.is_all_day)
+                .map((event) => ({
+                    from,
+                    entryId: event.identifier,
+                    calendar: event.calendar_title,
+                    title: event.title,
+                    start: new Date(event.start_date).toISOString(),
+                    end: new Date(event.end_date).toISOString(),
+                    people: [],
+                    ...(event.url ? { conferenceUrl: event.url } : {}),
+                })),
+        };
+    } catch (err) {
+        log.warn({ err }, "apple calendar read failed");
+        return { ok: false, from, reason: `Apple Calendar read failed: ${err instanceof Error ? err.message : err}` };
     }
 }

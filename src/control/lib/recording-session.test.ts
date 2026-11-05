@@ -5,16 +5,22 @@ import * as fs from "node:fs/promises";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { chosenPlan } from "@app/recorder/lib/proxy";
+import { framesDurationUs } from "@genesiscz/utils/recording-editor/source";
 import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import * as videoProbe from "@genesiscz/utils/video/probe";
 import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
 import * as captureRunner from "./capture-runner";
-import { nativeSegmentRecorder } from "./recording-native";
+import { type NativeRecorderOptions, nativeSegmentRecorder, segmentCaptureSpec } from "./recording-native";
 import {
+    concatCopyArgv,
+    concatListLine,
     FIRST_FRAME_MESSAGE,
     type FinishedSegment,
+    joinCursorTracks,
     joinSegmentsArgv,
+    type MovieRates,
     PREPARING_MESSAGE,
     parseRecordingCommand,
     RecordingSession,
@@ -25,11 +31,15 @@ import {
 import { applyRecordingCommand, SessionRecorderControl } from "./recording-session-control";
 import {
     defaultRecordingTarget,
+    describeRecordingTarget,
     groupRecordingApps,
     parseRecordingWindows,
+    parseRegionTarget,
+    parseWindowIdList,
     type RecordingTarget,
 } from "./recording-targets";
 
+// AppKit and the swift interpreter exist only on macOS.
 it.skipIf(process.platform !== "darwin")(
     "the benchmark scene exceeds its one percent threshold on a 4K display",
     async () => {
@@ -54,6 +64,7 @@ it("rejects benchmark durations beyond the backend cap and invalid plans", () =>
     for (const seconds of [0, -1, NaN, Infinity, 181]) {
         expect(() => validateBenchmark(1, seconds)).toThrow();
     }
+
     expect(() => validateBenchmark(0, 60)).toThrow();
     expect(() => validateBenchmark(1, 60, "unknown")).toThrow();
     expect(() => validateBenchmark(1, 180, "native")).not.toThrow();
@@ -71,6 +82,8 @@ const editor: RecordingTarget = { kind: "window", windowIds: [77], app: "Editor"
 
 interface FakeRun {
     target: RecordingTarget;
+    /** The frame rates and threshold the session gave this run. */
+    rates?: MovieRates;
     output: string;
     maxSeconds: number;
     signal: AbortSignal;
@@ -87,7 +100,7 @@ interface FakeRun {
 function fakeRecorder(options: { failFirst?: boolean; armLater?: boolean; prepares?: boolean } = {}) {
     const runs: FakeRun[] = [];
     const recorder: SegmentRecorder = {
-        record({ target, output, maxSeconds, signal, onRecording, onPreparing }) {
+        record({ target, rates, output, maxSeconds, signal, onRecording, onPreparing }) {
             if (options.prepares) {
                 onPreparing?.();
             }
@@ -106,7 +119,7 @@ function fakeRecorder(options: { failFirst?: boolean; armLater?: boolean; prepar
                     armed = true;
                     onRecording();
                 };
-                runs.push({ target, output, maxSeconds, signal, end, arm });
+                runs.push({ target, rates, output, maxSeconds, signal, end, arm });
                 if (options.failFirst && index === 0) {
                     void end({ ok: false, endedBy: "failure", error: "[screen-recording-denied] no grant" }, false);
                     return;
@@ -546,6 +559,7 @@ describe("RecordingSession", () => {
             slowStartMs: 0,
         });
         control = new SessionRecorderControl(recording, { target: finder });
+
         try {
             await recording.start();
             await Promise.all([
@@ -568,9 +582,12 @@ describe("RecordingSession", () => {
             output: join(root, "out.mp4"),
             recorder,
             join: async ({ output }) => {
-                if (++attempts === 1) {
+                attempts += 1;
+
+                if (attempts === 1) {
                     throw new Error("disk full");
                 }
+
                 await writeFile(output, "joined");
                 return { durationMs: 1000 };
             },
@@ -580,6 +597,7 @@ describe("RecordingSession", () => {
             slowStartMs: 0,
         });
         control = new SessionRecorderControl(recording, { target: finder });
+
         try {
             await recording.start();
             await control.pause();
@@ -794,6 +812,41 @@ describe("nativeSegmentRecorder", () => {
         return { result: await run, output, probes: probe.mock.calls.length };
     }
 
+    it("a run records with the session's rates, and passes no idle rate when it equals the active one", async () => {
+        const plans: Array<{ activeFps?: number; idleFps?: number; threshold?: number }> = [];
+        spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async ({ plan }) => {
+            plans.push({
+                activeFps: plan.capture.activeFps,
+                idleFps: plan.capture.idleFps,
+                threshold: plan.capture.threshold,
+            });
+            return {
+                ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+                captureFailed: true,
+                warnings: [],
+                capture: null,
+            };
+        });
+        const recorder = nativeSegmentRecorder({ fps: 60, idleFps: 2, threshold: 0.5 });
+        const run = (rates: MovieRates) =>
+            recorder.record({
+                target: display,
+                rates,
+                output: join(root, "segment.mp4"),
+                maxSeconds: 3,
+                signal: new AbortController().signal,
+                onRecording: () => undefined,
+            });
+
+        await run({ activeFps: 30, idleFps: 1, threshold: 2 });
+        await run({ activeFps: 30, idleFps: 30, threshold: 2 });
+
+        expect(plans).toEqual([
+            { activeFps: 30, idleFps: 1, threshold: 2 },
+            { activeFps: 30, idleFps: undefined, threshold: 2 },
+        ]);
+    });
+
     it("a stop on a recorder that failed probes its movie and drops an unfinished one", async () => {
         const { result, output, probes } = await stoppedRun(true);
         expect(probes).toBe(1);
@@ -808,6 +861,51 @@ describe("nativeSegmentRecorder", () => {
         expect(probes).toBe(0);
         expect(result).toEqual({ ok: true, endedBy: "stop", durationMs: undefined });
         expect(existsSync(output)).toBe(true);
+    });
+});
+
+describe("joining segments with their audio and cursor tracks", () => {
+    it("copies same-shape segments with every stream and quotes paths for the concat list", () => {
+        const argv = concatCopyArgv({ list: "/s/list.txt", output: "/o.mp4" });
+        expect(argv.slice(argv.indexOf("-f"), argv.indexOf("-f") + 6)).toEqual([
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            "/s/list.txt",
+        ]);
+        expect(argv).toContain("copy");
+        expect(argv[argv.indexOf("-map") + 1]).toBe("0");
+        expect(concatListLine("/a/it's.mp4")).toBe("file '/a/it'\\''s.mp4'");
+    });
+
+    it("keeps the audio when it re-encodes segments of different sizes", () => {
+        const argv = joinSegmentsArgv({
+            inputs: ["/a.mp4", "/b.mp4"],
+            width: 1280,
+            height: 720,
+            output: "/o.mp4",
+            audio: true,
+        });
+        const graph = argv[argv.indexOf("-filter_complex") + 1];
+        expect(graph).toContain("[0:a:0]aresample=async=1:first_pts=0[a0_0]");
+        expect(graph).toEndWith("[v0][a0_0][v1][a1_0]concat=n=2:v=1:a=1[out][aout0]");
+        expect(argv).toContain("[aout0]");
+        expect(argv[argv.indexOf("-c:a") + 1]).toBe("aac");
+    });
+
+    it("moves each segment's cursor samples by the length of the segments before it", () => {
+        const joined = joinCursorTracks([
+            { text: '{"t":0.0,"x":0.1,"y":0.2}\n{"t":500.5,"x":0.3,"y":0.4,"click":"left"}\n', offsetMs: 0 },
+            { text: 'not json\n{"t":10.0,"x":0.5,"y":0.6}\n', offsetMs: 2000 },
+        ]);
+        expect(joined.trim().split("\n")).toEqual([
+            '{"t":0.0,"x":0.1,"y":0.2}',
+            '{"t":500.5,"x":0.3,"y":0.4,"click":"left"}',
+            '{"t":2010.0,"x":0.5,"y":0.6}',
+        ]);
+        expect(joinCursorTracks([])).toBe("");
     });
 });
 
@@ -891,4 +989,232 @@ describe("recording commands and targets", () => {
             pid: 20,
         });
     });
+});
+
+describe("segmentCaptureSpec", () => {
+    it("records an area of the screen in region mode, in global points", () => {
+        const spec = segmentCaptureSpec({
+            target: { kind: "region", x: 100, y: 50, width: 640, height: 360 },
+            output: "/tmp/segment.mp4",
+            maxSeconds: 60,
+            options: { fps: 30, cursorTrack: true },
+        });
+        expect(spec.mode).toBe("region");
+        expect(spec.region).toBe("100,50,640,360");
+        expect(spec.activeFps).toBe(30);
+        expect(spec.cursorTrack).toBe("/tmp/segment.mp4.cursor.jsonl");
+        expect(describeRecordingTarget({ kind: "region", x: 100, y: 50, width: 640, height: 360 })).toBe(
+            "area 640×360 at 100,50"
+        );
+    });
+
+    it("passes the idle rate, the change threshold and the windows to leave out", () => {
+        const spec = segmentCaptureSpec({
+            target: { kind: "display", screenIndex: 0 },
+            output: "/tmp/segment.mp4",
+            maxSeconds: 60,
+            options: { fps: 30, idleFps: 2, threshold: 3, excludeWindowIds: [41, 42] },
+        });
+        expect(spec.idleFps).toBe(2);
+        expect(spec.threshold).toBe(3);
+        expect(spec.excludeWindowIds).toEqual([41, 42]);
+    });
+
+    it("keeps the motion threshold the recorder used before when none is given", () => {
+        const spec = segmentCaptureSpec({
+            target: { kind: "window", windowIds: [7] },
+            output: "/tmp/segment.mp4",
+            maxSeconds: 60,
+            options: {},
+        });
+        expect(spec.threshold).toBe(0.5);
+        expect(spec.idleFps).toBeUndefined();
+    });
+
+    it("refuses audio and the cursor track for a window or an app before the capture starts", () => {
+        const targets: RecordingTarget[] = [
+            { kind: "window", windowIds: [7] },
+            { kind: "app", app: "Notes" },
+        ];
+        const asks: NativeRecorderOptions[] = [{ audio: ["mic"] }, { cursorTrack: true }];
+
+        for (const target of targets) {
+            for (const options of asks) {
+                expect(() =>
+                    segmentCaptureSpec({ target, output: "/tmp/segment.mp4", maxSeconds: 60, options })
+                ).toThrow("those need a display or an area target");
+            }
+        }
+
+        const region = segmentCaptureSpec({
+            target: { kind: "region", x: 0, y: 0, width: 100, height: 100 },
+            output: "/tmp/segment.mp4",
+            maxSeconds: 60,
+            options: { audio: ["mic"], cursorTrack: true },
+        });
+        expect(region.audio).toEqual(["mic"]);
+    });
+});
+
+describe("start flags for a target", () => {
+    it("reads an area as x,y,width,height and refuses a malformed one", () => {
+        expect(parseRegionTarget("10, 20,300,200")).toEqual({ kind: "region", x: 10, y: 20, width: 300, height: 200 });
+        expect(() => parseRegionTarget("10,20,0,200")).toThrow("--region takes x,y,width,height");
+        expect(() => parseRegionTarget("10,20,300")).toThrow("--region takes x,y,width,height");
+    });
+
+    it("reads window ids and refuses anything that is not one", () => {
+        expect(parseWindowIdList(undefined, "--exclude-window-ids")).toBeUndefined();
+        expect(parseWindowIdList("41,42", "--exclude-window-ids")).toEqual([41, 42]);
+        expect(() => parseWindowIdList("41,x", "--exclude-window-ids")).toThrow(
+            "--exclude-window-ids takes CG window ids"
+        );
+    });
+});
+
+describe("a movie recording's live settings", () => {
+    let root: string;
+
+    beforeEach(async () => {
+        root = join(tmpdir(), `movie-settings-${randomUUID()}`);
+        await mkdir(root, { recursive: true });
+    });
+
+    afterEach(async () => {
+        await rm(root, { recursive: true, force: true });
+    });
+
+    /** A movie session started at 60 fps, 1 fps while still and a 0.5 % threshold, served over its live socket. */
+    async function movie(rates = { activeFps: 60, idleFps: 1, threshold: 0.5 }) {
+        const { recorder, runs } = fakeRecorder();
+        let control: SessionRecorderControl | undefined;
+        const recording = new RecordingSession({
+            target: display,
+            directory: join(root, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            rates,
+            join: async ({ output }) => {
+                await writeFile(output, "joined");
+                return { durationMs: 1000 };
+            },
+            emit: (event) => control?.observe(event),
+            tickMs: 0,
+            slowStartMs: 0,
+        });
+        control = new SessionRecorderControl(recording, { target: display, audio: { sources: ["mic"] } });
+        const dir = join(root, "live");
+        const server = new LiveRecordingServer({
+            id: "movie-settings",
+            kind: control.kind,
+            title: "Movie",
+            control,
+            dir,
+        });
+        await recording.start();
+        const client = await RecorderClient.connect("movie-settings", { dir });
+        const close = async () => {
+            client.close();
+            server.close();
+            await recording.command({ cmd: "discard" });
+        };
+        return { client, runs, close };
+    }
+
+    it("reads the movie's rates and threshold, and names the keys a movie keeps as they are", async () => {
+        const { client, close } = await movie();
+
+        try {
+            expect(client.methods).toContain("settings.set");
+            const answer = await client.getSettings();
+            expect(answer.settings).toEqual({
+                activeFps: 60,
+                idleFps: 1,
+                threshold: 0.5,
+                maxLongSide: 16_384,
+                heartbeatSec: 0,
+                ocr: {
+                    enabled: false,
+                    languages: ["en-US"],
+                    minChars: 0,
+                    threshold: 0,
+                    skipTextless: false,
+                    region: "frame",
+                    read: "frame",
+                },
+            });
+            expect(answer.audio).toEqual({ sources: ["mic"], muted: { mic: false, system: false } });
+            expect(Object.keys(answer.fixed ?? {}).sort()).toEqual(["heartbeatSec", "maxLongSide", "ocr"]);
+        } finally {
+            await close();
+        }
+    });
+
+    it("a change while it records ends the running segment and starts the next one with the new rates", async () => {
+        const { client, runs, close } = await movie();
+
+        try {
+            const answer = await client.setSettings({ activeFps: 30, threshold: 2 });
+            expect(answer.applied).toBe("restart");
+            expect(answer.settings).toMatchObject({ activeFps: 30, idleFps: 1, threshold: 2 });
+            expect(runs).toHaveLength(2);
+            expect(runs[0].signal.aborted).toBe(true);
+            expect(runs[0].rates).toEqual({ activeFps: 60, idleFps: 1, threshold: 0.5 });
+            expect(runs[1].rates).toEqual({ activeFps: 30, idleFps: 1, threshold: 2 });
+        } finally {
+            await close();
+        }
+    });
+
+    it("a single-rate movie stays single-rate when only its active rate changes", async () => {
+        const { client, runs, close } = await movie({ activeFps: 60, idleFps: 60, threshold: 0.5 });
+
+        try {
+            const answer = await client.setSettings({ activeFps: 120 });
+            expect(answer.applied).toBe("restart");
+            expect(runs[1].rates).toEqual({ activeFps: 120, idleFps: 120, threshold: 0.5 });
+        } finally {
+            await close();
+        }
+    });
+
+    it("refuses the keys a movie keeps, naming each, and changes nothing", async () => {
+        const { client, runs, close } = await movie();
+
+        try {
+            const refused = client.setSettings({ activeFps: 30, maxLongSide: 1280, ocr: { enabled: true } });
+            await expect(refused).rejects.toMatchObject({ code: RPC_ERRORS.unsupported });
+            await expect(refused).rejects.toThrow("maxLongSide, ocr");
+            expect(runs).toHaveLength(1);
+            expect((await client.getSettings()).settings.activeFps).toBe(60);
+        } finally {
+            await close();
+        }
+    });
+});
+
+it("segment re-encoding maps every audio source", () => {
+    const argv = joinSegmentsArgv({
+        inputs: ["/a.mp4", "/b.mp4"],
+        width: 1280,
+        height: 720,
+        output: "/out.mp4",
+        audioTracks: 2,
+    });
+    const graph = argv[argv.indexOf("-filter_complex") + 1];
+    expect(graph).toContain("[0:a:0]");
+    expect(graph).toContain("[1:a:1]");
+    expect(graph).toContain("concat=n=2:v=1:a=2[out][aout0][aout1]");
+    expect(argv).toContain("[aout0]");
+    expect(argv).toContain("[aout1]");
+});
+
+it("a proxy retains its final still until stop and validates supplied plan windows", () => {
+    expect(
+        framesDurationUs({ lastUs: 1_000_000, startedAt: "2026-11-05T10:00:00Z", endedAt: "2026-11-05T10:03:00Z" })
+    ).toBe(180_000_000);
+    expect(framesDurationUs({ lastUs: 1_000_000 })).toBe(2_000_000);
+    for (const windowSec of [0, -1, Number.NaN, 0.0000001]) {
+        expect(() => chosenPlan([], { plan: { policy: "most-change", windowSec, ranges: [] } })).toThrow("window");
+    }
 });

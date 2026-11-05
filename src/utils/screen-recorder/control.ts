@@ -1,4 +1,6 @@
 import type { JobInfo } from "@genesiscz/utils/jobs";
+import { OCR_READS } from "@genesiscz/utils/macos/ocr";
+import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "@genesiscz/utils/rpc/errors";
 import { z } from "zod";
 import type { DisplayInfo } from "./types";
 
@@ -22,6 +24,7 @@ export const RECORDER_METHODS = [
     "audio.setInput",
     "settings.get",
     "settings.set",
+    "marker.add",
 ] as const;
 export type RecorderMethod = (typeof RECORDER_METHODS)[number];
 
@@ -30,11 +33,7 @@ export type RecorderState = (typeof RECORDER_STATES)[number];
 
 /** JSON-RPC 2.0 error codes: the standard ones, and the recorder's own from 1001. */
 export const RPC_ERRORS = {
-    parse: -32700,
-    invalidRequest: -32600,
-    methodNotFound: -32601,
-    invalidParams: -32602,
-    internal: -32603,
+    ...JSON_RPC_ERRORS,
     unknownDisplay: 1001,
     notPaused: 1002,
     alreadyStopped: 1003,
@@ -42,18 +41,27 @@ export const RPC_ERRORS = {
     lastDisplay: 1005,
     unsupported: 1006,
     unknownDevice: 1007,
+    /** The recorder service's `hello`: another protocol, or a second host while the first is connected. */
+    protocolMismatch: 1011,
+    hostTaken: 1012,
+    /** A `$/cancel` stopped the request; the transport answers it (`@genesiscz/utils/rpc`). */
+    cancelled: RPC_CANCELLED,
+    /** The host's `camera.start`: macOS denied the camera, or another app holds it. */
+    cameraDenied: 1014,
+    cameraBusy: 1015,
+    /** The recorder service's edit sessions: another writer changed the edit, or a call named an older revision. */
+    staleRevision: 1016,
+    nothingToUndo: 1017,
+    nothingToRedo: 1018,
+    /** A host method no connected host answered, and no headless way does it (the camera). */
+    hostUnavailable: 1019,
+    /** The recorder service's `recording.call`: no live recording with that id is registered with it. */
+    unknownRecording: 1020,
+    /** The host's `window.close`: the editor window has a drag not saved yet, or an export running. */
+    windowBusy: 1021,
 } as const;
 
-export class RpcError extends Error {
-    constructor(
-        readonly code: number,
-        message: string,
-        readonly data?: unknown
-    ) {
-        super(message);
-        this.name = "RpcError";
-    }
-}
+export { RpcError };
 
 export interface RecorderStatus {
     kind: string;
@@ -64,6 +72,10 @@ export interface RecorderStatus {
     lastFrameAt?: string;
     warning?: string;
     folder?: string;
+    /** A movie recording: the recorded time so far (pauses left out), its limit and the segments written. */
+    elapsedMs?: number;
+    limitMs?: number;
+    segments?: number;
 }
 
 export type DisplayEntry = DisplayInfo & { recorded: boolean };
@@ -91,6 +103,10 @@ export interface AudioState {
     micDevice?: string;
 }
 
+/** What OCR reads of a kept frame: all of it, or the area that changed since the last kept frame of its display. */
+export const OCR_REGIONS = ["frame", "changed"] as const;
+export type OcrRegion = (typeof OCR_REGIONS)[number];
+
 /** The settings a running recording takes live; `settings.set` takes any part of them. */
 export const recorderSettingsSchema = z.object({
     /** Frames per second while the screen changes. */
@@ -109,8 +125,27 @@ export const recorderSettingsSchema = z.object({
         languages: z.array(z.string().trim().min(1)).min(1),
         /** OCR text shorter than this is stored as no text. */
         minChars: z.number().int().min(0).max(1000),
+        /**
+         * The OCR-only change threshold, in percent: a kept frame that changed less than this keeps the previous frame's
+         * text for its display. 0 reads every kept frame.
+         */
+        threshold: z.number().min(0).max(100),
+        /** A kept frame whose changed area holds no text, now or before, keeps the previous text (a fast read decides). */
+        skipTextless: z.boolean(),
+        /** What OCR reads: the whole frame, or only the changed area, its lines put into the previous frame's text. */
+        region: z.enum(OCR_REGIONS),
+        /** How a full-frame read is recognized; omitted legacy settings keep whole-frame reads. */
+        read: z.enum(OCR_READS).optional(),
     }),
 });
+
+/** What the OCR settings are when a recorder names none of the read savings: every kept frame read whole. */
+export const OCR_READ_DEFAULTS = {
+    threshold: 0,
+    skipTextless: false,
+    region: "frame",
+    read: "frame",
+} as const satisfies Pick<RecorderSettings["ocr"], "threshold" | "skipTextless" | "region" | "read">;
 export type RecorderSettings = z.infer<typeof recorderSettingsSchema>;
 export const recorderSettingsPatchSchema = recorderSettingsSchema
     .omit({ ocr: true })
@@ -124,6 +159,8 @@ export interface SettingsAnswer {
     audio: AudioState;
     /** How the change took effect on the running captures. */
     applied?: "live" | "restart" | "next-piece";
+    /** Keys this recording keeps as they are, with why; `settings.set` refuses them (a movie: size, heartbeat, OCR). */
+    fixed?: Partial<Record<keyof RecorderSettings, string>>;
 }
 
 /** `all`, `follow-focus`, `main` or a screen index. */
@@ -158,6 +195,17 @@ function unsupported(kind: string, method: RecorderMethod): never {
  * capture session, and a remote one over the live recording socket (`RecorderClient`). A kind implements what it has
  * and lists it in `methods`; the rest answers `unsupported`.
  */
+/** A moment of a recording an agent or the user marked, at its time in the movie. */
+export interface RecordingMarker {
+    atMs: number;
+    label: string;
+}
+
+/** The answer of every kind to `marker.add` while the recording does not record (paused, stopping). */
+export function refuseMarker(state: string): never {
+    throw new RpcError(RPC_ERRORS.unsupported, `a marker needs a running recording; this one is ${state}`);
+}
+
 export abstract class RecorderControl {
     abstract readonly kind: string;
     abstract readonly methods: readonly RecorderMethod[];
@@ -222,6 +270,11 @@ export abstract class RecorderControl {
         return unsupported(this.kind, "audio.setInput");
     }
 
+    /** Marks this moment of the recording with a label; the editor lists it at its movie time. */
+    async addMarker(_label: string): Promise<RecordingMarker> {
+        return unsupported(this.kind, "marker.add");
+    }
+
     async getSettings(): Promise<SettingsAnswer> {
         return unsupported(this.kind, "settings.get");
     }
@@ -280,13 +333,18 @@ export const RECORDER_DISPATCH: Record<
     },
     "audio.setInput": (control, params) =>
         control.setAudioInput(parse(z.object({ deviceId: z.string().min(1) }), params, "{ deviceId }").deviceId),
+    "marker.add": (control, params) =>
+        control.addMarker(
+            parse(z.object({ label: z.string().trim().min(1).max(80) }), params, "{ label: <1 to 80 characters> }")
+                .label
+        ),
     "settings.get": (control) => control.getSettings(),
     "settings.set": (control, params) =>
         control.setSettings(
             parse(
                 recorderSettingsPatchSchema,
                 params,
-                "any of { activeFps, idleFps, threshold, maxLongSide, heartbeatSec, ocr: { enabled, languages, minChars } }"
+                "any of { activeFps, idleFps, threshold, maxLongSide, heartbeatSec, ocr: { enabled, languages, minChars, threshold, skipTextless, region, read } }"
             )
         ),
 };

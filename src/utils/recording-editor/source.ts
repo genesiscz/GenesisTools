@@ -1,10 +1,10 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { readRecordingManifest, recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
-import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { type RecordingStoreId, recordingStores } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import type { VideoInfo } from "@genesiscz/utils/video/types";
-import type { EditSource } from "./plan";
+import { type EditSource, STORES } from "./plan";
 
 /** A frame of a frames source (a recording or meeting folder): its file, time from the first frame, display. */
 export interface SourceFrame {
@@ -12,6 +12,20 @@ export interface SourceFrame {
     atUs: number;
     displayId?: number;
     changePercent?: number;
+}
+
+/** The final still lasts until the recording ends; a folder without an endpoint holds it for one second. */
+export function framesDurationUs({
+    lastUs,
+    startedAt,
+    endedAt,
+}: {
+    lastUs: number;
+    startedAt?: string;
+    endedAt?: string;
+}): number {
+    const elapsedUs = endedAt && startedAt ? (Date.parse(endedAt) - Date.parse(startedAt)) * 1000 : NaN;
+    return Number.isFinite(elapsedUs) && elapsedUs > 0 ? Math.max(lastUs + 1, elapsedUs) : lastUs + 1_000_000;
 }
 
 /** Where a source is, found without reading it: what the receipts and the input guard need first. */
@@ -26,7 +40,7 @@ export interface LocatedSource {
         mtimeMs: number;
         frames?: Array<{ path: string; size: number; mtimeMs: number }>;
     };
-    store?: "recordings" | "meetings";
+    store?: RecordingStoreId;
     id?: string;
 }
 
@@ -57,24 +71,13 @@ function fileFingerprint(path: string): LocatedSource["fingerprint"] {
 }
 
 /** The folder whose frames a recording id names, in the recordings store first, then the meetings store. */
-function recordingFolder(
-    id: string,
-    store?: "recordings" | "meetings"
-): { path: string; store: "recordings" | "meetings" } {
-    const candidates: Array<{ path: string; store: "recordings" | "meetings" }> = [];
-
-    if (store !== "meetings") {
-        candidates.push({ path: recordingsLibraryDir(id), store: "recordings" });
-    }
-
-    if (store !== "recordings") {
-        candidates.push({ path: toolDataDir("meetings", id, "frames"), store: "meetings" });
-    }
-
-    const found = candidates.find((candidate) => existsSync(candidate.path));
+function recordingFolder(id: string, store?: RecordingStoreId): { path: string; store: RecordingStoreId } {
+    const found = recordingStores(store)
+        .map((candidate) => ({ path: candidate.framesOf(id), store: candidate.id }))
+        .find((candidate) => existsSync(candidate.path));
 
     if (!found) {
-        throw new Error(`No recording "${id}" in the ${store ?? "recordings or meetings"} store`);
+        throw new Error(`No recording "${id}" in the ${store ?? STORES.join(" or ")} store`);
     }
 
     return found;
@@ -162,11 +165,8 @@ export async function loadSource(located: LocatedSource, signal?: AbortSignal): 
     }
 
     const manifest = readRecordingManifest(located.path);
-    const elapsedUs = manifest?.endedAt ? (Date.parse(manifest.endedAt) - Date.parse(manifest.startedAt)) * 1000 : NaN;
     const lastUs = frames[frames.length - 1].atUs;
-    // A plain folder has no endpoint: let its final still remain on screen for one second.
-    const durationUs =
-        Number.isFinite(elapsedUs) && elapsedUs > 0 ? Math.max(lastUs + 1, elapsedUs) : lastUs + 1_000_000;
+    const durationUs = framesDurationUs({ lastUs, startedAt: manifest?.startedAt, endedAt: manifest?.endedAt });
     return {
         kind: "frames",
         path: located.path,

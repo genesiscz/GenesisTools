@@ -8,14 +8,22 @@ import {
     type AudioSource,
     displayModeSchema,
     type RecorderMethod,
+    type RecorderSettingsPatch,
     type RecorderStatus,
+    type RecordingMarker,
     RPC_ERRORS,
     RpcError,
     recorderSettingsPatchSchema,
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
+import { FRAME_NAMINGS, OCR_SINK_KINDS } from "@genesiscz/utils/screen-recorder/frame-output";
 import { type LiveNotification, listLiveRecordings, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
-import { type LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
+import {
+    FRAME_FLUSHES,
+    type LibraryRecording,
+    type StartRecordingOptions,
+    startRecording,
+} from "@genesiscz/utils/screen-recorder/start";
 import type { FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
 import { z } from "zod";
 import { ReplToolset, type ToolsetContext } from "../toolset";
@@ -41,15 +49,48 @@ export const recorderStartSchema = z
                 minChars: z.number().int().optional(),
             })
             .optional(),
+        /** Where each frame's OCR goes: `<frame>.ocr.json` beside it (default) or an `ocr.jsonl` row per frame. */
+        ocrSink: z.enum(OCR_SINK_KINDS).optional(),
+        /** How frames are written: format, JPEG quality, naming, and whether a piece's frames land as it ends. */
+        frames: z
+            .object({
+                format: z.enum(["original", "jpeg"]).optional(),
+                jpegQuality: z.number().min(0.1).max(1).optional(),
+                naming: z.enum(FRAME_NAMINGS).optional(),
+                flush: z.enum(FRAME_FLUSHES).optional(),
+            })
+            .strict()
+            .optional(),
         maxDurationSec: z.number().min(1).max(7200).optional(),
         pieceSec: z.number().min(5).max(180).optional(),
     })
     .strict();
 
+/**
+ * What `startRecording` takes for the options of `recorder.start()` (also `tools recorder start --frames`): an OCR
+ * block that does not say `enabled` turns OCR on.
+ */
+export function libraryStartOptions(
+    options: z.infer<typeof recorderStartSchema>
+): Omit<StartRecordingOptions, "recorder"> {
+    return { ...options, ocr: options.ocr ? { ...options.ocr, enabled: options.ocr.enabled ?? true } : undefined };
+}
+
 /** `set` takes `fps` for the active rate, as `start` does. */
-const setSchema = recorderSettingsPatchSchema
+export const recorderSetSchema = recorderSettingsPatchSchema
     .omit({ activeFps: true })
     .extend({ fps: z.number().min(0.5).max(120).optional() });
+
+/** What every toolset that controls a live recording says about reading and changing its settings. */
+export const RECORDER_SETTINGS_DOC = "The live settings and the audio state.";
+export const RECORDER_SET_SETTINGS_DOC =
+    "Changes fps, idleFps, threshold, maxLongSide, heartbeatSec or ocr while it records.";
+
+/** The patch the live socket takes (`settings.set`) from what a REPL caller gave (`fps` is the active rate). */
+export function settingsPatchOf(input: z.input<typeof recorderSetSchema>): RecorderSettingsPatch {
+    const { fps, ...rest } = recorderSetSchema.parse(input);
+    return { ...rest, ...(fps !== undefined ? { activeFps: fps } : {}) };
+}
 const EVENTS = ["state", "frame", "displays", "warning", "progress", "ended"] as const;
 const statusSchema = z.custom<RecorderStatus>();
 
@@ -97,15 +138,15 @@ const recordingMethods = [
         params: z.object({}),
         result: z.unknown(),
         resultName: "{ settings, audio }",
-        doc: "The live settings and the audio state.",
+        doc: RECORDER_SETTINGS_DOC,
         effect: "read",
     }),
     defineMethod({
         name: "set",
-        params: setSchema,
+        params: recorderSetSchema,
         result: z.unknown(),
         resultName: "{ settings, audio, applied }",
-        doc: "Changes fps, idleFps, threshold, maxLongSide, heartbeatSec or ocr while it records.",
+        doc: RECORDER_SET_SETTINGS_DOC,
         effect: "reversible",
     }),
     defineMethod({
@@ -188,6 +229,15 @@ const recordingMethods = [
         effect: "reversible",
     }),
     defineMethod({
+        name: "mark",
+        params: z.object({ label: z.string().min(1).max(80) }),
+        positional: ["label"],
+        result: z.custom<RecordingMarker>(),
+        resultName: "{ atMs, label }",
+        doc: 'Marks this moment with a label ("login done") at its time in the movie; the editor lists it on the timeline and movie.markers() returns it.',
+        effect: "reversible",
+    }),
+    defineMethod({
         name: "jobs",
         params: z.object({}),
         result: z.custom<JobInfo[]>(),
@@ -229,7 +279,7 @@ export const recorderApi = defineApi({
             params: recorderStartSchema,
             result: z.unknown(),
             resultName: "Recording",
-            doc: "Starts a library recording (frames of the chosen displays, sound when asked) and returns its handle.",
+            doc: 'Starts a library recording (frames of the chosen displays, sound when asked) and returns its handle. Frames default to the recorder\'s files moved at the stop; frames: { format: "jpeg", naming: "wall-clock", flush: "piece" } with ocr: { enabled: true } and ocrSink: "jsonl" records the way a meeting does (each piece\'s JPEGs and ocr.jsonl rows exist while it records).',
             effect: "reversible",
         }),
         defineMethod({
@@ -351,15 +401,17 @@ export class RecordingHandle {
         return this.check("discard", () => this.client.discard());
     }
 
+    mark(label: string): Promise<RecordingMarker> {
+        return this.check("marker.add", () => this.client.addMarker(label));
+    }
+
     settings() {
         return this.check("settings.get", () => this.client.getSettings());
     }
 
-    set(patch: z.input<typeof setSchema>) {
-        const { fps, ...rest } = setSchema.parse(patch);
-        return this.check("settings.set", () =>
-            this.client.setSettings({ ...rest, ...(fps !== undefined ? { activeFps: fps } : {}) })
-        );
+    set(patch: z.input<typeof recorderSetSchema>) {
+        const parsed = settingsPatchOf(patch);
+        return this.check("settings.set", () => this.client.setSettings(parsed));
     }
 
     jobs(): Promise<JobInfo[]> {
@@ -400,18 +452,17 @@ export class RecordingHandle {
     ): Promise<RecorderStatus> {
         const timeoutMs = options.timeoutMs ?? 60_000;
         const deadline = Date.now() + timeoutMs;
-        const expired = new Error(`waitFor: the condition did not hold within ${timeoutMs} ms`);
-        const bounded = <T>(promise: Promise<T>) => withTimeout(promise, Math.max(0, deadline - Date.now()), expired);
+        const remaining = () => Math.max(0, deadline - Date.now());
+        const expired = () => new Error(`waitFor: the condition did not hold within ${timeoutMs} ms`);
         let wake: (() => void) | undefined;
+        let timer: ReturnType<typeof setTimeout> | undefined;
         const off = this.on("*", () => wake?.());
 
         try {
-            await bounded(this.ensureSubscribed());
-            while (Date.now() < deadline) {
-                const status = await bounded(this.status());
-                if (Date.now() >= deadline) {
-                    throw expired;
-                }
+            // The subscription and each status read have the RPC's own, longer timeout: they get what is left of this one.
+            await withTimeout(this.ensureSubscribed(), remaining(), expired());
+            while (remaining() > 0) {
+                const status = await withTimeout(this.status(), remaining(), expired());
 
                 if (predicate(status)) {
                     return status;
@@ -419,14 +470,16 @@ export class RecordingHandle {
 
                 await new Promise<void>((resolve) => {
                     wake = resolve;
-                    setTimeout(resolve, Math.min(1000, Math.max(0, deadline - Date.now())));
+                    timer = setTimeout(resolve, Math.min(1000, remaining()));
                 });
+                clearTimeout(timer);
             }
         } finally {
+            clearTimeout(timer);
             off();
         }
 
-        throw new Error(`waitFor: the condition did not hold within ${timeoutMs} ms`);
+        throw expired();
     }
 
     close(): void {
@@ -455,8 +508,7 @@ export class RecorderToolset extends ReplToolset {
 
                 const recording = await startRecording({
                     recorder: this.createRecorder(),
-                    ...options,
-                    ocr: options.ocr ? { ...options.ocr, enabled: options.ocr.enabled ?? true } : undefined,
+                    ...libraryStartOptions(options),
                 });
                 this.owned.push(recording);
                 return this.track(new RecordingHandle(await RecorderClient.connect(recording.id), recording));

@@ -7,6 +7,15 @@ export const timeSchema = z.union([
 ]);
 export type TimeValue = z.infer<typeof timeSchema>;
 
+/**
+ * A time of the recorded movie, before any cut or speed change (what the edit ops and info() use): a cut never moves
+ * it. Its JSON Schema carries the title, so a signature says `SourceTime` and the API's notes define it.
+ */
+export const sourceTimeSchema = timeSchema.meta({ title: "SourceTime" });
+
+/** A time of the edited movie, what plays after cuts and speed changes (still(), itemsAt(), export(), range()). */
+export const outputTimeSchema = timeSchema.meta({ title: "OutputTime" });
+
 /** Microseconds of a time value, rounded to a whole microsecond. */
 export function timeToUs(value: TimeValue): number {
     if (typeof value === "number") {

@@ -123,6 +123,8 @@ PLAN CONTRACT (TypeScript)
       audio?: ("system" | "mic")[]; // native, not isolated: audio tracks in videoOut and/or .m4a sidecars
       micDevice?: string;         // native: input UID from \`ax-tool audio-devices\` (needs audio "mic")
       audioSidecar?: boolean;     // native: also write audio-<source>.m4a next to the frames
+      cursorTrack?: string;       // native, not isolated: the pointer as JSON lines (t, x, y 0-1, click) for auto zoom
+      cursorShapes?: string;      // native, needs cursorTrack: hide the system cursor; its images go to this folder
       app?: string;               // window mode
       windowTitle?: string;       // window mode narrowing
       windowIndex?: number;       // window mode narrowing. AX-ordered, so the native recorder
@@ -490,6 +492,12 @@ export interface CaptureSpec {
     micDevice?: string;
     /** Native: also write `audio-<source>.m4a` next to the frames. */
     audioSidecar?: boolean;
+    /** Native, not isolated: write the pointer (positions and clicks) as JSON lines to this file. */
+    cursorTrack?: string;
+    /** Native, needs cursorTrack: no system cursor in the movie; each cursor image goes into this folder for the editor. */
+    cursorShapes?: string;
+    /** Native, needs cursorTrack: track rows carry the ⌘/⌃ shortcuts pressed (never plain typing). */
+    shortcuts?: boolean;
     countdownSec?: number;
     noRemote?: boolean;
     captureEngine?: "cg" | "sc";

@@ -77,6 +77,16 @@ export type RecordingSessionEvent =
     | { event: "preparing"; message: string }
     | { event: "error"; message: string; code?: string; fatal: boolean };
 
+/**
+ * A movie's frame rates and change threshold. `idleFps` equal to `activeFps` keeps one rate (no drop while still);
+ * the threshold, in percent of the picture, decides when the stream leaves the idle rate.
+ */
+export interface MovieRates {
+    activeFps: number;
+    idleFps: number;
+    threshold: number;
+}
+
 /** How one recorder run ended: asked to stop, reached its own deadline, or failed. */
 export type SegmentEnd = "stop" | "deadline" | "failure";
 
@@ -99,6 +109,8 @@ export interface SegmentResult {
 export interface SegmentRecorder {
     record(input: {
         target: RecordingTarget;
+        /** The session's rates for this run, when it has them; a recorder without rates keeps its own. */
+        rates?: MovieRates;
         output: string;
         maxSeconds: number;
         signal: AbortSignal;
@@ -165,6 +177,7 @@ export class RecordingSession {
     private readonly limitMs: number;
     private readonly segmentSeconds: number;
     private readonly now: () => number;
+    private rates: MovieRates | undefined;
 
     constructor(
         private readonly options: {
@@ -183,9 +196,12 @@ export class RecordingSession {
             tickMs?: number;
             /** A segment with no first frame after this long says so (`FIRST_FRAME_MESSAGE`); 0 never does. */
             slowStartMs?: number;
+            /** The movie's rates; a session with them can change them while it records (`retune`). */
+            rates?: MovieRates;
         }
     ) {
         this.target = options.target;
+        this.rates = options.rates;
         this.limitMs = Math.round((options.maxSeconds ?? RECORDING_SESSION_MAX_SECONDS) * 1000);
         this.segmentSeconds = Math.min(options.segmentSeconds ?? RECORDING_SEGMENT_MAX_SECONDS, 180);
         this.now = options.now ?? Date.now;
@@ -222,6 +238,45 @@ export class RecordingSession {
 
     command(command: RecordingCommand): Promise<void> {
         return this.enqueue(() => this.apply(command));
+    }
+
+    /** The rates the running segment, or the next one, records with; undefined for a session started without them. */
+    currentRates(): MovieRates | undefined {
+        return this.rates;
+    }
+
+    /**
+     * New rates for the movie. A segment records with the rates it started with, so a running one ends here and the
+     * next starts with the new ones at once (`restart`: a short gap while it arms); while paused the next segment
+     * takes them (`next-piece`). Rates equal to the current ones change nothing (`live`).
+     */
+    retune(rates: MovieRates): Promise<"live" | "restart" | "next-piece"> {
+        let applied: "live" | "restart" | "next-piece" = "live";
+        return this.enqueue(async () => {
+            applied = await this.applyRates(rates);
+        }).then(() => applied);
+    }
+
+    private async applyRates(rates: MovieRates): Promise<"live" | "restart" | "next-piece"> {
+        const before = this.rates;
+        this.rates = rates;
+
+        if (
+            before?.activeFps === rates.activeFps &&
+            before.idleFps === rates.idleFps &&
+            before.threshold === rates.threshold
+        ) {
+            return "live";
+        }
+
+        if (!this.current) {
+            return "next-piece";
+        }
+
+        log.info({ before, rates }, "recording rates changed; starting the next segment with them");
+        await this.stopSegment();
+        this.resumeOrRefuse(this.target);
+        return "restart";
     }
 
     elapsedMs(): number {
@@ -339,6 +394,7 @@ export class RecordingSession {
         run.result = this.options.recorder
             .record({
                 target,
+                ...(this.rates ? { rates: this.rates } : {}),
                 output: path,
                 maxSeconds,
                 signal: controller.signal,
@@ -502,6 +558,29 @@ export class RecordingSession {
      * the output first and renamed there: the output is either the old file or the whole new movie, never a part.
      */
     private async moveMovie(source: string): Promise<void> {
+        // A one-segment recording's cursor track goes with its movie; the joiner makes the track of several.
+        if (existsSync(cursorTrackPath(source))) {
+            const track = cursorTrackPath(source);
+            const destination = cursorTrackPath(this.options.output);
+            try {
+                await rename(track, destination);
+            } catch (error) {
+                if (!(error instanceof Error) || !("code" in error) || error.code !== "EXDEV") {
+                    throw error;
+                }
+
+                const temporary = `${destination}.${randomUUID()}.tmp`;
+                try {
+                    await copyFile(track, temporary);
+                    await rename(temporary, destination);
+                } finally {
+                    await unlink(temporary).catch((error: unknown) => {
+                        log.debug({ error, temporary }, "cursor temporary file already gone");
+                    });
+                }
+            }
+        }
+
         try {
             await rename(source, this.options.output);
         } catch (error) {
@@ -529,9 +608,12 @@ export class RecordingSession {
         const temporary = this.temporaryOutput();
         try {
             const { durationMs } = await this.options.join({ segments: ordered, output: temporary });
-            await rename(temporary, this.options.output);
+            await this.moveMovie(temporary);
             return durationMs;
         } finally {
+            await unlink(cursorTrackPath(temporary)).catch((error: unknown) => {
+                log.debug({ error, temporary }, "recording temporary cursor track already gone");
+            });
             await unlink(temporary).catch((cleanupError: unknown) => {
                 log.debug({ error: cleanupError, temporary }, "recording temporary file already gone");
             });
@@ -581,6 +663,65 @@ function formatLimit(ms: number): string {
     return seconds % 60 === 0 ? `${seconds / 60} min` : `${seconds} s`;
 }
 
+/** Where a segment's or a saved movie's cursor track lives (`ax-tool capture --cursor-track`). */
+export function cursorTrackPath(movie: string): string {
+    return `${movie}.cursor.jsonl`;
+}
+
+/**
+ * ffmpeg arguments that join segments which share one size and codec without decoding them: the concat demuxer
+ * copies every stream (the audio tracks included), so a long recording joins in seconds at the recorder's quality.
+ * `list` is a concat list file (`file '<path>'` per line).
+ */
+export function concatCopyArgv({ list, output }: { list: string; output: string }): string[] {
+    return [
+        "ffmpeg",
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        list,
+        "-map",
+        "0",
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        output,
+    ];
+}
+
+/** One concat list line; a quote in a path is closed, escaped and reopened, as the concat demuxer reads it. */
+export function concatListLine(path: string): string {
+    return `file '${path.replaceAll("'", "'\\''")}'`;
+}
+
+/**
+ * The cursor tracks of the segments (`<segment>.cursor.jsonl`) as one track of the joined movie: each segment's
+ * times move by the length of the segments before it, so a pause leaves no gap in the track either.
+ */
+export function joinCursorTracks(parts: Array<{ text: string; offsetMs: number }>): string {
+    const lines: string[] = [];
+
+    for (const part of parts) {
+        for (const line of part.text.split("\n")) {
+            const match = /^\{"t":(-?[\d.]+)(,.*)$/.exec(line.trim());
+
+            if (match) {
+                lines.push(`{"t":${(Number(match[1]) + part.offsetMs).toFixed(1)}${match[2]}`);
+            }
+        }
+    }
+
+    return lines.length ? `${lines.join("\n")}\n` : "";
+}
+
 /**
  * ffmpeg arguments that join segments of any sizes into one H.264 MP4 at the first segment's size: each input is
  * scaled to fit, padded with black and given square pixels, then the concat filter chains them. The recorder writes
@@ -591,20 +732,70 @@ export function joinSegmentsArgv({
     width,
     height,
     output,
+    audio = false,
+    audioTracks = audio ? 1 : 0,
 }: {
     inputs: string[];
     width: number;
     height: number;
     output: string;
+    /** Every input has one audio track: it is joined too (resampled across the cuts), as AAC. */
+    audio?: boolean;
+    audioTracks?: number;
 }): string[] {
     const w = Math.max(2, Math.floor(width / 2) * 2);
     const h = Math.max(2, Math.floor(height / 2) * 2);
     const chains = inputs.map(
         (_, index) =>
             `[${index}:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
-            `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p,settb=AVTB[v${index}]`
+            `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p,settb=AVTB[v${index}]` +
+            Array.from(
+                { length: audioTracks },
+                (_, track) => `;[${index}:a:${track}]aresample=async=1:first_pts=0[a${index}_${track}]`
+            ).join("")
     );
-    const labels = inputs.map((_, index) => `[v${index}]`).join("");
+    const labels = inputs
+        .map(
+            (_, index) =>
+                `[v${index}]` + Array.from({ length: audioTracks }, (_, track) => `[a${index}_${track}]`).join("")
+        )
+        .join("");
+    const outputs = Array.from({ length: audioTracks }, (_, track) => `[aout${track}]`);
+
+    if (audioTracks > 0) {
+        return [
+            "ffmpeg",
+            "-hide_banner",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            ...inputs.flatMap((input) => ["-i", input]),
+            "-filter_complex",
+            `${chains.join(";")};${labels}concat=n=${inputs.length}:v=1:a=${audioTracks}[out]${outputs.join("")}`,
+            "-map",
+            "[out]",
+            ...outputs.flatMap((label) => ["-map", label]),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-fps_mode",
+            "vfr",
+            "-movflags",
+            "+faststart",
+            output,
+        ];
+    }
+
     return [
         "ffmpeg",
         "-hide_banner",

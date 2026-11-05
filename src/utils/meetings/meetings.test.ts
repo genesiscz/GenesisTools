@@ -4,8 +4,10 @@ import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { FILLER_WORDS } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
+    fillerListsOf,
     languageSettings,
     MEETINGS_CONFIG_VERSION,
     MeetingsConfigStore,
@@ -45,7 +47,6 @@ describe("meetings config", () => {
         expect(config.sources.wisprflow.autoRecord).toEqual({
             enabled: false,
             liveWithinSec: 30,
-            stopAfterSilenceSec: 120,
             notify: true,
         });
         expect(config.projects).toEqual({});
@@ -54,6 +55,98 @@ describe("meetings config", () => {
         expect(languageSettings(config).ocr).toEqual(["cs-CZ", "en-US"]);
         expect(languageSettings(config, "sk").render.readAloudLabel).toBe("číta z");
         expect(recorderSettings(config.global.capture)).toEqual({ audio: { sources: [] } });
+    });
+
+    test("capture.ocr: an old file gains the tile default; explicit read choices are kept", () => {
+        const old = meetingsConfigSchema.parse({ version: 3, global: { capture: { threshold: 0.05 } } });
+        expect(old.global.capture.threshold).toBe(0.05);
+        expect(old.global.capture.ocr).toEqual({ threshold: 0, skipTextless: false, region: "frame", read: "tiles" });
+
+        const set = meetingsConfigSchema.parse({
+            global: { capture: { ocr: { threshold: 0.1, skipTextless: true, region: "changed" } } },
+        });
+        expect(set.global.capture.ocr).toEqual({
+            threshold: 0.1,
+            skipTextless: true,
+            region: "changed",
+            read: "tiles",
+        });
+        expect(
+            meetingsConfigSchema.parse({ global: { capture: { ocr: { read: "tiles" } } } }).global.capture.ocr.read
+        ).toBe("tiles");
+        expect(
+            meetingsConfigSchema.parse({ global: { capture: { ocr: { read: "frame" } } } }).global.capture.ocr.read
+        ).toBe("frame");
+        expect(() => meetingsConfigSchema.parse({ global: { capture: { ocr: { read: true } } } })).toThrow();
+        expect(() => meetingsConfigSchema.parse({ global: { capture: { ocr: { region: "crop" } } } })).toThrow();
+    });
+
+    const shipped = (code: string) => ({
+        sounds: [...FILLER_WORDS[code].sounds],
+        words: [...FILLER_WORDS[code].words],
+    });
+
+    test("fillers per language: an old file without the key keeps the shipped lists, a changed one replaces its own language", () => {
+        const old = meetingsConfigSchema.parse({ version: 3, languages: { cs: { ocr: ["cs-CZ"] } } });
+        expect(languageSettings(old, "cs").fillers).toEqual(shipped("cs"));
+        expect(languageSettings(old, "sk").fillers).toEqual(shipped("sk"));
+        expect(fillerListsOf(old.languages)).toEqual(FILLER_WORDS);
+
+        const changed = meetingsConfigSchema.parse({
+            languages: {
+                cs: { fillers: { sounds: ["ehm", "ach"] } },
+                de: {
+                    ocr: ["de-DE"],
+                    render: { unclearLabel: "unklar", readAloudLabel: "liest aus", lineLabel: "Z." },
+                    fillers: { sounds: ["äh"], words: ["also"] },
+                },
+            },
+        });
+        const lists = fillerListsOf(changed.languages);
+
+        expect(lists.cs).toEqual({ sounds: ["ehm", "ach"], words: [...FILLER_WORDS.cs.words] });
+        expect(lists.de).toEqual({ sounds: ["äh"], words: ["also"] });
+        expect(lists.sk).toEqual(FILLER_WORDS.sk);
+        expect(lists.en).toEqual(FILLER_WORDS.en);
+
+        const withoutKey = meetingsConfigSchema.parse({
+            languages: {
+                en: {
+                    ocr: ["en-US"],
+                    render: { unclearLabel: "unclear", readAloudLabel: "reads from", lineLabel: "l." },
+                },
+            },
+        });
+        expect(fillerListsOf(withoutKey.languages).en).toEqual(FILLER_WORDS.en);
+        expect(withoutKey.languages.en.fillers).toEqual(shipped("en"));
+
+        const oneLevel = meetingsConfigSchema.parse({
+            languages: {
+                en: {
+                    ocr: ["en-US"],
+                    render: { unclearLabel: "unclear", readAloudLabel: "reads from", lineLabel: "l." },
+                    fillers: { sounds: ["um"] },
+                },
+                de: {
+                    ocr: ["de-DE"],
+                    render: { unclearLabel: "unklar", readAloudLabel: "liest aus", lineLabel: "Z." },
+                    fillers: { sounds: ["äh"] },
+                },
+            },
+        });
+        expect(oneLevel.languages.en.fillers).toEqual({ sounds: ["um"], words: [...FILLER_WORDS.en.words] });
+        expect(oneLevel.languages.de.fillers).toEqual({ sounds: ["äh"], words: [] });
+    });
+
+    test("an empty file has the three assign timings of today, and a changed one is read", () => {
+        const defaults = meetingsConfigSchema.parse({}).global.assign;
+        expect(defaults).toMatchObject({ calendarLookbehindHours: 3, folderWaitDays: 14, retryFailedMin: 10 });
+
+        const changed = meetingsConfigSchema.parse({
+            global: { assign: { calendarLookbehindHours: 6, folderWaitDays: 30, retryFailedMin: 20 } },
+        }).global.assign;
+        expect(changed).toMatchObject({ calendarLookbehindHours: 6, folderWaitDays: 30, retryFailedMin: 20 });
+        expect(() => meetingsConfigSchema.parse({ global: { assign: { folderWaitDays: 0 } } })).toThrow();
     });
 
     test("a version 1 file moves each key to its axis, and the old places still read", () => {
@@ -76,7 +169,7 @@ describe("meetings config", () => {
                 suggest: { questionCap: 7 },
                 capture: { retentionDays: 9 },
             },
-            projects: { work: { match: { calendar: { titles: ["Wiki"] } } } },
+            projects: { work: { match: { title: { words: ["Wiki"] } } } },
             languages: { cs: { render: { unclearLabel: "unclear" } } },
             sources: { wisprflow: { match: { work: { folders: ["Work"] } } } },
         });
@@ -90,6 +183,98 @@ describe("meetings config", () => {
         });
         expect(config.global.suggest.questionCap).toBe(7);
         expect(sourceFolders(config, "work")).toEqual([{ source: "wisprflow", folder: "Work" }]);
+    });
+
+    test("a version 2 file moves calendar.titles to title.words; a current file round-trips; a newer one reads", () => {
+        const v2 = {
+            version: 2,
+            projects: {
+                work: {
+                    match: { calendar: { calendars: ["Work"], titles: ["Wiki", "Sync"] }, title: { words: ["Sync"] } },
+                },
+                side: { match: { calendar: { titles: ["Side"] } } },
+            },
+        };
+        const raw: Record<string, unknown> = structuredClone(v2);
+
+        expect(migrateMeetingsConfig(raw)).toBe(true);
+        expect(raw).toEqual({
+            version: 3,
+            projects: {
+                work: { match: { calendar: { calendars: ["Work"] }, title: { words: ["Sync", "Wiki"] } } },
+                side: { match: { title: { words: ["Side"] } } },
+            },
+        });
+
+        const again = structuredClone(raw);
+        expect(migrateMeetingsConfig(again)).toBe(false);
+        expect(again).toEqual(raw);
+
+        const config = meetingsConfigSchema.parse(v2);
+        expect(config.projects.work?.match?.title?.words).toEqual(["Sync", "Wiki"]);
+        expect(config.projects.work?.labels).toEqual([]);
+        expect(config.projects.work?.match?.people).toEqual([]);
+        expect(config.global.assign).toEqual({
+            ask: true,
+            lookbackHours: 48,
+            maxProposals: 5,
+            calendarSlackMin: 15,
+            calendarLookbehindHours: 3,
+            folderWaitDays: 14,
+            retryFailedMin: 10,
+        });
+        expect(matchProjects(config, { title: "Side quest" })).toEqual(["side"]);
+        expect(meetingsConfigSchema.parse({ version: 4, future: { key: 1 } }).version).toBe(4);
+    });
+
+    test("labels and people pairings: many projects per person, unpairing an entry keeps other sources", async () => {
+        const config = store();
+        const entry = (entryId: string) => ({
+            kind: "calendar" as const,
+            from: "wisprflow",
+            entryId,
+            title: "Planning",
+            at: "2026-11-04T10:00:00.000Z",
+        });
+        const alice = { name: "Alice Novak", email: "alice@example.com" };
+        const bob = { name: "Bob Smith" };
+
+        expect(await config.setProjectLabels("work", { add: ["Offers 2.0", "offers 2.0", "Wiki"] })).toEqual([
+            "Offers 2.0",
+            "Wiki",
+        ]);
+        expect(await config.setProjectLabels("work", { remove: ["wiki"] })).toEqual(["Offers 2.0"]);
+
+        await config.pairPeople({ project: "work", people: [alice, bob, { name: "Me", self: true }], by: entry("e1") });
+        await config.pairPeople({ project: "work", people: [{ name: "alice.novak" }], by: entry("e2") });
+        await config.pairPeople({ project: "side", people: [alice], by: entry("e1") });
+        await config.pairPeople({
+            project: "side",
+            people: [bob],
+            by: { kind: "manual", at: "2026-11-04T11:00:00.000Z" },
+        });
+        let read = await config.read();
+
+        expect(read.projects.work?.match?.people.map((person) => [person.name, person.pairedBy.length])).toEqual([
+            ["Alice Novak", 2],
+            ["Bob Smith", 1],
+        ]);
+        expect(read.projects.side?.match?.people.map((person) => person.name)).toEqual(["Alice Novak", "Bob Smith"]);
+
+        const removed = await config.unpairEntry("e1");
+        read = await config.read();
+
+        expect(removed).toEqual([
+            { project: "work", name: "Alice Novak", email: "alice@example.com", left: false },
+            { project: "work", name: "Bob Smith", left: true },
+            { project: "side", name: "Alice Novak", email: "alice@example.com", left: true },
+        ]);
+        expect(read.projects.work?.match?.people.map((person) => person.name)).toEqual(["Alice Novak"]);
+        expect(read.projects.side?.match?.people.map((person) => person.name)).toEqual(["Bob Smith"]);
+        expect(await config.unpairPerson("side", { name: "Smith Bob" })).toBe(true);
+        expect(await config.addSourceFolder("wisprflow", "work", "Work")).toBe(true);
+        expect(await config.addSourceFolder("wisprflow", "work", "work")).toBe(false);
+        expect(sourceFolders(await config.read(), "work")).toEqual([{ source: "wisprflow", folder: "Work" }]);
     });
 
     test("a version 1 file on disk is rewritten once, and a later change keeps the new shape", async () => {
@@ -136,6 +321,52 @@ describe("meetings config", () => {
         ]);
     });
 
+    test("a renamed dictionary entry replaces the old one in one write, and a refused one keeps the old", async () => {
+        const config = store();
+        const scope = { kind: "project", project: "work" } as const;
+        await config.addProject("work");
+        await config.putDictionaryEntries(scope, [
+            { type: "fix", value: "Viky", substitution: "wiki" },
+            { type: "abbr", value: "NWD", substitution: "NWD (Northwind)" },
+        ]);
+
+        await expect(
+            config.replaceDictionaryEntry(scope, "NWD", { type: "abbr", value: "MOP", substitution: "MOPsuffix" })
+        ).rejects.toThrow('the substitution must contain "MOP" itself');
+        expect((await config.read()).projects.work?.dictionary?.entries.map((entry) => entry.value)).toEqual([
+            "Viky",
+            "NWD",
+        ]);
+
+        const read = await config.replaceDictionaryEntry(scope, "NWD", {
+            type: "abbr",
+            value: "HBR",
+            substitution: "HBR (Harbor)",
+        });
+        expect(read.projects.work?.dictionary?.entries).toEqual([
+            { type: "fix", value: "Viky", substitution: "wiki" },
+            { type: "abbr", value: "HBR", substitution: "HBR (Harbor)" },
+        ]);
+    });
+
+    test("an Undo's restore puts the entry back only while nobody made it again in that level", async () => {
+        const config = store();
+        const scope = { kind: "project", project: "work" } as const;
+        await config.addProject("work");
+
+        await config.putDictionaryEntry(
+            scope,
+            { type: "fix", value: "Viky", substitution: "wiki" },
+            { ifAbsent: true }
+        );
+        await expect(
+            config.putDictionaryEntry(scope, { type: "fix", value: "Viky", substitution: "Wiki" }, { ifAbsent: true })
+        ).rejects.toMatchObject({ code: "dictionary-exists" });
+        const read = await config.read();
+        expect(read.projects.work?.dictionary?.entries).toEqual([{ type: "fix", value: "Viky", substitution: "wiki" }]);
+        expect(read.global.dictionary.entries).toEqual([]);
+    });
+
     test("a project gets its dictionary and its expansion; the merged dictionary takes the project's", async () => {
         const config = store();
         expect(await config.addProject("work")).toBe(true);
@@ -160,7 +391,7 @@ describe("meetings config", () => {
     test("projects match by a source's folder, calendar name or a title word", () => {
         const config = meetingsConfigSchema.parse({
             projects: {
-                work: { match: { wisprflow: { folders: ["Work"] }, calendar: { titles: ["Wiki"] } } },
+                work: { match: { wisprflow: { folders: ["Work"] }, title: { words: ["Wiki"] } } },
                 side: { match: { calendar: { calendars: ["Side"] } } },
                 bare: {},
             },
@@ -193,6 +424,19 @@ describe("a GENESIS_TOOLS_HOME one level too deep", () => {
 });
 
 describe("meeting records", () => {
+    test("a speaker renamed back to its own label loses the rename", async () => {
+        const meetings = new MeetingStore(new Storage(`meetings-rename-${process.pid}`));
+        const created = await meetings.create(
+            { title: "Harbor sync", start: "2026-11-05T11:00:00.000Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+
+        await meetings.renameSpeaker(created.id, "S1", "Alice Example");
+        expect(meetings.read(created.id)?.speakers.labels).toEqual({ S1: "Alice Example" });
+        const reset = await meetings.renameSpeaker(created.id, "S1", " S1 ");
+        expect(reset.speakers.labels).toEqual({});
+    });
+
     function records(): MeetingStore {
         stores += 1;
         return new MeetingStore(new Storage(`meetings-test-${stores}`));
@@ -348,13 +592,15 @@ test("meeting allocation retries when another process reserves the selected dire
     const mkdir = fs.mkdirSync;
     let collided = false;
     const spy = spyOn(fs, "mkdirSync").mockImplementation((target, options) => {
-        if (!collided && String(target).startsWith(store.root + "/")) {
+        if (!collided && String(target).startsWith(`${store.root}/`)) {
             collided = true;
             mkdir(target, { recursive: true });
             writeFileSync(join(String(target), "meeting.json"), "other-process-record");
         }
+
         return mkdir(target, options);
     });
+
     try {
         const record = await store.create(
             { title: "Race", start: "2026-11-02T15:00:00Z", createdBy: "new" },
@@ -365,5 +611,45 @@ test("meeting allocation retries when another process reserves the selected dire
         expect(fs.readFileSync(store.path(record.id.slice(0, -2)), "utf8")).toBe("other-process-record");
     } finally {
         spy.mockRestore();
+    }
+});
+
+test("bounded meeting discovery skips old JSON and applies limits before read", () => {
+    const records = new MeetingStore(new Storage(`bounded-meetings-${++stores}`));
+    for (const id of ["2026-01-01_10-00-old", "2026-11-03_10-00-margin", "2026-11-05_10-00-new", "undated"]) {
+        mkdirSync(records.folder(id), { recursive: true });
+        writeFileSync(records.path(id), "{}");
+    }
+    const read = spyOn(records, "read").mockReturnValue(undefined);
+    try {
+        const result = records.listBounded({ since: new Date("2026-11-04T00:00:00Z") });
+        expect(result.olderMeetings).toBe(1);
+        expect(read.mock.calls.map(([id]) => id).sort()).toEqual([
+            "2026-11-03_10-00-margin",
+            "2026-11-05_10-00-new",
+            "undated",
+        ]);
+        read.mockClear();
+        records.listBounded({ limit: 0 });
+        expect(read).not.toHaveBeenCalled();
+    } finally {
+        read.mockRestore();
+    }
+});
+test("a positive discovery limit parses only that many recent records", async () => {
+    const records = new MeetingStore(new Storage(`bounded-positive-${++stores}`));
+    for (const day of [1, 2, 3]) {
+        await records.create(
+            { title: "Planning", start: `2026-11-0${day}T09:00:00.000Z`, createdBy: "new" },
+            { command: "new", change: "fixture" }
+        );
+    }
+    const read = spyOn(records, "read");
+    try {
+        const result = records.listBounded({ limit: 1 });
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(result.records.map((record) => record.start)).toEqual(["2026-11-03T09:00:00.000Z"]);
+    } finally {
+        read.mockRestore();
     }
 });

@@ -38,6 +38,7 @@ type AttendanceCall = z.infer<typeof attendanceSchema>[number];
 /** The call that started closest to the meeting, if one is close enough to be the same call. */
 function closestCall(calls: AttendanceCall[], startMs: number): AttendanceCall | undefined {
     const timed = calls
+        // A call still running has no "call ended" message, so no startedAt: the observer's join stands in for it.
         .map((call) => ({
             call,
             gap: Math.abs(Date.parse(call.meeting.startedAt ?? call.observer?.joinedAt ?? "") - startMs),

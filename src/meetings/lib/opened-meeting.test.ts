@@ -46,6 +46,10 @@ function fakeSource(options: { evidence?: MeetingEvidence | null; clock?: string
                   }
                 : options.evidence,
         liveRecording: async () => null,
+        calendarEntries: async () => ({ ok: true, from: "wisprflow", entries: [] }),
+        folders: async () => [],
+        meetingFolders: async () => [],
+        folderWrite: { supported: false, reason: "fake", manualStep: "none" },
     };
 }
 
@@ -268,4 +272,33 @@ describe("the word check provider per language", () => {
             (await wordCheckFor({ perLanguage: () => "off" }, [{ speaker: "A", startSec: 0, text: "Ahoj." }])).reason
         ).toBe("turned off for cs (languages.cs.wordCheck)");
     });
+});
+
+test("CLI suggestions use the shared runner and render its warnings", async () => {
+    const { Command } = await import("commander");
+    const runner = await import("./suggest-run");
+    const { ui } = await import("@genesiscz/utils/cli/ui");
+    const { out } = await import("@genesiscz/utils/logger");
+    const { registerItemCommands } = await import("../commands/items");
+    const { record } = await newRecord();
+    const resolve = spyOn(MeetingStore.prototype, "resolve").mockReturnValue(record);
+    const run = spyOn(runner, "runSuggest").mockResolvedValue({ fresh: [], warnings: ["context fixture warning"] });
+    const warn = spyOn(ui, "warn").mockImplementation(() => {});
+    const result = spyOn(out, "result").mockImplementation(() => {});
+    try {
+        const program = new Command();
+        registerItemCommands(program);
+        await program.parseAsync(["suggest", record.id, "--rules", "terms", "--word-check", "off", "--json"], {
+            from: "user",
+        });
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(run.mock.calls[0][0]).toMatchObject({ record, rules: ["terms"], wordCheck: "off" });
+        expect(warn).toHaveBeenCalledWith("context fixture warning");
+        expect(result).toHaveBeenCalled();
+    } finally {
+        resolve.mockRestore();
+        run.mockRestore();
+        warn.mockRestore();
+        result.mockRestore();
+    }
 });

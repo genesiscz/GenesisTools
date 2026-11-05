@@ -1,4 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
@@ -6,7 +5,13 @@ import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from 
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { DEFAULT_FUZZY, fuzzyMatches, type ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
-import { docIdentifiers, docLines, findReadAloud, findSpokenIdentifiers } from "@genesiscz/utils/transcribe/doc-match";
+import {
+    docIdentifiers,
+    docLines,
+    findReadAloud,
+    findSpokenIdentifiers,
+    restatesSpokenWords,
+} from "@genesiscz/utils/transcribe/doc-match";
 import { type LineEvidence, lineEvidence, SELF } from "@genesiscz/utils/transcribe/evidence";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import {
@@ -22,12 +27,14 @@ import {
     DEV_GLOSSARY,
     findSuspectTerms,
     findUnknownWords,
+    keepsHeardWords,
     type RawTermEvidence,
     rawTermEvidence,
     termsFromText,
     type VocabTerm,
 } from "@genesiscz/utils/transcribe/terms";
 import { arrivalItems } from "./arrival";
+import { contextFileText, contextMoment } from "./context-file";
 import { selectQuestions } from "./question-select";
 import { DEFAULT_LISTEN_BELOW, questionFor, questionKey } from "./questions";
 import { unlabeledStretches, unlabeledView } from "./unlabeled";
@@ -181,6 +188,8 @@ interface TermSources {
     sourceLabels?: { readAloudLabel: string; lineLabel: string };
     dictionary: ResolvedDictionary;
     sourceWords: DictionaryCandidate[];
+    /** `global.suggest.restatedIdentifiers`: `skip` (the default) adds no meaning a plain code name only restates. */
+    restatedIdentifiers?: "skip" | "mark";
 }
 
 /** The text of each context file and note of a meeting, with a short name for a quote's source. */
@@ -190,9 +199,8 @@ function contextDocuments(record: MeetingRecord): { name: string; text: string }
             return [{ name: entry.title ?? entry.id, text: entry.ref }];
         }
 
-        return entry.kind === "file" && existsSync(entry.ref)
-            ? [{ name: entry.title ?? basename(entry.ref, extname(entry.ref)), text: readFileSync(entry.ref, "utf8") }]
-            : [];
+        const file = entry.kind === "file" ? contextFileText(entry.ref, contextMoment(record)) : undefined;
+        return file ? [{ name: entry.title ?? basename(entry.ref, extname(entry.ref)), text: file.text }] : [];
     });
 }
 
@@ -243,7 +251,9 @@ function documentItems(options: TermSources): NewItem[] {
         }),
         ...spoken.flatMap((match): NewItem[] => {
             const at = atSec(match.entry);
-            return at === undefined || inQuote(match.entry, match.start, match.end)
+            const restated =
+                options.restatedIdentifiers !== "mark" && restatesSpokenWords(match.heard, match.identifier);
+            return at === undefined || restated || inQuote(match.entry, match.start, match.end)
                 ? []
                 : [
                       {
@@ -269,9 +279,8 @@ function termVocabulary(options: TermSources): VocabTerm[] {
             return termsFromText(entry.ref, "context");
         }
 
-        return entry.kind === "file" && existsSync(entry.ref)
-            ? termsFromText(readFileSync(entry.ref, "utf8"), "context")
-            : [];
+        const file = entry.kind === "file" ? contextFileText(entry.ref, contextMoment(record)) : undefined;
+        return file ? termsFromText(file.text, "context") : [];
     });
     const dictionaryTerms = dictionary.entries.flatMap((entry) => {
         if (entry.type === "term") {
@@ -417,7 +426,8 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
         ...documentItems(options),
         ...fuzzyItems,
         ...suspects.flatMap((suspect) => {
-            const best = suspect.candidates[0];
+            // A code name or another case of the same word keeps the heard words: no replacement to suggest.
+            const best = suspect.candidates.find((candidate) => !keepsHeardWords(suspect.heard, candidate));
 
             if (!best) {
                 return [];
@@ -887,6 +897,7 @@ function microphoneVoices(lines: LineEvidence[], selfName: string, platformLabel
             .map(([label]) => label)
     );
 
+    log.debug({ sureMicLines: Object.fromEntries(ranked), ownerLeads, others: [...others] }, "microphone voices");
     return { ...(top ? { owner: top[0] } : {}), ownerLeads, others };
 }
 
@@ -1182,6 +1193,8 @@ export function suggestItems(options: {
     wordCheck?: WordCheck;
     /** How a quote names its source (`languages.<global.language>.render`). */
     sourceLabels?: { readAloudLabel: string; lineLabel: string };
+    /** `global.suggest.restatedIdentifiers` (default `skip`). */
+    restatedIdentifiers?: "skip" | "mark";
     now: string;
 }): MeetingItem[] {
     const { record } = options;

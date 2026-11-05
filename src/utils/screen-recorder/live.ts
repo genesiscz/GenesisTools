@@ -6,9 +6,10 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
+import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
+import { RpcSocketServer } from "@genesiscz/utils/rpc/socket-server";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
-import type { Socket } from "bun";
 import { z } from "zod";
 import {
     type AudioDevices,
@@ -26,11 +27,14 @@ import {
     type RecorderSettingsPatch,
     type RecorderState,
     type RecorderStatus,
+    type RecordingMarker,
     RPC_ERRORS,
     RpcError,
     type SettingsAnswer,
     type StopAnswer,
 } from "./control";
+// service-link imports this module back; neither touches the other's exports before a call, so the cycle is safe.
+import { connectRecordingViaService, recorderServiceDir, type ServiceJoin, ServiceRegistration } from "./service-link";
 
 const { log } = logger.scoped("live-recordings");
 
@@ -67,25 +71,12 @@ export const liveEntrySchema = z.object({
     controls: z.array(z.string()).default([...LIVE_COMMANDS]),
     /** The JSON-RPC socket that controls the recording. */
     socket: z.string(),
+    /** Asks the menu bar host to open the recording's floating controls once it sees the entry. */
+    panel: z.boolean().optional(),
 });
 export type LiveEntry = z.infer<typeof liveEntrySchema>;
 
 export { RPC_ERRORS, RpcError } from "./control";
-
-const rpcRequest = z.object({
-    jsonrpc: z.literal("2.0"),
-    id: z.union([z.string(), z.number(), z.null()]).optional(),
-    method: z.string(),
-    params: z.unknown().optional(),
-});
-const rpcMessage = z.object({
-    jsonrpc: z.literal("2.0"),
-    id: z.union([z.string(), z.number(), z.null()]).optional(),
-    method: z.string().optional(),
-    params: z.unknown().optional(),
-    result: z.unknown().optional(),
-    error: z.object({ code: z.number(), message: z.string(), data: z.unknown().optional() }).optional(),
-});
 
 /** `<genesis-tools root>/recordings/live/`: one `<id>.json` per running recording, and its `<id>.sock`. */
 export function liveRecordingsDir(): string {
@@ -161,61 +152,21 @@ export function readLiveRecording(id: string, dir = liveRecordingsDir()): LiveEn
     return listLiveRecordings(dir).find((entry) => entry.id === id);
 }
 
-/** Splits a byte stream into lines; a partial line waits for its newline. */
-class LineBuffer {
-    private pending = "";
-    private readonly decoder = new TextDecoder();
-
-    push(chunk: Uint8Array): string[] {
-        this.pending += this.decoder.decode(chunk, { stream: true });
-        const lines = this.pending.split("\n");
-        this.pending = lines.pop() ?? "";
-        return lines.map((line) => line.replace(/\r$/, "")).filter((line) => line.trim());
-    }
-}
-
-/** Writes a whole message even when the socket takes only part of it now; the rest goes on `drain`. */
-class Outbox {
-    private queued: Buffer = Buffer.alloc(0);
-
-    constructor(
-        private readonly write: (bytes: Buffer) => number,
-        private readonly overflow: () => void
-    ) {}
-
-    send(text: string): void {
-        const bytes = Buffer.from(text);
-        if (this.queued.length + bytes.length > 1_048_576) {
-            this.queued = Buffer.alloc(0);
-            this.overflow();
-            return;
-        }
-        this.queued = Buffer.concat([this.queued, bytes]);
-        this.flush();
-    }
-
-    flush(): void {
-        if (this.queued.length === 0) {
-            return;
-        }
-
-        const written = this.write(this.queued);
-        this.queued = this.queued.subarray(Math.max(0, written));
-    }
-}
-
-interface Connection {
-    lines: LineBuffer;
-    outbox: Outbox;
-    /** The requests of one connection are answered one after another, in the order they came. */
-    queue: Promise<void>;
-    /** The events this connection subscribed to (empty: all of them); undefined until it calls `subscribe`. */
-    events?: Set<string>;
-}
-
 export type LiveEntryChange = Partial<
     Pick<LiveEntry, "title" | "state" | "displays" | "frames" | "lastFrameAt" | "warning">
 >;
+
+/** Methods that answer after the recording's post-processing (OCR, the summary, the collect): a discard waits for it too. */
+const FINISHING_METHODS = new Set(["stop", "discard"]);
+
+/**
+ * The answer deadline of a call: a `stop` or `discard` that waits for the finish gets the finish's time, any other call
+ * the short one.
+ */
+export function callTimeoutFor(method: string, params: unknown): number {
+    const waits = !(typeof params === "object" && params !== null && "wait" in params && params.wait === false);
+    return FINISHING_METHODS.has(method) && waits ? STOP_TIMEOUT_MS : CALL_TIMEOUT_MS;
+}
 
 /**
  * The live recording of one recorder in this process: the `<id>.json` discovery entry, written on every change, and a
@@ -223,10 +174,10 @@ export type LiveEntryChange = Partial<
  * `subscribe`. `close()` notifies `ended`, ends every connection after its last answer and removes both files.
  */
 export class LiveRecordingServer {
-    private entry!: LiveEntry;
+    private entry: LiveEntry;
     private readonly entryPath: string;
-    private readonly listener: ReturnType<typeof Bun.listen<Connection>>;
-    private readonly connections = new Set<Socket<Connection>>();
+    private readonly server: RpcSocketServer<undefined>;
+    private readonly registration?: ServiceRegistration;
     private closed = false;
     private mutations: Promise<unknown> = Promise.resolve();
 
@@ -238,78 +189,90 @@ export class LiveRecordingServer {
         displays?: LiveEntry["displays"];
         control: RecorderControl;
         dir?: string;
+        /** The host opens the floating controls for it (`tools recorder start`, the menu's Record Screen). */
+        panel?: boolean;
+        /**
+         * The recorder service it joins while one runs: by default the one in `<genesis-tools root>/recordings`; a
+         * scratch `dir` joins none unless this names one.
+         */
+        service?: ServiceJoin;
     }) {
         const dir = options.dir ?? liveRecordingsDir();
         mkdirSync(dir, { recursive: true, mode: 0o700 });
         chmodSync(dir, 0o700);
         this.entryPath = join(dir, `${options.id}.json`);
         const socket = liveSocketPath(dir, options.id);
-
-        this.listener = withPathArbitrationSync(socket, () => {
+        const control = options.control;
+        const pidCommand = readProcessCommand(process.pid);
+        this.entry = {
+            version: 1,
+            id: options.id,
+            kind: options.kind,
+            title: options.title,
+            pid: process.pid,
+            ...(pidCommand ? { pidCommand } : {}),
+            startedAt: new Date().toISOString(),
+            state: "recording",
+            displays: options.displays ?? [],
+            frames: 0,
+            ...(options.folder ? { folder: options.folder } : {}),
+            controls: [...control.methods],
+            socket,
+            ...(options.panel ? { panel: true } : {}),
+        };
+        // One process at a time decides who owns the id: a live or unreadable entry keeps it, and only a socket file
+        // left by a recorder that died is removed. The entry is published under the same lock as the socket.
+        this.server = withPathArbitrationSync(socket, () => {
             if (existsSync(this.entryPath)) {
                 const previous = liveEntrySchema.safeParse(parseOrNull(readFileSync(this.entryPath, "utf8")));
+
                 if (!previous.success || isLiveEntryAlive(previous.data)) {
                     throw new Error(`Recording "${options.id}" already owns its control socket`);
                 }
             }
-            // A socket file left by a recorder that died; this process now owns the id.
+
             if (existsSync(socket)) {
                 unlinkSync(socket);
             }
 
-            const control = options.control;
-            const listener = Bun.listen<Connection>({
-                unix: socket,
-                socket: {
-                    open: (client) => {
-                        client.data = {
-                            lines: new LineBuffer(),
-                            outbox: new Outbox(
-                                (bytes) => client.write(bytes),
-                                () => {
-                                    this.connections.delete(client);
-                                    client.end();
-                                }
-                            ),
-                            queue: Promise.resolve(),
-                        };
-                        this.connections.add(client);
-                    },
-                    data: (client, chunk) => {
-                        for (const line of client.data.lines.push(chunk)) {
-                            client.data.queue = client.data.queue.then(() => this.handle(client, line, control));
-                        }
-                    },
-                    drain: (client) => client.data.outbox.flush(),
-                    close: (client) => {
-                        this.connections.delete(client);
-                    },
-                    error: (client, error) => {
-                        log.debug({ error }, "live recording connection error");
-                        this.connections.delete(client);
-                    },
-                },
-            });
+            const listener = this.listen(socket, control);
+            // Only the owner may reach the control socket.
             chmodSync(socket, 0o600);
-            const pidCommand = readProcessCommand(process.pid);
-            this.entry = {
-                version: 1,
-                id: options.id,
-                kind: options.kind,
-                title: options.title,
-                pid: process.pid,
-                ...(pidCommand ? { pidCommand } : {}),
-                startedAt: new Date().toISOString(),
-                state: "recording",
-                displays: options.displays ?? [],
-                frames: 0,
-                ...(options.folder ? { folder: options.folder } : {}),
-                controls: [...control.methods],
-                socket,
-            };
             this.write();
-            log.info({ id: options.id, kind: options.kind, socket }, "live recording listening");
             return listener;
+        });
+        log.info({ id: options.id, kind: options.kind, socket }, "live recording listening");
+        const service = options.service ?? (options.dir ? false : { dir: recorderServiceDir() });
+
+        if (service) {
+            this.registration = new ServiceRegistration({
+                dir: service.dir,
+                ...(service.pollMs ? { pollMs: service.pollMs } : {}),
+                entry: () => this.current,
+                answer: (method, params) => this.dispatch(control, method, params),
+            });
+            this.registration.start();
+        }
+    }
+
+    /** True while the recording is registered with a running recorder service. */
+    get joinedService(): boolean {
+        return this.registration?.joined ?? false;
+    }
+
+    /** Resolves once a join with the service that is under way ended. */
+    async serviceSettled(): Promise<void> {
+        await this.registration?.settled();
+    }
+
+    private listen(socket: string, control: RecorderControl): RpcSocketServer<undefined> {
+        return new RpcSocketServer<undefined>({
+            socket,
+            state: () => undefined,
+            call: ({ method, params }) => this.dispatch(control, method, params),
+            logScope: "live-recordings",
+            label: "live recording",
+            logFields: { id: this.entry.id },
         });
     }
 
@@ -334,6 +297,7 @@ export class LiveRecordingServer {
         }
 
         this.write();
+        this.registration?.changed(change);
 
         if (change.state && change.state !== before.state) {
             this.emit("state", { state: change.state });
@@ -346,15 +310,8 @@ export class LiveRecordingServer {
 
     /** A notification to every connection that subscribed to `event`. */
     emit(event: LiveEvent, params: Record<string, unknown>): void {
-        const message = `${SafeJSON.stringify({ jsonrpc: "2.0", method: event, params })}\n`;
-
-        for (const client of this.connections) {
-            const wanted = client.data.events;
-
-            if (wanted && (wanted.size === 0 || wanted.has(event))) {
-                client.data.outbox.send(message);
-            }
-        }
+        this.server.emit(event, params);
+        this.registration?.event(event, params);
     }
 
     /** Notifies `ended`, closes the socket and removes the entry and the socket file. */
@@ -365,28 +322,29 @@ export class LiveRecordingServer {
 
         this.emit("ended", reason ? { reason } : {});
         this.closed = true;
+        this.registration?.close();
 
         // Answers already written go out before the connection ends; `stop(true)` would cut them off.
-        for (const client of this.connections) {
-            void client.data.queue
-                .then(() => {
-                    client.data.outbox.flush();
-                    client.end();
-                })
-                .catch((error: unknown) => {
-                    log.debug({ error }, "live recording connection ended during shutdown");
-                    client.end();
-                });
-        }
+        this.server.endConnections();
 
-        withPathArbitrationSync(this.entry.socket, () => {
-            this.listener.stop();
+        const remove = () => {
+            this.server.stopListening();
+
             for (const path of [this.entryPath, this.entry.socket]) {
                 if (existsSync(path)) {
                     unlinkSync(path);
                 }
             }
-        });
+        };
+
+        // Under the same lock as a start, so a new owner never sees this entry gone while its socket still exists.
+        try {
+            withPathArbitrationSync(this.entry.socket, remove);
+        } catch (error) {
+            // A start holding the lock now reads this entry as alive and gives up, so removing without it is safe.
+            log.warn({ error, id: this.entry.id }, "live recording socket lock busy; removing without it");
+            remove();
+        }
 
         log.info({ id: this.entry.id }, "live recording removed");
     }
@@ -399,57 +357,24 @@ export class LiveRecordingServer {
         atomicWriteFileSync(this.entryPath, SafeJSON.stringify(this.entry, null, 2));
     }
 
-    private async handle(client: Socket<Connection>, line: string, control: RecorderControl): Promise<void> {
-        const parsed = rpcRequest.safeParse(parseOrNull(line));
-        const reply = (body: Record<string, unknown>) => {
-            client.data.outbox.send(`${SafeJSON.stringify({ jsonrpc: "2.0", ...body })}\n`);
-        };
-
-        if (!parsed.success) {
-            reply({ id: null, error: { code: RPC_ERRORS.invalidRequest, message: "not a JSON-RPC 2.0 request" } });
-            return;
+    /** The recorder's methods; the server answers `subscribe` itself. */
+    private async dispatch(control: RecorderControl, method: string, params: unknown): Promise<unknown> {
+        if (!isRecorderMethod(method)) {
+            throw new RpcError(RPC_ERRORS.methodNotFound, `unknown method ${method}`);
         }
 
-        const { id, method, params } = parsed.data;
-
-        try {
-            let result: unknown;
-
-            if (method === "subscribe") {
-                const events = z.object({ events: z.array(z.string()).optional() }).safeParse(params ?? {});
-                client.data.events = new Set(events.success ? (events.data.events ?? []) : []);
-                result = { events: [...client.data.events] };
-            } else {
-                if (!isRecorderMethod(method)) {
-                    throw new RpcError(RPC_ERRORS.methodNotFound, `unknown method ${method}`);
-                }
-
-                if (!control.methods.includes(method)) {
-                    throw new RpcError(RPC_ERRORS.unsupported, `a ${control.kind} recording has no ${method}`);
-                }
-
-                if (method === "status" || method.endsWith(".list") || method === "settings.get") {
-                    result = await RECORDER_DISPATCH[method](control, params);
-                } else {
-                    const pending = this.mutations.then(() => RECORDER_DISPATCH[method](control, params));
-                    this.mutations = pending.catch(() => undefined);
-                    result = await pending;
-                }
-            }
-
-            log.debug({ id: this.entry.id, method }, "live recording call");
-
-            if (id !== undefined) {
-                reply({ id, result: result ?? null });
-            }
-        } catch (error) {
-            const code = error instanceof RpcError ? error.code : RPC_ERRORS.internal;
-            log.info({ id: this.entry.id, method, error }, "live recording call refused");
-
-            if (id !== undefined) {
-                reply({ id, error: { code, message: error instanceof Error ? error.message : String(error) } });
-            }
+        if (!control.methods.includes(method)) {
+            throw new RpcError(RPC_ERRORS.unsupported, `a ${control.kind} recording has no ${method}`);
         }
+
+        if (method === "status" || method.endsWith(".list") || method === "settings.get") {
+            return RECORDER_DISPATCH[method](control, params);
+        }
+
+        // Changes run one after another whichever client sent them, so two clients never interleave a mutation.
+        const pending = this.mutations.then(() => RECORDER_DISPATCH[method](control, params));
+        this.mutations = pending.catch(() => undefined);
+        return pending;
     }
 }
 
@@ -458,32 +383,73 @@ export interface LiveNotification {
     params: unknown;
 }
 
-interface Pending {
-    resolve: (value: unknown) => void;
-    reject: (error: Error) => void;
-    timer: ReturnType<typeof setTimeout>;
+/** How a RecorderClient reaches its recording: the recording's own socket, or the recorder service. */
+export interface RecorderTransport {
+    readonly via: "socket" | "service";
+    call<T>(method: string, params: unknown, timeoutMs: number): Promise<T>;
+    onNotification(listener: (notification: LiveNotification) => void): void;
+    /** Starts the recording's notifications; the client filters them by event. */
+    subscribe(): Promise<void>;
+    close(): void;
+}
+
+/** The recording's own control socket. */
+class SocketRecorderTransport implements RecorderTransport {
+    readonly via = "socket";
+
+    constructor(private readonly rpc: RpcSocketClient) {}
+
+    call<T>(method: string, params: unknown, timeoutMs: number): Promise<T> {
+        return this.rpc.call<T>(method, params, { timeoutMs });
+    }
+
+    onNotification(listener: (notification: LiveNotification) => void): void {
+        this.rpc.onNotification(({ method, params }) => listener({ event: method, params }));
+    }
+
+    async subscribe(): Promise<void> {
+        await this.rpc.call("subscribe", {});
+    }
+
+    close(): void {
+        this.rpc.close();
+    }
 }
 
 /**
- * A running recording over its socket, as a RecorderControl: the same methods in-process and remote, so the menu bar,
- * a REPL and the CLI call one method set for every recorder kind. `call` and `subscribe` stay for the raw protocol.
+ * A running recording as a RecorderControl: the same methods in-process and remote, so the menu bar, a REPL and the
+ * CLI call one method set for every recorder kind. It goes through the recorder service while one runs and holds the
+ * recording, else over the recording's own socket. `call` and `subscribe` stay for the raw protocol.
  */
 export class RecorderClient extends RecorderControl {
-    private nextId = 1;
-    private readonly pending = new Map<number, Pending>();
-    private readonly listeners = new Set<(notification: LiveNotification) => void>();
-    private readonly lines = new LineBuffer();
-    private socket?: Socket<undefined>;
-    private outbox?: Outbox;
-    private closedReason?: string;
+    private readonly listeners = new Set<{
+        onEvent: (notification: LiveNotification) => void;
+        events?: ReadonlySet<string>;
+    }>();
+    private subscribed?: Promise<void>;
 
     readonly kind: string;
     readonly methods: readonly RecorderMethod[];
 
-    private constructor(readonly entry: LiveEntry) {
+    private constructor(
+        readonly entry: LiveEntry,
+        private readonly transport: RecorderTransport
+    ) {
         super();
         this.kind = entry.kind;
         this.methods = RECORDER_METHODS.filter((method) => entry.controls.includes(method));
+        transport.onNotification((notification) => {
+            for (const listener of this.listeners) {
+                if (!listener.events || listener.events.has(notification.event)) {
+                    listener.onEvent(notification);
+                }
+            }
+        });
+    }
+
+    /** `service` while the calls go through the recorder service, `socket` on the recording's own socket. */
+    get via(): RecorderTransport["via"] {
+        return this.transport.via;
     }
 
     status(): Promise<RecorderStatus> {
@@ -552,6 +518,10 @@ export class RecorderClient extends RecorderControl {
         return this.call("audio.setInput", { deviceId });
     }
 
+    override addMarker(label: string): Promise<RecordingMarker> {
+        return this.call("marker.add", { label });
+    }
+
     override getSettings(): Promise<SettingsAnswer> {
         return this.call("settings.get");
     }
@@ -560,137 +530,71 @@ export class RecorderClient extends RecorderControl {
         return this.call("settings.set", patch);
     }
 
-    /** Connects by id; throws when no such recording runs or its socket refuses (a stale entry counts as gone). */
-    static async connect(id: string, options: { dir?: string } = {}): Promise<RecorderClient> {
+    /**
+     * Connects by id: through the recorder service when one runs and holds the recording, else over the recording's
+     * socket. Throws when no such recording runs or its socket refuses (a stale entry counts as gone).
+     */
+    static async connect(id: string, options: { dir?: string; service?: ServiceJoin } = {}): Promise<RecorderClient> {
+        const service = options.service ?? (options.dir ? false : { dir: recorderServiceDir() });
+        const viaService = service ? await connectRecordingViaService(id, service.dir) : undefined;
+
+        if (viaService) {
+            return new RecorderClient(viaService.entry, viaService.transport);
+        }
+
         const entry = readLiveRecording(id, options.dir);
 
         if (!entry) {
             throw new Error(`No running recording "${id}"`);
         }
 
-        const client = new RecorderClient(entry);
-
         try {
-            const socket = await Bun.connect({
-                unix: entry.socket,
-                socket: {
-                    data: (_socket, chunk) => client.receive(chunk),
-                    drain: () => client.outbox?.flush(),
-                    close: () => client.end("the recording closed the connection"),
-                    error: (_socket, error) => client.end(error.message),
-                },
+            const rpc = await RpcSocketClient.connect({
+                socket: entry.socket,
+                logScope: "live-recordings",
+                label: "live recording",
+                closedMessage: "the recording closed the connection",
             });
-            client.socket = socket;
-            client.outbox = new Outbox(
-                (bytes) => socket.write(bytes),
-                () => {
-                    socket.end();
-                    client.end("socket outbox exceeded byte limit");
-                }
-            );
+            return new RecorderClient(entry, new SocketRecorderTransport(rpc));
         } catch (error) {
             log.debug({ error, id, socket: entry.socket }, "live recording socket refused");
             throw new Error(`No running recording "${id}" (its socket does not answer)`);
         }
-
-        return client;
     }
 
     /** One JSON-RPC call; an error reply rejects with an RpcError that carries its code. */
-    call<T = unknown>(
-        method: string,
-        params?: unknown,
-        timeoutMs = (method === "stop" || method === "discard") &&
-        !(typeof params === "object" && params !== null && "wait" in params && params.wait === false)
-            ? STOP_TIMEOUT_MS
-            : CALL_TIMEOUT_MS
-    ): Promise<T> {
-        if (this.closedReason) {
-            return Promise.reject(new Error(this.closedReason));
-        }
-
-        const id = this.nextId++;
-        return new Promise<T>((resolve, reject) => {
-            const timer = setTimeout(() => {
-                this.pending.delete(id);
-                reject(new Error(`${method}: no answer within ${timeoutMs / 1000} s`));
-            }, timeoutMs);
-            this.pending.set(id, { resolve: (value) => resolve(value as T), reject, timer });
-            const params_ = params !== undefined ? { params } : {};
-            this.outbox?.send(`${SafeJSON.stringify({ jsonrpc: "2.0", id, method, ...params_ })}\n`);
-        });
+    /** A waiting `stop` gets the time a finish takes, through this path as through `stop()`. */
+    call<T = unknown>(method: string, params?: unknown, timeoutMs = callTimeoutFor(method, params)): Promise<T> {
+        return this.transport.call<T>(method, params, timeoutMs);
     }
 
     /** Receives notifications from now on: all of them, or only `events`. */
     async subscribe(onEvent: (notification: LiveNotification) => void, events?: LiveEvent[]): Promise<void> {
-        this.listeners.add(onEvent);
-        await this.call("subscribe", events ? { events } : {});
+        this.listeners.add({ onEvent, ...(events ? { events: new Set(events) } : {}) });
+        this.subscribed ??= this.transport.subscribe().catch((error: unknown) => {
+            this.subscribed = undefined;
+            throw error;
+        });
+        await this.subscribed;
     }
 
     close(): void {
-        this.socket?.end();
-        this.end("closed");
-    }
-
-    private receive(chunk: Uint8Array): void {
-        for (const line of this.lines.push(chunk)) {
-            const parsed = rpcMessage.safeParse(parseOrNull(line));
-
-            if (!parsed.success) {
-                log.debug({ line }, "unreadable live recording message");
-                continue;
-            }
-
-            const message = parsed.data;
-
-            if (message.method) {
-                for (const listener of this.listeners) {
-                    listener({ event: message.method, params: message.params });
-                }
-
-                continue;
-            }
-
-            const waiting = typeof message.id === "number" ? this.pending.get(message.id) : undefined;
-
-            if (!waiting || typeof message.id !== "number") {
-                continue;
-            }
-
-            this.pending.delete(message.id);
-            clearTimeout(waiting.timer);
-
-            if (message.error) {
-                waiting.reject(new RpcError(message.error.code, message.error.message, message.error.data));
-            } else {
-                waiting.resolve(message.result);
-            }
-        }
-    }
-
-    private end(reason: string): void {
-        if (this.closedReason) {
-            return;
-        }
-
-        this.closedReason = reason;
-
-        for (const [id, waiting] of this.pending) {
-            clearTimeout(waiting.timer);
-            waiting.reject(new Error(reason));
-            this.pending.delete(id);
-        }
+        this.transport.close();
     }
 }
 
-/** Connects, makes one call, and closes: what a CLI command needs. */
+/** Connects (through the recorder service while one runs), makes one call, and closes: what a CLI command needs. */
 export async function callRecorder<T = unknown>(options: {
     id: string;
     method: string;
     params?: unknown;
     dir?: string;
+    service?: ServiceJoin;
 }): Promise<T> {
-    const client = await RecorderClient.connect(options.id, { dir: options.dir });
+    const client = await RecorderClient.connect(options.id, {
+        ...(options.dir ? { dir: options.dir } : {}),
+        ...(options.service !== undefined ? { service: options.service } : {}),
+    });
 
     try {
         return await client.call<T>(options.method, options.params);

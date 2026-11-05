@@ -1,5 +1,5 @@
 import { formatBytes } from "@genesiscz/utils/format";
-import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, RecordingDisplaySpan } from "@genesiscz/utils/meetings/record";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { z } from "zod";
 
@@ -33,6 +33,22 @@ export function recordedSpans(record: MeetingRecord, now = Date.now()): Recorded
     });
     const firstKept = kept[0]?.fromMs ?? Number.POSITIVE_INFINITY;
     return [...historySpans(record, now).filter((span) => span.toMs <= firstKept), ...kept];
+}
+
+/**
+ * When each display was captured, on the wall clock: the running recorder's own list when it records this meeting
+ * (`live`), else the record's. Undefined for a recording from before display intervals were kept.
+ */
+export function recordedDisplaySpans(
+    record: MeetingRecord,
+    options: { live?: RecordingDisplaySpan[]; now?: number } = {}
+): Array<RecordedSpan & { displayId: number }> | undefined {
+    const now = options.now ?? Date.now();
+    return (options.live ?? record.recording?.displaySpans)?.map((span) => ({
+        displayId: span.displayId,
+        fromMs: Date.parse(span.from),
+        toMs: span.to ? Date.parse(span.to) : now,
+    }));
 }
 
 function historySpans(record: MeetingRecord, now: number): RecordedSpan[] {
@@ -94,6 +110,7 @@ export interface DisplayFrames {
 export function framesAtPerDisplay(options: {
     lines: OcrLine[];
     spans: RecordedSpan[];
+    /** When each display was captured; absent for a recording made before display intervals were kept. */
     displaySpans?: Array<RecordedSpan & { displayId: number }>;
     targetMs: number;
     windowMs: number;
@@ -149,7 +166,7 @@ export function framesAtPerDisplay(options: {
     return { displays, recorded };
 }
 
-/** The lines `show` prints about the screen recording: its state, frames per display, the spans, and its warning. */
+/** The facts `show` lists about the screen recording: its state, frames per display, the spans, and its warning. */
 export function recordingSummary(record: MeetingRecord, now = Date.now()): string[] {
     const recording = record.recording;
 
@@ -161,13 +178,13 @@ export function recordingSummary(record: MeetingRecord, now = Date.now()): strin
     const state = `${recording.status ?? "unknown"}${recording.stopReason ? ` (${recording.stopReason})` : ""}`;
     const size = recording.bytes !== undefined ? `, ${formatBytes(recording.bytes)}` : "";
     const lines = [
-        `- recording: ${state}, ${frames === 0 ? "no frames" : `${frames} frames`}${size}${recording.backend ? `, ${recording.backend}` : ""}`,
+        `recording: ${state}, ${frames === 0 ? "no frames" : `${frames} frames`}${size}${recording.backend ? `, ${recording.backend}` : ""}`,
     ];
     const displays = recording.displays ?? [];
 
     if (displays.length > 0) {
         lines.push(
-            `- displays: ${displays.map((display) => `${display.name} (${display.id}) ${display.frames}`).join(", ")}`
+            `displays: ${displays.map((display) => `${display.name} (${display.id}) ${display.frames}`).join(", ")}`
         );
     }
 
@@ -175,11 +192,11 @@ export function recordingSummary(record: MeetingRecord, now = Date.now()): strin
 
     if (spans.length > 0) {
         const clock = (ms: number) => localTime(new Date(ms).toISOString()).slice(11);
-        lines.push(`- recorded: ${spans.map((span) => `${clock(span.fromMs)}–${clock(span.toMs)}`).join(", ")}`);
+        lines.push(`recorded: ${spans.map((span) => `${clock(span.fromMs)}–${clock(span.toMs)}`).join(", ")}`);
     }
 
     if (recording.warning) {
-        lines.push(`- recording warning: ${recording.warning}`);
+        lines.push(`recording warning: ${recording.warning}`);
     }
 
     return lines;
