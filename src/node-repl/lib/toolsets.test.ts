@@ -693,6 +693,48 @@ describe("recorder and editor toolsets", () => {
         }
     }, 10_000);
 
+    test("OCR sidecars include the minimum length and exclude a read one character shorter", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-rec-ocr-boundary-"));
+        const recorder = new FakeRecorder();
+        const original = recorder.capture.bind(recorder);
+        const captured = Promise.withResolvers<void>();
+        let captures = 0;
+        recorder.capture = async (request, signal) => {
+            const result = await original({ ...request, durationSec: 0.01 }, signal);
+            if (++captures === 2) {
+                captured.resolve();
+            }
+            return result;
+        };
+        const recognize = spyOn(ocr, "recognizeText").mockImplementation(async (file) => ({
+            text: file.endsWith("-d1.png") ? "abc" : "abcd",
+            blocks: [],
+        }));
+        const recording = await startRecording({
+            recorder,
+            displays: "all",
+            folder: join(root, "rec"),
+            liveDir: join(root, "live"),
+            ocr: { enabled: true, minChars: 4 },
+        });
+        try {
+            await withTimeout(captured.promise, 2000);
+            await recording.stop();
+            const frames = readRecordingManifest(recording.folder)!.frames;
+            expect(new Set(frames.map((frame) => frame.displayId))).toEqual(new Set([1, 4]));
+            for (const frame of frames) {
+                const sidecar = join(recording.folder, `${frame.file}.ocr.json`);
+                expect(existsSync(sidecar)).toBe(frame.displayId === 4);
+                if (frame.displayId === 4) {
+                    expect(SafeJSON.parse(readFileSync(sidecar, "utf8"))).toEqual({ text: "abcd", blocks: [] });
+                }
+            }
+        } finally {
+            recognize.mockRestore();
+            await recording.stop();
+        }
+    });
+
     test("OCR failures preserve frames, audio and the finalized manifest", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-rec-ocr-"));
         const recorder = new FakeRecorder();
