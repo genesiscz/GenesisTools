@@ -78,7 +78,7 @@ function clipLength(question: NewQuestion): number {
     return question.clip ? question.clip.toSec - question.clip.fromSec : 0;
 }
 
-/** One question for a run of neighbours with the same choices: it decides all their items. */
+/** One question for the same labelled passage and clip with the same choices: it decides all their items. */
 function merge(into: NewQuestion, next: NewQuestion): NewQuestion {
     const labels = [...new Set([...labelsOf(into), ...labelsOf(next)])];
     const ranges = into.decides.length + next.decides.length;
@@ -103,9 +103,9 @@ function merge(into: NewQuestion, next: NewQuestion): NewQuestion {
 /**
  * From the candidate questions, the ones worth asking, each with its priority:
  * 1. a coarse question whose time finer items mostly cover is dropped;
- * 2. neighbours (30 s apart or less) offering the same people become one cluster question;
+ * 2. questions with the same single label, exact range, clip and choices become one cluster question;
  * 3. priority = (1 − confidence) × impact × reach, where reach counts the questions that share the signature (the same
- *    top choices and the same people present), because one answer settles them all.
+ *    top choices and the same people present). Settlement also requires the same label and exact range.
  */
 export function selectQuestions(candidates: NewQuestion[], items: MeetingItem[]): NewQuestion[] {
     const kept = candidates.filter((question) => !isCoarse(question, items)).sort((a, b) => a.fromSec - b.fromSec);

@@ -119,14 +119,16 @@ Only what is unsure and matters (Martin, 2026-11-02: "just on those which are re
    (`src/utils/transcribe/importance.ts`). A term needs two occurrences, an identifier, a person's name from the
    summary, or a decision in its line; any other low term is only marked in the transcript.
 3. A goodbye or attendance range is dropped when finer audio-evidence items cover 80 % of it.
-4. Neighbours within 30 s offering the same people become one question; it plays the longest line.
+4. Speaker questions cluster only for the same single label, exact range and clip times, and choices.
+   Separate neighbouring passages stay separate.
 5. Priority = (1 − confidence) × impact × reach. Impact is log2(1 + words), +3 for a decision word, +3 when the
    range cites a summary action item or decision (`global.summary` headings), +2 when the answer moves an action's
    owner. Reach counts the questions with the same signature (top two choices and the people present).
 
 `listen` asks by priority, at most `playback.listen.budget` (12) per round and none under `minPriority` (0.5). A split
 does not count against the budget: its parts take its place. Each
-answer settles its look-alikes: the questions with the same signature get the answer, +0.3 up to 0.9, and close when
+speaker answer settles only questions for the same single label and exact range that share its signature and offer
+that answer. Their items gain +0.3 up to 0.9, and close when
 that reaches the threshold. "Enough for now" ends the round; the rest stay marked in the transcript.
 
 A confirmed term or join is also written to `~/.genesis-tools/meetings/corrections.jsonl`.
