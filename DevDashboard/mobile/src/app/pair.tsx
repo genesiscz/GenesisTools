@@ -90,6 +90,7 @@ export default function PairScreen() {
         setError(null);
         setAsking(false);
         setConfirming(false);
+        setSecret("");
 
         if (!pairing) {
             setError("That is not a DevDashboard pairing link.");
