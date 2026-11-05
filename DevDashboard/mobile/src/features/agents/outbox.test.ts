@@ -5,7 +5,7 @@ mock.module("expo-sqlite/kv-store", () => ({
     default: { getItem: async () => null, setItem: async () => {}, removeItem: async () => {} },
 }));
 
-const { addDraft, flushDrafts, isOfflineError, memoryDraftStore } = await import("@/features/agents/outbox");
+const { addDraft, flushDrafts, isOfflineError, memoryDraftStore, removeDraft } = await import("@/features/agents/outbox");
 type SteerDraft = Parameters<typeof addDraft>[1];
 
 function draft(id: string, createdAt: number): SteerDraft {
@@ -88,6 +88,38 @@ describe("steer outbox (F10)", () => {
         await flushDrafts({ store, connectionId: "mac-a", send });
         expect(calls).toBe(2);
         expect(await store.read()).toHaveLength(2);
+    });
+
+    it("keeps concurrent offline additions and a concurrent discard without losing another prompt", async () => {
+        const store = memoryDraftStore();
+        await Promise.all([addDraft(store, draft("a", 1)), addDraft(store, draft("b", 2))]);
+        expect((await store.read()).map((entry) => entry.id)).toEqual(["a", "b"]);
+        await Promise.all([removeDraft(store, "a"), addDraft(store, draft("c", 3))]);
+        expect((await store.read()).map((entry) => entry.id)).toEqual(["b", "c"]);
+    });
+
+    it("does not resurrect a discarded draft when an in-flight replay fails", async () => {
+        const store = memoryDraftStore([draft("a", 1)]);
+        await flushDrafts({ store, connectionId: "mac-a", send: async (entry) => {
+            await removeDraft(store, entry.id);
+            throw new TypeError("Network request failed");
+        } });
+        expect(await store.read()).toEqual([]);
+    });
+
+    it("reports a failed store write and lets the next queued update proceed", async () => {
+        const memory = memoryDraftStore();
+        let fail = true;
+        const store = { read: memory.read, write: async (drafts: SteerDraft[]) => {
+            if (fail) {
+                fail = false;
+                throw new Error("store unavailable");
+            }
+            await memory.write(drafts);
+        } };
+        await expect(addDraft(store, draft("a", 1))).rejects.toThrow("store unavailable");
+        await addDraft(store, draft("b", 2));
+        expect((await store.read()).map((entry) => entry.id)).toEqual(["b"]);
     });
 
     it("keeps a draft added while a flush runs", async () => {

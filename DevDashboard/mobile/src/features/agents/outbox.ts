@@ -133,18 +133,29 @@ export async function flushDrafts({
 
     // Drafts added while this flush ran are kept as they are.
     const handled = new Set(drafts.map((draft) => draft.id));
-    const added = (await store.read()).filter((draft) => !handled.has(draft.id));
-    await store.write([...result.waiting, ...added]);
+    await updateDrafts(store, (current) => [
+        ...result.waiting.filter((draft) => current.some((entry) => entry.id === draft.id)),
+        ...current.filter((draft) => !handled.has(draft.id)),
+    ]);
     return result;
 }
 
+const writes = new WeakMap<DraftStore, Promise<void>>();
+
+/** Serialize each store's read/modify/write so concurrent composers cannot overwrite one another. */
+export function updateDrafts(store: DraftStore, update: (current: SteerDraft[]) => SteerDraft[]): Promise<void> {
+    const run = async () => { await store.write(update(await store.read())); };
+    const pending = (writes.get(store) ?? Promise.resolve()).then(run, run);
+    writes.set(store, pending);
+    return pending;
+}
+
 export async function addDraft(store: DraftStore, draft: SteerDraft): Promise<void> {
-    const drafts = await store.read();
-    await store.write([...drafts.filter((entry) => entry.id !== draft.id), draft]);
+    await updateDrafts(store, (drafts) => [...drafts.filter((entry) => entry.id !== draft.id), draft]);
 }
 
 export async function removeDraft(store: DraftStore, id: string): Promise<void> {
-    await store.write((await store.read()).filter((draft) => draft.id !== id));
+    await updateDrafts(store, (drafts) => drafts.filter((draft) => draft.id !== id));
 }
 
 /** A memory store, for tests and the fixture app. */

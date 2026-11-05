@@ -17,6 +17,7 @@ import {
     kvDraftStore,
     removeDraft,
     type SteerDraft,
+    updateDrafts,
 } from "@/features/agents/outbox";
 import {
     agentsKeys,
@@ -183,7 +184,7 @@ export function useSteerComposer(sessionKey: string, store: DraftStore = kvDraft
     );
 
     const retry = useCallback(async (id: string) => {
-        await store.write((await store.read()).map((draft) =>
+        await updateDrafts(store, (current) => current.map((draft) =>
             draft.id === id && draft.connectionId === connectionId ? { ...draft, blocked: false } : draft
         ));
         await flush();
