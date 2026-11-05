@@ -20,8 +20,7 @@ export type FaceIdGate = { ok: true; via: "biometrics" | "passcode" | "none" } |
 
 /**
  * Asks for Face ID (or Touch ID, or the passcode when biometrics fail) before an act that cannot be undone, such as
- * stopping a session. When the native module reports no enrolled authentication, the existing `via: "none"`
- * behavior is retained.
+ * stopping a session. A device with no enrolled authentication refuses the action.
  *
  * The module loads on first use, not at import: expo-router loads every route at start, and a build made before the
  * module was added (no `expo prebuild` since) would otherwise crash at launch. Such a build refuses confirmation
@@ -41,7 +40,7 @@ export function createFaceIdGate(load: AuthenticationLoader) {
         const level = await LocalAuthentication.getEnrolledLevelAsync();
 
         if (level === LocalAuthentication.SecurityLevel.NONE) {
-            return { ok: true, via: "none" };
+            return { ok: false, reason: "Set up device authentication before confirming this action." };
         }
 
         const result = await LocalAuthentication.authenticateAsync({
