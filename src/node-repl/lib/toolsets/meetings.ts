@@ -1,8 +1,9 @@
+import { prepareFindings } from "@app/meetings/lib/add-findings";
 import { captureCost } from "@app/meetings/lib/capture-cost";
 import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/lib/config-edit";
 import { decideItems } from "@app/meetings/lib/decide";
 import { testPhrase } from "@app/meetings/lib/dictionary-test";
-import { findingItems, findingProblems, findingSchema } from "@app/meetings/lib/findings";
+import { findingSchema } from "@app/meetings/lib/findings";
 import { itemWhat } from "@app/meetings/lib/item-text";
 import { matchDraftSchema, matchPreview } from "@app/meetings/lib/match-preview";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
@@ -672,19 +673,30 @@ export class MeetingsToolset extends ReplToolset {
                         .filter((item) => (!status || item.status === status) && (!kind || item.kind === kind))
                         .map((item) => itemRow(record, item));
                 },
-                add: (input: z.input<typeof add.params>) => {
+                add: async (input: z.input<typeof add.params>) => {
                     const { findings } = add.params.parse(input);
+                    // The same anchors as `items add`; with no transcript at hand, the items are added as given.
+                    const source = await opened()
+                        .meeting()
+                        .catch((error: unknown) => {
+                            log.debug({ error, meeting: id }, "no transcript to check the finding anchors against");
+                            return undefined;
+                        });
                     return store.update(
                         id,
                         { command: "items add", change: `${findings.length} findings` },
                         (record) => {
-                            const problems = findingProblems(findings, record.items);
+                            const prepared = prepareFindings({
+                                findings,
+                                items: record.items,
+                                transcript: source?.transcript,
+                            });
 
-                            if (problems.length > 0) {
-                                throw new Error(problems.join("; "));
+                            for (const warning of prepared.warnings) {
+                                log.warn({ meeting: id }, warning);
                             }
 
-                            record.items.push(...findingItems(findings, record.items, new Date().toISOString()));
+                            record.items.push(...prepared.added);
                         }
                     );
                 },

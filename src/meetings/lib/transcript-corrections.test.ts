@@ -4,6 +4,9 @@ import { meetingItemSchema, meetingRecordSchema } from "@genesiscz/utils/meeting
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
+import { z } from "zod";
+import { prepareFindings } from "./add-findings";
+import { findingSchema } from "./findings";
 import { checkAnchors, correctTranscript, ledgerEntryFor, outcomeText } from "./transcript-corrections";
 
 function line(speaker: string, startSec: number, text: string): TranscriptEntry {
@@ -164,6 +167,34 @@ describe("anchors at items add", () => {
             "i3: no line starts at 00:40",
         ]);
         expect([...addresses]).toEqual([["i2", 2]]);
+    });
+
+    test("findings added through the shared preparation get the same anchors, and a refused finding throws", () => {
+        const twice = [line("A", 5, "To je Ada."), line("B", 5, "Ada ne."), line("A", 9, "Konec.")];
+        const findings = z.array(findingSchema).parse([
+            {
+                kind: "term",
+                at: 9,
+                heard: "Konec",
+                proposed: "Konec!",
+                scope: "line",
+                confidence: 0.9,
+                reason: "heard",
+            },
+            { kind: "term", at: 5, heard: "Ada", proposed: "ADA", scope: "line", confidence: 0.9, reason: "heard" },
+        ]);
+        const { added, warnings } = prepareFindings({ findings, items: [], transcript: twice });
+
+        expect(added.map((one) => one.evidence?.transcriptLine)).toEqual([2, undefined]);
+        expect(warnings).toHaveLength(1);
+        expect(prepareFindings({ findings, items: [] }).warnings).toEqual([]);
+        const twiceNamed = z.array(findingSchema).parse([
+            { kind: "term", ref: "a", at: 9, heard: "Konec", confidence: 0.9, reason: "heard" },
+            { kind: "term", ref: "a", at: 5, heard: "Ada", confidence: 0.9, reason: "heard" },
+        ]);
+        expect(() => prepareFindings({ findings: twiceNamed, items: [] })).toThrow(
+            'ref "a" names more than one finding'
+        );
     });
 });
 
