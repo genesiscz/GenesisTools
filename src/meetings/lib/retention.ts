@@ -41,21 +41,37 @@ export type TrashPaths = (paths: string[]) => string | null;
 /** Capture folders whose files are written in place, so the folder's own mtime does not move with them. */
 const IN_PLACE_FOLDERS = new Set(["audio"]);
 
-/** A path's stat, or null when it went away during the pass (a recorder or another prune removed it). */
+/** True for the errors of a path that is no longer there; any other read error is not evidence of age. */
+function wentAway(err: unknown): boolean {
+    return err instanceof Error && "code" in err && (err.code === "ENOENT" || err.code === "ENOTDIR");
+}
+
+/**
+ * A path's stat, or null when it went away during the pass (a recorder or another prune removed it). Any other error
+ * (a denied or failed read) is thrown, so the pass stops instead of pruning a meeting on incomplete evidence.
+ */
 function statOrNull(path: string): Stats | null {
     try {
         return statSync(path);
     } catch (err) {
+        if (!wentAway(err)) {
+            throw err;
+        }
+
         log.debug({ err, path }, "a capture path went away during the retention pass");
         return null;
     }
 }
 
-/** A folder's entries, or none when it went away during the pass. */
+/** A folder's entries, or none when it went away during the pass; any other error is thrown, as in `statOrNull`. */
 function namesOrEmpty(path: string): string[] {
     try {
         return readdirSync(path);
     } catch (err) {
+        if (!wentAway(err)) {
+            throw err;
+        }
+
         log.debug({ err, path }, "a capture folder went away during the retention pass");
         return [];
     }

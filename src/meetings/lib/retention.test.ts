@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import * as removal from "@genesiscz/utils/rm";
@@ -63,6 +63,23 @@ describe("capture retention", () => {
         utimesSync(track, old, old);
         expect(capturesToPrune(store, { days: 30, now })[0]?.paths).toEqual([audio, ledger]);
         expect(capturesToPrune(store, { days: 30, now, skip: id })).toEqual([]);
+    });
+
+    test("an unreadable audio folder stops the pass instead of pruning on partial evidence", () => {
+        const store = fresh();
+        const folder = store.folder("unreadable-audio");
+        const audio = join(folder, "audio");
+        mkdirSync(audio, { recursive: true });
+        writeFileSync(join(audio, "mic.m4a"), "audio fixture");
+        const old = new Date(now - 60 * DAY_MS);
+        utimesSync(audio, old, old);
+        chmodSync(audio, 0o000);
+
+        try {
+            expect(() => capturesToPrune(store, { days: 30, now })).toThrow();
+        } finally {
+            chmodSync(audio, 0o755);
+        }
     });
 
     test("the daily pass runs once a day and hands the paths to the trash", () => {
