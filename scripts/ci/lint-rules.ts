@@ -35,6 +35,13 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { findInFiles, Lang, type NapiConfig, parse, type SgNode } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
+import {
+    AGENT_BINARY_TABLE_RATCHET,
+    HARDCODED_ACCOUNT_ENV_RATCHET,
+    PARENT_WALK_RATCHET,
+    RAW_AGENT_ENV_RATCHET,
+    RAW_TERMINAL_ENV_RATCHET,
+} from "./agent-context-ratchet";
 import { HARNESS_GUARD_STRICT, strictViolations } from "./harness-guard";
 import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
@@ -405,6 +412,163 @@ function readsHookPayload(node: SgNode, statusline = false): boolean {
     });
 }
 
+// ─── The agent-context rules of 2026-11-04 (spec 2026-11-04, section 5) ────────────────────────────────────────────────
+// no-raw-agent-env, no-raw-terminal-env, no-hardcoded-account-env, no-agent-binary-table, no-parent-walk. Who the
+// caller is (agent, host, terminal, parent process) is found in one place per fact. The files that still find it
+// themselves live in scripts/ci/agent-context-ratchet.ts and may only shrink.
+// no-agent-name-in-command-match (above) already covers an agent name matched against one command line, and
+// no-hook-payload-read already covers hook payload fields, so neither is repeated here.
+
+const AGENT_ENV_KEY =
+    "CLAUDE_CODE_SESSION_ID|CLAUDECODE|CODEX_THREAD_ID|CODEX_SESSION_ID|CODEX_TOOL_CALL_ID|GROK_SESSION_ID|COPILOT_AGENT_SESSION_ID|AI_AGENT|CLAUDE_EFFORT|T3CODE_[A-Z0-9_]+";
+const TERMINAL_ENV_KEY = "CMUX_[A-Z0-9_]+|TMUX_PANE|TMUX|TERM_PROGRAM|ITERM_SESSION_ID|TERM_SESSION_ID";
+/** `TOOLS_CLAUDE_ACCOUNT`, and the same name built from a value: `TOOLS_${provider}_ACCOUNT`. */
+const ACCOUNT_ENV_KEY = "TOOLS_(?:[A-Z]+|\\$\\{[^}]*\\})_ACCOUNT";
+/** Node kinds that carry a bare key name: `env.KEY`, `{ KEY: v }`, `{ KEY }` and `const { KEY } = env`. */
+const KEY_NAME_KINDS: readonly string[] = [
+    "property_identifier",
+    "shorthand_property_identifier",
+    "shorthand_property_identifier_pattern",
+];
+const QUOTED_KINDS = ["string", "template_string"];
+
+/**
+ * A matcher and a test for one set of environment variable names. It sees a name written as a member (`env.KEY`), an
+ * object key, a destructured name, and a whole string or template literal (`env["KEY"]`, `getEnv("KEY")`). A literal
+ * inside a sentence is prose and passes. Reads and writes both count: the key name itself belongs to one owner.
+ * `quoted` is how much of a literal may be a match: the whole literal, or any part of it.
+ */
+function envKeyRule(keys: string, quoted: "whole" | "part"): Pick<Rule, "kinds" | "matcher" | "test"> {
+    const bare = `^(?:${keys})$`;
+    const literalBody = quoted === "whole" ? `^["'\`](?:${keys})["'\`]$` : `\\b(?:${keys})\\b`;
+    const bareRe = new RegExp(bare);
+    const literalRe = new RegExp(literalBody);
+
+    return {
+        kinds: [...KEY_NAME_KINDS, ...QUOTED_KINDS],
+        matcher: {
+            rule: {
+                any: [
+                    ...KEY_NAME_KINDS.map((kind) => ({ kind, regex: bare })),
+                    ...QUOTED_KINDS.map((kind) => ({ kind, regex: literalBody })),
+                ],
+            },
+        },
+        test: (text, node) => (KEY_NAME_KINDS.includes(String(node.kind())) ? bareRe.test(text) : literalRe.test(text)),
+    };
+}
+
+const AGENT_BINARY_WORD = /\b(claude|codex|grok|copilot)\b/g;
+const AGENT_BINARY_NAME = /^(?:claude|codex|grok|copilot)$/;
+
+/** The agent binary a string literal or an object key names, if it is one. */
+function agentBinaryOf(node: SgNode | null | undefined): string | undefined {
+    const name = node?.kind() === "string" ? unquote(node) : node?.kind() === "property_identifier" ? node.text() : "";
+
+    return AGENT_BINARY_NAME.test(name) ? name : undefined;
+}
+
+/** Words in a name that say the value is about a process: `AGENT_BINARIES`, `launcherPattern`, `commandHead`. */
+const PROCESS_NAME_WORDS = new Set([
+    "bin",
+    "binary",
+    "binaries",
+    "exe",
+    "executable",
+    "process",
+    "proc",
+    "command",
+    "cmd",
+    "argv",
+    "comm",
+    "launcher",
+    "program",
+    "basename",
+]);
+
+function namesProcess(name: string): boolean {
+    return name
+        .split(/[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])/)
+        .some((word) => PROCESS_NAME_WORDS.has(word.toLowerCase()));
+}
+
+/**
+ * True when the table is about processes: it is declared under a name like `AGENT_BINARIES` or keyed by one, or it is
+ * the regex or list a call checks a command, argv or process against (`/claude|codex/.test(command)`,
+ * `new Set([...]).has(comm)`, `command.replace(/…/, "")`). A table of harness names for another purpose (a display
+ * label, a per-harness account field) passes: it is not what finds an agent among running processes.
+ */
+function isInProcessContext(node: SgNode): boolean {
+    let child = node;
+    let up = node.parent();
+
+    for (let depth = 0; up && depth < 6; depth++) {
+        const kind = up.kind();
+
+        if (kind === "variable_declarator") {
+            return namesProcess(up.field("name")?.text() ?? "");
+        }
+
+        if (kind === "pair") {
+            return namesProcess(up.field("key")?.text().replace(/["'`]/g, "") ?? "");
+        }
+
+        if (kind === "call_expression") {
+            const inArguments = up.field("arguments")?.range().start.index === child.range().start.index;
+            const other = inArguments ? up.field("function")?.text() : up.field("arguments")?.text();
+
+            if (AGENT_SUBJECT.test(other ?? "")) {
+                return true;
+            }
+        }
+
+        if (kind === "statement_block" || kind === "lexical_declaration" || kind === "expression_statement") {
+            return false;
+        }
+
+        child = up;
+        up = up.parent();
+    }
+
+    return false;
+}
+
+/**
+ * True for a table of agent binary names in a process context: a regex that names two or more of them, an array or
+ * Set of two or more names, a Map made of `[name, value]` pairs, or an object keyed by two or more names. One name is
+ * a different rule (no-agent-name-in-command-match); two or more is a table a new agent must edit.
+ */
+function isAgentBinaryTable(node: SgNode): boolean {
+    const distinct = (names: (string | undefined)[]) => new Set(names.filter((name) => name !== undefined)).size >= 2;
+    let names: (string | undefined)[] = [];
+
+    switch (node.kind()) {
+        case "regex":
+            names = [...node.text().matchAll(AGENT_BINARY_WORD)].map((match) => match[1]);
+            break;
+        case "array":
+            names = arrayEntries(node).map((entry) =>
+                entry.kind() === "array" ? agentBinaryOf(arrayEntries(entry)[0]) : agentBinaryOf(entry)
+            );
+            break;
+        case "object":
+            names = node
+                .children()
+                .filter((child) => child.kind() === "pair")
+                .map((pair) => agentBinaryOf(pair.field("key")));
+            break;
+        default:
+            return false;
+    }
+
+    return distinct(names) && isInProcessContext(node);
+}
+
+/** Scripts that measure or replay (benchmarks) and the plugins, which stand alone by design, are out of scope. */
+const AGENT_CONTEXT_SCOPE = /^(?:src|scripts)\//;
+/** scripts/ci/ holds these lint rules and their guards, which name the keys, binaries and fields on purpose. */
+const AGENT_CONTEXT_OUT_OF_SCOPE = /^scripts\/(?:benchmarks|ci)\//;
+
 const RULES: Rule[] = [
     {
         ...STORAGE_ROOT_RULE,
@@ -700,6 +864,81 @@ const RULES: Rule[] = [
 
             return AGENT_SUBJECT.test(object?.text() ?? "");
         },
+    },
+    {
+        ...envKeyRule(AGENT_ENV_KEY, "whole"),
+        name: "no-raw-agent-env",
+        severity: "error",
+        message:
+            "Do not name a coding agent's environment variable (CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID, GROK_SESSION_ID, " +
+            "T3CODE_*, ...) outside the agent identity module (src/utils/agent/), a harness driver's `harness.ts`, " +
+            "src/utils/t3code/ and src/utils/env/. Ask the identity module who the caller is. " +
+            "scripts/ci/agent-context-ratchet.ts lists the files not migrated yet.",
+        onlyIn: AGENT_CONTEXT_SCOPE,
+        allowedIn:
+            /^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/agent\/|src\/utils\/ai\/providers\/plugins\/[\w-]+\/harness\.ts$|src\/utils\/t3code\/|src\/utils\/env\/)/,
+        allowedFiles: RAW_AGENT_ENV_RATCHET,
+    },
+    {
+        ...envKeyRule(TERMINAL_ENV_KEY, "whole"),
+        name: "no-raw-terminal-env",
+        severity: "error",
+        message:
+            "Do not name a terminal's environment variable (CMUX_*, TMUX_PANE, TERM_PROGRAM, ITERM_SESSION_ID, ...) outside " +
+            "src/utils/cmux/, src/utils/tmux/, src/utils/env/ and the agent identity module's terminal part " +
+            "(src/utils/agent/identity/). scripts/ci/agent-context-ratchet.ts lists the files not migrated yet.",
+        onlyIn: AGENT_CONTEXT_SCOPE,
+        allowedIn:
+            /^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/cmux\/|src\/utils\/tmux\/|src\/utils\/env\/|src\/utils\/agent\/identity\/)/,
+        allowedFiles: RAW_TERMINAL_ENV_RATCHET,
+    },
+    {
+        ...envKeyRule(ACCOUNT_ENV_KEY, "part"),
+        name: "no-hardcoded-account-env",
+        severity: "error",
+        message:
+            "Do not write a TOOLS_<PROVIDER>_ACCOUNT name by hand. Take it from src/utils/ai/account-env.ts, so a new " +
+            "provider adds its name in one place. scripts/ci/agent-context-ratchet.ts lists the files not migrated yet.",
+        onlyIn: AGENT_CONTEXT_SCOPE,
+        allowedIn: /^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/ai\/account-env\.ts$)/,
+        allowedFiles: HARDCODED_ACCOUNT_ENV_RATCHET,
+    },
+    {
+        name: "no-agent-binary-table",
+        severity: "error",
+        kinds: ["regex", "array", "object"],
+        matcher: { rule: { any: [{ kind: "regex" }, { kind: "array" }, { kind: "object" }] } },
+        message:
+            "Do not keep a table of agent binary names (claude, codex, grok, copilot) to classify a process. Ask " +
+            "src/utils/process/classify.ts, and put a harness's own facts in its driver. " +
+            "scripts/ci/agent-context-ratchet.ts lists the files not migrated yet.",
+        onlyIn: AGENT_CONTEXT_SCOPE,
+        // The same owners as no-agent-name-in-command-match: the process matchers and each harness driver's process part.
+        allowedIn: new RegExp(`${AGENT_CONTEXT_OUT_OF_SCOPE.source}|${AGENT_SESSION_OWNERS.source}`),
+        allowedFiles: AGENT_BINARY_TABLE_RATCHET,
+        test: (_text, node) => isAgentBinaryTable(node),
+    },
+    {
+        name: "no-parent-walk",
+        severity: "error",
+        kinds: ["member_expression", "string", "template_string"],
+        matcher: {
+            rule: {
+                any: [
+                    { kind: "member_expression", regex: "^process\\.ppid$" },
+                    { kind: "string", regex: "\\bppid\\b" },
+                    { kind: "template_string", regex: "\\bppid\\b" },
+                ],
+            },
+        },
+        message:
+            "Do not walk to a parent process by hand (process.ppid, `ps -o ppid`). Use the process helpers in " +
+            "src/utils/process/. scripts/ci/agent-context-ratchet.ts lists the files not migrated yet.",
+        onlyIn: AGENT_CONTEXT_SCOPE,
+        allowedIn: /^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/process\/)/,
+        allowedFiles: PARENT_WALK_RATCHET,
+        // A template's own `${row.ppid}` prints a parsed value; only a literal word `ppid` asks `ps` for it.
+        test: (text, node) => node.kind() === "member_expression" || /\bppid\b/.test(text.replace(/\$\{[^}]*\}/g, "")),
     },
 ];
 
@@ -1508,6 +1747,41 @@ export function checkSource(file: string, source: string, { ratchets = true }: {
     return ratchets ? withinCountRatchets(findings) : findings;
 }
 
+/**
+ * The entries of ratchet lists whose file no longer breaks the rule the list belongs to (migrated, deleted or renamed),
+ * as `rule: file`. A ratchet may only shrink, so a stale entry must leave the list: it would let the file offend again
+ * unseen. `sourceOf` reads a listed file; a file it cannot read counts as stale.
+ */
+export function staleRatchetEntries(
+    lists: readonly (readonly [rule: string, entries: ReadonlySet<string>])[],
+    sourceOf: (file: string) => string | undefined
+): string[] {
+    const offending = new Map<string, Set<string>>();
+    const stale: string[] = [];
+
+    for (const [rule, entries] of lists) {
+        for (const file of entries) {
+            if (!offending.has(file)) {
+                const source = sourceOf(file);
+                offending.set(
+                    file,
+                    new Set(
+                        source === undefined
+                            ? []
+                            : checkSource(file, source, { ratchets: false }).map((finding) => finding.rule)
+                    )
+                );
+            }
+
+            if (!offending.get(file)?.has(rule)) {
+                stale.push(`${rule}: ${file}`);
+            }
+        }
+    }
+
+    return stale;
+}
+
 /** The per-file counts of every rule that has them, by rule name. */
 const COUNT_RATCHETS: ReadonlyMap<string, ReadonlyMap<string, number>> = new Map(
     RULES.flatMap((rule) => (rule.allowedCounts ? [[rule.name, rule.allowedCounts] as const] : []))
@@ -1558,6 +1832,7 @@ export function withinCountRatchets(
  * Established exemption lists are also compared with the base before scoping.
  */
 const RATCHET_INPUTS = [
+    "scripts/ci/agent-context-ratchet.ts",
     "scripts/ci/harness-ratchet.ts",
     "scripts/ci/model-facts-ratchet.ts",
     "scripts/ci/native-home-ratchet.ts",

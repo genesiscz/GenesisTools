@@ -1,11 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, unlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import { compressFile } from "@genesiscz/utils/compress/file";
 import { formatLocalDate } from "@genesiscz/utils/date";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
-import { claudeProjectFolder } from "./caller";
+import { claudeProjectFolder, failureCaller, transcriptOf } from "./caller";
 import { recordSignalEnd, signalEnd, signalOfStatus, WITHHELD_ARGV } from "./launcher";
 import { appendFailure, failureDays, failureLogPath, readFailures, type ToolFailure } from "./record";
 import { RUN_ID_ENV } from "./run-id";
@@ -528,5 +530,315 @@ describe("a tool that handles its own interrupt under the tools wrapper", () => 
         });
         expect(second).toBeNull();
         expect(read()).toHaveLength(1);
+    });
+});
+
+// Characterization tests (2026-11-04): what a failure record says about its caller today, before the agent-context
+// gatherers are unified. Every input is injected: the context, the env and the home are plain objects and a folder.
+describe("characterization: the caller a failure record names", () => {
+    const NOW = new Date(2026, 10, 4, 12, 0, 0);
+
+    function context(overrides: Partial<AgentRuntimeContext>): AgentRuntimeContext {
+        return {
+            agent: "claude-code",
+            sessionId: "11111111-2222-3333-4444-555555555555",
+            isInAgent: true,
+            aiAgent: null,
+            sessionTitle: "Fixture session",
+            project: "FixtureProject",
+            repoRoot: "/fixture/FixtureProject",
+            cwd: "/fixture/FixtureProject/sub",
+            isWorktree: false,
+            worktreePath: null,
+            branch: "feat/fixture",
+            commitSha: "abc1234",
+            commitMessage: "fixture commit",
+            ...overrides,
+        };
+    }
+
+    function scratch(): string {
+        return mkdtempSync(join(tmpdir(), "failures-caller-"));
+    }
+
+    function put(path: string, text = ""): string {
+        mkdirSync(join(path, ".."), { recursive: true });
+        writeFileSync(path, text);
+        return path;
+    }
+
+    function claudeRow(model: string): string {
+        return `${SafeJSON.stringify({ type: "assistant", message: { model, content: [] } })}\n`;
+    }
+
+    function codexRow(model: string): string {
+        return `${SafeJSON.stringify({ type: "turn_context", payload: { model } })}\n`;
+    }
+
+    describe("the Claude transcript", () => {
+        it("is projects/<cwd as folder>/<session>.jsonl under CLAUDE_CONFIG_DIR", () => {
+            const config = scratch();
+            const ctx = context({});
+            const file = put(join(config, "projects", claudeProjectFolder(ctx.cwd), `${ctx.sessionId}.jsonl`));
+
+            expect(transcriptOf({ context: ctx, processEnv: { CLAUDE_CONFIG_DIR: config } })).toBe(file);
+        });
+
+        it("tries the cwd first, then the repo root", () => {
+            const config = scratch();
+            const ctx = context({});
+            const inRoot = put(join(config, "projects", claudeProjectFolder(ctx.repoRoot), `${ctx.sessionId}.jsonl`));
+            expect(transcriptOf({ context: ctx, processEnv: { CLAUDE_CONFIG_DIR: config } })).toBe(inRoot);
+
+            const inCwd = put(join(config, "projects", claudeProjectFolder(ctx.cwd), `${ctx.sessionId}.jsonl`));
+            expect(transcriptOf({ context: ctx, processEnv: { CLAUDE_CONFIG_DIR: config } })).toBe(inCwd);
+        });
+
+        it("falls back to a scan of every project folder when neither name matches", () => {
+            const config = scratch();
+            const ctx = context({});
+            const elsewhere = put(join(config, "projects", "-some-other-folder", `${ctx.sessionId}.jsonl`));
+
+            expect(transcriptOf({ context: ctx, processEnv: { CLAUDE_CONFIG_DIR: config } })).toBe(elsewhere);
+        });
+
+        it("is null when no folder holds the session, or the config has no projects folder", () => {
+            const config = scratch();
+            const ctx = context({});
+            put(join(config, "projects", "-some-other-folder", "another-session.jsonl"));
+
+            expect(transcriptOf({ context: ctx, processEnv: { CLAUDE_CONFIG_DIR: config } })).toBeNull();
+            expect(transcriptOf({ context: ctx, processEnv: { CLAUDE_CONFIG_DIR: scratch() } })).toBeNull();
+        });
+
+        it("reads ~/.claude of the given home when CLAUDE_CONFIG_DIR is unset or blank", () => {
+            const home = scratch();
+            const ctx = context({});
+            const file = put(join(home, ".claude", "projects", claudeProjectFolder(ctx.cwd), `${ctx.sessionId}.jsonl`));
+
+            expect(transcriptOf({ context: ctx, processEnv: {}, home })).toBe(file);
+            expect(transcriptOf({ context: ctx, processEnv: { CLAUDE_CONFIG_DIR: "  " }, home })).toBe(file);
+        });
+
+        it("encodes Windows cwd separators and keeps punctuation in the session filename", () => {
+            const config = scratch();
+            const ctx = context({ cwd: "C:\\work\\My App.v2", sessionId: "thread:child%3Amcp ?#ž" });
+            expect(claudeProjectFolder(ctx.cwd)).toBe("C--work-My-App-v2");
+            expect(claudeProjectFolder("C:/work/My App.v2")).toBe("C--work-My-App-v2");
+            const file = put(join(config, "projects", "C--work-My-App-v2", `${ctx.sessionId}.jsonl`));
+            expect(transcriptOf({ context: ctx, processEnv: { CLAUDE_CONFIG_DIR: config } })).toBe(file);
+        });
+
+        it("a whitespace session id is a literal filename, while an empty id stops the lookup", () => {
+            const config = scratch();
+            const ctx = context({ sessionId: " \t " });
+            const file = put(join(config, "projects", claudeProjectFolder(ctx.cwd), " \t .jsonl"));
+            const processEnv = { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_SESSION_ID: "env-session" };
+            expect(transcriptOf({ context: ctx, processEnv })).toBe(file);
+            expect(transcriptOf({ context: context({ sessionId: "" }), processEnv })).toBeNull();
+        });
+
+        it("is null for a caller with no session id", () => {
+            const config = scratch();
+            expect(
+                transcriptOf({ context: context({ sessionId: null }), processEnv: { CLAUDE_CONFIG_DIR: config } })
+            ).toBeNull();
+        });
+    });
+
+    describe("the Codex transcript", () => {
+        const THREAD = "01a0f4fc-171d-7c30-9679-ee00633dee2d";
+
+        function rollout(codexHome: string, day: Date, ext = "jsonl"): string {
+            const dir = join(
+                codexHome,
+                "sessions",
+                String(day.getFullYear()),
+                String(day.getMonth() + 1).padStart(2, "0"),
+                String(day.getDate()).padStart(2, "0")
+            );
+            return put(join(dir, `rollout-2026-11-04T09-00-00-${THREAD}.${ext}`));
+        }
+
+        it("is found in the FIRST entry of the CODEX_HOME list, never in a later one", () => {
+            const first = scratch();
+            const second = scratch();
+            rollout(second, NOW);
+            const ctx = context({ agent: "codex", sessionId: THREAD });
+
+            expect(
+                transcriptOf({ context: ctx, processEnv: { CODEX_HOME: `${first},${second}` }, now: NOW })
+            ).toBeNull();
+
+            const file = rollout(first, NOW);
+            expect(transcriptOf({ context: ctx, processEnv: { CODEX_HOME: ` ${first} , ${second}` }, now: NOW })).toBe(
+                file
+            );
+        });
+
+        it("looks back through today and the six days before, and no further", () => {
+            const home = scratch();
+            const ctx = context({ agent: "codex", sessionId: THREAD });
+            const old = rollout(home, new Date(NOW.getTime() - 7 * 86_400_000));
+            expect(transcriptOf({ context: ctx, processEnv: { CODEX_HOME: home }, now: NOW })).toBeNull();
+
+            const sixBack = rollout(home, new Date(NOW.getTime() - 6 * 86_400_000));
+            expect(old).not.toBe(sixBack);
+            expect(transcriptOf({ context: ctx, processEnv: { CODEX_HOME: home }, now: NOW })).toBe(sixBack);
+        });
+
+        it("a CODEX_HOME list of only blank entries falls back to the injected home", () => {
+            const home = scratch();
+            const ctx = context({ agent: "codex", sessionId: THREAD });
+            const file = rollout(join(home, ".codex"), NOW);
+            expect(transcriptOf({ context: ctx, processEnv: { CODEX_HOME: " , \t , " }, now: NOW, home })).toBe(file);
+        });
+
+        it("takes a compressed rollout too, and reads ~/.codex of the given home when CODEX_HOME is unset", () => {
+            const home = scratch();
+            const ctx = context({ agent: "codex", sessionId: THREAD });
+            const file = rollout(join(home, ".codex"), NOW, "jsonl.zst");
+
+            expect(transcriptOf({ context: ctx, processEnv: {}, now: NOW, home })).toBe(file);
+        });
+    });
+
+    it("Grok, Copilot and an unknown caller have no transcript looked up", () => {
+        for (const agent of ["grok", "copilot", "unknown"] as const) {
+            expect(transcriptOf({ context: context({ agent }), processEnv: {} })).toBeNull();
+        }
+    });
+
+    describe("failureCaller", () => {
+        it("falls back to AI_AGENT for Codex and omits cwd from the saved caller", () => {
+            const ctx = context({ agent: "codex", aiAgent: null, cwd: "/fixture/repo/sub" });
+            const caller = failureCaller({ context: ctx, processEnv: { AI_AGENT: "label" }, home: scratch() });
+            expect(caller.aiAgent).toBe("label");
+            expect(caller).not.toHaveProperty("cwd");
+            const dir = scratch();
+            const failure: ToolFailure = {
+                v: 1,
+                id: "failure-1",
+                at: "2026-11-04T12:00:00.000Z",
+                kind: "error",
+                tool: "fixture",
+                command: null,
+                argv: [],
+                exitCode: 1,
+                message: "failed",
+                errorName: null,
+                stack: null,
+                stderrTail: null,
+                fatal: false,
+                durationMs: 3,
+                pid: 1,
+                ppid: 2,
+                cwd: ctx.cwd,
+                traceId: null,
+                toolsRoot: "/fixture/tools",
+                caller,
+            };
+            appendFailure(failure, dir);
+            const stored = SafeJSON.parse(
+                readFileSync(failureLogPath(formatLocalDate(new Date(failure.at)), dir), "utf8"),
+                { strict: true }
+            );
+            expect(stored).toEqual(failure);
+            expect(stored.caller).toEqual({
+                agent: "codex",
+                sessionId: ctx.sessionId,
+                sessionTitle: "Fixture session",
+                model: null,
+                effort: null,
+                aiAgent: "label",
+                project: "FixtureProject",
+                repoRoot: "/fixture/FixtureProject",
+                branch: "feat/fixture",
+                commitSha: "abc1234",
+                worktreePath: null,
+            });
+            expect(stored.caller).not.toHaveProperty("cwd");
+        });
+        it("reads the model of a Claude session from the newest assistant row of its transcript", () => {
+            const config = scratch();
+            const ctx = context({});
+            put(
+                join(config, "projects", claudeProjectFolder(ctx.cwd), `${ctx.sessionId}.jsonl`),
+                claudeRow("model-old") + claudeRow("model-new")
+            );
+
+            expect(failureCaller({ context: ctx, processEnv: { CLAUDE_CONFIG_DIR: config } }).model).toBe("model-new");
+        });
+
+        it("reads the model of a Codex session from the newest turn_context row of its rollout", () => {
+            const home = scratch();
+            const ctx = context({ agent: "codex", sessionId: "01a0f4fc-171d-7c30-9679-ee00633dee2d" });
+            const day = NOW;
+            put(
+                join(
+                    home,
+                    "sessions",
+                    String(day.getFullYear()),
+                    String(day.getMonth() + 1).padStart(2, "0"),
+                    String(day.getDate()).padStart(2, "0"),
+                    `rollout-x-${ctx.sessionId}.jsonl`
+                ),
+                codexRow("codex-old") + codexRow("codex-new")
+            );
+
+            expect(failureCaller({ context: ctx, processEnv: { CODEX_HOME: home }, now: NOW }).model).toBe("codex-new");
+        });
+
+        it("has no model when there is no transcript, and none for Grok or an unknown caller", () => {
+            const config = scratch();
+            expect(failureCaller({ context: context({}), processEnv: { CLAUDE_CONFIG_DIR: config } }).model).toBeNull();
+            expect(failureCaller({ context: context({ agent: "grok" }), processEnv: {} }).model).toBeNull();
+            expect(
+                failureCaller({ context: context({ agent: "unknown", sessionId: null }), processEnv: {} }).model
+            ).toBeNull();
+        });
+
+        it("takes the effort from CLAUDE_EFFORT, trimmed, and null when blank or unset, whatever the host", () => {
+            expect(failureCaller({ context: context({}), processEnv: { CLAUDE_EFFORT: " high " } }).effort).toBe(
+                "high"
+            );
+            expect(failureCaller({ context: context({}), processEnv: { CLAUDE_EFFORT: "  " } }).effort).toBeNull();
+            expect(failureCaller({ context: context({}), processEnv: {} }).effort).toBeNull();
+            expect(
+                failureCaller({ context: context({ agent: "codex" }), processEnv: { CLAUDE_EFFORT: "low" } }).effort
+            ).toBe("low");
+        });
+
+        it("an empty or whitespace context label blocks the nonblank AI_AGENT fallback", () => {
+            for (const aiAgent of ["", " \t "]) {
+                const caller = failureCaller({
+                    context: context({ agent: "unknown", sessionId: null, aiAgent }),
+                    processEnv: { AI_AGENT: "fallback-label" },
+                });
+                expect(caller.aiAgent).toBe(aiAgent);
+                expect(caller.model).toBeNull();
+            }
+        });
+
+        it("copies the agent, session and checkout from the context, and the label from the context before AI_AGENT", () => {
+            const ctx = context({ aiAgent: "from-context" });
+            expect(failureCaller({ context: ctx, processEnv: { AI_AGENT: "from-env" } })).toEqual({
+                agent: "claude-code",
+                sessionId: "11111111-2222-3333-4444-555555555555",
+                sessionTitle: "Fixture session",
+                model: null,
+                effort: null,
+                aiAgent: "from-context",
+                project: "FixtureProject",
+                repoRoot: "/fixture/FixtureProject",
+                branch: "feat/fixture",
+                commitSha: "abc1234",
+                worktreePath: null,
+            });
+            expect(failureCaller({ context: context({}), processEnv: { AI_AGENT: " from-env " } }).aiAgent).toBe(
+                "from-env"
+            );
+            expect(failureCaller({ context: context({}), processEnv: {} }).aiAgent).toBeNull();
+        });
     });
 });

@@ -4,8 +4,10 @@ import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/har
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { ancestry, readExecutablePath } from "@genesiscz/utils/process/processes";
+import { profiler } from "@genesiscz/utils/profile";
 
 const { log } = logger.scoped("say:caller");
+const prof = profiler.scope("agent-context");
 
 /** One process on the way from the `tools say` invocation up to launchd. */
 export interface AncestryFrame {
@@ -116,12 +118,14 @@ export function parsePidCommands(stdout: string): Map<number, string> {
  */
 export async function captureAncestry(startPid: number): Promise<AncestryFrame[]> {
     try {
-        return ancestry(startPid, MAX_ANCESTRY_DEPTH)
-            .filter((entry) => entry.pid > 1)
-            .map((entry) => ({
-                pid: entry.pid,
-                command: (entry.command ?? readExecutablePath(entry.pid) ?? "").slice(0, MAX_COMMAND_CHARS),
-            }));
+        return prof.measure("say.captureAncestry", () =>
+            ancestry(startPid, MAX_ANCESTRY_DEPTH)
+                .filter((entry) => entry.pid > 1)
+                .map((entry) => ({
+                    pid: entry.pid,
+                    command: (entry.command ?? readExecutablePath(entry.pid) ?? "").slice(0, MAX_COMMAND_CHARS),
+                }))
+        );
     } catch (err) {
         log.debug({ err, startPid }, "could not capture the caller's process ancestry");
         return [];
@@ -212,6 +216,10 @@ export function describeAncestry(frames: AncestryFrame[]): string {
 
 /** Everything about the process that ran `tools say`. Kernel reads, `ps` only for other users' frames; never throws. */
 export async function captureCallerContext(): Promise<CallerContext> {
+    return prof.measureAsync("say.captureCallerContext", readCallerContext);
+}
+
+async function readCallerContext(): Promise<CallerContext> {
     const processEnv = env.getProcessEnv();
     const host = resolveAgentHost(processEnv);
     const ancestry = await captureAncestry(process.ppid);

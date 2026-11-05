@@ -6,6 +6,13 @@ import { dirname, join } from "node:path";
 import { Lang, parse } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
+import {
+    AGENT_BINARY_TABLE_RATCHET,
+    HARDCODED_ACCOUNT_ENV_RATCHET,
+    PARENT_WALK_RATCHET,
+    RAW_AGENT_ENV_RATCHET,
+    RAW_TERMINAL_ENV_RATCHET,
+} from "./agent-context-ratchet";
 import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
 import {
     BARE_REQUIRE_RATCHET,
@@ -18,6 +25,7 @@ import {
     namesTranscriptFormat,
     pluginsDisabledFor,
     ratchetAdditions,
+    staleRatchetEntries,
     withinCountRatchets,
 } from "./lint-rules";
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
@@ -1360,6 +1368,7 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
             return result.stdout.trim();
         };
         const inputs = [
+            "agent-context-ratchet.ts",
             "harness-ratchet.ts",
             "model-facts-ratchet.ts",
             "native-home-ratchet.ts",
@@ -1408,7 +1417,7 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
         }
     }, 30_000);
 
-    test("every file on a ratchet list still offends its rule, so a migrated file leaves the list", async () => {
+    test("every file on a ratchet list still offends its rule, so a migrated file leaves the list", () => {
         const lists: [string, ReadonlySet<string>][] = [
             ["no-transcript-format-outside-readers", TRANSCRIPT_FORMAT_RATCHET],
             ["no-hand-built-claude-home", NATIVE_HOME_CLAUDE_RATCHET],
@@ -1419,31 +1428,200 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
             ["no-harness-name-branch", HARNESS_BRANCH_RATCHET],
             ["no-hook-payload-read", HOOK_PAYLOAD_READ_RATCHET],
             ["no-agent-name-in-command-match", AGENT_PROCESS_MATCH_RATCHET],
+            ...AGENT_CONTEXT_LISTS,
         ];
-        const stale: string[] = [];
-        const files = [...new Set(lists.flatMap(([, entries]) => [...entries]))];
-        const found = new Map(
-            await Promise.all(
-                files.map(async (file) => {
-                    const source = await Bun.file(file).text();
-                    return [
-                        file,
-                        new Set(checkSource(file, source, { ratchets: false }).map((finding) => finding.rule)),
-                    ] as const;
-                })
-            )
-        );
 
-        for (const [rule, entries] of lists) {
-            for (const file of entries) {
-                if (!found.get(file)?.has(rule)) {
-                    stale.push(`${rule}: ${file}`);
+        expect(staleRatchetEntries(lists, (file) => readFileSync(file, "utf8"))).toEqual([]);
+    }, 30_000);
+});
+
+const AGENT_CONTEXT_LISTS: [string, ReadonlySet<string>][] = [
+    ["no-raw-agent-env", RAW_AGENT_ENV_RATCHET],
+    ["no-raw-terminal-env", RAW_TERMINAL_ENV_RATCHET],
+    ["no-hardcoded-account-env", HARDCODED_ACCOUNT_ENV_RATCHET],
+    ["no-agent-binary-table", AGENT_BINARY_TABLE_RATCHET],
+    ["no-parent-walk", PARENT_WALK_RATCHET],
+];
+
+describe("the agent-context rules (spec 2026-11-04, section 5)", () => {
+    /** One planted violation per rule, an owner path that may hold it, and look-alikes that must pass. */
+    const cases: {
+        rule: string;
+        hit: string[];
+        owners: string[];
+        misses: string[];
+    }[] = [
+        {
+            rule: "no-raw-agent-env",
+            hit: [
+                "const id = process.env.CLAUDE_CODE_SESSION_ID;",
+                'const id = env["CODEX_THREAD_ID"];',
+                "const { GROK_SESSION_ID } = process.env;",
+                "const flag = Bun.env.CLAUDECODE;",
+                'const t3 = process.env["T3CODE_THREAD_ID"];',
+                "const e = processEnv.CLAUDE_EFFORT;",
+                'const who = getEnv("AI_AGENT");',
+                "const c = process.env.COPILOT_AGENT_SESSION_ID ?? process.env.CODEX_TOOL_CALL_ID;",
+            ],
+            owners: [
+                "src/utils/agent/identity/env.ts",
+                "src/utils/agent/runtime.ts",
+                "src/utils/ai/providers/plugins/anthropic-sub/harness.ts",
+                "src/utils/t3code/host.ts",
+                "src/utils/env/env-core.ts",
+            ],
+            misses: [
+                'const note = "Set CLAUDE_CODE_SESSION_ID to resume";',
+                "const id = process.env.CLAUDE_CODE_SESSION_IDS;",
+                "const home = process.env.CLAUDE_CONFIG_DIR;",
+                "// process.env.CLAUDE_CODE_SESSION_ID",
+            ],
+        },
+        {
+            rule: "no-raw-terminal-env",
+            hit: [
+                "const pane = process.env.TMUX_PANE;",
+                'const surface = env["CMUX_SURFACE_ID"];',
+                "const { TERM_PROGRAM } = process.env;",
+                "const inTmux = Boolean(process.env.TMUX);",
+                'const tab = getEnv("ITERM_SESSION_ID");',
+                "const t = processEnv.TERM_SESSION_ID;",
+            ],
+            owners: [
+                "src/utils/cmux/surface.ts",
+                "src/utils/tmux/pane.ts",
+                "src/utils/env/env-core.ts",
+                "src/utils/agent/identity/terminal.ts",
+            ],
+            misses: [
+                'const hint = "run inside TMUX_PANE";',
+                "const t = process.env.TERM;",
+                "const x = process.env.TMUX_PANEL;",
+            ],
+        },
+        {
+            rule: "no-hardcoded-account-env",
+            hit: [
+                "const a = process.env.TOOLS_CLAUDE_ACCOUNT;",
+                'const key = "TOOLS_CODEX_ACCOUNT";',
+                "const line = `TOOLS_GROK_ACCOUNT=${name}`;",
+                "const key = `TOOLS_${provider}_ACCOUNT`;",
+                "const env = { TOOLS_CLAUDE_ACCOUNT: account };",
+            ],
+            owners: ["src/utils/ai/account-env.ts"],
+            misses: ['const key = "TOOLS_ACCOUNT";', 'const key = "TOOLS_CLAUDE_ACCOUNTS_DIR";'],
+        },
+        {
+            rule: "no-agent-binary-table",
+            hit: [
+                "const AGENT_BINARIES = new Set(['claude', 'codex', 'grok']);",
+                'const AGENT_BINARIES = ["claude", "codex"];',
+                'const BINARY_AGENT = new Map([["claude", "claude-code"], ["codex", "codex"]]);',
+                'const processAgents = { claude: "claude-code", codex: "codex" };',
+                "const AGENT_PROGRAM = /(?:^|\\/)(?:claude|codex|copilot)(?=\\s|$)/;",
+                'const live = ["claude", "grok"].includes(comm);',
+                'const live = new Set(["codex", "copilot"]).has(command);',
+            ],
+            owners: ["src/utils/process/classify.ts", "src/utils/ai/providers/plugins/openai-sub/harness.ts"],
+            misses: [
+                'const AGENTS = ["claude", "codex", "grok"];',
+                'const LABEL = { claude: "Claude", codex: "Codex" };',
+                'const AGENT_BINARIES = ["claude"];',
+                'const BIN = ["claude", "ls"];',
+            ],
+        },
+        {
+            rule: "no-parent-walk",
+            hit: [
+                "const parent = process.ppid;",
+                'const out = spawnSync("ps", ["-o", "ppid=", "-p", String(pid)]);',
+                'const columns = "pid,ppid,command";',
+                "const cmd = `ps -o ppid= -p ${pid}`;",
+            ],
+            owners: ["src/utils/process/tree.ts"],
+            misses: ["const line = `${row.pid} ${row.ppid}`;", 'const word = "shipping";', "const p = other.ppid;"],
+        },
+    ];
+    const scratchFile = "src/example/lib/caller.ts";
+
+    for (const { rule, hit, owners, misses } of cases) {
+        test(`${rule}: every planted violation is caught and named, the owners and look-alikes pass`, () => {
+            for (const source of hit) {
+                const findings = checkSource(scratchFile, source).filter((finding) => finding.rule === rule);
+                expect({ source, found: findings.length > 0 }).toEqual({ source, found: true });
+                expect(findings[0].file).toBe(scratchFile);
+                expect(findings[0].message).toContain("scripts/ci/agent-context-ratchet.ts");
+            }
+
+            for (const owner of owners) {
+                for (const source of hit) {
+                    expect({ owner, source, found: rules(source, owner).includes(rule) }).toEqual({
+                        owner,
+                        source,
+                        found: false,
+                    });
                 }
             }
-        }
 
-        expect(stale).toEqual([]);
-    }, 30_000);
+            for (const source of misses) {
+                expect({ source, found: rules(source, scratchFile).includes(rule) }).toEqual({ source, found: false });
+            }
+        });
+    }
+
+    test("tests, plugins, benchmarks and the lint scripts themselves are out of scope", () => {
+        for (const { rule, hit } of cases) {
+            for (const file of [
+                "src/example/caller.test.ts",
+                "plugins/example/caller.ts",
+                "scripts/benchmarks/example.ts",
+                "scripts/ci/example.ts",
+            ]) {
+                expect({ rule, file, found: rules(hit[0], file).includes(rule) }).toEqual({ rule, file, found: false });
+            }
+        }
+    });
+
+    test("a file on the ratchet passes while it is listed, and the same text fails in an unlisted file", () => {
+        for (const { rule, hit } of cases) {
+            const list = AGENT_CONTEXT_LISTS.find(([name]) => name === rule)?.[1];
+            expect(list).toBeDefined();
+            const [listed] = list ?? [];
+
+            if (listed === undefined) {
+                // The migration emptied this list: nothing is left to pass through it.
+                continue;
+            }
+
+            expect({ rule, listed, found: rules(hit[0], listed).includes(rule) }).toEqual({
+                rule,
+                listed,
+                found: false,
+            });
+            expect({
+                rule,
+                found: checkSource(listed, hit[0], { ratchets: false }).some((f) => f.rule === rule),
+            }).toEqual({ rule, found: true });
+            expect({ rule, found: rules(hit[0], scratchFile).includes(rule) }).toEqual({ rule, found: true });
+        }
+    });
+
+    test("a ratchet entry that no longer offends is reported, a live one is not", () => {
+        const sources: Record<string, string> = {
+            "src/fixture/live.ts": "const id = process.env.CODEX_THREAD_ID;",
+            "src/fixture/migrated.ts": "const id = identity.sessionId;",
+        };
+        const lists: [string, ReadonlySet<string>][] = [
+            ["no-raw-agent-env", new Set(["src/fixture/live.ts", "src/fixture/migrated.ts", "src/fixture/gone.ts"])],
+            ["no-parent-walk", new Set(["src/fixture/live.ts"])],
+        ];
+
+        expect(staleRatchetEntries(lists, (file) => sources[file])).toEqual([
+            "no-raw-agent-env: src/fixture/migrated.ts",
+            "no-raw-agent-env: src/fixture/gone.ts",
+            "no-parent-walk: src/fixture/live.ts",
+        ]);
+    });
 });
 
 describe("no-proxy-provider-branch", () => {

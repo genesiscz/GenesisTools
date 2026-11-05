@@ -1,11 +1,17 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runMigrations } from "@genesiscz/utils/database/migrations";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     type AncestryFrame,
     agentFromAncestry,
     type CallerContext,
     captureAncestry,
+    captureCallerContext,
     describeAncestry,
     parsePidCommands,
     parsePidParents,
@@ -18,6 +24,7 @@ import {
     isAttentionText,
     listCalls,
     NO_OUTCOME_AFTER_MS,
+    openCallsDb,
     recordCall,
     type SayCallOutcome,
     type SayCallRequest,
@@ -430,5 +437,220 @@ describe("view helpers", () => {
         expect(agentLabel("claude-code")).toBe("claude");
         expect(agentLabel("grok")).toBe("grok");
         expect(agentLabel("unknown")).toBe("—");
+    });
+});
+
+// Characterization tests (2026-11-04): what `tools say` records about its caller today, before the agent-context
+// gatherers are unified. `captureCallerContext` reads the live process env and the live process chain, so each
+// case clears every variable it reads and sets only its own.
+const CALLER_ENV_KEYS = [
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDECODE",
+    "CODEX_CI",
+    "CODEX_THREAD_ID",
+    "GROK_SESSION_ID",
+    "COPILOT_AGENT_SESSION_ID",
+    "AI_AGENT",
+    "TOOLS_CLAUDE_ACCOUNT",
+    "CMUX_SURFACE_ID",
+    "CMUX_WORKSPACE_ID",
+    "CMUX_TAB_ID",
+    "TMUX_PANE",
+    "TERM_PROGRAM",
+] as const;
+
+async function captureWith(vars: Partial<Record<(typeof CALLER_ENV_KEYS)[number], string>>) {
+    const cleared = Object.fromEntries(CALLER_ENV_KEYS.map((key) => [key, undefined]));
+    let caller: CallerContext | undefined;
+    await env.testing.withOverrides({ ...cleared, ...vars }, async () => {
+        caller = await captureCallerContext();
+    });
+
+    if (!caller) {
+        throw new Error("captureCallerContext did not run");
+    }
+
+    return caller;
+}
+
+describe("characterization: the caller `tools say` records", () => {
+    test("the env host wins over the process chain", async () => {
+        const caller = await captureWith({ GROK_SESSION_ID: "grok-session-1" });
+        expect(caller.agent).toBe("grok");
+        expect(caller.sessionId).toBe("grok-session-1");
+    });
+
+    test("the outer host of two in the env wins, with its session id", async () => {
+        const caller = await captureWith({
+            CLAUDE_CODE_SESSION_ID: "claude-session-1",
+            CLAUDECODE: "1",
+            CODEX_THREAD_ID: "codex-thread-1",
+        });
+        expect(caller.agent).toBe("claude-code");
+        expect(caller.sessionId).toBe("claude-session-1");
+    });
+
+    test("with no host in the env the agent is whatever the process chain names, and the session is null", async () => {
+        const caller = await captureWith({});
+        expect(caller.agent).toBe(agentFromAncestry(caller.ancestry));
+        expect(caller.sessionId).toBeNull();
+        expect(caller.callerPid).toBe(process.ppid);
+        expect(caller.cwd).toBe(process.cwd());
+    });
+
+    test("the terminal ids come from the cmux, tmux and terminal variables", async () => {
+        const caller = await captureWith({
+            CMUX_SURFACE_ID: "surface-1",
+            CMUX_WORKSPACE_ID: "workspace-1",
+            CMUX_TAB_ID: "tab-1",
+            TMUX_PANE: "%3",
+            TERM_PROGRAM: "ghostty",
+        });
+        expect(caller).toMatchObject({
+            surfaceId: "surface-1",
+            workspaceId: "workspace-1",
+            tabId: "tab-1",
+            tmuxPane: "%3",
+            termProgram: "ghostty",
+        });
+    });
+
+    test("a terminal variable that is not set is null", async () => {
+        const caller = await captureWith({});
+        expect(caller).toMatchObject({
+            surfaceId: null,
+            workspaceId: null,
+            tabId: null,
+            tmuxPane: null,
+            termProgram: null,
+            account: null,
+        });
+    });
+
+    test("the account is TOOLS_CLAUDE_ACCOUNT whatever the host is", async () => {
+        expect((await captureWith({ TOOLS_CLAUDE_ACCOUNT: "work" })).account).toBe("work");
+        expect((await captureWith({ GROK_SESSION_ID: "g1", TOOLS_CLAUDE_ACCOUNT: "work" })).account).toBe("work");
+    });
+
+    test("aiAgent is the host's label: AI_AGENT for Claude, Grok and no host, null for Codex", async () => {
+        expect((await captureWith({ CLAUDECODE: "1", AI_AGENT: "label" })).aiAgent).toBe("label");
+        expect((await captureWith({ GROK_SESSION_ID: "g1", AI_AGENT: "label" })).aiAgent).toBe("label");
+        expect((await captureWith({ AI_AGENT: "label" })).aiAgent).toBe("label");
+        expect((await captureWith({ CODEX_CI: "1", AI_AGENT: "label" })).aiAgent).toBe("label");
+    });
+
+    test("the agent comes from the ancestry binary name only when the env names none", () => {
+        const chain: AncestryFrame[] = [
+            { pid: 30, command: "/bin/zsh -c tools say hi" },
+            { pid: 20, command: "/opt/homebrew/bin/codex exec" },
+            { pid: 10, command: "/Users/x/.bun/bin/claude --resume" },
+        ];
+        // The nearest agent binary wins, so Codex running inside Claude reads as Codex here.
+        expect(agentFromAncestry(chain)).toBe("codex");
+        expect(agentFromAncestry([...chain].reverse())).toBe("claude-code");
+    });
+});
+
+test("the on-disk say call row stores caller fields and JSON argv and ancestry", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "say-row-")), "calls.db");
+    const db = openCallsDb(path);
+    const req = request({ id: "call-1", argv: ["hello", "--app", "codex"], text: "hello", app: "codex" });
+    const who = caller({
+        agent: "codex",
+        sessionId: "thread-1",
+        aiAgent: "label",
+        account: "work",
+        ancestry: [{ pid: 10, command: "codex" }],
+    });
+    try {
+        recordCall(db, req, who, "started");
+    } finally {
+        db.close();
+    }
+    const reopened = new Database(path, { readonly: true });
+    try {
+        const row = reopened.query("SELECT * FROM calls WHERE id = ?").get("call-1");
+        expect(row).toEqual({
+            id: "call-1",
+            ts: 1000000,
+            text: "hello",
+            argv: SafeJSON.stringify(["hello", "--app", "codex"]),
+            app: "codex",
+            attention: 0,
+            agent: "codex",
+            session_id: "thread-1",
+            ai_agent: "label",
+            account: "work",
+            surface_id: who.surfaceId,
+            workspace_id: who.workspaceId,
+            tab_id: null,
+            tmux_pane: null,
+            term_program: "ghostty",
+            cwd: who.cwd,
+            caller_pid: 7398,
+            ancestry: SafeJSON.stringify([{ pid: 10, command: "codex" }]),
+            pid: 500,
+            speaker_pid: null,
+            status: "started",
+            provider: null,
+            voice: null,
+            cache_hit: null,
+            fallback_from: null,
+            error: null,
+            finished_at: null,
+        });
+    } finally {
+        reopened.close();
+    }
+});
+
+describe("characterization: blank labels and terminal ids in say callers", () => {
+    test("empty label, account and terminal values are recorded as empty strings", async () => {
+        const caller = await captureWith({
+            CODEX_THREAD_ID: "thread-1",
+            AI_AGENT: "",
+            TOOLS_CLAUDE_ACCOUNT: "",
+            CMUX_SURFACE_ID: "",
+            CMUX_WORKSPACE_ID: "",
+            CMUX_TAB_ID: "",
+            TMUX_PANE: "",
+            TERM_PROGRAM: "",
+        });
+        expect(caller).toMatchObject({
+            agent: "codex",
+            sessionId: "thread-1",
+            aiAgent: "",
+            account: "",
+            surfaceId: "",
+            workspaceId: "",
+            tabId: "",
+            tmuxPane: "",
+            termProgram: "",
+        });
+    });
+
+    test("whitespace label, account and terminal values are recorded without trimming", async () => {
+        const value = " \t ";
+        const caller = await captureWith({
+            GROK_SESSION_ID: " g1 ",
+            AI_AGENT: value,
+            TOOLS_CLAUDE_ACCOUNT: value,
+            CMUX_SURFACE_ID: value,
+            CMUX_WORKSPACE_ID: value,
+            CMUX_TAB_ID: value,
+            TMUX_PANE: value,
+            TERM_PROGRAM: value,
+        });
+        expect(caller).toMatchObject({
+            agent: "grok",
+            sessionId: "g1",
+            aiAgent: value,
+            account: value,
+            surfaceId: value,
+            workspaceId: value,
+            tabId: value,
+            tmuxPane: value,
+            termProgram: value,
+        });
     });
 });

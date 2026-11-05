@@ -1,5 +1,46 @@
-import { describe, expect, it } from "bun:test";
-import { codexThreadIdFromOpenFiles } from "./http-caller";
+import { afterAll, describe, expect, it, mock } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
+import type { ResolvedCaller } from "./http-caller";
+
+// The caller lookup reads sockets, the process table and open files from the kernel. The modules that do are
+// replaced by a table the tests fill in, and restored after the file, so nothing here touches a real process.
+const realSocketOwner = await import("@genesiscz/utils/process/socket-owner");
+const realProcessCwd = await import("@genesiscz/utils/process/cwd");
+
+interface FakeProcess {
+    pid: number;
+    name: string;
+    startSec: number;
+    openFiles: string[];
+    cwd: string | null;
+}
+
+let fakeProcesses: FakeProcess[] = [];
+let loopbackOwners: number[] = [];
+
+mock.module("@genesiscz/utils/process/socket-owner", () => ({
+    ...realSocketOwner,
+    findLoopbackClientPids: () => loopbackOwners,
+    readProcessInfo: (pid: number) => {
+        const found = fakeProcesses.find((row) => row.pid === pid);
+        return found ? { pid, name: found.name, uid: 501, startSec: found.startSec } : null;
+    },
+    readOpenFilePaths: (pid: number) => fakeProcesses.find((row) => row.pid === pid)?.openFiles ?? [],
+}));
+mock.module("@genesiscz/utils/process/cwd", () => ({
+    ...realProcessCwd,
+    readProcessCwd: (pid: number) => fakeProcesses.find((row) => row.pid === pid)?.cwd ?? null,
+}));
+
+afterAll(() => {
+    mock.module("@genesiscz/utils/process/socket-owner", () => realSocketOwner);
+    mock.module("@genesiscz/utils/process/cwd", () => realProcessCwd);
+});
+
+const { callerSessionReadable, codexThreadIdFromOpenFiles, resolveCallerFromPeer } = await import("./http-caller");
 
 describe("codexThreadIdFromOpenFiles", () => {
     const rollout = (id: string) => `/Users/someone/.codex/sessions/2026/10/01/rollout-2026-10-01T03-02-36-${id}.jsonl`;
@@ -15,4 +56,235 @@ describe("codexThreadIdFromOpenFiles", () => {
         expect(codexThreadIdFromOpenFiles(["/Users/someone/.codex/state_5.sqlite"])).toBeNull();
         expect(codexThreadIdFromOpenFiles(["/tmp/rollout-x-" + a + ".jsonl"])).toBeNull();
     });
+});
+
+describe("characterization: who the gateway says the caller is", () => {
+    const START_SEC = 1_800_000_000;
+    const PEER = { clientPort: 50_001, serverPort: 50_002 };
+
+    function sessionsDir(files: Record<string, unknown>): string {
+        const dir = mkdtempSync(join(tmpdir(), "claude-sessions-"));
+        mkdirSync(dir, { recursive: true });
+
+        for (const [name, body] of Object.entries(files)) {
+            writeFileSync(join(dir, name), SafeJSON.stringify(body));
+        }
+
+        return dir;
+    }
+
+    function peer(process: Partial<FakeProcess> & { pid: number; name: string }): void {
+        fakeProcesses = [{ startSec: START_SEC, openFiles: [], cwd: "/fixture/project", ...process }];
+        loopbackOwners = [process.pid];
+    }
+
+    it("a Claude peer: the session comes from sessions/<pid>.json when its start time matches", () => {
+        peer({ pid: 4101, name: "claude" });
+        const dir = sessionsDir({
+            "4101.json": { pid: 4101, sessionId: "claude-session-1", startedAt: (START_SEC + 30) * 1000 },
+        });
+
+        expect(resolveCallerFromPeer({ ...PEER, claudeSessionsDir: dir })).toEqual({
+            agent: "claude-code",
+            sessionId: "claude-session-1",
+            cwd: "/fixture/project",
+            pid: 4101,
+            processName: "claude",
+        });
+    });
+
+    it("a Claude peer: the start time may differ by up to 120 seconds, and not more", () => {
+        peer({ pid: 4102, name: "claude" });
+        const near = sessionsDir({
+            "4102.json": { pid: 4102, sessionId: "near", startedAt: (START_SEC - 120) * 1000 },
+        });
+        const far = sessionsDir({ "4102.json": { pid: 4102, sessionId: "far", startedAt: (START_SEC - 121) * 1000 } });
+
+        expect(resolveCallerFromPeer({ ...PEER, claudeSessionsDir: near }).sessionId).toBe("near");
+        expect(resolveCallerFromPeer({ ...PEER, claudeSessionsDir: far }).sessionId).toBeNull();
+    });
+
+    it("a Claude peer: a stale sessions file from an earlier process with this pid gives no session", () => {
+        peer({ pid: 4103, name: "claude" });
+        const dir = sessionsDir({
+            "4103.json": { pid: 4103, sessionId: "old-process", startedAt: (START_SEC - 86_400) * 1000 },
+        });
+
+        const caller = resolveCallerFromPeer({ ...PEER, claudeSessionsDir: dir });
+        expect(caller.agent).toBe("claude-code");
+        expect(caller.sessionId).toBeNull();
+        expect(caller.pid).toBe(4103);
+    });
+
+    it("a Claude peer: a file for another pid, a missing field or no file gives no session", () => {
+        peer({ pid: 4104, name: "claude" });
+        const startedAt = START_SEC * 1000;
+
+        expect(
+            resolveCallerFromPeer({
+                ...PEER,
+                claudeSessionsDir: sessionsDir({ "4104.json": { pid: 9999, sessionId: "x", startedAt } }),
+            }).sessionId
+        ).toBeNull();
+        expect(
+            resolveCallerFromPeer({
+                ...PEER,
+                claudeSessionsDir: sessionsDir({ "4104.json": { pid: 4104, startedAt } }),
+            }).sessionId
+        ).toBeNull();
+        expect(resolveCallerFromPeer({ ...PEER, claudeSessionsDir: sessionsDir({}) }).sessionId).toBeNull();
+    });
+
+    it("a Codex peer: the session is the one rollout file it holds open", () => {
+        const id = "01a0f4fc-171d-7c30-9679-ee00633dee2d";
+        peer({
+            pid: 4201,
+            name: "codex",
+            openFiles: [
+                "/fixture/.codex/state_5.sqlite",
+                `/fixture/.codex/sessions/2026/11/04/rollout-2026-11-04T09-00-00-${id}.jsonl`,
+            ],
+        });
+
+        expect(resolveCallerFromPeer({ ...PEER })).toEqual({
+            agent: "codex",
+            sessionId: id,
+            cwd: "/fixture/project",
+            pid: 4201,
+            processName: "codex",
+        });
+    });
+
+    it("a Codex peer with two rollouts open (an app-server) names no session", () => {
+        peer({
+            pid: 4202,
+            name: "codex",
+            openFiles: [
+                "/fixture/.codex/sessions/2026/11/04/rollout-2026-11-04T09-00-00-01a0f4fc-171d-7c30-9679-ee00633dee2d.jsonl",
+                "/fixture/.codex/sessions/2026/11/04/rollout-2026-11-04T09-05-00-01a0f4fc-0000-7c30-9679-ee00633dee2d.jsonl",
+            ],
+        });
+
+        expect(resolveCallerFromPeer({ ...PEER })).toMatchObject({ agent: "codex", sessionId: null });
+    });
+
+    it("a Grok peer is a Grok caller with no session, whatever files it holds open", () => {
+        peer({
+            pid: 4301,
+            name: "grok",
+            openFiles: ["/fixture/.codex/sessions/2026/11/04/rollout-x-01a0f4fc-171d-7c30-9679-ee00633dee2d.jsonl"],
+        });
+
+        expect(resolveCallerFromPeer({ ...PEER })).toEqual({
+            agent: "grok",
+            sessionId: null,
+            cwd: "/fixture/project",
+            pid: 4301,
+            processName: "grok",
+        });
+    });
+
+    it("a Copilot peer is a Copilot caller with no session", () => {
+        peer({ pid: 4401, name: "copilot" });
+        expect(resolveCallerFromPeer({ ...PEER })).toMatchObject({ agent: "copilot", sessionId: null, pid: 4401 });
+    });
+
+    it("a harness process wins over another process on the same socket", () => {
+        fakeProcesses = [
+            { pid: 4501, name: "bun", startSec: START_SEC, openFiles: [], cwd: "/fixture/other" },
+            { pid: 4502, name: "grok", startSec: START_SEC, openFiles: [], cwd: "/fixture/project" },
+        ];
+        loopbackOwners = [4501, 4502];
+
+        expect(resolveCallerFromPeer({ ...PEER })).toMatchObject({ agent: "grok", pid: 4502, cwd: "/fixture/project" });
+    });
+
+    it("one unnamed owner is an unknown caller that keeps its pid, name and cwd", () => {
+        peer({ pid: 4601, name: "node" });
+        expect(resolveCallerFromPeer({ ...PEER })).toEqual({
+            agent: "unknown",
+            sessionId: null,
+            cwd: "/fixture/project",
+            pid: 4601,
+            processName: "node",
+        });
+    });
+
+    it("no owner, or several unnamed owners, is an unknown caller with nothing filled in", () => {
+        const nobody: ResolvedCaller = { agent: "unknown", sessionId: null, cwd: null, pid: null, processName: null };
+        fakeProcesses = [];
+        loopbackOwners = [];
+        expect(resolveCallerFromPeer({ ...PEER })).toEqual(nobody);
+
+        fakeProcesses = [
+            { pid: 4701, name: "bun", startSec: START_SEC, openFiles: [], cwd: null },
+            { pid: 4702, name: "node", startSec: START_SEC, openFiles: [], cwd: null },
+        ];
+        loopbackOwners = [4701, 4702];
+        expect(resolveCallerFromPeer({ ...PEER })).toEqual(nobody);
+    });
+
+    it("a Claude peer keeps an empty, whitespace-only or punctuated session id verbatim", () => {
+        peer({ pid: 4801, name: "claude", cwd: null });
+
+        for (const sessionId of ["", " \t\n ", "thread:child%3Amcp/part\\leaf ?#ž"]) {
+            const dir = sessionsDir({ "4801.json": { pid: 4801, sessionId, startedAt: START_SEC * 1000 } });
+            expect(resolveCallerFromPeer({ ...PEER, claudeSessionsDir: dir })).toMatchObject({
+                agent: "claude-code",
+                sessionId,
+                cwd: null,
+                pid: 4801,
+            });
+        }
+    });
+
+    it("with several harness owners the first socket owner wins, even if it cannot name a session", () => {
+        const id = "01a0f4fc-171d-7c30-9679-ee00633dee2d";
+        fakeProcesses = [
+            { pid: 4802, name: "grok", startSec: START_SEC, openFiles: [], cwd: "/fixture/outer" },
+            {
+                pid: 4803,
+                name: "codex",
+                startSec: START_SEC,
+                cwd: "/fixture/inner",
+                openFiles: [`/fixture/sessions/2026/11/04/rollout-x-${id}.jsonl`],
+            },
+        ];
+        loopbackOwners = [4802, 4803];
+        expect(resolveCallerFromPeer(PEER)).toMatchObject({ agent: "grok", sessionId: null, pid: 4802 });
+        loopbackOwners = [4803, 4802];
+        expect(resolveCallerFromPeer(PEER)).toMatchObject({ agent: "codex", sessionId: id, pid: 4803 });
+    });
+
+    it("the gateway can name the session of a Claude or Codex caller only", () => {
+        expect(callerSessionReadable("claude-code")).toBe(true);
+        expect(callerSessionReadable("codex")).toBe(true);
+        expect(callerSessionReadable("grok")).toBe(false);
+        expect(callerSessionReadable("copilot")).toBe(false);
+        expect(callerSessionReadable("unknown")).toBe(false);
+    });
+});
+
+describe("characterization: rollout path edge cases at the gateway", () => {
+    const id = "01a0f4fc-171d-7c30-9679-ee00633dee2d";
+    const file = `/fixture/sessions/2026/11/04/rollout-x-${id}.jsonl`;
+
+    it("duplicate files for the same thread are one candidate, with UUID case folded", () => {
+        expect(codexThreadIdFromOpenFiles([file.toUpperCase()])).toBe(id);
+        expect(codexThreadIdFromOpenFiles([file, file, file.toUpperCase()])).toBe(id);
+    });
+
+    it("compressed rollouts do not name a peer session today", () => {
+        expect(codexThreadIdFromOpenFiles([`${file}.zst`])).toBeNull();
+        expect(codexThreadIdFromOpenFiles([`${file}.zst`, file])).toBe(id);
+    });
+
+    it("Windows separators and non-UUID session strings are not matched today", () => {
+        expect(codexThreadIdFromOpenFiles([file.replaceAll("/", "\\")])).toBeNull();
+        expect(
+            codexThreadIdFromOpenFiles(["/fixture/sessions/2026/11/04/rollout-x-thread:child%3Amcp.jsonl"])
+        ).toBeNull();
+    });
+
+    it.todo("a peer with only a compressed Codex rollout can still identify its thread", () => {});
 });

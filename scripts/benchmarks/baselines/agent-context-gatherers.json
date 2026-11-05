@@ -1,0 +1,38 @@
+{
+    "name": "agent-context-gatherers",
+    "capturedAt": "2026-11-04T20:30:10.855Z",
+    "commit": "427c4fc73c",
+    "loadAvg": [
+        21.4853515625,
+        16.2958984375,
+        13.7822265625
+    ],
+    "hostname": "MacBook-Pro-2299.local",
+    "metrics": {
+        "resolveAgentHost.cpuMs": 0.018,
+        "resolveAgentHost.spawns": 0,
+        "agentSessionIds.cpuMs": 0.005,
+        "agentSessionIds.spawns": 0,
+        "assignedSessionId.cpuMs": 0.002,
+        "assignedSessionId.spawns": 0,
+        "getAgentRuntimeContext.cpuMs": 35.163,
+        "getAgentRuntimeContext.spawns": 6,
+        "gatherHarnessPoster.cpuMs": 37.368,
+        "gatherHarnessPoster.spawns": 6,
+        "agentFailureCaller.cpuMs": 41.34,
+        "agentFailureCaller.spawns": 6,
+        "failureCaller.cpuMs": 0.609,
+        "failureCaller.spawns": 0,
+        "transcriptOf.cpuMs": 0.012,
+        "transcriptOf.spawns": 0,
+        "captureCallerContext (say).cpuMs": 0.593,
+        "captureCallerContext (say).spawns": 0,
+        "captureAncestry (say).cpuMs": 0.342,
+        "captureAncestry (say).spawns": 0,
+        "resolveCallerFromPeer.cpuMs": 9.1,
+        "resolveCallerFromPeer.spawns": 0,
+        "parseHookPayload.cpuMs": 0.032,
+        "parseHookPayload.spawns": 0
+    },
+    "notes": "20 calls per gatherer in one process, run from a shell; CPU is this process only, children appear as spawns"
+}

@@ -78,7 +78,7 @@ import {
 } from "./mods";
 import { nativeDiffState } from "./native-diff";
 import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
-import { HARNESS_HOOK_FACTS, harnessHookFacts, parseHookPayload } from "./payload";
+import { detectHarness, HARNESS_HOOK_FACTS, harnessHookFacts, parseHookPayload } from "./payload";
 import { rmRequestNotice } from "./rm-requests";
 import { applySetting, SETTABLE_KEYS, setHooksConfig } from "./set-config";
 import {
@@ -110,6 +110,73 @@ describe("DEFAULT_HOOKS_CONFIG", () => {
 });
 
 describe("parseHookPayload", () => {
+    it("retains event-specific turn and subagent fields in raw payloads for each wire shape", () => {
+        const cases = [
+            {
+                raw: {
+                    hook_event_name: "SubagentStop",
+                    session_id: "s1",
+                    agent_id: "a1",
+                    agent_type: "worker",
+                    agent_transcript_path: "/fixture/agent.jsonl",
+                },
+                harness: "claude",
+                event: "SubagentStop",
+                agentId: "a1",
+            },
+            {
+                raw: {
+                    hook_event_name: "Stop",
+                    session_id: "s2",
+                    model: "model-1",
+                    turn_id: "turn-1",
+                    transcript_path: "/fixture/rollout-2026.jsonl",
+                },
+                harness: "codex",
+                event: "Stop",
+                agentId: undefined,
+            },
+            {
+                raw: { hookEventName: "PreToolUse", sessionId: "s3", promptId: "prompt-1", toolUseId: "call-1" },
+                harness: "grok",
+                event: "PreToolUse",
+                agentId: undefined,
+            },
+            {
+                raw: {
+                    hookEventName: "subagentStop",
+                    sessionId: "s4",
+                    agentId: "a4",
+                    agentType: "worker",
+                    parentAgentId: "root",
+                },
+                harness: "grok",
+                event: "subagentStop",
+                agentId: "a4",
+            },
+            {
+                raw: {
+                    hook_event_name: "SubagentStop",
+                    session_id: "s5",
+                    agent_id: "a5",
+                    agent_type: "worker",
+                    parent_agent_id: "root",
+                },
+                harness: "claude",
+                event: "SubagentStop",
+                agentId: "a5",
+            },
+        ] as const;
+
+        for (const { raw, harness, event, agentId } of cases) {
+            const payload = parseHookPayload(SafeJSON.stringify(raw));
+            expect(detectHarness(raw)).toBe(harness);
+            expect(payload).toMatchObject({ harness, event, agentId, raw });
+            expect(payload).not.toHaveProperty("turnId");
+            expect(payload).not.toHaveProperty("parentAgentId");
+        }
+    });
+
     it("reads the snake_case wire shape Claude sends", () => {
         const payload = parseHookPayload(
             SafeJSON.stringify({
@@ -1369,6 +1436,159 @@ describe("parseHookPayload tolerates a malformed native payload", () => {
     });
 });
 
+// Characterization tests (2026-11-04): what the hook payload reader answers for each harness today, before the
+// agent-context gatherers are unified. The source file of record is payload.ts (it has no test file of its own).
+describe("characterization: parseHookPayload per harness", () => {
+    it("a Claude payload: snake_case fields, the session, the tool call and the transcript", () => {
+        const payload = parseHookPayload(
+            SafeJSON.stringify({
+                hook_event_name: "PreToolUse",
+                tool_name: "Bash",
+                session_id: "claude-session-1",
+                tool_use_id: "toolu_01",
+                transcript_path: "/fixture/.claude/projects/-fixture/claude-session-1.jsonl",
+                cwd: "/fixture/repo",
+                tool_input: { command: "ls -la" },
+            })
+        );
+
+        expect(payload).toMatchObject({
+            harness: "claude",
+            event: "PreToolUse",
+            tool: "Bash",
+            sessionId: "claude-session-1",
+            toolUseId: "toolu_01",
+            transcriptPath: "/fixture/.claude/projects/-fixture/claude-session-1.jsonl",
+            cwd: "/fixture/repo",
+            command: "ls -la",
+            model: "",
+            agentId: undefined,
+        });
+    });
+
+    it("a Claude subagent payload carries agent_id beside the shared session id", () => {
+        const payload = parseHookPayload(
+            SafeJSON.stringify({
+                hook_event_name: "PostToolUse",
+                tool_name: "Bash",
+                session_id: "claude-session-1",
+                agent_id: "agent-7",
+                tool_use_id: "toolu_02",
+                cwd: "/fixture/repo",
+            })
+        );
+
+        expect(payload).toMatchObject({
+            harness: "claude",
+            sessionId: "claude-session-1",
+            agentId: "agent-7",
+            toolUseId: "toolu_02",
+        });
+    });
+
+    it("a Codex payload is told apart by its model field or its rollout transcript, and keeps the snake_case fields", () => {
+        const byModel = parseHookPayload(
+            SafeJSON.stringify({
+                hook_event_name: "PreToolUse",
+                tool_name: "Bash",
+                session_id: "codex-thread-1",
+                tool_use_id: "call_01",
+                model: "codex-model-1",
+                cwd: "/fixture/repo",
+                tool_input: { command: "pwd" },
+            })
+        );
+        const byRollout = parseHookPayload(
+            SafeJSON.stringify({
+                hook_event_name: "PreToolUse",
+                tool_name: "Bash",
+                session_id: "codex-thread-1",
+                transcript_path:
+                    "/fixture/.codex/sessions/2026/11/04/rollout-2026-11-04T09-00-00-01a0f4fc-171d-7c30-9679-ee00633dee2d.jsonl",
+                cwd: "/fixture/repo",
+            })
+        );
+
+        expect(byModel).toMatchObject({
+            harness: "codex",
+            sessionId: "codex-thread-1",
+            toolUseId: "call_01",
+            model: "codex-model-1",
+            command: "pwd",
+        });
+        expect(byRollout?.harness).toBe("codex");
+        expect(byRollout?.model).toBe("");
+    });
+
+    it("a Claude-shaped payload that carries a model field is read as Codex today", () => {
+        const payload = parseHookPayload(
+            SafeJSON.stringify({
+                hook_event_name: "SessionStart",
+                session_id: "claude-session-1",
+                model: "claude-model-1",
+                cwd: "/fixture/repo",
+            })
+        );
+
+        expect(payload?.harness).toBe("codex");
+    });
+
+    it("a Grok payload: camelCase fields, the session, the tool call and the transcript", () => {
+        const payload = parseHookPayload(
+            SafeJSON.stringify({
+                hookEventName: "PreToolUse",
+                toolName: "Bash",
+                sessionId: "grok-session-1",
+                toolUseId: "grok-call-1",
+                transcriptPath: "/fixture/.grok/sessions/grok-session-1/chat.jsonl",
+                cwd: "/fixture/repo",
+                toolInput: { command: "git status" },
+            })
+        );
+
+        expect(payload).toMatchObject({
+            harness: "grok",
+            event: "PreToolUse",
+            tool: "Bash",
+            sessionId: "grok-session-1",
+            toolUseId: "grok-call-1",
+            transcriptPath: "/fixture/.grok/sessions/grok-session-1/chat.jsonl",
+            command: "git status",
+        });
+    });
+
+    it("a Grok payload with a model field is still Grok: hookEventName is tested first", () => {
+        const payload = parseHookPayload(
+            SafeJSON.stringify({ hookEventName: "SessionStart", model: "grok-model-1", cwd: "/fixture/repo" })
+        );
+        expect(payload?.harness).toBe("grok");
+        expect(payload?.model).toBe("grok-model-1");
+    });
+
+    it("the camelCase spelling wins when a payload carries both spellings of a field", () => {
+        const payload = parseHookPayload(
+            SafeJSON.stringify({
+                hook_event_name: "A",
+                hookEventName: "B",
+                session_id: "snake",
+                sessionId: "camel",
+                tool_use_id: "snake",
+                toolUseId: "camel",
+            })
+        );
+
+        expect(payload).toMatchObject({ event: "B", sessionId: "camel", toolUseId: "camel" });
+    });
+
+    it("a payload without a session or tool call id leaves both undefined, and the cwd falls back to ours", () => {
+        const payload = parseHookPayload(SafeJSON.stringify({ hook_event_name: "Stop" }));
+
+        expect(payload?.sessionId).toBeUndefined();
+        expect(payload?.toolUseId).toBeUndefined();
+        expect(payload?.cwd).toBe(process.cwd());
+    });
+});
+
 describe("the stored config is merged over the shipped one, key by key", () => {
     const stored = (value: unknown): string => {
         const path = join(mkdtempSync(join(tmpdir(), "gt-cfg-keys-")), "hooks.json");
@@ -2493,4 +2713,36 @@ describe("rm request notice", () => {
         expect(shown ? await rmRequestNotice(shown, deps) : "missing").toBeNull();
         expect(other ? await rmRequestNotice(other, deps) : "missing").toBeNull();
     });
+});
+
+it("classifies Copilot hook spellings and leaves turn and parent agent ids in raw", () => {
+    const cases = [
+        {
+            raw: {
+                hookEventName: "subagentStop",
+                sessionId: "s",
+                agentId: "child",
+                parentAgentId: "parent",
+                turnId: "turn",
+            },
+            harness: "grok",
+        },
+        {
+            raw: {
+                hook_event_name: "SubagentStop",
+                session_id: "s",
+                agent_id: "child",
+                parent_agent_id: "parent",
+                turn_id: "turn",
+            },
+            harness: "claude",
+        },
+    ] as const;
+    for (const { raw, harness } of cases) {
+        const parsed = parseHookPayload(SafeJSON.stringify(raw));
+        expect(detectHarness(raw)).toBe(harness);
+        expect(parsed).toMatchObject({ harness, sessionId: "s", agentId: "child", raw });
+        expect(parsed).not.toHaveProperty("turnId");
+        expect(parsed).not.toHaveProperty("parentAgentId");
+    }
 });
