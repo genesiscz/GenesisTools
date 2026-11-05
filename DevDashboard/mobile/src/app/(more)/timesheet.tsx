@@ -4,7 +4,7 @@ import { memo, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Switch, Text, View } from "react-native";
 import { idempotencyKey } from "@/features/answer-queue/units";
 import { useFillWeek, useTimesheetWeek } from "@/features/timesheet/hooks";
-import { allAccepted, dayLine, hours, localDay } from "@/features/timesheet/queries";
+import { acceptedForRevision, allAccepted, dayLine, hours, localDay, type ReviewAcceptance } from "@/features/timesheet/queries";
 import { ensureDefaultReminder, setReminder } from "@/features/timesheet/reminder";
 import { confirmWithFaceId } from "@/lib/face-id";
 import { Empty } from "@/ui/Empty";
@@ -53,7 +53,7 @@ export default function TimesheetScreen() {
     const c = useThemeColors();
     const [date] = useState(localDay);
     const week = useTimesheetWeek(date);
-    const [accepted, setAccepted] = useState<Set<string>>(new Set());
+    const [reviewed, setReviewed] = useState<ReviewAcceptance>({ revision: undefined, codes: new Set() });
     const [receipt, setReceipt] = useState<TimesheetFillReceiptDto | null>(null);
     const [gate, setGate] = useState<string | null>(null);
     const [reminder, setReminderOn] = useState<boolean | null>(null);
@@ -64,16 +64,17 @@ export default function TimesheetScreen() {
     }, []);
 
     const data = week.data;
+    const accepted = acceptedForRevision(data, reviewed);
     const ready = allAccepted(data, accepted) && !fill.isPending;
     const toggle = (code: string) =>
-        setAccepted((current) => {
-            const next = new Set(current);
+        setReviewed((current) => {
+            const next = new Set(acceptedForRevision(data, current));
 
             if (!next.delete(code)) {
                 next.add(code);
             }
 
-            return next;
+            return { revision: data?.revision, codes: next };
         });
     const submit = async () => {
         if (!data) {

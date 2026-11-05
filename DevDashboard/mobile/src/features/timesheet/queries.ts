@@ -42,6 +42,15 @@ export function dayLine(row: TimesheetRowDto): string {
         .join(" · ");
 }
 
+export interface ReviewAcceptance {
+    revision: string | undefined;
+    codes: Set<string>;
+}
+
+export function acceptedForRevision(week: TimesheetWeekDto | null | undefined, review: ReviewAcceptance): ReadonlySet<string> {
+    return week?.revision === review.revision ? review.codes : new Set<string>();
+}
+
 /** The fill waits until every row was accepted, so a swipe through the week is the review. */
 export function allAccepted(week: TimesheetWeekDto | null | undefined, accepted: ReadonlySet<string>): boolean {
     return Boolean(week && week.rows.length > 0 && week.rows.every((row) => accepted.has(row.code)));
