@@ -70,7 +70,13 @@ function outcomeOf(result: InboxAnswerResult): ActOutcome {
 
 type Claim =
     | { kind: "done"; receipt: ActReceipt }
-    | { kind: "go"; decision: NonNullable<ActReceipt["decision"]>; revision?: number; provider?: string };
+    | {
+          kind: "go";
+          decision: NonNullable<ActReceipt["decision"]>;
+          revision?: number;
+          provider?: string;
+          reply: boolean;
+      };
 
 /**
  * The one door that answers a decision from a stored token. The Telegram button, the Mac banner button and the phone
@@ -82,11 +88,14 @@ export async function act({
     token,
     key,
     deps,
+    text,
     now = Date.now(),
 }: {
     token: string;
     key: string;
     deps: ActDeps;
+    /** The answer of a reply token (the notification's Reply field); a letter token ignores it. */
+    text?: string;
     now?: number;
 }): Promise<ActReceipt> {
     const refuse = (code: ActRefusalCode, detail: string, decision?: ActReceipt["decision"]): ActReceipt => ({
@@ -139,8 +148,18 @@ export async function act({
             return { kind: "done", receipt };
         }
 
+        if (record.reply && !text?.trim()) {
+            return { kind: "done", receipt: refuse("invalid", "A reply needs text.", decision) };
+        }
+
         record.receipts[key] = { pending: true, at: now };
-        return { kind: "go", decision, revision: record.revision, provider: record.provider };
+        return {
+            kind: "go",
+            decision,
+            revision: record.revision,
+            provider: record.provider,
+            reply: record.reply === true,
+        };
     });
 
     if (claim.kind === "done") {
@@ -158,7 +177,7 @@ export async function act({
             const result = await deps.answer({
                 session: decision.session,
                 number: decision.number,
-                option: decision.option,
+                ...(claim.reply ? { text: text?.trim() } : { option: decision.option }),
                 ...(claim.revision === undefined ? {} : { expectedRevision: claim.revision }),
                 ...(claim.provider ? { provider: claim.provider } : {}),
                 deliveryKey: key,

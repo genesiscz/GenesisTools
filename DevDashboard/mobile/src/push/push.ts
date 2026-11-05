@@ -6,6 +6,8 @@ import {
     ENDPOINTS,
     letterOfAction,
     type PushDeviceRegistration,
+    REPLY_ACTION_ID,
+    REPLY_TOKEN_KEY,
 } from "@dd/contract";
 import * as Application from "expo-application";
 import * as Device from "expo-device";
@@ -37,12 +39,20 @@ async function registerCategories(): Promise<void> {
         answerCategories().map((category) =>
             Notifications.setNotificationCategoryAsync(
                 category.id,
-                category.letters.map((letter) => ({
-                    identifier: answerActionId(letter),
-                    buttonTitle: letter === category.recommended ? `${letter} ★` : letter,
-                    // The answer runs without opening the app; the receipt comes back as a notice.
-                    options: { opensAppToForeground: false },
-                }))
+                [
+                    ...category.letters.map((letter) => ({
+                        identifier: answerActionId(letter),
+                        buttonTitle: letter === category.recommended ? `${letter} ★` : letter,
+                        // The answer runs without opening the app; the receipt comes back as a notice.
+                        options: { opensAppToForeground: false },
+                    })),
+                    {
+                        identifier: REPLY_ACTION_ID,
+                        buttonTitle: "Reply",
+                        textInput: { submitButtonTitle: "Send", placeholder: "Your answer" },
+                        options: { opensAppToForeground: false },
+                    },
+                ]
             )
         )
     );
@@ -133,7 +143,8 @@ async function activeClient(): Promise<DashboardClient | null> {
 }
 
 function receiptLine(letter: string, receipt: ActReceiptDto): string {
-    const what = receipt.decision ? `DECISION ${receipt.decision.number} → ${letter}` : `Answer ${letter}`;
+    const answer = letter === REPLY_TOKEN_KEY ? "your reply" : letter;
+    const what = receipt.decision ? `DECISION ${receipt.decision.number} → ${answer}` : `Answer ${answer}`;
     const outcome = receipt.outcome;
     return outcome.kind === "refused" ? `${what} refused: ${outcome.detail}` : `${what}: ${outcome.kind}`;
 }
@@ -148,7 +159,8 @@ async function tell(title: string, body: string): Promise<void> {
  * delivers twice (once live, once as the last response) answers once.
  */
 export async function answerFromNotification(response: Notifications.NotificationResponse): Promise<void> {
-    const letter = letterOfAction(response.actionIdentifier);
+    const reply = response.actionIdentifier === REPLY_ACTION_ID ? response.userText?.trim() : undefined;
+    const letter = reply ? REPLY_TOKEN_KEY : letterOfAction(response.actionIdentifier);
 
     if (!letter) {
         return;
@@ -176,7 +188,7 @@ export async function answerFromNotification(response: Notifications.Notificatio
     }
 
     try {
-        const receipt = await client.call(ENDPOINTS.act, {}, {
+        const receipt = await client.call(ENDPOINTS.act, reply ? { text: reply } : {}, {
             actToken: token,
             idempotencyKey: `push:${response.notification.request.identifier}:${letter}`,
         });

@@ -1,10 +1,10 @@
 import { logger } from "@genesiscz/utils/logger";
 import type { NotificationAction } from "@genesiscz/utils/macos/notifications";
 import { CHANNEL_NAMES, notificationsConfig } from "@genesiscz/utils/notifications";
-import { MAX_ANSWER_LETTERS } from "@genesiscz/utils/notifications/phone-wire";
+import { MAX_ANSWER_LETTERS, REPLY_TOKEN_KEY } from "@genesiscz/utils/notifications/phone-wire";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import { clipOneLine } from "@genesiscz/utils/string";
-import { type ActTokenStore, issueActTokens } from "../act/tokens";
+import { type ActTokenStore, issueActTokens, issueReplyToken } from "../act/tokens";
 import { hubItemClickCommand } from "../hub-link";
 import { NOTICE_IDS, type NoticeDeps, noticeItem, postNotice } from "../notices/notices";
 import { waitsOnHuman } from "../waiting/set";
@@ -144,7 +144,14 @@ async function postPhonePushes(waiting: DecisionRecord[], deps: DecisionNoticeDe
                                   answers: {
                                       letters: issued.map(({ letter }) => letter),
                                       ...(row.recommended ? { recommended: row.recommended.trim().toLowerCase() } : {}),
-                                      tokens: Object.fromEntries(issued.map(({ letter, token }) => [letter, token])),
+                                      tokens: {
+                                          ...Object.fromEntries(issued.map(({ letter, token }) => [letter, token])),
+                                          [REPLY_TOKEN_KEY]: await issueReplyToken({
+                                              row,
+                                              surface: "phone",
+                                              ...(deps.tokens ? { store: deps.tokens } : {}),
+                                          }),
+                                      },
                                   },
                               }
                             : {}),

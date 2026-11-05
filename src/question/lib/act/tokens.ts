@@ -13,6 +13,8 @@ export interface ActTokenRecord {
     session: string;
     number: number;
     option: string;
+    /** A reply token answers with the text the act carries, not with `option` (the lock screen's Reply field). */
+    reply?: true;
     /** The revision the button showed; a newer post refuses the act ("changed"). */
     revision?: number;
     provider?: string;
@@ -133,4 +135,39 @@ export async function issueActTokens({
     });
 
     return issued;
+}
+
+/** One token that answers `row` with free text (the notification's Reply field), stored for `surface`. */
+export async function issueReplyToken({
+    row,
+    surface,
+    store = fileActTokenStore(),
+    now = Date.now(),
+    newToken = newActToken,
+}: {
+    row: Pick<DecisionRecord, "id" | "sessionId" | "number" | "revision" | "provider">;
+    surface: ActSurface;
+    store?: ActTokenStore;
+    now?: number;
+    newToken?: () => string;
+}): Promise<string> {
+    const token = newToken();
+
+    await store.update((tokens) => {
+        tokens[token] = {
+            decisionId: row.id,
+            session: row.sessionId,
+            number: row.number,
+            option: "",
+            reply: true,
+            revision: row.revision ?? 1,
+            ...(row.provider ? { provider: row.provider } : {}),
+            surface,
+            issuedAt: now,
+            expiresAt: now + ACT_TOKEN_TTL_MS,
+            receipts: {},
+        };
+    });
+
+    return token;
 }

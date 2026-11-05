@@ -104,11 +104,13 @@ describe("decision notices", () => {
         const issued = Object.values(tokens.tokens);
         expect(
             issued
-                .filter((token) => token.surface === "phone")
+                .filter((token) => token.surface === "phone" && !token.reply)
                 .map((token) => token.option)
                 .sort()
         ).toEqual(["a", "b"]);
         expect(push.phone?.answers?.tokens.a).toBeDefined();
+        // The lock screen's Reply field answers with text through its own token.
+        expect(tokens.tokens[push.phone?.answers?.tokens.reply ?? ""]).toMatchObject({ reply: true, surface: "phone" });
 
         expect(Object.keys(store.notices).sort()).toEqual(
             [NOTICE_IDS.decision(row.id), NOTICE_IDS.post(row.id)].sort()
