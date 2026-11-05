@@ -31,7 +31,7 @@ import { ensureScreenRecording } from "../lib/grants";
 import { linkSource } from "../lib/link";
 import { resolveProject } from "../lib/project";
 import { runRecorder, stateDisplays } from "../lib/recorder";
-import { framesOnDisk, meetingLiveId, readRecorderState, recorderFiles } from "../lib/recorder-shared";
+import { framesOnDisk, meetingLiveId, readRecorderState, recorderAcknowledged } from "../lib/recorder-shared";
 import { meetingScreen, type ScreenBoxFrame } from "../lib/screen-boxes";
 import { screenTimeline } from "../lib/screen-timeline";
 import { type SetSettingsFlags, settingsPatchFromFlags } from "../lib/settings-flags";
@@ -174,6 +174,7 @@ async function start(opts: {
         }
 
         const record = await meetingToRecord(store, opts);
+        const startedAfter = Date.now();
         const pid = spawnToolDetached([
             "meetings",
             "record",
@@ -183,9 +184,8 @@ async function start(opts: {
             ...(audio.length > 0 ? ["--audio", audio.join(",")] : []),
         ]);
         log.info({ meeting: record.id, pid, identity: grant.identity }, "recorder started");
-        const files = recorderFiles(store);
         const reported = await waitFor(
-            () => existsSync(files.state) && readRecorderState(store).state?.meetingId === record.id,
+            () => recorderAcknowledged({ current: readRecorderState(store), meetingId: record.id, startedAfter }),
             START_WAIT_MS
         );
 

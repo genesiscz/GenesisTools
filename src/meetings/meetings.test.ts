@@ -59,7 +59,13 @@ import {
 } from "./lib/questions";
 import { rawMeeting } from "./lib/raw";
 import { runRecorder } from "./lib/recorder";
-import { meetingLiveId, RecorderFailedError, type RecorderNote, recorderFiles } from "./lib/recorder-shared";
+import {
+    meetingLiveId,
+    RecorderFailedError,
+    type RecorderNote,
+    recorderAcknowledged,
+    recorderFiles,
+} from "./lib/recorder-shared";
 import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from "./lib/screen";
 import { framesMatching, ocrRowSchema, renderScreenBoxes } from "./lib/screen-boxes";
 import { showText } from "./lib/show-text";
@@ -3658,6 +3664,24 @@ test("a recycled pid's claim and an unreadable pid file are both taken over, as 
     // Taken over, then released when the blocked frames directory ends the start.
     await expect(runRecorder({ store, meetingId: record.id, capture })).rejects.toThrow();
     expect(existsSync(files.pid)).toBe(false);
+});
+
+test("recorder startup requires a fresh acknowledgement and live ownership", () => {
+    const state = {
+        meetingId: "fixture",
+        pid: 12345,
+        startedAt: "2026-11-05T00:00:00.000Z",
+        display: 1,
+        frames: 0,
+        bytes: 0,
+    };
+    const startedAfter = Date.parse(state.startedAt);
+    const check = (running: boolean, startedAt: string, meetingId = "fixture") =>
+        recorderAcknowledged({ current: { running, state: { ...state, startedAt } }, meetingId, startedAfter });
+    expect(check(true, state.startedAt)).toBe(true);
+    expect(check(false, state.startedAt)).toBe(false);
+    expect(check(true, "2026-11-04T23:59:59.999Z")).toBe(false);
+    expect(check(true, state.startedAt, "other")).toBe(false);
 });
 
 test("a stale recorder claim is recovered and an initialization failure releases it", async () => {
