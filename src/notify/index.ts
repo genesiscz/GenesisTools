@@ -25,6 +25,7 @@ import {
 } from "@genesiscz/utils/macos/notifications-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import type { ChannelConfigs, ChannelName } from "@genesiscz/utils/notifications";
+import { PHONE_WHEN_DEFAULTS, validPhoneClock } from "@genesiscz/utils/notifications/channels/phone/when";
 import { CHANNEL_NAMES, CHANNELS, dispatchNotification, notificationsConfig } from "@genesiscz/utils/notifications";
 import { notificationLedgerPath, readNotificationLedger } from "@genesiscz/utils/notifications/ledger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
@@ -221,7 +222,30 @@ async function configurePhone(channels: ChannelConfigs): Promise<void> {
           )
         : current.text;
 
-    await notificationsConfig.setGlobalChannel("phone", { ...current, enabled, text });
+    let when = current.when;
+    if (enabled) {
+        const desk = await withCancel(p.select({
+            message: "When should the phone receive alerts?",
+            initialValue: current.when?.desk ?? PHONE_WHEN_DEFAULTS.desk,
+            options: [{ value: "away", label: "When away from the Mac" }, { value: "always", label: "Always" }],
+        }));
+        const idle = desk === "away" ? await withCancel(p.text({
+            message: "Minutes idle before the Mac is considered away",
+            initialValue: String(current.when?.idleMinutes ?? PHONE_WHEN_DEFAULTS.idleMinutes),
+            validate: (v) => v && /^\d+$/.test(v) && Number(v) > 0 && Number(v) <= 1440 ? undefined : "Enter a whole number from 1 to 1440",
+        })) : String(current.when?.idleMinutes ?? PHONE_WHEN_DEFAULTS.idleMinutes);
+        const quietEnabled = await withCancel(p.confirm({ message: "Set quiet hours?", initialValue: !!current.when?.quiet }));
+        const clock = async (label: string, initialValue: string) => withCancel(p.text({
+            message: label, initialValue, placeholder: "22:00",
+            validate: (v) => v && validPhoneClock(v) ? undefined : "Enter a time from 00:00 to 23:59",
+        }));
+        const quiet = quietEnabled ? {
+            from: await clock("Quiet hours start", current.when?.quiet?.from ?? "22:00"),
+            to: await clock("Quiet hours end", current.when?.quiet?.to ?? "07:00"),
+        } : undefined;
+        when = { desk, idleMinutes: Number(idle), quiet };
+    }
+    await notificationsConfig.setGlobalChannel("phone", { ...current, enabled, text, when });
     p.log.success(enabled ? "Phone push enabled." : "Phone push disabled.");
     p.log.info(`Devices: ${CHANNELS.phone.describe({ ...current, enabled, text })}`);
 
