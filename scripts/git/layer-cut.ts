@@ -205,7 +205,17 @@ const CUT: readonly CutBranch[] = [
             `${APP}/Tests/CapturePickerTests.swift`,
             `${APP}/Tests/CameraBubbleTests.swift`,
             `${APP}/Info.plist`,
+            // The camera library the bubble links (a8c6527dad split it out of GenesisKitPosture, which the app must
+            // never compile): its new folder, the old one's deletions, the Posture re-export, the kit's Package.swift
+            // and the kit tests that import it, so this layer's swift build has all of it.
+            `${KIT}/Sources/GenesisKitCamera/**`,
             `${KIT}/Sources/GenesisKitPosture/Camera/**`,
+            `${KIT}/Sources/GenesisKitPosture/Posture/CameraExport.swift`,
+            `${KIT}/Sources/GenesisKitPosture/Posture/PostureStateMachine.swift`,
+            `${KIT}/Package.swift`,
+            `${KIT}/Tests/GenesisKitTests/Camera*Tests.swift`,
+            `${KIT}/Tests/GenesisKitTests/Posture*Tests.swift`,
+            `${KIT}/Tests/GenesisKitTests/VisionPoseBenchTests.swift`,
             `${KIT}/Sources/GenesisKit/Controls/GenSegmentedTabs.swift`,
         ],
         // service.test.ts reads the Swift editor's tab list.
