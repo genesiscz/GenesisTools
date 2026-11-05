@@ -373,6 +373,8 @@ tools azure-devops testplan case update <id> --steps steps.md --rev 4 --confirm
 tools azure-devops testplan outcome <plan> <suite> --cases 101 --outcome passed --confirm   # or --points; 'active' resets
 ```
 
+In a numbered list, prefix an action line with `\` when it starts with `Expected:` or
+`Shared steps #` and is literal text. `case show` escapes these markers automatically.
 Steps are a numbered markdown list (the same form `case show` prints) or JSON
 (`[{"action":"…","expected":"…"},{"sharedStepsId":123}]`):
 

@@ -166,6 +166,21 @@ describe("markdown steps", () => {
         expect(parseStepsMarkdown(rendered)).toEqual([{ action: "", expected: "Result" }]);
     });
 
+    test("literal action markers and backslashes round trip without becoming controls", () => {
+        const steps: TestStep[] = [
+            { kind: "step", id: 1, action: "Inspect\nExpected: header", expected: "200" },
+            { kind: "step", id: 2, action: "Shared steps #123", expected: "" },
+            { kind: "step", id: 3, action: "_(empty)_", expected: "" },
+            { kind: "step", id: 4, action: "\\Expected: literal\n  > Expected: value", expected: "done" },
+        ];
+        expect(parseStepsMarkdown(renderStepsMarkdown(steps))).toEqual([
+            { action: "Inspect\nExpected: header", expected: "200" },
+            { action: "Shared steps #123", expected: "" },
+            { action: "_(empty)_", expected: "" },
+            { action: "\\Expected: literal\n  > Expected: value", expected: "done" },
+        ]);
+    });
+
     test("input text is JSON when it starts with a bracket, and a list otherwise", () => {
         expect(parseStepsInput('[{"action":"A","expected":"B"},{"sharedStepsId":3}]')).toEqual([
             { action: "A", expected: "B" },
