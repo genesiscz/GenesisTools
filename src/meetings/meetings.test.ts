@@ -51,6 +51,7 @@ import { sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { createCanvas } from "@napi-rs/canvas";
 import { claimWatcher, watcherPidPath } from "./commands/watch";
+import { buildQuestion } from "./lib/assign";
 import { CallTimeline } from "./lib/call-timeline";
 import { suggestDictionary } from "./lib/dictionary-suggest";
 import { captionSegments } from "./lib/editor-project";
@@ -4527,7 +4528,50 @@ test("confirmed attribution wins over later overlapping suggestions", () => {
 test("a truncated final OCR row leaves earlier valid frames readable", () => {
     const folder = mkdtempSync(join(tmpdir(), "truncated-ocr-"));
     const file = join(folder, "ocr.jsonl");
-    const row = { file: "frames/one.jpg", atMs: 1000, displayId: 1, text: "visible", lines: [], blocks: [] };
+    const row = {
+        file: "frames/one.jpg",
+        at: "2026-11-05T10:00:00Z",
+        displayId: 1,
+        text: "visible",
+        lines: [],
+        blocks: [],
+    };
     writeFileSync(file, `${SafeJSON.stringify(row)}\n{"file":`);
     expect(readOcrRows(file).map((frame) => frame.text)).toEqual(["visible"]);
+});
+test("recovered assignment choices keep the saved calendar order and folder", () => {
+    const entry = {
+        from: "fixture",
+        entryId: "saved",
+        title: "Saved entry",
+        start: record.start,
+        end: record.end ?? "2026-11-05T11:00:00Z",
+        people: [],
+    };
+    const question = buildQuestion(
+        {
+            record,
+            calendarNotes: [],
+            proposals: {
+                projects: [],
+                labels: [],
+                calendars: [{ entry: { ...entry, entryId: "new", title: "New entry" }, overlapSec: 30, share: 1 }],
+                folder: { kind: "pair", source: "wisprflow", folder: "New folder" },
+            },
+        },
+        meetingsConfigSchema.parse({}),
+        {
+            formId: "saved-form",
+            askedAt: record.start,
+            outcome: "pending",
+            proposals: [],
+            calendars: [entry],
+            folder: { source: "wisprflow", folder: "Saved folder" },
+        }
+    );
+    const calendar = question.items.find((item) => item.id === "calendar");
+    expect(calendar?.choices?.[0]).toMatchObject({ id: "calendar:0", label: expect.stringContaining("Saved entry") });
+    expect(question.items.find((item) => item.id === "folder")?.promptMarkdown).toContain("Saved folder");
+    expect(SafeJSON.stringify(question)).not.toContain("New entry");
+    expect(SafeJSON.stringify(question)).not.toContain("New folder");
 });

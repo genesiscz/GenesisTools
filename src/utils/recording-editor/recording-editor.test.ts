@@ -61,7 +61,7 @@ import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema } from "./denoise
 import { RecordingEditor } from "./editor";
 import { atempoChain, concatList, exportVideoArgv, speedArgv, trimArgv } from "./ffmpeg";
 import { parseEditPlan, timeToUs } from "./plan";
-import { applyOp, wholeProject } from "./project";
+import * as projectOps from "./project";
 import { locateSource } from "./source";
 import { formatSubtitles, subtitleCues } from "./subtitles";
 import { cutRanges, fillerCuts, fillerList, transcriptSegmentSchema, wordCuts, wordSpans } from "./transcript-cuts";
@@ -1918,7 +1918,16 @@ test.skipIf(skip.integration)("sampled still exports preserve duplicate samples 
     expect(durations).toEqual(Array(8).fill(0.5));
 });
 test("track denoise starts from no cleaned tracks when noise reduction is off", () => {
-    const project = wholeProject({ video: "/tmp/fixture.mp4", durationUs: 5_000_000, width: 640, height: 480 });
-    expect(applyOp(project, { op: "denoise", track: 1, trackCount: 2, on: true }).audio.denoise?.tracks).toEqual([1]);
-    expect(applyOp(project, { op: "denoise", track: 1, trackCount: 2, on: false }).audio.denoise).toBeUndefined();
+    const project = projectOps.wholeProject({
+        video: "/tmp/fixture.mp4",
+        durationUs: 5_000_000,
+        width: 640,
+        height: 480,
+    });
+    expect(
+        projectOps.applyOp(project, { op: "denoise", track: 1, trackCount: 2, on: true }).audio.denoise?.tracks
+    ).toEqual([1]);
+    expect(
+        projectOps.applyOp(project, { op: "denoise", track: 1, trackCount: 2, on: false }).audio.denoise
+    ).toBeUndefined();
 });

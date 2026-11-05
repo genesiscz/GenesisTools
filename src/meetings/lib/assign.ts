@@ -170,7 +170,10 @@ export function buildQuestion(
                           slackMin: config.global.assign.calendarSlackMin,
                       })[0] ?? { entry, overlapSec: 0, share: 0 }
               ),
-              folder: snapshot.folder ? { kind: "pair" as const, ...snapshot.folder } : undefined,
+              folder:
+                  snapshot.folder && isMeetingSourceId(snapshot.folder.source)
+                      ? { kind: "pair" as const, source: snapshot.folder.source, folder: snapshot.folder.folder }
+                      : undefined,
           }
         : view.proposals;
     const known = Object.keys(config.projects);
@@ -187,7 +190,7 @@ export function buildQuestion(
                 `${i + 1}. **${proposal.project}** (${proposal.score}): ${proposal.reasons.map(reasonText).join("; ")}`
         ),
         ...view.calendarNotes.map((note) => `> ${note}`),
-        ...folderLines(view),
+        ...folderLines({ ...view, proposals }),
         "",
         "Pick one, or write another known project or a new project's name in the text field.",
     ];
