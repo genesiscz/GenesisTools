@@ -108,6 +108,7 @@ export default function TimesheetScreen() {
                         Remind me on Fridays at 15:00
                     </Text>
                     <Switch
+                        accessibilityLabel="Remind me on Fridays at 15:00"
                         testID="timesheet-reminder"
                         value={reminder ?? false}
                         disabled={reminder === null}
