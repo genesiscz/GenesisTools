@@ -156,10 +156,16 @@ export type LiveEntryChange = Partial<
     Pick<LiveEntry, "title" | "state" | "displays" | "frames" | "lastFrameAt" | "warning">
 >;
 
-/** The answer deadline of a call: a `stop` that waits for its finish gets the finish's time, any other call the short one. */
+/** Methods that answer after the recording's post-processing (OCR, the summary, the collect): a discard waits for it too. */
+const FINISHING_METHODS = new Set(["stop", "discard"]);
+
+/**
+ * The answer deadline of a call: a `stop` or `discard` that waits for the finish gets the finish's time, any other call
+ * the short one.
+ */
 export function callTimeoutFor(method: string, params: unknown): number {
     const waits = !(typeof params === "object" && params !== null && "wait" in params && params.wait === false);
-    return method === "stop" && waits ? STOP_TIMEOUT_MS : CALL_TIMEOUT_MS;
+    return FINISHING_METHODS.has(method) && waits ? STOP_TIMEOUT_MS : CALL_TIMEOUT_MS;
 }
 
 /**
@@ -460,8 +466,9 @@ export class RecorderClient extends RecorderControl {
         return this.call<StopAnswer>("stop", options, options.wait === false ? CALL_TIMEOUT_MS : STOP_TIMEOUT_MS);
     }
 
+    /** Waits for the same post-processing as a stop before the folder goes to the trash, so the same deadline. */
     override discard(): Promise<StopAnswer> {
-        return this.call("discard");
+        return this.call("discard", undefined, STOP_TIMEOUT_MS);
     }
 
     override restart(): Promise<{ state: RecorderState }> {

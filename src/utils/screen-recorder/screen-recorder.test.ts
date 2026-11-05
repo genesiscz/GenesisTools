@@ -25,6 +25,7 @@ import { outputScaleFor, parseDisplayList } from "./displays";
 import { FrameOutput, type OcrRow, ocrSinkFor, SidecarOcrSink, sipsJpegWithin } from "./frame-output";
 import { readRecordingManifest, renameRecording } from "./library";
 import {
+    callTimeoutFor,
     type LiveNotification,
     LiveRecordingServer,
     listLiveRecordings,
@@ -464,6 +465,13 @@ test("mutations from two clients share one recorder queue", async () => {
 });
 
 describe("live recordings", () => {
+    test("a discard waits as long as a stop for the post-processing; other calls keep the short deadline", () => {
+        const short = callTimeoutFor("pause", undefined);
+        expect(callTimeoutFor("discard", undefined)).toBe(callTimeoutFor("stop", {}));
+        expect(callTimeoutFor("discard", undefined)).toBeGreaterThan(short);
+        expect(callTimeoutFor("stop", { wait: false })).toBe(short);
+    });
+
     test("closing inside stop removes discovery immediately and delivers the final answer", async () => {
         const dir = mkdtempSync(join(tmpdir(), "live-rec-close-"));
         const control = new TestControl();
