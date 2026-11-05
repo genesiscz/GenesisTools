@@ -244,9 +244,14 @@ export function recorderWindowArgs(which: "library" | "picker", { focus = true }
     return recorderOpenArgs(focus, [which === "library" ? "--library" : "--picker"]);
 }
 
-/** The `open` arguments that start the recorder face in the background with no window (its menu and services). */
+/**
+ * The `open` arguments that start the recorder face in the background with no window (its menu and services). `-n`:
+ * a new process, as for the windows; without it Launch Services hands the request to a running face (the hub), whose
+ * main never sees `--recorder`. When a recorder face runs already, the new process forwards its arguments to it and
+ * exits (`SingleInstance` in RecorderFace.swift).
+ */
 export function recorderFaceArgs(): string[] {
-    return ["-g", genesisAppBundlePath(), "--args", "--recorder"];
+    return ["-n", "-g", genesisAppBundlePath(), "--args", "--recorder"];
 }
 
 /** Opens the recordings library window, where a double-click opens a recording in the editor. */

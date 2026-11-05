@@ -616,6 +616,18 @@ describe("the recorder service", () => {
         });
     });
 
+    // Regression test: 2026-11-05 recorder service review, finding 10 — the camera's launch reused a running app face
+    test("without a host, a camera call asks open for a new app process, whose main gets --recorder", async () => {
+        const { service, opened } = await serviceFixture();
+        const client = await connect(service.entry);
+        await expect(client.call<unknown>("camera.start", { folder: "/rec/talk" })).rejects.toMatchObject({
+            code: RPC_ERRORS.hostUnavailable,
+        });
+
+        const launch = opened.at(-1) ?? [];
+        expect(launch.slice(0, launch.indexOf("--args"))).toContain("-n");
+    });
+
     test("it exits when idle, and when a loaded module of its source changed since its start", async () => {
         const idle = await serviceFixture({ idleMs: 30, checkEveryMs: 15 });
         expect(await Promise.race([idle.service.stopped, Bun.sleep(1_000).then(() => "still running")])).toBe("idle");
