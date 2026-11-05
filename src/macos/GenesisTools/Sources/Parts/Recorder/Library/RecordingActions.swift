@@ -93,8 +93,14 @@ enum RecordingActions {
         case .reveal:
             PathOpener.reveal(item.folder.path)
         case .openMeeting:
-            let record = item.folder.appendingPathComponent("meeting.json")
-            PathOpener.reveal(FileManager.default.fileExists(atPath: record.path) ? record.path : item.folder.path)
+            // The Meetings window at this meeting; the folder is the meeting's own, named by its id. Revealing
+            // meeting.json in Finder stays as the fallback when the window does not open.
+            ToolsRunner.run(["meetings", "window", item.folder.lastPathComponent]) { status, _, stderr in
+                guard status != 0 else { return }
+                let record = item.folder.appendingPathComponent("meeting.json")
+                PathOpener.reveal(FileManager.default.fileExists(atPath: record.path) ? record.path : item.folder.path)
+                report(.failed("The Meetings window did not open: \(stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"); its record is shown in Finder."))
+            }
         case .rename:
             rename(item, report: report)
         case .trash:
