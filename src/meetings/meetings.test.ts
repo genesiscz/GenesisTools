@@ -38,7 +38,7 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
 import { findReadAloud } from "@genesiscz/utils/transcribe/doc-match";
 import { groupTurns } from "@genesiscz/utils/transcribe/render";
-import { sameName } from "@genesiscz/utils/transcribe/speakers";
+import { sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { createCanvas } from "@napi-rs/canvas";
 import { claimWatcher, watcherPidPath } from "./commands/watch";
@@ -4431,5 +4431,24 @@ test("audio processing kills expired children and names the affected audio", asy
     } finally {
         spawn.mockRestore();
         which.mockRestore();
+    }
+});
+
+test("uncertain attendance ends neither exclude speakers nor prove a sole attendee", () => {
+    for (const sec of [10, 100]) {
+        const uncertain = { name: "Alice Example", fromSec: 40, toSec: 60, joinedAtExact: false, leftAtExact: false };
+        const other = { name: "Bob Example", fromSec: 0, toSec: 120 };
+        const lines = [line("Alice Example", sec, "Speaking")];
+        const hints = speakerStats(lines, { presence: [uncertain, other] }).hints;
+        expect(hints.filter((hint) => hint.kind === "absent-speaker" || hint.kind === "sole-attendee")).toEqual([]);
+        const exact = speakerStats(lines, {
+            presence: [{ ...uncertain, joinedAtExact: true, leftAtExact: true }, other],
+        }).hints;
+        expect(exact.some((hint) => hint.kind === "absent-speaker")).toBe(true);
+        expect(exact.some((hint) => hint.kind === "sole-attendee")).toBe(true);
+        const unconfirmed = speakerStats([line("Unknown", sec, "Speaking")], {
+            presence: [uncertain, { ...other, fromSec: 200, toSec: 300 }],
+        }).hints;
+        expect(unconfirmed.some((hint) => hint.kind === "sole-attendee")).toBe(false);
     }
 });
