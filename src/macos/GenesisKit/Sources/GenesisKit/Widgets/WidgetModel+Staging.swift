@@ -409,9 +409,11 @@ extension WidgetModel {
         // A second press while the first send runs: that send's note answers it. It says so too: a Send now that
         // changed nothing read as a dead button (Martin, 2026-10-28: "the Send now in the quit dialog didnt send it").
         let fresh = chosen.filter { !sendingDecisionIDs.contains($0.sourceId) }
-        guard !fresh.isEmpty else {
-            PerfLog.mark("widget.send-staged already sending: \(chosen.count) of \(ids.count) ids")
-            postNote("Still sending " + Plural.count(chosen.count, "decision") + "…")
+        guard fresh.count == chosen.count else {
+            keptStaged.subtract(chosen.map(\.sourceId))
+            PerfLog.mark("widget.send-staged already sending: \(chosen.count - fresh.count) of \(ids.count) ids")
+            postNote("Still sending " + Plural.count(chosen.count - fresh.count, "decision")
+                     + "… New stages remain staged; send again when it finishes.")
             return
         }
         deliverDecisions(fresh, action: .sendStaged, thenClose: thenClose)

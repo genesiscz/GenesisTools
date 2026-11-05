@@ -2126,6 +2126,45 @@ final class WidgetStagingTests: XCTestCase {
     }
 
     /// A decision whose send runs is on its way: the leave question does not call it staged, and Esc closes.
+    func testSendOnLeaveWithANewerStageStaysRetryableDuringTheEarlierSend() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        let started = expectation(description: "first send started")
+        let finished = expectation(description: "first send released its ID")
+        let retried = expectation(description: "new stage sent on a later leave")
+        var held: CheckedContinuation<WidgetJSON, Error>?
+        var sends = 0
+        model.actionRunner = { request in
+            guard case .object(let fields) = request, case .string(let action) = fields["action"],
+                  action == DecisionAnswering.SendAction.sendStaged.rawValue else { return ["ok": true] }
+            sends += 1
+            if sends == 1 {
+                return try await withCheckedThrowingContinuation { held = $0; started.fulfill() }
+            }
+            retried.fulfill()
+            return ["ok": true]
+        }
+        model.receive([try snapshot(draftOption: "a", stagedOnLeave: "send")])
+        model.select(key)
+        let card = try XCTUnwrap(model.cards.first)
+        model.sendStaged([card.sourceId])
+        await fulfillment(of: [started], timeout: 1)
+        let observation = model.$sendingDecisionIDs.dropFirst().filter(\.isEmpty).prefix(1).sink { _ in finished.fulfill() }
+        defer { observation.cancel() }
+        model.markPending(card.sourceId, "b", item: WidgetModel.inboxItem(card), note: "new answer")
+        model.expanded = .right
+        model.requestCollapse()
+        XCTAssertEqual(model.expanded, .right)
+        XCTAssertFalse(model.keptStaged.contains(card.sourceId), "an unsent new stage must be offered on the next leave")
+        XCTAssertEqual(model.stagedForLeave.first?.draft, "new answer")
+        XCTAssertEqual(sends, 1)
+        try XCTUnwrap(held).resume(returning: ["ok": true])
+        await fulfillment(of: [finished], timeout: 1)
+        model.requestCollapse()
+        await fulfillment(of: [retried], timeout: 1)
+        XCTAssertEqual(sends, 2)
+    }
+
     func testLeavingWhileASendRunsDoesNotCallItStaged() async throws {
         let model = StagingFixture.model()
         defer { model.stop() }
