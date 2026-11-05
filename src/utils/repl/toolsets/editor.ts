@@ -358,10 +358,16 @@ export class EditorToolset extends ReplToolset {
     }
 
     override async dispose(): Promise<void> {
+        const pending: Promise<unknown>[] = [];
         for (const info of this.jobs.list()) {
             if (info.state === "running") {
-                this.jobs.get(info.id)?.cancel();
+                const job = this.jobs.get(info.id);
+                if (job) {
+                    pending.push(job.done);
+                    job.cancel();
+                }
             }
         }
+        await Promise.allSettled(pending);
     }
 }
