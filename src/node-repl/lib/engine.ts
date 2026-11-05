@@ -1,7 +1,12 @@
 import { join } from "node:path";
+import { withTimeout } from "@genesiscz/utils/async";
+import { env } from "@genesiscz/utils/env";
 import { TemporaryArtifacts } from "@genesiscz/utils/fs/temporary-artifacts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { recorderStartSchema } from "@genesiscz/utils/repl/toolsets/recorder";
+import { type LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
+import type { FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
 
 /**
  * Parent side of the REPL: owns one worker process, one request at a time, and the wall clock.
@@ -34,8 +39,14 @@ interface WorkerResponse {
 }
 
 const WORKER_PATH = join(import.meta.dir, "worker.ts");
-function spawnWorker() {
-    return Bun.spawn([process.execPath, WORKER_PATH], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+function spawnWorker(ipc: (message: unknown) => void) {
+    return Bun.spawn([process.execPath, WORKER_PATH], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        ipc,
+        env: env.getProcessEnv(),
+    });
 }
 type ReplWorker = ReturnType<typeof spawnWorker>;
 
@@ -68,6 +79,7 @@ export function resultMessage(result: Pick<ReplResult, "ok" | "text" | "error" |
 }
 
 export interface ReplEngineOptions {
+    recorder?: { create(): Promise<FrameRecorder> };
     defaultTimeoutMs?: number;
     /** Toolset ids from `REPL_TOOLSETS`, preloaded into every worker this engine spawns. */
     toolsets?: readonly string[];
@@ -77,6 +89,7 @@ export interface ReplEngineOptions {
 
 /** How long `shutdown` and `reset` give the toolsets to release what they started before the worker is killed. */
 const DISPOSE_TIMEOUT_MS = 10_000;
+const FINALIZE_TIMEOUT_MS = 600_000;
 
 export class ReplEngine {
     private worker: ReplWorker | null = null;
@@ -88,11 +101,14 @@ export class ReplEngine {
     private generation = 0;
     private shutdownJob?: Promise<void>;
     private scratch?: TemporaryArtifacts;
+    private readonly recordings = new Set<LibraryRecording>();
+    private readonly recordingFailures: unknown[] = [];
+    private readonly recordingStarts = new Set<Promise<void>>();
     readonly defaultTimeoutMs: number;
     readonly preloadTimeoutMs: number;
     readonly toolsets: readonly string[];
 
-    constructor(options: ReplEngineOptions = {}) {
+    constructor(private readonly options: ReplEngineOptions = {}) {
         this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
         this.preloadTimeoutMs = options.preloadTimeoutMs ?? 120_000;
         this.toolsets = options.toolsets ?? [];
@@ -111,7 +127,65 @@ export class ReplEngine {
             this.workerStopped();
         }
 
-        const worker = spawnWorker();
+        let worker: ReplWorker;
+        worker = spawnWorker((message) => {
+            if (
+                typeof message !== "object" ||
+                message === null ||
+                !("recordingStart" in message) ||
+                !("id" in message)
+            ) {
+                return;
+            }
+
+            if (this.worker !== worker) {
+                return;
+            }
+            const requestId = message.id;
+            const startup = new AbortController();
+            const task = (async () => {
+                try {
+                    const recording = await withTimeout(
+                        (async () => {
+                            const options = recorderStartSchema.parse(message.recordingStart);
+                            const { FRAME_RECORDERS } = await import("@genesiscz/utils/screen-recorder/recorders");
+                            const { ensureBinaryAsync } = await import("@app/control/lib/runner");
+                            const recorder = this.options.recorder
+                                ? await this.options.recorder.create()
+                                : FRAME_RECORDERS.native({ axTool: async (input) => [await ensureBinaryAsync(input)] });
+                            startup.signal.throwIfAborted();
+                            return startRecording({
+                                ...options,
+                                signal: startup.signal,
+                                ocr: options.ocr ? { ...options.ocr, enabled: options.ocr.enabled ?? true } : undefined,
+                                recorder,
+                            });
+                        })(),
+                        this.preloadTimeoutMs,
+                        new Error(`Recording startup exceeded ${this.preloadTimeoutMs} ms`)
+                    );
+                    this.recordings.add(recording);
+                    void recording.finished.then(
+                        () => this.recordings.delete(recording),
+                        (error) => {
+                            this.recordings.delete(recording);
+                            this.recordingFailures.push(error);
+                        }
+                    );
+
+                    if (this.worker === worker && worker.exitCode === null) {
+                        worker.send({ id: requestId, recordingId: recording.id });
+                    }
+                } catch (error) {
+                    startup.abort(error);
+                    if (this.worker === worker && worker.exitCode === null) {
+                        worker.send({ id: requestId, error: String(error) });
+                    }
+                }
+            })();
+            this.recordingStarts.add(task);
+            void task.finally(() => this.recordingStarts.delete(task));
+        });
         logger.debug({ pid: worker.pid, toolsets: this.toolsets }, "node-repl worker started");
         this.worker = worker;
         void this.readResponses(worker);
@@ -364,6 +438,10 @@ export class ReplEngine {
     }
 
     /** Gives toolsets a bounded disposal attempt, then kills the worker without waiting for the turn deadline. */
+    get shutdownTimeoutMs(): number {
+        return DISPOSE_TIMEOUT_MS + this.preloadTimeoutMs + FINALIZE_TIMEOUT_MS + 5_000;
+    }
+
     async shutdown(reason = "shutdown"): Promise<void> {
         if (this.shutdownJob) {
             return this.shutdownJob;
@@ -388,6 +466,25 @@ export class ReplEngine {
             }
 
             this.killWorker(reason);
+            await Promise.all(this.recordingStarts);
+            const owned = [...this.recordings];
+            const results = await withTimeout(
+                Promise.allSettled(owned.map((recording) => recording.stop())),
+                FINALIZE_TIMEOUT_MS,
+                new Error("Recording finalization exceeded 10 minutes")
+            );
+            for (const recording of owned) {
+                this.recordings.delete(recording);
+            }
+            const failures = [
+                ...new Set([
+                    ...this.recordingFailures.splice(0),
+                    ...results.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])),
+                ]),
+            ];
+            if (failures.length > 0) {
+                throw new AggregateError(failures, "Recording post-processing failed");
+            }
         })();
         this.shutdownJob = stop;
         this.queue = stop.catch(() => undefined);
