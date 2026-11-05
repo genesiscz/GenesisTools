@@ -69,6 +69,8 @@ public final class NativeSettingsHighlightCenter: ObservableObject {
     /// When the last request came: a card that appears later (a page that opens on it) flashes only what is left of
     /// the flash, and a page visited again later does not flash or scroll again.
     @Published public private(set) var requestedAt: Date?
+    /// Bumped when the requested card is on its page: the page scrolls to it then, however long its data took.
+    @Published public private(set) var cardArrival = 0
 
     public func request(_ anchor: String) {
         self.anchor = anchor
@@ -80,6 +82,7 @@ public final class NativeSettingsHighlightCenter: ObservableObject {
     func consume(_ anchor: String) -> Bool {
         guard self.anchor == anchor, deliveredToken != token else { return false }
         deliveredToken = token
+        cardArrival += 1
         return true
     }
 
@@ -97,7 +100,10 @@ private struct NativeSettingsAnchor: ViewModifier {
     @State private var pulses = 0
 
     func body(content: Content) -> some View {
+        // The id lets the page scroll to the card; without it a link to a card below the fold pulsed out of sight
+        // (2026-11-05).
         content
+            .id(id)
             .attentionPulse(trigger: pulses)
             // A window that opens on the page asks before the card exists: the card pulses once it is on screen.
             .onAppear { if center.consume(id) { pulseSoon() } }

@@ -199,6 +199,8 @@ private struct NativeSettingsPageScroll: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .task(id: center.token) { await reveal(proxy) }
+            // A requested card drawn late (its page waited for its settings) scrolls into view when it appears.
+            .onChange(of: center.cardArrival) { _, _ in Task { await scrollToRequested(proxy) } }
         }
         .id(id)
     }
@@ -211,6 +213,10 @@ private struct NativeSettingsPageScroll: View {
     /// Only a fresh request scrolls: a page visited again later stays where its reader left it.
     private func reveal(_ proxy: ScrollViewProxy) async {
         guard center.anchor != nil, let at = center.requestedAt, Date().timeIntervalSince(at) < 2 else { return }
+        await scrollToRequested(proxy)
+    }
+
+    private func scrollToRequested(_ proxy: ScrollViewProxy) async {
         try? await Task.sleep(for: .milliseconds(80))
         guard let anchor = center.anchor else { return }
         let place = UnitPoint(x: 0.5, y: 0.15)
