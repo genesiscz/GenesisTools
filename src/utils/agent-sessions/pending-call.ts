@@ -44,27 +44,61 @@ function replacement(input: Record<string, unknown>): string {
     );
 }
 
-/** `*** Add File:`, `*** Update File:`, `*** Delete File:` sections of a patch, each as one change with its lines. */
+interface PatchSection {
+    path: string;
+    operation: NonNullable<PendingCallFileChange["operation"]>;
+    movedTo?: string;
+    lines: string[];
+}
+
+function patchOperation(word: string): PatchSection["operation"] {
+    if (word === "Add") {
+        return "add";
+    }
+
+    return word === "Delete" ? "delete" : "update";
+}
+
+function sectionChange(section: PatchSection): PendingCallFileChange {
+    return {
+        path: section.path,
+        operation: section.operation,
+        ...(section.movedTo ? { movedTo: section.movedTo } : {}),
+        diff: cut(section.lines.join("\n")),
+    };
+}
+
+/**
+ * `*** Add File:`, `*** Update File:`, `*** Delete File:` sections of a patch, each as one change with its lines, its
+ * operation and the `*** Move to:` path of a rename, so an approval shows a deletion and a rename's destination.
+ */
 export function patchChanges(patch: string): PendingCallFileChange[] {
     const changes: PendingCallFileChange[] = [];
-    let current: { path: string; lines: string[] } | null = null;
+    let current: PatchSection | null = null;
 
     for (const line of patch.split("\n")) {
-        const header = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/.exec(line);
+        const header = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(line);
 
         if (header) {
             if (current) {
-                changes.push({ path: current.path, diff: cut(current.lines.join("\n")) });
+                changes.push(sectionChange(current));
             }
 
-            current = { path: header[1].trim(), lines: [] };
+            current = { path: header[2].trim(), operation: patchOperation(header[1]), lines: [] };
+            continue;
+        }
+
+        const move = /^\*\*\* Move to: (.+)$/.exec(line);
+
+        if (current && move) {
+            current.movedTo = move[1].trim();
         } else if (current && !line.startsWith("*** ")) {
             current.lines.push(line);
         }
     }
 
     if (current) {
-        changes.push({ path: current.path, diff: cut(current.lines.join("\n")) });
+        changes.push(sectionChange(current));
     }
 
     return changes;

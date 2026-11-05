@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { totalsOf } from "@genesiscz/utils/ai/transcripts/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { patchChanges } from "../pending-call";
 import { codexPendingCall } from "./codex-pending-call";
 import { codexGtEventsToTurns, codexNativeLinesToTurns } from "./codex-turns";
 
@@ -684,4 +685,14 @@ test("approval details preserve valid JavaScript escapes that are not JSON escap
         { type: "response_item", payload: { type: "custom_tool_call", name: "exec", call_id: "c1", input } },
     ]);
     expect(pending?.detail).toEqual({ kind: "tool", input });
+});
+
+test("a pending patch keeps a deletion and a rename's destination", () => {
+    const changes = patchChanges(
+        "*** Begin Patch\n*** Delete File: config.json\n*** Update File: old-name.ts\n*** Move to: new-name.ts\n@@\n-a\n+b\n*** End Patch"
+    );
+    expect(changes).toEqual([
+        { path: "config.json", operation: "delete", diff: "" },
+        { path: "old-name.ts", operation: "update", movedTo: "new-name.ts", diff: "@@\n-a\n+b" },
+    ]);
 });

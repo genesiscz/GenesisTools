@@ -340,6 +340,10 @@ export interface NativeDialogPermission {
 /** One file a pending call would change: its path, and the replaced and new text or the whole new content. */
 export interface PendingCallFileChange {
     path: string;
+    /** What the call does to the file, when its input says so (a patch's Add, Update and Delete sections). */
+    operation?: "add" | "update" | "delete";
+    /** The file's new path, when the call also renames it (a patch's `*** Move to:` line). */
+    movedTo?: string;
     /** `-` and `+` lines for a replacement; absent for a whole-file write. */
     diff?: string;
     /** The whole new content of a write; absent for a replacement. */
