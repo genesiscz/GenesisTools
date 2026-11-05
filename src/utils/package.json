@@ -118,6 +118,11 @@
             "types": "./cli/current-command.ts",
             "default": "./cli/current-command.ts"
         },
+        "./process/bounded-command": {
+            "bun": "./process/bounded-command.ts",
+            "types": "./process/bounded-command.ts",
+            "default": "./process/bounded-command.ts"
+        },
         "./cli/executor": {
             "bun": "./cli/executor.ts",
             "types": "./cli/executor.ts",
