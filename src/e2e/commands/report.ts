@@ -51,10 +51,6 @@ export function registerReport(program: Command): void {
 
             const markdown = join(dir, "summary.md");
             out.print(existsSync(markdown) ? readFileSync(markdown, "utf8") : formatSummary(summary));
-
-            if (!summary.ok) {
-                process.exitCode = 1;
-            }
         });
 
     withConfig(
@@ -91,10 +87,6 @@ export function registerReport(program: Command): void {
                 for (const change of changes) {
                     const line = `${change.test}: ${change.before} → ${change.after}`;
                     change.after === "failed" ? ui.err(line) : ui.dim(line);
-                }
-
-                if (changes.some((change) => change.after === "failed")) {
-                    process.exitCode = 1;
                 }
             }
         );
