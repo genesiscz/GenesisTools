@@ -99,6 +99,9 @@ export interface Presence {
     name: string;
     /** The recording user; a platform may name them by email only. */
     self?: boolean;
+    /** False when the join was only observed after it happened. Missing means legacy exact attendance. */
+    joinedAtExact?: boolean;
+    leftAtExact?: boolean;
     fromSec: number;
     toSec: number;
 }

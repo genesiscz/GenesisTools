@@ -1969,3 +1969,33 @@ test("exhausted capture retries persist failure without capturing a frame", asyn
         sleep.mockRestore();
     }
 });
+
+test("Teams observation bounds never count as an arrival", () => {
+    for (const exact of [false, true]) {
+        const raw = SafeJSON.stringify([
+            {
+                meeting: { startedAt: meeting.start },
+                attendance: [
+                    {
+                        name: "Newcomer",
+                        joinedAt: "2026-11-02T14:00:15.000Z",
+                        joinedAtExact: exact,
+                        leftAtExact: false,
+                    },
+                ],
+            },
+        ]);
+        const attendance = teamsAttendanceFromJson(raw, { title: "Planning", start: meeting.start }, "fixture");
+        expect(attendance?.presence[0]).toMatchObject({ joinedAtExact: exact, leftAtExact: false });
+        const items = suggestItems({
+            record,
+            meeting: { ...meeting, transcript: [line("Other", 20, "O co jsem přišel?")] },
+            rules: ["evidence"],
+            dictionary: { abbrExpansion: "every", entries: [] },
+            sourceWords: [],
+            presence: attendance?.presence,
+            now: "2026-11-02T15:00:00.000Z",
+        });
+        expect(items.some((item) => item.kind === "speaker-range" && item.speaker === "Newcomer")).toBe(exact);
+    }
+});
