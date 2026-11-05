@@ -16,6 +16,18 @@ const receipt = (key: string) =>
     ({ key, outcome: "delivered", timing: "now", route: "claude-peer", detail: "peer" }) as const;
 
 describe("steer outbox (F10)", () => {
+    it("does not send a draft discarded while an earlier send is pending", async () => {
+        const store = memoryDraftStore([draft("a", 1), draft("b", 2)]);
+        const sent: string[] = [];
+        await flushDrafts({ store, connectionId: "mac-a", send: async (entry) => {
+            sent.push(entry.id);
+            if (entry.id === "a") { await removeDraft(store, "b"); }
+            return receipt(entry.key);
+        } });
+        expect(sent).toEqual(["a"]);
+        expect(await store.read()).toEqual([]);
+    });
+
     it("shares one flush across composers so uncertainty cannot be overwritten", async () => {
         const store = memoryDraftStore([draft("a", 1)]);
         let finish!: (value: ReturnType<typeof receipt>) => void;

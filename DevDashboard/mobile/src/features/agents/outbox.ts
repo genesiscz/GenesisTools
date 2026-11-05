@@ -126,6 +126,10 @@ async function flushDraftsOnce({
     const result: FlushResult = { sent: [], failed: [], waiting: [] };
 
     for (const draft of drafts) {
+        const current = (await store.read()).find((entry) => entry.id === draft.id);
+        if (!current || current.blocked || current.connectionId !== connectionId) {
+            continue;
+        }
         try {
             const receipt = await send(draft);
             if (receipt.outcome === "refused" || receipt.outcome === "unknown") {
