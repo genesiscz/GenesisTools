@@ -448,6 +448,15 @@ export class ReplEngine {
     }
 
     /**
+     * The whole budget a close may take: a recording's start (the larger of the preload and startup budgets), the
+     * toolset dispose and the bound on finishing the owned recordings, plus a margin.
+     */
+    get shutdownTimeoutMs(): number {
+        const startMs = Math.max(this.preloadTimeoutMs, this.recordingStartupTimeoutMs);
+        return startMs + DISPOSE_TIMEOUT_MS + RECORDING_FINISH_TIMEOUT_MS + 5_000;
+    }
+
+    /**
      * Gives the toolsets a bounded dispose, then kills the worker. It does not wait for a running turn's deadline,
      * and the turns queued before it are cancelled.
      */
