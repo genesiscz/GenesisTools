@@ -134,14 +134,18 @@ public final class NativeSettingsStore: ObservableObject {
     public private(set) var pendingPageID: String?
     private let defaults: UserDefaults
     private let selectionKey: String
+    /// False for a window an agent drives in the background (`--features --headless`): the page it opens is not the
+    /// user's choice, so the next Settings window still opens on the page the user left.
+    private let remembersSelection: Bool
 
     public init(
         sections: [NativeSettingsSection], defaults: UserDefaults = .standard,
         selectionKey: String = "featureSettings.selectedPage", initialPageID: String? = nil,
-        appearance: NativeSettingsAppearance? = nil
+        appearance: NativeSettingsAppearance? = nil, remembersSelection: Bool = true
     ) {
         self.defaults = defaults
         self.selectionKey = selectionKey
+        self.remembersSelection = remembersSelection
         self.appearance = appearance ?? .shared
         let error = Self.validate(sections)
         catalogError = error
@@ -169,7 +173,7 @@ public final class NativeSettingsStore: ObservableObject {
         }
         pendingPageID = nil
         selectedPageID = pageID
-        defaults.set(pageID, forKey: selectionKey)
+        if remembersSelection { defaults.set(pageID, forKey: selectionKey) }
         if let anchor { NativeSettingsHighlightCenter.shared.request(anchor) }
         return true
     }

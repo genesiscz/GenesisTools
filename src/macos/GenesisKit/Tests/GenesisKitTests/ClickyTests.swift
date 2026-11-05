@@ -918,6 +918,26 @@ final class ClickyTests: XCTestCase {
         XCTAssertEqual(restored.selectedPageID, "widgets.general")
     }
 
+    /// `--features --headless` opens the page an agent asked for; the user's saved page stays as it was.
+    @MainActor
+    func testAStoreThatDoesNotRememberShowsTheRequestedPageAndKeepsTheSavedOne() {
+        let suite = "dev.genesis.settings.test.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { disposeIntegrationDefaults(defaults, suite: suite) }
+        let appearance = NativeSettingsAppearance(
+            defaults: defaults, notificationNamespace: suite, observeExternalChanges: false)
+        defaults.set("general", forKey: "featureSettings.selectedPage")
+        let initial = settingsSection("general", pages: ["general", "about"], order: 0)
+        let store = NativeSettingsStore(
+            sections: [initial], defaults: defaults, appearance: appearance, remembersSelection: false)
+        XCTAssertTrue(store.select(pageID: "about"))
+        XCTAssertEqual(store.selectedPageID, "about")
+        XCTAssertFalse(store.select(pageID: "widgets.general"))
+        XCTAssertTrue(store.register(section: settingsSection("widgets", pages: ["widgets.general"], order: 30)))
+        XCTAssertEqual(store.selectedPageID, "widgets.general", "a pending page still opens once its part registers")
+        XCTAssertEqual(defaults.string(forKey: "featureSettings.selectedPage"), "general")
+    }
+
     @MainActor
     func testSettingsRejectDuplicatePageIDsWithoutChangingTheCatalog() {
         let suite = "dev.genesis.settings.test.\(UUID().uuidString)"

@@ -33,13 +33,15 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
     let daemon = DaemonSettingsStore()
     /// The page a snapshot draws (nil: the first page).
     var shownPageID: String?
-    /// A snapshot keeps no window frame and no selected page either.
+    /// A snapshot keeps no window frame and no selected page either, and a headless run keeps no selected page: its
+    /// writes go to the real defaults, since an agent drives its controls, but the page it opened is not the user's.
     private lazy var window = FeatureSettingsWindowController(
         sections: [
             FeatureSettingsPages.general(extra: AnyView(QuitSettingsCard(defaults: defaults))),
             DaemonSettingsPages.section(store: daemon),
         ], defaults: defaults,
-        appearance: appearance, frameAutosaveName: mode == .snapshot ? "" : "FeatureSettings.window")
+        appearance: appearance, frameAutosaveName: mode == .snapshot ? "" : "FeatureSettings.window",
+        remembersSelection: mode == .live)
     private var aboutInfo: [String] = []
     /// Drops the settings window's PartPresence lock when the window closes.
     private var windowCloseObserver: NSObjectProtocol?
