@@ -2267,7 +2267,9 @@ final class WidgetRosterTests: XCTestCase {
                 if let scroll = view as? NSScrollView { return [scroll] }
                 return view.subviews.flatMap(scrollViews)
             }
-            let scroll = try XCTUnwrap(scrollViews(host).first)
+            // GrowingTextEditor adds an NSTextView scroll view for the composer. Measure the inbox viewport,
+            // not the editor, regardless of the native subview order.
+            let scroll = try XCTUnwrap(scrollViews(host).first { !($0.documentView is NSTextView) })
             let document = try XCTUnwrap(scroll.documentView)
             XCTAssertGreaterThan(document.bounds.height, scroll.contentView.bounds.height * 2)
             XCTAssertEqual(scroll.contentView.bounds.minY, 0, accuracy: 1)
@@ -2459,7 +2461,9 @@ final class WidgetRosterTests: XCTestCase {
                 if let scroll = view as? NSScrollView { return [scroll] }
                 return view.subviews.flatMap(scrollViews)
             }
-            let scroll = try XCTUnwrap(scrollViews(host).first)
+            // The composer's independently scrolling editor is narrower than the inbox by its padding and send
+            // button. Its NSTextView is not the detail document whose available width this test verifies.
+            let scroll = try XCTUnwrap(scrollViews(host).first { !($0.documentView is NSTextView) })
             XCTAssertGreaterThan(scroll.bounds.width, 750, "The detail must grow with its actual native host")
             window.setContentSize(CGSize(width: 560, height: 700))
             host.layoutSubtreeIfNeeded()
