@@ -768,7 +768,7 @@ describe("watchOnce", () => {
         expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("failed");
         h.deps.run = successfulRun;
         expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("disabled");
-        expect(h.runs.at(-1)).toEqual(["meetings", "record", "stop"]);
+        expect(h.runs.at(-1)).toEqual(["meetings", "record", "stop", "--meeting", "m1", "--started-at", ""]);
         expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("disabled");
         expect(h.runs).toHaveLength(2);
 
@@ -805,7 +805,7 @@ describe("watchOnce", () => {
         await watchOnce(h.store, { deps: h.deps, now });
 
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 200_000 })).toBe("stopped");
-        expect(h.runs.at(-1)).toEqual(["meetings", "record", "stop"]);
+        expect(h.runs.at(-1)).toEqual(["meetings", "record", "stop", "--meeting", "m1", "--started-at", ""]);
 
         const other = harness({
             recorder: () => ({
@@ -825,7 +825,22 @@ describe("watchOnce", () => {
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 200_000 })).toBe("failed");
         h.deps.run = successfulRun;
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 215_000 })).toBe("stopped");
-        expect(h.runs.at(-1)).toEqual(["meetings", "record", "stop"]);
+        expect(h.runs.at(-1)).toEqual(["meetings", "record", "stop", "--meeting", "m1", "--started-at", ""]);
+    });
+
+    test("a manually resumed owned meeting is left alone in enabled and disabled modes", async () => {
+        const h = harness();
+        await watchOnce(h.store, { deps: h.deps, now });
+        const saved = SafeJSON.parse(readFileSync(join(h.store.root, "watch-auto.json"), "utf8"));
+        expect(saved.recorderStartedAt).toBe("");
+        h.deps.recorder = () => ({
+            running: true,
+            state: { meetingId: "m1", pid: 1, startedAt: "new-run", display: 1, frames: 0, bytes: 0 },
+        });
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 200_000 })).toBe("busy");
+        h.deps.settings = async () => ({ ...settings, enabled: false });
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("disabled");
+        expect(h.runs).toHaveLength(1);
     });
 
     test("a start that failed (no grant) is not retried for the same meeting", async () => {

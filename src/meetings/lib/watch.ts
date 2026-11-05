@@ -21,7 +21,12 @@ export const WATCH_INTERVAL_MS = 15_000;
 const TOOL_TIMEOUT_MS = 120_000;
 
 /** The recording the watcher started, so it stops only its own. */
-const autoSchema = z.object({ sourceMeetingId: z.string(), meetingId: z.string().optional(), startedAt: z.string() });
+const autoSchema = z.object({
+    sourceMeetingId: z.string(),
+    meetingId: z.string().optional(),
+    startedAt: z.string(),
+    recorderStartedAt: z.string().optional(),
+});
 type AutoRecording = z.infer<typeof autoSchema>;
 
 function autoPath(store: MeetingStore): string {
@@ -96,8 +101,22 @@ export async function watchOnce(
         const recorder = deps.recorder();
         const auto = readAuto(store);
 
-        if (recorder.running && auto?.meetingId && recorder.state?.meetingId === auto.meetingId) {
-            const result = await deps.run(["meetings", "record", "stop"]);
+        if (
+            recorder.running &&
+            auto?.meetingId &&
+            auto.recorderStartedAt !== undefined &&
+            recorder.state?.meetingId === auto.meetingId &&
+            recorder.state?.startedAt === auto.recorderStartedAt
+        ) {
+            const result = await deps.run([
+                "meetings",
+                "record",
+                "stop",
+                "--meeting",
+                auto.meetingId,
+                "--started-at",
+                auto.recorderStartedAt,
+            ]);
 
             if (!result.success || deps.recorder().running) {
                 return "failed";
@@ -115,7 +134,11 @@ export async function watchOnce(
     log.debug({ live, running: recorder.running, auto }, "watch tick");
 
     if (recorder.running) {
-        const own = auto && recorder.state?.meetingId === auto.meetingId;
+        const own =
+            auto &&
+            auto.recorderStartedAt !== undefined &&
+            recorder.state?.meetingId === auto.meetingId &&
+            recorder.state?.startedAt === auto.recorderStartedAt;
         const ended = !live || live.sourceMeetingId !== auto?.sourceMeetingId;
         const silent = live ? now - Date.parse(live.liveChangedAt) > settings.stopAfterSilenceSec * 1000 : true;
 
@@ -127,7 +150,15 @@ export async function watchOnce(
             return "recording";
         }
 
-        const result = await deps.run(["meetings", "record", "stop"]);
+        const result = await deps.run([
+            "meetings",
+            "record",
+            "stop",
+            "--meeting",
+            auto.meetingId!,
+            "--started-at",
+            auto.recorderStartedAt!,
+        ]);
         log.info({ meeting: auto.meetingId, exitCode: result.exitCode, ended, silent }, "auto recording stopped");
         if (result.success && !deps.recorder().running) {
             unlinkSync(autoPath(store));
@@ -174,6 +205,7 @@ export async function watchOnce(
         SafeJSON.stringify({
             sourceMeetingId: live.sourceMeetingId,
             ...(meetingId ? { meetingId } : {}),
+            ...(startedRecorder ? { recorderStartedAt: startedRecorder.startedAt } : {}),
             startedAt: new Date(now).toISOString(),
         })
     );
