@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkProjects, ScratchTree, testFolders } from "./layer-cut";
+import { checkProjects, installStamp, ScratchTree, testFolders } from "./layer-cut";
 import { expect, test } from "bun:test";
 import { loadTable } from "./layer-cut-tables/load";
 import unified from "./layer-cut-tables/unified";
@@ -31,6 +31,19 @@ test("project discovery includes mobile configs for selected mobile files", () =
     const tree = new Map(["tsconfig.json", "DevDashboard/mobile/tsconfig.json", "DevDashboard/mobile/package.json"].map((file) => [file, entry]));
     expect(checkProjects(["DevDashboard/mobile/src/screen.tsx"], tree)).toEqual(["DevDashboard/mobile/tsconfig.json", "tsconfig.json"]);
     expect(checkProjects(["src/widget/index.ts"], tree)).toEqual(["tsconfig.json"]);
+});
+
+test("install invalidation covers workspace manifests and standalone project locks", () => {
+    const entry = { mode: "100644", sha: "before" };
+    const tree = new Map(["bun.lock", "src/utils/package.json", "DevDashboard/mobile/package.json", "DevDashboard/mobile/bun.lock"].map((file) => [file, entry]));
+    const initial = installStamp(tree);
+    for (const file of [...tree.keys()].filter((file) => file !== "bun.lock")) {
+        tree.set(file, { ...entry, sha: "after" });
+        expect(installStamp(tree)).not.toBe(initial);
+        tree.set(file, entry);
+    }
+    tree.set("src/tool/index.ts", entry);
+    expect(installStamp(tree)).toBe(initial);
 });
 
 test("--table requires a module path", async () => {
