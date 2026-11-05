@@ -127,6 +127,11 @@ public final class ApprovalDialogModel: ObservableObject {
     /// An approval that came sooner than `confirmWithin` after the window appeared: its method, waiting for the
     /// person's "Approve" (`confirmIntent`) before it counts.
     @Published public private(set) var pendingIntent: String?
+    /// "Use password…" goes once the sensor approved: while the request waits for its Approve click, and after it,
+    /// the password would answer nothing (`ApprovalVerifier.usePassword` returns at once when answered).
+    public var offersPasswordFallback: Bool {
+        pendingIntent == nil && verifier?.state != .verified
+    }
     /// When the panel came on screen (`ApprovalPanelPresenter.present`); nil never asks again.
     public var shownAt: Date?
     /// How soon after `shownAt` an approval asks once more; 0 never asks (`ApprovalAttention.confirmWithin`).
@@ -717,7 +722,7 @@ struct ApprovalVerifyFooter: View {
                     .buttonStyle(.borderedProminent)
                     .pointerCursor()
                     .accessibilityIdentifier("\(model.identifier)-password")
-            } else {
+            } else if model.offersPasswordFallback {
                 // The password is a person's act, so it works while the sensor waits for the click.
                 Button("Use password…", action: verifier.usePassword)
                     .disabled(verifier.state == .password || (verifier.state == .paused && !offUntilClick))

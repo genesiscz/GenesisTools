@@ -397,12 +397,14 @@ final class ApprovalVerifierTests: XCTestCase {
         model.shownAt = Date()
 
         verifier.begin(windowIsKey: false)
+        XCTAssertTrue(model.offersPasswordFallback, "before the touch, the password is the other way")
         verifier.evaluate(try XCTUnwrap(verifier.context))
         try XCTUnwrap(fake.biometricReplies.last)(true, nil)
         settle()
         XCTAssertTrue(answers.isEmpty, "a touch within the first second must not approve by itself")
         XCTAssertEqual(model.pendingIntent, "touch-id")
         XCTAssertFalse(model.answered)
+        XCTAssertFalse(model.offersPasswordFallback, "after the touch, Use password… would answer nothing")
 
         model.confirmIntent()
         XCTAssertEqual(answers, ["touch-id"])
