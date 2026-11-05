@@ -155,7 +155,7 @@ export function registerDevices(program: Command): void {
     ).action(async (link: string, options: DeviceOptions) => {
         const { project, platform, device, app } = await appTarget(options);
         const route = projectRoute(project, link);
-        await platform.openUrl(device, route.url, app);
+        await platform.openUrl(device, route.url, /^https?:\/\//i.test(link) ? undefined : app);
         ui.ok(`opened ${route.url} on ${device.name}`);
     });
 
