@@ -396,6 +396,7 @@ enum MeetingsWords {
         case "join": return "Join the line at \(MeetingsFormat.clock(item.atSec ?? 0))"
         case "term":
             if let proposed = item.proposed { return "“\(item.heard ?? "")” → “\(proposed)”" }
+            if let quote = item.quote { return "“\(item.heard ?? "")” → “\(quote.text)” (from \(quote.source))" }
             return "“\(item.heard ?? "")”"
         case "question": return item.question ?? "Question"
         default: return item.id

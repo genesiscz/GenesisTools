@@ -73,6 +73,8 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
     let heard: String?
     let proposed: String?
     let meaning: String?
+    /// A term read aloud from a document: its exact text replaces the heard words, with the source.
+    let quote: Quote?
     let joined: String?
     let about: String?
     let question: String?
@@ -81,8 +83,12 @@ struct MeetingItem: Decodable, Equatable, Hashable, Identifiable {
     let priority: Double?
     let evidence: [String: JSONValue]?
 
+    struct Quote: Decodable, Equatable, Hashable { let text: String; let source: String }
+
     /// Where the item sits on the transcript clock.
     var seconds: Double? { fromSec ?? atSec }
+    /// A term with nothing to confirm yet: no spelling, meaning or quoted line (the CLI's own rule in decide.ts).
+    var needsSpelling: Bool { kind == "term" && proposed == nil && meaning == nil && quote == nil }
     var reason: String? {
         if case .string(let text)? = evidence?["reason"] { return text }
         return nil

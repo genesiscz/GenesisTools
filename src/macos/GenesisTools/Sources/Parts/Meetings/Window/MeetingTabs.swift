@@ -375,7 +375,7 @@ private struct ItemRow: View, Equatable {
     }
 
     private var needsSpeaker: Bool { item.kind == "speaker-range" && item.speaker == nil }
-    private var needsSpelling: Bool { item.kind == "term" && item.proposed == nil && item.meaning == nil }
+    private var needsSpelling: Bool { item.needsSpelling }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {

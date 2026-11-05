@@ -238,4 +238,13 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(unread.map(\.source), [.proposals])
         XCTAssertEqual(unread.first?.text, "The proposed projects did not load: The config is not valid.")
     }
+
+    func testAQuotedTermCanBeConfirmedAndShowsItsLine() throws {
+        let item = try JSONDecoder().decode(MeetingItem.self, from: Data("""
+        {"kind":"term","id":"i4","status":"suggested","heard":"lomeno type","quote":{"text":"/{type}","source":"Harbor spec"},
+         "rules":[],"suggestedAt":"2026-11-04T10:00:00.000Z"}
+        """.utf8))
+        XCTAssertFalse(item.needsSpelling, "the quote is what a confirm applies")
+        XCTAssertEqual(MeetingsWords.itemTitle(item), "“lomeno type” → “/{type}” (from Harbor spec)")
+    }
 }
