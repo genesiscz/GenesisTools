@@ -122,6 +122,7 @@ enum LinkRelay {
     }
 
     private static let heartbeatSeconds = 60.0
+    private nonisolated(unsafe) static var ending = false // accessed only on stateWriter
     private nonisolated(unsafe) static var state: RelayJournal.State?
     private nonisolated(unsafe) static var heartbeat: DispatchSourceTimer?
     /// Every write of link-relay.json after the start, in order: a heartbeat never lands after the clean-exit write.
@@ -178,7 +179,10 @@ enum LinkRelay {
             current.heartbeatAt = Date()
             state = current
             let beat = current
-            stateWriter.async { RelayJournal.writeState(beat) }
+            stateWriter.async {
+                guard !ending else { return }
+                RelayJournal.writeState(beat)
+            }
         }
         timer.resume()
         heartbeat = timer
@@ -193,7 +197,10 @@ enum LinkRelay {
                 note("ending on signal \(number)")
                 if var current = state {
                     current.cleanExit = true
-                    stateWriter.sync { RelayJournal.writeState(current) }
+                    stateWriter.sync {
+                        ending = true
+                        RelayJournal.writeState(current)
+                    }
                 }
                 exit(0)
             }
