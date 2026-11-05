@@ -42,7 +42,7 @@ const STATUSLINE_HOOK = {
 };
 
 export interface GoldenCase {
-    /** The golden file under `__fixtures__/`, without `.golden`. */
+    /** The golden file under `__tests__/`, without `.golden`. */
     name: string;
     /** The `tools ai-spend` arguments; an alias door prefixes its own path. */
     args: string[];
