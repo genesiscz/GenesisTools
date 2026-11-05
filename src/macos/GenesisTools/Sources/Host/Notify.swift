@@ -568,6 +568,10 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
                 ].merging(typed.map { ["text": $0] } ?? [:]) { first, _ in first }
             )
 
+            if quitAfterNotificationClick, !NotificationLedger.flush(timeout: 5) {
+                logClick("notification ledger drain timed out")
+            }
+
             DispatchQueue.main.async {
                 completionHandler()
                 // macOS activates the face again when the handler completes, which can be after a

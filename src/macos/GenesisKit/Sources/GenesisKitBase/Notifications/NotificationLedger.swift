@@ -96,9 +96,12 @@ public enum NotificationLedger {
         }
     }
 
-    /// Waits for the lines queued so far. Tests only: posters never wait.
-    public static func flush() {
-        queue.sync {}
+    /// Drains queued lines before a short-lived writer exits. Call off the main queue.
+    @discardableResult
+    public static func flush(timeout: TimeInterval = 5) -> Bool {
+        let drained = DispatchSemaphore(value: 0)
+        queue.async { drained.signal() }
+        return drained.wait(timeout: .now() + timeout) == .success
     }
 
     private static func rotateIfFull(_ file: String) {

@@ -126,7 +126,16 @@ export function readNotificationLedger(options: { sinceMs?: number; path?: strin
                 continue;
             }
 
-            const parsed = ledgerRowSchema.safeParse(SafeJSON.parse(line, { jsonl: true }));
+            let raw: unknown;
+            try {
+                raw = SafeJSON.parse(line, { jsonl: true });
+            } catch (error) {
+                skipped += 1;
+                logger.debug({ error, file }, "notification ledger: malformed line skipped");
+                continue;
+            }
+
+            const parsed = ledgerRowSchema.safeParse(raw);
 
             if (!parsed.success) {
                 skipped += 1;

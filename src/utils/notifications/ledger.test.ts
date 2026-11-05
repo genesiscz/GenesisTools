@@ -7,7 +7,12 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { notificationsConfig } from "./config";
 import { unconfiguredChannel } from "./dispatch";
-import { NOTIFICATION_LEDGER_MAX_BYTES, notificationLedgerPath, recordNotification } from "./ledger";
+import {
+    NOTIFICATION_LEDGER_MAX_BYTES,
+    notificationLedgerPath,
+    readNotificationLedger,
+    recordNotification,
+} from "./ledger";
 
 describe("notification ledger", () => {
     const saved = process.env.GENESIS_TOOLS_HOME;
@@ -31,6 +36,8 @@ describe("notification ledger", () => {
         expect(lines[0]).toMatchObject({ source: "hub", channel: "macos", outcome: "posted", body: "#561" });
         expect(lines[1].writer.app).toBe("tools");
         expect(Number.isNaN(Date.parse(lines[0].at))).toBe(false);
+        writeFileSync(notificationLedgerPath(), `${readFileSync(notificationLedgerPath(), "utf8")}broken{\n`);
+        expect(readNotificationLedger()).toHaveLength(2);
     });
 
     it("an enabled channel without its token, chat or URL counts as unconfigured, so its line says suppressed", () => {

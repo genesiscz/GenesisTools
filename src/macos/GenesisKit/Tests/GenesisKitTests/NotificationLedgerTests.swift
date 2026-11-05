@@ -59,6 +59,18 @@ final class NotificationLedgerTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: file + ".1")), full)
     }
 
+    func testClickDrainPersistsAndHasABoundedWait() throws {
+        let descriptor = open(file + ".lock", O_CREAT | O_WRONLY | O_CLOEXEC, 0o600)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        XCTAssertEqual(flock(descriptor, LOCK_EX | LOCK_NB), 0)
+        NotificationLedger.record(source: "click", channel: "macos", outcome: .clicked, file: file)
+        XCTAssertFalse(NotificationLedger.flush(timeout: 0.01))
+        flock(descriptor, LOCK_UN)
+        close(descriptor)
+        XCTAssertTrue(NotificationLedger.flush(timeout: 2))
+        XCTAssertEqual(try lines().first?["outcome"] as? String, "clicked")
+    }
+
     func testAFullFileMovesAsideBeforeTheNextLine() throws {
         try Data(count: Int(NotificationLedger.maxBytes) + 1).write(to: URL(fileURLWithPath: file))
         NotificationLedger.record(source: "disk", channel: "macos", file: file)
