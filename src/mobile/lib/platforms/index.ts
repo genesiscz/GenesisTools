@@ -45,7 +45,14 @@ export function choosePlatform(requested: string | undefined, project: MobilePro
  */
 export function chooseDevice(devices: MobileDevice[], requested?: string): MobileDevice {
     if (requested) {
-        const device = devices.find((candidate) => candidate.id === requested || candidate.name === requested);
+        const byId = devices.find((candidate) => candidate.id === requested);
+        const byName = devices.filter((candidate) => candidate.name === requested);
+
+        if (!byId && byName.length > 1) {
+            throw new Error(`${byName.length} devices are named ${requested}; pass a device id`);
+        }
+
+        const device = byId ?? byName[0];
 
         if (!device) {
             throw new Error(`no device ${requested}; list them with: ${toolCommand("mobile devices")}`);
