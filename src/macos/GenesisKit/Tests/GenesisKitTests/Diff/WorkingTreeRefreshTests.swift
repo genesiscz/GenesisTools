@@ -98,18 +98,18 @@ final class WorkingTreeRefreshTests: XCTestCase {
         XCTAssertEqual(commands, ["status", "diff"])
     }
 
-    func testAStatOnlyIndexWriteAndAnotherRefChangeNothingWithoutAGitRun() throws {
+    func testAnIndexWriteFallsBackBecauseTheCountCannotProvePathIdentity() throws {
         try write("a.txt", "changed\n")
         let first = try load()
         try git(["status", "--porcelain"])
         try git(["branch", "other"])
         try git(["pack-refs", "--all"])
         let (answer, commands) = try refresh(first, batch(index: true, refs: true))
-        guard case .same = answer else { return XCTFail("\(answer)") }
-        XCTAssertEqual(commands, [], "HEAD came from packed-refs and the index header")
+        guard case .full = answer else { return XCTFail("\(answer)") }
+        XCTAssertEqual(commands, [])
     }
 
-    func testAnIgnoredPathIsRememberedAndCostsNothingTheSecondTime() throws {
+    func testAnIgnoredPathIsRememberedButRevalidatedTheSecondTime() throws {
         let first = try load()
         try write("dist/out.js", "built\n")
         let (answer, _) = try refresh(first, batch("dist/out.js"))
@@ -121,7 +121,38 @@ final class WorkingTreeRefreshTests: XCTestCase {
         try write("dist/out.js", "built again\n")
         let (again, commands) = try refresh(known, batch("dist/out.js"))
         guard case .same = again else { return XCTFail("\(again)") }
-        XCTAssertEqual(commands, [])
+        XCTAssertEqual(commands, ["status"])
+    }
+
+    func testEqualCountIndexReplacementRequiresAFullLoad() throws {
+        try write("new.txt", "new\n")
+        let first = try load()
+        try git(["rm", "--cached", "a.txt"])
+        try git(["add", "new.txt"])
+        guard case .full = try refresh(first, batch(index: true)).0 else { return XCTFail("equal-count replacement") }
+        XCTAssertTrue(try load().files.contains { $0.path == "a.txt" && $0.status == .deleted })
+    }
+
+    func testAnAddedFileEditCanFormARename() throws {
+        try git(["rm", "a.txt"])
+        try write("new.txt", "unrelated\n")
+        let first = try load()
+        try write("new.txt", "one\ntwo\n")
+        guard case .full = try refresh(first, batch("new.txt")).0 else { return XCTFail("rename formed") }
+        XCTAssertTrue(try load().files.contains { $0.status == .renamed })
+    }
+
+    func testRemovingAnExcludeMakesARememberedPathVisible() throws {
+        try write(".git/info/exclude", "output.txt\n")
+        try write("output.txt", "hidden\n")
+        let first = try load()
+        guard case .same(let marks) = try refresh(first, batch("output.txt")).0 else { return XCTFail("ignored") }
+        var known = first
+        known.marks = marks
+        try write(".git/info/exclude", "")
+        try write("output.txt", "visible\n")
+        guard case .updated(let next) = try refresh(known, batch("output.txt")).0 else { return XCTFail("newly visible") }
+        XCTAssertEqual(next.files, try load().files)
     }
 
     func testANewFileAndAFileEditedBackToHeadMatchAFullLoad() throws {
