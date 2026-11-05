@@ -170,7 +170,7 @@ test("exact transcript paths reach both provider catalogs before row hydration",
     const catalog = spyOn(historyCatalog, "catalogHistory").mockResolvedValue({
         metadata: [],
         reindexed: false,
-        report: { sessions: 0, messages: null, sources: 0, issues: [], parsed: 0, unchanged: 0, removed: 0 },
+        report: { issues: [], parsed: 0, unchanged: 0, removed: 0 },
     });
     try {
         expect(await listAgentSessionRows({ providers: ["claude", "codex"], filePaths, refresh: false })).toEqual([]);

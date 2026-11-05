@@ -200,12 +200,17 @@ export class HistorySyncRepository {
             sessions,
             sources: sources.count,
             messages: sources.known === sources.count ? sources.messages : null,
-            issues: this.db
-                .query<NativeSourceIssue, [string]>(
-                    "SELECT path,message FROM history_source_issues WHERE provider=? ORDER BY path"
-                )
-                .all(providerId),
+            issues: this.issues(providerId),
         };
+    }
+
+    /** The source issues on record, without the counts of `status`. */
+    issues(providerId: string): NativeSourceIssue[] {
+        return this.db
+            .query<NativeSourceIssue, [string]>(
+                "SELECT path,message FROM history_source_issues WHERE provider=? ORDER BY path"
+            )
+            .all(providerId);
     }
 }
 
