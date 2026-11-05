@@ -9,7 +9,7 @@ import { createBoxTable } from "@genesiscz/utils/table";
 import { Command } from "commander";
 import { ReplEngine } from "./lib/engine";
 import { coerceParam, listPresets, readPreset, removePreset, resolveParams, savePreset } from "./lib/presets";
-import { parseToolsetList, REPL_TOOLSET_IDS } from "./lib/toolsets";
+import { parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp } from "./lib/toolsets";
 
 handleReadmeFlag(import.meta.url);
 
@@ -283,5 +283,7 @@ preset
             process.exitCode = 1;
         }
     });
+
+program.addHelpText("after", toolsetCliHelp);
 
 await runTool(program, { tool: "node-repl" });

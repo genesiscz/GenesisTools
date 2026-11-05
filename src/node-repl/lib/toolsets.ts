@@ -2,6 +2,7 @@ import { isAbsolute } from "node:path";
 import { ComputerToolset } from "@app/control/lib/computer-use/toolset";
 import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { MoviesToolset } from "@app/recorder/lib/toolset";
+import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { ReplToolset, type ReplToolsetFactory } from "@genesiscz/utils/repl/toolset";
 import { EditorToolset } from "@genesiscz/utils/repl/toolsets/editor";
 import { RecorderToolset } from "@genesiscz/utils/repl/toolsets/recorder";
@@ -36,6 +37,10 @@ export const REPL_TOOLSETS = {
 
 export type ReplToolsetId = keyof typeof REPL_TOOLSETS;
 export const REPL_TOOLSET_IDS = Object.keys(REPL_TOOLSETS) as ReplToolsetId[];
+
+export function toolsetCliHelp(): string {
+    return `\nToolset APIs (JavaScript passed to run):\n\n${REPL_TOOLSET_IDS.map((id) => renderDocs(REPL_TOOLSETS[id]().api)).join("\n\n")}`;
+}
 
 export function isToolsetId(value: string): value is ReplToolsetId {
     return Object.hasOwn(REPL_TOOLSETS, value);

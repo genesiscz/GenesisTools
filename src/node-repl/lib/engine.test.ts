@@ -8,7 +8,14 @@ import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
 import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 import { jsDescription } from "../mcp/server";
 import { ReplEngine, resultMessage } from "./engine";
-import { createToolsets, parseToolsetList } from "./toolsets";
+import { createToolsets, parseToolsetList, toolsetCliHelp } from "./toolsets";
+
+it("CLI help renders registered descriptor methods and handles", () => {
+    const help = toolsetCliHelp();
+    expect(help).toContain("recorder.start(options?:");
+    expect(help).toContain("recording.stop(");
+    expect(help).toContain("editor.open(source: string)");
+});
 
 // The MCP server renders a js_add_node_module_dir result with this. A timeout or a worker exit
 // reports through `error` with an EMPTY `text`, so reading `text` alone answered those failures
