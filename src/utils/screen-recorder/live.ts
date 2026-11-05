@@ -503,8 +503,9 @@ export class RecorderClient extends RecorderControl {
         return this.call<StopAnswer>("stop", options, options.wait === false ? CALL_TIMEOUT_MS : STOP_TIMEOUT_MS);
     }
 
+    /** Waits for the same post-processing as a stop before the folder goes to the trash, so the same deadline. */
     override discard(): Promise<StopAnswer> {
-        return this.call("discard");
+        return this.call("discard", undefined, STOP_TIMEOUT_MS);
     }
 
     override restart(): Promise<{ state: RecorderState }> {
@@ -599,7 +600,7 @@ export class RecorderClient extends RecorderControl {
     call<T = unknown>(
         method: string,
         params?: unknown,
-        timeoutMs = method === "stop" &&
+        timeoutMs = (method === "stop" || method === "discard") &&
         !(typeof params === "object" && params !== null && "wait" in params && params.wait === false)
             ? STOP_TIMEOUT_MS
             : CALL_TIMEOUT_MS
