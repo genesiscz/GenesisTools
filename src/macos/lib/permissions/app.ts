@@ -721,6 +721,10 @@ async function buildAppSteps(
             // Only the app and what it links: a plain `swift build` compiles every target, unlinked parts included.
             "--product",
             GENESIS_APP_NAME,
+            // No SourceKit-LSP index in the app's scratch folder: nothing reads it (the editor indexes its own build).
+            // Measured 2026-11-05 on a cold build of every part: tree 1203 to 1138 MiB real (5.4%), an incremental
+            // build after touching one file 6.2 to 4.0 s, cold build 143 to 155 s (one run each, a busy machine).
+            "--disable-index-store",
             "--manifest-cache",
             "local",
             ...(fileListChanged ? ["--disable-build-manifest-caching"] : []),
