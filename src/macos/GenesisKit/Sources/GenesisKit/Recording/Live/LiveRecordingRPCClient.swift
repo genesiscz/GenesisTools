@@ -117,6 +117,8 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "genesis.live-recording.rpc")
     private let callbackQueue: DispatchQueue
+    /// How long one write may wait for a peer that stopped reading; past it the connection ends and its calls fail.
+    private let sendTimeout: TimeInterval
     private var descriptor: Int32 = -1
     private var source: DispatchSourceRead?
     private var buffer: [UInt8] = []
@@ -138,9 +140,10 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
     private var incoming: [String: Incoming] = [:]
     private var closed = false
 
-    public init(path: String, callbackQueue: DispatchQueue = .main) {
+    public init(path: String, callbackQueue: DispatchQueue = .main, sendTimeout: TimeInterval = 2) {
         self.path = path
         self.callbackQueue = callbackQueue
+        self.sendTimeout = sendTimeout
     }
 
     deinit {
@@ -165,6 +168,11 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
             guard socketFD >= 0 else { throw Failure.connect(errno: errno) }
             var noSigpipe: Int32 = 1
             setsockopt(socketFD, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
+            // The writes run on the queue that reads the answers and fires the deadlines: a peer that stops reading
+            // must not hold it, so a write gives up after `sendTimeout` (write returns -1 with EAGAIN).
+            let seconds = sendTimeout.rounded(.down)
+            var sendLimit = timeval(tv_sec: Int(seconds), tv_usec: Int32((sendTimeout - seconds) * 1_000_000))
+            setsockopt(socketFD, SOL_SOCKET, SO_SNDTIMEO, &sendLimit, socklen_t(MemoryLayout<timeval>.size))
             let result = withUnsafePointer(to: &address) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                     Darwin.connect(socketFD, $0, socklen_t(MemoryLayout<sockaddr_un>.size))

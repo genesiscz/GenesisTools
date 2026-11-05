@@ -226,6 +226,43 @@ final class LiveRecordingRPCClientTests: XCTestCase {
         client.close()
     }
 
+    func testAWriteToAPeerThatStoppedReadingGivesUpAndFailsTheCall() async throws {
+        let path = "/tmp/lr-\(UUID().uuidString.prefix(8)).sock"
+        unlink(path)
+        let listener = socket(AF_UNIX, SOCK_STREAM, 0)
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(path.utf8)
+        withUnsafeMutableBytes(of: &address.sun_path) { raw in
+            raw.copyBytes(from: bytes)
+            raw[bytes.count] = 0
+        }
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        XCTAssertEqual(bound, 0)
+        XCTAssertEqual(Darwin.listen(listener, 1), 0)
+        defer {
+            Darwin.close(listener)
+            unlink(path)
+        }
+
+        let client = LiveRecordingRPCClient(path: path, callbackQueue: DispatchQueue(label: "test.callbacks"), sendTimeout: 0.3)
+        try client.connect()
+        // Accepted and never read: the socket buffer fills and the write would wait for ever.
+        let accepted = Darwin.accept(listener, nil, nil)
+        defer { Darwin.close(accepted) }
+
+        let started = Date()
+        do {
+            _ = try await client.call("render.export", params: ["blob": String(repeating: "x", count: 8 * 1024 * 1024)], timeout: 30)
+            XCTFail("the call should fail when the write gives up")
+        } catch {
+            XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+        }
+        client.close()
+    }
+
     func testNotificationsArriveAfterSubscribe() throws {
         let client = try connected()
         let arrived = expectation(description: "frame notification")
