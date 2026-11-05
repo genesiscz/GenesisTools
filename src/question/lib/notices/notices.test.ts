@@ -43,6 +43,34 @@ function decision(over: Partial<DecisionRecord> = {}): DecisionRecord {
 }
 
 describe("notices", () => {
+    test("retracts late delivery after closure during dispatch", async () => {
+        const { deps, store, retracted } = fakeDeps();
+        let finish!: (value: boolean) => void;
+        let entered!: () => void;
+        const started = new Promise<void>((resolve) => {
+            entered = resolve;
+        });
+        deps.dispatch = () => {
+            entered();
+            return new Promise<boolean>((resolve) => {
+                finish = resolve;
+            });
+        };
+        const posting = postNotice(
+            {
+                event: { app: "question", message: "form", id: "qa-form-f1", only: ["system"] },
+                items: [noticeItem("form", "f1")],
+            },
+            deps
+        );
+        await started;
+        await closeNoticeItems([noticeItem("form", "f1")], deps);
+        finish(true);
+        expect(await posting).toBe(true);
+        expect(store.notices).toEqual({});
+        expect(retracted).toHaveLength(2);
+    });
+
     test("records every destination of the same notice", async () => {
         const { deps, store, retracted } = fakeDeps();
         const notice = { id: "qa-decision-d1", items: [noticeItem("decision", "d1")] };
