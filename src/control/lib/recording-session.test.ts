@@ -1154,7 +1154,7 @@ describe("a movie recording's live settings", () => {
     });
 });
 
-test("segment re-encoding maps every audio source", () => {
+it("segment re-encoding maps every audio source", () => {
     const argv = joinSegmentsArgv({
         inputs: ["/a.mp4", "/b.mp4"],
         width: 1280,
