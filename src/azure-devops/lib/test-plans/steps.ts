@@ -230,6 +230,23 @@ const ITEM = /^(\d+)[.)]\s+(.*)$/;
 const EXPECTED = /^(?:>\s*)?(?:[-*]\s+)?expected(?:\s+result)?\s*:\s*(.*)$/i;
 const SHARED = /^shared\s+steps\s+#?(\d+)\b/i;
 
+/** Prefix ambiguous action lines so the numbered-list parser treats them as literal text. */
+function escapeActionLine(line: string): string {
+    return line.replace(/^(\s*)(.*)$/, (whole, space: string, text: string) =>
+        text.startsWith("\\") || EXPECTED.test(text) || SHARED.test(text) || text === "_(empty)_"
+            ? `${space}\\${text}`
+            : whole
+    );
+}
+
+function unescapeActionLine(line: string): string {
+    return line.replace(/^(\s*)\\(.*)$/, (whole, space: string, text: string) =>
+        text.startsWith("\\") || EXPECTED.test(text) || SHARED.test(text) || text === "_(empty)_"
+            ? `${space}${text}`
+            : whole
+    );
+}
+
 /**
  * Steps written as a numbered markdown list. The lines of an item form its action, until a line
  * `Expected: …` starts the expected result. An item `Shared steps #123` calls a Shared Steps work item.
@@ -244,6 +261,7 @@ export function parseStepsMarkdown(markdown: string): TestStepInput[] {
     const steps: TestStepInput[] = [];
     let action: string[] | null = null;
     let expected: string[] | null = null;
+    let itemIndent = 0;
 
     const flush = (): void => {
         if (!action) {
@@ -258,7 +276,7 @@ export function parseStepsMarkdown(markdown: string): TestStepInput[] {
             steps.push({ sharedStepsId: Number(shared[1]) });
         } else {
             steps.push({
-                action: actionText === "_(empty)_" ? "" : actionText,
+                action: actionText === "_(empty)_" ? "" : action.map(unescapeActionLine).join("\n").trim(),
                 expected: (expected ?? []).join("\n").trim(),
             });
         }
@@ -273,6 +291,7 @@ export function parseStepsMarkdown(markdown: string): TestStepInput[] {
         if (item) {
             flush();
             action = [item[2]];
+            itemIndent = item[1].length + 2;
             continue;
         }
 
@@ -285,7 +304,8 @@ export function parseStepsMarkdown(markdown: string): TestStepInput[] {
             continue;
         }
 
-        const line = raw.replace(/^ {1,4}/, "");
+        const prefix = " ".repeat(itemIndent);
+        const line = raw.startsWith(prefix) ? raw.slice(prefix.length) : raw.replace(/^ {1,4}/, "");
         const expectedLine = EXPECTED.exec(line.trim());
 
         if (expectedLine && expected === null) {
@@ -383,7 +403,8 @@ export function renderStepsMarkdown(steps: readonly TestStep[]): string {
             return;
         }
 
-        lines.push(`${number} ${indent(step.action || "_(empty)_", pad)}`);
+        const action = step.action ? step.action.split("\n").map(escapeActionLine).join("\n") : "_(empty)_";
+        lines.push(`${number} ${indent(action, pad)}`);
 
         if (step.expected) {
             lines.push(`${pad}Expected: ${indent(step.expected, pad)}`);
