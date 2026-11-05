@@ -34,7 +34,7 @@
         "@dnd-kit/core": "^6.3.1",
         "@dnd-kit/sortable": "^10.0.0",
         "@dnd-kit/utilities": "^3.2.2",
-        "@genesiscz/darwinkit": "0.8.0",
+        "@genesiscz/darwinkit": "0.8.1",
         "@hlidac-shopu/lib": "^1.5.4",
         "@iarna/toml": "^2.2.5",
         "@inquirer/prompts": "^8.7.0",
@@ -710,7 +710,7 @@
 
     "@floating-ui/utils": ["@floating-ui/utils@0.2.11", "", {}, "sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg=="],
 
-    "@genesiscz/darwinkit": ["@genesiscz/darwinkit@0.8.0", "", { "dependencies": { "tar": "^7.0.0" } }, "sha512-gK2pYMzn43PlmaZGazR1KBdCIU7CM1CVMq/pTJBTpcuJ/YTg737HvUojSKdzgXDaeX7p+seLJFkEQewSKGG8hQ=="],
+    "@genesiscz/darwinkit": ["@genesiscz/darwinkit@0.8.1", "", { "dependencies": { "tar": "^7.0.0" } }, "sha512-Vi9gZn22S7nqX6TXSfQQy/pHKBfjwj8TirvdgJKoa1Iv978TMl1nKHjnhICpQG3EILDwDyLJvTFam6yxGzqB2g=="],
 
     "@genesiscz/utils": ["@genesiscz/utils@workspace:src/utils"],
 
