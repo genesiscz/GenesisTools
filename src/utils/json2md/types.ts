@@ -181,8 +181,6 @@ export interface ImageBlock {
     source: string;
     alt?: string;
     tooltip?: string;
-    /** Set false to keep a source already formatted for Markdown. */
-    escapeSource?: boolean;
 }
 
 export interface DetailsBlock {

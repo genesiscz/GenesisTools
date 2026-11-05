@@ -139,12 +139,7 @@ export function toYaml(data: Record<string, unknown>): string {
  * TOML front matter is delimited by `+++`, which is the Hugo convention. YAML and JSON both
  * use `---`, which is what every other static-site generator expects.
  */
-export function renderFrontmatter(data: Record<string, unknown> | string, format: FrontmatterFormat = "yaml"): string {
-    if (typeof data === "string") {
-        const delimiter = format === "toml" ? "+++" : "---";
-        return `${delimiter}\n${data}\n${delimiter}`;
-    }
-
+export function renderFrontmatter(data: Record<string, unknown>, format: FrontmatterFormat = "yaml"): string {
     if (Object.keys(data).length === 0) {
         return "";
     }

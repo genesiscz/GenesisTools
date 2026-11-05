@@ -46,7 +46,7 @@ function pictureLinks(notePath: string): string[] {
 }
 
 describe("the screen note of a meeting", () => {
-    it("keeps raw meeting IDs and the final blank line when no frames are shown", () => {
+    it("writes the head alone when no frame is shown, and quotes an id YAML would misread", () => {
         const result = screenNoteMarkdown({
             record: { ...record, id: "yes" },
             rows: [],
@@ -57,8 +57,8 @@ describe("the screen note of a meeting", () => {
         });
 
         expect(result.markdown).toBe(
-            "---\nmeeting: yes\n---\n\n# Screen OCR: Weekly sync\n\n" +
-                "Source: `ocr.jsonl` (0 frames; 0 shown here, a frame whose text did not change on its display is left out). Pictures: `frames/`. Times are local time and the transcript time.\n\n"
+            '---\nmeeting: "yes"\n---\n\n# Screen OCR: Weekly sync\n\n' +
+                "Source: `ocr.jsonl` (0 frames; 0 shown here, a frame whose text did not change on its display is left out). Pictures: `frames/`. Times are local time and the transcript time.\n"
         );
     });
 

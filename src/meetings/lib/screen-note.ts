@@ -139,14 +139,13 @@ export function screenNoteMarkdown({
         const text = row.text.trim() || "(no text)";
         blocks.push(
             { h2: `${clockTime(atMs)} · transcript ${formatClock(Math.max(0, (atMs - zeroMs) / 1000))} · ${display}` },
-            link ? { img: { source: link, escapeSource: false } } : { p: `_The picture ${row.file} is not on disk._` },
+            link ? { img: { source: link } } : { p: `_The picture ${row.file} is not on disk._` },
             { code: { language: "text", content: text } }
         );
     }
 
-    const frontmatter = renderFrontmatter(`meeting: ${record.id}`);
     const body = renderBlocks(blocks, { options: {}, converters: builtinConverters() });
-    return { markdown: `${frontmatter}\n\n${body}\n${shown.length === 0 ? "\n" : ""}`, shown: shown.length };
+    return { markdown: `${screenNoteFrontmatter(record.id)}\n\n${body}\n`, shown: shown.length };
 }
 
 /**
@@ -212,9 +211,14 @@ function shownRows(rows: OcrLine[]): OcrLine[] {
     });
 }
 
+/** The note's front matter; the writer and `isScreenNoteOf` share it, so a quoted id still matches. */
+function screenNoteFrontmatter(meetingId: string): string {
+    return renderFrontmatter({ meeting: meetingId });
+}
+
 function isScreenNoteOf(text: string, meetingId: string): boolean {
     const head = text.slice(0, 400);
-    return head.startsWith("---\n") && head.includes(`\nmeeting: ${meetingId}\n`) && head.includes("\n# Screen OCR: ");
+    return head.startsWith(`${screenNoteFrontmatter(meetingId)}\n`) && head.includes("\n# Screen OCR: ");
 }
 
 function isUnder(path: string, folder: string): boolean {

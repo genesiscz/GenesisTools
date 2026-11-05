@@ -148,8 +148,7 @@ function renderLink(block: LinkBlock): string {
 function renderImage(block: ImageBlock): string {
     const title = block.tooltip ? ` "${escapeLinkTitle(block.tooltip)}"` : "";
 
-    const source = block.escapeSource === false ? block.source : escapeUrl(block.source);
-    return `![${block.alt ?? ""}](${source}${title})`;
+    return `![${block.alt ?? ""}](${escapeUrl(block.source)}${title})`;
 }
 
 function renderBadges(badges: Badge[]): string {

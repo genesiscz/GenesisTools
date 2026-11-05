@@ -64,8 +64,8 @@ export {
 export interface DocumentOptions extends RenderOptions {
     /** An H1 placed above everything except the front matter. */
     title?: string;
-    /** Metadata to serialize, or front-matter text to preserve as supplied. */
-    frontmatter?: Record<string, unknown> | string;
+    /** Metadata rendered as a front-matter block. */
+    frontmatter?: Record<string, unknown>;
     frontmatterFormat?: FrontmatterFormat;
     /** A provenance header: when, from what commit, covering what, and how to regenerate. */
     provenance?: ProvenanceInput;
