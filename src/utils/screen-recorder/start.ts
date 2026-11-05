@@ -354,6 +354,19 @@ export class LibraryRecording extends RecorderControl {
     private async run(): Promise<void> {
         const maxMs = (this.options.maxDurationSec ?? 600) * 1000;
         const pieceSec = Math.min(this.options.pieceSec ?? 60, MAX_CAPTURE_SECONDS);
+
+        try {
+            await this.capturePieces({ maxMs, pieceSec });
+        } catch (error) {
+            // Anything a piece throws ends the recording; the finish still keeps what it recorded.
+            log.error({ error, id: this.id }, "the library recording stopped on an error");
+            this.warn(`the recording stopped on an error: ${error instanceof Error ? error.message : String(error)}`);
+        }
+
+        this.stopRequested = true;
+    }
+
+    private async capturePieces({ maxMs, pieceSec }: { maxMs: number; pieceSec: number }): Promise<void> {
         let failures = 0;
 
         while (!this.stopRequested && Date.now() - this.startedAt.getTime() < maxMs) {
@@ -381,8 +394,6 @@ export class LibraryRecording extends RecorderControl {
                 break;
             }
         }
-
-        this.stopRequested = true;
     }
 
     private targetOf(displayId: number): PieceTarget {

@@ -1194,6 +1194,23 @@ describe("characterization: what a library recording asks its recorder for", () 
         await recording.stop();
     });
 
+    test("an error in the capture loop ends the library recording by itself, with the finish and the reason in its notes", async () => {
+        const recorder = new ScriptRecorder();
+        const recording = await start(recorder, { displays: "main" });
+        await recorder.waitFor(1);
+        // The next capture's folder cannot be made: a file holds its name.
+        writeFileSync(join(recording.folder, ".pieces", "d1-2"), "taken");
+        recorder.finishAll();
+
+        expect(await withTimeout(recording.finished, 3_000)).toMatchObject({
+            state: "stopped",
+            outcome: "done",
+            notes: [expect.stringContaining("the recording stopped on an error")],
+        });
+        expect(recorder.requests).toHaveLength(1);
+        expect(readRecordingManifest(recording.folder)?.frames).toHaveLength(1);
+    });
+
     test("a live switch answers a missing display as unknownDisplay, and a switch whose capture ended meanwhile restarts instead of reviving it", async () => {
         const recorder = new ScriptRecorder();
         const recording = await start(recorder, { displays: "main" });
