@@ -59,7 +59,14 @@ const NEEDS = {
 
 function authFlags(key: Partial<AscApiKey> | undefined): string[] {
     return key?.path && key.id && key.issuer
-        ? ["-authenticationKeyPath", key.path, "-authenticationKeyID", key.id, "-authenticationKeyIssuerID", key.issuer]
+        ? [
+              "-authenticationKeyPath",
+              resolve(key.path),
+              "-authenticationKeyID",
+              key.id,
+              "-authenticationKeyIssuerID",
+              key.issuer,
+          ]
         : [];
 }
 
