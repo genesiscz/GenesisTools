@@ -291,8 +291,17 @@ describe("hub server", () => {
         });
         expect(handle).not.toBeNull();
 
-        expect(await stopped.promise).toBe("memory");
-        expect(released).toBe(1);
+        if (handle) {
+            servers.push(handle);
+        }
+        const deadline = setTimeout(() => stopped.reject(new Error("server did not stop within 5s")), 5000);
+        try {
+            expect(await stopped.promise).toBe("memory");
+            expect(released).toBe(1);
+        } finally {
+            clearTimeout(deadline);
+            await handle?.drain("test cleanup");
+        }
     });
 });
 
