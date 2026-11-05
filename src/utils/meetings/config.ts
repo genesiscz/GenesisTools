@@ -543,6 +543,12 @@ export class MeetingsConfigStore {
         if (Object.keys(raw).length > 0 && migrateMeetingsConfig(structuredClone(raw))) {
             raw = await this.storage.atomicConfigUpdate<Record<string, unknown>>((current) => {
                 if (migrateMeetingsConfig(current)) {
+                    const parsed = meetingsConfigSchema.safeParse(current);
+
+                    if (!parsed.success) {
+                        throw new Error(formatIssues(parsed.error, this.path));
+                    }
+
                     log.debug({ path: this.path, version: MEETINGS_CONFIG_VERSION }, "meetings config migrated");
                 }
             });

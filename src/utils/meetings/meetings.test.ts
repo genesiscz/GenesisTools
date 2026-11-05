@@ -30,6 +30,15 @@ function store(): MeetingsConfigStore {
 }
 
 describe("meetings config", () => {
+    test("invalid legacy migration preserves the original bytes", async () => {
+        const config = store();
+        mkdirSync(dirname(config.path), { recursive: true });
+        const original = '{"version":1,"global":{"playback":{"listen":{"budget":-1}}}}\n';
+        writeFileSync(config.path, original);
+        await expect(config.read()).rejects.toThrow();
+        expect(fs.readFileSync(config.path, "utf8")).toBe(original);
+    });
+
     test("an empty file is every default, with autoRecord off", () => {
         const config = meetingsConfigSchema.parse({});
 
