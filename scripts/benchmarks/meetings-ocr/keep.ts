@@ -19,7 +19,7 @@
  * Usage: bun scripts/benchmarks/meetings-ocr/keep.ts [--runs 3] [--meeting <folder>] [--scratch <dir>] [--json]
  */
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -152,6 +152,8 @@ async function main(): Promise<void> {
     const pid = await helperPid();
     const arms: Record<"inline" | "shared", Sample[]> = { inline: [], shared: [] };
     let mismatches = 0;
+    // A loaded machine changes the timings and, measured 2026-11-05 at load 178, the OCR text too: print the load.
+    const loadBefore = Math.round(loadavg()[0] * 10) / 10;
 
     for (let run = 0; run < runs; run++) {
         const inlineDir = mkdtempSync(join(scratch, "inline-"));
@@ -197,7 +199,13 @@ async function main(): Promise<void> {
             },
         ])
     );
-    const result = { runs, frames: pngs.length, mismatches, ...summary };
+    const result = {
+        runs,
+        frames: pngs.length,
+        mismatches,
+        load: { before: loadBefore, after: Math.round(loadavg()[0] * 10) / 10 },
+        ...summary,
+    };
 
     if (process.argv.includes("--json")) {
         out.result(result);
