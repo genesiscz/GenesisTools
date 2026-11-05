@@ -335,7 +335,18 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
 
         expect(plan({ psStdout: listing, stalePids: ["301", "302", "303"], frontPid: 999 })).toEqual([
             ["open", "-n", "-g", BUNDLE, "--args", "--link-relay"],
-            ["open", "-n", "-g", BUNDLE, "--args", "--widget", "--ensure-running", "--no-activate"],
+            [
+                "open",
+                "-n",
+                "-g",
+                "--env",
+                "HOME=/Users/alice",
+                BUNDLE,
+                "--args",
+                "--widget",
+                "--ensure-running",
+                "--no-activate",
+            ],
             [
                 "open",
                 "-n",
@@ -358,7 +369,7 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
 
         expect(plan({ psStdout: listing, stalePids: ["311"] })).toEqual([
             ["open", "-n", "-g", BUNDLE, "--args", "--link-relay"],
-            ["open", "-n", "-g", BUNDLE, "--args", "--features", "--no-activate"],
+            ["open", "-n", "-g", "--env", "HOME=/Users/alice", BUNDLE, "--args", "--features", "--no-activate"],
         ]);
     });
 
@@ -388,6 +399,8 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
         expect(plan({ psStdout: listing, stalePids: ["351"], frontPid: 351 }).at(-1)).toEqual([
             "open",
             "-n",
+            "--env",
+            "HOME=/Users/alice",
             BUNDLE,
             "--args",
             "--widget",
