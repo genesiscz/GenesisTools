@@ -2865,7 +2865,7 @@ test("characterization (stage 5): a live recorder's claim is refused and left as
     expect(existsSync(files.state)).toBe(false);
 });
 
-test("characterization (pid claim): a recycled pid's claim is taken over, an unreadable one is refused and kept", async () => {
+test("a recycled pid's claim and an unreadable pid file are both taken over, as the daemon and chrome-devtools do", async () => {
     const store = new MeetingStore(new Storage("recorder-claim-kinds"));
     const record = await store.create(
         { title: "Claim fixture", start: meeting.start, createdBy: "new" },
@@ -2883,8 +2883,9 @@ test("characterization (pid claim): a recycled pid's claim is taken over, an unr
 
     writeFileSync(files.pid, "not a pid");
 
+    // Taken over, then released when the blocked frames directory ends the start.
     await expect(runRecorder({ store, meetingId: record.id, capture })).rejects.toThrow();
-    expect(readFileSync(files.pid, "utf8")).toBe("not a pid");
+    expect(existsSync(files.pid)).toBe(false);
 });
 
 test("a stale recorder claim is recovered and an initialization failure releases it", async () => {

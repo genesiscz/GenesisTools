@@ -20,12 +20,13 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 const { log } = logger.scoped("meetings-recorder");
 
 /**
- * Claims the store's one recorder. Only a claim whose owner is dead (or a reused pid of another program) is taken
- * over; a live recorder's claim, this process's own and an unreadable file are left as they are, and the start fails.
+ * Claims the store's one recorder. A claim whose owner is dead, a reused pid of another program and an unreadable
+ * (empty or corrupt) file are taken over, as the daemon and chrome-devtools do; a live recorder's claim and this
+ * process's own are left as they are, and the start fails, so one process never runs two meeting recordings.
  */
 export async function claimRecorderPid(path: string): Promise<{ release: () => void }> {
     const claim = await claimPidFile(path, {
-        reclaimable: (state) => state.status === "dead" || state.status === "foreign",
+        reclaimable: (state) => state.status === "dead" || state.status === "foreign" || state.status === "none",
     });
 
     if (claim.status !== "claimed") {
