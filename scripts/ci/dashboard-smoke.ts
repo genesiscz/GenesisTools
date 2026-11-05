@@ -57,6 +57,7 @@ export const SMOKE_DASHBOARDS: SmokeDashboard[] = [
             "src/claude/lib/",
             "src/daemon/lib/",
             "src/handoff/",
+            "src/hub/lib/",
             "src/macos/lib/swap/",
             "src/question/",
         ],
