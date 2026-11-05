@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ScratchTree } from "./layer-cut";
+import { ScratchTree, testFolders } from "./layer-cut";
 import { expect, test } from "bun:test";
 import { loadTable } from "./layer-cut-tables/load";
 import unified from "./layer-cut-tables/unified";
@@ -17,6 +17,13 @@ test("--table selects a complete alternate cut without changing the default", as
     expect(table.defaults.base).toBe("origin/feat/2026-11-03-ai-usage-6-review-followups");
     expect(table.refPrefix).toBe("refs/heads/cut/722/");
     expect(await loadTable([])).toBe(unified);
+});
+
+test("test discovery uses the checked tree even when the source no longer has its tests", () => {
+    const entry = { mode: "100644", sha: "fixture" };
+    const checked = new Map([["src/widget/index.ts", entry], ["src/widget/index.test.ts", entry]]);
+    expect(testFolders(["src/widget/index.ts"], checked)).toEqual(["src/widget"]);
+    expect(testFolders(["src/widget/index.ts"], new Map())).toEqual([]);
 });
 
 test("--table requires a module path", async () => {

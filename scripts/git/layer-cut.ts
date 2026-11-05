@@ -779,7 +779,7 @@ export class ScratchTree {
 }
 
 /** The repo folders whose tests cover a branch's files: `src/<tool>`, `src/utils/<pkg>`, or the file's own folder. */
-function testFolders(files: string[], tree: Map<string, TreeEntry>): string[] {
+export function testFolders(files: string[], tree: Map<string, TreeEntry>): string[] {
     const folders = new Set<string>();
     for (const file of files) {
         if (!tree.has(file) || !/\.(ts|tsx)$/.test(file)) {
@@ -1273,7 +1273,6 @@ async function main(): Promise<number> {
                 commit: commitsBuilt.get(branch.name) ?? null,
                 files: filesOf(branch.name),
             })),
-            unifiedTree,
         });
         const testResults = checks.tests;
         const swiftResults = checks.swift;
@@ -1318,7 +1317,6 @@ async function runChecks(params: {
     logDir: string;
     baseSha: string;
     branches: { branch: CutBranch; commit: string | null; files: string[] }[];
-    unifiedTree: Map<string, TreeEntry>;
 }): Promise<Checks> {
     const { options, scratchTree, logDir } = params;
     const checks: Checks = { tests: new Map(), swift: new Map() };
@@ -1340,7 +1338,7 @@ async function runChecks(params: {
         }
 
         await scratchTree.checkout(commit);
-        const folders = testFolders(files, params.unifiedTree);
+        const folders = testFolders(files, readTree(commit));
         const log = join(logDir, `tests-${position + 1}.log`);
         if (options.tests && folders.length === 0) {
             // `bun scripts/test.ts` with no path runs the whole suite, which this must never start.
@@ -1426,7 +1424,7 @@ async function checksOnly(options: Options): Promise<number> {
         logDir,
         baseSha: revParse(options.base),
         branches,
-        unifiedTree: readTree(revParse(options.unified)),
+
     });
     const output = {
         tests: Object.fromEntries(checks.tests),
