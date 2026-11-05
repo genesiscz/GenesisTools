@@ -25,8 +25,8 @@ describe("the questions feature", () => {
             join(agents, "hooks.json"),
             SafeJSON.stringify({ questions: { harnesses: { claude: true }, notify: false } })
         );
-        const run = (event: string, id: string, sessionId?: string) =>
-            spawnSync(process.execPath, [join(import.meta.dir, "../../bin/hook-question.ts")], {
+        const run = (event: string, id: string, sessionId?: string) => {
+            const result = spawnSync(process.execPath, [join(import.meta.dir, "../../bin/hook-question.ts")], {
                 input: SafeJSON.stringify({
                     hook_event_name: event,
                     session_id: sessionId,
@@ -36,7 +36,13 @@ describe("the questions feature", () => {
                 }),
                 env: { GENESIS_TOOLS_HOME: home, CLAUDE_CODE_SESSION_ID: "inherited", HOME: home },
                 encoding: "utf8",
+                timeout: 10_000,
             });
+            if (result.error) {
+                throw result.error;
+            }
+            return result;
+        };
         const root = join(agents, "dialogs");
         for (const [id, sessionId] of [["q1", undefined], ["q2", ""]] as const) {
             expect(run("PreToolUse", id, sessionId).status).toBe(0);
