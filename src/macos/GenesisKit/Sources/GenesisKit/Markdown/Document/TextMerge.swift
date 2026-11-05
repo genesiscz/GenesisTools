@@ -147,6 +147,9 @@ enum TextMerge {
         // trace[d] is v[k] for k in -d...d after round d, at index k + d.
         var trace: [[Int]] = []
         search: for d in 0...(n + m) {
+            // The retained trace contains (d + 1)^2 integers. Bound both memory and search time;
+            // a coarse replacement remains a valid edit script for a heavily rewritten document.
+            if d >= 1024 { return (Set(0..<n), Set(0..<m)) }
             for k in stride(from: -d, through: d, by: 2) {
                 var x = k == -d || (k != d && v[mid + k - 1] < v[mid + k + 1]) ? v[mid + k + 1] : v[mid + k - 1] + 1
                 var y = x - k
