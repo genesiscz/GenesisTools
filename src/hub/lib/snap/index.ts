@@ -12,8 +12,32 @@ import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 export interface SnapDeps {
     uploadRoot?: string;
+    sourceHome?: (input: { provider: string; sessionId: string }) => Promise<string | null>;
     stage?: (input: { input: string; name?: string }) => Promise<{ id: string }>;
     attach?: (input: { id: string; key: string }) => Promise<{ added: boolean }>;
+}
+
+async function liveSourceHome(input: { provider: string; sessionId: string }): Promise<string | null> {
+    const { openHistoryReadOnly } = await import("@genesiscz/utils/agent-sessions/database");
+    const { HistoryRepository } = await import("@genesiscz/utils/agent-sessions/repository");
+    const { resolveProviderAlias } = await import("@genesiscz/utils/ai/providers/aliases");
+    const db = openHistoryReadOnly();
+
+    if (!db) {
+        return null;
+    }
+
+    try {
+        const matches = new HistoryRepository(db).listMetadata({
+            providerId: resolveProviderAlias(input.provider),
+            sessionId: input.sessionId,
+            withUserText: false,
+            limit: 2,
+        });
+        return matches.length === 1 ? (matches[0].sourceHome ?? "") : null;
+    } finally {
+        db.close();
+    }
 }
 
 async function liveStage(input: { input: string; name?: string }): Promise<{ id: string }> {
@@ -46,12 +70,30 @@ export async function snapToSession(input: SnapInput, deps: SnapDeps = {}): Prom
         return refused(`Unknown provider ${input.provider}.`);
     }
 
+    let sourceHome = input.sourceHome;
+
+    if (sourceHome === undefined) {
+        try {
+            sourceHome =
+                (await (deps.sourceHome ?? liveSourceHome)({ provider, sessionId: input.sessionId })) ?? undefined;
+        } catch (error) {
+            logger.warn({ error, provider, sessionId: input.sessionId }, "snap: source home lookup failed");
+        }
+
+        if (sourceHome === undefined) {
+            logger.warn(
+                { provider, sessionId: input.sessionId },
+                "snap: no unique indexed session; using an empty source home"
+            );
+        }
+    }
+
     const { widgetSessionKey } = await import("../widget/types");
     const key = widgetSessionKey({
         hostId: "local",
         provider,
         sessionId: input.sessionId,
-        sourceHome: input.sourceHome ?? "",
+        sourceHome: sourceHome ?? "",
         cwd: "",
     });
 
