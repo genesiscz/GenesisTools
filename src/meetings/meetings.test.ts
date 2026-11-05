@@ -1205,8 +1205,10 @@ describe("questions (R2.3)", () => {
     });
 
     test("a sure range, a mixed channel alone, or a range of fillers is not asked", () => {
-        const sure = withItems([{ ...range, confidence: 0.7 }]).items[0]!;
+        const sure = withItems([{ ...range, confidence: 0.7, evidence: { listen: false } }]).items[0]!;
         expect(questionFor(sure, context())).toBeUndefined();
+        const mixed = withItems([{ ...range, confidence: 0.8, evidence: { listen: true, endSec: 146 } }]).items[0]!;
+        expect(questionFor(mixed, context())).toMatchObject({ about: "speaker", decides: ["i1"] });
         const fillers = withItems([{ ...range, fromSec: 140, toSec: 140, confidence: 0.3 }]).items[0]!;
         expect(questionFor(fillers, context())).toBeUndefined();
     });
