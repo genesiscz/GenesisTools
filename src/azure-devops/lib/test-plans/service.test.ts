@@ -171,6 +171,24 @@ describe("listPlans", () => {
 });
 
 describe("writes", () => {
+    test("case updates test the work item type before modifying it", async () => {
+        const transport = new FakeTransport([
+            [
+                "PATCH /wit/workitems/42",
+                (request) => {
+                    expect(request.body).toContainEqual({
+                        op: "test",
+                        path: "/fields/System.WorkItemType",
+                        value: "Test Case",
+                    });
+                    throw new Error("type test failed for Bug");
+                },
+            ],
+        ]);
+        await expect(new TestPlans(transport, CONFIG).updateTestCase(42, { title: "New" }, true)).rejects.toThrow(
+            "type test failed"
+        );
+    });
     test("a dry run sends no write, and names what it would send", async () => {
         const transport = new FakeTransport([["GET /testplan/plans/10", () => PLAN]]);
         const plans = new TestPlans(transport, CONFIG);
