@@ -31,7 +31,7 @@ const asks = event === "pretooluse" || event === "notification";
 
 try {
     const { hookCaller } = await import("../lib/hooks/caller");
-    const caller = hookCaller(payload, env.getProcessEnv());
+    const caller = hookCaller(payload, env.getProcessEnv(), asks ? { facets: ["host"] } : undefined);
     const sessionId = caller.sessionId ?? undefined;
 
     if (!asks && !hasOpenDialogRecords(payload.harness, sessionId)) {
