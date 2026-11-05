@@ -20,7 +20,10 @@ interface RunOptions extends ProjectOptions {
 
 function runOptions(command: Command): Command {
     let withFlags = withConfig(command)
-        .option("--env <pairs...>", "KEY=VALUE variables for every spec process, e.g. a test server's URL")
+        .option("--env <pair>", "repeat KEY=VALUE for each variable", (value: string, previous: string[] = []) => [
+            ...previous,
+            value,
+        ])
         .option("--out <dir>", "the run folder (default ~/.genesis-tools/e2e/runs/<project>/<time>)")
         .option("--stream", "print the runner's output while it runs")
         .option("--json", "print the summary as JSON");
