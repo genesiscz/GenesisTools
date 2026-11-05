@@ -6,6 +6,7 @@ import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import { awaitStart, startGatePath, sweepStartGates } from "@genesiscz/utils/process/start-gate";
 import { checkProject, type EditFacts, fixOps } from "@genesiscz/utils/recording-editor/check";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
@@ -1951,7 +1952,20 @@ async function record(options: z.infer<typeof recordSchema>, ctx?: ToolsetContex
         graceMs: START_GRACE_MS,
         pollMs: POLL_MS,
         stop: (pid) => {
+            // The gate confirmed this pid 30 s ago; read it again, so a recorder that ended (and released its gate)
+            // or a recycled pid is never signalled.
+            const state = inspectPidFile(gate);
+
+            if (state.status !== "live" || state.pid !== pid) {
+                log.info(
+                    { pid, gate, state: state.status },
+                    "the recorder left its start gate before the stop; not signalling"
+                );
+                return;
+            }
+
             log.warn({ pid, gate }, "the recorder passed its start but never recorded; stopping it");
+            // pid-verified: inspectPidFile just above confirmed the gate's writer is still this live process
             process.kill(pid, "SIGTERM");
         },
     });
