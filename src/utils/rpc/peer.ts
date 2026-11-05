@@ -67,6 +67,7 @@ const progressParams = z.object({
 /** Splits a byte stream into lines; a partial line waits for its newline. */
 export class LineBuffer {
     private pending = "";
+    private pendingBytes = 0;
     private readonly decoder = new TextDecoder();
 
     push(chunk: Uint8Array): string[] {
@@ -74,8 +75,11 @@ export class LineBuffer {
         const lines: string[] = [];
 
         for (const [index, part] of parts.entries()) {
-            if (Buffer.byteLength(this.pending) + Buffer.byteLength(part) > 8 * 1024 * 1024) {
+            this.pendingBytes += Buffer.byteLength(part);
+
+            if (this.pendingBytes > 8 * 1024 * 1024) {
                 this.pending = "";
+                this.pendingBytes = 0;
                 throw new Error("RPC frame exceeds 8 MiB");
             }
 
@@ -84,6 +88,7 @@ export class LineBuffer {
             if (index < parts.length - 1) {
                 const line = this.pending.replace(/\r$/, "");
                 this.pending = "";
+                this.pendingBytes = 0;
 
                 if (line.trim()) {
                     lines.push(line);
