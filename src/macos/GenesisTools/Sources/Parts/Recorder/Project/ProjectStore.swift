@@ -70,13 +70,35 @@ final class ProjectStore {
         let folder = video.deletingLastPathComponent()
         let cursor = folder.appendingPathComponent("cursor.jsonl")
         let isRecording = FileManager.default.fileExists(atPath: folder.appendingPathComponent("recording.json").path)
-        return EditProject.whole(
+        var project = EditProject.whole(
             video: video.path,
             durationUs: Int64((duration.seconds * 1_000_000).rounded()),
             width: Int(size.width), height: Int(size.height),
             cursor: FileManager.default.fileExists(atPath: cursor.path) ? cursor.path : nil,
             recording: isRecording ? folder.lastPathComponent : nil
         )
+        if let data = try? Data(contentsOf: folder.appendingPathComponent("camera.json")),
+           let sidecar = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let file = sidecar["file"] as? String {
+            var camera = EditProject.Camera(file: file)
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let started = sidecar["startedAt"] as? String, let screen = sidecar["screenStartedAt"] as? String,
+               let a = formatter.date(from: started), let b = formatter.date(from: screen) {
+                camera.offsetMs = max(-600_000, min(600_000, Int((a.timeIntervalSince(b) * 1000).rounded())))
+            }
+            if let placement = sidecar["placement"] as? [String: Any] {
+                if let x = placement["x"] as? Double, let y = placement["y"] as? Double {
+                    camera.corner = .custom
+                    camera.x = x
+                    camera.y = y
+                }
+                if let size = placement["size"] as? Double { camera.size = size }
+                if let shape = placement["shape"] as? String, let value = EditProject.CameraShape(rawValue: shape) { camera.shape = value }
+            }
+            project.camera = camera
+        }
+        return project
     }
 
     /// A revision this window's own change wrote through `tools` (offline): its file event is not an outside edit.
