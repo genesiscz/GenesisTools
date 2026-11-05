@@ -211,7 +211,7 @@ export type PinAuthSource = "launch-env" | "argv" | "oauth-env" | "default-named
 
 /**
  * The app that hosted the session (T3 Code), and its id for it (the T3 thread). The hook records it when the
- * agent's env carries a host marker (`AGENT_HOST_MARKERS` in `src/utils/ai/active-processes.ts`).
+ * agent's env carries a host marker (`AGENT_HOST_MARKERS` in `src/utils/ai/active-processes.ts`, each host's rows in its own folder).
  */
 export interface PinHost {
     kind: string;

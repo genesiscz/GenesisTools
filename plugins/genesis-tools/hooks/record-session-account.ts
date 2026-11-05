@@ -51,8 +51,9 @@ interface PinHost {
 /**
  * The apps that host agent sessions, each recognised by the variable it sets on every agent it starts.
  *
- * 🛑 A copy: the source is `AGENT_HOST_MARKERS` in `src/utils/ai/active-processes.ts`, which this standalone
- * hook cannot import. A new host is one row in BOTH tables; `record-hook.test.ts` fails while they differ.
+ * 🛑 A copy: the source is `T3_HOST_MARKERS` in `src/utils/t3code/host-markers.ts` (spread into `AGENT_HOST_MARKERS` in
+ * `src/utils/ai/active-processes.ts`), which this standalone hook cannot
+ * import. A new host is one row in BOTH tables; `record-hook.test.ts` fails while they differ.
  */
 export const AGENT_HOST_MARKERS: readonly { kind: string; envKey: string; carriesId: boolean }[] = [
     { kind: "t3", envKey: "T3CODE_THREAD_ID", carriesId: true },
