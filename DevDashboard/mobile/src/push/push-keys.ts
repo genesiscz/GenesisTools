@@ -15,6 +15,8 @@ interface PushIdentity {
     secretKey: string;
     /** The Mac's push public key, from the last registration. */
     macPublicKey?: string;
+    /** Verification keys are owned by the saved connection that registered them. */
+    macPublicKeys?: Record<string, string>;
 }
 
 const ITEM = "dd_push_identity";
@@ -48,31 +50,32 @@ export function pushIdentity(): Promise<PushIdentity> {
     return identity;
 }
 
-export async function rememberMacKey(macPublicKey: string): Promise<void> {
-    const current = await pushIdentity();
+let keyWrites: Promise<void> = Promise.resolve();
 
-    if (current.macPublicKey === macPublicKey) {
-        return;
-    }
-
-    const next = { ...current, macPublicKey };
-    await SecureStore.setItemAsync(ITEM, SafeJSON.stringify(next), ACCESS);
-    identity = Promise.resolve(next);
+export function rememberMacKey(macPublicKey: string, connectionId: string): Promise<void> {
+    const write = async () => {
+        const current = await pushIdentity();
+        const next = { ...current, macPublicKeys: { ...current.macPublicKeys, [connectionId]: macPublicKey } };
+        await SecureStore.setItemAsync(ITEM, SafeJSON.stringify(next), ACCESS);
+        identity = Promise.resolve(next);
+    };
+    keyWrites = keyWrites.then(write, write);
+    return keyWrites;
 }
 
-/** Opens the sealed answer tokens of one push; null when the box was not sealed to this install by the paired Mac. */
-export async function openSealed(sealed: SealedBox): Promise<PushSecrets | null> {
-    const { secretKey, macPublicKey } = await pushIdentity();
+export type OpenedPush = PushSecrets & { connectionId: string };
 
-    if (!macPublicKey) {
-        return null;
+/** An unowned legacy key is never guessed to belong to the active connection. */
+export async function openSealed(sealed: SealedBox): Promise<OpenedPush | null> {
+    const { secretKey, macPublicKeys } = await pushIdentity();
+    for (const [connectionId, macPublicKey] of Object.entries(macPublicKeys ?? {})) {
+        const opened = nacl.box.open(
+            naclUtil.decodeBase64(sealed.box), naclUtil.decodeBase64(sealed.nonce),
+            naclUtil.decodeBase64(macPublicKey), naclUtil.decodeBase64(secretKey)
+        );
+        if (opened) {
+            return { ...(SafeJSON.parse(naclUtil.encodeUTF8(opened), { strict: true }) as PushSecrets), connectionId };
+        }
     }
-
-    const opened = nacl.box.open(
-        naclUtil.decodeBase64(sealed.box),
-        naclUtil.decodeBase64(sealed.nonce),
-        naclUtil.decodeBase64(macPublicKey),
-        naclUtil.decodeBase64(secretKey)
-    );
-    return opened ? (SafeJSON.parse(naclUtil.encodeUTF8(opened), { strict: true }) as PushSecrets) : null;
+    return null;
 }

@@ -37,7 +37,7 @@ export default function RootLayout() {
             return;
         }
 
-        void registerForPush(transport.client())
+        void registerForPush()
             .then((reason) => reason && console.warn(`[push] not registered: ${reason}`))
             .catch((err: unknown) => console.warn("[push] register", err));
     }, [transport]);
