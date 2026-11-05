@@ -5,7 +5,10 @@ import * as fs from "node:fs/promises";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
+import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import * as videoProbe from "@genesiscz/utils/video/probe";
+import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
 import * as captureRunner from "./capture-runner";
 import { nativeSegmentRecorder } from "./recording-native";
 import {
@@ -19,12 +22,48 @@ import {
     type SegmentRecorder,
     type SegmentResult,
 } from "./recording-session";
+import { applyRecordingCommand, SessionRecorderControl } from "./recording-session-control";
 import {
     defaultRecordingTarget,
     groupRecordingApps,
     parseRecordingWindows,
     type RecordingTarget,
 } from "./recording-targets";
+
+it.skipIf(process.platform !== "darwin")(
+    "the benchmark scene exceeds its one percent threshold on a 4K display",
+    async () => {
+        const proc = Bun.spawn(
+            ["swift", "src/control/scripts/recorder-benchmark-scene.swift", "--geometry", "3840", "2160"],
+            { stdout: "pipe", stderr: "pipe", env: process.env }
+        );
+        const [output, error, code] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+        expect(error).toBe("");
+        expect(code).toBe(0);
+        const [width, height] = output.trim().split(" ").map(Number);
+        expect((width! * height!) / (3840 * 2160)).toBeGreaterThan(0.01);
+    },
+    60_000
+);
+
+it("rejects benchmark durations beyond the backend cap and invalid plans", () => {
+    for (const seconds of [0, -1, NaN, Infinity, 181]) {
+        expect(() => validateBenchmark(1, seconds)).toThrow();
+    }
+    expect(() => validateBenchmark(0, 60)).toThrow();
+    expect(() => validateBenchmark(1, 60, "unknown")).toThrow();
+    expect(() => validateBenchmark(1, 180, "native")).not.toThrow();
+});
+
+it("reports fulfilled captures that terminated early as benchmark errors", () => {
+    expect(captureDiagnostics({ startedAtMs: 0, frames: [], endedEarly: "stream-error" })).toEqual([
+        "capture ended early: stream-error",
+    ]);
+});
 
 const finder: RecordingTarget = { kind: "app", app: "4242", name: "Finder" };
 const display: RecordingTarget = { kind: "display", screenIndex: 0, name: "Built-in" };
@@ -168,6 +207,74 @@ describe("RecordingSession", () => {
         expect(await recording.finished).toBe("done");
         expect(joined).toHaveLength(0);
         expect(events.find((event) => event.event === "done")).toMatchObject({ segments: 1 });
+    });
+
+    it("as a RecorderControl over the socket: pause, a refused second pause, a display switch, stop as a join job", async () => {
+        const { recorder, runs } = fakeRecorder();
+        let control: SessionRecorderControl | undefined;
+        const recording = new RecordingSession({
+            target: finder,
+            directory: join(root, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            join: async ({ segments, output }) => {
+                joined.push(segments);
+                await writeFile(output, "joined");
+                return { durationMs: 1000 };
+            },
+            emit: (event) => {
+                events.push(event);
+                control?.observe(event);
+            },
+            now: () => clock,
+            tickMs: 0,
+            slowStartMs: 0,
+        });
+        const progress: string[] = [];
+        control = new SessionRecorderControl(recording, {
+            target: finder,
+            onProgress: (event) => progress.push(`${event.step} ${event.done}/${event.total}`),
+            screens: async () => ({
+                ok: true,
+                screens: [
+                    {
+                        displayID: 7,
+                        index: 0,
+                        isPrimary: true,
+                        name: "Built-in",
+                        position: { x: 0, y: 0 },
+                        resolution: { width: 1512, height: 982 },
+                        scaleFactor: 2,
+                    },
+                ],
+            }),
+        });
+        const dir = join(root, "live");
+        const server = new LiveRecordingServer({
+            id: "session-test",
+            kind: control.kind,
+            title: "Finder",
+            control,
+            dir,
+        });
+        await recording.start();
+        const client = await RecorderClient.connect("session-test", { dir });
+
+        expect(client.methods).toContain("target.switch");
+        expect(await client.pause()).toEqual({ state: "paused" });
+        await expect(client.pause()).rejects.toMatchObject({ code: RPC_ERRORS.alreadyPaused });
+        expect(await client.resume()).toEqual({ state: "recording" });
+        expect(await client.switchDisplay(7)).toMatchObject({ chosen: [7], applied: "restart" });
+        await expect(client.switchDisplay(9)).rejects.toMatchObject({ code: RPC_ERRORS.unknownDisplay });
+        expect(runs.at(-1)?.target).toMatchObject({ kind: "display", screenIndex: 0 });
+
+        const stopped = await client.stop();
+        client.close();
+        server.close();
+
+        expect(stopped).toMatchObject({ state: "stopped", outcome: "done", job: expect.stringMatching(/^join-/) });
+        expect(progress).toContain("join 1/1");
+        expect(joined).toHaveLength(1);
     });
 
     it("pause, resume, switch and stop join every segment in order, each with its own target", async () => {
@@ -422,6 +529,74 @@ describe("RecordingSession", () => {
         await recording.command({ cmd: "stop" });
         expect(await recording.finished).toBe("done");
         expect(await readFile(join(root, "out.mp4"), "utf8")).toBe("movie 0 app");
+    });
+
+    it("commands arriving together validate state in arrival order", async () => {
+        const { recorder } = fakeRecorder();
+        let control: SessionRecorderControl | undefined;
+        const recording = new RecordingSession({
+            target: finder,
+            directory: join(root, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            join: async () => ({ durationMs: 0 }),
+            emit: (event) => control?.observe(event),
+            now: () => clock,
+            tickMs: 0,
+            slowStartMs: 0,
+        });
+        control = new SessionRecorderControl(recording, { target: finder });
+        try {
+            await recording.start();
+            await Promise.all([
+                applyRecordingCommand(control, { cmd: "pause" }),
+                applyRecordingCommand(control, { cmd: "resume" }),
+            ]);
+            expect((await control.status()).state).toBe("recording");
+        } finally {
+            await recording.command({ cmd: "discard" });
+        }
+    });
+
+    it("control stop rejects a failed save and permits a retry", async () => {
+        const { recorder } = fakeRecorder();
+        let control: SessionRecorderControl | undefined;
+        let attempts = 0;
+        const recording = new RecordingSession({
+            target: finder,
+            directory: join(root, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            join: async ({ output }) => {
+                if (++attempts === 1) {
+                    throw new Error("disk full");
+                }
+                await writeFile(output, "joined");
+                return { durationMs: 1000 };
+            },
+            emit: (event) => control?.observe(event),
+            now: () => clock,
+            tickMs: 0,
+            slowStartMs: 0,
+        });
+        control = new SessionRecorderControl(recording, { target: finder });
+        try {
+            await recording.start();
+            await control.pause();
+            await control.resume();
+            await expect(
+                Promise.race([
+                    control.stop(),
+                    Bun.sleep(300).then(() => {
+                        throw new Error("stop hung");
+                    }),
+                ])
+            ).rejects.toThrow("disk full");
+            expect(await control.stop()).toMatchObject({ state: "stopped", outcome: "done" });
+            expect(attempts).toBe(2);
+        } finally {
+            await recording.command({ cmd: "discard" });
+        }
     });
 
     it("a discard after a failed save deletes every segment", async () => {
