@@ -53,8 +53,7 @@ struct MeetingDetailView: View {
             }
             HStack(spacing: 10) {
                 projectPicker(record)
-                labelsPicker(record)
-                Spacer(minLength: 0)
+                labelsPicker(record).frame(maxWidth: .infinity, alignment: .leading)
             }
             if let failure = detail.record.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
@@ -125,7 +124,9 @@ struct MeetingDetailView: View {
         let labels = record?.labels ?? []
         let known = record?.project.flatMap { window.settings.value?.projects[$0]?.labels } ?? []
         let all = (known + labels.filter { !known.contains($0) })
-        return HStack(spacing: 6) {
+        // A project with many labels wraps them to a new row; in an HStack the last ones were squeezed until
+        // "+ Label" broke into two lines (2026-11-05).
+        return WrapLayout(spacing: 6, lineSpacing: 6) {
             ForEach(all, id: \.self) { label in
                 let on = labels.contains(label)
                 Button {
