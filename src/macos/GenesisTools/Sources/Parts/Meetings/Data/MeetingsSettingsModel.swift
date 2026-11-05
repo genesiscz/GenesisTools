@@ -61,9 +61,14 @@ final class MeetingsSettingsModel {
             do {
                 let shown = try await MeetingsCLI.json(ConfigShow.self, ["config", "show", "--json"])
                 let value = shown.value
+                let previous = settings.value
+                let dirty = Set(drafts.keys.filter { name in
+                    guard let previous else { return true }
+                    return drafts[name] != savedRules(name, in: previous)
+                })
                 settingsRaw = shown.raw
                 settings = .loaded(value)
-                for name in value.projectNames where drafts[name] == nil {
+                for name in value.projectNames where !dirty.contains(name) {
                     drafts[name] = savedRules(name, in: value)
                 }
             } catch {
