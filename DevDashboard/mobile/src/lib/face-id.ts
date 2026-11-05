@@ -1,40 +1,64 @@
-import { requireOptionalNativeModule } from "expo";
+import type * as LocalAuthentication from "expo-local-authentication";
 
-export type FaceIdGate =
-    | { ok: true; via: "biometrics" | "passcode" | "none" | "not-in-build" }
-    | { ok: false; reason: string };
+export type AuthenticationModule = Pick<typeof LocalAuthentication, "getEnrolledLevelAsync" | "authenticateAsync"> & {
+    SecurityLevel: Pick<typeof LocalAuthentication.SecurityLevel, "NONE" | "SECRET">;
+};
+
+type AuthenticationLoader = () => Promise<AuthenticationModule | null>;
+
+async function loadAuthentication(): Promise<AuthenticationModule | null> {
+    const { requireOptionalNativeModule } = await import("expo");
+
+    if (!requireOptionalNativeModule("ExpoLocalAuthentication")) {
+        return null;
+    }
+
+    return import("expo-local-authentication");
+}
+
+export type FaceIdGate = { ok: true; via: "biometrics" | "passcode" | "none" } | { ok: false; reason: string };
 
 /**
  * Asks for Face ID (or Touch ID, or the passcode when biometrics fail) before an act that cannot be undone, such as
- * stopping a session. A phone with no biometrics and no passcode has nothing to ask, so the gate passes with
- * `via: "none"` and the caller's own confirmation is the only check (the simulator answers this way too).
+ * stopping a session. When the native module reports no enrolled authentication, the existing `via: "none"`
+ * behavior is retained.
  *
  * The module loads on first use, not at import: expo-router loads every route at start, and a build made before the
- * module was added (no `expo prebuild` since) would otherwise crash at launch. Such a build passes with
- * `via: "not-in-build"`, so the confirmation dialog stays the check until the next native build.
+ * module was added (no `expo prebuild` since) would otherwise crash at launch. Such a build refuses confirmation
+ * and asks for a rebuild.
  */
-export async function confirmWithFaceId(reason: string): Promise<FaceIdGate> {
-    if (!requireOptionalNativeModule("ExpoLocalAuthentication")) {
-        console.warn("[face-id] expo-local-authentication is not in this build; run expo prebuild and rebuild");
-        return { ok: true, via: "not-in-build" };
-    }
+export function createFaceIdGate(load: AuthenticationLoader) {
+    return async (reason: string): Promise<FaceIdGate> => {
+        const LocalAuthentication = await load();
 
-    const LocalAuthentication = await import("expo-local-authentication");
-    const level = await LocalAuthentication.getEnrolledLevelAsync();
+        if (!LocalAuthentication) {
+            return {
+                ok: false,
+                reason: "Authentication is unavailable in this build. Rebuild the app before confirming this action.",
+            };
+        }
 
-    if (level === LocalAuthentication.SecurityLevel.NONE) {
-        return { ok: true, via: "none" };
-    }
+        const level = await LocalAuthentication.getEnrolledLevelAsync();
 
-    const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: reason,
-        cancelLabel: "Cancel",
-        disableDeviceFallback: false,
-    });
+        if (level === LocalAuthentication.SecurityLevel.NONE) {
+            return { ok: true, via: "none" };
+        }
 
-    if (result.success) {
-        return { ok: true, via: level === LocalAuthentication.SecurityLevel.SECRET ? "passcode" : "biometrics" };
-    }
+        const result = await LocalAuthentication.authenticateAsync({
+            promptMessage: reason,
+            cancelLabel: "Cancel",
+            disableDeviceFallback: false,
+        });
 
-    return { ok: false, reason: result.error === "user_cancel" ? "Cancelled." : `Not confirmed (${result.error}).` };
+        if (result.success) {
+            return { ok: true, via: level === LocalAuthentication.SecurityLevel.SECRET ? "passcode" : "biometrics" };
+        }
+
+        return {
+            ok: false,
+            reason: result.error === "user_cancel" ? "Cancelled." : `Not confirmed (${result.error}).`,
+        };
+    };
 }
+
+export const confirmWithFaceId = createFaceIdGate(loadAuthentication);
