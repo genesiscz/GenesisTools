@@ -60,7 +60,7 @@ Pin a commit, download into the scratch folder, and only read the files (they ar
 them). The commit used on 2026-11-04 was `af336d20718b7d912cef6d206227a34b4666142f`.
 
 ```bash
-SHA=$(git ls-remote https://github.com/microsoft/azure-devops-node-api HEAD | cut -f1)
+SHA=af336d20718b7d912cef6d206227a34b4666142f
 for f in api/TestPlanApi.ts api/interfaces/TestPlanInterfaces.ts; do
     curl -sSfL -o "$DIR/$(basename "$f")" \
         "https://raw.githubusercontent.com/microsoft/azure-devops-node-api/$SHA/$f"
