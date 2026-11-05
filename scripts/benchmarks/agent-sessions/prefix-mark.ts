@@ -141,7 +141,11 @@ const program = new Command()
 
                 if (options.recordRun) {
                     await recordRun({
-                        name: options.compare ? name(options.compare) : NAME,
+                        name: options.compare
+                            ? name(options.compare)
+                            : options.baseline
+                              ? name(options.baseline)
+                              : NAME,
                         metrics,
                         change: options.recordRun,
                         notes: `runs=${options.runs} | ${check} | Bun ${Bun.version} | ${uptime()}`,

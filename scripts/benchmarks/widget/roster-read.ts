@@ -118,7 +118,11 @@ const program = new Command()
             }
 
             if (options.recordRun) {
-                const target = options.compare ? name(options.compare) : NAME;
+                const target = options.compare
+                    ? name(options.compare)
+                    : options.baseline
+                      ? name(options.baseline)
+                      : NAME;
                 await recordRun({ name: target, metrics, change: options.recordRun, notes });
             }
         }
