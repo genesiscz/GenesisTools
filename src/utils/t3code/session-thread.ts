@@ -21,7 +21,13 @@ export type T3ThreadOpen = { opened: true; title: string; link: string } | { ope
  * Opens the T3 Code thread a session runs in, in the T3 Code app. Undefined when no T3 thread ran the session, so the
  * caller looks for its terminal instead.
  */
-export async function openT3ThreadOfSession(sessionId: string): Promise<T3ThreadOpen | undefined> {
+export async function openT3ThreadOfSession({
+    sessionId,
+    activate = true,
+}: {
+    sessionId: string;
+    activate?: boolean;
+}): Promise<T3ThreadOpen | undefined> {
     const threadId = await t3ThreadOfSession(sessionId);
     if (!threadId) {
         return undefined;
@@ -37,7 +43,7 @@ export async function openT3ThreadOfSession(sessionId: string): Promise<T3Thread
         return { opened: false, reason: "T3 Code printed no link for its thread" };
     }
 
-    const opened = await boundedCommand({ command: ["open", link], timeoutMs: 10_000 });
+    const opened = await boundedCommand({ command: ["open", ...(activate ? [] : ["-g"]), link], timeoutMs: 10_000 });
     if (opened.status !== 0) {
         log.warn({ link, status: opened.status, stderr: opened.stderr }, "could not open a T3 Code thread");
         return { opened: false, reason: `open failed: ${opened.stderr.trim() || `exit ${opened.status}`}` };
