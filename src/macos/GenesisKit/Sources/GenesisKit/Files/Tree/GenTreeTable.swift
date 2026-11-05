@@ -35,6 +35,8 @@ extension FileTreeRow: GenTreeRow {}
 /// marks, the style), so the visible cells are built again.
 public struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresentable {
     @GenReduceMotion private var reduceMotion
+    /// A cover over the subtree: the table, laid above the root, hides with its slot (`genOverlaysHidden`).
+    @Environment(\.genOverlaysHidden) private var overlaysHidden
     /// The visible tree rows in depth-first display order.
     let rows: [Row]
     /// The selection, style and decoration revision used to invalidate visible cells.
@@ -115,6 +117,10 @@ public struct GenTreeTable<Row: GenTreeRow, Revision: Equatable>: NSViewRepresen
         box.scrollView = slot.overlay as? NSScrollView
         guard let table = context.coordinator.table else { return }
         apply(to: context.coordinator, table: table, force: false)
+        if slot.isHidden != overlaysHidden {
+            // `GenOverlayContentView.placeOverlays` hides the table while its slot is hidden.
+            slot.isHidden = overlaysHidden
+        }
         slot.contentChanged()
     }
 

@@ -17,6 +17,17 @@
 import AppKit
 import SwiftUI
 
+private struct GenOverlaysHiddenKey: EnvironmentKey { static let defaultValue = false }
+
+extension EnvironmentValues {
+    /// True under a view that covers its subtree (the hub's cover over a PR that is still opening): each overlay
+    /// laid over a slot in it hides. An overlay lies above the whole SwiftUI root, so no SwiftUI view draws over it.
+    public var genOverlaysHidden: Bool {
+        get { self[GenOverlaysHiddenKey.self] }
+        set { self[GenOverlaysHiddenKey.self] = newValue }
+    }
+}
+
 /// Hosts the SwiftUI root beside AppKit overlays whose scrolling must not relayout that root.
 public final class GenOverlayContentView: NSView {
     /// The SwiftUI root; it states no sizes of its own (`MarkdownDocumentWindowController.contentView`).

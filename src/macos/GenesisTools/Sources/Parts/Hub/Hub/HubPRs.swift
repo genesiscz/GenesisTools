@@ -2251,6 +2251,10 @@ struct PRsMain: View {
     var body: some View {
         let _ = RenderProbe.hit("prs.main.body")
         content
+            // Under the cover the last PR takes no clicks, and its file table hides: an AppKit view laid above the
+            // whole root (GenesisKit `GenOverlayContentView`), which no SwiftUI view draws over.
+            .allowsHitTesting(prs.opening == nil)
+            .environment(\.genOverlaysHidden, prs.opening != nil)
             // A PR the list does not hold yet (a link, a resume): the view switches at once, the last view
             // blurred under a cover until the PR's row lands. The PR list beside it stays usable.
             .overlay {
@@ -2287,19 +2291,19 @@ struct PROpeningCover: View {
     let label: String
 
     var body: some View {
-        ZStack {
-            Rectangle().fill(.regularMaterial)
-            VStack(spacing: 10) {
-                ProgressView().controlSize(.regular)
-                Text(verbatim: "Opening \(label)…")
-                    .font(.system(size: 14, weight: .semibold))
-                Text("Asking the forge for its title, branches and commits")
-                    .font(.system(size: 11))
-                    .foregroundColor(ReviewPalette.dim)
-            }
-            .padding(24)
+        VStack(spacing: 10) {
+            ProgressView().controlSize(.regular)
+            Text(verbatim: "Opening \(label)…")
+                .font(.system(size: 14, weight: .semibold))
+            Text("Asking the forge for its title, branches and commits")
+                .font(.system(size: 11))
+                .foregroundColor(ReviewPalette.dim)
         }
-        .contentShape(Rectangle())
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Up into the title bar strip too, over the last PR's header row; the strip's clicks stay the window's
+        // (double-click, drag), and the cover's own frame takes the rest.
+        .titlebarBackground(Rectangle().fill(.regularMaterial))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(verbatim: "Opening \(label)"))
     }
