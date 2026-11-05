@@ -27,6 +27,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { Glob } from "bun";
 import { checkSubject } from "./commit-scopes";
 
@@ -51,6 +52,11 @@ interface CutBranch {
     commits?: readonly RegExp[];
     /** Files whose form on this branch is unified's text with edits, because they also register another branch's part. */
     derived?: readonly DerivedFile[];
+    /**
+     * Files that belong here whatever the globs say and never move: a test that reads another language's file of
+     * this branch by path, which no import shows (service.test.ts reads the Swift editor's tab list).
+     */
+    stays?: readonly string[];
     /** Run one `swift build` of the app package on this tree when --swift is given. */
     swift?: boolean;
 }
@@ -150,7 +156,9 @@ const CUT: readonly CutBranch[] = [
             `${APP}/Info.plist`,
             `${KIT}/Sources/GenesisKitPosture/Camera/**`,
             `${KIT}/Sources/GenesisKit/Controls/WrapLayout.swift`,
+            `${KIT}/Sources/GenesisKit/Controls/GenSegmentedTabs.swift`,
         ],
+        stays: ["src/recorder/lib/service.test.ts"],
         derived: partRegistration("meetings"),
         swift: true,
     },
@@ -192,6 +200,7 @@ const MIN_FILES = 50;
 const MAX_FILES = 90;
 const MAX_TYPECHECK_ROUNDS = 10;
 const TEST_FILE = /\.test\.tsx?$/;
+const STAYS = new Set(CUT.flatMap((branch) => branch.stays ?? []));
 /** How many re-export hops the error tracer follows from a failing file's imports. */
 const IMPORT_DEPTH = 3;
 const CUT_REF_PREFIX = "refs/heads/cut/";
@@ -495,6 +504,12 @@ function assignFiles(commits: Commit[], differing: Set<string>, onOpenPr: (commi
     const unplaced: string[] = [];
     for (const [file, fileCommits] of [...touching].sort(([a], [b]) => a.localeCompare(b))) {
         if (derivedFiles.has(file)) {
+            continue;
+        }
+
+        const stayer = CUT.find((branch) => branch.stays?.includes(file));
+        if (stayer) {
+            owner.set(file, stayer.name);
             continue;
         }
 
@@ -1131,8 +1146,19 @@ async function main(): Promise<number> {
                         restartAt = Math.min(restartAt ?? currentIndex, currentIndex);
                     }
                 };
+                /**
+                 * A test follows only when everything else it imports is already there (in the target's lineage, or
+                 * unchanged since the base): a broad test such as meetings.test.ts would drag its whole folder down.
+                 */
+                const testFitsIn = (test: string, target: string): boolean => {
+                    const there = new Set(lineage(target));
+                    return importsOf(test, unifiedSha, exists).every((imported) => {
+                        const importedOwner = owner.get(imported);
+                        return importedOwner ? there.has(importedOwner) : !statuses.has(imported);
+                    });
+                };
                 const moveDown = (file: string, why: string): void => {
-                    if (movedNow.has(file) || pinned.has(file)) {
+                    if (movedNow.has(file) || pinned.has(file) || STAYS.has(file)) {
                         return;
                     }
 
@@ -1165,9 +1191,11 @@ async function main(): Promise<number> {
                     for (const [test, testOwner] of [...owner]) {
                         if (
                             TEST_FILE.test(test) &&
+                            !STAYS.has(test) &&
                             testOwner !== target &&
                             !lineage(target).includes(testOwner) &&
-                            importsOf(test, unifiedSha, exists).includes(file)
+                            importsOf(test, unifiedSha, exists).includes(file) &&
+                            testFitsIn(test, target)
                         ) {
                             const testMove: Move = {
                                 file: test,
@@ -1416,7 +1444,8 @@ async function runChecks(params: {
                 cwd: scratchTree.dir,
                 log,
             });
-            const errors = new Set(swift.text.split("\n").filter((line) => /: error: /.test(line)));
+            const plain = stripAnsi(swift.text);
+            const errors = new Set(plain.split("\n").filter((line) => /\.swift:\d+:\d+: error: /.test(line)));
             const summary = swift.exitCode === 0 ? "build ok" : `${errors.size} errors`;
             checks.swift.set(branch.name, { ok: swift.exitCode === 0, exitCode: swift.exitCode, summary, log });
             say(`  swift ${branch.name}: ${summary} (exit ${swift.exitCode})`);
