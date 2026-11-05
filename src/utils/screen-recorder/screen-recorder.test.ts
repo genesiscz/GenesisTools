@@ -533,7 +533,7 @@ describe("live recordings", () => {
                     ended.resolve();
                 }
             },
-            ["state", "ended"]
+            ["state", "warning", "ended"]
         );
 
         expect(client.kind).toBe("meeting");
@@ -556,7 +556,11 @@ describe("live recordings", () => {
         server.close("requested");
         await withTimeout(ended.promise, 2_000, new Error("ended event timed out"));
 
-        expect(events.map((event) => event.event)).toEqual(["state", "ended"]);
+        expect(events.map((event) => event.event)).toEqual(["state", "warning", "warning", "ended"]);
+        expect(events.filter((event) => event.event === "warning").map((event) => event.params)).toEqual([
+            { warning: "a note" },
+            { warning: null },
+        ]);
         expect(existsSync(join(dir, "meeting-m1.json"))).toBe(false);
         expect(existsSync(join(dir, "meeting-m1.sock"))).toBe(false);
         await expect(RecorderClient.connect("meeting-m1", { dir })).rejects.toThrow(/No running recording/);
