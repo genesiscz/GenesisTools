@@ -211,6 +211,13 @@ describe("digest folds", () => {
             () => ({ provider: "anthropic-sub", accountId: "acc-work", accountName: "work" })
         );
 
+        const distinct = digestWindows(
+            [day("2026-11-01", 1, 10, 20), { ...day("2026-11-02", 1, 70, 80), kind: "weekly" }],
+            () => ({ provider: "anthropic-sub", accountId: "acc-work", accountName: "work" })
+        );
+        expect(distinct.map((entry) => [entry.kind, entry.startPct, entry.endPct])).toEqual([
+            ["session", 10, 20], ["weekly", 70, 80],
+        ]);
         expect([window?.startPct, window?.endPct]).toEqual([50, 70]);
     });
 
