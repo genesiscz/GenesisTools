@@ -18,7 +18,7 @@ package enum FaceLifecycle {
     static var logURL: URL { directory.appendingPathComponent("lifecycle.jsonl") }
     static var aliveDirectory: URL { directory.appendingPathComponent("lifecycle-alive", isDirectory: true) }
 
-    /// The log moves to `lifecycle.jsonl.1` at a face start once it is this big.
+    /// The log moves to a uniquely named archive at a face start once it is this big.
     static let rotateBytes = 4 * 1024 * 1024
 
     static let terminatingSignals: [Int32] = [SIGTERM, SIGINT, SIGHUP]
@@ -57,6 +57,7 @@ package enum FaceLifecycle {
     }
 
     nonisolated(unsafe) private static var descriptor: Int32 = -1
+    nonisolated(unsafe) private static var logPath: UnsafeMutablePointer<CChar>?
     nonisolated(unsafe) private static var face = ""
     nonisolated(unsafe) private static var aliveMarkerPath: UnsafeMutablePointer<CChar>?
     /// Per signal number: the line up to `"t":`, prepared at install, and its length.
@@ -82,6 +83,7 @@ package enum FaceLifecycle {
         rotateIfLarge()
         descriptor = open(logURL.path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o644)
         guard descriptor >= 0 else { return }
+        logPath = strdup(logURL.path)
 
         reportVanished(now: Int(Date().timeIntervalSince1970))
         writeAliveMarker()
@@ -98,23 +100,30 @@ package enum FaceLifecycle {
     static func note(_ event: String, detail: String? = nil) {
         guard descriptor >= 0 else { return }
         let text = line(time: Int(Date().timeIntervalSince1970), pid: getpid(), face: face, event: event, detail: detail)
-        text.utf8CString.withUnsafeBufferPointer { buffer in
-            _ = write(descriptor, buffer.baseAddress, buffer.count - 1)
-        }
+        appendLine(text, to: logURL)
     }
 
     private static func note(_ event: String, argv: [String]) {
         note(event, detail: argv.joined(separator: " "))
     }
 
-    private static func rotateIfLarge() {
-        let size = (try? FileManager.default.attributesOfItem(atPath: logURL.path)[.size] as? Int) ?? 0
-        guard size >= rotateBytes else { return }
-        let old = URL(fileURLWithPath: logURL.path + ".1")
-        try? FileManager.default.removeItem(at: old)
-        try? FileManager.default.moveItem(at: logURL, to: old)
+    /// Resolve the current file at each event, so a face started before rotation writes to the active log.
+    static func appendLine(_ text: String, to url: URL) {
+        let target = open(url.path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o644)
+        guard target >= 0 else { return }
+        defer { close(target) }
+        text.utf8CString.withUnsafeBufferPointer { buffer in
+            _ = write(target, buffer.baseAddress, buffer.count - 1)
+        }
     }
 
+    static func rotateIfLarge(at url: URL = logURL, threshold: Int = rotateBytes) {
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        guard size >= threshold else { return }
+        // Keep distinct archives: a writer that opened immediately before the rename may still append there.
+        let old = URL(fileURLWithPath: url.path + "." + UUID().uuidString)
+        try? FileManager.default.moveItem(at: url, to: old)
+    }
     // MARK: Alive markers
 
     struct AliveMarker: Codable, Equatable {
@@ -143,9 +152,7 @@ package enum FaceLifecycle {
             let text = line(
                 time: now, pid: pid, face: marker.face, event: "vanished",
                 detail: "started at \(marker.t) and left no exit line: SIGKILL, a jetsam kill or a power loss (seen by pid \(getpid()))")
-            text.utf8CString.withUnsafeBufferPointer { buffer in
-                _ = write(descriptor, buffer.baseAddress, buffer.count - 1)
-            }
+            appendLine(text, to: logURL)
         }
     }
 
@@ -192,13 +199,13 @@ package enum FaceLifecycle {
         }
     }
 
-    /// Runs inside the signal handler: only `write`, `time`, `memcpy`, `unlink`, `signal` and `raise`, on memory
+    /// Runs inside the signal handler: only `open`, `write`, `close`, `time`, `memcpy`, `unlink`, `signal` and `raise`, on memory
     /// prepared at install. It restores the default action and raises the signal again, so the process ends (and a
     /// crash report is written) exactly as it would without this log.
     fileprivate static func handle(signal: Int32) {
         if descriptor >= 0, signal > 0, Int(signal) < signalSlots,
            let prefixes = signalPrefixes, let lengths = signalPrefixLengths, let buffer = signalLine,
-           let prefix = prefixes[Int(signal)]
+           let prefix = prefixes[Int(signal)], let logPath
         {
             let length = lengths[Int(signal)]
             memcpy(buffer, prefix, length)
@@ -225,7 +232,11 @@ package enum FaceLifecycle {
             }
             buffer[cursor] = 125
             buffer[cursor + 1] = 10
-            _ = write(descriptor, buffer, cursor + 2)
+            let target = open(logPath, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o644)
+            if target >= 0 {
+                _ = write(target, buffer, cursor + 2)
+                close(target)
+            }
         }
         if let aliveMarkerPath { unlink(aliveMarkerPath) }
         Darwin.signal(signal, SIG_DFL)

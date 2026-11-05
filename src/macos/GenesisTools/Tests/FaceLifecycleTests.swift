@@ -16,6 +16,24 @@ final class FaceLifecycleTests: XCTestCase {
         try? FileManager.default.removeItem(at: scratch)
     }
 
+    func testWritersReopenTheCurrentLogAcrossRepeatedRotations() throws {
+        let log = scratch.appendingPathComponent("lifecycle.jsonl")
+        let first = { FaceLifecycle.appendLine("widget\n", to: log) }
+        let second = { FaceLifecycle.appendLine("hub\n", to: log) }
+        first()
+        FaceLifecycle.rotateIfLarge(at: log, threshold: 1)
+        second()
+        FaceLifecycle.rotateIfLarge(at: log, threshold: 1)
+        first()
+        second()
+        XCTAssertEqual(try String(contentsOf: log, encoding: .utf8), "widget\nhub\n")
+        let archives = try FileManager.default.contentsOfDirectory(at: scratch, includingPropertiesForKeys: nil).filter { $0 != log }
+        XCTAssertEqual(archives.count, 2)
+        let previous = try archives.map { try String(contentsOf: $0, encoding: .utf8) }.joined()
+        XCTAssertTrue(previous.contains("widget\n"))
+        XCTAssertTrue(previous.contains("hub\n"))
+    }
+
     func testALineIsOneSortedJSONObjectWithTheTimeLast() throws {
         let text = FaceLifecycle.line(time: 1_793_800_000, pid: 42, face: "--widget", event: "signal", detail: "signal 15: Terminated")
 
