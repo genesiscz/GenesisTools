@@ -1888,6 +1888,26 @@ describe("characterization: what a library recording asks its recorder for", () 
     });
 });
 
+test("native settings wait for the preceding command acknowledgement", async () => {
+    const sent: string[] = [];
+    const live = new NativeLiveCapture(
+        (text) => sent.push(text),
+        1,
+        {},
+        new Set(["set-max-long-side", "set-threshold"])
+    );
+    const resize = live.setMaxLongSide!(1200);
+    const threshold = live.setThreshold!(2);
+    await Promise.resolve();
+    expect(sent).toHaveLength(1);
+    live.receive('{"event":"settings"}');
+    await resize;
+    await Promise.resolve();
+    expect(sent).toHaveLength(2);
+    live.receive('{"event":"settings"}');
+    await threshold;
+});
+
 test("malformed native stderr is ignored without losing valid events", () => {
     const frames: string[] = [];
     const live = new NativeLiveCapture(() => undefined, 1, { onFrame: (frame) => frames.push(frame.path) });

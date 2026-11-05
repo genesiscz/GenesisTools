@@ -318,6 +318,10 @@ export class NativeLiveCapture implements LiveCapture {
         reject: (error: Error) => void;
         timer: ReturnType<typeof setTimeout>;
     };
+    /** The settings command in flight; the next one waits for its answer. */
+    private settingsQueue: Promise<void> = Promise.resolve();
+    /** A command the recorder never answered: the answers no longer pair with the commands, so every later one fails. */
+    private settingsFailure?: Error;
 
     constructor(
         private readonly write: (text: string) => void,
@@ -346,8 +350,26 @@ export class NativeLiveCapture implements LiveCapture {
         }
     }
 
-    /** One command whose answer is the recorder's next `settings` event, or its next `error` event. */
+    /**
+     * One command whose answer is the recorder's next `settings` event, or its next `error` event. The commands go out
+     * one at a time: an answer names no command, so a second one sent before the first answer would take that answer.
+     */
     private settingsCommand(
+        command: Record<string, unknown>,
+        answer: "settings" | "muted" = "settings"
+    ): Promise<void> {
+        const pending = this.settingsQueue.then(() => {
+            if (this.settingsFailure) {
+                throw this.settingsFailure;
+            }
+
+            return this.sendSettingsCommand(command, answer);
+        });
+        this.settingsQueue = pending.catch(() => undefined);
+        return pending;
+    }
+
+    private sendSettingsCommand(
         command: Record<string, unknown>,
         answer: "settings" | "muted" = "settings"
     ): Promise<void> {
@@ -363,7 +385,11 @@ export class NativeLiveCapture implements LiveCapture {
                         this.pendingSettings.splice(index, 1);
                     }
 
-                    reject(new CaptureError("timeout", `the recorder did not answer ${String(command.cmd)}`));
+                    this.settingsFailure = new CaptureError(
+                        "timeout",
+                        `the recorder did not answer ${String(command.cmd)}`
+                    );
+                    reject(this.settingsFailure);
                 }, SETTINGS_TIMEOUT_MS),
             };
             this.pendingSettings.push(entry);
