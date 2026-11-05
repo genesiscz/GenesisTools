@@ -280,6 +280,30 @@ describe("the editor on a recording folder", () => {
     });
 });
 
+test("cached results wait for an active writer in the same workspace", async () => {
+    const source = recordingFolder();
+    const output = workspace();
+    const editor = new RecordingEditor();
+    const plan = {
+        source: { file: source },
+        output,
+        steps: [
+            { kind: "frames" as const, displays: [1] },
+            { kind: "grid" as const, perImage: 4 },
+        ],
+    };
+    await editor.run(plan).done;
+    const writer = editor.run(plan, { receipts: false });
+    let finished = false;
+    const first = writer.done.then(() => {
+        finished = true;
+    });
+    const reader = editor.run(plan);
+    await reader.done;
+    expect(finished).toBe(true);
+    await first;
+});
+
 test("trimmed stills sample through the transformed endpoint", async () => {
     const source = recordingFolder();
     const result = await new RecordingEditor().run({

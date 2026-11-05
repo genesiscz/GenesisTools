@@ -741,7 +741,7 @@ export class RecordingEditor {
                       ]
                     : []),
             ],
-            receipts: receipts ? join(outputDir, ".receipts") : undefined,
+            receipts: receipts && !previous ? join(outputDir, ".receipts") : undefined,
             fingerprint: located.fingerprint,
             signal: options.signal,
             onProgress: options.onProgress,
