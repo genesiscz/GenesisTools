@@ -19,6 +19,7 @@ describe.skipIf(skip.onWindows)("writeStdout", () => {
 
     it("exits quietly when a real pipe reader closes", async () => {
         const proc = Bun.spawn(["bash", "-o", "pipefail", "-c", 'bun run "$1" 300000 | head -c 1', "test", FIXTURE], {
+            env: process.env,
             stdout: "pipe",
             stderr: "pipe",
         });

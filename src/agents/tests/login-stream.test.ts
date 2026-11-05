@@ -12,8 +12,9 @@ const agentsEntry = join(import.meta.dir, "../index.ts");
 
 type JsonLine = Record<string, unknown>;
 
-function spawnAgents(home: string, args: string[]): Bun.Subprocess<"ignore", "pipe", "ignore"> {
-    return Bun.spawn(["bun", agentsEntry, ...args], {
+function spawnAgents(home: string, args: string[], closeAfterReady = false): Bun.Subprocess<"ignore", "pipe", "ignore"> {
+    const command = ["bun", agentsEntry, ...args];
+    return Bun.spawn(closeAfterReady ? ["bash", "-o", "pipefail", "-c", '"$@" | head -n 1', "test", ...command] : command, {
         stdout: "pipe",
         stderr: "ignore",
         env: {
@@ -258,6 +259,29 @@ describe("agents login --once --timeout", () => {
             type: "message",
             body: "line one\nline two",
         });
+    }, 30_000);
+
+    test("a closed feed consumer does not advance past undelivered mail", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-login-closed-"));
+        const session = `closed-${Date.now()}`;
+        await runOnce(home, ["--agent-name", "alpha", "--session", session, "--timeout", "0.1"]);
+        await runOnce(home, ["--agent-name", "beta", "--session", session, "--timeout", "0.1"]);
+        const listener = spawnAgents(home, ["login", "--agent-name", "beta", "--session", session, "--format", "json"], true);
+        const tap = new JsonlTap(listener.stdout);
+        try {
+            await tap.waitUntil((line) => line.type === "ready", 8_000);
+            const sent = spawnAgents(home, ["message", "--from", "alpha", "--to", "beta", "--body", "undelivered", "--session", session]);
+            expect(await sent.exited).toBe(0);
+            const exited = await Promise.race([listener.exited, Bun.sleep(8_000).then(() => null)]);
+            expect(exited).toBe(0);
+            const replay = await runOnce(home, ["--agent-name", "beta", "--session", session, "--timeout", "1"]);
+            expect(replay.lines.some((line) => line.type === "message" && line.body === "undelivered")).toBe(true);
+        } finally {
+            if (listener.exitCode === null) {
+                listener.kill("SIGTERM");
+                await listener.exited;
+            }
+        }
     }, 30_000);
 
     test("--timeout without --once is refused", async () => {
