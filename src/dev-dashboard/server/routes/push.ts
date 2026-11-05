@@ -86,7 +86,7 @@ export function pushRoutes(
                             answers: { letters: ["a", "b"], recommended: "a", tokens: { a: "test-a", b: "test-b" } },
                         },
                     },
-                    { ...channels.phone, enabled: true }
+                    { ...channels.phone, enabled: true, when: { desk: "always" } }
                 );
             },
         }),
