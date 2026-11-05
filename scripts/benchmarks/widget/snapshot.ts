@@ -65,6 +65,12 @@ const program = new Command()
             recordRun?: string;
             json?: boolean;
         }) => {
+            if (options.baseline && options.compare) {
+                throw new InvalidArgumentError(
+                    "--baseline and --compare cannot be used together; compare before replacing a baseline"
+                );
+            }
+
             const roster = await readWarmStartRoster();
             if (!roster) {
                 throw new Error("no widget roster cache to start from: run the widget once (`tools hub widget watch`)");

@@ -4,6 +4,26 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { baselinePath, compareToBaseline, formatComparison, readBaseline, recordBaseline, recordRun } from "./baseline";
 
+const BENCHMARK_SCRIPTS = ["agent-sessions/prefix-mark.ts", "widget/roster-read.ts", "widget/snapshot.ts"];
+
+for (const script of BENCHMARK_SCRIPTS) {
+    test(`${script} rejects recording and comparing together before reading workload or writing a baseline`, () => {
+        const proc = Bun.spawnSync(
+            [
+                process.execPath,
+                join(import.meta.dir, "../../../scripts/benchmarks", script),
+                "--baseline",
+                "fixture",
+                "--compare",
+                "fixture",
+            ],
+            { stdout: "pipe", stderr: "pipe" }
+        );
+        expect(proc.exitCode).not.toBe(0);
+        expect(new TextDecoder().decode(proc.stderr)).toContain("--baseline and --compare cannot be used together");
+    });
+}
+
 const DIR = mkdtempSync(join(tmpdir(), "gt-benchmark-baseline-"));
 const TOLERANCE = 10;
 
