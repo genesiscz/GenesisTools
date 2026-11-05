@@ -100,19 +100,21 @@ const program = new Command()
 
             const metrics = { snapshotCpuMs: median(cpu), snapshotWallMs: median(wall) };
             if (options.json) {
-                out.println(SafeJSON.stringify({ metrics, cpu, check, loadBefore, loadAfter: uptime() }) ?? "");
+                out.result({ metrics, cpu, check, loadBefore, loadAfter: uptime() });
             }
 
-            out.println(
-                [
-                    `roster: ${roster.rows.length} rows, ${roster.agents.parents.length} parents`,
-                    `cpu per snapshot ms: ${cpu.map((value) => value.toFixed(0)).join(" ")} (median ${metrics.snapshotCpuMs.toFixed(0)})`,
-                    `wall per snapshot ms: ${wall.map((value) => value.toFixed(0)).join(" ")} (median ${metrics.snapshotWallMs.toFixed(0)})`,
-                    `check: ${check}`,
-                    `load before: ${loadBefore}`,
-                    `load after: ${uptime()}`,
-                ].join("\n")
-            );
+            if (!options.json) {
+                out.println(
+                    [
+                        `roster: ${roster.rows.length} rows, ${roster.agents.parents.length} parents`,
+                        `cpu per snapshot ms: ${cpu.map((value) => value.toFixed(0)).join(" ")} (median ${metrics.snapshotCpuMs.toFixed(0)})`,
+                        `wall per snapshot ms: ${wall.map((value) => value.toFixed(0)).join(" ")} (median ${metrics.snapshotWallMs.toFixed(0)})`,
+                        `check: ${check}`,
+                        `load before: ${loadBefore}`,
+                        `load after: ${uptime()}`,
+                    ].join("\n")
+                );
+            }
             if (options.dump && last) {
                 await Bun.write(options.dump, SafeJSON.stringify(last, null, 2));
             }

@@ -18,7 +18,7 @@
 import { compareToBaseline, formatComparison, recordBaseline, recordRun } from "@app/benchmark/lib";
 import { readWidgetRoster } from "@app/hub/lib/widget/roster-index";
 import { runTool } from "@genesiscz/utils/cli";
-import { SafeJSON } from "@genesiscz/utils/json";
+
 import { out } from "@genesiscz/utils/logger";
 import { Command, InvalidArgumentError } from "commander";
 
@@ -85,7 +85,7 @@ const program = new Command()
 
             const metrics = { rosterReadCpuMs: median(cpu), rosterReadWallMs: median(wall) };
             if (options.json) {
-                out.println(SafeJSON.stringify({ metrics, cpu, check, loadBefore, loadAfter: uptime() }) ?? "");
+                out.result({ metrics, cpu, check, loadBefore, loadAfter: uptime() });
             } else {
                 out.println(
                     [
