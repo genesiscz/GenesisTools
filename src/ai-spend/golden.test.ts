@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { readFileSync, rmSync } from "node:fs";
 import { GOLDEN_CASES, goldenPath, runGoldenCase, writeGoldenHome } from "./__tests__/golden-home";
 
 /**
@@ -16,6 +16,7 @@ const DOORS = [
 
 describe("tools ai-spend keeps its bytes (golden)", () => {
     const home = writeGoldenHome();
+    afterAll(() => rmSync(home, { recursive: true, force: true }));
 
     test("daily, weekly and statusline print the pinned bytes through both doors", async () => {
         const runs = await Promise.all(
