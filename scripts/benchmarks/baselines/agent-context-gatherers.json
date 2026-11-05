@@ -17,8 +17,6 @@
         "assignedSessionId.spawns": 0,
         "getAgentRuntimeContext.cpuMs": 35.163,
         "getAgentRuntimeContext.spawns": 6,
-        "gatherHarnessPoster.cpuMs": 37.368,
-        "gatherHarnessPoster.spawns": 6,
         "agentFailureCaller.cpuMs": 41.34,
         "agentFailureCaller.spawns": 6,
         "failureCaller.cpuMs": 0.609,
@@ -27,12 +25,10 @@
         "transcriptOf.spawns": 0,
         "captureCallerContext (say).cpuMs": 0.593,
         "captureCallerContext (say).spawns": 0,
-        "captureAncestry (say).cpuMs": 0.342,
-        "captureAncestry (say).spawns": 0,
         "resolveCallerFromPeer.cpuMs": 9.1,
         "resolveCallerFromPeer.spawns": 0,
         "parseHookPayload.cpuMs": 0.032,
         "parseHookPayload.spawns": 0
     },
-    "notes": "20 calls per gatherer in one process, run from a shell; CPU is this process only, children appear as spawns"
+    "notes": "20 calls per gatherer in one process, run from a shell; CPU is this process only, children appear as spawns; gatherHarnessPoster and captureAncestry (say) were deleted by the unification (78d0ee256b, da68230f8e), so their rows left the baseline"
 }
