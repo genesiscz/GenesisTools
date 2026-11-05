@@ -41,7 +41,9 @@ async function withBotTarget(telegram: TelegramChannelConfig): Promise<TelegramC
         }),
     });
 
-    return target ? { ...telegram, botToken: target.botToken, chatId: String(target.chatId), apiRoot: target.apiRoot } : telegram;
+    return target
+        ? { ...telegram, botToken: target.botToken, chatId: String(target.chatId), apiRoot: target.apiRoot }
+        : telegram;
 }
 
 /**

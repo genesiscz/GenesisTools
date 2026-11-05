@@ -149,7 +149,9 @@ describe("phone channel", () => {
             const store = memoryPhoneDeviceStore({ "phone-1": original });
             let release!: (result: PushResult) => void;
             let started!: () => void;
-            const entered = new Promise<void>((resolve) => { started = resolve; });
+            const entered = new Promise<void>((resolve) => {
+                started = resolve;
+            });
             let calls = 0;
             const send = async (): Promise<PushResult> => {
                 calls++;
@@ -157,9 +159,16 @@ describe("phone channel", () => {
                     return { ok: false, reason: "wrong environment", otherEnvironment: true };
                 }
                 started();
-                return new Promise((resolve) => { release = resolve; });
+                return new Promise((resolve) => {
+                    release = resolve;
+                });
             };
-            const channel = createPhoneChannel({ devices: store, transports: { apns: { send }, simctl: { send } }, keys: async () => macKeys, presence: AWAY });
+            const channel = createPhoneChannel({
+                devices: store,
+                transports: { apns: { send }, simctl: { send } },
+                keys: async () => macKeys,
+                presence: AWAY,
+            });
             const pending = channel.post(decisionEvent, { enabled: true });
             await entered;
             store.devices["phone-1"] = device({ kind: "apns", token: "new", environment: "production" });
@@ -197,7 +206,10 @@ describe("phone channel", () => {
         await channel.post(decisionEvent, config);
         await channel.retract("qa-decision-d3", config);
         expect(sent.map(({ message }) => message.topic)).toEqual([
-            "dev.example.override", "dev.example.app", "dev.example.override", "dev.example.app",
+            "dev.example.override",
+            "dev.example.app",
+            "dev.example.override",
+            "dev.example.app",
         ]);
     });
 
