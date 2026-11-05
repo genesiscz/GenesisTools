@@ -95,7 +95,24 @@ export interface FlushResult {
  * Sends every waiting draft once, oldest first, and stores what is still waiting. A draft is never sent while
  * another flush runs (`flushing` guard in the hook), and each attempt reuses the draft's key.
  */
-export async function flushDrafts({
+const flushes = new WeakMap<DraftStore, Map<string, Promise<FlushResult>>>();
+
+export function flushDrafts(input: { store: DraftStore; connectionId: string; send: (draft: SteerDraft) => Promise<AgentSendReceiptDto> }): Promise<FlushResult> {
+    let active = flushes.get(input.store);
+    if (!active) {
+        active = new Map();
+        flushes.set(input.store, active);
+    }
+    const existing = active.get(input.connectionId);
+    if (existing) {
+        return existing;
+    }
+    const pending = flushDraftsOnce(input).finally(() => active.delete(input.connectionId));
+    active.set(input.connectionId, pending);
+    return pending;
+}
+
+async function flushDraftsOnce({
     store,
     send,
     connectionId,
