@@ -50,6 +50,8 @@ struct MeetingsOverview: Decodable, Equatable {
     let days: Int
     let applyAbove: Double
     let meetings: [OverviewMeeting]
+    /// Meetings that started before the window; nil from a CLI older than this field.
+    let olderMeetings: Int?
     let projects: [ProjectCount]
     let needsYou: NeedsYou
 }

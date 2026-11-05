@@ -43,6 +43,8 @@ export interface MeetingsOverview {
     days: number;
     applyAbove: number;
     meetings: OverviewMeeting[];
+    /** How many meetings started before the window: 0 means there is no meeting at all, so a longer window shows none. */
+    olderMeetings: number;
     /** Every known project with the number of its meetings in the window, in config order. */
     projects: Array<{ name: string; meetings: number }>;
     /** The meetings of the window that wait for a person, one list per reason, newest first. */
@@ -132,6 +134,7 @@ export function meetingsOverview(options: {
         days,
         applyAbove,
         meetings,
+        olderMeetings: options.records.filter((record) => Date.parse(record.start) < since).length,
         projects: Object.keys(config.projects).map((name) => ({
             name,
             meetings: meetings.filter((meeting) => meeting.project === name).length,

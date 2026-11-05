@@ -105,6 +105,8 @@ describe("overview", () => {
         const view = meetingsOverview({ records, config, now, days: 14, timeZone: "UTC" });
 
         expect(view.meetings.map((meeting) => meeting.id)).toEqual(["a", "b"]);
+        expect(view.olderMeetings).toBe(1);
+        expect(meetingsOverview({ records: [], config, now, days: 14 }).olderMeetings).toBe(0);
         expect(view.meetings[0]).toMatchObject({ day: "2026-11-05", durationSec: 3600, hasTranscript: true });
         expect(view.meetings[0]?.badges).toEqual({
             noProject: true,

@@ -146,6 +146,10 @@ private struct MeetingsListPane: View {
         if case .project(let name) = model.place {
             EmptyState(symbol: "folder", text: "No \(name) meeting in the last \(Plural.count(model.days, "day"))",
                        actionTitle: longer.map { "Show \($0) days" }) { if let longer { model.show(days: longer) } }
+        } else if overview.olderMeetings == 0 {
+            // A longer window cannot show a meeting when none exists, so the "Show N days" button would do nothing.
+            EmptyState(symbol: "calendar", text: "No meetings yet",
+                       detail: "A meeting appears here when Wispr Flow records one, or after tools meetings new.")
         } else {
             EmptyState(symbol: "calendar", text: "No meeting in the last \(Plural.count(model.days, "day"))",
                        detail: "A meeting appears here when Wispr Flow records one, or after tools meetings new.",
