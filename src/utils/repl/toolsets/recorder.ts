@@ -1,5 +1,6 @@
 import { basename, join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
+import { withTimeout } from "@genesiscz/utils/async";
 import type { JobInfo } from "@genesiscz/utils/jobs";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -451,13 +452,17 @@ export class RecordingHandle {
     ): Promise<RecorderStatus> {
         const timeoutMs = options.timeoutMs ?? 60_000;
         const deadline = Date.now() + timeoutMs;
+        const remaining = () => Math.max(0, deadline - Date.now());
+        const expired = () => new Error(`waitFor: the condition did not hold within ${timeoutMs} ms`);
         let wake: (() => void) | undefined;
+        let timer: ReturnType<typeof setTimeout> | undefined;
         const off = this.on("*", () => wake?.());
 
         try {
-            await this.ensureSubscribed();
-            while (Date.now() < deadline) {
-                const status = await this.status();
+            // The subscription and each status read have the RPC's own, longer timeout: they get what is left of this one.
+            await withTimeout(this.ensureSubscribed(), remaining(), expired());
+            while (remaining() > 0) {
+                const status = await withTimeout(this.status(), remaining(), expired());
 
                 if (predicate(status)) {
                     return status;
@@ -465,14 +470,16 @@ export class RecordingHandle {
 
                 await new Promise<void>((resolve) => {
                     wake = resolve;
-                    setTimeout(resolve, Math.min(1000, Math.max(0, deadline - Date.now())));
+                    timer = setTimeout(resolve, Math.min(1000, remaining()));
                 });
+                clearTimeout(timer);
             }
         } finally {
+            clearTimeout(timer);
             off();
         }
 
-        throw new Error(`waitFor: the condition did not hold within ${timeoutMs} ms`);
+        throw expired();
     }
 
     close(): void {

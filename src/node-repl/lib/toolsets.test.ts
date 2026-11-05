@@ -1022,6 +1022,45 @@ describe("recorder and editor toolsets", () => {
         }
     });
 
+    test("waitFor keeps its own deadline when the recording stops answering", async () => {
+        class StalledControl extends RecorderControl {
+            readonly kind = "movie";
+            readonly methods = ["status", "stop"] as const;
+            async status(): Promise<never> {
+                return new Promise(() => undefined);
+            }
+            async pause() {
+                return { state: "paused" as const };
+            }
+            async resume() {
+                return { state: "recording" as const };
+            }
+            async stop() {
+                return { state: "stopped" as const };
+            }
+        }
+        const dir = mkdtempSync(join(tmpdir(), "gt-repl-wait-"));
+        const id = `movie-stalled-${process.pid}`;
+        const server = new LiveRecordingServer({
+            id,
+            kind: "movie",
+            title: "Stalled",
+            dir,
+            control: new StalledControl(),
+        });
+        const client = await RecorderClient.connect(id, { dir });
+        try {
+            const started = performance.now();
+            await expect(new RecordingHandle(client).waitFor(() => true, { timeoutMs: 200 })).rejects.toThrow(
+                "within 200 ms"
+            );
+            expect(performance.now() - started).toBeLessThan(1_500);
+        } finally {
+            client.close();
+            server.close();
+        }
+    });
+
     test("docs come from the descriptors, handles included", () => {
         const recorder = renderDocs(recorderApi);
         expect(recorder).toContain('recording.audio.mute(source: "mic" | "system") → AudioState [reversible]');
