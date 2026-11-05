@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { CANARY_PACKAGES, lockStamp, STAMP_FILE } from "../test-deps";
 import { checkProjects, installStamp, ScratchTree, testFolders } from "./layer-cut";
 import { loadTable } from "./layer-cut-tables/load";
 import unified from "./layer-cut-tables/unified";
@@ -80,8 +81,8 @@ test("install invalidation covers workspace manifests and standalone project loc
 test("cut preserves foreign refs and checks recorded tests without resolving a moving source", async () => {
     const script = join(import.meta.dir, "layer-cut.ts");
     const root = fixtureRoot("cut");
-    const invoke = (cmd: string[]) => {
-        const result = Bun.spawnSync(cmd, { cwd: root, env: process.env, stdout: "pipe", stderr: "pipe" });
+    const invoke = (cmd: string[], cwd = root) => {
+        const result = Bun.spawnSync(cmd, { cwd, env: process.env, stdout: "pipe", stderr: "pipe" });
         expect(result.exitCode, result.stderr.toString()).toBe(0);
         return result.stdout.toString().trim();
     };
@@ -89,15 +90,31 @@ test("cut preserves foreign refs and checks recorded tests without resolving a m
     git("init");
     git("config", "user.name", "Fixture");
     git("config", "user.email", "alice@example.com");
+    writeFileSync(join(root, ".gitignore"), "node_modules/\n");
+    mkdirSync(join(root, "fixtures/canary"), { recursive: true });
+    writeFileSync(join(root, "fixtures/canary/package.json"), SafeJSON.stringify({ name: "fixture-dep", version: "1.0.0" }));
     writeFileSync(
         join(root, "package.json"),
         SafeJSON.stringify({
             name: "fixture",
+            dependencies: Object.fromEntries(CANARY_PACKAGES.map((name) => [name, "file:fixtures/canary"])),
             scripts: { prepare: "git config layercut.prepare ran" },
         })
     );
     invoke(["bun", "install", "--ignore-scripts"]);
-    git("add", "package.json");
+    mkdirSync(join(root, "apps/eve"), { recursive: true });
+    writeFileSync(join(root, "apps/eve/package.json"), SafeJSON.stringify({
+        name: "fixture-subproject", dependencies: { "fixture-dep": "file:../../fixtures/canary" },
+        scripts: { prepare: "git config layercut.subprepare ran" },
+    }));
+    invoke(["bun", "install", "--ignore-scripts"], join(root, "apps/eve"));
+    mkdirSync(join(root, "scripts"));
+    for (const file of ["test.ts", "test-args.ts", "test-deps.ts", "test-reap.ts"]) {
+        writeFileSync(join(root, "scripts", file), readFileSync(join(import.meta.dir, "..", file)));
+    }
+    mkdirSync(join(root, "src/utils/process"), { recursive: true });
+    writeFileSync(join(root, "src/utils/process/process-basics.ts"), readFileSync(join(import.meta.dir, "../../src/utils/process/process-basics.ts")));
+    git("add", "package.json", ".gitignore", "fixtures", "apps", "scripts", "src/utils/process");
     // Bun can omit a lock for a package with no dependencies.
     if (existsSync(join(root, "bun.lock"))) {
         git("add", "bun.lock");
@@ -105,14 +122,10 @@ test("cut preserves foreign refs and checks recorded tests without resolving a m
     git("-c", "core.hooksPath=/dev/null", "commit", "-m", "fixture base");
     const base = git("rev-parse", "HEAD");
     mkdirSync(join(root, "src/widget"), { recursive: true });
-    mkdirSync(join(root, "scripts"));
     writeFileSync(join(root, "src/widget/index.ts"), "export const widget = 1;\n");
-    writeFileSync(join(root, "src/widget/index.test.ts"), "// test fixture\n");
     const proof = join(root, "tests-ran");
-    writeFileSync(
-        join(root, "scripts/test.ts"),
-        `await Bun.write(${SafeJSON.stringify(proof)}, process.argv.slice(2).join(","));`
-    );
+    writeFileSync(join(root, "src/widget/index.test.ts"),
+        `import { test } from "bun:test"; test("fixture", async () => { await Bun.write(${SafeJSON.stringify(proof)}, "src/widget"); });`);
     git("add", "src/widget/index.ts", "src/widget/index.test.ts", "scripts/test.ts");
     git("-c", "core.hooksPath=/dev/null", "commit", "-m", "fixture source");
     const source = git("rev-parse", "HEAD");
@@ -155,6 +168,12 @@ test("cut preserves foreign refs and checks recorded tests without resolving a m
     ]);
     expect(readFileSync(proof, "utf8")).toBe("src/widget");
     expect(git("config", "--local", "--list")).toBe(configBefore);
+    const checked = join(scratch, "tree");
+    expect(readFileSync(join(checked, "node_modules", STAMP_FILE), "utf8")).toBe(lockStamp(checked));
+    // Force root repair as well as the subproject repair exercised above.
+    writeFileSync(join(checked, "node_modules", STAMP_FILE), "stale");
+    invoke(["bun", "scripts/test.ts", "src/widget"], checked);
+    expect(git("config", "--local", "--list")).not.toBe(configBefore);
     const checks = SafeJSON.parse(readFileSync(join(scratch, "checks.json"), "utf8"));
     expect(checks.tests["feat/fixture"].folders).toEqual(["src/widget"]);
 });
