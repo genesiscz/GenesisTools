@@ -46,7 +46,7 @@ import {
     wholeProject,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
-import { RECORDING_MANIFEST } from "@genesiscz/utils/screen-recorder/library";
+import { RECORDING_MANIFEST, readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { skip } from "@genesiscz/utils/test/skip";
 import { prepareVideoEvidence } from "@genesiscz/utils/video/evidence";
 import { probeVideo } from "@genesiscz/utils/video/probe";
@@ -1823,6 +1823,25 @@ test("editor commands replace guarded outputs and force the requested container"
         const args = exportVideoArgv({ input: "in.mp4", output: "out.wrong", format });
         expect(args).toContain("-y");
         expect(args[args.lastIndexOf("-f") + 1]).toBe(format);
+    }
+});
+
+test("manifest duration preserves static recordings and the unchanged tail", async () => {
+    for (const staticScreen of [true, false]) {
+        const source = recordingFolder();
+        const manifestFile = join(source, RECORDING_MANIFEST);
+        const manifest = readRecordingManifest(source)!;
+        if (staticScreen) {
+            manifest.frames = [{ file: "frames/d1-0.png", atMs: 0, displayId: 1, changePercent: 0, reason: "first" }];
+        }
+        manifest.endedAt = "2026-11-03T20:00:12.000Z";
+        writeFileSync(manifestFile, SafeJSON.stringify(manifest));
+        const result = await new RecordingEditor().run({
+            source: { file: source },
+            steps: [{ kind: "frames", fps: 2, displays: [1] }],
+        }).done;
+        expect(result.frames).toHaveLength(24);
+        expect(result.frames.at(-1)).toMatchObject({ requestedUs: 11500000, actualUs: staticScreen ? 0 : 4000000 });
     }
 });
 

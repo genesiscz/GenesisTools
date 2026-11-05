@@ -150,11 +150,17 @@ export async function loadSource(located: LocatedSource, signal?: AbortSignal): 
         throw new Error(`${located.path} holds no frames`);
     }
 
+    const manifest = readRecordingManifest(located.path);
+    const elapsedUs = manifest?.endedAt ? (Date.parse(manifest.endedAt) - Date.parse(manifest.startedAt)) * 1000 : NaN;
+    const lastUs = frames[frames.length - 1].atUs;
+    // A plain folder has no endpoint: let its final still remain on screen for one second.
+    const durationUs =
+        Number.isFinite(elapsedUs) && elapsedUs > 0 ? Math.max(lastUs + 1, elapsedUs) : lastUs + 1_000_000;
     return {
         kind: "frames",
         path: located.path,
         frames,
-        durationUs: frames[frames.length - 1].atUs,
+        durationUs,
         displays: [...new Set(frames.map((frame) => frame.displayId).filter((id) => id !== undefined))],
     };
 }
