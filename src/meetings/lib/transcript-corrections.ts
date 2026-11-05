@@ -127,7 +127,9 @@ export function correctionsOf(
         (opts.withSuggested === true &&
             item.status === "suggested" &&
             (item.confidence === undefined || item.confidence >= applyAbove));
-    const used = record.items.filter(applies).sort((a, b) => Number(a.status === "confirmed") - Number(b.status === "confirmed"));
+    const used = record.items
+        .filter(applies)
+        .sort((a, b) => Number(a.status === "confirmed") - Number(b.status === "confirmed"));
     const passages = opts.withSuggested
         ? unclearPassages(record, { below: applyAbove, applied: applies })
         : unclearPassages(record, { below: config.global.suggest.listenBelow });

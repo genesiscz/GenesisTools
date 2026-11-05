@@ -1920,7 +1920,12 @@ test("recorder failure persists a terminal state before releasing ownership", as
         },
         { command: "test", change: "fixture" }
     );
-    const captureDirs = [store.root, store.folder(record.id), join(store.folder(record.id), "frames"), join(store.folder(record.id), ".piece")];
+    const captureDirs = [
+        store.root,
+        store.folder(record.id),
+        join(store.folder(record.id), "frames"),
+        join(store.folder(record.id), ".piece"),
+    ];
     for (const dir of captureDirs) {
         mkdirSync(dir, { recursive: true });
         chmodSync(dir, 0o755);
@@ -1992,6 +1997,7 @@ test("Teams observation bounds survive storage and never count as an arrival", a
                         name: "Newcomer",
                         joinedAt: "2026-11-02T14:00:15.000Z",
                         joinedAtExact: exact,
+                        leftAt: "2026-11-02T14:02:00.000Z",
                         leftAtExact: false,
                     },
                 ],
@@ -2007,7 +2013,12 @@ test("Teams observation bounds survive storage and never count as an arrival", a
         });
         const reopened = new MeetingStore(storage).read(saved.id)!;
         expect(reopened.attendance?.people[0]).toMatchObject({ joinedAtExact: exact, leftAtExact: false });
-        expect(meetingRecordSchema.parse({ ...record, attendance: { from: "old", people: [{ name: "Old", fromSec: 0, toSec: 30 }] } }).attendance?.people[0].joinedAtExact).toBeUndefined();
+        expect(
+            meetingRecordSchema.parse({
+                ...record,
+                attendance: { from: "old", people: [{ name: "Old", fromSec: 0, toSec: 30 }] },
+            }).attendance?.people[0].joinedAtExact
+        ).toBeUndefined();
         const items = suggestItems({
             record,
             meeting: { ...meeting, transcript: [line("Other", 20, "O co jsem přišel?")] },
@@ -2081,20 +2092,48 @@ test("uncertain attendance ends neither exclude speakers nor prove a sole attend
         const lines = [line("Alice Example", sec, "Speaking")];
         const hints = speakerStats(lines, { presence: [uncertain, other] }).hints;
         expect(hints.filter((hint) => hint.kind === "absent-speaker" || hint.kind === "sole-attendee")).toEqual([]);
-        const exact = speakerStats(lines, { presence: [{ ...uncertain, joinedAtExact: true, leftAtExact: true }, other] }).hints;
+        const exact = speakerStats(lines, {
+            presence: [{ ...uncertain, joinedAtExact: true, leftAtExact: true }, other],
+        }).hints;
         expect(exact.some((hint) => hint.kind === "absent-speaker")).toBe(true);
         expect(exact.some((hint) => hint.kind === "sole-attendee")).toBe(true);
-        const unconfirmed = speakerStats([line("Unknown", sec, "Speaking")], { presence: [uncertain, { ...other, fromSec: 200, toSec: 300 }] }).hints;
+        const unconfirmed = speakerStats([line("Unknown", sec, "Speaking")], {
+            presence: [uncertain, { ...other, fromSec: 200, toSec: 300 }],
+        }).hints;
         expect(unconfirmed.some((hint) => hint.kind === "sole-attendee")).toBe(false);
     }
 });
 
 test("listening answers replace quoted and meaning-marked terms", () => {
     for (const mark of [{ quote: { text: "old", source: "fixture" } }, { meaning: "old meaning" }]) {
-        const draft = meetingRecordSchema.parse({ ...record, items: [
-            { id: "i1", kind: "term", status: "suggested", atSec: 12, heard: "old", rules: [], suggestedAt: meeting.start, ...mark },
-            { id: "i2", kind: "question", status: "suggested", about: "term", question: "Spelling?", decides: ["i1"], choices: [], rules: [], suggestedAt: meeting.start },
-        ] });
+        const draft = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                {
+                    id: "i1",
+                    kind: "term",
+                    status: "suggested",
+                    atSec: 12,
+                    heard: "old",
+                    rules: [],
+                    suggestedAt: meeting.start,
+                    ...mark,
+                },
+                {
+                    id: "i2",
+                    kind: "question",
+                    status: "suggested",
+                    about: "term",
+                    question: "Spelling?",
+                    fromSec: 10,
+                    toSec: 15,
+                    decides: ["i1"],
+                    choices: [],
+                    rules: [],
+                    suggestedAt: meeting.start,
+                },
+            ],
+        });
         answerQuestion(draft, "i2", { answer: "new", now: meeting.start });
         const corrections = correctionsOf(draft, meetingsConfigSchema.parse({}), { format: "md" });
         expect(applyCorrections([line("Alice", 12, "old")], corrections).entries[0]?.text).toBe("new");
@@ -2102,11 +2141,21 @@ test("listening answers replace quoted and meaning-marked terms", () => {
 });
 
 test("confirmed attribution wins over later overlapping suggestions", () => {
-    const range = { kind: "speaker-range", label: "Unknown", fromSec: 0, toSec: 20, rules: [], suggestedAt: meeting.start };
-    const draft = meetingRecordSchema.parse({ ...record, items: [
-        { ...range, id: "i1", status: "confirmed", speaker: "Alice" },
-        { ...range, id: "i2", status: "suggested", speaker: "Bob", confidence: 1 },
-    ] });
+    const range = {
+        kind: "speaker-range",
+        label: "Unknown",
+        fromSec: 0,
+        toSec: 20,
+        rules: [],
+        suggestedAt: meeting.start,
+    };
+    const draft = meetingRecordSchema.parse({
+        ...record,
+        items: [
+            { ...range, id: "i1", status: "confirmed", speaker: "Alice" },
+            { ...range, id: "i2", status: "suggested", speaker: "Bob", confidence: 1 },
+        ],
+    });
     const corrections = correctionsOf(draft, meetingsConfigSchema.parse({}), { format: "md", withSuggested: true });
     expect(applyCorrections([line("Unknown", 10, "Hello")], corrections).entries[0]?.speaker).toBe("Alice");
 });

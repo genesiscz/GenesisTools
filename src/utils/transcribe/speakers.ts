@@ -537,7 +537,8 @@ function presentAt(presence: Presence[], sec: number): Presence[] {
 
 function possiblyPresentAt(presence: Presence[], sec: number): Presence[] {
     return presence.filter(
-        (stay) => (stay.joinedAtExact === false || sec >= stay.fromSec - PRESENCE_TOLERANCE_SEC) &&
+        (stay) =>
+            (stay.joinedAtExact === false || sec >= stay.fromSec - PRESENCE_TOLERANCE_SEC) &&
             (stay.leftAtExact === false || sec <= stay.toSec + PRESENCE_TOLERANCE_SEC)
     );
 }

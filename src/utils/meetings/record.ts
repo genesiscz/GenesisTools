@@ -163,8 +163,12 @@ export const meetingRecordSchema = z.object({
             from: z.string(),
             people: z.array(
                 z.object({
-                    name: z.string(), self: z.boolean().optional(), fromSec: z.number(), toSec: z.number(),
-                    joinedAtExact: z.boolean().optional(), leftAtExact: z.boolean().optional(),
+                    name: z.string(),
+                    self: z.boolean().optional(),
+                    fromSec: z.number(),
+                    toSec: z.number(),
+                    joinedAtExact: z.boolean().optional(),
+                    leftAtExact: z.boolean().optional(),
                 })
             ),
         })
