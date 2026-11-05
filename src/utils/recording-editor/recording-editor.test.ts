@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { OverwriteInputError } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
@@ -302,6 +303,35 @@ test("cached results wait for an active writer in the same workspace", async () 
     await reader.done;
     expect(finished).toBe(true);
     await first;
+});
+
+test("still sampling advances through irregular changes and can be cancelled", async () => {
+    const source = recordingFolder();
+    const editor = new RecordingEditor();
+    const result = await editor.run({
+        source: { file: source },
+        steps: [
+            { kind: "range", from: 0.5, to: 3.5 },
+            { kind: "frames", fps: 2, displays: [1] },
+        ],
+    }).done;
+    expect(result.frames.map((frame) => frame.actualUs)).toEqual([0, 1000000, 1000000, 2000000, 2000000, 3000000]);
+    const controller = new AbortController();
+    const job = editor.run(
+        {
+            source: { file: source },
+            steps: [
+                { kind: "range", from: 0, to: 10000 },
+                { kind: "frames", fps: 60 },
+            ],
+        },
+        { signal: controller.signal, receipts: false }
+    );
+    const outcome = job.done.catch((error: unknown) => error);
+    await yieldToEventLoop();
+    controller.abort(new Error("sampling cancelled"));
+    expect(await outcome).toBeInstanceOf(Error);
+    expect(((await outcome) as Error).message).toContain("cancel");
 });
 
 test("trimmed stills sample through the transformed endpoint", async () => {

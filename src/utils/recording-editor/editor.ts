@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { composeImageGrid, type ImageGridResult } from "@genesiscz/utils/image/grid";
 import { decodeImageRgba } from "@genesiscz/utils/image/raster";
 import {
@@ -291,7 +292,12 @@ export function frameSelectExpression(indices: readonly number[]): string {
     return `(${frameSelectExpression(indices.slice(0, middle))}+${frameSelectExpression(indices.slice(middle))})`;
 }
 
-function stillFrames(state: EditState, step: { fps?: number; displays?: number[] }): EditFrame[] {
+async function stillFrames(
+    state: EditState,
+    step: { fps?: number; displays?: number[] },
+    signal: AbortSignal
+): Promise<EditFrame[]> {
+    signal.throwIfAborted();
     const fromUs = state.window.fromUs ?? 0;
     const toUs = state.window.toUs ?? Number.POSITIVE_INFINITY;
     // A sampled window starts with the frame already on screen at its start, so the frames before it stay candidates;
@@ -305,27 +311,25 @@ function stillFrames(state: EditState, step: { fps?: number; displays?: number[]
 
     if (step.fps !== undefined && inWindow.length > 0) {
         const end = Number.isFinite(toUs) ? toUs : inWindow[inWindow.length - 1].atUs + 1;
-        const byDisplay = new Map<number, SourceFrame[]>();
-
-        for (const frame of inWindow) {
-            const key = frame.displayId ?? -1;
-            const group = byDisplay.get(key);
-
-            if (group) {
-                group.push(frame);
-            } else {
-                byDisplay.set(key, [frame]);
+        const byDisplay = Map.groupBy(inWindow, (frame) => frame.displayId ?? -1);
+        const times = sampleTimes({ fromUs, toUs: end, fps: step.fps });
+        chosen = [];
+        for (const frames of byDisplay.values()) {
+            let cursor = -1;
+            for (const [index, time] of times.entries()) {
+                if (index % 1024 === 0) {
+                    await yieldToEventLoop();
+                    signal.throwIfAborted();
+                }
+                while (cursor + 1 < frames.length && frames[cursor + 1].atUs <= time) {
+                    cursor += 1;
+                }
+                if (cursor >= 0) {
+                    chosen.push({ ...frames[cursor], requestedUs: time });
+                }
             }
         }
-
-        chosen = [...byDisplay.values()]
-            .flatMap((frames) =>
-                sampleTimes({ fromUs, toUs: end, fps: step.fps ?? 1 }).flatMap((time) => {
-                    const shown = frames.findLast((frame) => frame.atUs <= time);
-                    return shown ? [{ ...shown, requestedUs: time }] : [];
-                })
-            )
-            .sort((a, b) => (a.requestedUs ?? a.atUs) - (b.requestedUs ?? b.atUs));
+        chosen.sort((a, b) => (a.requestedUs ?? a.atUs) - (b.requestedUs ?? b.atUs));
     }
 
     return chosen.map((frame, position) => ({
@@ -443,7 +447,8 @@ async function exportStep(
             timeoutMs: EXPORT_TIMEOUT_MS,
         });
     } else {
-        const frames = ctx.state.frames?.filter((frame) => frame.kept) ?? stillFrames(ctx.state, {});
+        const frames =
+            ctx.state.frames?.filter((frame) => frame.kept) ?? (await stillFrames(ctx.state, {}, ctx.signal));
 
         if (frames.length === 0) {
             throw new Error("Nothing to export: no frames in the range");
@@ -622,7 +627,7 @@ function compile(options: {
                             ...ctx.state,
                             frames: ctx.state.video
                                 ? await extractVideoFrames(ctx, dir, step.fps ?? 2)
-                                : stillFrames(ctx.state, step),
+                                : await stillFrames(ctx.state, step, ctx.signal),
                             sheets: [],
                         }),
                     });
