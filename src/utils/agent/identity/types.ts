@@ -1,12 +1,13 @@
 import type { AgentRuntimeContext, CallerAgent, CallerCore, ScopedCaller } from "@genesiscz/utils/agent/context";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
+import type { CallerTerminals, TerminalId, TerminalSource } from "./terminals";
 
-export type { CallerAgent, CallerCore, ScopedCaller };
+export type { CallerAgent, CallerCore, CallerTerminals, ScopedCaller, TerminalId };
 
 /**
  * Where one fact came from. A source names the caller (`hook-payload`, `caller-scope`, `env`); a facet
- * or an enricher describes it (`git`, `history`, `process`, `transcript`, `cmux`, `tmux`, `terminal` for the terminal
- * app, `account`, `t3code` for the
+ * or an enricher describes it (`git`, `history`, `process`, `transcript`, a terminal's own source from
+ * `TERMINAL_ENRICHERS` (`cmux`, `tmux`, `terminal` for the terminal app), `account`, `t3code` for the
  * host's env thread id and `t3code-store` for the details read from the host's own database); `override` is a value
  * the caller of `whoIsCalling` passed in.
  */
@@ -22,9 +23,7 @@ export type FactSource =
     | "history"
     | "process"
     | "transcript"
-    | "cmux"
-    | "tmux"
-    | "terminal"
+    | TerminalSource
     | "t3code"
     | "t3code-store"
     | "account";
@@ -46,16 +45,6 @@ export interface TerminalApp {
     program: string | null;
     itermSessionId: string | null;
     termSessionId: string | null;
-}
-
-/**
- * Every terminal a caller sits in, at once: a tmux pane inside a cmux surface keeps both. Choosing one to type into
- * is the transport's job (send-self, delivery), never the observer's.
- */
-export interface CallerTerminals {
-    cmux?: CmuxTerminal;
-    tmux?: TmuxTerminal;
-    app?: TerminalApp;
 }
 
 /**
@@ -125,7 +114,7 @@ export type IdentityField = Exclude<keyof AgentIdentity, "sources">;
  * `terminal`, and the host's thread id (its env) is a separate observation from the details its database adds. An
  * override of the whole field is recorded under the field itself (`terminal`, `host`).
  */
-export type FactPart = "terminal.cmux" | "terminal.tmux" | "terminal.app" | "host.threadId" | "host.details";
+export type FactPart = `terminal.${TerminalId}` | "host.threadId" | "host.details";
 
 /** What `sources` is keyed by: a whole field, or one independently observed part of it. */
 export type FactPath = IdentityField | FactPart;
@@ -213,9 +202,8 @@ export type CallerReading = Partial<Omit<AgentIdentity, "sources" | "agent">> & 
 
 /** The one field group each enricher owns, keyed by the enricher's id. An enricher can write nothing else. */
 export interface EnricherSlots {
-    cmux: CmuxTerminal;
-    tmux: TmuxTerminal;
-    terminal: TerminalApp;
+    /** Every terminal of `TERMINAL_ENRICHERS` the environment names, each under its own source path. */
+    terminal: CallerTerminals;
     t3code: CallerHost;
     account: CallerAccount;
 }

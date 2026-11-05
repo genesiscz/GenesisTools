@@ -2,6 +2,7 @@ import { afterEach } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isTerminalEnvKey } from "@genesiscz/utils/agent/identity/terminals";
 import { env } from "@genesiscz/utils/env";
 import { type NativeSessionProvider, nativeHomeOverrideVariable } from "@genesiscz/utils/providers/session-paths";
 
@@ -137,18 +138,17 @@ function isolateCodexModelsCache(): void {
     env.testing.set("GENESIS_TOOLS_CODEX_MODELS_CACHE", env.getTrimmed("GENESIS_TOOLS_CODEX_MODELS_CACHE") ?? missing);
 }
 
-/** Who-is-calling keys a harness, a host app or a terminal sets for the processes it starts (`*_HOME` stay). */
-export const AMBIENT_AGENT_ENV_PREFIXES = ["CLAUDE_CODE_", "CODEX_", "GROK_", "COPILOT_", "T3CODE_", "CMUX_", "ITERM_"];
+/**
+ * Who-is-calling keys a harness or a host app sets for the processes it starts (`*_HOME` stay). A terminal's keys
+ * come from the identity's terminal table (`isTerminalEnvKey`), so a new terminal is removed here too.
+ */
+export const AMBIENT_AGENT_ENV_PREFIXES = ["CLAUDE_CODE_", "CODEX_", "GROK_", "COPILOT_", "T3CODE_"];
 export const AMBIENT_AGENT_ENV_KEYS = [
     "CLAUDECODE",
     "CLAUDE_PID",
     "CLAUDE_EFFORT",
     "CLAUDE_AGENT_SDK_VERSION",
     "AI_AGENT",
-    "TMUX",
-    "TMUX_PANE",
-    "TERM_PROGRAM",
-    "TERM_SESSION_ID",
     "GENESIS_AGENTS_SESSION",
     "GT_RENDEZVOUS_SESSION",
     "TOOLS_CLAUDE_AUTH",
@@ -163,6 +163,7 @@ export function isAmbientAgentEnvKey(name: string): boolean {
 
     return (
         AMBIENT_AGENT_ENV_KEYS.includes(name) ||
+        isTerminalEnvKey(name) ||
         ACCOUNT_STAMP.test(name) ||
         AMBIENT_AGENT_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))
     );

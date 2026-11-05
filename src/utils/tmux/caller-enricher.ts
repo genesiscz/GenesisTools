@@ -1,4 +1,4 @@
-import type { ContextEnricher, TmuxTerminal } from "@genesiscz/utils/agent/identity/types";
+import type { TmuxTerminal } from "@genesiscz/utils/agent/identity/types";
 
 /**
  * The tmux pane a caller's environment names, or undefined outside tmux. A whitespace-only `TMUX_PANE` is what an
@@ -9,8 +9,3 @@ export function readTmuxTerminal(env: NodeJS.ProcessEnv): TmuxTerminal | undefin
     const pane = env.TMUX_PANE?.trim();
     return pane ? { pane } : undefined;
 }
-
-export const tmuxCallerEnricher: ContextEnricher<"tmux"> = {
-    id: "tmux",
-    enrich: ({ env }) => readTmuxTerminal(env),
-};

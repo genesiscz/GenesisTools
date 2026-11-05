@@ -4,6 +4,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writ
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Lang, parse } from "@ast-grep/napi";
+import { TERMINAL_ENV_KEYS } from "@genesiscz/utils/agent/identity/terminals";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import {
@@ -1486,6 +1487,9 @@ describe("the agent-context rules (spec 2026-11-04, section 5)", () => {
                 "const inTmux = Boolean(process.env.TMUX);",
                 'const tab = getEnv("ITERM_SESSION_ID");',
                 "const t = processEnv.TERM_SESSION_ID;",
+                // The whole cmux family belongs to src/utils/cmux/, not only the ids a caller is named by.
+                "const bundle = process.env.CMUX_BUNDLE_ID;",
+                'const socket = env["CMUX_SOCKET_PATH"];',
             ],
             owners: [
                 "src/utils/cmux/surface.ts",
@@ -1583,6 +1587,26 @@ describe("the agent-context rules (spec 2026-11-04, section 5)", () => {
             }
         });
     }
+
+    test("no-raw-terminal-env takes every terminal key from the terminal table, and a terminal's own reader owns it", () => {
+        for (const key of TERMINAL_ENV_KEYS) {
+            expect({
+                key,
+                found: rules(`const value = process.env.${key};`, scratchFile).includes("no-raw-terminal-env"),
+            }).toEqual({
+                key,
+                found: true,
+            });
+        }
+
+        // A new terminal's reader in its own folder is an owner, as cmux and tmux are.
+        expect(rules("const pane = process.env.TMUX_PANE;", "src/utils/wezterm/caller-enricher.ts")).not.toContain(
+            "no-raw-terminal-env"
+        );
+        expect(rules("const pane = process.env.TMUX_PANE;", "src/utils/wezterm/other.ts")).toContain(
+            "no-raw-terminal-env"
+        );
+    });
 
     test("tests, plugins, benchmarks and the lint scripts themselves are out of scope", () => {
         for (const { rule, hit } of cases) {

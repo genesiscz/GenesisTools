@@ -1,11 +1,11 @@
-import type { CmuxTerminal, ContextEnricher } from "@genesiscz/utils/agent/identity/types";
+import type { CmuxTerminal } from "@genesiscz/utils/agent/identity/types";
 
 /**
  * The cmux identity a process inherits, by variable name. A --via-tmux agent starts before its workspace exists, and
  * the tmux server may carry the CALLER's surface in its global environment; with it, the session hook would record
  * the agent in the caller's surface, and close or adoption could act on the caller's terminal. Without it, the hook
  * records the tmux pane, which is how close finds the agent's turn (session-close.ts `recordedSessionIdOf`).
- * `readCmuxTerminal` reads the same names.
+ * `readCmuxTerminal` reads the same names, and the identity's terminal table (`TERMINAL_ENRICHERS`) lists them.
  */
 export const CMUX_IDENTITY_ENV = ["CMUX_SURFACE_ID", "CMUX_WORKSPACE_ID", "CMUX_PANEL_ID", "CMUX_TAB_ID"] as const;
 
@@ -27,8 +27,3 @@ export function readCmuxTerminal(env: NodeJS.ProcessEnv): CmuxTerminal | undefin
         tabId: env.CMUX_TAB_ID?.trim() || null,
     };
 }
-
-export const cmuxCallerEnricher: ContextEnricher<"cmux"> = {
-    id: "cmux",
-    enrich: ({ env }) => readCmuxTerminal(env),
-};

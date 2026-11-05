@@ -206,6 +206,43 @@ describe("enrichers: terminals, host and account, each in its own slot", () => {
         expect(identity).toMatchObject({ agent: "claude-code", sessionId: "c1" });
     });
 
+    // Characterization (2026-11-05, before the terminal table): every terminal present at once, each under its own
+    // source path, the terminal app with its program and session ids, and a given `terminal` reads none of them.
+    it("characterization: cmux, tmux and the terminal app each keep their own slot and source", () => {
+        const identity = whoIsCalling(
+            local({
+                CMUX_SURFACE_ID: "surface-2",
+                CMUX_TAB_ID: " tab-2 ",
+                TMUX_PANE: "%4",
+                TERM_PROGRAM: " iTerm.app ",
+                ITERM_SESSION_ID: "w0t1p0:fixture",
+                TERM_SESSION_ID: "",
+                WEZTERM_PANE: "7",
+            })
+        );
+
+        expect(identity.terminal).toEqual({
+            cmux: { surfaceId: "surface-2", workspaceId: null, tabId: "tab-2" },
+            tmux: { pane: "%4" },
+            app: { program: "iTerm.app", itermSessionId: "w0t1p0:fixture", termSessionId: null },
+        });
+        expect(identity.sources).toMatchObject({
+            "terminal.cmux": "cmux",
+            "terminal.tmux": "tmux",
+            "terminal.app": "terminal",
+        });
+        expect(whoIsCalling(local({ TERM_SESSION_ID: "t-1" })).terminal).toEqual({
+            app: { program: null, itermSessionId: null, termSessionId: "t-1" },
+        });
+
+        const given = whoIsCalling(local({ CMUX_SURFACE_ID: "surface-2", TMUX_PANE: "%4" }), {
+            overrides: { terminal: { tmux: { pane: "%given" } } },
+        });
+        expect(given.terminal).toEqual({ tmux: { pane: "%given" } });
+        expect(given.sources).toMatchObject({ terminal: "override" });
+        expect(given.sources["terminal.cmux"]).toBeUndefined();
+    });
+
     it("the account is the caller's own harness stamp, an account or a proxy target", () => {
         const codex = whoIsCalling(local({ CODEX_THREAD_ID: "t1", [accountEnvVar("codex")]: "work laptop" }));
         expect(codex.account).toEqual({ harness: "codex", account: "work laptop", proxyTarget: null });
