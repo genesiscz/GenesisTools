@@ -11,7 +11,7 @@ const { log } = logger.scoped("t3code:thread");
  * pins again with no host, so it no longer names the thread. Undefined for a session no T3 thread ran.
  */
 export async function t3ThreadOfSession(sessionId: string): Promise<string | undefined> {
-    const pin = (await loadPins({ readOnly: true })).get(sessionId);
+    const pin = (await loadPins({ readOnly: true, provider: "claude" })).get(sessionId);
     return pin?.host?.kind === "t3" && pin.host.id ? pin.host.id : undefined;
 }
 
