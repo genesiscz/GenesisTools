@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { asResult } from "@genesiscz/utils/cli/result";
-import { writeStdoutStrict } from "@genesiscz/utils/cli/stdout";
+import { isBrokenPipe, writeStdoutStrict } from "@genesiscz/utils/cli/stdout";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -710,7 +710,7 @@ export async function runLogin(opts: LoginOpts): Promise<void> {
         try {
             await runLoginImpl(opts);
         } catch (error) {
-            if (!(error instanceof Error && "code" in error && error.code === "EPIPE")) {
+            if (!isBrokenPipe(error)) {
                 throw error;
             }
         }

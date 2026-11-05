@@ -1,5 +1,12 @@
+/** Whether a stream error means its reader closed the pipe. */
+export function isBrokenPipe(error: unknown): boolean {
+    return error instanceof Error && "code" in error && error.code === "EPIPE";
+}
+
+let listening = false;
+
 /**
- * Write text to stdout and resolve only once every byte is committed.
+ * Write text to stdout and reject if delivery fails.
  *
  * Bun leaves a piped stdout fd in non-blocking mode. A plain `console.log` of a
  * large string can race process exit and be truncated at the OS pipe buffer
@@ -9,13 +16,6 @@
  * action handler returns. `fs.writeSync(1, ...)` is not a safe replacement here;
  * it can throw EAGAIN on Bun's non-blocking pipe fd.
  */
-function isBrokenPipe(error: unknown): boolean {
-    return error instanceof Error && "code" in error && error.code === "EPIPE";
-}
-
-let listening = false;
-
-/** Write output whose delivery must be acknowledged by the caller. */
 export async function writeStdoutStrict(text: string): Promise<void> {
     if (!listening) {
         listening = true;
