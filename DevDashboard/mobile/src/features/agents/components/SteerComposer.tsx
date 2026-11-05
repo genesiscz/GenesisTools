@@ -241,7 +241,12 @@ export function SteerComposer({
                     disabled={!canSend}
                     onPress={() => {
                         const message = text.trim();
-                        void composer.submit(message, timing).then(() => setText(""));
+                        const submitted = text;
+                        void composer.submit(message, timing).then((accepted) => {
+                            if (accepted) {
+                                setText((current) => current === submitted ? "" : current);
+                            }
+                        });
                     }}
                     className="items-center justify-center rounded-xl px-4 py-2"
                     style={{ backgroundColor: canSend ? c.accent : c.accentMuted }}
