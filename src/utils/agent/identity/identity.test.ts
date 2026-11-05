@@ -465,6 +465,22 @@ describe("the transcript and model facets, through each harness's locator and mo
             model: null,
         });
     });
+
+    it("a Claude subagent inside its lead's session never gets the lead's transcript from the lookup", () => {
+        const home = scratch("claude-sub-home-");
+        const cwd = "/fixture/claude project";
+        const lead = put(join(home, ".claude", "projects", "-fixture-claude-project", "lead-1.jsonl"), "");
+        const caller = (subagentId?: string) =>
+            whoIsCalling(
+                { origin: "local", env: {}, hook: { caller: "claude", sessionId: "lead-1", cwd, subagentId } },
+                { facets: ["transcript"], home }
+            );
+
+        expect(caller().transcriptPath).toBe(lead);
+        const sub = caller("agent-7");
+        expect(sub).toMatchObject({ sessionId: "lead-1", subagentId: "agent-7" });
+        expect(sub.transcriptPath).toBeUndefined();
+    });
 });
 
 describe("the git facet's cache", () => {
