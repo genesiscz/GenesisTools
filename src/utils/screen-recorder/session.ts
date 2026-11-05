@@ -31,6 +31,8 @@ export interface SessionCapture {
     streamed: number;
     /** This capture records the session's sound. */
     audio: boolean;
+    /** The sound sources it started with: a source muted at its start is not among them. */
+    audioSources: readonly AudioSource[];
     /** Where its recorder writes (`<pieceDir>/d<display>-<n>`). */
     outDir: string;
     done: Promise<void>;
@@ -102,6 +104,7 @@ export class PieceCaptures {
             controller: new AbortController(),
             streamed: 0,
             audio: withAudio,
+            audioSources: withAudio && sound ? sound.sources : [],
             outDir,
             done: Promise.resolve(),
         };
@@ -143,6 +146,20 @@ export class PieceCaptures {
                         outcome.lastError = new CaptureError("failed", "the capture stream failed");
                     } else {
                         outcome.recorded = true;
+                    }
+
+                    // The one capture that recorded the sound lost its display: the others record none, so the piece
+                    // ends, and the next one gives the sound to a display that is still there.
+                    if (
+                        entry.audio &&
+                        result.endedEarly === "display-removed" &&
+                        this.options.audioOwnership !== "every"
+                    ) {
+                        for (const other of this.running.values()) {
+                            if (other !== entry) {
+                                other.controller.abort();
+                            }
+                        }
                     }
 
                     const kept = await this.options.hooks.onResult?.(entry, result);

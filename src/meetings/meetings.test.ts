@@ -2080,7 +2080,7 @@ describe("the meetings recorder loop", () => {
     let stores = 0;
 
     /** `stream`: the capture's stream failed, but it returns the frame it kept before. */
-    type Step = "frames" | "empty" | "fail" | "hang" | "timeout" | "stream";
+    type Step = "frames" | "empty" | "fail" | "hang" | "timeout" | "stream" | "removed";
 
     /** A recorder that follows a script per capture; after the script it waits for the stop the test sends. */
     class ScriptedRecorder extends FrameRecorder {
@@ -2305,6 +2305,10 @@ describe("the meetings recorder loop", () => {
 
             if (step === "empty") {
                 return { startedAtMs: Date.now(), frames: [] };
+            }
+
+            if (step === "removed") {
+                return { startedAtMs: Date.now(), frames: [], endedEarly: "display-removed" };
             }
 
             const path = join(request.outDir, "keep-0001.png");
@@ -3114,6 +3118,28 @@ describe("the meetings recorder loop", () => {
         });
     });
 
+    test("when the display whose capture records the sound is unplugged, the next piece records it on another", async () => {
+        const run = await recordWith({
+            // The second piece sees only the external display: the built-in one left.
+            displays: [[builtIn, external], [external]],
+            steps: ["removed", "hang", "hang"],
+            audio: true,
+            actions: [
+                // Without the restart nothing starts again, so this stop ends the run after a while either way.
+                async (call) => {
+                    await Bun.sleep(400);
+                    return call("stop");
+                },
+            ],
+        });
+
+        expect(run.recorder.requests.map((request) => [request.target, request.audio !== undefined])).toEqual([
+            [{ kind: "display", displayId: 1 }, true],
+            [{ kind: "display", displayId: 4 }, false],
+            [{ kind: "display", displayId: 4 }, true],
+        ]);
+    });
+
     test("a live switch moves the capture that records the sound, even when it started last", async () => {
         const run = await recordWith({
             displays: [[builtIn, external]],
@@ -3270,6 +3296,37 @@ describe("the meetings recorder loop", () => {
             ],
         });
         expect(run.recorder.requests.map((request) => request.audio?.sources ?? [])).toEqual([["mic"], [], ["mic"]]);
+    });
+
+    test("a microphone chosen while the mic is muted waits for the unmute instead of reaching a capture without it", async () => {
+        let chosen: unknown;
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["hang", "hang", "hang"],
+            liveControl: true,
+            liveSettings: true,
+            audio: true,
+            actions: [
+                async (call) => {
+                    await call("audio.mute", { source: "mic", muted: true });
+                    return call("displays.mode", { mode: "all" });
+                },
+                async (call) => {
+                    // The capture of this piece started without the microphone.
+                    chosen = await call("audio.setInput", { deviceId: "desk-mic" });
+                    return call("audio.mute", { source: "mic", muted: false });
+                },
+                async (call) => call("stop"),
+            ],
+        });
+
+        expect(chosen).not.toBeInstanceOf(Error);
+        expect(run.recorder.commands).not.toContain("mic desk-mic");
+        expect(run.recorder.requests.map((request) => request.audio)).toEqual([
+            { sources: ["mic"] },
+            undefined,
+            { sources: ["mic"], micDeviceId: "desk-mic" },
+        ]);
     });
 
     test("a system-only restart omits the selected but muted microphone", async () => {

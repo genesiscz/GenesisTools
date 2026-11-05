@@ -735,6 +735,14 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
         const owners = [...this.captures.running.values()].filter((one) => one.audio);
 
+        // Muted before these captures started, the mic is in none of them: the unmute restarts them, and the new ones
+        // open this input, so nothing is sent or restarted now. A capture muted live still has its mic and switches.
+        if (this.sound.muted.mic && !owners.some((one) => one.audioSources.includes("mic"))) {
+            this.sound = { ...this.sound, micDevice: deviceId };
+            log.info({ id: this.config.live.id, deviceId }, "microphone chosen while muted; used at the unmute");
+            return this.audio;
+        }
+
         if (owners.length > 0 && owners.every((one) => one.live?.setMic)) {
             await Promise.all(owners.map((one) => one.live?.setMic?.(deviceId))).catch((error: unknown) => {
                 throw new RpcError(RPC_ERRORS.internal, errorText(error));

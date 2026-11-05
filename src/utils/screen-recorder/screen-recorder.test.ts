@@ -134,6 +134,7 @@ describe("displays", () => {
             controller: new AbortController(),
             streamed: 0,
             audio: false,
+            audioSources: [],
             outDir: join(tmpdir(), "d1-0"),
             done: Promise.resolve(),
         };
