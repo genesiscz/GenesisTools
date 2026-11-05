@@ -58,15 +58,27 @@ describe("meetings config", () => {
         expect(recorderSettings(config.global.capture)).toEqual({ audio: { sources: [] } });
     });
 
-    test("capture.ocr: an old file without the block reads every kept frame whole; a set block is kept", () => {
+    test("capture.ocr: an old file gains the tile default; explicit read choices are kept", () => {
         const old = meetingsConfigSchema.parse({ version: 3, global: { capture: { threshold: 0.05 } } });
         expect(old.global.capture.threshold).toBe(0.05);
-        expect(old.global.capture.ocr).toEqual({ threshold: 0, skipTextless: false, region: "frame" });
+        expect(old.global.capture.ocr).toEqual({ threshold: 0, skipTextless: false, region: "frame", read: "tiles" });
 
         const set = meetingsConfigSchema.parse({
             global: { capture: { ocr: { threshold: 0.1, skipTextless: true, region: "changed" } } },
         });
-        expect(set.global.capture.ocr).toEqual({ threshold: 0.1, skipTextless: true, region: "changed" });
+        expect(set.global.capture.ocr).toEqual({
+            threshold: 0.1,
+            skipTextless: true,
+            region: "changed",
+            read: "tiles",
+        });
+        expect(
+            meetingsConfigSchema.parse({ global: { capture: { ocr: { read: "tiles" } } } }).global.capture.ocr.read
+        ).toBe("tiles");
+        expect(
+            meetingsConfigSchema.parse({ global: { capture: { ocr: { read: "frame" } } } }).global.capture.ocr.read
+        ).toBe("frame");
+        expect(() => meetingsConfigSchema.parse({ global: { capture: { ocr: { read: true } } } })).toThrow();
         expect(() => meetingsConfigSchema.parse({ global: { capture: { ocr: { region: "crop" } } } })).toThrow();
     });
 

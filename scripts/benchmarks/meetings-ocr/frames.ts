@@ -117,7 +117,9 @@ export async function consecutiveFrames(options: {
 /** The darwinkit helper this process started, found by its parent pid. */
 export async function helperPid(): Promise<number | null> {
     const rows = await listPsTable();
-    return rows.find((row) => row.ppid === process.pid && /darwinkit/i.test(row.command))?.pid ?? null;
+    return (
+        rows.find((row) => row.ppid === process.pid && /(?:^|[/\\])darwinkit(?:\s|$)/i.test(row.command))?.pid ?? null
+    );
 }
 
 /** A process's CPU so far (`ps cputime`, 10 ms resolution). */

@@ -5,7 +5,12 @@ import { logger } from "@genesiscz/utils/logger";
 import { getDarwinKit } from "./darwinkit";
 import type { OcrBlock, OcrLevel, OcrResult } from "./types";
 
+export const OCR_READS = ["frame", "tiles"] as const;
+export type OcrRead = (typeof OCR_READS)[number];
+
 export interface OcrOptions {
+    /** Side-by-side region reads without language correction. Default: frame. */
+    read?: OcrRead;
     /** BCP-47 language codes to use for recognition. Default: ["en-US"] */
     languages?: string[];
     /** "fast" for speed, "accurate" for quality. Default: "accurate" */
@@ -148,6 +153,47 @@ export function mergeTiledOcrResults(parts: TilePart[], fullHeight: number): Ocr
     };
 }
 
+/** Ultrawide frames need two reads; ordinary landscape and portrait frames need one. */
+export function planOcrTiles({ width, height }: ImageDimensions) {
+    const count = width / height >= 2 ? 2 : 1;
+    return Array.from({ length: count }, (_, index) => {
+        const x = Math.max(0, index / count - (index > 0 ? 0.03 : 0));
+        const right = Math.min(1, (index + 1) / count + (index < count - 1 ? 0.03 : 0));
+        return { x, y: 0, width: right - x, height: 1 };
+    });
+}
+
+/** Region OCR already answers in full-image, bottom-left coordinates. Never scale those bounds again. */
+export function mergeRegionOcrResults(parts: OcrResult[]): OcrResult {
+    const blocks: OcrBlock[] = [];
+    const fold = (text: string) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+
+    for (const part of parts) {
+        for (const block of part.blocks) {
+            const duplicate = blocks.findIndex((other) => {
+                if (fold(other.text) !== fold(block.text)) {
+                    return false;
+                }
+
+                const a = other.bounds;
+                const b = block.bounds;
+                const overlapWidth = Math.max(0, Math.min(+a.x + +a.width, +b.x + +b.width) - Math.max(+a.x, +b.x));
+                const overlapHeight = Math.max(0, Math.min(+a.y + +a.height, +b.y + +b.height) - Math.max(+a.y, +b.y));
+                const area = Math.min(+a.width * +a.height, +b.width * +b.height);
+                return area > 0 && (overlapWidth * overlapHeight) / area > 0.5;
+            });
+
+            if (duplicate < 0) {
+                blocks.push(block);
+            } else if (block.confidence > blocks[duplicate].confidence) {
+                blocks[duplicate] = block;
+            }
+        }
+    }
+
+    return { text: blocks.map((block) => block.text).join("\n"), blocks };
+}
+
 function needsAccurateTiling(dims: ImageDimensions): boolean {
     return dims.height > MAX_ACCURATE_DIMENSION || dims.width > MAX_ACCURATE_DIMENSION;
 }
@@ -215,8 +261,10 @@ export async function recognizeText(imagePath: string, options: OcrOptions = {})
     const level = options.level ?? "accurate";
     const languages = options.languages ?? ["en-US"];
 
+    const dimensions = level === "accurate" || options.read === "tiles" ? await getImageDimensions(imagePath) : null;
+
     if (level === "accurate") {
-        const dims = await getImageDimensions(imagePath);
+        const dims = dimensions;
 
         if (dims && needsAccurateTiling(dims)) {
             const tiled = await recognizeTextTiled(imagePath, dims, languages, level);
@@ -226,6 +274,28 @@ export async function recognizeText(imagePath: string, options: OcrOptions = {})
             }
 
             logger.debug({ imagePath, dims }, "darwin-ocr: tiled accurate empty, falling back to fast");
+        }
+    }
+
+    if (options.read === "tiles") {
+        const dims = dimensions;
+
+        if (dims && !needsAccurateTiling(dims)) {
+            const parts: OcrResult[] = [];
+
+            for (const region of planOcrTiles(dims)) {
+                parts.push(
+                    await getDarwinKit().vision.ocr({
+                        path: imagePath,
+                        languages,
+                        level,
+                        region,
+                        language_correction: false,
+                    })
+                );
+            }
+
+            return mergeRegionOcrResults(parts);
         }
     }
 

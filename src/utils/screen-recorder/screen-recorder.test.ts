@@ -879,6 +879,32 @@ describe("frame output", () => {
         return { path, atMs: 0, displayId: 2, changePercent: 3, reason: "change" };
     };
 
+    test("a kept frame passes the live tile choice to its recognizer", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-frame-tiles-"));
+        const choices: unknown[] = [];
+        const output = new FrameOutput({
+            folder: dir,
+            naming: "elapsed",
+            format: { kind: "original" },
+            ocr: {
+                settings: () => ({
+                    enabled: true,
+                    languages: ["en-US"],
+                    minChars: 0,
+                    ...OCR_READ_DEFAULTS,
+                    read: "tiles",
+                }),
+                sink: { write: () => {} },
+                recognize: async (_image, _languages, options) => {
+                    choices.push(options);
+                    return { text: "", blocks: [] };
+                },
+            },
+        });
+        await output.keep(frameIn(dir), { atMs: 1000, originMs: 0, displayId: 2 });
+        expect(choices).toEqual([{ read: "tiles" }]);
+    });
+
     test("a sidecar is written only for a read with minChars or more; OCR off still gives the jsonl sink a row", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-frame-out-"));
         let enabled = true;
@@ -1889,6 +1915,7 @@ describe("characterization: what a library recording asks its recorder for", () 
                     minChars: "number",
                     threshold: "number",
                     skipTextless: "boolean",
+                    read: "string",
                     region: "string",
                 },
                 audio: { sources: [], muted: { mic: "boolean", system: "boolean" } },

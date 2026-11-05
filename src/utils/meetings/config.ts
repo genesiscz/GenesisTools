@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { OCR_READS } from "@genesiscz/utils/macos/ocr";
 import { FILLER_WORDS, type FillerLists } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { AUDIO_SOURCES, OCR_REGIONS } from "@genesiscz/utils/screen-recorder/control";
 import { FRAME_RECORDER_IDS, type FrameRecorderId } from "@genesiscz/utils/screen-recorder/types";
@@ -103,7 +104,7 @@ const captureSchema = z.object({
     idleFps: z.number().positive().default(0.1),
     /** The share of the screen that must change for a new frame (0 to 1). */
     threshold: z.number().min(0).max(1).default(0.02),
-    /** How the kept frames are read by OCR. The defaults read every kept frame whole, as before these keys existed. */
+    /** How the kept frames are read by OCR. Tile reads improve small-text recall on wide displays. */
     ocr: z
         .object({
             /** The OCR-only change threshold (0 to 1): a kept frame that changed less keeps the previous frame's text. */
@@ -112,6 +113,8 @@ const captureSchema = z.object({
             skipTextless: z.boolean().default(false),
             /** `frame` reads each kept frame whole; `changed` reads only its changed area and keeps the rest. */
             region: z.enum(OCR_REGIONS).default("frame"),
+            /** Whole-frame reads or overlapping region tiles without language correction. */
+            read: z.enum(OCR_READS).default("tiles"),
         })
         .prefault({}),
     jpegQuality: z.number().min(0.1).max(1).default(0.75),

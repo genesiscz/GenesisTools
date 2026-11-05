@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { recognizeText } from "@genesiscz/utils/macos/ocr";
+import { type OcrRead, recognizeText } from "@genesiscz/utils/macos/ocr";
 import { imageSize, type PixelBox } from "@genesiscz/utils/macos/ocr-boxes";
 import type { OcrBlock, OcrLevel, OcrResult } from "@genesiscz/utils/macos/types";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
@@ -75,7 +75,7 @@ export type JpegConverter = (source: string, target: string, quality: number) =>
 export type OcrRecognizer = (
     image: string,
     languages: string[],
-    options?: { level?: OcrLevel; fastFallback?: boolean }
+    options?: { level?: OcrLevel; fastFallback?: boolean; read?: OcrRead }
 ) => Promise<OcrResult>;
 /** Writes the `box` of an image (pixels, top-left origin) to `target` as a PNG. */
 export type ImageCropper = (source: string, target: string, box: PixelBox) => Promise<void>;
@@ -424,7 +424,7 @@ export class FrameOutput {
         }
 
         try {
-            const read = await recognize(path, settings.languages);
+            const read = await recognize(path, settings.languages, { read: settings.read });
             this.lastRead.set(displayId, read);
             return { read };
         } catch (error) {

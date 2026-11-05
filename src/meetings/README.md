@@ -139,6 +139,15 @@ costs about as much as a whole read (each Vision call costs about 110 ms of CPU 
 a whole read of a wide frame does, so the text would change (`docs/benchmarks-cpu.md`, 2026-11-05). The first frame of
 each capture and each display switch is always read whole.
 
+`capture.ocr.read` selects `frame` or `tiles` (default) for a full-frame read, including the first frame and display switches.
+`frame` keeps the existing whole-image read with language correction. `tiles` reads the original image through Vision
+regions, with language correction off: two side-by-side strips when width / height is at least 2, otherwise one region.
+Each strip extends 3% of the full image width past its inner edge. Spatially overlapping duplicate lines are dropped;
+block bounds stay in full-image coordinates. No tile crop files are made. The existing vertical-crop fallback for images
+larger than 6000 pixels remains unchanged. `region: changed` still controls changed-area crops independently; `read`
+applies when a full-frame read is needed. The default and second-meeting measurements are recorded in
+`docs/benchmarks-cpu.md`.
+
 `capture.displays` picks what is recorded: `all` (default) records every connected display at once, one capture per
 display per piece; `main`; `follow-focus` (the display of the focused window, when the recorder supports it, else the
 main one); or a screen index. Each piece reads the display list again by id, so a display that is connected joins at

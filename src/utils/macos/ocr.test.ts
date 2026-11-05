@@ -1,6 +1,86 @@
-import { describe, expect, it } from "bun:test";
-import { mergeTiledOcrResults } from "./ocr";
+import { describe, expect, it, spyOn } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getDarwinKit } from "./darwinkit";
+import { mergeRegionOcrResults, mergeTiledOcrResults, planOcrTiles, recognizeText } from "./ocr";
 import { boxesHolding, changedLines, frameBoxes, matchingBoxes, type OcrBox, padBox, pixelBox } from "./ocr-boxes";
+
+describe("region tiles", () => {
+    it.skipIf(process.platform !== "darwin")(
+        "reads two regions of the original image with correction off, without an empty fast retry",
+        async () => {
+            const image = join(mkdtempSync(join(tmpdir(), "ocr-region-")), "frame.bmp");
+            const bitmap = Buffer.alloc(62);
+            bitmap.write("BM");
+            bitmap.writeUInt32LE(62, 2);
+            bitmap.writeUInt32LE(54, 10);
+            bitmap.writeUInt32LE(40, 14);
+            bitmap.writeInt32LE(2, 18);
+            bitmap.writeInt32LE(1, 22);
+            bitmap.writeUInt16LE(1, 26);
+            bitmap.writeUInt16LE(24, 28);
+            writeFileSync(image, bitmap);
+            const native = spyOn(getDarwinKit().vision, "ocr").mockResolvedValue({ text: "", blocks: [] });
+            try {
+                expect(await recognizeText(image, { read: "tiles", languages: ["en-US"] })).toEqual({
+                    text: "",
+                    blocks: [],
+                });
+                expect(native).toHaveBeenCalledTimes(2);
+                expect(native.mock.calls.map(([request]) => request)).toEqual([
+                    {
+                        path: image,
+                        languages: ["en-US"],
+                        level: "accurate",
+                        region: { x: 0, y: 0, width: 0.53, height: 1 },
+                        language_correction: false,
+                    },
+                    {
+                        path: image,
+                        languages: ["en-US"],
+                        level: "accurate",
+                        region: { x: 0.47, y: 0, width: 0.53, height: 1 },
+                        language_correction: false,
+                    },
+                ]);
+                native.mockClear();
+                await recognizeText(image, { read: "frame", fastFallback: false });
+                expect(native).toHaveBeenCalledWith({ path: image, languages: ["en-US"], level: "accurate" });
+            } finally {
+                native.mockRestore();
+            }
+        }
+    );
+
+    it("uses two overlapping strips for ultrawide frames, one for ordinary and portrait frames", () => {
+        expect(planOcrTiles({ width: 2880, height: 1205 })).toEqual([
+            { x: 0, y: 0, width: 0.53, height: 1 },
+            { x: 0.47, y: 0, width: 0.53, height: 1 },
+        ]);
+        expect(planOcrTiles({ width: 2000, height: 1000 })).toHaveLength(2);
+        for (const size of [
+            { width: 1920, height: 1080 },
+            { width: 1440, height: 2560 },
+        ]) {
+            expect(planOcrTiles(size)).toEqual([{ x: 0, y: 0, width: 1, height: 1 }]);
+        }
+    });
+
+    it("preserves full-image bounds and repeated text elsewhere, deduplicating only spatially overlapping lines", () => {
+        const left = { text: "Seam line", confidence: 0.8, bounds: { x: 0.48, y: 0.7, width: 0.04, height: 0.02 } };
+        const duplicate = { ...left, text: "seam  line", confidence: 0.9 };
+        const elsewhere = { ...left, bounds: { ...left.bounds, y: 0.3 } };
+        const merged = mergeRegionOcrResults([
+            { text: left.text, blocks: [left] },
+            { text: "seam  line\nSeam line", blocks: [duplicate, elsewhere] },
+        ]);
+        expect(merged.blocks).toEqual([duplicate, elsewhere]);
+        expect(merged.blocks[0].bounds).toEqual(left.bounds);
+        expect(merged.text).toBe("seam  line\nSeam line");
+        expect(mergeRegionOcrResults([])).toEqual({ text: "", blocks: [] });
+    });
+});
 
 describe("mergeTiledOcrResults", () => {
     it("merges text and re-maps block y from tile-normalized to full-image coords", () => {

@@ -523,3 +523,33 @@ Rerun:
 ```bash
 bun scripts/benchmarks/meetings-ocr/small-text.ts --runs 3 --frames 8 --displays 2,1,4
 ```
+
+## 2026-11-05 15:05 — Meeting OCR: shipped region tiles on a second meeting
+
+darwinkit 0.8.1, `small-text.ts --meeting /Users/Martin/.genesis-tools/meetings/2026-11-05_14-02-playwright --runs 3 --frames 4`. The meeting is read only; frames are copied to scratch, all OCR text stays in memory, and retained summaries contain counts only. Every existing arm is retained; `darwinkit-tiles` adds the shipped `FrameOutput` → `recognizeText({ read: "tiles" })` path. Four consecutive frames per display, three repeats, rotated arm order. Reference: the first repeat of `halves`, as above. CPU is the median of repeat means; native arms count helper CPU plus crop-child CPU, with 10 ms resolution; this excludes Bun CPU.
+
+Tile count follows the frame aspect ratio: two strips at width / height >= 2, one region otherwise. Each inner edge extends 3% of full-image width. Correction is off for these region reads. Bounds are already full-image coordinates; duplicate lines are merged spatially. Ordinary displays therefore keep one read rather than the fixed two-region Swift experiment.
+
+Columns below give reference-word recall (%) / helper CPU per kept frame (ms). Weighted values use this meeting's frame counts: display 4 = 67, display 2 = 102, display 1 = 68, total 237. This is a sample of one second meeting, not ground-truth transcription accuracy.
+
+| Arm | Display 4, 2880×1205 | Display 2, 2560×1440 | Display 1, 2880×1861 | Weighted recall % / CPU ms |
+|---|---:|---:|---:|---:|
+| `whole` | 1.4 / 74.9 | 75.0 / 195.2 | 93.2 / 357.0 | 59.4 / 207.6 |
+| `mth-0.02` | 1.4 / 63.0 | 75.0 / 194.3 | 92.1 / 352.5 | 59.1 / 202.6 |
+| `mth-0.01` | 1.4 / 66.6 | 75.1 / 197.8 | 93.2 / 343.0 | 59.5 / 202.4 |
+| `mth-0.005` | 1.4 / 63.2 | 75.1 / 196.8 | 93.2 / 345.8 | 59.5 / 201.8 |
+| `no-correction` | 1.1 / 39.8 | 73.3 / 78.9 | 92.5 / 133.8 | 58.4 / 83.6 |
+| `fast` | 3.5 / 486.9 | 65.3 / 121.9 | 65.3 / 209.8 | 47.8 / 250.3 |
+| `tiles-2` | 76.6 / 1188.4 | 96.2 / 287.9 | 94.5 / 432.9 | 90.2 / 584.1 |
+| `tiles-3` | 85.3 / 1340.9 | 96.4 / 322.3 | 95.1 / 446.4 | 92.9 / 645.9 |
+| `tiles-2-no-correction` | 76.2 / 391.6 | 96.8 / 152.5 | 94.1 / 195.1 | 90.2 / 232.3 |
+| `tiles-3-no-correction` | 84.5 / 481.2 | 96.3 / 178.6 | 94.3 / 210.7 | 92.4 / 273.4 |
+| `halves` | 100.0 / 1203.3 | 99.6 / 271.4 | 100.0 / 410.1 | 99.8 / 574.6 |
+| `darwinkit-whole` | 1.4 / 70.0 | 65.0 / 182.5 | 93.2 / 365.0 | 55.1 / 203.1 |
+| `darwinkit-tiles` | 76.2 / 400.0 | 64.4 / 80.0 | 92.5 / 137.5 | 75.8 / 187.0 |
+| `changed` | 8.7 / 196.6 | 67.2 / 205.2 | 93.2 / 352.5 | 58.1 / 245.0 |
+| `tiles-2-crops` | 71.3 / 1685.7 | 82.9 / 439.0 | 69.8 / 563.9 | 75.9 / 827.3 |
+
+Verdict: meetings defaults to `capture.ocr.read: "tiles"`. Weighted word recall rises from 55.1% to 75.8% (+20.7 points), and CPU falls from 203.1 to 187.0 ms (0.92×), meeting the recall-gain and <=1.5× CPU gate. On the ultrawide display alone it costs 400 vs 70 ms (5.71×) for 76.2% vs 1.4% recall; ordinary displays save CPU but gain no recall. Users can select `frame`. The shared OCR API and generic recorder retain their frame default, and oversized-image vertical cropping is unchanged.
+
+Load: first 75.3, median 51.4, max 98.2, last 33.4; Bun 1.4.2. CPU remains sensitive to machine load. One earlier 8-frame, 3-repeat attempt timed out on vision.ocr after 60 s and produced no valid summary. Measurement also exposed a helper-discovery bug: a loose darwinkit match selected the Swift helper because the scratch directory contained darwinkit-ocr. The matcher now identifies the executable basename, missing helpers fail the bench, and completed repeats save count-only checkpoints. The table uses only the successful rerun with the corrected matcher. Swift whole and darwinkit whole differ on display 2 (75% vs 65% recall); the cause is unknown, and the default comparison uses the shipped native whole arm.

@@ -1,4 +1,5 @@
 import type { JobInfo } from "@genesiscz/utils/jobs";
+import { OCR_READS } from "@genesiscz/utils/macos/ocr";
 import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "@genesiscz/utils/rpc/errors";
 import { z } from "zod";
 import type { DisplayInfo } from "./types";
@@ -133,14 +134,18 @@ export const recorderSettingsSchema = z.object({
         skipTextless: z.boolean(),
         /** What OCR reads: the whole frame, or only the changed area, its lines put into the previous frame's text. */
         region: z.enum(OCR_REGIONS),
+        /** How a full-frame read is recognized; omitted legacy settings keep whole-frame reads. */
+        read: z.enum(OCR_READS).optional(),
     }),
 });
 
 /** What the OCR settings are when a recorder names none of the read savings: every kept frame read whole. */
-export const OCR_READ_DEFAULTS = { threshold: 0, skipTextless: false, region: "frame" } as const satisfies Pick<
-    RecorderSettings["ocr"],
-    "threshold" | "skipTextless" | "region"
->;
+export const OCR_READ_DEFAULTS = {
+    threshold: 0,
+    skipTextless: false,
+    region: "frame",
+    read: "frame",
+} as const satisfies Pick<RecorderSettings["ocr"], "threshold" | "skipTextless" | "region" | "read">;
 export type RecorderSettings = z.infer<typeof recorderSettingsSchema>;
 export const recorderSettingsPatchSchema = recorderSettingsSchema
     .omit({ ocr: true })
@@ -339,7 +344,7 @@ export const RECORDER_DISPATCH: Record<
             parse(
                 recorderSettingsPatchSchema,
                 params,
-                "any of { activeFps, idleFps, threshold, maxLongSide, heartbeatSec, ocr: { enabled, languages, minChars, threshold, skipTextless, region } }"
+                "any of { activeFps, idleFps, threshold, maxLongSide, heartbeatSec, ocr: { enabled, languages, minChars, threshold, skipTextless, region, read } }"
             )
         ),
 };

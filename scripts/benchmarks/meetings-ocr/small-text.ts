@@ -13,6 +13,8 @@
  *     right, each `OVERLAP` of the width wider on its inner sides, as regions of interest of one image.
  *   - `darwinkit-whole` and `changed` are the recorder's own path (`FrameOutput` with `region` "frame" or "changed",
  *     the shared darwinkit helper): the positive control for `whole`, and the existing changed-area read.
+ *   - `darwinkit-tiles` uses FrameOutput and recognizeText with read: tiles: the shipped aspect-ratio rule, native
+ *     regions, correction off, and spatial overlap deduplication, through darwinkit 0.8.1.
  *   - `tiles-2-crops` is how a tile read would ship without a new native binary: `sips` crops each tile to a PNG and
  *     darwinkit reads each crop.
  *   CPU per frame for the darwinkit arms is the helper's `ps cputime` (10 ms resolution) plus the CPU of the `sips`
@@ -37,7 +39,7 @@ import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { closeDarwinKit } from "@genesiscz/utils/macos/darwinkit";
-import { recognizeText } from "@genesiscz/utils/macos/ocr";
+import { type OcrRead, recognizeText } from "@genesiscz/utils/macos/ocr";
 import { imageSize, type PixelBox } from "@genesiscz/utils/macos/ocr-boxes";
 import { OCR_READ_DEFAULTS, type OcrRegion } from "@genesiscz/utils/screen-recorder/control";
 import { FrameOutput, type ImageCropper, type OcrRow } from "@genesiscz/utils/screen-recorder/frame-output";
@@ -68,7 +70,7 @@ type VisionArm = {
     tiles?: number;
     overlap?: number;
 };
-type Arm = VisionArm | { kind: "output"; region: OcrRegion } | { kind: "crops"; tiles: number };
+type Arm = VisionArm | { kind: "output"; region: OcrRegion; read?: OcrRead } | { kind: "crops"; tiles: number };
 
 const today = { kind: "vision", level: "accurate", correction: true } as const satisfies VisionArm;
 
@@ -85,6 +87,7 @@ const ARMS: Record<string, Arm> = {
     "tiles-3-no-correction": { ...today, tiles: 3, correction: false },
     halves: { ...today, tiles: 2, overlap: 0 },
     "darwinkit-whole": { kind: "output", region: "frame" },
+    "darwinkit-tiles": { kind: "output", region: "frame", read: "tiles" },
     changed: { kind: "output", region: "changed" },
     "tiles-2-crops": { kind: "crops", tiles: 2 },
 };
@@ -312,6 +315,10 @@ async function main(): Promise<void> {
         closeDarwinKit();
         await recognizeText(firstFrame, { languages });
         const context: Context = { languages, vision, helper: await helperPid(), scratch };
+        if (context.helper === null) {
+            throw new Error("darwinkit helper not found: CPU measurements would be invalid");
+        }
+
         loads.push(loadavg()[0]);
 
         for (let run = 0; run < runs; run++) {
@@ -341,6 +348,7 @@ async function main(): Promise<void> {
                                         minChars: 0,
                                         ...OCR_READ_DEFAULTS,
                                         region: arm.region,
+                                        read: arm.read ?? "frame",
                                     }),
                                     sink: { write: (row) => rows.get(name)?.push(row) },
                                 },
@@ -368,6 +376,11 @@ async function main(): Promise<void> {
             }
 
             samples.push(runSamples);
+            // Keep counts only, so a later native timeout does not discard completed repeats.
+            await Bun.write(
+                join(scratch, "counts.json"),
+                SafeJSON.stringify(summarize({ samples, sequences, names, loads, ready, languages }))
+            );
             out.log.info(`run ${run + 1}/${runs} done, load ${loadavg()[0].toFixed(1)}`);
         }
     } catch (error) {
