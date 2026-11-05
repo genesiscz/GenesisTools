@@ -148,14 +148,27 @@ export function planMostChange(frames: readonly SourceFrame[], windowUs: number)
     const ranges: DisplayRange[] = [];
     let current = frames.find((frame) => frame.displayId !== undefined)?.displayId ?? displays[0];
 
-    for (let fromUs = 0; fromUs < endUs; fromUs += windowUs) {
-        const score = new Map<number, number>();
+    const windows = new Map<number, Map<number, number>>();
 
-        for (const frame of frames) {
-            if (frame.displayId !== undefined && frame.atUs >= fromUs && frame.atUs < fromUs + windowUs) {
-                const weight = frame.changePercent && frame.changePercent > 0 ? frame.changePercent : 1;
-                score.set(frame.displayId, (score.get(frame.displayId) ?? 0) + weight);
-            }
+    for (const frame of frames) {
+        if (frame.displayId === undefined) {
+            continue;
+        }
+
+        const fromUs = Math.floor(frame.atUs / windowUs) * windowUs;
+        const score = windows.get(fromUs) ?? new Map<number, number>();
+        const weight = frame.changePercent && frame.changePercent > 0 ? frame.changePercent : 1;
+        score.set(frame.displayId, (score.get(frame.displayId) ?? 0) + weight);
+        windows.set(fromUs, score);
+    }
+
+    for (const [fromUs, score] of [...windows].sort(([a], [b]) => a - b)) {
+        const previous = ranges.at(-1);
+
+        if (previous) {
+            previous.toUs = fromUs;
+        } else if (fromUs > 0) {
+            ranges.push({ fromUs: 0, toUs: fromUs, displayId: current });
         }
 
         const best = Math.max(0, ...score.values());
@@ -171,6 +184,12 @@ export function planMostChange(frames: readonly SourceFrame[], windowUs: number)
         } else {
             ranges.push({ fromUs, toUs: fromUs + windowUs, displayId: current });
         }
+    }
+
+    const last = ranges.at(-1);
+
+    if (last) {
+        last.toUs = Math.ceil(endUs / windowUs) * windowUs;
     }
 
     return ranges;
