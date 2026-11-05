@@ -387,8 +387,8 @@ export function shapeBins(group: SeriesGroup, opts: ShapeOptions): SeriesBinEntr
         ...base,
         resets,
         availability: availabilitySpans(rows, opts.to, ends),
-        bins: availabilitySpans(rows, opts.to, ends).flatMap((span) => {
-            const indexes = read.flatMap((row, i) => row.t >= span.from && row.t < span.to ? [i] : []);
+        bins: availabilitySpans(rows, opts.to, ends).flatMap((span, index, spans) => {
+            const indexes = read.flatMap((row, i) => row.t >= span.from && (row.t < span.to || (index === spans.length - 1 && row.t === span.to)) ? [i] : []);
             return minMaxBins(indexes.map((i) => read[i]), opts.step, indexes.map((i) => resetBefore[i]));
         }),
     };

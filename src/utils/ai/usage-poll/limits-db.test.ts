@@ -959,7 +959,7 @@ describe("UsageLimitsDb", () => {
                 store.recordSnapshotV2("work", "primary", 20, at(20), reading);
                 store.recordSnapshotV2("work", "primary", 30, at(30), { ...reading, kind: "weekly" });
                 store.recordSnapshotV2("work", "primary", 40, at(40), reading);
-                const session = store.getSeries({ from: at(0), to: at(50), step: 3_600_000, agg: "minmax" }).find((entry) => entry.kind === "session");
+                const session = store.getSeries({ from: at(0), to: at(40), step: 3_600_000, agg: "minmax" }).find((entry) => entry.kind === "session");
                 expect(session?.bins.map((bin) => [bin.open, bin.close])).toEqual([[10, 10], [20, 20], [40, 40]]);
             } finally {
                 store.close();
