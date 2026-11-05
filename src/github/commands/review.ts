@@ -33,10 +33,7 @@ import { Command } from "commander";
 /**
  * Main review command handler
  */
-export async function reviewCommand(
-    input: string,
-    options: ReviewCommandOptions & { fullComments?: boolean }
-): Promise<void> {
+export async function reviewCommand(input: string, options: ReviewCommandOptions): Promise<void> {
     // Set global verbose for HTTP request logging
     if (options.verbose) {
         setGlobalVerbose(true);
@@ -165,7 +162,8 @@ export async function reviewCommand(
     // LLM-optimized output (session-based with refs)
     if (options.llm) {
         const sessionMgr = new ReviewSessionManager();
-
+        const recentSession = await sessionMgr.findRecentSessionForPR(owner, repo, prNumber);
+        const isFirstFetch = !recentSession;
         const sessionId = options.session || sessionMgr.generateSessionId(prNumber);
 
         // Reindex threads with contiguous ref numbers (t1, t2, ...) for session-local refs
@@ -205,7 +203,11 @@ export async function reviewCommand(
 
         const prComments = reviewData.prComments ?? [];
         if (prComments.length > 0) {
-            output += `\n${formatPrCommentsLLM(prComments, sessionId, { fullComments: options.fullComments })}`;
+            if (isFirstFetch || options.fullComments) {
+                output += `\n${formatPrCommentsLLM(prComments, sessionId, { fullComments: options.fullComments })}`;
+            } else {
+                output += `\nSummary: ${toolCommand("github review summary")} -s ${sessionId}\n`;
+            }
         }
 
         out.println(output);

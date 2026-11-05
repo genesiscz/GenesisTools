@@ -413,6 +413,8 @@ export interface ReviewCommandOptions {
     prComments?: boolean;
     author?: string;
     llm?: boolean;
+    /** With --llm: print every bot PR comment in full instead of one line each. */
+    fullComments?: boolean;
     session?: string;
     worktree?: boolean | string;
     save?: boolean | string;
