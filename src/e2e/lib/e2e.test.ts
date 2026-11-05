@@ -448,3 +448,11 @@ it("starts device logging only after preparation succeeds and stops it at finish
         }
     }
 });
+
+it("discovers only summary-bearing suite runs, excluding later screen captures", () => {
+    const folder = runsRoot("fixture-report-discovery");
+    mkdirSync(join(folder, "2026-11-05T10-00-00"), { recursive: true });
+    mkdirSync(join(folder, "2026-11-05T11-00-00"), { recursive: true });
+    writeFileSync(join(folder, "2026-11-05T10-00-00", "summary.json"), "{}");
+    expect(listRunDirs("fixture-report-discovery")).toEqual([join(folder, "2026-11-05T10-00-00")]);
+});

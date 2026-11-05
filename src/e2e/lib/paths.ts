@@ -26,7 +26,7 @@ export function listRunDirs(projectId: string): string[] {
     }
 
     return readdirSync(root, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
+        .filter((entry) => entry.isDirectory() && existsSync(join(root, entry.name, "summary.json")))
         .map((entry) => entry.name)
         .sort()
         .reverse()
