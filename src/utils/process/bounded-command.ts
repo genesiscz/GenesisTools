@@ -36,6 +36,8 @@ export async function boundedCommand(options: {
     timeoutMs: number;
     signal?: AbortSignal;
     maxBufferBytes?: number;
+    /** Stream all output to callbacks while retaining only a small diagnostic tail. */
+    streamOnly?: boolean;
     cwd?: string;
     environment?: Record<string, string | undefined>;
     onStdout?: (chunk: Uint8Array) => void;
@@ -151,6 +153,16 @@ export async function boundedCommand(options: {
             if (failure || settled) {
                 return;
             }
+            if (options.streamOnly) {
+                stdout.splice(0, stdout.length, Buffer.from(value.subarray(-16_384)));
+                try {
+                    options.onStdout?.(value);
+                } catch (error) {
+                    stop(error instanceof Error ? error : new Error("Command output callback failed."));
+                }
+                return;
+            }
+
             stdoutBytes += value.byteLength;
             if (stdoutBytes > maxBufferBytes) {
                 stop(Object.assign(new Error("Command stdout exceeded its byte budget."), { code: "ENOBUFS" }));
@@ -167,6 +179,16 @@ export async function boundedCommand(options: {
             if (failure || settled) {
                 return;
             }
+            if (options.streamOnly) {
+                stderr.splice(0, stderr.length, Buffer.from(value.subarray(-16_384)));
+                try {
+                    options.onStderr?.(value);
+                } catch (error) {
+                    stop(error instanceof Error ? error : new Error("Command output callback failed."));
+                }
+                return;
+            }
+
             stderrBytes += value.byteLength;
             if (stderrBytes > maxBufferBytes) {
                 stop(Object.assign(new Error("Command stderr exceeded its byte budget."), { code: "ENOBUFS" }));

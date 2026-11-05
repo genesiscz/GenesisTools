@@ -82,7 +82,14 @@ export async function buildAndInstall(options: {
     let proc: Awaited<ReturnType<typeof boundedCommand>>;
 
     try {
-        proc = await boundedCommand({ command, cwd: appDir, timeoutMs: 3_600_000, onStdout: pump, onStderr: pump });
+        proc = await boundedCommand({
+            command,
+            cwd: appDir,
+            timeoutMs: 3_600_000,
+            streamOnly: true,
+            onStdout: pump,
+            onStderr: pump,
+        });
     } finally {
         sink.end();
     }
