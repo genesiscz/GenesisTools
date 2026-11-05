@@ -864,3 +864,153 @@ describe("characterization: the caller a failure record names", () => {
         });
     });
 });
+
+// The saved-record facts of 2026-11-05 (decision 11 a): optional fields, so the reader needs no migration.
+describe("the failure record's caller facts", () => {
+    const OLD_LINE: ToolFailure = {
+        v: 1,
+        id: "f-old-1",
+        at: "2026-11-03T10:00:00.000Z",
+        kind: "exit",
+        tool: "open",
+        command: null,
+        argv: ["-g"],
+        exitCode: 1,
+        message: null,
+        errorName: null,
+        stack: null,
+        stderrTail: null,
+        fatal: true,
+        durationMs: 12,
+        pid: 101,
+        ppid: 100,
+        cwd: "/fixture/repo",
+        traceId: null,
+        toolsRoot: "/fixture/tools",
+        // The caller as a record from before 2026-11-04 wrote it: no cwd, and none of the facts below.
+        caller: {
+            agent: "claude-code",
+            sessionId: "s-old",
+            sessionTitle: null,
+            model: "model-1",
+            effort: null,
+            aiAgent: null,
+            project: "repo",
+            repoRoot: "/fixture/repo",
+            branch: "main",
+            commitSha: "abc1234",
+            worktreePath: null,
+        },
+    };
+
+    it("an old record without the facts and a new one with them both read back, each as written", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-failures-facts-"));
+        const path = failureLogPath("2026-11-05", dir);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(path, `${SafeJSON.stringify(OLD_LINE)}\n`);
+        const fresh: ToolFailure = {
+            ...OLD_LINE,
+            id: "f-new-1",
+            at: "2026-11-05T10:00:00.000Z",
+            caller: {
+                agent: "codex",
+                sessionId: "t1",
+                sessionTitle: null,
+                model: "model-1",
+                effort: null,
+                aiAgent: null,
+                project: "repo",
+                repoRoot: "/fixture/repo",
+                branch: "main",
+                commitSha: "abc1234",
+                worktreePath: null,
+                cwd: "/fixture/repo",
+                transcriptPath: "/fixture/.codex/sessions/rollout-t1.jsonl",
+                toolUseId: "exec-1",
+                subagentId: "t1",
+                account: { harness: "codex", account: "work", proxyTarget: null },
+                host: { app: "t3code", threadId: "thread:1", providerInstanceId: "gt-codex-work" },
+            },
+        };
+        appendFailure(fresh, dir);
+
+        const [old, now] = [...readFailures({ fromDay: "2026-11-05", toDay: "2026-11-05", dir })];
+        expect(old).toEqual(OLD_LINE);
+        expect(old?.caller?.transcriptPath).toBeUndefined();
+        expect(old?.caller?.host).toBeUndefined();
+        expect(now).toEqual(fresh);
+    });
+
+    it("a Codex subagent run keeps its transcript, tool call, subagent, account and T3 thread", () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-failures-codex-"));
+        const thread = "01a195d5-8f1b-78f0-9c7c-24d0dd290d30";
+        const rollout = join(home, "sessions", "2026", "11", "05", `rollout-2026-11-05T09-00-00-${thread}.jsonl`);
+        mkdirSync(join(rollout, ".."), { recursive: true });
+        writeFileSync(rollout, `${SafeJSON.stringify({ type: "turn_context", payload: { model: "sub-model" } })}\n`);
+        const caller = failureCaller({
+            processEnv: {
+                CODEX_SESSION_ID: "01a195ae-e4aa-7cb0-b579-8974a4580b9b",
+                CODEX_THREAD_ID: thread,
+                CODEX_TOOL_CALL_ID: "exec-1",
+                CODEX_HOME: home,
+                TOOLS_CODEX_ACCOUNT: "side",
+                T3CODE_THREAD_ID: "thread:1",
+                T3CODE_HOME: join(home, "no-t3"),
+            },
+            context: {
+                cwd: "/fixture/repo",
+                repoRoot: "/fixture/repo",
+                project: "repo",
+                branch: "main",
+                commitSha: "abc1234",
+                worktreePath: null,
+                sessionTitle: null,
+            },
+            now: new Date(2026, 10, 5, 12, 0, 0),
+        });
+
+        expect(caller).toMatchObject({
+            agent: "codex",
+            sessionId: thread,
+            model: "sub-model",
+            transcriptPath: rollout,
+            toolUseId: "exec-1",
+            subagentId: thread,
+            account: { harness: "codex", account: "side", proxyTarget: null },
+            host: { app: "t3code", threadId: "thread:1" },
+        });
+        expect(caller.turnId).toBeUndefined();
+    });
+
+    it("a caller the identity knows none of the facts for writes exactly the old keys", () => {
+        const caller = failureCaller({
+            processEnv: {},
+            context: {
+                cwd: "/fixture/repo",
+                repoRoot: "/fixture/repo",
+                project: "repo",
+                branch: null,
+                commitSha: null,
+                worktreePath: null,
+                sessionTitle: null,
+            },
+        });
+
+        expect(Object.keys(caller).sort()).toEqual(
+            [
+                "agent",
+                "sessionId",
+                "sessionTitle",
+                "model",
+                "effort",
+                "aiAgent",
+                "project",
+                "repoRoot",
+                "cwd",
+                "branch",
+                "commitSha",
+                "worktreePath",
+            ].sort()
+        );
+    });
+});

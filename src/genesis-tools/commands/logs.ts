@@ -96,6 +96,22 @@ function localTime(iso: string, millis = false): string {
     return millis ? `${time}.${String(at.getMilliseconds()).padStart(3, "0")}` : time;
 }
 
+type FailureCallerOf = NonNullable<ToolFailure["caller"]>;
+
+/** The tool call, subagent and turn a failure's caller ran in, for `logs show`; empty for a record from before 2026-11-05. */
+function callerCallLine(caller: FailureCallerOf | null): string {
+    const parts = [
+        caller?.toolUseId,
+        caller?.subagentId ? `subagent ${caller.subagentId}` : undefined,
+        caller?.turnId ? `turn ${caller.turnId}` : undefined,
+    ];
+    return parts.filter(Boolean).join(", ");
+}
+
+function callerHostLine(host: NonNullable<FailureCallerOf["host"]>): string {
+    return `${host.app} ${host.threadId}${host.providerInstanceId ? ` (${host.providerInstanceId})` : ""}`;
+}
+
 function who(failure: ToolFailure): string {
     const caller = failure.caller;
     if (!caller || caller.agent === "unknown") {
@@ -242,6 +258,10 @@ function registerShow(logs: Command): void {
                         : null,
                 ],
                 ["project", caller ? `${caller.project} @ ${caller.branch ?? "?"} ${caller.commitSha ?? ""}` : null],
+                ["transcript", caller?.transcriptPath],
+                ["call", callerCallLine(caller)],
+                ["account", caller?.account ? (caller.account.account ?? `proxy ${caller.account.proxyTarget}`) : null],
+                ["host", caller?.host ? callerHostLine(caller.host) : null],
                 ["app trace", failure.traceId],
             ];
             for (const [name, value] of rows) {

@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CallerCore } from "@genesiscz/utils/agent/context";
+import type { RecordedCallerFacts } from "@genesiscz/utils/agent/identity/record-facts";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -19,8 +20,12 @@ import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 export const FAILURE_KINDS = ["usage", "error", "crash", "exit", "interrupt"] as const;
 export type FailureKind = (typeof FAILURE_KINDS)[number];
 
-/** Who ran the tool. Model and effort come from the agent's own transcript and env, never guessed. */
-export interface FailureCaller extends CallerCore {
+/**
+ * Who ran the tool. Model and effort come from the agent's own transcript and env, never guessed. The identity facts
+ * (`RecordedCallerFacts`: transcript, tool call, subagent, turn, account, T3 Code host) are optional and absent in
+ * records written before 2026-11-05; `isToolFailure` never checks the caller's keys, so both shapes read.
+ */
+export interface FailureCaller extends CallerCore, RecordedCallerFacts {
     sessionTitle: string | null;
     model: string | null;
     effort: string | null;
