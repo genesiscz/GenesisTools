@@ -30,13 +30,40 @@ export function registerUp(program: Command): void {
     )
         .option("--udid <udid>", "use this simulator instead of finding one by name")
         .option("--name <name>", "the simulator's name; created when missing (default gt-w<width>)")
-        .option("--width <points>", "the phone width in points (default: platforms.ios.defaultWidth)")
+        .option(
+            "--width <points>",
+            "the phone width in points (default: platforms.ios.defaultWidth)",
+            (value: string) => {
+                const n = Number(value);
+                if (!Number.isFinite(n) || n <= 0) {
+                    throw new Error("--width must be finite and positive");
+                }
+                return value;
+            }
+        )
         .option("--os <version>", "the iOS runtime for a new simulator, e.g. 26.5 (default: the newest)")
         .option("--release", "run the Release build (JavaScript inside the app, no Metro)")
         .option("--derived-data <dir>", "the DerivedData folder (default <app>/ios/build; give each session its own)")
         .option("--build <when>", `${BUILD_POLICIES.join(" | ")}: auto builds only when a build input changed`, "auto")
-        .option("--metro-port <port>", "the Metro port for a Debug build (default: the project's)")
-        .option("--launch-timeout <s>", "how long to wait for the app to fetch its bundle", "180")
+        .option("--metro-port <port>", "the Metro port for a Debug build (default: the project's)", (value: string) => {
+            const n = Number(value);
+            if (!Number.isFinite(n) || n <= 0) {
+                throw new Error("--metro-port must be finite and positive");
+            }
+            return value;
+        })
+        .option(
+            "--launch-timeout <s>",
+            "how long to wait for the app to fetch its bundle",
+            (value: string) => {
+                const n = Number(value);
+                if (!Number.isFinite(n) || n <= 0) {
+                    throw new Error("--launch-timeout must be finite and positive");
+                }
+                return value;
+            },
+            "180"
+        )
         .option("--json", "print the report as JSON")
         .action(async (options: UpOptions) => {
             const build = BUILD_POLICIES.find((policy) => policy === options.build);
