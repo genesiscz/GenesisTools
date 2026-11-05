@@ -196,6 +196,12 @@ export interface HostResolver {
      * identity owned by one such thread refuses a shell of another (`src/agents/lib/thread-owner.ts`).
      */
     readonly sessionIsExecutingThread: boolean;
+    /**
+     * The variable that names the ROOT session a native subagent's thread belongs to, beside the thread's own session
+     * variable (Codex's `CODEX_SESSION_ID`, codex-rs protocol shell_environment.rs), or null. When both are set and
+     * differ, the shell runs in a subagent thread, so its thread is the caller's subagent id.
+     */
+    readonly rootSessionEnvKey: string | null;
     detects(env: NodeJS.ProcessEnv): boolean;
     resolve(env: NodeJS.ProcessEnv): Partial<AgentRuntimeContext>;
 }

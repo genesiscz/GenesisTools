@@ -107,6 +107,54 @@ describe("whoIsCalling: one precedence rule", () => {
     });
 });
 
+// Codex gives every shell CODEX_SESSION_ID (the root session, shared by the root and its subagent threads) and
+// CODEX_THREAD_ID (the thread that runs the shell), codex-rs protocol shell_environment.rs. Recorded on this Mac: a root
+// session's shell had both equal (two runs, 2026-11-04); a subagent's rollout keeps its own thread as `id` and the
+// root as `session_id` (2026-11-01). A subagent's shell env was NOT recorded live: these tests pin the documented rule.
+describe("the Codex subagent thread", () => {
+    it("a thread that is not the root session is a subagent: its own thread is its session and its subagent id", () => {
+        const identity = whoIsCalling(local({ CODEX_SESSION_ID: "root-1", CODEX_THREAD_ID: "thread-1" }));
+
+        expect(identity).toMatchObject({ agent: "codex", sessionId: "thread-1", subagentId: "thread-1" });
+        expect(identity.sources).toMatchObject({ sessionId: "env", subagentId: "env" });
+    });
+
+    it("the root thread, a blank root and another harness name no subagent", () => {
+        expect(
+            whoIsCalling(local({ CODEX_SESSION_ID: "root-1", CODEX_THREAD_ID: "root-1" })).subagentId
+        ).toBeUndefined();
+        expect(whoIsCalling(local({ CODEX_SESSION_ID: "  ", CODEX_THREAD_ID: "thread-1" })).subagentId).toBeUndefined();
+        expect(whoIsCalling(local({ CODEX_THREAD_ID: "thread-1" })).subagentId).toBeUndefined();
+        // Claude is the outer host: the Codex variables it passed on describe nobody it is.
+        expect(
+            whoIsCalling(
+                local({ CLAUDE_CODE_SESSION_ID: "c1", CODEX_SESSION_ID: "root-1", CODEX_THREAD_ID: "thread-1" })
+            ).subagentId
+        ).toBeUndefined();
+    });
+
+    it("the subagent's transcript and model are its own thread's rollout, not the root's", () => {
+        const home = scratch("codex-sub-home-");
+        const day = join(home, "sessions", "2026", "11", "04");
+        const meta = (id: string, root: string) =>
+            `${SafeJSON.stringify({ type: "session_meta", payload: { id, session_id: root } })}\n`;
+        const turn = (model: string) => `${SafeJSON.stringify({ type: "turn_context", payload: { model } })}\n`;
+        const rootId = "01a1a847-802d-7082-9d2c-db4ff4272969";
+        const threadId = "01a195d5-8f1b-78f0-9c7c-24d0dd290d30";
+        put(join(day, `rollout-2026-11-04T09-00-00-${rootId}.jsonl`), meta(rootId, rootId) + turn("root-model"));
+        const own = put(
+            join(day, `rollout-2026-11-04T09-05-00-${threadId}.jsonl`),
+            meta(threadId, rootId) + turn("sub-model")
+        );
+        const identity = whoIsCalling(
+            local({ CODEX_SESSION_ID: rootId, CODEX_THREAD_ID: threadId, CODEX_HOME: home }),
+            { facets: ["model"], now: new Date(2026, 10, 4, 12, 0, 0) }
+        );
+
+        expect(identity).toMatchObject({ subagentId: threadId, transcriptPath: own, model: "sub-model" });
+    });
+});
+
 describe("whoIsCalling: a remote caller", () => {
     const gatewayEnv = {
         CLAUDE_CODE_SESSION_ID: "gateway-own",

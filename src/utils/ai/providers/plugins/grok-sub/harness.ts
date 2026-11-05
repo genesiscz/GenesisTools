@@ -52,6 +52,7 @@ export const grokHarness: HarnessDriver<"grok"> = {
             effortEnvKey: null,
             // No per-thread id was established for a Grok subagent; it inherits the session id.
             sessionIsExecutingThread: false,
+            rootSessionEnvKey: null,
             detects: isGrok,
             resolve: resolveGrokContext,
         },

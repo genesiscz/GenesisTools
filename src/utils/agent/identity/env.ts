@@ -48,8 +48,10 @@ export function hostLabel(agent: CallerAgent, env: NodeJS.ProcessEnv): string | 
 
 /**
  * The environment of a local caller. Its host names the agent and session; the same host's own variables add the
- * tool call (Codex `CODEX_TOOL_CALL_ID`) and the effort (Claude `CLAUDE_EFFORT`). With no host the label is the
- * untrimmed `AI_AGENT`, as the runtime context has always kept it.
+ * tool call (Codex `CODEX_TOOL_CALL_ID`), the effort (Claude `CLAUDE_EFFORT`) and, where the host names a root
+ * session beside the thread (Codex `CODEX_SESSION_ID`), the subagent: a thread that is not the root is a subagent's,
+ * so the thread is both the session and the subagent id. With no host the label is the untrimmed `AI_AGENT`, as the
+ * runtime context has always kept it.
  */
 export const envSource: CallerSource = {
     id: "env",
@@ -77,6 +79,12 @@ export const envSource: CallerSource = {
 
         if (effort) {
             reading.effort = effort;
+        }
+
+        const root = host ? envValue(env, host.rootSessionEnvKey) : undefined;
+
+        if (root && reading.sessionId && root !== reading.sessionId) {
+            reading.subagentId = reading.sessionId;
         }
 
         return reading;
