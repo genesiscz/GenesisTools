@@ -42,6 +42,7 @@ extension EditorModel {
         }
         let op = EditOp.Camera(file: change.file, show: change.show, corner: change.corner, x: change.x, y: change.y, size: change.size,
                                shape: change.shape, mirror: change.mirror, offsetMs: change.offsetMs, enabled: change.enabled)
-        continuous("camera", [.camera(op)])
+        let fields = EditOp.objects([.camera(op)]).first?.keys.filter { $0 != "op" }.sorted() ?? []
+        continuous("camera:" + fields.joined(separator: ","), [.camera(op)])
     }
 }
