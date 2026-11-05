@@ -1,6 +1,13 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { getDevDashboardBundleId } from "./bundle-id";
+import { e2eRun } from "./run";
+import {
+    failureScreenshotPath,
+    recordTestResult,
+    wdioTestResult,
+    xcuitestCapabilities,
+} from "../../../src/utils/e2e/spec-env";
 
 // ── App under test ───────────────────────────────────────────────────────────
 // Two modes:
@@ -13,20 +20,15 @@ const APP_PATH = process.env.DD_APP_PATH ?? "";
 const BUNDLE_ID = getDevDashboardBundleId();
 
 // ── iOS Simulator capabilities (default) ─────────────────────────────────────
-const IOS_DEVICE = process.env.DD_SIM_DEVICE ?? "iPhone 17 Pro Max";
-const IOS_OS = process.env.DD_SIM_OS ?? "26.5";
-
-const iosCap: WebdriverIO.Capabilities = {
-    platformName: "iOS",
-    "appium:automationName": "XCUITest",
-    "appium:deviceName": IOS_DEVICE,
-    "appium:platformVersion": IOS_OS,
-    // Reinstall mode pins `app`; attach mode pins `bundleId` + noReset (no uninstall, keep Metro bind).
-    ...(APP_PATH ? { "appium:app": APP_PATH } : { "appium:bundleId": BUNDLE_ID, "appium:noReset": true }),
-    // New-Arch (D3) dev-client cold-launch can be slow; give WDA room.
-    "appium:newCommandTimeout": 240,
-    "appium:wdaLaunchTimeout": 120_000,
-};
+// Under `tools e2e` the simulator, its Appium, its own WebDriverAgent and MJPEG ports and `isHeadless` come from the
+// run (`E2E_*`, see e2e/README.md): XCUITest kills every WDA on its port that belongs to another simulator, and a wrong
+// `isHeadless` reboots the simulator on Xcode 27. A plain `bun run e2e` falls back to the device below.
+const iosCap: WebdriverIO.Capabilities = xcuitestCapabilities(e2eRun, {
+    bundleId: BUNDLE_ID,
+    app: APP_PATH || undefined,
+    deviceName: process.env.DD_SIM_DEVICE ?? "iPhone 17 Pro Max",
+    platformVersion: process.env.DD_SIM_OS ?? "26.5",
+});
 
 // ── Android Emulator capabilities (opt-in via DD_PLATFORM=android) ────────────
 // NOTE (D20): running on Android additionally needs the `appium-uiautomator2-driver`
@@ -51,16 +53,18 @@ const androidCap: WebdriverIO.Capabilities = {
 
 const platform = process.env.DD_PLATFORM === "android" ? "android" : "ios";
 
-const SHOTS_DIR = path.join(import.meta.dirname, "screenshots");
+// Under `tools e2e` screenshots, the runner's logs and one JSON line per test go into the spec's run folder, which the
+// tool reads into its summary. A plain `bun run e2e` writes screenshots to e2e/screenshots and records no results.
+const SHOTS_DIR = e2eRun.shotsDir ?? path.join(import.meta.dirname, "screenshots");
 
 export const config: WebdriverIO.Config = {
     runner: "local",
 
     // Point the runner at the out-of-band Appium server explicitly. Without hostname/port/path,
     // WDIO v9's session bootstrap builds an invalid connection URL ("TypeError: Invalid URL" at
-    // newSession). Override host/port via env when Appium runs elsewhere.
+    // newSession). `tools e2e` passes the simulator's own Appium port.
     hostname: process.env.DD_APPIUM_HOST ?? "127.0.0.1",
-    port: Number(process.env.DD_APPIUM_PORT ?? "4723"),
+    port: e2eRun.appiumPort ?? Number(process.env.DD_APPIUM_PORT ?? "4723"),
     path: "/",
 
     // Resolve the e2e tsconfig relative to THIS file, not process.cwd() — `bun run e2e` runs
@@ -74,14 +78,15 @@ export const config: WebdriverIO.Config = {
     capabilities: [platform === "android" ? androidCap : iosCap],
 
     logLevel: "info",
+    ...(e2eRun.runDir ? { outputDir: path.join(e2eRun.runDir, "wdio-logs") } : {}),
     bail: 0,
     waitforTimeout: 10_000,
-    connectionRetryTimeout: 120_000,
+    // The first session builds WebDriverAgent with xcodebuild, which can take minutes.
+    connectionRetryTimeout: 600_000,
     connectionRetryCount: 3,
 
-    // The local Appium server is started/managed out-of-band: run `bun run e2e:appium` in a
-    // separate shell (default port 4723), then `bun run e2e`. To auto-manage it, add
-    // `@wdio/appium-service` to `services` later (kept empty so the runner has no extra deps).
+    // The Appium server runs out-of-band: `tools e2e` starts the simulator's own when none answers; for a plain run
+    // start one with `bun run e2e:appium` (default port 4723).
     services: [],
 
     framework: "mocha",
@@ -112,15 +117,14 @@ export const config: WebdriverIO.Config = {
         // Give boot-restore time to rehydrate + the splash to hand off to the tabs/connect.
         await browser.pause(4000);
 
-        // Force-repoint to a side-port Agent when DD_TEST_AGENT is set. Boot-restore reconnects to
-        // the LAST-SAVED connection (e.g. the user's real :3042), so a spec's `if (connectPage.isShown())`
-        // pairing guard is false and never re-points — the app keeps talking to the stored Agent. The
-        // `pair` deep-link applies UNCONDITIONALLY (upserts + marks active), so injecting it here once
-        // per suite pins EVERY spec to the side Agent regardless of stored state. No-op when unset, so
-        // default runs are unchanged.
+        // Force-repoint to a side-port Agent when DD_TEST_AGENT is set (`tools e2e … --env DD_TEST_AGENT=<url>`).
+        // Boot-restore reconnects to the LAST-SAVED connection (e.g. the user's real :3042), so a spec's
+        // `if (connectPage.isShown())` pairing guard is false and never re-points — the app keeps talking to the stored
+        // Agent. The `pair` deep-link applies UNCONDITIONALLY (upserts + marks active), so injecting it here once per
+        // suite pins EVERY spec to the side Agent regardless of stored state. No-op when unset.
         const testAgent = process.env.DD_TEST_AGENT;
         if (testAgent) {
-            const uri = `devdashboard://pair?tier=cloudflared-self&baseUrl=${encodeURIComponent(testAgent)}&username=martin`;
+            const uri = `devdashboard://pair?tier=cloudflared-self&baseUrl=${encodeURIComponent(testAgent)}&username=e2e`;
             try {
                 await browser.execute("mobile: deepLink", { url: uri, bundleId });
                 // A link never connects by itself: confirm the address on the pair screen.
@@ -134,22 +138,22 @@ export const config: WebdriverIO.Config = {
         }
     },
 
-    // Screenshot every genuinely FAILING test — a captured artifact for each failed assertion, not
-    // just a console trace. A skipped/pending test reports `passed === false` too, so it must be
-    // excluded (`result.retries.attempts === -1` marks a pending test that never ran); otherwise an
-    // all-green run still litters FAIL_*.png for the data-gated `this.skip()` cases. Filename =
-    // sanitized "<suite> <test>".
+    // One result line per test for `tools e2e`, and a screenshot of every genuinely FAILING test. A skipped/pending
+    // test reports `passed === false` too (`result.retries.attempts === -1`); `wdioTestResult` records it as a skip
+    // and takes no screenshot, so an all-green run never litters FAIL_*.png for the data-gated `this.skip()` cases.
     async afterTest(test, _context, result) {
-        const wasSkipped = result.retries != null && result.retries.attempts === -1;
-        if (result.passed || wasSkipped) {
-            return;
+        let line = wdioTestResult({ test, result });
+        const screenshot = line.state === "failed" ? failureScreenshotPath({ shotsDir: SHOTS_DIR }, test) : undefined;
+
+        if (screenshot) {
+            try {
+                await browser.saveScreenshot(screenshot);
+                line = { ...line, screenshot };
+            } catch {
+                // A session that already crashed can't screenshot; the spec error itself is the signal.
+            }
         }
 
-        const safe = `${test.parent} ${test.title}`.replace(/[^a-z0-9]+/gi, "_").slice(0, 120);
-        try {
-            await browser.saveScreenshot(path.join(SHOTS_DIR, `FAIL_${safe}.png`));
-        } catch {
-            // A session that already crashed can't screenshot; the spec error itself is the signal.
-        }
+        recordTestResult(e2eRun, line);
     },
 };

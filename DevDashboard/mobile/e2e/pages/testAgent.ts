@@ -13,6 +13,6 @@ type Tier = "lan" | "tailscale" | "cloudflared-self" | "managed";
 export const TEST_AGENT_BASE_URL = process.env.DD_TEST_AGENT ?? "http://127.0.0.1:3042";
 
 /** Build the `devdashboard://pair?...` deep-link URI for the configured test Agent. */
-export function pairingUri({ tier = "cloudflared-self", username = "martin", baseUrl = TEST_AGENT_BASE_URL }: { tier?: Tier; username?: string; baseUrl?: string } = {}): string {
+export function pairingUri({ tier = "cloudflared-self", username = "e2e", baseUrl = TEST_AGENT_BASE_URL }: { tier?: Tier; username?: string; baseUrl?: string } = {}): string {
     return `devdashboard://pair?tier=${tier}&baseUrl=${encodeURIComponent(baseUrl)}&username=${encodeURIComponent(username)}`;
 }

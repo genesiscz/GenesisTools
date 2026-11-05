@@ -13,5 +13,6 @@
       "@e2e/*": ["./*"]
     }
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts"],
+  "exclude": ["mobile.config.ts", "e2e.config.ts", "adapter.ts"]
 }
