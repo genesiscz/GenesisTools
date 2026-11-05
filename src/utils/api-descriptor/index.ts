@@ -12,7 +12,6 @@ export {
     type McpToolShape,
     methodSignature,
     renderDocs,
-    renderOneLine,
     toMcpTools,
     typeText,
 } from "./render";
