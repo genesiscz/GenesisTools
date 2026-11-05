@@ -1,4 +1,5 @@
 import type { JobInfo } from "@genesiscz/utils/jobs";
+import { JSON_RPC_ERRORS, RPC_CANCELLED, RpcError } from "@genesiscz/utils/rpc/errors";
 import { z } from "zod";
 import type { DisplayInfo } from "./types";
 
@@ -31,11 +32,7 @@ export type RecorderState = (typeof RECORDER_STATES)[number];
 
 /** JSON-RPC 2.0 error codes: the standard ones, and the recorder's own from 1001. */
 export const RPC_ERRORS = {
-    parse: -32700,
-    invalidRequest: -32600,
-    methodNotFound: -32601,
-    invalidParams: -32602,
-    internal: -32603,
+    ...JSON_RPC_ERRORS,
     unknownDisplay: 1001,
     notPaused: 1002,
     alreadyStopped: 1003,
@@ -43,18 +40,11 @@ export const RPC_ERRORS = {
     lastDisplay: 1005,
     unsupported: 1006,
     unknownDevice: 1007,
+    /** A `$/cancel` stopped the request; the transport answers it (`@genesiscz/utils/rpc`). */
+    cancelled: RPC_CANCELLED,
 } as const;
 
-export class RpcError extends Error {
-    constructor(
-        readonly code: number,
-        message: string,
-        readonly data?: unknown
-    ) {
-        super(message);
-        this.name = "RpcError";
-    }
-}
+export { RpcError };
 
 export interface RecorderStatus {
     kind: string;
