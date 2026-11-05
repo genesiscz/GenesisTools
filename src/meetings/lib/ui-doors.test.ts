@@ -16,7 +16,7 @@ import { exportMeeting } from "./export";
 import { matchPreview } from "./match-preview";
 import { meetingsOverview } from "./overview";
 import { screenTimeline } from "./screen-timeline";
-import { windowOpenArgs } from "./window";
+import { openMeetingsWindow, windowOpenArgs } from "./window";
 
 let n = 0;
 
@@ -541,6 +541,33 @@ describe("undo puts back what the decision changed", () => {
 });
 
 describe("window", () => {
+    test("an app without the Meetings part gets it built before the window opens, or the command says how", async () => {
+        const calls: string[] = [];
+        const deps = (parts: string[]) => ({
+            status: () => ({ built: true, parts }),
+            build: async () => {
+                calls.push("build");
+            },
+            open: (args: string[]) => {
+                calls.push(`open ${args.includes("--meetings")}`);
+                return { status: 0, stderr: "" };
+            },
+        });
+
+        await openMeetingsWindow({ meeting: "m1" }, deps(["hub"]));
+        expect(calls).toEqual(["build", "open true"]);
+
+        calls.length = 0;
+        await openMeetingsWindow({}, deps(["meetings"]));
+        expect(calls).toEqual(["open true"]);
+
+        calls.length = 0;
+        await expect(openMeetingsWindow({ build: false }, deps(["hub"]))).rejects.toThrow(
+            "tools macos permissions build --add-part meetings"
+        );
+        expect(calls).toEqual([]);
+    });
+
     test("the open arguments name the face, the place, the meeting and the tab; no focus opens it behind", () => {
         expect(windowOpenArgs({ place: { project: "side.quest" }, meeting: "m1", tab: "items" }, "/A.app")).toEqual([
             "-n",

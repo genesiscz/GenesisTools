@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 
@@ -40,13 +41,64 @@ export function windowOpenArgs(request: WindowRequest, bundle = genesisAppBundle
     ];
 }
 
-/** Opens the Meetings window through Launch Services; a running window takes the request and comes forward. */
-export function openMeetingsWindow(request: WindowRequest): void {
+/** What opening the window needs from the machine; tests pass fakes, so no app is built or started. */
+export interface WindowDeps {
+    /** The installed app: whether it is built and the parts it was built with. */
+    status(): { built: boolean; parts: string[] };
+    /** Builds the app with the installed parts plus meetings. */
+    build(onStep?: (line: string) => void): Promise<void>;
+    open(args: string[]): { status: number | null; stderr: string };
+}
+
+async function defaultWindowDeps(): Promise<WindowDeps> {
+    // lazy: the app builder loads only when a window opens
+    const { appStatus, buildApp } = await import("@app/macos/lib/permissions/app");
+
+    return {
+        status: () => appStatus(),
+        build: async (onStep) => {
+            await buildApp({ ...(onStep ? { onStep } : {}), parts: { add: ["meetings"] } });
+        },
+        open: (args) => {
+            const result = spawnSync("open", args, { encoding: "utf8" });
+            return { status: result.status, stderr: result.stderr || result.error?.message || "" };
+        },
+    };
+}
+
+export const MEETINGS_PART_BUILD = toolCommand("macos", "permissions", "build", "--add-part", "meetings");
+
+/**
+ * Opens the Meetings window through Launch Services; a running window takes the request and comes forward. An app
+ * built without the Meetings part has no such face and would exit at once, so it is built with the part first, as
+ * `tools hub` does for the hub; `build: false` says the command instead.
+ */
+export async function openMeetingsWindow(
+    request: WindowRequest & { build?: boolean; onStep?: (line: string) => void },
+    deps?: WindowDeps
+): Promise<void> {
+    const machine = deps ?? (await defaultWindowDeps());
+    const status = machine.status();
+
+    if (!status.built || !status.parts.includes("meetings")) {
+        const reason = status.built
+            ? "GenesisTools.app was built without the Meetings part"
+            : "GenesisTools.app is not built";
+
+        if (request.build === false) {
+            throw new Error(`${reason}; run without --no-build, or: ${MEETINGS_PART_BUILD}`);
+        }
+
+        request.onStep?.(`${reason}: building it with the part (about a minute)`);
+        log.info({ parts: status.parts }, "meetings window: adding the meetings part");
+        await machine.build(request.onStep);
+    }
+
     const args = windowOpenArgs(request);
     log.debug({ args }, "meetings: open the window");
-    const result = spawnSync("open", args, { encoding: "utf8" });
+    const result = machine.open(args);
 
     if (result.status !== 0) {
-        throw new Error(`open failed (${result.status}): ${(result.stderr || result.error?.message || "").trim()}`);
+        throw new Error(`open failed (${result.status}): ${result.stderr.trim()}`);
     }
 }
