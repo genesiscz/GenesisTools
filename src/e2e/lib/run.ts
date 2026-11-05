@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { appendFileSync, closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { E2eHookContext, E2eProject } from "@genesiscz/utils/e2e/project";
 import { E2E_ENV } from "@genesiscz/utils/e2e/spec-env";
@@ -71,7 +71,8 @@ export async function runE2e(options: {
     /** Prepares the target; default the project's runner from `RUNNERS`. A test hands in its own. */
     prepare?: (input: { project: E2eProject; flags: Record<string, unknown>; runDir: string }) => Promise<RunTarget>;
 }): Promise<RunSummary> {
-    const { project, runDir } = options;
+    const { project } = options;
+    const runDir = resolve(options.runDir);
     const startedAt = new Date().toISOString();
     mkdirSync(runDir, { recursive: true });
     const prepare = options.prepare ?? ((input) => prepareRunner(project.config.runner, input));
