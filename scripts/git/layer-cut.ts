@@ -10,6 +10,19 @@
  * --tests runs `bun scripts/test.ts <folders>` per tree, serially; --swift runs one app `swift build` per Swift branch
  * through the babysit skill's shared Swift slot.
  *
+ * The final run of a night (unified keeps moving, so pin the head you cut; the open PR heads must be fetched):
+ *
+ *   git fetch origin
+ *   bun scripts/git/layer-cut.ts \
+ *       --scratch /tmp/cc/GenesisTools/<session>/layer-cut \
+ *       --unified "$(git rev-parse feat/2026-10-13-enhancements-unified)" \
+ *       --base origin/feat/2026-11-03-repl-followups \
+ *       --tests \
+ *       --swift
+ *
+ * The layering is the CUT table below. A layering change is an edit of that table; the next run drops the cut/ refs
+ * of branches the table no longer names. A derived file (part registration) fails loudly when unified changes it.
+ *
  * A replay of unified's commits onto the stack conflicts (27 of 247 applied on 2026-11-05), because unified holds the
  * stack's code in another form. So each cut branch is one commit whose tree is its parent's tree plus unified's
  * version of the branch's files, deletions included. Nothing can conflict, and the full history stays on unified.
@@ -34,7 +47,9 @@ import { checkSubject } from "./commit-scopes";
 /** A file that holds more than one branch's part (the app's part registration). */
 interface DerivedFile {
     file: string;
-    /** Applied to unified's text in order; each one must match, so a changed file fails loudly instead of drifting. */
+    /** The text the edits start from: unified's (the default) or the base's. */
+    from?: "unified" | "base";
+    /** Applied to that text in order; each one must match, so a changed file fails loudly instead of drifting. */
     edits: readonly (readonly [RegExp, string])[];
 }
 
@@ -57,6 +72,12 @@ interface CutBranch {
      * this branch by path, which no import shows (service.test.ts reads the Swift editor's tab list).
      */
     stays?: readonly string[];
+    /**
+     * Folders this branch takes whole: every file under them that differs between the base and unified and that no
+     * other branch holds, whatever commit changed it. For a feature whose commits carry scopes outside the selection
+     * (the app lifecycle's `(GenesisHub, app)` commits), so the branch does not hold half of it.
+     */
+    sweep?: readonly string[];
     /** Run one `swift build` of the app package on this tree when --swift is given. */
     swift?: boolean;
 }
@@ -72,6 +93,7 @@ const KIT = "src/macos/GenesisKit";
  * branches share no ancestor that could hold both. Each branch gets unified's file without the other part's lines.
  */
 function partRegistration(drop: "recorder" | "meetings"): DerivedFile[] {
+    const keep = drop === "recorder" ? "meetings" : "recorder";
     // Package.swift: the part's entry with the comment lines right above it; an entry may wrap over lines.
     const packageEntry = new RegExp(`(\\n {4}//[^\\n]*)*\\n {4}AppPart\\(id: "${drop}",[\\s\\S]*?\\),(?=\\n)`);
     return [
@@ -79,7 +101,13 @@ function partRegistration(drop: "recorder" | "meetings"): DerivedFile[] {
         // Parts.swift keeps unified's text: a part's \`#if GENESIS_PART_<ID>\` blocks compile away when Package.swift
         // does not link it.
         { file: `${APP}/Sources/GenesisTools/Parts.swift`, edits: [] },
-        { file: `${APP}/Sources/Host/AppParts.swift`, edits: [[new RegExp(`\\n {8}"--${drop}": "${drop}",`), ""]] },
+        // Unified's AppParts.swift reads the AppFaces table, a refactor of the leftovers branch: start from the base
+        // and add this branch's face.
+        {
+            file: `${APP}/Sources/Host/AppParts.swift`,
+            from: "base",
+            edits: [[/\n( {8})"--markdown": "markdown",/, `\n$1"--markdown": "markdown",\n$1"--${keep}": "${keep}",`]],
+        },
         {
             file: "src/macos/lib/permissions/parts.ts",
             edits: [[new RegExp(`\\n {4}\\{\\n {8}id: "${drop}",[\\s\\S]*?\\n {4}\\},`), ""]],
@@ -87,64 +115,86 @@ function partRegistration(drop: "recorder" | "meetings"): DerivedFile[] {
     ];
 }
 
+/**
+ * The layering (lead, 2026-11-05 07:48): every branch 50 to 90 files where the import graph allows.
+ *
+ *   base ─ capture-core ─ meetings-recorder ─┬─ recorder-service-and-editor ─ recorder-editor-swift ─ unified-leftovers
+ *                                             └─ meetings-v3-and-window
+ *
+ * capture-core and meetings-recorder split the shared capture layer by the import graph, measured on unified
+ * 7bac3b8298: the capture core typechecks on its own once screen-recorder/start.ts (and its test) waits for the next
+ * branch, because the base form of meetings/lib/recorder.ts calls startRecording with the old options and nothing else
+ * in the core imports start.ts.
+ */
 const CUT: readonly CutBranch[] = [
     {
         name: "feat/2026-11-05-capture-core",
         parent: null,
         subject:
-            "feat(screen-recorder, ax-tool, control): the shared capture session and its run loop, the shared pid claim and the frames recorders",
-        scopes: CAPTURE_SCOPES,
+            "feat(screen-recorder, ax-tool, control): the shared capture session and its run loop, the RPC socket and the frames recorders",
+        scopes: [...CAPTURE_SCOPES, "json2md", "transcribe"],
         globs: [
             "src/utils/screen-recorder/**",
+            "!src/utils/screen-recorder/start.ts",
+            "!src/utils/screen-recorder/screen-recorder.test.ts",
             "native/ax-tool/**",
             "src/control/**",
             "src/daemon/**",
             "src/utils/process/**",
             "src/utils/video/**",
+            "src/utils/rpc/**",
+            "src/utils/api-descriptor/**",
+            "src/utils/macos/ocr*",
+            "src/utils/transcribe/render.ts",
+            "src/utils/json2md/**",
+            "src/json2md/**",
             "src/chrome-devtools/lib/recorder*",
             "plugins/genesis-tools/skills/macos-control/**",
         ],
     },
     {
-        name: "feat/2026-11-05-recorder-service",
+        name: "feat/2026-11-05-meetings-recorder",
         parent: "feat/2026-11-05-capture-core",
         subject:
-            "feat(recorder, GenesisKit): tools recorder serve, the RPC socket and api-descriptor table, the edit session and the live recordings client",
-        scopes: [...RECORDER_SCOPES, "node-repl", "repl", "GenesisKit", "GenesisHub"],
+            "feat(meetings, screen-recorder): the meetings recorder on the shared capture session, its start path and meetings config v3",
+        scopes: [...CAPTURE_SCOPES, ...MEETINGS_SCOPES, "GenesisKit", "GenesisHub"],
         globs: [
-            "src/utils/rpc/**",
-            "src/utils/api-descriptor/**",
-            "src/recorder/commands/serve.ts",
-            "src/recorder/lib/service*",
-            "src/recorder/lib/__fixtures__/service-protocol.json",
-            "src/recorder/lib/edit-session.ts",
-            "src/recorder/lib/host.ts",
-            `${KIT}/Sources/GenesisKit/Recording/**`,
-            `${KIT}/Tests/GenesisKitTests/LiveRecording*`,
+            "src/utils/screen-recorder/start.ts",
+            "src/utils/screen-recorder/screen-recorder.test.ts",
+            "src/utils/meetings/**",
+            "src/meetings/lib/recorder*",
+            "src/meetings/lib/meeting-run.ts",
+            "src/meetings/lib/recording-manifest*",
+            "src/meetings/commands/record.ts",
+            // Both app parts lay chips out with it (the editor's transcript cuts, the meeting detail).
+            `${KIT}/Sources/GenesisKit/Controls/WrapLayout.swift`,
         ],
     },
     {
-        name: "feat/2026-11-05-recorder-editor-ts",
-        parent: "feat/2026-11-05-recorder-service",
+        name: "feat/2026-11-05-recorder-service-and-editor",
+        parent: "feat/2026-11-05-meetings-recorder",
         subject:
-            "feat(recorder, recording-editor, node-repl): the recording editor library, the rest of tools recorder and the movies REPL toolset",
-        scopes: [...RECORDER_SCOPES, "node-repl", "repl"],
+            "feat(recorder, recording-editor, node-repl): tools recorder serve and its edit session, the recording editor library and the movies REPL toolset",
+        scopes: [...RECORDER_SCOPES, "node-repl", "repl", "GenesisKit", "GenesisHub"],
         globs: [
-            "src/utils/recording-editor/**",
             "src/recorder/**",
+            "src/utils/recording-editor/**",
             "src/node-repl/**",
             "src/utils/repl/**",
             "src/utils/ai/providers/xai/AIXAITranscription*",
+            `${KIT}/Sources/GenesisKit/Recording/**`,
+            `${KIT}/Tests/GenesisKitTests/LiveRecording*`,
             "plugins/genesis-tools/skills/recorder/**",
             "plugins/genesis-tools/skills/node-repl/**",
             "plugins/genesis-tools/.claude-plugin/plugin.json",
             ".claude-plugin/marketplace.json",
             "scripts/benchmarks/recorder-denoise/**",
+            "scripts/recorder/**",
         ],
     },
     {
         name: "feat/2026-11-05-recorder-editor-swift",
-        parent: "feat/2026-11-05-recorder-editor-ts",
+        parent: "feat/2026-11-05-recorder-service-and-editor",
         subject:
             "feat(GenesisHub, recorder): the recorder app part: the service host, the editor and library windows, the lanes, the capture picker and the camera bubble",
         scopes: [...RECORDER_SCOPES, "GenesisKit", "GenesisHub"],
@@ -155,43 +205,60 @@ const CUT: readonly CutBranch[] = [
             `${APP}/Tests/CameraBubbleTests.swift`,
             `${APP}/Info.plist`,
             `${KIT}/Sources/GenesisKitPosture/Camera/**`,
-            `${KIT}/Sources/GenesisKit/Controls/WrapLayout.swift`,
             `${KIT}/Sources/GenesisKit/Controls/GenSegmentedTabs.swift`,
         ],
-        stays: ["src/recorder/lib/service.test.ts"],
+        // service.test.ts reads the Swift editor's tab list; GLOSSARY.md's new entries are the recorder's words.
+        stays: ["src/recorder/lib/service.test.ts", "GLOSSARY.md"],
         derived: partRegistration("meetings"),
         swift: true,
     },
     {
-        name: "feat/2026-11-05-meetings-v3",
-        parent: "feat/2026-11-05-capture-core",
+        name: "feat/2026-11-05-meetings-v3-and-window",
+        parent: "feat/2026-11-05-meetings-recorder",
         subject:
-            "feat(meetings, transcribe): meetings config v3, the dictionary in any case, meeting markdown through json2md, OCR boxes and a meeting as an editor project",
-        scopes: MEETINGS_SCOPES,
+            "feat(meetings, GenesisHub): meetings v3 (dictionary, json2md markdown, OCR boxes, a meeting as an editor project) and the Meetings window with Settings → Meetings",
+        scopes: [...MEETINGS_SCOPES, "GenesisKit", "GenesisHub"],
         globs: [
             "src/meetings/**",
-            "src/utils/meetings/**",
             "src/utils/transcribe/**",
             "src/transcribe/**",
             "src/wisprflow/**",
-            "src/utils/json2md/**",
-            "src/json2md/**",
-            "src/utils/macos/ocr*",
             "src/ms-teams/lib/attendance.ts",
             "scripts/benchmarks/meetings-ocr/**",
             "scripts/benchmarks/baselines/meetings-ocr.json",
             "plugins/genesis-tools/skills/meetings/**",
+            `${APP}/Sources/Parts/Meetings/**`,
+            `${APP}/Tests/MeetingsWindowTests.swift`,
         ],
+        // The meetings sandbox fixture, the meetings rows of the CPU benchmark doc and the transcribe hint serve it.
+        stays: ["scripts/fixtures/meetings-sandbox.ts", "docs/benchmarks-cpu.md", "src/transcribe/index.ts"],
+        derived: partRegistration("recorder"),
+        swift: true,
     },
     {
-        name: "feat/2026-11-05-meetings-window",
-        parent: "feat/2026-11-05-meetings-v3",
+        name: "feat/2026-11-05-unified-leftovers",
+        parent: "feat/2026-11-05-recorder-editor-swift",
         subject:
-            "feat(GenesisHub, meetings): the Meetings window and Settings → Meetings in the app, with the JSON doors they read",
-        scopes: [...MEETINGS_SCOPES, "GenesisKit", "GenesisHub"],
-        globs: [`${APP}/Sources/Parts/Meetings/**`, `${APP}/Tests/MeetingsWindowTests.swift`, "src/meetings/**"],
-        commits: [/Meetings window/i, /meetings app part/i, /Settings → Meetings/i],
-        derived: partRegistration("recorder"),
+            "feat(GenesisHub, GenesisKit, macos): unified's hub, widget, markdown viewer and app lifecycle changes that the recorder and meetings commits carried",
+        // The catch-all: `**` has no literal prefix, so any other branch's glob wins, and this takes exactly the
+        // changed files of the selected commits that no branch above serves (the hub, the widget, the markdown viewer,
+        // the face lifecycle and quit flow, the app faces table, the permissions relaunch, mobile, toolCommand hints).
+        scopes: [...new Set([...CAPTURE_SCOPES, ...MEETINGS_SCOPES, "GenesisKit", "GenesisHub"])],
+        globs: ["**"],
+        sweep: [
+            `${APP}/Sources/Host/**`,
+            "src/macos/lib/permissions/**",
+            "scripts/native/**",
+            `${APP}/Tests/PartQuitTests.swift`,
+        ],
+        // This branch merges after both app parts, so its registration is unified's, meetings part included
+        // (relaunch.test.ts knows the meetings face). Package.swift stays the recorder branch's: an unlinked part's face
+        // answers with the command that adds it.
+        derived: [
+            { file: `${APP}/Sources/Host/AppParts.swift`, edits: [] },
+            { file: `${APP}/Sources/Host/AppFaces+Declared.swift`, edits: [] },
+            { file: "src/macos/lib/permissions/parts.ts", edits: [] },
+        ],
         swift: true,
     },
 ];
@@ -548,7 +615,20 @@ function assignFiles(commits: Commit[], differing: Set<string>, onOpenPr: (commi
         }
     }
 
-    return { owner, unplaced, selectedCommits, excludedOnOpenPr };
+    for (const branch of CUT) {
+        for (const file of [...differing].sort()) {
+            if (owner.has(file) || derivedFiles.has(file)) {
+                continue;
+            }
+
+            if ((branch.sweep ?? []).some((pattern) => globMatch(pattern, file))) {
+                owner.set(file, branch.name);
+            }
+        }
+    }
+
+    const placed = new Set(owner.keys());
+    return { owner, unplaced: unplaced.filter((file) => !placed.has(file)), selectedCommits, excludedOnOpenPr };
 }
 
 // ─── the branch graph ────────────────────────────────────────────────────────
@@ -606,6 +686,7 @@ function buildCommit(params: {
     parentCommit: string;
     files: string[];
     unifiedTree: Map<string, TreeEntry>;
+    baseTree: Map<string, TreeEntry>;
     derived: readonly DerivedFile[];
     subject: string;
     indexFile: string;
@@ -619,15 +700,16 @@ function buildCommit(params: {
         return entry ? `${entry.mode} ${entry.sha}\t${file}` : `0 ${ZERO_SHA}\t${file}`;
     });
     for (const derivedFile of params.derived) {
-        const entry = params.unifiedTree.get(derivedFile.file);
+        const from = derivedFile.from ?? "unified";
+        const entry = (from === "base" ? params.baseTree : params.unifiedTree).get(derivedFile.file);
         if (!entry) {
-            throw new Error(`${derivedFile.file} is derived from unified, but unified has no such file`);
+            throw new Error(`${derivedFile.file} is derived from the ${from} tree, which has no such file`);
         }
 
         let text = git(["cat-file", "blob", entry.sha]);
         for (const [pattern, replacement] of derivedFile.edits) {
             if (!pattern.test(text)) {
-                throw new Error(`${derivedFile.file}: the edit ${pattern} no longer matches the unified file`);
+                throw new Error(`${derivedFile.file}: the edit ${pattern} no longer matches the ${from} file`);
             }
 
             text = text.replace(pattern, replacement);
@@ -1062,6 +1144,7 @@ async function main(): Promise<number> {
             parentCommit,
             files,
             unifiedTree,
+            baseTree,
             derived: branch.derived ?? [],
             subject: check.subject,
             date: unifiedDate,
@@ -1325,6 +1408,15 @@ async function main(): Promise<number> {
             }
 
             git(["update-ref", ref, commit]);
+        }
+
+        // A branch the table no longer names (a layering change) leaves its old cut/ ref behind: drop it.
+        const current = new Set(CUT.map((branch) => `${CUT_REF_PREFIX}${branch.name}`));
+        for (const ref of git(["for-each-ref", "--format=%(refname)", CUT_REF_PREFIX]).split("\n").filter(Boolean)) {
+            if (ref.startsWith(CUT_REF_PREFIX) && !current.has(ref)) {
+                git(["update-ref", "-d", ref]);
+                say(`  dropped ${ref}, which the table no longer names`);
+            }
         }
 
         const checks = await runChecks({
