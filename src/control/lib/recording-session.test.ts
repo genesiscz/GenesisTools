@@ -5,6 +5,8 @@ import * as fs from "node:fs/promises";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { chosenPlan } from "@app/recorder/lib/proxy";
+import { framesDurationUs } from "@genesiscz/utils/recording-editor/source";
 import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import * as videoProbe from "@genesiscz/utils/video/probe";
@@ -1168,4 +1170,14 @@ it("segment re-encoding maps every audio source", () => {
     expect(graph).toContain("concat=n=2:v=1:a=2[out][aout0][aout1]");
     expect(argv).toContain("[aout0]");
     expect(argv).toContain("[aout1]");
+});
+
+it("a proxy retains its final still until stop and validates supplied plan windows", () => {
+    expect(
+        framesDurationUs({ lastUs: 1_000_000, startedAt: "2026-11-05T10:00:00Z", endedAt: "2026-11-05T10:03:00Z" })
+    ).toBe(180_000_000);
+    expect(framesDurationUs({ lastUs: 1_000_000 })).toBe(2_000_000);
+    for (const windowSec of [0, -1, Number.NaN, 0.0000001]) {
+        expect(() => chosenPlan([], { plan: { policy: "most-change", windowSec, ranges: [] } })).toThrow("window");
+    }
 });
