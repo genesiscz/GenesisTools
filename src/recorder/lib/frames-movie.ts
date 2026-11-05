@@ -2,7 +2,14 @@ import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { meetingEditorSource } from "@app/meetings/lib/editor-project";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
-import { type DisplayRange, makeProxy, type ProxyDisplay, type ProxyResult, readDisplayPlan } from "./proxy";
+import {
+    type DisplayPlan,
+    type DisplayRange,
+    makeProxy,
+    type ProxyOptions,
+    type ProxyResult,
+    readDisplayPlan,
+} from "./proxy";
 
 /**
  * proxy.mp4 for a frames folder; a meeting's folder also gets its recording.json and the transcript as captions with
@@ -10,7 +17,7 @@ import { type DisplayRange, makeProxy, type ProxyDisplay, type ProxyResult, read
  */
 export async function prepareFramesMovie(
     folder: string,
-    options: { display?: ProxyDisplay; windowSec?: number; overrides?: DisplayRange[] }
+    options: ProxyOptions
 ): Promise<ProxyResult & { transcript?: string; captions?: number }> {
     if (!existsSync(join(folder, "meeting.json"))) {
         return makeProxy(folder, options);
@@ -55,4 +62,12 @@ export async function switchDisplay(folder: string, range: DisplayRange) {
     }
 
     return prepareFramesMovie(folder, keptPlan(folder, [range]));
+}
+
+/**
+ * Makes the proxy again with exactly `plan` (an earlier proxy.json), which puts a display switch back: the editor's
+ * undo of a switch, and `tools recorder proxy --plan <file>`.
+ */
+export async function restoreDisplayPlan(folder: string, plan: Pick<DisplayPlan, "policy" | "windowSec" | "ranges">) {
+    return prepareFramesMovie(folder, { plan });
 }

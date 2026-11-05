@@ -1,4 +1,4 @@
-import { type DisplayRange, makeProxy, type ProxyDisplay, type ProxyResult } from "@app/recorder/lib/proxy";
+import { makeProxy, type ProxyOptions, type ProxyResult } from "@app/recorder/lib/proxy";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
@@ -76,13 +76,12 @@ export interface MeetingEditorSource {
  * or by default per window the display with the most change), and the transcript beside it as captions with the
  * speakers' names (`proxy.transcript.json`). The editor then opens the meeting folder like any recording.
  */
-export async function meetingEditorSource(options: {
-    store: MeetingStore;
-    record: MeetingRecord;
-    display?: ProxyDisplay;
-    windowSec?: number;
-    overrides?: DisplayRange[];
-}): Promise<MeetingEditorSource> {
+export async function meetingEditorSource(
+    options: {
+        store: MeetingStore;
+        record: MeetingRecord;
+    } & ProxyOptions
+): Promise<MeetingEditorSource> {
     const { store, record } = options;
     const folder = store.folder(record.id);
     const manifest = readRecordingManifest(folder) ?? writeMeetingRecordingManifest(folder, record);
@@ -95,6 +94,7 @@ export async function meetingEditorSource(options: {
         ...(options.display !== undefined ? { display: options.display } : {}),
         ...(options.windowSec !== undefined ? { windowSec: options.windowSec } : {}),
         ...(options.overrides ? { overrides: options.overrides } : {}),
+        ...(options.plan ? { plan: options.plan } : {}),
     });
     const lastMs = Math.max(0, ...manifest.frames.map((frame) => frame.atMs));
     const opened = OpenedMeeting.of(store, record);

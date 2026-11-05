@@ -11,6 +11,19 @@ final class PlayheadClock {
     var outUs: Int64 = 0
 }
 
+/// One step of the editor's undo: the edit as it was before a change, or a display switch, which changed the proxy
+/// movie and not the edit file, so its undo makes the movie again with the plan from before.
+enum UndoStep {
+    case edit(EditProject)
+    case display(DisplaySwitchStep)
+}
+
+/// A display switch as an undo step: the frames recording's display plan before and after it.
+struct DisplaySwitchStep {
+    let before: DisplayPlan
+    let after: DisplayPlan
+}
+
 /// One selection for the whole editor, so ⌫, Esc, the lanes and the inspector agree on what is selected.
 enum EditorSelection: Equatable {
     case none
@@ -81,8 +94,13 @@ final class EditorModel {
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var renderTask: Task<Void, Never>?
     @ObservationIgnored private var rebuildSoon: DispatchWorkItem?
-    @ObservationIgnored private var undoStack: [EditProject] = []
-    @ObservationIgnored private var redoStack: [EditProject] = []
+    @ObservationIgnored private var undoStack: [UndoStep] = []
+    @ObservationIgnored private var redoStack: [UndoStep] = []
+    /// Starts a `tools` command for the window and answers on the main thread (`ToolsRunner.run`); a test answers
+    /// for the CLI instead.
+    @ObservationIgnored var runTools: (_ argv: [String], _ done: @escaping @MainActor (Int32, String, String) -> Void) -> Void = {
+        ToolsRunner.run($0, done: $1)
+    }
     @ObservationIgnored let cursor: CursorTrack?
     /// The review comments beside the recording (comments.jsonl), watched so an agent's comment shows at once.
     @ObservationIgnored let commentsStore: ReviewCommentsStore
@@ -389,7 +407,7 @@ final class EditorModel {
             && now.timeIntervalSince(lastChange.at) < 0.6 && !undoStack.isEmpty
         lastChange = (parts, now)
         if !continues {
-            undoStack.append(project)
+            undoStack.append(.edit(project))
             if undoStack.count > 200 { undoStack.removeFirst() }
         }
         redoStack.removeAll()
@@ -447,8 +465,15 @@ final class EditorModel {
     }
 
     /// What ⌘Z would take back ("Move Text", "Delete Zoom"), for the Edit menu and the notice; nil when nothing.
-    var undoName: String? { undoStack.last.map { Self.changeName(from: $0, to: project).name } }
-    var redoName: String? { redoStack.last.map { Self.changeName(from: project, to: $0).name } }
+    var undoName: String? { undoStack.last.map { name(of: $0, undoing: true).name } }
+    var redoName: String? { redoStack.last.map { name(of: $0, undoing: false).name } }
+
+    private func name(of step: UndoStep, undoing: Bool) -> (name: String, tab: InspectorTab?) {
+        switch step {
+        case let .edit(other): undoing ? Self.changeName(from: other, to: project) : Self.changeName(from: project, to: other)
+        case .display: ("Display Switch", nil)
+        }
+    }
 
     /// A name for the change from `a` to `b`, and the tab that shows it. An add or a delete says so; several kinds of
     /// change at once are "Changes".
@@ -490,20 +515,69 @@ final class EditorModel {
     }
 
     func undo() {
-        guard let previous = undoStack.popLast() else { return }
-        let change = Self.changeName(from: previous, to: project)
+        guard let step = undoStack.last else { return }
+        let change = name(of: step, undoing: true)
         lastChange = ([], .distantPast)
-        redoStack.append(project)
-        commit(previous, rebuildMovie: previous.clips != project.clips || previous.audio != project.audio)
-        announce("Undid", change)
+        switch step {
+        case let .edit(previous):
+            undoStack.removeLast()
+            redoStack.append(.edit(project))
+            commit(previous, rebuildMovie: previous.clips != project.clips || previous.audio != project.audio)
+            announce("Undid", change)
+        case let .display(switchStep):
+            // The movie is made again first; the step moves to the redo list only once it was.
+            guard !isSwitchingDisplay else {
+                show("The movie is still being made; undo again once it is ready.", error: false)
+                return
+            }
+            remakeProxy(plan: switchStep.before, doing: "Undoing the display switch") { [weak self] made in
+                guard let self, made else { return }
+                self.undoStack.removeLast()
+                self.redoStack.append(step)
+                self.refreshUndoState()
+                self.announce("Undid", change)
+            }
+        }
     }
 
     func redo() {
-        guard let next = redoStack.popLast() else { return }
-        let change = Self.changeName(from: project, to: next)
-        undoStack.append(project)
-        commit(next, rebuildMovie: next.clips != project.clips || next.audio != project.audio)
-        announce("Redid", change)
+        guard let step = redoStack.last else { return }
+        let change = name(of: step, undoing: false)
+        switch step {
+        case let .edit(next):
+            redoStack.removeLast()
+            undoStack.append(.edit(project))
+            commit(next, rebuildMovie: next.clips != project.clips || next.audio != project.audio)
+            announce("Redid", change)
+        case let .display(switchStep):
+            guard !isSwitchingDisplay else {
+                show("The movie is still being made; redo again once it is ready.", error: false)
+                return
+            }
+            remakeProxy(plan: switchStep.after, doing: "Redoing the display switch") { [weak self] made in
+                guard let self, made else { return }
+                self.redoStack.removeLast()
+                self.undoStack.append(step)
+                self.refreshUndoState()
+                self.announce("Redid", change)
+            }
+        }
+    }
+
+    /// A display switch that made the proxy movie again: one undo step among the edit's own, so ⌘Z takes back the
+    /// changes in the order they were made.
+    func recordDisplaySwitch(before: DisplayPlan, after: DisplayPlan) {
+        guard before != after else { return }
+        undoStack.append(.display(DisplaySwitchStep(before: before, after: after)))
+        if undoStack.count > 200 { undoStack.removeFirst() }
+        redoStack.removeAll()
+        lastChange = ([], .distantPast)
+        refreshUndoState()
+    }
+
+    private func refreshUndoState() {
+        canUndo = !undoStack.isEmpty
+        canRedo = !redoStack.isEmpty
     }
 
     /// The scale at which the whole edit fits the timeline's width; the timeline keeps it current.
@@ -1307,7 +1381,7 @@ final class EditorModel {
         saveNow()
         let before = durationUs
         ownOpsRunning += 1
-        ToolsRunner.run(["recorder", "apply", store.url.path, ops]) { [weak self] status, _, stderr in
+        runTools(["recorder", "apply", store.url.path, ops]) { [weak self] status, _, stderr in
             guard let self else { return }
             defer { self.ownOpsRunning -= 1 }
             guard status == 0 else {
@@ -1329,7 +1403,7 @@ final class EditorModel {
     /// An agent changed the edit file: its version replaces this one, and this one stays one undo away.
     private func adoptExternal(_ next: EditProject) {
         guard next != project else { return }
-        undoStack.append(project)
+        undoStack.append(.edit(project))
         redoStack.removeAll()
         let rebuildMovie = next.clips != project.clips || next.audio != project.audio
         project = next
@@ -1339,7 +1413,8 @@ final class EditorModel {
         canUndo = true
         canRedo = false
         if rebuildMovie { rebuild() } else { refreshFrame() }
-        let previous = undoStack.last ?? next
+        let previous: EditProject
+        if case let .edit(before)? = undoStack.last { previous = before } else { previous = next }
         // The window's own op (applyOps) names itself in its notice.
         guard ownOpsRunning == 0 else { return }
         if !announceExternal(old: previous, new: next) {

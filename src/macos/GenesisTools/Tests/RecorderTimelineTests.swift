@@ -227,6 +227,68 @@ final class RecorderTimelineTests: XCTestCase {
         }
     }
 
+    /// A display switch is one undo step: ⌘Z makes the proxy again with exactly the plan from before, through
+    /// `tools recorder proxy --plan <file>`, ⇧⌘Z with the plan after it, and the edit's own steps keep their order.
+    func testADisplaySwitchIsOneUndoStepThatMakesTheMovieAgainWithThePlanBeforeIt() throws {
+        let recording = folder.appendingPathComponent("meeting-undo")
+        try FileManager.default.createDirectory(at: recording, withIntermediateDirectories: true)
+        let before = #"{"policy":"most-change","ranges":[{"displayId":1,"fromUs":0,"toUs":4000000},{"displayId":4,"fromUs":4000000,"toUs":10000000}],"version":1,"windowSec":10}"#
+        let after = #"{"policy":"most-change","ranges":[{"displayId":1,"fromUs":0,"toUs":2500000},{"displayId":2,"fromUs":2500000,"toUs":6000000},{"displayId":4,"fromUs":6000000,"toUs":10000000}],"version":1,"windowSec":10}"#
+        let planFile = recording.appendingPathComponent("proxy.json")
+        try Data(before.utf8).write(to: planFile)
+        try Data(#"{"displays":[{"id":1,"name":"Built-in"},{"id":2,"name":"Side"},{"id":4,"name":"Studio"}]}"#.utf8)
+            .write(to: recording.appendingPathComponent("recording.json"))
+        let project = EditProject.whole(video: recording.appendingPathComponent("proxy.mp4").path, durationUs: 10_000_000,
+                                        width: 1920, height: 1080, cursor: nil, recording: nil)
+        let model = EditorModel(project: project, store: ProjectStore(url: recording.appendingPathComponent("edit.json")))
+        let first = try XCTUnwrap(model.displayPlan)
+        // The CLI, as the editor calls it: a switch writes the new plan, --plan writes the file's plan as it is.
+        var calls: [[String]] = []
+        var plansGiven: [String] = []
+        var fails = false
+        model.runTools = { argv, done in
+            calls.append(argv)
+            if fails { return done(1, "", "ffmpeg failed\n") }
+            if let index = argv.firstIndex(of: "--plan") {
+                let text = (try? String(contentsOfFile: argv[index + 1], encoding: .utf8)) ?? ""
+                plansGiven.append(text)
+                try? Data(text.utf8).write(to: planFile)
+            } else {
+                try? Data(after.utf8).write(to: planFile)
+            }
+            done(0, "{}", "")
+        }
+
+        model.switchDisplay(fromUs: 2_500_000, toUs: 6_000_000, displayId: 2)
+        XCTAssertEqual(calls.last, ["recorder", "proxy", recording.path, "--keep-plan", "--switch", "2.500-6.000=2"])
+        XCTAssertEqual(model.displayPlan?.ranges.map(\.displayId), [1, 2, 4])
+        XCTAssertEqual(model.undoName, "Display Switch")
+        model.applyRange(.cut, TimelineRange(fromUs: 8_000_000, toUs: 9_000_000))
+        XCTAssertEqual(model.project.outputDurationUs, 9_000_000)
+
+        model.undo()
+        XCTAssertEqual(model.project.outputDurationUs, 10_000_000, "the cut made after the switch goes back first")
+        XCTAssertEqual(calls.count, 1, "an edit's undo needs no movie")
+        model.undo()
+        XCTAssertEqual(Array(calls.last?.prefix(4) ?? []), ["recorder", "proxy", recording.path, "--plan"])
+        XCTAssertEqual(model.displayPlan, first, "the plan from before the switch is back")
+        let given = try XCTUnwrap(plansGiven.last.flatMap { $0.data(using: .utf8) })
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: given) as? NSDictionary,
+                       try JSONSerialization.jsonObject(with: Data(before.utf8)) as? NSDictionary)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: calls.last?.last ?? ""), "the plan file is removed after the call")
+        XCTAssertEqual(model.redoName, "Display Switch")
+
+        model.redo()
+        XCTAssertEqual(model.displayPlan?.ranges.map(\.displayId), [1, 2, 4])
+        XCTAssertEqual(model.undoName, "Display Switch")
+
+        fails = true
+        model.undo()
+        XCTAssertEqual(model.displayPlan?.ranges.map(\.displayId), [1, 2, 4], "a failed remake leaves the movie as it was")
+        XCTAssertEqual(model.undoName, "Display Switch", "and keeps the step to try again")
+        XCTAssertTrue(model.noticeIsError)
+    }
+
     func testADisplayPlanReadsItsRangesAndNamesAddsItsLaneAndSwitchesThroughTheCLI() throws {
         let recording = folder.appendingPathComponent("meeting")
         try FileManager.default.createDirectory(at: recording, withIntermediateDirectories: true)

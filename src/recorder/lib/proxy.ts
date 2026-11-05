@@ -187,6 +187,67 @@ export function framesForPlan(frames: readonly SourceFrame[], ranges: readonly D
     return ordered.length > 0 ? [{ ...ordered[0], atUs: 0 }, ...ordered.slice(1)] : ordered;
 }
 
+/** What a proxy shows: a display policy with overrides, or exactly a saved plan. */
+export interface ProxyOptions {
+    /** One display, or `most-change` (default): per window the display whose frames changed most. */
+    display?: ProxyDisplay;
+    /** The window of `most-change`, in seconds. Default 10. */
+    windowSec?: number;
+    /** Ranges that show a given display whatever the policy picks. */
+    overrides?: DisplayRange[];
+    /** Exactly this plan (a copy of an earlier proxy.json, to put it back): no policy pick and no overrides. */
+    plan?: Pick<DisplayPlan, "policy" | "windowSec" | "ranges">;
+}
+
+/** A display plan from untrusted JSON (a copy of proxy.json), or a readable error. */
+export function parseDisplayPlan(raw: unknown): DisplayPlan {
+    return displayPlanSchema.parse(raw);
+}
+
+/**
+ * The display ranges a proxy shows and the plan it saves: the policy's pick (one display, or the most change per
+ * window) with the overrides laid over it, or exactly `options.plan`, whose displays must all have frames.
+ */
+export function chosenPlan(frames: readonly SourceFrame[], options: ProxyOptions): DisplayPlan {
+    const displays = new Set(frames.map((frame) => frame.displayId).filter((id) => id !== undefined));
+    const endUs = frames.length > 0 ? frames[frames.length - 1].atUs + 1 : 1;
+
+    if (options.plan) {
+        if (options.display !== undefined || (options.overrides?.length ?? 0) > 0) {
+            throw new Error("a plan is the whole display plan; give it without a display or switches");
+        }
+
+        const missing = options.plan.ranges.find((range) => !displays.has(range.displayId));
+
+        if (missing) {
+            throw new Error(
+                `the plan shows display ${missing.displayId}, which has no frames; there are ${[...displays].join(", ") || "none"}`
+            );
+        }
+
+        return { version: 1, ...options.plan, ranges: options.plan.ranges.map((range) => ({ ...range })) };
+    }
+
+    const windowSec = options.windowSec ?? DEFAULT_WINDOW_SEC;
+    const single = typeof options.display === "number" ? options.display : undefined;
+
+    if (single !== undefined && !displays.has(single)) {
+        throw new Error(`there are no frames of display ${single}; there are ${[...displays].join(", ") || "none"}`);
+    }
+
+    const base =
+        single !== undefined
+            ? [{ fromUs: 0, toUs: endUs, displayId: single }]
+            : planMostChange(frames, Math.round(windowSec * 1_000_000));
+    const ranges = overrideRanges(base, options.overrides ?? []);
+    return {
+        version: 1,
+        policy: single !== undefined ? "display" : "most-change",
+        windowSec,
+        ranges: ranges.map((range) => ({ ...range, toUs: Math.min(range.toUs, endUs) })),
+    };
+}
+
 /** The display plan a proxy was made with, or undefined for a proxy from before plans (or none). */
 export function readDisplayPlan(folder: string): DisplayPlan | undefined {
     const path = join(folder, PROXY_PLAN_FILE);
@@ -223,17 +284,7 @@ function meetingAudioPieces(folder: string, startedMs: number): Array<{ path: st
  * next one (the recording's own timing), with the audio pieces placed at their start times and mixed. The frames and
  * the audio files stay; the proxy is only what the editor plays and cuts.
  */
-export async function makeProxy(
-    folder: string,
-    options: {
-        /** One display, or `most-change` (default): per window the display whose frames changed most. */
-        display?: ProxyDisplay;
-        /** The window of `most-change`, in seconds. Default 10. */
-        windowSec?: number;
-        /** Ranges that show a given display whatever the policy picks. */
-        overrides?: DisplayRange[];
-    } = {}
-): Promise<ProxyResult> {
+export async function makeProxy(folder: string, options: ProxyOptions = {}): Promise<ProxyResult> {
     const manifest = readRecordingManifest(folder);
     const frames = readFrameFolder(folder);
 
@@ -241,27 +292,15 @@ export async function makeProxy(
         throw new Error(`${folder} has no frames to make a movie of`);
     }
 
-    const windowSec = options.windowSec ?? DEFAULT_WINDOW_SEC;
-    const single = typeof options.display === "number" ? options.display : undefined;
-    const displays = new Set(frames.map((frame) => frame.displayId).filter((id) => id !== undefined));
-
-    if (single !== undefined && !displays.has(single)) {
-        throw new Error(`${folder} has no frames of display ${single}; it has ${[...displays].join(", ") || "none"}`);
-    }
-
-    const endUs = frames[frames.length - 1].atUs + 1;
-    const base =
-        single !== undefined
-            ? [{ fromUs: 0, toUs: endUs, displayId: single }]
-            : planMostChange(frames, Math.round(windowSec * 1_000_000));
-    const ranges = overrideRanges(base, options.overrides ?? []);
+    const plan = (() => {
+        try {
+            return chosenPlan(frames, options);
+        } catch (error) {
+            throw new Error(`${folder}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    })();
+    const ranges = plan.ranges;
     const chosen = ranges.length > 0 ? framesForPlan(frames, ranges) : frames;
-    const plan: DisplayPlan = {
-        version: 1,
-        policy: single !== undefined ? "display" : "most-change",
-        windowSec,
-        ranges: ranges.map((range) => ({ ...range, toUs: Math.min(range.toUs, endUs) })),
-    };
     const shownDisplays = [...new Set(ranges.map((range) => range.displayId))];
     const display = shownDisplays.length === 1 ? shownDisplays[0] : undefined;
     const videoFilter = proxyVideoFilter(shownSizes(chosen));

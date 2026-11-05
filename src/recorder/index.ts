@@ -32,7 +32,7 @@ import {
     undoEdit,
     writeSubtitles,
 } from "./lib/edit";
-import { keptPlan, prepareFramesMovie } from "./lib/frames-movie";
+import { keptPlan, prepareFramesMovie, restoreDisplayPlan } from "./lib/frames-movie";
 import {
     EDITOR_TABS,
     type EditorTab,
@@ -46,7 +46,7 @@ import {
     waitForEditorOpen,
 } from "./lib/library";
 import { chaptersOf, markersOf, searchLibrary } from "./lib/moments";
-import { type DisplayRange, PROXY_DISPLAY_POLICIES, type ProxyDisplay } from "./lib/proxy";
+import { type DisplayRange, PROXY_DISPLAY_POLICIES, type ProxyDisplay, parseDisplayPlan } from "./lib/proxy";
 import { copyRecording, revealRecording, trashRecording } from "./lib/quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./lib/review";
 import { findOnScreen } from "./lib/screen-search";
@@ -1215,11 +1215,31 @@ program
         "--keep-plan",
         "keep the display plan of the last proxy (proxy.json) and lay the --switch ranges over it, as the editor does"
     )
+    .option(
+        "--plan <file>",
+        "make it with exactly the display plan in this file (a copy of an earlier proxy.json), which puts a switch back, as the editor's undo does; not with --display, --switch or --keep-plan"
+    )
     .action(
-        async (value: string, flags: { display?: string; window?: string; switch?: string[]; keepPlan?: boolean }) => {
+        async (
+            value: string,
+            flags: { display?: string; window?: string; switch?: string[]; keepPlan?: boolean; plan?: string }
+        ) => {
             try {
-                const display = flags.display === undefined ? undefined : parseProxyDisplay(flags.display);
                 const folder = resolveRecording(value);
+
+                if (flags.plan) {
+                    if (flags.display !== undefined || flags.switch?.length || flags.keepPlan) {
+                        throw new Error(
+                            "--plan is the whole display plan; give it without --display, --switch or --keep-plan"
+                        );
+                    }
+
+                    const plan = parseDisplayPlan(SafeJSON.parse(readFileSync(flags.plan, "utf8"), { strict: true }));
+                    out.result(await restoreDisplayPlan(folder, plan));
+                    return;
+                }
+
+                const display = flags.display === undefined ? undefined : parseProxyDisplay(flags.display);
                 const switches = (flags.switch ?? []).map(parseDisplaySwitch);
                 const result = await prepareFramesMovie(folder, {
                     ...(display !== undefined ? { display } : {}),

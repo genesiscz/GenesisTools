@@ -7,7 +7,7 @@ import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/reco
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
 import { keptPlan } from "./frames-movie";
 import { editorOpenStatePath, movieOf, readEditorOpenState, resolveRecording } from "./library";
-import { framesForPlan, overrideRanges, planMostChange, proxyVideoFilter } from "./proxy";
+import { chosenPlan, framesForPlan, overrideRanges, parseDisplayPlan, planMostChange, proxyVideoFilter } from "./proxy";
 import { currentGif, isMeetingFolder, meetingOf, shareableMovie, trashRecording } from "./quick-actions";
 import { findOnScreen } from "./screen-search";
 
@@ -136,6 +136,31 @@ describe("a display switch from the editor", () => {
             { fromUs: 5_000_000, toUs: 25_000_000, displayId: 2 },
             { fromUs: 25_000_000, toUs: 40_000_000, displayId: 4 },
         ]);
+    });
+
+    it("an undo makes the proxy with exactly the plan from before the switch, never the policy's pick", () => {
+        const frames = [1, 4, 1, 4].map((displayId, index) => ({
+            path: `/f/${index}.jpg`,
+            atUs: index * 6_000_000,
+            displayId,
+            changePercent: displayId === 4 ? 50 : 1,
+        }));
+        const before = {
+            policy: "most-change" as const,
+            windowSec: 10,
+            ranges: [
+                { fromUs: 0, toUs: 12_000_000, displayId: 1 },
+                { fromUs: 12_000_000, toUs: 18_000_001, displayId: 4 },
+            ],
+        };
+
+        expect(chosenPlan(frames, { plan: before })).toEqual({ version: 1, ...before });
+        expect(chosenPlan(frames, {}).ranges).not.toEqual(before.ranges);
+        expect(() =>
+            chosenPlan(frames, { plan: { ...before, ranges: [{ fromUs: 0, toUs: 1, displayId: 9 }] } })
+        ).toThrow("the plan shows display 9, which has no frames");
+        expect(() => chosenPlan(frames, { plan: before, display: 1 })).toThrow("without a display or switches");
+        expect(parseDisplayPlan({ version: 1, ...before })).toEqual({ version: 1, ...before });
     });
 });
 
