@@ -142,7 +142,9 @@ export function correctionsOf(
         (opts.withSuggested === true &&
             item.status === "suggested" &&
             (item.confidence === undefined || item.confidence >= applyAbove));
-    const used = record.items.filter(applies).sort((a, b) => Number(a.status === "confirmed") - Number(b.status === "confirmed"));
+    const used = record.items
+        .filter(applies)
+        .sort((a, b) => Number(a.status === "confirmed") - Number(b.status === "confirmed"));
     // A label that tracks no one person marks its lines unclear, last: a question or a range's own guess says more.
     const unlabeled = used.flatMap((item): UnclearPassage[] =>
         item.kind === "label" ? [{ fromSec: item.fromSec, toSec: item.toSec, speaker: item.label, readings: [] }] : []
@@ -153,7 +155,6 @@ export function correctionsOf(
             : unclearPassages(record, { below: config.global.suggest.listenBelow })),
         ...unlabeled,
     ];
-
 
     const address = (item: MeetingItem) => {
         const line = lineOf(item);
