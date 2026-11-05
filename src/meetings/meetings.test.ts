@@ -4857,3 +4857,36 @@ test("frame filenames distinguish resumed dates and repeated local hours", async
     expect(new Set(names).size).toBe(3);
     expect(names).toEqual([...names].sort());
 });
+
+test("addressed questions select repeated words within their own line", async () => {
+    const { questionOccurrence, askedSpotSec } = await import("./lib/questions");
+    const question = {
+        id: "i1",
+        kind: "question",
+        status: "suggested",
+        about: "term",
+        question: "Which?",
+        heard: "word",
+        fromSec: 10,
+        toSec: 20,
+        choices: [],
+        decides: [],
+        rules: [],
+        suggestedAt: meeting.start,
+        evidence: { transcriptLine: 0 },
+    };
+    const draft = meetingRecordSchema.parse({
+        ...record,
+        items: [{ ...question, id: "i0", evidence: { transcriptLine: 1 } }, question, { ...question, id: "i2" }],
+    });
+    const first = draft.items[1]!;
+    const second = draft.items[2]!;
+    if (first.kind !== "question" || second.kind !== "question") {
+        throw new Error("fixture");
+    }
+    const transcript = [line("Alice", 10, "word then word"), line("Bob", 20, "word")];
+    expect(questionOccurrence(draft, first)).toBe(0);
+    expect(questionOccurrence(draft, second)).toBe(1);
+    expect(heardContext(second, transcript, 240, 1)?.lead).toBe("word then ");
+    expect(askedSpotSec(second, transcript, 1)).toBeGreaterThan(askedSpotSec(first, transcript, 0));
+});

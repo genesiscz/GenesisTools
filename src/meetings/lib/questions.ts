@@ -524,7 +524,7 @@ function heardLine(question: QuestionItem, lines: TranscriptLines, occurrence: n
     const transcriptLine = question.evidence?.transcriptLine;
     const matches = lines.occurrences({ heard: question.heard, fromSec: question.fromSec, toSec: question.toSec });
     return typeof transcriptLine === "number"
-        ? matches.find((one) => one.index === transcriptLine)
+        ? matches.filter((one) => one.index === transcriptLine)[occurrence]
         : matches[occurrence];
 }
 
@@ -543,6 +543,7 @@ export function questionOccurrence(record: MeetingRecord, question: QuestionItem
         (item): item is QuestionItem =>
             item.kind === "question" &&
             heardKey(item) === heard &&
+            item.evidence?.transcriptLine === question.evidence?.transcriptLine &&
             Math.round(item.fromSec) === Math.round(question.fromSec) &&
             Math.round(item.toSec) === Math.round(question.toSec)
     );
