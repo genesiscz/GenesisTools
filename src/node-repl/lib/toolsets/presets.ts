@@ -1,4 +1,5 @@
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import { z } from "zod";
@@ -102,7 +103,7 @@ export class PresetsToolset extends ReplToolset {
             "Save a script that worked as a named preset with parameters, list them, run one again with other values.",
         methods: [save, list, show, run, remove],
         notes: [
-            "A preset lives in ~/.genesis-tools/node-repl/presets/<name>/ (script.js and preset.json); `tools node-repl preset run <name> --param key=value` runs it from a shell.",
+            `A preset lives in ~/.genesis-tools/node-repl/presets/<name>/ (script.js and preset.json); \`${toolCommand("node-repl preset run")} <name> --param key=value\` runs it from a shell.`,
         ],
     });
 
