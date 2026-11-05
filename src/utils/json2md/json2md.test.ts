@@ -344,6 +344,10 @@ describe("blocks", () => {
         expect(render([{ badges: [{ label: "passed", value: 41 }] }])).toBe("**passed** `41`");
     });
 
+    test("an image can preserve its supplied source bytes", () => {
+        expect(render([{ img: { source: "a b(c).jpg", escapeSource: false } }])).toBe("![](a b(c).jpg)");
+    });
+
     test("mermaid is generated from nodes and parents", () => {
         const out = render([
             {
@@ -396,6 +400,12 @@ describe("blocks", () => {
 });
 
 describe("frontmatter", () => {
+    test("preserves supplied YAML front matter text without quoting its values", () => {
+        expect(json2md([{ p: "Body" }], { frontmatter: "meeting: yes", trailingNewline: false })).toBe(
+            "---\nmeeting: yes\n---\n\nBody"
+        );
+    });
+
     test("quotes only what YAML would otherwise misread", () => {
         const yaml = toYaml({ plain: "hello", colon: "yes: no", numeric: "42", bool: "true", empty: "" });
 

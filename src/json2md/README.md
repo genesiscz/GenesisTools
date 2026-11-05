@@ -163,6 +163,8 @@ Blocks: `h1`–`h6`, `heading`, `p`, `blockquote`, `callout`, `ul`, `ol`, `tasks
 a single-key object; two keys is an error rather than a silent concatenation.
 
 `callout` takes `labelCase: "lower"` for `[!warning]` where the default is `[!WARNING]`.
+Pass front-matter text as `frontmatter: "key: value"` to preserve it without YAML serialization.
+An image block accepts `escapeSource: false` when its source is already formatted for Markdown.
 
 One row set at several column subsets:
 

@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import type { CopyFile } from "@genesiscz/utils/fs/clone";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingRecordSchema } from "@genesiscz/utils/meetings/record";
-import { noteFramesDir, writeScreenNote } from "./screen-note";
+import { noteFramesDir, screenNoteMarkdown, writeScreenNote } from "./screen-note";
 
 const root = mkdtempSync(join(tmpdir(), "gt-test-screen-note-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -46,6 +46,47 @@ function pictureLinks(notePath: string): string[] {
 }
 
 describe("the screen note of a meeting", () => {
+    it("keeps raw meeting IDs and the final blank line when no frames are shown", () => {
+        const result = screenNoteMarkdown({
+            record: { ...record, id: "yes" },
+            rows: [],
+            zeroMs: ZERO_MS,
+            links: new Map(),
+            ocrPath: "ocr.jsonl",
+            picturesLabel: "frames/",
+        });
+
+        expect(result.markdown).toBe(
+            "---\nmeeting: yes\n---\n\n# Screen OCR: Weekly sync\n\n" +
+                "Source: `ocr.jsonl` (0 frames; 0 shown here, a frame whose text did not change on its display is left out). Pictures: `frames/`. Times are local time and the transcript time.\n\n"
+        );
+    });
+
+    it("preserves every byte of a note with a missing picture and backticks", () => {
+        const zero = new Date(2026, 2, 2, 10, 0, 0).getTime();
+        const rows = [
+            { file: "frames/one.jpg", at: new Date(zero + 5000).toISOString(), displayId: 2, text: "Code ```x```" },
+            { file: "frames/missing.jpg", at: new Date(zero + 60000).toISOString(), displayId: 2, text: "Other" },
+        ];
+        const result = screenNoteMarkdown({
+            record,
+            rows,
+            zeroMs: zero,
+            links: new Map([["frames/one.jpg", "images/one.jpg"]]),
+            ocrPath: "meeting/ocr.jsonl",
+            picturesLabel: "images/",
+        });
+
+        expect(result).toEqual({
+            shown: 2,
+            markdown:
+                "---\nmeeting: 2026-03-02_10-00-meeting\n---\n\n# Screen OCR: Weekly sync\n\n" +
+                "Source: `meeting/ocr.jsonl` (2 frames; 2 shown here, a frame whose text did not change on its display is left out). Pictures: `images/`. Times are local time and the transcript time.\n\n" +
+                "## 10:00:05 · transcript 00:05 · Side\n\n![](images/one.jpg)\n\n````text\nCode ```x```\n````\n\n" +
+                "## 10:01:00 · transcript 01:00 · Side\n\n_The picture frames/missing.jpg is not on disk._\n\n```text\nOther\n```\n",
+        });
+    });
+
     it("clones each shown frame beside the note and links the clone by a relative path", () => {
         const folder = meetingFolder("vault-note");
         const notePath = join(root, "vault-note", "vault", "Meetings", "Weekly sync.ScreenOCR.md");
