@@ -203,10 +203,7 @@ const CUT: readonly CutBranch[] = [
  * Files the cut leaves at their base form on purpose, with the reason. For a dependency the import tracer cannot see
  * (Swift) on code another open PR holds. A TypeScript file never needs an entry: the tracer keeps it at base itself.
  */
-const KEEP_AT_BASE: Record<string, string> = {
-    [`${APP}/Sources/Parts/Widget/WidgetWindow.swift`]:
-        "its unified form passes openUsage to WidgetCoordinator, the AI usage widget of PRs #711 and #712",
-};
+const KEEP_AT_BASE: Record<string, string> = {};
 
 export default {
     branches: CUT,
