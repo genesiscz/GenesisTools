@@ -235,6 +235,33 @@ describe("answer attachments and session reads", () => {
     });
 });
 
+it("a read with unchanged log files runs no per-file catch-up, and a new line still arrives", () => {
+    const root = mkdtempSync(join(tmpdir(), "qa-catchup-skip-"));
+    const logBase = join(root, "log");
+    appendEntry(e("first"), logBase);
+    const db = openReadModel(join(root, "qa.db"));
+    try {
+        const query = spyOn(db, "query");
+        const offsetQueries = () => query.mock.calls.filter(([sql]) => String(sql).includes("ingest_offsets")).length;
+        expect(queryEntries(db, { logBase }).map((row) => row.id)).toEqual(["first"]);
+        const afterFirst = offsetQueries();
+        expect(afterFirst).toBeGreaterThan(0);
+
+        expect(queryEntries(db, { logBase }).map((row) => row.id)).toEqual(["first"]);
+        expect(offsetQueries()).toBe(afterFirst);
+
+        appendEntry(e("second", { ts: Date.now() + 1000 }), logBase);
+        expect(
+            queryEntries(db, { logBase })
+                .map((row) => row.id)
+                .sort()
+        ).toEqual(["first", "second"]);
+        expect(offsetQueries()).toBeGreaterThan(afterFirst);
+    } finally {
+        db.close();
+    }
+});
+
 it("recovers attachments ingested by an old reader without losing read/supersession state", () => {
     const root = mkdtempSync(join(tmpdir(), "qa-mixed-readers-"));
     const logBase = join(root, "log");

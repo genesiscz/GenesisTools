@@ -103,10 +103,48 @@ function dedupeKey(en: QaEntry): string {
     return `${en.sessionId}|${Math.round(en.ts / 2000)}|${en.question}`;
 }
 
+/**
+ * The log files as the last catch-up into each database saw them (name, inode, size and mtime of each). A widget
+ * snapshot runs a catch-up for every question read, 16 or more on the same in-memory copy, and each ran an offset query
+ * per log file (130 files) and the backfill scan though nothing had changed: about 18 ms of a 61 ms snapshot
+ * (2026-11-05). Only bytes written to the files are ingested, so files that read the same have nothing new. A row an
+ * older reader stored without the newer fields can still land after the last pass (it read the offset before that
+ * pass wrote it), so the skip also needs `needsBackfill` to find none.
+ */
+const caughtUp = new WeakMap<Database, string>();
+
+/** Whether a row lacks the fields a newer writer adds: a probe of the two partial indexes, about 1 µs. */
+function needsBackfill(db: Database): boolean {
+    try {
+        const row = db
+            .query<{ missing: number }, []>(
+                "SELECT EXISTS (SELECT 1 FROM entries WHERE attachments_json IS NULL) OR EXISTS (SELECT 1 FROM entries WHERE transcript_anchor_json IS NULL) AS missing"
+            )
+            .get();
+        return Boolean(row?.missing);
+    } catch (error) {
+        log.debug({ error }, "Backfill probe failed; the catch-up runs in full");
+        return true;
+    }
+}
+
 /** Lazily ingest any JSONL bytes newer than the stored offset. No daemon. */
 function catchUp(db: Database, logBase?: string): void {
     const dir = logDir(logBase);
     if (!existsSync(dir)) {
+        return;
+    }
+
+    const files = readdirSync(dir)
+        .filter((f) => f.endsWith(".jsonl"))
+        .sort()
+        .map((name) => {
+            const file = join(dir, name);
+            const stat = statSync(file);
+            return { file, size: stat.size, stamp: `${name}:${stat.ino}:${stat.size}:${stat.mtimeMs}` };
+        });
+    const stamp = files.map((entry) => entry.stamp).join("|");
+    if (caughtUp.get(db) === stamp && !needsBackfill(db)) {
         return;
     }
 
@@ -119,11 +157,7 @@ function catchUp(db: Database, logBase?: string): void {
         "UPDATE entries SET superseded_by = ? WHERE dedupe_key = ? AND id != ? AND superseded_by IS NULL"
     );
 
-    for (const name of readdirSync(dir)
-        .filter((f) => f.endsWith(".jsonl"))
-        .sort()) {
-        const file = join(dir, name);
-        const size = statSync(file).size;
+    for (const { file, size } of files) {
         const prev = (getOff.get(file) as { byte_offset: number } | null)?.byte_offset ?? 0;
         if (size <= prev) {
             continue;
@@ -185,6 +219,7 @@ function catchUp(db: Database, logBase?: string): void {
     }
 
     backfillAttachments(db, dir);
+    caughtUp.set(db, stamp);
 }
 
 /** Old resident readers can advance the shared offset without indexing fields added by a newer writer. */
