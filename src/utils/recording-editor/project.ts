@@ -1252,8 +1252,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
              * Where the picked words start and end (source seconds, as `tools recorder words` timed them): this place,
              * whatever its count is now; refused when the line no longer says the words there. Give both or neither.
              */
-            from: timeSchema.optional(),
-            to: timeSchema.optional(),
+            from: sourceTimeSchema.optional(),
+            to: sourceTimeSchema.optional(),
             /** Kept off the words' edges, so the next word is not clipped. Default 40. */
             padMs: z.number().int().min(0).max(500).optional(),
         })

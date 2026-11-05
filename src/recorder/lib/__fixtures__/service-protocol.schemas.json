@@ -1746,10 +1746,10 @@
                 "maximum": 9007199254740991
               },
               "from": {
-                "$ref": "#/$defs/__schema6"
+                "$ref": "#/$defs/__schema3"
               },
               "to": {
-                "$ref": "#/$defs/__schema6"
+                "$ref": "#/$defs/__schema3"
               },
               "padMs": {
                 "type": "integer",
