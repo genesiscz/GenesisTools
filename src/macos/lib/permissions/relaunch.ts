@@ -469,7 +469,6 @@ export function restoredEnvironment(environment: Record<string, string>): Record
         RESTORED_ENVIRONMENT.flatMap((key) => (environment[key] ? [[key, environment[key]]] : []))
     );
 
-
     return Object.keys(kept).length > 0 ? kept : undefined;
 }
 

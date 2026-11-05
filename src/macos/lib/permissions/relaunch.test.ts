@@ -336,7 +336,20 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
         expect(plan({ psStdout: listing, stalePids: ["301", "302", "303"], frontPid: 999 })).toEqual([
             ["open", "-n", "-g", BUNDLE, "--args", "--link-relay"],
             ["open", "-n", "-g", BUNDLE, "--args", "--widget", "--ensure-running", "--no-activate"],
-            ["open", "-n", "-g", "--env", "HOME=/Users/alice", BUNDLE, "--args", "--hub", "--mode", "sessions", "--resume", "--no-activate"],
+            [
+                "open",
+                "-n",
+                "-g",
+                "--env",
+                "HOME=/Users/alice",
+                BUNDLE,
+                "--args",
+                "--hub",
+                "--mode",
+                "sessions",
+                "--resume",
+                "--no-activate",
+            ],
         ]);
     });
 
@@ -426,7 +439,20 @@ describe("a rebuild reopens each face on the environment it started with", () =>
                 "m1",
                 "--no-activate",
             ],
-            ["open", "-n", "-g", "--env", "HOME=/Users/alice", BUNDLE, "--args", "--hub", "--mode", "sessions", "--resume", "--no-activate"],
+            [
+                "open",
+                "-n",
+                "-g",
+                "--env",
+                "HOME=/Users/alice",
+                BUNDLE,
+                "--args",
+                "--hub",
+                "--mode",
+                "sessions",
+                "--resume",
+                "--no-activate",
+            ],
         ]);
     });
 
@@ -466,7 +492,12 @@ describe("a rebuild reopens each face on the environment it started with", () =>
     });
 
     it("never hands the build's own sandbox to a face through open", () => {
-        const build = { PATH: "/usr/bin", HOME: "/tmp/build-home", GENESIS_TOOLS_HOME: "/tmp/build-sandbox", GENESIS_HUB_SERVER: "0" };
+        const build = {
+            PATH: "/usr/bin",
+            HOME: "/tmp/build-home",
+            GENESIS_TOOLS_HOME: "/tmp/build-sandbox",
+            GENESIS_HUB_SERVER: "0",
+        };
         expect(openEnvironment(build)).toEqual({ PATH: "/usr/bin" });
     });
 
