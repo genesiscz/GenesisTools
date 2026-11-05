@@ -280,6 +280,20 @@ describe("the editor on a recording folder", () => {
     });
 });
 
+test("trimmed stills sample through the transformed endpoint", async () => {
+    const source = recordingFolder();
+    const result = await new RecordingEditor().run({
+        source: { file: source },
+        output: workspace(),
+        steps: [
+            { kind: "trim", from: 0.25, to: 0.75 },
+            { kind: "speed", factor: 2 },
+            { kind: "frames", fps: 8, displays: [1] },
+        ],
+    }).done;
+    expect(result.frames.map((frame) => frame.requestedUs)).toEqual([0, 125000]);
+});
+
 describe.skipIf(skip.integration)("the editor on a video, and the frame review over it", () => {
     test("expanded extraction filenames cannot overwrite a video input", async () => {
         const root = workspace();

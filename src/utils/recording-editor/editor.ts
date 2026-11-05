@@ -508,6 +508,7 @@ function compile(options: {
                     source,
                     video: source.kind === "video" ? { path: source.path, info: source.info } : undefined,
                     stills: source.kind === "frames" ? source.frames : undefined,
+                    window: source.kind === "frames" ? { toUs: source.durationUs } : ctx.state.window,
                 };
             },
         },
@@ -535,7 +536,7 @@ function compile(options: {
 
                         if (!ctx.state.video) {
                             const fromUs = window.fromUs ?? 0;
-                            const toUs = window.toUs ?? Number.POSITIVE_INFINITY;
+                            const toUs = window.toUs ?? ctx.state.window.toUs ?? Number.POSITIVE_INFINITY;
                             // A plain map: the dev-dashboard UI typechecks this file against ES2023, which has no grouping helper on Map.
                             const byDisplay = new Map<number | undefined, NonNullable<typeof ctx.state.stills>>();
 
@@ -557,7 +558,7 @@ function compile(options: {
                                     ];
                                 })
                                 .sort((a, b) => a.atUs - b.atUs);
-                            return { ...ctx.state, stills, window: {}, frames: undefined };
+                            return { ...ctx.state, stills, window: { toUs: toUs - fromUs }, frames: undefined };
                         }
 
                         const { fromUs, toUs } = videoWindow({ ...ctx.state, window });
