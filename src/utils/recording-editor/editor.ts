@@ -684,6 +684,8 @@ async function hasAudio(path: string, signal: AbortSignal): Promise<boolean> {
  * Cuts a recording into frames, change-only frames, image grids, trims, speed changes and exports, as steps of one
  * job. It never writes an input, and a rerun of a plan on an unchanged source skips the steps its receipts cover.
  */
+const workspaceJobs = new Map<string, Promise<unknown>>();
+
 export class RecordingEditor {
     constructor(private readonly options: { registry?: JobRegistry } = {}) {}
 
@@ -693,6 +695,7 @@ export class RecordingEditor {
         const located = locateSource(plan.source);
         const outputDir = resolve(options.outputDir ?? plan.output ?? defaultEditsDir(located));
         const receipts = options.receipts ?? true;
+        const previous = workspaceJobs.get(outputDir);
         const steps = compile({ plan, located, outputDir, layout: options.layout ?? "workspace" });
         log.debug({ source: located.path, outputDir, steps: steps.map((step) => step.name) }, "edit job starting");
         const job = runJob<EditState>({
@@ -703,6 +706,7 @@ export class RecordingEditor {
                     name: "workspace",
                     key: { layout: options.layout ?? "workspace" },
                     run: async (ctx) => {
+                        await previous;
                         mkdirSync(ctx.claim(outputDir), { recursive: true });
                         return ctx.state;
                     },
@@ -718,6 +722,15 @@ export class RecordingEditor {
             signal: options.signal,
             onProgress: options.onProgress,
             registry: this.options.registry,
+        });
+        const settled = job.done.catch((error: unknown) => {
+            log.debug({ error, outputDir }, "previous workspace job failed");
+        });
+        workspaceJobs.set(outputDir, settled);
+        void settled.then(() => {
+            if (workspaceJobs.get(outputDir) === settled) {
+                workspaceJobs.delete(outputDir);
+            }
         });
         return new EditJob(job, outputDir);
     }
