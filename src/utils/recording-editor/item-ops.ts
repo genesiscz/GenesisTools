@@ -346,7 +346,9 @@ export function denoiseTrack(project: EditProject, op: Op<"denoise">): EditProje
     const audio = { ...project.audio, include: true };
 
     if (op.on !== undefined) {
-        const tracks = new Set(settings.tracks ?? Array.from({ length: count }, (_, index) => index));
+        const tracks = new Set(
+            project.audio.denoise ? (settings.tracks ?? Array.from({ length: count }, (_, index) => index)) : []
+        );
 
         if (op.on) {
             tracks.add(track);
