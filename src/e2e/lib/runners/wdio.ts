@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { appendFileSync, closeSync, existsSync, openSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { E2E_ENV } from "@genesiscz/utils/e2e/spec-env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -164,8 +164,17 @@ export const wdioRunner: E2eRunner<"wdio"> = {
                 stopDeviceLog();
 
                 if (existsSync(appium.log)) {
-                    const text = readFileSync(appium.log);
-                    writeFileSync(join(runDir, "appium.log"), text.subarray(Math.min(appiumOffset, text.length)));
+                    const size = statSync(appium.log).size;
+                    const start = Math.max(size < appiumOffset ? 0 : appiumOffset, size - 16 * 1024 * 1024);
+                    const buffer = Buffer.alloc(size - start);
+                    const fd = openSync(appium.log, "r");
+
+                    try {
+                        const bytes = readSync(fd, buffer, 0, buffer.length, start);
+                        writeFileSync(join(runDir, "appium.log"), buffer.subarray(0, bytes));
+                    } finally {
+                        closeSync(fd);
+                    }
                 }
 
                 return notes;
