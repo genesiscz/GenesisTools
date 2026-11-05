@@ -157,9 +157,10 @@ order to the file as it is now and save once; one failing op saves nothing and n
 `movie.itemsAt(at)` (and `tools recorder items-at <recording> <at>`) says in words what plays at an output time: the
 source time, the zoom, the hidden parts, texts and shapes on screen with their ids, and the caption line.
 
-`movie.check()` (and `tools recorder check`) lists what to look at before an export; an issue with a fix carries it
-as a REPL call (`fix`) and as edit ops (`action.ops`). `movie.fix()` (and `tools recorder fix`) runs every such fix in one save and
-one undo step; the Export tab's Fix All does the same, and its Remove, Lengthen and Move After buttons run one issue's
+`movie.check()` (and `tools recorder check`) lists what to look at before an export, a marker or text a cut hides or
+shortens included; an issue with a fix carries it as a REPL call (`fix`) and as edit ops (`action.ops`). An edit whose
+cut causes such a loss says so in its own `warnings`. `movie.fix()` (and `tools recorder fix`) runs every such fix in one save and
+one undo step; the Export tab's Fix All does the same, and its Remove, Move, Lengthen and Move After buttons run one issue's
 ops through `tools recorder apply`.
 
 In the editor, texts and shapes are segments on the marks lane (a drag moves one in time, an edge trims it), and

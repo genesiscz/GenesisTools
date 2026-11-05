@@ -20,6 +20,7 @@ import {
     type UndoStep,
     writeUndoSteps,
 } from "./edit";
+import { recordedMarkersOf } from "./moments";
 
 const { log } = logger.scoped("recorder-edit-session");
 
@@ -170,13 +171,14 @@ export class EditSession {
             }
 
             let base = this.project;
-            let edit = await computeEdit({ project: base, ops, fresh: this.fresh });
+            const recordedMarkers = recordedMarkersOf({ path: this.path, project: base });
+            let edit = await computeEdit({ project: base, ops, fresh: this.fresh, recordedMarkers });
 
             // A save during the computation (the timer, a render) may have taken in another writer's file: the ops
             // run again on the edit as it is now, with the measurements they had, so this change keeps that file.
             while (this.project !== base) {
                 base = this.project;
-                edit = await computeEdit({ project: base, ops, fresh: this.fresh, facts: edit.facts });
+                edit = await computeEdit({ project: base, ops, fresh: this.fresh, facts: edit.facts, recordedMarkers });
             }
 
             const extras = {

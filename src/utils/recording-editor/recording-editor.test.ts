@@ -663,6 +663,64 @@ describe("edit project (edit.json)", () => {
         expect(checkProject(wholeProject(source), facts)).toEqual([]);
     });
 
+    test("check names a marker a cut hides (with a move to the nearest kept moment) and a text a cut shortens", () => {
+        let project = applyOp(wholeProject(source), { op: "text", from: 1, to: 4, text: "Title" });
+        project = applyOp(project, { op: "marker", at: 6.2, label: "Step two" });
+        project = applyOp(project, { op: "cut", from: 3, to: 6.5 });
+        const marker = project.markers?.[0]?.id ?? "";
+        const text = project.texts?.[0]?.id ?? "";
+        const facts = {
+            hasTranscript: true,
+            hasCursorTrack: true,
+            musicFileExists: true,
+            recordedMarkers: [
+                { atMs: 5000, label: "Recorded" },
+                { atMs: 8000, label: "Kept" },
+            ],
+        };
+        const move = [
+            { op: "unmarker" as const, id: marker },
+            { op: "marker" as const, at: 6.5, label: "Step two" },
+        ];
+
+        expect(checkProject(project, facts)).toEqual([
+            {
+                severity: "fix",
+                item: `marker ${marker}`,
+                message: 'The marker "Step two" at 6.2 s never plays: that time is cut, so it is no chapter',
+                fix: `movie.apply([{"op":"unmarker","id":"${marker}"},{"op":"marker","at":6.5,"label":"Step two"}])`,
+                at: 6.2,
+                target: { list: "markers", id: marker },
+                action: { label: "Move", ops: move },
+            },
+            {
+                severity: "check",
+                item: `text ${text}`,
+                message: 'The text "Title" (1 to 4 s) loses 1 s of its 3 s to a cut',
+                at: 1,
+                target: { list: "texts", id: text },
+            },
+            {
+                severity: "check",
+                item: 'recorded marker "Recorded"',
+                message: 'The recorded marker "Recorded" at 5 s never plays: that time is cut, so it is no chapter',
+                fix: 'movie.marker(6.5, "Recorded")',
+                at: 5,
+            },
+        ]);
+
+        // fix() moves the edit marker onto the kept movie once; the recorded one has no fix it could make twice.
+        const fixed = fixOps(project, facts).ops.reduce((next, op) => applyOp(next, op), project);
+        expect(fixed.markers?.map((one) => [one.atUs, one.label])).toEqual([[6_500_000, "Step two"]]);
+        expect(checkProject(fixed, facts).map((issue) => issue.item)).toEqual([
+            `text ${text}`,
+            'recorded marker "Recorded"',
+        ]);
+        // An edit marker of the same name stands in for the recorded one.
+        const stood = applyOp(fixed, { op: "marker", at: 7, label: "Recorded" });
+        expect(checkProject(stood, facts).map((issue) => issue.item)).toEqual([`text ${text}`]);
+    });
+
     test("replace words fixes every line with the word, whole words, any case, over earlier fixes", () => {
         const segments = [
             { text: "Open genesis tolls now.", start: 1 },

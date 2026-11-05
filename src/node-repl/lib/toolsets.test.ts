@@ -347,6 +347,47 @@ describe("the clicks of a movie, grouped", () => {
     });
 });
 
+describe("what a cut costs, in the answer of the call", () => {
+    test("a cut that hides a marker or shortens a text says so once in its answer, and check() names them", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-cut-losses-"));
+        writeFileSync(
+            join(folder, "recording.json"),
+            SafeJSON.stringify({
+                version: 1,
+                id: "rec",
+                title: "Rec",
+                startedAt: "2026-11-05T10:00:00.000Z",
+                displays: [],
+                frames: [],
+                settings: { markers: [{ atMs: 5000, label: "Recorded" }] },
+            })
+        );
+        const path = join(folder, "screen.edit.json");
+        writeProject(
+            path,
+            wholeProject({ video: join(folder, "screen.mp4"), durationUs: 10_000_000, width: 100, height: 100 })
+        );
+        const movie = new Movie(path);
+        await movie.text({ from: 1, to: 4, text: "Title" });
+        expect((await movie.marker(6.2, "Step two")).warnings).toBeUndefined();
+        const marker = readProject(path).markers?.[0]?.id ?? "";
+        const text = readProject(path).texts?.[0]?.id ?? "";
+
+        expect((await movie.cut(3, 6.5)).warnings).toEqual([
+            'The text "Title" (1 to 4 s) loses 1 s of its 3 s to a cut',
+            `The marker "Step two" at 6.2 s never plays: that time is cut, so it is no chapter; movie.apply([{"op":"unmarker","id":"${marker}"},{"op":"marker","at":6.5,"label":"Step two"}]) fixes it`,
+            'The recorded marker "Recorded" at 5 s never plays: that time is cut, so it is no chapter; movie.marker(6.5, "Recorded") fixes it',
+        ]);
+        // A change that costs nothing more says nothing again.
+        expect((await movie.zoom({ from: 7, to: 9 })).warnings).toBeUndefined();
+        expect((await movie.check()).issues.map((issue) => issue.item)).toEqual([
+            `marker ${marker}`,
+            `text ${text}`,
+            'recorded marker "Recorded"',
+        ]);
+    });
+});
+
 describe("a copied recording folder", () => {
     test("reads its own movie and cursor track, and the original when the copy has a different movie", () => {
         const root = mkdtempSync(join(tmpdir(), "copied-rec-"));

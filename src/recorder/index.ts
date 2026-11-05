@@ -676,7 +676,7 @@ program
 program
     .command("check")
     .description(
-        "What to fix before an export (items whose time is cut, missing music, captions or subtitles without a transcript) and what to look at; changes nothing"
+        "What to fix before an export (items and markers whose time is cut, texts a cut shortens, missing music, captions or subtitles without a transcript) and what to look at; changes nothing"
     )
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .action(async (value: string) => {
@@ -738,7 +738,7 @@ program
 program
     .command("fix")
     .description(
-        "Runs every fix `check` offers (removes what never shows, lengthens what is too short to read, moves a text off another) in one save and one undo step"
+        "Runs every fix `check` offers (removes what never shows, moves a cut marker to the nearest kept moment, lengthens what is too short to read, moves a text off another) in one save and one undo step"
     )
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .action(async (value: string) => {

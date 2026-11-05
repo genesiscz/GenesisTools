@@ -9,7 +9,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { fillerListsOf, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { bubbleFromSidecar, readCameraSidecar } from "@genesiscz/utils/recording-editor/camera";
-import { checkProject } from "@genesiscz/utils/recording-editor/check";
+import { cutIssues, type EditIssue } from "@genesiscz/utils/recording-editor/check";
 import { ensureDenoisedSource } from "@genesiscz/utils/recording-editor/denoise";
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
@@ -54,7 +54,7 @@ import { probeVideo, type VideoProbeLimits } from "@genesiscz/utils/video/probe"
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
 import { type ExportAnswer, movieOf, resolveRecording } from "./library";
-import { chapterMetadata, chapterPoints, chaptersOfPart, markersOf } from "./moments";
+import { chapterMetadata, chapterPoints, chaptersOfPart, markersOf, recordedMarkersOf } from "./moments";
 import { hostExport } from "./service-client";
 
 const { log } = logger.scoped("recorder-edit");
@@ -253,12 +253,15 @@ export async function computeEdit({
     ops,
     fresh,
     facts: known,
+    recordedMarkers = [],
 }: {
     project: EditProject;
     ops: readonly EditOp[];
     /** The project has no file yet: it changes, and is saved, even when the ops change nothing. */
     fresh: boolean;
     facts?: readonly OpFacts[];
+    /** The markers set while it recorded (recordedMarkersOf), so a cut that hides one says so. */
+    recordedMarkers?: ReadonlyArray<{ atMs: number; label: string }>;
 }): Promise<ComputedEdit> {
     let next = project;
     const removedIdleUs: Array<[number, number]> = [];
@@ -298,12 +301,16 @@ export async function computeEdit({
         };
     }
 
-    // An item whose whole time this edit cut never shows any more: say so now, not only in check().
-    const hiddenBefore = new Set(neverShown(project).map((issue) => issue.item));
+    // What this edit's cuts cost that they did not before (an item or a marker that no longer plays, a text cut
+    // short): say so now, not only in check().
+    const costBefore = new Set(cutIssues(project, recordedMarkers).map(costKey));
     warnings.push(
-        ...neverShown(next)
-            .filter((issue) => !hiddenBefore.has(issue.item))
-            .map((issue) => `${issue.message}${issue.fix ? `; ${issue.fix} removes it` : ""}`)
+        ...cutIssues(next, recordedMarkers)
+            .filter((issue) => !costBefore.has(costKey(issue)))
+            .map(
+                (issue) =>
+                    `${issue.message}${issue.fix ? `; ${issue.fix} ${issue.action?.label === "Remove" ? "removes it" : "fixes it"}` : ""}`
+            )
     );
     return { project: next, changed: true, facts, removedIdleUs, ...(loudness ? { loudness } : {}), warnings };
 }
@@ -340,7 +347,12 @@ export async function editProject(
         throw notAtBase(opened.project.revision, baseRevision);
     }
 
-    let edit = await computeEdit({ project: opened.project, ops, fresh: opened.fresh });
+    let edit = await computeEdit({
+        project: opened.project,
+        ops,
+        fresh: opened.fresh,
+        recordedMarkers: recordedMarkersOf(opened),
+    });
     let saved: EditProject | undefined;
 
     for (let replay = 0; ; replay++) {
@@ -391,7 +403,13 @@ export async function editProject(
             { path: opened.path, revision: opened.project.revision, by: opened.project.updatedBy, replay },
             "the edit changed on disk since it was read; the ops run again on the newer file"
         );
-        edit = await computeEdit({ project: opened.project, ops, fresh: opened.fresh, facts: measured });
+        edit = await computeEdit({
+            project: opened.project,
+            ops,
+            fresh: opened.fresh,
+            facts: measured,
+            recordedMarkers: recordedMarkersOf(opened),
+        });
     }
 
     log.debug({ path: opened.path, ops: ops.map((op) => op.op), warnings: edit.warnings }, "edit applied");
@@ -441,10 +459,9 @@ function saveIfAt<T>(
 }
 
 /** The items of an edit that never show because their whole time is cut (check()'s first kind of issue). */
-function neverShown(project: EditProject) {
-    return checkProject(project, { hasTranscript: true, hasCursorTrack: true, musicFileExists: true }).filter(
-        (issue) => issue.severity === "fix" && issue.target
-    );
+/** One cost of a cut: the item it is about and what it costs, so a text cut shorter again is a new one. */
+function costKey(issue: EditIssue): string {
+    return `${issue.item}\n${issue.message}`;
 }
 
 /** The cached transcript's lines (with word times when the provider gave them); throws when there is none. */

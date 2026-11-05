@@ -66,7 +66,15 @@ import {
 } from "./edit";
 import { stepDisplaySwitch, switchDisplay } from "./frames-movie";
 import { EDITOR_TABS, type EditorTab, ensureRecorderPart, listLibrary } from "./library";
-import { chaptersOf, clickGroupsOf, markersOf, recordingFolderOf, searchLibrary, spreadTimes } from "./moments";
+import {
+    chaptersOf,
+    clickGroupsOf,
+    markersOf,
+    recordedMarkersOf,
+    recordingFolderOf,
+    searchLibrary,
+    spreadTimes,
+} from "./moments";
 import { serviceRoutedMovie } from "./movie-client";
 import { copyRecording, revealRecording, trashRecording } from "./quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./review";
@@ -159,7 +167,7 @@ const movieMethods = [
         result: z.unknown(),
         resultName:
             '{ ok, clean, issues: { severity: "fix" | "check", item, message, fix?, at?, target?, action?: { label, ops } }[] }',
-        doc: 'What to look at before export(): items whose whole time is cut (they never show), a missing music file, captions, subtitles or ducking without a transcript, a part that follows a cursor the movie lacks, items too short to read, texts drawn over each other. "fix" issues come first, each with a call that fixes it when one does (`fix`, and the same as edit ops in `action.ops` for apply()); ok is true when there is no "fix" issue (the export works), clean when there is no issue at all. It changes nothing.',
+        doc: 'What to look at before export(): items whose whole time is cut (they never show), a marker in cut time (no chapter: an edit marker comes with a move to the nearest kept moment, one set while it recorded is stood in for by an edit marker of its name), a text a cut shortens, a missing music file, captions, subtitles or ducking without a transcript, a part that follows a cursor the movie lacks, items too short to read, texts drawn over each other. "fix" issues come first, each with a call that fixes it when one does (`fix`, and the same as edit ops in `action.ops` for apply()); ok is true when there is no "fix" issue (the export works), clean when there is no issue at all. It changes nothing. An edit call whose cut hides an item or a marker, or shortens a text, says so in its own warnings too.',
         effect: "read",
     }),
     defineMethod({
@@ -167,7 +175,7 @@ const movieMethods = [
         params: z.object({}),
         result: z.unknown(),
         resultName: "Edit (the fields info() lists) plus fixed: the messages of the issues it fixed",
-        doc: "Runs every fix check() offers (each issue's action.ops: remove what never shows, lengthen what is too short to read, move a text off another) in one save and one undo() step. Issues with no fix (a missing transcript or music file) stay; check() again lists them.",
+        doc: "Runs every fix check() offers (each issue's action.ops: remove what never shows, move an edit marker a cut hides to the nearest kept moment, lengthen what is too short to read, move a text off another) in one save and one undo() step. Issues with no fix (a missing transcript or music file) stay; check() again lists them.",
         effect: "reversible",
     }),
     edit("split", z.object({ at: timeSchema }), "Splits the clip at a source time.", ["at"]),
@@ -1028,11 +1036,13 @@ function summarize(project: EditProject, title: string | undefined): string {
 }
 
 /** What check() cannot read from the edit itself, looked up on the disk. */
-function facts(project: EditProject): EditFacts {
+function facts(opened: { path: string; project: EditProject }): EditFacts {
+    const { project } = opened;
     return {
         hasTranscript: existsSync(transcriptCachePath(project.source.video)),
         hasCursorTrack: Boolean(project.source.cursor && existsSync(project.source.cursor)),
         musicFileExists: project.audio.music ? existsSync(project.audio.music.file) : true,
+        recordedMarkers: recordedMarkersOf(opened),
     };
 }
 
@@ -1056,16 +1066,16 @@ export class Movie {
     }
 
     async check() {
-        const { project } = await openProject(this.recording);
-        const issues = checkProject(project, facts(project));
+        const opened = await openProject(this.recording);
+        const issues = checkProject(opened.project, facts(opened));
         log.debug({ recording: this.recording, issues: issues.length }, "edit checked");
         // ok: nothing that breaks the export; clean: nothing to look at either.
         return { ok: !issues.some((issue) => issue.severity === "fix"), clean: issues.length === 0, issues };
     }
 
     async fix() {
-        const { project } = await openProject(this.recording);
-        const { ops, fixed } = fixOps(project, facts(project));
+        const opened = await openProject(this.recording);
+        const { ops, fixed } = fixOps(opened.project, facts(opened));
 
         if (ops.length === 0) {
             return { ...(await this.info()), fixed: [], warnings: ["check() found nothing that fix() can fix"] };
