@@ -147,8 +147,11 @@ export class SessionRecorderControl extends RecorderControl {
         }
 
         const activeFps = patch.activeFps ?? rates.activeFps;
+        // A single-rate movie (equal rates) stays single-rate when only its active rate changes: 60/60 to 120 is 120/120,
+        // never 120/60, which the capture refuses as an idle rate above 5.
+        const singleRate = patch.idleFps === undefined && rates.idleFps === rates.activeFps;
         // ax-tool never records the idle rate above the active one (Record.swift setFrameRates).
-        const idleFps = Math.min(patch.idleFps ?? rates.idleFps, activeFps);
+        const idleFps = singleRate ? activeFps : Math.min(patch.idleFps ?? rates.idleFps, activeFps);
         const applied = await this.session.retune({
             activeFps,
             idleFps,

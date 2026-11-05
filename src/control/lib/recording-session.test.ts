@@ -1085,7 +1085,7 @@ describe("a movie recording's live settings", () => {
     });
 
     /** A movie session started at 60 fps, 1 fps while still and a 0.5 % threshold, served over its live socket. */
-    async function movie() {
+    async function movie(rates = { activeFps: 60, idleFps: 1, threshold: 0.5 }) {
         const { recorder, runs } = fakeRecorder();
         let control: SessionRecorderControl | undefined;
         const recording = new RecordingSession({
@@ -1093,7 +1093,7 @@ describe("a movie recording's live settings", () => {
             directory: join(root, "segments"),
             output: join(root, "out.mp4"),
             recorder,
-            rates: { activeFps: 60, idleFps: 1, threshold: 0.5 },
+            rates,
             join: async ({ output }) => {
                 await writeFile(output, "joined");
                 return { durationMs: 1000 };
@@ -1160,6 +1160,18 @@ describe("a movie recording's live settings", () => {
             expect(runs[0].signal.aborted).toBe(true);
             expect(runs[0].rates).toEqual({ activeFps: 60, idleFps: 1, threshold: 0.5 });
             expect(runs[1].rates).toEqual({ activeFps: 30, idleFps: 1, threshold: 2 });
+        } finally {
+            await close();
+        }
+    });
+
+    it("a single-rate movie stays single-rate when only its active rate changes", async () => {
+        const { client, runs, close } = await movie({ activeFps: 60, idleFps: 60, threshold: 0.5 });
+
+        try {
+            const answer = await client.setSettings({ activeFps: 120 });
+            expect(answer.applied).toBe("restart");
+            expect(runs[1].rates).toEqual({ activeFps: 120, idleFps: 120, threshold: 0.5 });
         } finally {
             await close();
         }
