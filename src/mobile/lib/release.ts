@@ -33,6 +33,7 @@ export interface ReleaseStep {
     command: string[];
     cwd: string;
     env?: Record<string, string>;
+    runIf?: () => boolean;
 }
 
 export interface ReleasePlan {
@@ -106,7 +107,7 @@ export function releasePlan(input: ReleaseInput): ReleasePlan {
     const auth = authFlags(apiKey);
     const settings = Object.entries(ios.build.buildSettings ?? {}).map(([key, value]) => `${key}=${value}`);
     const prepare = (ios.release?.prepare?.({ buildNumber }) ?? []).map((step) => prepareStep(appDir, step));
-    const pods = ios.release?.pods ?? existsSync(join(appDir, "ios", "Podfile"));
+    const pods = ios.release?.pods;
 
     return {
         archivePath,
@@ -115,7 +116,16 @@ export function releasePlan(input: ReleaseInput): ReleasePlan {
         missing,
         steps: [
             ...prepare,
-            ...(pods ? [{ title: "pods", command: ["pod", "install"], cwd: join(appDir, "ios") }] : []),
+            ...(pods === false
+                ? []
+                : [
+                      {
+                          title: "pods",
+                          command: ["pod", "install"],
+                          cwd: join(appDir, "ios"),
+                          runIf: pods === true ? undefined : () => existsSync(join(appDir, "ios", "Podfile")),
+                      },
+                  ]),
             {
                 title: "signed device archive",
                 command: [
@@ -173,6 +183,10 @@ export async function runRelease(
     writeFileSync(plan.exportOptionsPath, plan.exportOptions);
 
     for (const [index, step] of plan.steps.entries()) {
+        if (step.runIf?.() === false) {
+            continue;
+        }
+
         onStep(step, index);
         const logPath = join(outDir, `${String(index + 1).padStart(2, "0")}.log`);
         const sink = createWriteStream(logPath);
