@@ -248,10 +248,16 @@ describe("dialog record store", () => {
             { options: ["yes", 2] },
             { kind: "other" },
             { source: "elsewhere" },
+            { caller: { toolUseId: 42 } },
+            { caller: { host: [] } },
+            { caller: { host: { app: "t3code", threadId: 42 } } },
+            { caller: { account: { harness: "unknown", account: null, proxyTarget: null } } },
+            { caller: { account: { harness: "claude", account: 42, proxyTarget: null } } },
         ]) {
             writeFileSync(path, SafeJSON.stringify([{ ...question({ toolCallId: "kept" }), ...damaged }]));
             expect(readSessionQuestions("claude", SESSION, dir)).toEqual([]);
             expect(() => readSessionQuestionsStrict("claude", SESSION, dir)).toThrow("malformed dialog records");
+            await expect(upsertQuestion(question(), dir)).rejects.toThrow("malformed dialog records");
         }
     });
 });
