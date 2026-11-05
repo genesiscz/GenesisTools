@@ -1443,6 +1443,20 @@ describe("questions (R2.3)", () => {
         expect(answered.items[2]).toMatchObject({ answer: "Carol Example", comment: "clear" });
         expect(ledger).toEqual([expect.objectContaining({ kind: "term", heard: "jenezetka", fixed: "Carol Example" })]);
 
+        const blank = withItems([range, question("i3", ["i1"])]);
+        expect(() => answerQuestion(blank, "i3", { answer: "  ", now })).toThrow("An empty answer decides nothing");
+        expect(blank.items.map((item) => item.status)).toEqual(["suggested", "suggested"]);
+
+        // Answering again with another spelling, or with None of these, withdraws the earlier confirmation first.
+        const respelled = answerQuestion(answered, "i3", { answer: "Carol Sample", now });
+        expect(respelled).toEqual([
+            expect.objectContaining({ kind: "term", fixed: "Carol Example", retracted: true }),
+            expect.objectContaining({ kind: "term", fixed: "Carol Sample" }),
+        ]);
+        expect(answerQuestion(answered, "i3", { answer: "None of these", now })).toEqual([
+            expect.objectContaining({ kind: "term", fixed: "Carol Sample", retracted: true }),
+        ]);
+
         const refused = withItems([range, question("i3", ["i1"])]);
         expect(answerQuestion(refused, "i3", { answer: "None of these", now })).toEqual([]);
         expect(refused.items[0]).toMatchObject({ status: "rejected", speaker: "Alice Example" });

@@ -533,7 +533,11 @@ describe("undo puts back what the decision changed", () => {
         expect(term.token).not.toBe(rejected.token);
 
         const ledger = readCorrections().filter((line) => line.meeting === created.id);
+        // The confirm, the reject's retraction, the confirmation the reject's Undo brings back, and the last Undo's
+        // retraction: the ledger follows the item's state, so a rejected spelling stops counting as dictionary evidence.
         expect(ledger.map((line) => [line.item, line.retracted === true])).toEqual([
+            ["i2", false],
+            ["i2", true],
             ["i2", false],
             ["i2", true],
         ]);

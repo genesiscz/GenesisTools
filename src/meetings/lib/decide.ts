@@ -4,7 +4,7 @@ import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/co
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { questionIdOf, questionLabel } from "./questions";
 import { TOOL } from "./shared";
-import { ledgerEntryFor } from "./transcript-corrections";
+import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
 
 /**
  * What a confirm or reject did: the items it decided, and each one it left with the reason and how to decide it.
@@ -98,6 +98,7 @@ export async function decideItems(options: {
                     continue;
                 }
 
+                const prior = ledgerEntryFor(current, item, now);
                 item.decision = {
                     token,
                     previous: {
@@ -111,6 +112,7 @@ export async function decideItems(options: {
                 item.decidedAt = now;
 
                 if (status !== "confirmed") {
+                    ledger.push(...decisionLedger(prior, undefined));
                     continue;
                 }
 
@@ -122,11 +124,7 @@ export async function decideItems(options: {
                     item.proposed = proposed;
                 }
 
-                const entry = ledgerEntryFor(current, item, now);
-
-                if (entry) {
-                    ledger.push(entry);
-                }
+                ledger.push(...decisionLedger(prior, ledgerEntryFor(current, item, now)));
             }
         }
     );
@@ -226,12 +224,9 @@ export async function reopenItems(options: {
 
         for (const item of reopening) {
             const confirmation = ledgerEntryFor(current, item, now);
-
-            if (confirmation) {
-                retracted.push({ ...confirmation, retracted: true });
-            }
-
             restoreBefore(item);
+            // The Undo of a reject or a respelling brings the earlier confirmation back, so the ledger confirms it again.
+            retracted.push(...decisionLedger(confirmation, ledgerEntryFor(current, item, now)));
         }
 
         reopened = reopening.map((item) => item.id);

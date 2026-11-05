@@ -1,3 +1,4 @@
+import { SafeJSON } from "@genesiscz/utils/json";
 import { languageSettings, type MeetingsConfig, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import type { MeetingItem, MeetingRecord } from "@genesiscz/utils/meetings/record";
@@ -364,6 +365,28 @@ export function outcomeText(outcome: CorrectionOutcome): string | undefined {
 
     const shown = outcome.status === "ambiguous" ? `${outcome.reason}; anchor it to one of them` : outcome.reason;
     return `${outcome.item} did not apply: ${shown}`;
+}
+
+/**
+ * The ledger lines one decision writes for an item, from its entry before the decision (`prior`) and after it
+ * (`next`): a retraction of the earlier confirmation when the decision changes it (a reject, another spelling or
+ * speaker), then the new confirmation. The ledger is append-only, so without the retraction a rejected or respelled
+ * confirmation kept counting as dictionary evidence.
+ */
+export function decisionLedger(prior: Correction | undefined, next: Correction | undefined): Correction[] {
+    const same = (a: Correction, b: Correction) =>
+        SafeJSON.stringify({ ...a, at: "" }) === SafeJSON.stringify({ ...b, at: "" });
+    const lines: Correction[] = [];
+
+    if (prior && !(next && same(prior, next))) {
+        lines.push({ ...prior, retracted: true });
+    }
+
+    if (next) {
+        lines.push(next);
+    }
+
+    return lines;
 }
 
 /**
