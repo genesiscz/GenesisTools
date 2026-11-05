@@ -12,8 +12,8 @@ export function registerLinkCommand(program: Command): void {
         )
         .argument("<commit>", "a commit (7 to 40 hex characters) or <from>..<to>")
         .option(
-            "--repo <path|owner/repo>",
-            "the checkout, or the forge project under the repo roots (default: this folder's)"
+            "--repo <path|owner/repo|folder>",
+            "the checkout, or the forge project or checkout folder name under the repo roots (default: this folder's)"
         )
         .option("--json", "machine-readable output: { link, query, pr, candidates, pushed, notes, … }")
         .option("--fresh", "ask the forge again instead of reusing its answer from the last minutes")

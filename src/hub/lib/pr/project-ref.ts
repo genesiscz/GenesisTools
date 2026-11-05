@@ -124,7 +124,9 @@ export async function projectCheckout(
 
 /**
  * The best checkout of the one project `name` names: its whole web path (with or without the host), else
- * the end of one (`daf-fe` for `group/daf/daf-fe`). Letter case does not matter, as on the forges.
+ * the end of one (`daf-fe` for `group/daf/daf-fe`), else the folder of a checkout (`Rewind`, whose project is
+ * `genesiscz/Rewinder`; 2026-11-05: `--repo Rewind` found "no checkout of Rewind" in ~/Tresors/Projects/Rewind).
+ * Letter case does not matter, as on the forges.
  */
 function checkoutOf(name: string, checkouts: LocalCheckout[]): { root: string } | { projects: string[] } {
     const wanted = name
@@ -133,8 +135,13 @@ function checkoutOf(name: string, checkouts: LocalCheckout[]): { root: string } 
         .replace(/^\/+|\/+$/g, "");
     const key = (checkout: LocalCheckout) => `${checkout.project.host}/${checkout.project.path}`;
     const exact = checkouts.filter((checkout) => checkout.project.path === wanted || key(checkout) === wanted);
-    const pool =
+    const ending =
         exact.length > 0 ? exact : checkouts.filter((checkout) => checkout.project.path.endsWith(`/${wanted}`));
+    // A folder name is one segment; a path with a slash names a project, never a folder.
+    const pool =
+        ending.length > 0 || wanted.includes("/")
+            ? ending
+            : checkouts.filter((checkout) => basename(checkout.root).toLowerCase() === wanted);
     const projects = [...new Set(pool.map(key))];
 
     if (projects.length !== 1) {
