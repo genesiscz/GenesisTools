@@ -14,6 +14,10 @@ Appium + WebdriverIO end-to-end tests for the Expo SDK 55 dev-client app (D21). 
 e2e/
   wdio.conf.ts            # runner config: capabilities, timeouts, spec glob
   tsconfig.json           # e2e-only TS config (paths: @e2e/* → e2e/*)
+  mobile.config.ts        # the app for tools mobile and tools e2e (build, screens, first-run grants)
+  adapter.ts              # the screens, read from the expo-router tree
+  e2e.config.ts           # the suite for tools e2e (runner, specs, suites)
+  run.ts                  # the run tools e2e started this spec process in (E2E_*)
   pages/
     base.page.ts          # BasePage — find-by-a11y-id, waitForVisible, tap, type, getText,
                           #   scrollIntoView, retry, waitUntil. Every page object extends this.
@@ -73,6 +77,21 @@ bun run e2e:appium          # starts Appium on :4723
 ```bash
 bun run e2e                 # wdio run e2e/wdio.conf.ts (all specs, iOS default)
 ```
+
+Or through `tools e2e`, which picks the simulator, starts its own Appium on the simulator's port, answers system
+alerts, and collects one folder per run (`~/.genesis-tools/e2e/runs/dev-dashboard/<time>/`: per spec the runner log,
+`results.jsonl` and failure shots, for the run `device.log`, `appium.log`, `alerts.jsonl`, `summary.md`):
+
+```bash
+tools e2e suite flows --udid <udid> --env DD_TEST_AGENT=http://127.0.0.1:3143
+tools e2e run screens.tour --udid <udid>
+tools e2e report
+```
+
+The app the tools drive is described in `e2e/mobile.config.ts` (build, screens from the expo-router tree in
+`e2e/adapter.ts`, first-run grants), the suite in `e2e/e2e.config.ts`. Under `tools e2e`, `wdio.conf.ts` reads the
+run from the `E2E_*` variables (`e2e/run.ts`) and pins the simulator, its WebDriverAgent port and `isHeadless`;
+`tools mobile up`, `open`, `capture` and `tour` drive the same app.
 
 To run on Android instead:
 
