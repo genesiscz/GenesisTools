@@ -2,7 +2,14 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AudioSource, RecorderSettings, RecorderSettingsPatch } from "./control";
 import type { PieceTarget } from "./targets";
-import type { CapturedFrame, CaptureHooks, CaptureRequest, CaptureResult, LiveCapture } from "./types";
+import {
+    type CapturedFrame,
+    CaptureError,
+    type CaptureHooks,
+    type CaptureRequest,
+    type CaptureResult,
+    type LiveCapture,
+} from "./types";
 
 /**
  * The capture coordination of a recording session, shared by the meetings recorder and the library recording: one
@@ -29,7 +36,10 @@ export interface SessionCapture {
     done: Promise<void>;
 }
 
-/** How a piece went: `recorded` when any capture returned (even without frames), `frames` how many it kept. */
+/**
+ * How a piece went: `recorded` when any capture returned (even without frames) and its stream did not fail, `frames`
+ * how many it kept.
+ */
 export interface PieceOutcome {
     recorded: boolean;
     frames: number;
@@ -127,7 +137,14 @@ export class PieceCaptures {
             )
             .then(
                 async (result) => {
-                    outcome.recorded = true;
+                    // A capture whose stream failed returns what it kept before, but it did not record: a piece of
+                    // only such captures failed.
+                    if (result.endedEarly === "stream-error") {
+                        outcome.lastError = new CaptureError("failed", "the capture stream failed");
+                    } else {
+                        outcome.recorded = true;
+                    }
+
                     const kept = await this.options.hooks.onResult?.(entry, result);
 
                     if (kept !== false) {

@@ -1961,7 +1961,8 @@ describe("the meetings recorder loop", () => {
     };
     let stores = 0;
 
-    type Step = "frames" | "empty" | "fail" | "hang" | "timeout";
+    /** `stream`: the capture's stream failed, but it returns the frame it kept before. */
+    type Step = "frames" | "empty" | "fail" | "hang" | "timeout" | "stream";
 
     /** A recorder that follows a script per capture; after the script it waits for the stop the test sends. */
     class ScriptedRecorder extends FrameRecorder {
@@ -2159,6 +2160,16 @@ describe("the meetings recorder loop", () => {
             if (step === "timeout") {
                 this.script.onFail?.();
                 throw new CaptureError("timeout", "ax-tool capture did not end within 1 s + 30 s");
+            }
+
+            if (step === "stream") {
+                const path = join(request.outDir, "keep-0001.png");
+                await Bun.write(path, "png");
+                return {
+                    startedAtMs: Date.now(),
+                    frames: [{ path, atMs: 0, displayId, changePercent: 10, reason: "first" }],
+                    endedEarly: "stream-error",
+                };
             }
 
             if (step === "empty") {
@@ -2717,6 +2728,15 @@ describe("the meetings recorder loop", () => {
         expect(liveState).toBe("stopping");
         expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "failed" });
         expect(run.saved?.history.map((entry) => entry.change)).not.toContain("paused");
+    });
+
+    test("captures whose stream failed keep their frames but count as failures, so three in a row stop it as failed", async () => {
+        const run = await recordWith({ displays: [[builtIn]], steps: ["stream", "stream", "stream"] });
+
+        expect(run.recorder.requests).toHaveLength(3);
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "failed", frames: 3 });
+        expect(run.rejected?.message).toContain("capture failed 3 times in a row");
+        expect(readdirSync(join(run.folder, "frames"))).toHaveLength(3);
     });
 
     test("an error outside the capture still ends the recording, with the reason", async () => {
