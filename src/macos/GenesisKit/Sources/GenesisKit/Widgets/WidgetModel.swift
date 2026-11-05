@@ -1814,6 +1814,7 @@ public final class WidgetModel: ObservableObject {
     var pendingStageDone: [String: Double] = [:]
     /// Decisions whose send runs now, so their Send now says Sending… and a second press cannot send them twice.
     @Published public var sendingDecisionIDs: Set<String> = []
+    var sendingStageVersions: [String: UUID] = [:]
     /// The question about staged decisions before the panel closes (`requestCollapse`).
     @Published public var stagedLeavePrompt = false
     /// The staged decisions view: nil closed, "session" for the selected session's, "all" for every session's.
