@@ -40,6 +40,16 @@ final class CursorTrackWriter {
     private var savedShapes = Set<String>()
     private var wrotePointWidth = false
     private var pendingKeys: [String] = []
+    private var paused = false
+
+    func setPaused(_ value: Bool) {
+        queue.sync {
+            paused = value
+            pendingKeys.removeAll()
+            pendingShape = nil
+            if value { flush() }
+        }
+    }
     private var keyMonitor: Any?
     private(set) var shortcuts = 0
     var shapeCount: Int { queue.sync { savedShapes.count } }
@@ -64,7 +74,10 @@ final class CursorTrackWriter {
     func watchShortcuts() {
         keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard !event.isARepeat, let label = Self.shortcutLabel(event) else { return }
-            self?.queue.async { self?.pendingKeys.append(label) }
+            self?.queue.async {
+                guard let self, !self.paused else { return }
+                self.pendingKeys.append(label)
+            }
         }
     }
 
@@ -112,7 +125,7 @@ final class CursorTrackWriter {
     }
 
     private func sample() {
-        guard let point = CGEvent(source: nil)?.location else { return }
+        guard !paused, let point = CGEvent(source: nil)?.location else { return }
         let frame = rect()
         guard frame.width > 0, frame.height > 0 else { return }
         let ms = Date().timeIntervalSince(started) * 1000

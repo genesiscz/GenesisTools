@@ -1095,6 +1095,7 @@ func cmdCaptureScreen() {
         if cursorTrack == nil { recorder.warn("the cursor track \(path) could not be created") }
     }
     let started = Date()
+    host.cursorTrack = cursorTrack
     cursorTrack?.start(at: started)
     let cancelled = runRecordingLoop(duration: options.duration) {
         if let target = windowTarget,
@@ -1288,6 +1289,7 @@ private final class ScreenStreamHost {
     private var deadTicks = 0
 
     let audio: NativeAudio?
+    var cursorTrack: CursorTrackWriter?
     /// `set-max-long-side` replaces `--max-long-side`.
     private var maxLongSide: Int?
     /// The size in points the stream records: the display in screen mode, else the window or region.
@@ -1345,6 +1347,7 @@ private final class ScreenStreamHost {
             let paused = command == .pause
             recorder.setPaused(paused)
             audio?.setPaused(paused)
+            cursorTrack?.setPaused(paused)
             CaptureEvents.emit(["event": "state", "state": paused ? "paused" : "recording"])
         case .mute(let source), .unmute(let source):
             let muted: Bool
