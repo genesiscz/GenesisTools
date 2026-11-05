@@ -9,6 +9,7 @@ import { json2md, jsonToBlocks } from "@genesiscz/utils/json2md";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { Storage } from "@genesiscz/utils/storage";
 import { type JsonDocument, jsonDocument, prettyJson } from "@genesiscz/utils/storage/locked-document";
 
@@ -693,15 +694,7 @@ export interface ProposalIntentDeps {
 
 export const realProposalIntentDeps: ProposalIntentDeps = {
     now: () => new Date(),
-    alive: (pid) => {
-        try {
-            process.kill(pid, 0);
-            return true;
-        } catch (err) {
-            // EPERM: the process exists under another user; anything else means it is gone.
-            return err instanceof Error && "code" in err && err.code === "EPERM";
-        }
-    },
+    alive: (pid) => isProcessAlive(pid),
 };
 
 export function isStaleClaim(claim: ProposalClaim, deps: ProposalIntentDeps): boolean {
