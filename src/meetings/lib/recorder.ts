@@ -246,6 +246,9 @@ export async function runRecorder(options: {
                 framesDir: "frames",
                 ocr: "ocr.jsonl",
                 status: "recording",
+                stopReason: undefined,
+                stoppedAt: undefined,
+                warning: undefined,
             };
         });
 
@@ -370,7 +373,8 @@ export async function runRecorder(options: {
         await store.update(meetingId, { command: "record stop", change: `failed: ${warning}` }, (current) => {
             current.recording = {
                 ...current.recording,
-                status: "failed",
+                status: "stopped",
+                stopReason: "error",
                 stoppedAt: new Date().toISOString(),
                 frames: state?.frames ?? 0,
                 bytes: state?.bytes ?? 0,
