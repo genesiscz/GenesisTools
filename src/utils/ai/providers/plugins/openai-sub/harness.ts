@@ -1,5 +1,6 @@
 import { isCodex, resolveCodexContext } from "@genesiscz/utils/agent/hosts/codex";
 import { codexTurnState } from "@genesiscz/utils/agent-sessions/readers/codex-turn-state";
+import { codexCommand } from "@genesiscz/utils/genesis-tools/tools/ai";
 import { deferredLocator } from "@genesiscz/utils/harness/deferred";
 import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
@@ -70,11 +71,11 @@ export const codexHarness: HarnessDriver<"codex"> = {
         approval: {
             permission: {
                 supported: false,
-                reason: "the Codex TUI drew no approval dialog in a tmux pane when measured on 2026-11-04 (Codex 0.166.0), so its keys are not known; answer it in the terminal. A tools codex worker is answered through its control channel instead",
+                reason: `the Codex TUI drew no approval dialog in a tmux pane when measured on 2026-11-04 (Codex 0.166.0), so its keys are not known; answer it in the terminal. A ${codexCommand()} worker is answered through its control channel instead`,
             },
             plan: {
                 supported: false,
-                reason: "the Codex TUI drew no approval dialog in a tmux pane when measured on 2026-11-04 (Codex 0.166.0), so its keys are not known; answer it in the terminal. A tools codex worker is answered through its control channel instead",
+                reason: `the Codex TUI drew no approval dialog in a tmux pane when measured on 2026-11-04 (Codex 0.166.0), so its keys are not known; answer it in the terminal. A ${codexCommand()} worker is answered through its control channel instead`,
             },
         },
     },

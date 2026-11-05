@@ -9,7 +9,7 @@ import type {
 } from "@app/dev-dashboard/contract/brief";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
 import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
-import { execTool } from "@genesiscz/utils/cli";
+import { execTool, toolCommand } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
@@ -258,7 +258,7 @@ export async function buildBrief({
     ]);
 
     if (!trip) {
-        warnings.push("commute: no trip set (tools hub brief config --from <place> --to <place>)");
+        warnings.push(`commute: no trip set (${toolCommand("hub brief config")} --from <place> --to <place>)`);
     }
 
     return {

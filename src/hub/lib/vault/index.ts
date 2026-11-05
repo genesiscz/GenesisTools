@@ -5,7 +5,7 @@ import type {
     VaultClipInput,
     VaultClipReceiptDto,
 } from "@app/dev-dashboard/contract/vault";
-import { execTool } from "@genesiscz/utils/cli";
+import { execTool, toolCommand } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
 
@@ -80,7 +80,7 @@ export async function appendToVault(input: VaultAppendInput, deps: VaultDeps = {
     const root = await (deps.vaultRoot ?? liveVaultRoot)();
 
     if (!root) {
-        throw new Error("No Obsidian vault is configured for the dashboard (tools dev-dashboard config).");
+        throw new Error(`No Obsidian vault is configured for the dashboard (${toolCommand("dev-dashboard config")}).`);
     }
 
     const inbox = await (deps.inbox ?? readVaultInbox)();

@@ -7,6 +7,7 @@ import type {
     WatchSourceId,
     WatchStateDto,
 } from "@app/dev-dashboard/contract/watching";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
@@ -67,7 +68,10 @@ const monitorSource: WatchSource = {
                     };
                 })
             );
-            return { rows, note: rows.length === 0 ? "No Monitor watchers yet (tools monitor add)." : null };
+            return {
+                rows,
+                note: rows.length === 0 ? `No Monitor watchers yet (${toolCommand("monitor add")}).` : null,
+            };
         } finally {
             await monitor.close();
         }
@@ -116,7 +120,7 @@ const domainsSource: WatchSource = {
                 canMute: false,
             };
         });
-        return { rows, note: rows.length === 0 ? "No watched names (tools domains watch add)." : null };
+        return { rows, note: rows.length === 0 ? `No watched names (${toolCommand("domains watch add")}).` : null };
     },
 };
 
@@ -153,7 +157,7 @@ const shopsSource: WatchSource = {
                 canMute: false,
             };
         });
-        return { rows, note: rows.length === 0 ? "No watched products (tools shops watch add)." : null };
+        return { rows, note: rows.length === 0 ? `No watched products (${toolCommand("shops watch add")}).` : null };
     },
 };
 
@@ -165,7 +169,10 @@ const tradingviewSource: WatchSource = {
         const session = await resolveSession();
 
         if (!session) {
-            return { rows: [], note: "Signed out of TradingView (tools tradingview login)." };
+            return {
+                rows: [],
+                note: "Signed out of TradingView (set TRADINGVIEW_COOKIE, or TRADINGVIEW_SESSIONID and TRADINGVIEW_SESSIONID_SIGN).",
+            };
         }
 
         const alerts = await listAlerts(session);

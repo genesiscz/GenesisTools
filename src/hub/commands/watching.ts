@@ -1,4 +1,5 @@
 import type { WatchSourceId } from "@app/dev-dashboard/contract/watching";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -68,7 +69,7 @@ export function registerWatchingCommand(program: Command): void {
         .command("mute")
         .description("Silence one watch for a while (Monitor watchers; the other sources have no mute)")
         .argument("<source>", WATCH_SOURCE_IDS.join(", "), sourceArg)
-        .argument("<id>", "the row id from tools hub watching")
+        .argument("<id>", `the row id from ${toolCommand("hub watching")}`)
         .option("--minutes <n>", "how long; 0 lifts the mute", minutesArg, 120)
         .option("--json", "machine-readable output")
         .action(async (source: WatchSourceId, id: string, opts: { minutes: number; json?: boolean }) => {

@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -42,7 +43,7 @@ export function registerGatesCommand(program: Command): void {
     gates
         .command("raise")
         .description("Bring a waiting window to the front, or open the window of an rm request that has none")
-        .argument("<id>", "a ledger id from `tools hub gates`")
+        .argument("<id>", `a ledger id from \`${toolCommand("hub gates")}\``)
         .option("--json", "machine-readable output")
         .action(async (id: string, opts: { json?: boolean }) => {
             const receipt = await raiseGate(id);
