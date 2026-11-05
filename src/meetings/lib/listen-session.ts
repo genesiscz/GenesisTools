@@ -517,6 +517,9 @@ export class ListenSession {
         const now = new Date().toISOString();
         let parts: QuestionItem[] = [];
         const changes = await this.change(`${question.id} split per line and voice`, (current) => {
+            if (!openQuestions(current).some((item) => item.id === question.id)) {
+                return;
+            }
             parts = splitQuestion(current, question.id, { transcript, now, ...(micShare ? { micShare } : {}) });
         });
         const label = questionLabel(record, question.id);

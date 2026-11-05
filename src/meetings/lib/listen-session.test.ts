@@ -393,7 +393,7 @@ test("failed undo preserves the confirmed decision's ledger entry", async () => 
 });
 
 test("a stale terminal decision preserves an answer submitted while it waited", async () => {
-    for (const stale of ["skip", { answer: "Alice Example" }] as const) {
+    for (const stale of ["skip", "split", { answer: "Alice Example" }] as const) {
         const f = await fixture([question("i1")]);
         const adapter = new ScriptedAdapter([
             async () => {
@@ -411,5 +411,7 @@ test("a stale terminal decision preserves an answer submitted while it waited", 
         expect(f.item("i1")).toMatchObject({ status: "confirmed", answer: "Bob Example" });
         expect(f.events()).not.toContain("answered");
         expect(f.events()).not.toContain("skipped");
+        expect(f.events()).not.toContain("split");
+        expect(f.read().items).toHaveLength(1);
     }
 });
