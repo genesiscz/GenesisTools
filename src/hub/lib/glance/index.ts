@@ -1,7 +1,10 @@
+import { listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
 import { titleMatchKeys } from "@app/cmux/lib/title-match";
 import type { GlanceDecisionDto, GlanceDto, GlanceFleetDto, GlanceLimitDto } from "@app/dev-dashboard/contract/glance";
 import { GLANCE_INBOX_SIZE } from "@app/dev-dashboard/contract/glance";
-import { loadWaitingQueue, type WaitingQueue } from "@app/question/lib/inbox/load";
+import { loadWaitingQueue, realInboxDeps, type WaitingQueue } from "@app/question/lib/inbox/load";
+import { listFormsSnapshot } from "@app/question/lib/pending/store";
+import { openQuestions } from "@genesiscz/utils/agents/dialogs/store";
 import { type FleetEntry, readFleetView } from "@genesiscz/utils/ai/live-sessions/fleet";
 import { FLEET_PHASES } from "@genesiscz/utils/ai/live-sessions/phase";
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
@@ -22,7 +25,18 @@ export interface GlanceSources {
 
 export function liveGlanceSources(): GlanceSources {
     return {
-        waiting: () => loadWaitingQueue(),
+        waiting: () =>
+            loadWaitingQueue({
+                deps: {
+                    ...realInboxDeps,
+                    sessions: (hours) => listAgentSessionRows({ hours, withUsage: false, refresh: false }),
+                    tail: async () => [],
+                    harvest: undefined,
+                    forms: () => listFormsSnapshot({ opts: { status: "pending" } }),
+                    dialogs: async (sessions) => sessions.flatMap((row) => openQuestions(row.provider, row.sessionId)),
+                    writeCache: async () => {},
+                },
+            }),
         approvals: () => listPendingApprovals(),
         fleet: () => readFleetView({ titleKeys: titleMatchKeys }),
         forecast: () => buildForecast({}),
