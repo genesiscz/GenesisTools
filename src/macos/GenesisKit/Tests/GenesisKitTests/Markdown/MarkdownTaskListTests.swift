@@ -198,6 +198,13 @@ final class MarkdownTaskListTests: XCTestCase {
     - [ ] delta
     """
 
+    func testInvalidFenceInfoAndOverindentedClosingFence() {
+        let invalid = "- ```foo`bar\n\n```\n- [ ] hidden\n```\n- [ ] visible"
+        XCTAssertEqual(MarkdownTaskList.items(in: bytes(invalid)).map(\.text), ["visible"])
+        let indented = "- ```\n      ```\n  - [ ] hidden\n  ```\n- [ ] visible"
+        XCTAssertEqual(MarkdownTaskList.items(in: bytes(indented)).map(\.text), ["visible"])
+    }
+
     func testLineNumbersMatchThePageForCRLFAndABOM() {
         let note = "\u{FEFF}- [ ] first\r\n\r\n- [x] third\r\n"
         let items = MarkdownTaskList.items(in: bytes(note))
