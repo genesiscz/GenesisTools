@@ -1496,6 +1496,13 @@ test("widget snapshot reads dialogs only for the sessions the store lists record
     expect(asked).toEqual([target.sessionId]);
     const pending = overview.notifications?.sessions.filter((session) => session.pendingItem?.kind === "dialog");
     expect(pending?.map((session) => session.key)).toEqual([widgetSessionKey(target)]);
+    sources.dialogSessions = () => {
+        throw new Error("fixture directory unreadable");
+    };
+    asked.length = 0;
+    const fallback = await widgetSnapshot({ root: directory, sources });
+    expect(new Set(asked)).toEqual(new Set([target.sessionId, "fixture-quiet"]));
+    expect(fallback.sessions.length).toBeGreaterThan(0);
 });
 
 function readyVideo(id: string, manifestPath: string): WidgetAsset {
