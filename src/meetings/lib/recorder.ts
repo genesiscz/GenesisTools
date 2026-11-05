@@ -210,19 +210,21 @@ export async function runRecorder(options: {
             unlinkSync(files.stop);
         }
 
+        const earlier = store.read(meetingId)?.recording;
         const state: RecorderState = {
             meetingId,
             pid: process.pid,
             startedAt: new Date().toISOString(),
             display: options.display,
-            frames: 0,
-            bytes: 0,
+            frames: typeof earlier?.frames === "number" ? earlier.frames : 0,
+            bytes: typeof earlier?.bytes === "number" ? earlier.bytes : 0,
         };
         const saveState = () => atomicWriteFileSync(files.state, SafeJSON.stringify(state, null, 2));
         saveState();
         await store.update(meetingId, { command: "record start", change: `display ${options.display}` }, (record) => {
             record.recording = {
-                startedAt: state.startedAt,
+                ...record.recording,
+                startedAt: record.recording?.startedAt ?? state.startedAt,
                 display: options.display,
                 framesDir: "frames",
                 ocr: "ocr.jsonl",
@@ -325,7 +327,7 @@ export async function runRecorder(options: {
             (current) => {
                 current.recording = {
                     ...current.recording,
-                    startedAt: state.startedAt,
+                    startedAt: current.recording?.startedAt ?? state.startedAt,
                     stoppedAt,
                     frames: state.frames,
                     bytes: state.bytes,
