@@ -617,3 +617,14 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   every caller, the component is the place for it (an environment value a row sets once), and the second agent
   should have been the signal, not the fifth (Martin, 2026-10-29 21:30).
 
+## A cover that does not cover: AppKit tables laid over the SwiftUI root — 2026-11-05 18:14
+
+- **No SwiftUI view draws over a `GenTreeTable`.** The window's content view (`GenOverlayContentView`) lays each
+  tree table over its slot as a sibling ABOVE the whole SwiftUI root, so an `.overlay`, a material or a cover sits
+  under it, however late in the tree. The hub's "Opening #402…" cover blurred the PR view and left the old PR's file
+  tree sharp on top. Fix: `.environment(\.genOverlaysHidden, true)` on the covered subtree; the table hides its slot,
+  and `placeOverlays` hides a table whose slot is hidden. A WKWebView stays inside the root and does blur under a
+  SwiftUI material.
+- **A row moved into the title bar (`.titlebarRow()`) lies outside its view's frame** (a negative top padding), so an
+  overlay on that view leaves the row uncovered. Reach the strip with `.titlebarBackground(fill)`: it paints the strip,
+  leaves its clicks to the window (double-click, drag), and takes clicks in the view's own frame.
