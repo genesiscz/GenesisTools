@@ -6,10 +6,12 @@ enum MeetingsCLI {
     /// Resolved at each call, so `GENESIS_TOOLS_BIN` (a worktree's `tools`) and a moved checkout apply at once.
     static let bridge = ToolsBridge(resolveBinaryPath: { ToolsBridge.defaultBinaryPath() })
 
-    /// A failed command: one sentence for the pane, the CLI's own text for Details.
+    /// A failed command: one sentence for the pane, the CLI's own text for Details, and the conflict code a refused
+    /// write names (`✗ [config-stale] …`, src/utils/meetings/conflict.ts), so the pane can answer it.
     struct Failure: Error, CustomStringConvertible, Equatable {
         let sentence: String
         let detail: String
+        var code: String? = nil
         var description: String { sentence }
     }
 
@@ -26,7 +28,8 @@ enum MeetingsCLI {
         guard result.exitCode == 0 else {
             span.end("exit \(result.exitCode)")
             throw Failure(sentence: sentence(fromStderr: result.stderr) ?? "The meetings command failed.",
-                          detail: "tools meetings \(args.joined(separator: " ")) exited \(result.exitCode):\n\(result.stderr)")
+                          detail: "tools meetings \(args.joined(separator: " ")) exited \(result.exitCode):\n\(result.stderr)",
+                          code: code(fromStderr: result.stderr))
         }
         span.end()
         return Data(result.stdout.utf8)
@@ -44,13 +47,30 @@ enum MeetingsCLI {
         }
     }
 
-    /// The CLI's own message: its last `✗` line, else its last non-empty line, without colour codes.
+    /// The CLI's own message: its last `✗` line, else its last non-empty line, without colour codes and without the
+    /// conflict code in front.
     static func sentence(fromStderr stderr: String) -> String? {
+        guard var line = errorLine(stderr) else { return nil }
+        if let code = leadingCode(line) { line = String(line.dropFirst(code.count + 2)).trimmingCharacters(in: .whitespaces) }
+        guard !line.isEmpty else { return nil }
+        return line.prefix(1).uppercased() + line.dropFirst() + (line.hasSuffix(".") ? "" : ".")
+    }
+
+    /// The conflict code of the CLI's `✗ [code] …` line, if it has one.
+    static func code(fromStderr stderr: String) -> String? {
+        errorLine(stderr).flatMap(leadingCode)
+    }
+
+    private static func errorLine(_ stderr: String) -> String? {
         let lines = stderr.replacingOccurrences(of: "\u{1B}\\[[0-9;]*m", with: "", options: .regularExpression)
             .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         let marked = lines.last { $0.hasPrefix("✗") }.map { String($0.dropFirst()).trimmingCharacters(in: .whitespaces) }
-        guard let line = marked ?? lines.last else { return nil }
-        return line.prefix(1).uppercased() + line.dropFirst() + (line.hasSuffix(".") ? "" : ".")
+        return marked ?? lines.last
+    }
+
+    private static func leadingCode(_ line: String) -> String? {
+        guard let match = line.range(of: "^\\[[a-z0-9-]+\\]", options: .regularExpression) else { return nil }
+        return String(line[match].dropFirst().dropLast())
     }
 
     /// A JSON value as one command-line argument (`config set <path> <json>`). A number is written in its shortest

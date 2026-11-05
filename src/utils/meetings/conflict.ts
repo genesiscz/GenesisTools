@@ -3,6 +3,8 @@
  * reaches the CLI's `✗ [code] sentence` line, so the window can tell a conflict from a plain failure.
  */
 export const MEETINGS_CONFLICT_CODES = [
+    /** A config value changed since the caller read it (`config set --expect`). */
+    "config-stale",
     /** The export target holds edits the last export did not write. */
     "export-edited",
     /** The export target is a symlink or not a plain file inside the chosen folder. */

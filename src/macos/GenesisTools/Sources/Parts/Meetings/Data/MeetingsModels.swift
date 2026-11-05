@@ -330,6 +330,17 @@ struct MeetingsSettings: Decodable, Equatable {
 struct ConfigShow: Decodable, Equatable {
     let path: String
     let value: MeetingsSettings
+    /// The same value as JSON, so a write can name the value it replaces (`config set --expect`).
+    let raw: JSONValue
+
+    private enum CodingKeys: String, CodingKey { case path, value }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        path = try container.decode(String.self, forKey: .path)
+        value = try container.decode(MeetingsSettings.self, forKey: .value)
+        raw = try container.decode(JSONValue.self, forKey: .value)
+    }
 }
 
 // MARK: - Capture cost (`tools meetings record cost --json`)
@@ -430,6 +441,40 @@ enum JSONValue: Decodable, Equatable, Hashable {
             self = .array(value)
         } else {
             self = .object(try container.decode([String: JSONValue].self))
+        }
+    }
+
+    /// The value at a config path, or null where the path ends.
+    func at(_ path: [String]) -> JSONValue {
+        guard let first = path.first else { return self }
+        guard case .object(let fields) = self, let next = fields[first] else { return .null }
+        return next.at(Array(path.dropFirst()))
+    }
+
+    /// The same JSON with `value` at `path`; the objects on the way are made.
+    func setting(_ path: [String], to value: JSONValue) -> JSONValue {
+        guard let first = path.first else { return value }
+        var fields: [String: JSONValue] = [:]
+        if case .object(let existing) = self { fields = existing }
+        fields[first] = (fields[first] ?? .null).setting(Array(path.dropFirst()), to: value)
+        return .object(fields)
+    }
+
+    /// A value the page writes, as JSON (null when it is not JSON).
+    init(foundation value: Any) {
+        let text = MeetingsCLI.jsonArgument(value)
+        self = (try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))) ?? .null
+    }
+
+    /// The value as Foundation objects, for `MeetingsCLI.jsonArgument`.
+    var foundation: Any {
+        switch self {
+        case .string(let text): return text
+        case .number(let number): return number
+        case .bool(let flag): return flag
+        case .array(let values): return values.map(\.foundation)
+        case .object(let fields): return fields.mapValues(\.foundation)
+        case .null: return NSNull()
         }
     }
 }

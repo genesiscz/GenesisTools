@@ -19,6 +19,8 @@ struct MatchRulesDraft: Equatable {
 @MainActor
 final class MeetingsSettingsModel {
     private(set) var settings: Loadable<MeetingsSettings> = .idle
+    /// The settings as JSON from the same read, so each write names the value it replaces.
+    private(set) var settingsRaw: JSONValue?
     private(set) var cost: Loadable<CaptureCost> = .idle
     private(set) var preview: Loadable<[MatchPreviewRow]> = .idle
     private(set) var dictionary: Loadable<DictionaryShow> = .idle
@@ -57,7 +59,9 @@ final class MeetingsSettingsModel {
         settings = .loading(previous: settings.value)
         Task {
             do {
-                let value = try await MeetingsCLI.json(ConfigShow.self, ["config", "show", "--json"]).value
+                let shown = try await MeetingsCLI.json(ConfigShow.self, ["config", "show", "--json"])
+                let value = shown.value
+                settingsRaw = shown.raw
                 settings = .loaded(value)
                 for name in value.projectNames where drafts[name] == nil {
                     drafts[name] = savedRules(name, in: value)
@@ -118,10 +122,27 @@ final class MeetingsSettingsModel {
 
     // MARK: Writes
 
+    /// The `--expect` arguments of a write at `path`: the value this page read there. Another editor's change since then
+    /// makes the CLI refuse the write (`config-stale`) instead of overwriting it.
+    static func expectArgs(_ path: [String], in raw: JSONValue?) -> [String] {
+        guard let raw else { return [] }
+        return ["--expect", MeetingsCLI.jsonArgument(raw.at(path).foundation)]
+    }
+
+    /// One `config edit` change: the new value (nil unsets the key) and the value this page read there.
+    static func editJSON(_ path: [String], _ value: Any?, in raw: JSONValue?) -> [String: Any] {
+        var edit: [String: Any] = ["path": MeetingsCLI.jsonArgument(path)]
+        if let value { edit["value"] = value } else { edit["unset"] = true }
+        if let raw { edit["expect"] = raw.at(path).foundation }
+        return edit
+    }
+
     /// Writes one config value (`config set`) and reads the settings again. A refused value shows the schema's
     /// sentence; the control goes back to the saved value with the reload.
     func set(_ path: [String], _ value: Any, done: String? = nil) {
-        run(key: path.joined(separator: "."), ["config", "set", MeetingsCLI.jsonArgument(path), MeetingsCLI.jsonArgument(value)], done: done) {
+        run(key: path.joined(separator: "."),
+            ["config", "set", MeetingsCLI.jsonArgument(path), MeetingsCLI.jsonArgument(value)] + Self.expectArgs(path, in: settingsRaw),
+            done: done, saved: { $0.settingsRaw = $0.settingsRaw?.setting(path, to: JSONValue(foundation: value)) }) {
             $0.loadSettings()
             if path.first == "global", path.dropFirst().first == "capture" { $0.loadCost() }
         }
@@ -168,31 +189,41 @@ final class MeetingsSettingsModel {
     }
 
     func clearExportFolder(_ project: String) {
-        run(key: "projects.\(project).export", ["config", "unset", MeetingsCLI.path("projects", project, "export")],
+        run(key: "projects.\(project).export",
+            ["config", "unset", MeetingsCLI.path("projects", project, "export")] + Self.expectArgs(["projects", project, "export"], in: settingsRaw),
             done: "\(project) exports ask for a folder again") { $0.loadSettings() }
     }
 
-    /// Writes the draft rules of one project (only the lists that changed), then previews against the saved rules.
-    func saveRules(_ project: String) {
-        guard let draft = drafts[project], let settings = settings.value else { return }
-        let saved = savedRules(project, in: settings)
-        var writes: [[String]] = []
+    /// The `config edit` changes of a project's draft rules: only the lists that changed, each naming the saved list it
+    /// replaces, so they land together or not at all.
+    static func ruleEdits(_ project: String, draft: MatchRulesDraft, saved: MatchRulesDraft, raw: JSONValue?) -> [[String: Any]] {
+        var edits: [[String: Any]] = []
         if draft.folders != saved.folders {
-            writes.append(["config", "set", MeetingsCLI.path("sources", "wisprflow", "match", project, "folders"), MeetingsCLI.jsonArgument(draft.folders)])
+            edits.append(editJSON(["sources", "wisprflow", "match", project, "folders"], draft.folders, in: raw))
         }
         if draft.calendars != saved.calendars {
-            writes.append(["config", "set", MeetingsCLI.path("projects", project, "match", "calendar", "calendars"), MeetingsCLI.jsonArgument(draft.calendars)])
+            edits.append(editJSON(["projects", project, "match", "calendar", "calendars"], draft.calendars, in: raw))
         }
         if draft.titleWords != saved.titleWords {
-            writes.append(["config", "set", MeetingsCLI.path("projects", project, "match", "title", "words"), MeetingsCLI.jsonArgument(draft.titleWords)])
+            edits.append(editJSON(["projects", project, "match", "title", "words"], draft.titleWords, in: raw))
         }
-        guard writes.isEmpty == false, self.writes else { return }
+        return edits
+    }
+
+    /// Writes the draft rules of one project in one `config edit`, then previews against the saved rules.
+    func saveRules(_ project: String) {
+        guard let draft = drafts[project], let settings = settings.value else { return }
+        let edits = Self.ruleEdits(project, draft: draft, saved: savedRules(project, in: settings), raw: settingsRaw)
+        guard edits.isEmpty == false, self.writes else { return }
         writing.insert("rules.\(project)")
         Task {
             defer { writing.remove("rules.\(project)") }
             do {
-                for args in writes { _ = try await MeetingsCLI.run(args) }
+                _ = try await MeetingsCLI.run(["config", "edit", MeetingsCLI.jsonArgument(edits)])
                 notice = MeetingsNotice(text: "Saved the \(project) rules", tone: .success)
+            } catch let failure as MeetingsCLI.Failure where failure.code == "config-stale" {
+                // The draft stays: the reload brings the other editor's rules into the saved side to compare with.
+                notice = Self.staleNotice(failure)
             } catch {
                 notice = .failure(error) { [weak model = self] in model?.saveRules(project) }
             }
@@ -301,10 +332,18 @@ final class MeetingsSettingsModel {
 
     // MARK: Runner
 
+    /// Another editor changed the setting after this page read it: nothing was written, and the page reads it again.
+    static func staleNotice(_ failure: MeetingsCLI.Failure) -> MeetingsNotice {
+        MeetingsNotice(text: "Not saved: this setting changed in another window or the terminal. The page shows its new value now.",
+                       more: failure.detail, tone: .error)
+    }
+
     func isWriting(_ key: String) -> Bool { writing.contains(key) }
 
+    /// `saved` runs after a write succeeded, before the reload: this page's next write then names its own value, not
+    /// the one before it.
     private func run(key: String, _ args: [String], done: String?, undo: (@MainActor () -> Void)? = nil,
-                     then: @escaping (MeetingsSettingsModel) -> Void) {
+                     saved: ((MeetingsSettingsModel) -> Void)? = nil, then: @escaping (MeetingsSettingsModel) -> Void) {
         guard writes else { return }
         guard !writing.contains(key) else { return }
         writing.insert(key)
@@ -312,11 +351,15 @@ final class MeetingsSettingsModel {
             defer { writing.remove(key) }
             do {
                 _ = try await MeetingsCLI.run(args)
+                saved?(self)
                 if let done {
                     notice = MeetingsNotice(text: done, tone: .success, actionTitle: undo == nil ? nil : "Undo", actionSymbol: "arrow.uturn.backward", action: undo)
                 }
+            } catch let failure as MeetingsCLI.Failure where failure.code == "config-stale" {
+                notice = Self.staleNotice(failure)
+                loadSettings()
             } catch {
-                notice = .failure(error) { [weak model = self] in model?.run(key: key, args, done: done, undo: undo, then: then) }
+                notice = .failure(error) { [weak model = self] in model?.run(key: key, args, done: done, undo: undo, saved: saved, then: then) }
             }
             then(self)
         }

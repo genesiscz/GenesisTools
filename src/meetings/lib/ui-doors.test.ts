@@ -8,7 +8,7 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { createCanvas } from "@napi-rs/canvas";
 import type { z } from "zod";
 import { captureCost } from "./capture-cost";
-import { configValueAt, parseConfigPath, setConfigValue, unsetConfigValue } from "./config-edit";
+import { applyConfigEdits, configValueAt, parseConfigPath, setConfigValue, unsetConfigValue } from "./config-edit";
 import { decideItems, reopenItems } from "./decide";
 import { testPhrase } from "./dictionary-test";
 import { exportMeeting } from "./export";
@@ -41,6 +41,41 @@ function record(fields: RecordInput): MeetingRecord {
 const suggestedAt = "2026-11-04T10:00:00.000Z";
 
 describe("config set and unset", () => {
+    test("a write that names the value it replaces is refused when another editor changed it first", async () => {
+        const { config } = stores();
+        const path = '["languages","cs","ocr"]';
+        // Another editor added German after this page read Czech and English.
+        await setConfigValue(config, path, ["cs-CZ", "en-US", "de-DE"]);
+
+        await expect(setConfigValue(config, path, ["cs-CZ"], { expect: ["cs-CZ", "en-US"] })).rejects.toMatchObject({
+            code: "config-stale",
+        });
+        await expect(unsetConfigValue(config, path, { expect: ["cs-CZ", "en-US"] })).rejects.toMatchObject({
+            code: "config-stale",
+        });
+        await expect(
+            applyConfigEdits(config, [
+                { path: "global.capture.activeFps", value: 2, expect: 1 },
+                { path, value: ["cs-CZ"], expect: ["cs-CZ", "en-US"] },
+            ])
+        ).rejects.toMatchObject({ code: "config-stale" });
+        let read = await config.read();
+        expect(read.languages.cs.ocr).toEqual(["cs-CZ", "en-US", "de-DE"]);
+        expect(read.global.capture.activeFps).toBe(1);
+
+        read = await applyConfigEdits(config, [
+            { path: "global.capture.activeFps", value: 2, expect: 1 },
+            { path, value: ["cs-CZ"], expect: ["cs-CZ", "en-US", "de-DE"] },
+        ]);
+        expect(read.languages.cs.ocr).toEqual(["cs-CZ"]);
+        expect(read.global.capture.activeFps).toBe(2);
+
+        // A key nobody set yet expects null; the expectation reads the value with its default.
+        await setConfigValue(config, '["projects","work","export"]', { folder: "/notes" }, { expect: null });
+        read = await unsetConfigValue(config, "global.capture.activeFps", { expect: 2 });
+        expect(read.global.capture.activeFps).toBe(1);
+    });
+
     test("creates the objects on the way, validates the whole config, and unset brings the default back", async () => {
         const { config } = stores();
 
