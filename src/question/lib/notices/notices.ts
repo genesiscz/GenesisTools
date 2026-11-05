@@ -45,6 +45,11 @@ export interface NoticeDeps {
 }
 
 async function realRetract(channel: ChannelName, noticeId: string): Promise<boolean> {
+    const prefix = NOTICE_IDS.decision("");
+    if (channel === "telegram" && noticeId.startsWith(prefix)) {
+        const { retractDecisionTelegramMessages } = await import("../decisions/telegram");
+        return (await retractDecisionTelegramMessages([noticeId.slice(prefix.length)])) > 0;
+    }
     const channels = await notificationsConfig.getChannels("question");
     return retractOn(channel, noticeId, channels);
 }
