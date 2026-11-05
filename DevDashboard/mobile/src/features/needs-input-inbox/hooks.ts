@@ -12,10 +12,11 @@ import { useLiveRefetchInterval } from "@/live/provider";
  * ► REFERENCE SHAPE: `useX = () => useQuery(xQuery(useDashboardClient()))`.
  */
 
-/** The attention list. A `qa` entry refetches it while the stream is up; else it polls. */
+/** QA events refresh the list, while polling also covers terminal lifecycle and the day boundary. */
 export function useAttention() {
     const refetchInterval = useLiveRefetchInterval("qa");
-    return useQuery({ ...attentionQuery(useDashboardClient()), refetchInterval });
+    const options = attentionQuery(useDashboardClient());
+    return useQuery({ ...options, refetchInterval: refetchInterval || options.refetchInterval });
 }
 
 export function useResolveAttention() {
