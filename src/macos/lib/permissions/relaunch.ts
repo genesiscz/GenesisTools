@@ -458,11 +458,21 @@ export interface RelaunchCapture {
     recordDirs: string[];
 }
 
-/** A face's values of {@link RESTORED_ENVIRONMENT}, or undefined when it had none of them. */
+/**
+ * A face's values of {@link RESTORED_ENVIRONMENT}, or undefined when it had none of them. A face that ran on its own
+ * `GENESIS_TOOLS_HOME` (a sandbox) also keeps its `HOME`: the sandbox's other app data (the Wispr Flow folder) is read
+ * through `homedir()`, and a meetings window reopened on the sandbox but the real home mixed the two (2026-11-05).
+ * `HOME` is not in the list itself, because `openEnvironment` removes the list from the build's own environment.
+ */
 export function restoredEnvironment(environment: Record<string, string>): Record<string, string> | undefined {
-    const kept = Object.fromEntries(
+    const kept: Record<string, string> = Object.fromEntries(
         RESTORED_ENVIRONMENT.flatMap((key) => (environment[key] ? [[key, environment[key]]] : []))
     );
+
+    if (kept.GENESIS_TOOLS_HOME && environment.HOME) {
+        kept.HOME = environment.HOME;
+    }
+
     return Object.keys(kept).length > 0 ? kept : undefined;
 }
 

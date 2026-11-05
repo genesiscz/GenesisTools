@@ -417,6 +417,8 @@ describe("a rebuild reopens each face on the environment it started with", () =>
                 "-g",
                 "--env",
                 `GENESIS_TOOLS_HOME=${SANDBOX}`,
+                "--env",
+                "HOME=/Users/alice",
                 BUNDLE,
                 "--args",
                 "--meetings",
@@ -456,7 +458,9 @@ describe("a rebuild reopens each face on the environment it started with", () =>
     });
 
     it("keeps only the restored variables that are set", () => {
-        expect(restoredEnvironment(environments[401])).toEqual({ GENESIS_TOOLS_HOME: SANDBOX });
+        expect(restoredEnvironment(environments[401])).toEqual({ GENESIS_TOOLS_HOME: SANDBOX, HOME: "/Users/alice" });
+        // A face on the real home alone keeps nothing: its HOME is the build's own.
+        expect(restoredEnvironment({ HOME: "/Users/alice", PATH: "/usr/bin" })).toBeUndefined();
         expect(restoredEnvironment(environments[402])).toBeUndefined();
         expect(faceHome(environments[401])).toBe(SANDBOX);
         expect(faceHome(environments[402])).toBe("/Users/alice");
