@@ -85,7 +85,15 @@ private struct MeetingsListPane: View {
     var body: some View {
         VStack(spacing: 0) {
             if case .project(let name) = model.place {
-                ProjectSummary(name: name, settings: model.settings.value?.projects[name], wispr: model.settings.value?.wispr)
+                // A failed config read is not an empty project: the summary shows only data that was read.
+                if let unread = MeetingsUnread.of([(.projectSettings, model.settings.failure)]).first {
+                    NoticePill(text: unread.text, more: unread.failure.detail, tone: .error,
+                               fixes: [.button("Retry", symbol: "arrow.clockwise") { model.loadSettings() }])
+                        .padding(10)
+                }
+                if let settings = model.settings.value {
+                    ProjectSummary(name: name, settings: settings.projects[name], wispr: settings.wispr)
+                }
                 Divider()
             }
             if let failure = model.overview.failure {

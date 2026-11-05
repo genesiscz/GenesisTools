@@ -45,6 +45,26 @@ enum Loadable<Value: Equatable>: Equatable {
     var failure: MeetingsCLI.Failure? { if case .failed(let failure, _) = self { return failure } else { return nil } }
 }
 
+/// A read beside the main one that failed (a meeting's proposals, the config), with words that say what is missing
+/// on screen, so a failed read never looks like a successful empty one.
+struct MeetingsUnread: Equatable {
+    enum Source: String { case proposals, projects, projectSettings }
+    let source: Source
+    let failure: MeetingsCLI.Failure
+
+    var text: String {
+        switch source {
+        case .proposals: return "The proposed projects did not load: \(failure.sentence)"
+        case .projects: return "The known projects did not load, so the picker lists only the proposals: \(failure.sentence)"
+        case .projectSettings: return "The project's settings did not load: \(failure.sentence)"
+        }
+    }
+
+    static func of(_ reads: [(Source, MeetingsCLI.Failure?)]) -> [MeetingsUnread] {
+        reads.compactMap { source, failure in failure.map { MeetingsUnread(source: source, failure: $0) } }
+    }
+}
+
 func asFailure(_ error: Error) -> MeetingsCLI.Failure {
     error as? MeetingsCLI.Failure ?? MeetingsCLI.Failure(sentence: "The meetings command failed.", detail: "\(error)")
 }

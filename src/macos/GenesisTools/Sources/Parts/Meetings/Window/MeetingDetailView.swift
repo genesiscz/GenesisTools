@@ -59,6 +59,14 @@ struct MeetingDetailView: View {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
                            fixes: [.button("Retry", symbol: "arrow.clockwise") { detail.reloadRecord() }])
             }
+            // The picker lists the proposals and the known projects; a failed read of either says so here, so a short
+            // list is never mistaken for the whole one.
+            ForEach(MeetingsUnread.of([(.proposals, detail.proposals.failure), (.projects, window.settings.failure)]), id: \.source) { unread in
+                NoticePill(text: unread.text, more: unread.failure.detail, tone: .error,
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") {
+                               if unread.source == .proposals { detail.loadProposals() } else { window.loadSettings() }
+                           }])
+            }
             GenSegmentedTabs("Meeting tab", items: MeetingDetailModel.Tab.allCases.map { GenSegmentedTabs.Item($0, tabTitle($0, record)) },
                              selection: Binding(get: { detail.tab }, set: { detail.show($0) }), minSegmentWidth: 84,
                              identifier: "meetings.detail.tabs")

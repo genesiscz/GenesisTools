@@ -229,4 +229,13 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertTrue(MeetingDetailModel.reloadsTranscript(after: .decision), "a reject can take an unclear mark away")
         XCTAssertFalse(MeetingDetailModel.reloadsTranscript(after: .label))
     }
+
+    func testAFailedSideReadIsShownAndNotReadAsEmpty() {
+        let failure = MeetingsCLI.Failure(sentence: "The config is not valid.", detail: "tools meetings config show exited 1")
+        let proposals: Loadable<AssignProposals> = .failed(failure, previous: nil)
+        let settings: Loadable<MeetingsSettings> = .idle
+        let unread = MeetingsUnread.of([(.proposals, proposals.failure), (.projects, settings.failure)])
+        XCTAssertEqual(unread.map(\.source), [.proposals])
+        XCTAssertEqual(unread.first?.text, "The proposed projects did not load: The config is not valid.")
+    }
 }
