@@ -1,0 +1,16 @@
+{
+    "name": "widget-snapshot",
+    "capturedAt": "2026-11-04T23:58:32.621Z",
+    "commit": "89500ee16e",
+    "loadAvg": [
+        54.21484375,
+        119.3681640625,
+        147.251953125
+    ],
+    "hostname": "MacBook-Pro-2299.local",
+    "metrics": {
+        "snapshotCpuMs": 163.454,
+        "snapshotWallMs": 137.68829200000005
+    },
+    "notes": "runs=9 | sessions=1450 bytes=1757733 | 0:58  up 2 days, 14:07, 23 users, load averages: 54.21 119.37 147.25"
+}

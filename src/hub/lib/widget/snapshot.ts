@@ -1012,6 +1012,53 @@ export async function widgetSnapshot({
               truncated: true,
           };
     const sessions = new Map<string, WidgetSession>();
+    // The sessions by the fields the lookups below match on. Each lookup copied and scanned every session, for every
+    // agent node and inbox row: about 85 ms of a 168 ms warm snapshot with 1,450 sessions (2026-11-05). A session's
+    // id and provider are fixed when it is added; its agent id and transcript path change only through `setAgent`
+    // and `setTranscript`. `order` is the insertion order, so a lookup that took the first match still does.
+    const order = new Map<WidgetSession, number>();
+    const byId = new Map<string, WidgetSession[]>();
+    const byAgent = new Map<string, WidgetSession[]>();
+    const byTranscript = new Map<string, WidgetSession[]>();
+    const indexAdd = (index: Map<string, WidgetSession[]>, key: string | undefined, session: WidgetSession) => {
+        if (key === undefined) {
+            return;
+        }
+
+        const list = index.get(key);
+        if (list) {
+            list.push(session);
+        } else {
+            index.set(key, [session]);
+        }
+    };
+    const indexRemove = (index: Map<string, WidgetSession[]>, key: string | undefined, session: WidgetSession) => {
+        const list = key === undefined ? undefined : index.get(key);
+        const at = list?.indexOf(session) ?? -1;
+        if (list && at >= 0) {
+            list.splice(at, 1);
+        }
+    };
+    const setAgent = (session: WidgetSession, agentId: string) => {
+        indexRemove(byAgent, session.agentId, session);
+        session.agentId = agentId;
+        indexAdd(byAgent, agentId, session);
+    };
+    const setTranscript = (session: WidgetSession, path: string | undefined) => {
+        indexRemove(byTranscript, session.transcriptPath, session);
+        session.transcriptPath = path;
+        indexAdd(byTranscript, path, session);
+    };
+    const earliest = (list: readonly WidgetSession[]): WidgetSession | undefined => {
+        let found: WidgetSession | undefined;
+        for (const session of list) {
+            if (!found || (order.get(session) ?? 0) < (order.get(found) ?? 0)) {
+                found = session;
+            }
+        }
+
+        return found;
+    };
     const addSession = (target: WidgetTarget, title: string, project: string, activityAt: number): WidgetSession => {
         const key = widgetSessionKey(target);
         const existing = sessions.get(key);
@@ -1035,6 +1082,8 @@ export async function widgetSnapshot({
             hiddenByFilter,
         };
         sessions.set(key, entry);
+        order.set(entry, order.size);
+        indexAdd(byId, target.sessionId, entry);
         return entry;
     };
     for (const row of rows) {
@@ -1045,36 +1094,40 @@ export async function widgetSnapshot({
                 row.project ?? row.cwd,
                 row.mtime
             );
-            session.transcriptPath = row.filePath;
+            setTranscript(session, row.filePath);
             session.model = row.model ?? undefined;
             session.account = row.account ?? undefined;
         }
     }
     const findSession = (id: string, hint?: string | null) => {
-        const matches = [...sessions.values()].filter(
-            (entry) => entry.target.sessionId === id && (!hint || entry.target.provider === widgetProvider(hint))
+        const provider = hint ? widgetProvider(hint) : undefined;
+        const matches = (byId.get(id) ?? []).filter(
+            (entry) => provider === undefined || entry.target.provider === provider
         );
         return matches.length === 1 ? matches[0] : undefined;
     };
     // A worker reusing an indexed session keeps that session's id; `agentId` is what names the worker then.
-    const findResultSession = (node: AgentNode) =>
-        [...sessions.values()].find(
-            (entry) => entry.agentId === node.id && entry.target.provider === widgetProvider(node.harness)
-        ) ?? findSession(node.id, node.harness);
+    const findResultSession = (node: AgentNode) => {
+        const provider = widgetProvider(node.harness);
+        return (
+            earliest((byAgent.get(node.id) ?? []).filter((entry) => entry.target.provider === provider)) ??
+            findSession(node.id, node.harness)
+        );
+    };
     const addWorker = (node: AgentNode, parent?: WidgetSession) => {
         // A codex/grok worker's id is its name; replies reach it only through its native session and home.
         const sessionId = node.nativeSessionId || node.id;
         // The same session id is indexed once per home; only the copy in the worker's own home is the worker.
         const home = node.sourceHome ? workerSourceHome(node.sourceHome) : undefined;
-        const indexed = [...sessions.values()].filter(
+        const candidates = node.nativeSessionId
+            ? byId.get(node.nativeSessionId)
+            : node.filePath
+              ? byTranscript.get(node.filePath)
+              : byId.get(node.id);
+        const indexed = (candidates ?? []).filter(
             (entry) =>
                 entry.target.provider === node.harness &&
-                (node.nativeSessionId
-                    ? entry.target.sessionId === node.nativeSessionId &&
-                      (!home || workerSourceHome(entry.target.sourceHome) === home)
-                    : node.filePath
-                      ? entry.transcriptPath === node.filePath
-                      : entry.target.sessionId === node.id)
+                (!node.nativeSessionId || !home || workerSourceHome(entry.target.sourceHome) === home)
         );
         const target = targetOf(
             {
@@ -1098,10 +1151,10 @@ export async function widgetSnapshot({
                   );
         session.title = node.name ?? node.description ?? session.title;
         session.status = node.status === "running" ? "working" : node.status === "completed" ? "finished" : "recent";
-        session.agentId = node.id;
+        setAgent(session, node.id);
         session.parentSessionId = parent?.target.sessionId;
         session.parentKey = parent?.key;
-        session.transcriptPath = node.filePath ?? undefined;
+        setTranscript(session, node.filePath ?? undefined);
         session.role = node.kind;
         session.model = node.model ?? session.model;
         session.account = node.account ?? session.account;
@@ -1692,7 +1745,7 @@ export async function widgetSnapshot({
     for (const form of cardForms) {
         const session =
             (form.sessionHint ? findSession(form.sessionHint, formProvider(form)) : undefined) ??
-            [...sessions.values()].find((entry) => entry.target.sessionId === form.id);
+            byId.get(form.id)?.[0];
         if (!session || (cardKeys && !cardKeys.has(session.key))) {
             continue;
         }
