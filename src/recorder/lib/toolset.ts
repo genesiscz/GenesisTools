@@ -2158,7 +2158,7 @@ export class MoviesToolset extends ReplToolset {
     async bootstrap(ctx: ToolsetContext): Promise<Record<string, unknown>> {
         return {
             movies: {
-                list: (options: { limit?: number } = {}) => listLibrary().slice(0, options.limit ?? 20),
+                list: (options: { limit?: number } = {}) => listLibrary({ limit: options.limit ?? 20 }),
                 open: (recording: string) => serviceRoutedMovie(new Movie(recording, ctx), movieMethods),
                 record: (options: RecordOptions = {}) => record({ options, ctx, deps: { ...REAL_DEPS, ...this.deps } }),
                 demo: (options: z.input<typeof demoParamsSchema> & { steps: DemoStep[] }) => recordDemo(options, ctx),

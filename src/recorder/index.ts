@@ -166,7 +166,7 @@ function parseFormat(raw: string): ExportFormat {
  * window otherwise (undefined then, since the window opens the pick itself).
  */
 async function pickRecording(): Promise<string | undefined> {
-    const rows = listLibrary().slice(0, 20);
+    const rows = listLibrary({ limit: 20 });
 
     if (!isInteractive() || rows.length === 0) {
         await ensureRecorderPart((line) => out.printlnErr(line));
@@ -861,7 +861,7 @@ program
             return;
         }
 
-        const rows = listLibrary().slice(0, Math.max(1, Number(flags.limit) || 20));
+        const rows = listLibrary({ limit: Math.max(1, Number(flags.limit) || 20) });
         if (flags.json) {
             out.result(rows);
             return;

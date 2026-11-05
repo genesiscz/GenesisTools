@@ -517,7 +517,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
     const library = toRpcTable(
         libraryTable,
         handleHandlers(libraryTable, () => ({
-            list: (params: { limit?: number }) => listLibrary().slice(0, params.limit ?? 20),
+            list: (params: { limit?: number }) => listLibrary({ limit: params.limit ?? 20 }),
             search: (text: string) => searchLibrary(text),
         })),
         { prefix: "movies." }
