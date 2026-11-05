@@ -109,9 +109,10 @@ comment instead of a trail of reposts. `comment delete` needs `--yes` when no te
 ### Test plans
 
 Read and change the Test Plans hub with `testplan`, never with a hand-built `az` token and `curl`.
-Every command takes a plan id or a pasted Test Plans URL (`_testPlans/define?planId=…&suiteId=…`);
-a suite command takes `<plan> <suite>` or one URL with both ids. Reads print markdown (`-f json`
-for data) and save a snapshot under `.claude/azure/testplans/` (`--no-save` skips it).
+Commands operating on an existing plan or suite take a plan id or a pasted Test Plans URL
+(`_testPlans/define?planId=…&suiteId=…`); suite commands take `<plan> <suite>` or one URL with both ids.
+`list`, `search`, `case show` and `create` do not require a plan. Reads print markdown (`-f json`
+for data). Pass `--save` to write a snapshot under `.claude/azure/testplans/`.
 
 ```bash
 tools azure-devops testplan list --active --owner alice        # plans: id, name, state, owner, iteration, dates

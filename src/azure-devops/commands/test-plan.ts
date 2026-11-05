@@ -64,7 +64,7 @@ function withFormat(command: Command): Command {
 }
 
 function withSave(command: Command): Command {
-    return withFormat(command).option("--no-save", "Do not write the snapshot under .claude/azure/testplans/");
+    return withFormat(command).option("--save", "Write the snapshot under .claude/azure/testplans/");
 }
 
 function withConfirm(command: Command): Command {
@@ -92,12 +92,13 @@ function collect(value: string, previous: string[]): string[] {
 }
 
 /** Prints a read result as markdown (and saves the snapshot) or as JSON. */
-async function show<T>(
+export async function show<T>(
     options: FormatOptions,
     subcommand: string[],
     data: T,
     markdown: (data: T) => string,
-    snapshot?: SnapshotName
+    snapshot?: SnapshotName,
+    writeSnapshot: typeof saveSnapshot = saveSnapshot
 ): Promise<void> {
     const format = pick(options.format, FORMATS, "--format", subcommand);
 
@@ -105,16 +106,15 @@ async function show<T>(
         return;
     }
 
+    const text = format === "md" || (snapshot && options.save === true) ? markdown(data) : "";
     if (format === "json") {
         out.result(data);
-        return;
+    } else {
+        out.println(text);
     }
 
-    const text = markdown(data);
-    out.println(text);
-
-    if (snapshot && options.save !== false) {
-        const path = await saveSnapshot(snapshot, text, data);
+    if (snapshot && options.save === true) {
+        const path = await writeSnapshot(snapshot, text, data);
         out.printlnErr(pc.dim(`\nSaved: ${path}`));
     }
 }
