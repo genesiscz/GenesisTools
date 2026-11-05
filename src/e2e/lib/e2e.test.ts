@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { E2eProject } from "@genesiscz/utils/e2e/project";
 import { E2E_ENV, type E2eTestResult } from "@genesiscz/utils/e2e/spec-env";
-import { stamp } from "./paths";
+import { listRunDirs, runsRoot, stamp } from "./paths";
 import { runE2e } from "./run";
 import { RUNNERS, runnerFlags } from "./runners";
 import { listSpecs, resolveSpecs, specName, suiteSpecs } from "./specs";
@@ -245,4 +245,16 @@ it("finishes later specs and writes a summary after a truncated result line", as
     expect(summary.ok).toBe(false);
     expect(existsSync(join(runDir, "summary.json"))).toBe(true);
     expect(existsSync(join(runDir, "summary.md"))).toBe(true);
+});
+
+it("selects completed run summaries while ignoring newer screen captures", () => {
+    const history = runsRoot("history-fixture");
+    for (const name of ["2026-01-01", "2026-01-02", "2026-01-03-capture", "2026-01-04-incomplete"]) {
+        mkdirSync(join(history, name), { recursive: true });
+    }
+    for (const name of ["2026-01-01", "2026-01-02"]) {
+        writeFileSync(join(history, name, "summary.json"), "{}");
+    }
+    writeFileSync(join(history, "2026-01-03-capture", "screen.png"), "fixture");
+    expect(listRunDirs("history-fixture")).toEqual([join(history, "2026-01-02"), join(history, "2026-01-01")]);
 });

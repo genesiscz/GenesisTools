@@ -30,5 +30,6 @@ export function listRunDirs(projectId: string): string[] {
         .map((entry) => entry.name)
         .sort()
         .reverse()
-        .map((name) => join(root, name));
+        .map((name) => join(root, name))
+        .filter((dir) => existsSync(join(dir, "summary.json")));
 }
