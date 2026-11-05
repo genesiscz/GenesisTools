@@ -40,8 +40,8 @@ export async function boundedCommand(options: {
     streamOnly?: boolean;
     cwd?: string;
     environment?: Record<string, string | undefined>;
-    onStdout?: (chunk: Uint8Array) => void | Promise<void>;
-    onStderr?: (chunk: Uint8Array) => void | Promise<void>;
+    onStdout?: (chunk: Uint8Array) => unknown;
+    onStderr?: (chunk: Uint8Array) => unknown;
 }): Promise<BoundedCommandResult> {
     options.signal?.throwIfAborted();
     const timeoutMs = Math.floor(options.timeoutMs);
