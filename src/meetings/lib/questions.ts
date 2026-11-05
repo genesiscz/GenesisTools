@@ -426,6 +426,8 @@ export function answerQuestion(
 
         if (item.kind === "term") {
             item.proposed = answer;
+            delete item.quote;
+            delete item.meaning;
             ledger.push({
                 at: options.now,
                 meeting: record.id,
