@@ -12,7 +12,7 @@ import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-rec
 import * as videoProbe from "@genesiscz/utils/video/probe";
 import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
 import * as captureRunner from "./capture-runner";
-import { nativeSegmentRecorder, segmentCaptureSpec } from "./recording-native";
+import { type NativeRecorderOptions, nativeSegmentRecorder, segmentCaptureSpec } from "./recording-native";
 import {
     concatCopyArgv,
     concatListLine,
@@ -1029,6 +1029,30 @@ describe("segmentCaptureSpec", () => {
         });
         expect(spec.threshold).toBe(0.5);
         expect(spec.idleFps).toBeUndefined();
+    });
+
+    it("refuses audio and the cursor track for a window or an app before the capture starts", () => {
+        const targets: RecordingTarget[] = [
+            { kind: "window", windowIds: [7] },
+            { kind: "app", app: "Notes" },
+        ];
+        const asks: NativeRecorderOptions[] = [{ audio: ["mic"] }, { cursorTrack: true }];
+
+        for (const target of targets) {
+            for (const options of asks) {
+                expect(() =>
+                    segmentCaptureSpec({ target, output: "/tmp/segment.mp4", maxSeconds: 60, options })
+                ).toThrow("those need a display or an area target");
+            }
+        }
+
+        const region = segmentCaptureSpec({
+            target: { kind: "region", x: 0, y: 0, width: 100, height: 100 },
+            output: "/tmp/segment.mp4",
+            maxSeconds: 60,
+            options: { audio: ["mic"], cursorTrack: true },
+        });
+        expect(region.audio).toEqual(["mic"]);
     });
 });
 

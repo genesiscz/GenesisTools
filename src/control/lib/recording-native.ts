@@ -18,7 +18,7 @@ import {
     type SegmentRecorder,
     type SegmentResult,
 } from "./recording-session";
-import type { RecordingTarget } from "./recording-targets";
+import { describeRecordingTarget, type RecordingTarget } from "./recording-targets";
 
 const { log } = logger.scoped("control-recording-native");
 
@@ -38,11 +38,14 @@ export interface NativeRecorderOptions {
     fps?: number;
     /** False hides the red border around what is recorded (it never shows in the movie either way). */
     indicator?: boolean;
-    /** Audio tracks in each segment's movie, joined with the video. */
+    /** Audio tracks in each segment's movie, joined with the video. Display and region targets only. */
     audio?: ("system" | "mic")[];
     /** The microphone's input UID from `ax-tool audio-devices`; needs audio "mic". */
     micDevice?: string;
-    /** Each segment writes `<segment>.cursor.jsonl`; the joiner makes `<output>.cursor.jsonl` of them. */
+    /**
+     * Each segment writes `<segment>.cursor.jsonl`; the joiner makes `<output>.cursor.jsonl` of them. Display and region
+     * targets only.
+     */
     cursorTrack?: boolean;
     /** Needs cursorTrack: the movie records without the system cursor and its images go here, for the editor to draw. */
     cursorShapes?: string;
@@ -68,6 +71,13 @@ export function segmentCaptureSpec({
     maxSeconds: number;
     options: NativeRecorderOptions;
 }): CaptureSpec {
+    if (target.kind !== "display" && target.kind !== "region" && (options.audio?.length || options.cursorTrack)) {
+        // A window or app recording composes that window alone (isolated mode), which records no audio or pointer.
+        throw new Error(
+            `${describeRecordingTarget(target)} cannot record audio or the cursor track: those need a display or an area target`
+        );
+    }
+
     const duration = String(Math.max(0.1, Math.min(180, maxSeconds)));
     const common = {
         codec: "h264",
