@@ -1265,7 +1265,9 @@ final class ReviewModel: ObservableObject {
             }
             // After the answer is on its way to the screen, so encoding a large diff never delays it.
             let loaded = jobs.compactMap { job -> (repo: URL, snapshot: GitWorkingTreeSource.Snapshot)? in
-                guard !onlyPrimary || job.repo.path == primary.path, case .success(let snapshot)? = results[job.folder] else { return nil }
+                // Incremental refreshes update memory; only full-load jobs rewrite the whole disk snapshot.
+                guard job.refresh == nil, !onlyPrimary || job.repo.path == primary.path,
+                      case .success(let snapshot)? = results[job.folder] else { return nil }
                 return (snapshot.repository?.root ?? job.repo, snapshot)
             }
             ReviewCache.writer.async {
