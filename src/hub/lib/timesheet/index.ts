@@ -73,7 +73,7 @@ async function findWeek(
 
     for (const { month, year } of monthsToRead(date)) {
         const preview = await (deps.preview ?? livePreview)(month, year);
-        const found = preview.weeks.find((week) => week.periodStart <= date && date <= week.periodFinish);
+        const found = preview.weeks.find((week) => week.periodStart <= date && date < week.periodFinish);
 
         if (found) {
             const rows = rowsOf(found);

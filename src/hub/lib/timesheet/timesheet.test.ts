@@ -5,7 +5,7 @@ function week(minutes: number) {
     return {
         timesheetId: 77,
         periodStart: "2026-10-26",
-        periodFinish: "2026-11-01",
+        periodFinish: "2026-11-02",
         entries: [
             {
                 clarityTaskName: "Shop checkout",
@@ -46,6 +46,20 @@ function deps(minutes: { value: number }, executed: number[][]): TimesheetDeps {
 }
 
 describe("the Friday timesheet", () => {
+    it("chooses the next week on the preceding period's exclusive finish", async () => {
+        const result = await timesheetWeek("2026-11-02", {
+            preview: async () => ({
+                weeks: [
+                    week(240),
+                    { ...week(120), timesheetId: 78, periodStart: "2026-11-02", periodFinish: "2026-11-09" },
+                ],
+                totalMapped: 0,
+                totalUnmapped: 0,
+            }),
+        });
+        expect(result?.timesheetId).toBe(78);
+    });
+
     it("reads the week of a day, even one that starts in the month before", async () => {
         const result = await timesheetWeek("2026-11-01", deps({ value: 240 }, []));
 
