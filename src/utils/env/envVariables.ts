@@ -93,6 +93,13 @@ export const env = {
         getHomeOverride: () => getTrimmed("GROK_HOME"),
     },
 
+    t3: {
+        /** T3 Code's home (`T3CODE_HOME`), `~/.t3` by default. */
+        getHome: () => getWithDefault("T3CODE_HOME", `${homedir()}/.t3`),
+        /** The `t3` CLI T3 Code writes into its home, or the one this process's T3 parent named. */
+        getCliPath: () => getTrimmed("T3CODE_CLI_PATH"),
+    },
+
     android: {
         /** The Android SDK root (`platform-tools/adb`, `emulator/emulator`): `ANDROID_HOME`, then `ANDROID_SDK_ROOT`. */
         getSdkRoot: () =>

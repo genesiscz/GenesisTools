@@ -6,6 +6,8 @@ import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
 import { loadPins, pinsPath, recordPin } from "@genesiscz/utils/agent-sessions/pins";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { t3ThreadOfSession } from "@genesiscz/utils/t3code/session-thread";
+import { t3AppLink } from "@genesiscz/utils/t3code/thread-cli";
 
 let home: string;
 let envSnapshot: ReturnType<typeof env.testing.snapshot>;
@@ -230,5 +232,25 @@ describe("the parsed journal", () => {
         const first = await loadPins({ readOnly: true });
         first.delete("s1");
         expect((await loadPins({ readOnly: true })).has("s1")).toBe(true);
+    });
+});
+
+describe("the T3 Code thread of a session", () => {
+    test("is the newest pin's T3 host, and a later pin with no host ends it", async () => {
+        await recordPin(pin({ sessionId: "s1", host: { kind: "t3", id: "thread:fixture%3Aone" }, at: 1_000 }));
+        expect(await t3ThreadOfSession("s1")).toBe("thread:fixture%3Aone");
+        await recordPin(pin({ sessionId: "s1", at: 2_000 }));
+        expect(await t3ThreadOfSession("s1")).toBeUndefined();
+        await recordPin(pin({ sessionId: "s2", host: { kind: "t3" }, at: 3_000 }));
+        expect(await t3ThreadOfSession("s2")).toBeUndefined();
+        expect(await t3ThreadOfSession("never-pinned")).toBeUndefined();
+    });
+
+    test("the desktop link keeps the thread id percent-encoded as T3 Code prints it", () => {
+        expect(t3AppLink("https://app.t3.codes/threads/env-1/thread%3Adelegated-task%3Acommand%253Amcp")).toBe(
+            "t3code://threads/env-1/thread%3Adelegated-task%3Acommand%253Amcp"
+        );
+        expect(t3AppLink("https://app.t3.codes/projects/env-1")).toBeUndefined();
+        expect(t3AppLink("not a url")).toBeUndefined();
     });
 });

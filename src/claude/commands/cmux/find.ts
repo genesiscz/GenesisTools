@@ -5,6 +5,7 @@ import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { logger, out } from "@genesiscz/utils/logger";
+import { openT3ThreadOfSession } from "@genesiscz/utils/t3code/session-thread";
 import pc from "picocolors";
 import { activateApp, focusTarget } from "./focus";
 import { locatePane } from "./read";
@@ -127,6 +128,21 @@ export async function findCommand(session: string, text: string | undefined, opt
 
             await printFindLink({ session, text: query, decision: opts.decision, at: picked, uses });
             return;
+        }
+
+        // A session T3 Code runs has its chat in T3 Code, not in a terminal: its thread is opened there. T3 Code cannot
+        // be asked to scroll to a turn, so the thread opens where the user left it.
+        const t3 = await openT3ThreadOfSession(session);
+        if (t3?.opened) {
+            out.println(
+                `${pc.green("✓")} opened its T3 Code thread "${t3.title}"` +
+                    pc.dim(` (T3 Code cannot jump to "${query}"; it is in that thread's chat)`)
+            );
+            return;
+        }
+
+        if (t3) {
+            log.info({ session, reason: t3.reason }, "the T3 Code thread did not open; looking for a terminal");
         }
 
         // A decision is found where it was first asked; a re-ask further down only names it.
