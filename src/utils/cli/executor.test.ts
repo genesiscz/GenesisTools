@@ -18,6 +18,7 @@ import {
     suggestEnumFlag,
 } from "@genesiscz/utils/cli/executor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { env } from "@genesiscz/utils/env";
 import { Command } from "commander";
 
 const LONG =
@@ -366,25 +367,13 @@ describe("Executor bounded calls", () => {
 describe("PLAIN_OUTPUT_ENV", () => {
     // A hub started from a GenesisTools terminal inherits CLICOLOR_FORCE=1, and gh then colours its JSON into a pipe.
     test("a child whose output is parsed sees no forced colour, whatever the parent set", async () => {
-        const saved = { CLICOLOR_FORCE: process.env.CLICOLOR_FORCE, FORCE_COLOR: process.env.FORCE_COLOR };
-        process.env.CLICOLOR_FORCE = "1";
-        process.env.FORCE_COLOR = "1";
-
-        try {
+        await env.testing.withOverrides({ CLICOLOR_FORCE: "1", FORCE_COLOR: "1" }, async () => {
             const res = await new Executor({ env: PLAIN_OUTPUT_ENV }).exec([
                 "sh",
                 "-c",
                 'printf "%s %s %s" "${CLICOLOR_FORCE-unset}" "${FORCE_COLOR-unset}" "${NO_COLOR-unset}"',
             ]);
             expect(res.stdout).toBe("unset unset 1");
-        } finally {
-            for (const [key, value] of Object.entries(saved)) {
-                if (value === undefined) {
-                    delete process.env[key];
-                } else {
-                    process.env[key] = value;
-                }
-            }
-        }
+        });
     });
 });
