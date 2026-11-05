@@ -6,6 +6,8 @@ import {
     wholeProject,
 } from "@genesiscz/utils/recording-editor/project";
 import { z } from "zod";
+import { type ScreenHitWithOps, screenHitsWithOps } from "./screen-ops";
+import type { ScreenHit } from "./screen-search";
 import {
     HOST_METHODS,
     hostApi,
@@ -322,6 +324,56 @@ export interface EditorGolden {
     opTags: string[];
     ops: unknown[];
     projects: Array<{ name: string; project: EditProject }>;
+}
+
+/**
+ * Three hits of a meeting's screen search (a shown line, a display the movie does not show, a line in the letterboxed
+ * display), as screen-search.json held them on 2026-11-05; kept here so this fixture does not move with that one.
+ */
+const SCREEN_HITS: ScreenHit[] = [
+    {
+        sec: 0,
+        untilSec: 9,
+        displayId: 1,
+        file: "frames/0001.jpg",
+        lines: ["API token: sk-123"],
+        shown: true,
+        boxes: [{ text: "API token: sk-123", x: 0.1, y: 0.35, width: 0.4, height: 0.05 }],
+    },
+    {
+        sec: 4,
+        untilSec: 12.5,
+        displayId: 4,
+        file: "frames/0002.jpg",
+        lines: ["Token rotation"],
+        shown: false,
+        boxes: [],
+    },
+    {
+        sec: 12.5,
+        untilSec: 14.5,
+        displayId: 4,
+        file: "frames/0004.jpg",
+        lines: ["Tokén list"],
+        shown: true,
+        boxes: [{ text: "Tokén list", x: 0.2, y: 0.725, width: 0.25, height: 0.045 }],
+    },
+];
+
+export interface ScreenHitOpsFixture {
+    about: string;
+    /** The movie's source length the ops are kept inside. */
+    durationSec: number;
+    hits: ScreenHitWithOps[];
+}
+
+/** `__fixtures__/screen-hit-ops.json`: screen hits as the REPL's findOnScreen and `find-screen --json` answer them. */
+export function screenHitOpsFixture(): ScreenHitOpsFixture {
+    return {
+        about: "Made from the TypeScript source by scripts/recorder/write-protocol-fixtures.ts (src/recorder/lib/screen-ops.ts): screen hits with the edit ops that hide, mark or cut each one, as find-screen --json and the REPL's findOnScreen answer. The editor's Find tab decodes them and sends the ops as they are (Tests/RecorderEditTests.swift).",
+        durationSec: 15,
+        hits: screenHitsWithOps(SCREEN_HITS, 15),
+    };
 }
 
 /** `__fixtures__/editor-golden.json`: what the TypeScript side writes, for the Swift side to read back unchanged. */

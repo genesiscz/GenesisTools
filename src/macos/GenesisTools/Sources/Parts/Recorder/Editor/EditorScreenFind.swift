@@ -26,10 +26,21 @@ struct ScreenHit: Decodable, Equatable, Identifiable {
     let shown: Bool
     /// The matching lines over the movie; empty when the movie does not show the frame.
     let boxes: [ScreenBox]
+    /// What the hit can become, as the TypeScript side names it (src/recorder/lib/screen-ops.ts): the window sends
+    /// these ops as they are and builds none itself.
+    let ops: ScreenHitOps
 
     var id: String { file }
     var sourceUs: Int64 { Int64((sec * 1_000_000).rounded()) }
     var untilUs: Int64 { Int64((untilSec * 1_000_000).rounded()) }
+}
+
+/// The edit ops of a screen hit: `hide[i]` blurs `boxes[i]` and `mark[i]` draws a box round it while the frame shows,
+/// `cut` removes the frame's time; all empty when the movie does not show the frame.
+struct ScreenHitOps: Decodable, Equatable {
+    let hide: [EditOp]
+    let mark: [EditOp]
+    let cut: [EditOp]
 }
 
 /// The Find tab: the text a frames recording or a meeting read off its screens (OCR), searched by
@@ -81,34 +92,54 @@ extension EditorModel {
         return "The search did not run: \(stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")"
     }
 
-    /// The `redact` ops that blur `boxes` of a hit while its frame shows, each a little larger than the OCR line so the
-    /// blur covers the letters' edges; one call to `tools recorder apply`, so one undo step.
-    nonisolated static func hideOps(_ hit: ScreenHit, boxes: [ScreenBox], durationUs: Int64) -> String {
-        let pad = 0.004
-        let to = min(hit.untilSec, Double(durationUs) / 1_000_000)
-        let ops: [[String: Any]] = boxes.map { box in
-            let x = max(0, box.x - pad), y = max(0, box.y - pad)
-            let rect: [String: Any] = ["x": x, "y": y, "width": min(1 - x, box.width + 2 * pad), "height": min(1 - y, box.height + 2 * pad)]
-            return ["op": "redact", "from": hit.sec, "to": to, "rect": rect, "style": "blur", "label": String(box.text.prefix(60))]
-        }
-        return (try? JSONSerialization.data(withJSONObject: ops, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
+    /// Hides the text of a hit (all its boxes, or the one at `box`) as hidden parts over that frame's time.
+    func hideScreenText(_ hit: ScreenHit, box: Int? = nil) {
+        applyScreenOps(hit, ops: picked(hit.ops.hide, box), box: box, done: "Hid", undo: "brings it back", failed: "was not hidden")
     }
 
-    /// Hides the text of a hit (all its boxes, or one) as hidden parts over that frame's time.
-    func hideScreenText(_ hit: ScreenHit, boxes: [ScreenBox]? = nil) {
-        let picked = boxes ?? hit.boxes
-        guard !picked.isEmpty, hit.untilUs > hit.sourceUs else { return }
-        let name = picked.count == 1 ? "“\(picked[0].text)”" : Plural.count(picked.count, "line")
-        applyOps(Self.hideOps(hit, boxes: picked, durationUs: project.source.durationUs)) { [weak self] result in
+    /// Draws a box round the text of a hit (all its boxes, or the one at `box`) over that frame's time.
+    func markScreenText(_ hit: ScreenHit, box: Int? = nil) {
+        applyScreenOps(hit, ops: picked(hit.ops.mark, box), box: box, done: "Marked", undo: "takes it away", failed: "was not marked")
+    }
+
+    /// Cuts the time the hit's frame shows.
+    func cutScreenMoment(_ hit: ScreenHit) {
+        guard !hit.ops.cut.isEmpty else { return }
+        let from = TimelineMap.outputTime(ofSource: hit.sourceUs, in: project).map { formatClock($0, tenths: true) } ?? "a cut part"
+        let span = String(format: "%.1f s", hit.untilSec - hit.sec)
+        applyOps(Self.json(hit.ops.cut)) { [weak self] result in
+            switch result {
+            case .success: self?.show("Cut the \(span) from \(from) that showed the text. ⌘Z brings it back.", error: false)
+            case let .failure(failure): self?.show("The moment was not cut: \(failure.reason)", error: true)
+            }
+        }
+    }
+
+    /// `ops` (one per box), or only box `box`'s.
+    private func picked(_ ops: [EditOp], _ box: Int?) -> [EditOp] {
+        guard let box else { return ops }
+        return ops.indices.contains(box) ? [ops[box]] : []
+    }
+
+    /// Sends the ops of a hit's boxes in one `apply`, so one undo step, and says what it did to which lines.
+    private func applyScreenOps(_ hit: ScreenHit, ops: [EditOp], box: Int?, done: String, undo: String, failed: String) {
+        guard !ops.isEmpty else { return }
+        let lines = box.map { hit.boxes.indices.contains($0) ? [hit.boxes[$0]] : [] } ?? hit.boxes
+        let name = lines.count == 1 ? "“\(lines[0].text)”" : Plural.count(lines.count, "line")
+        applyOps(Self.json(ops)) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success:
                 let from = TimelineMap.outputTime(ofSource: hit.sourceUs, in: self.project).map { formatClock($0, tenths: true) } ?? "a cut part"
-                self.show("Hid \(name) from \(from) while that frame shows. ⌘Z brings it back.", error: false)
+                self.show("\(done) \(name) from \(from) while that frame shows. ⌘Z \(undo).", error: false)
             case let .failure(failure):
-                self.show("\(name) was not hidden: \(failure.reason)", error: true)
+                self.show("\(name) \(failed): \(failure.reason)", error: true)
             }
         }
+    }
+
+    private nonisolated static func json(_ ops: [EditOp]) -> String {
+        (try? JSONSerialization.data(withJSONObject: EditOp.objects(ops), options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
     }
 
     /// Moves the playhead to a moment; a moment that was cut says so.
@@ -185,6 +216,8 @@ struct ScreenFindInspector: View {
                         ScreenHitRow(model: model, hit: hit, selected: model.selectedScreenHit == index)
                             .rowButton(cornerRadius: 5) { model.goToScreenHit(index) }
                             .accessibilityAction(named: "Hide the Text") { model.hideScreenText(hit) }
+                            .accessibilityAction(named: "Mark the Text") { model.markScreenText(hit) }
+                            .accessibilityAction(named: "Cut This Moment") { model.cutScreenMoment(hit) }
                             .accessibilityAddTraits(model.selectedScreenHit == index ? .isSelected : [])
                             .accessibilityIdentifier("recorder.find.hit.\(index)")
                             .liveRow(selected: model.selectedScreenHit == index)
@@ -195,9 +228,18 @@ struct ScreenFindInspector: View {
                         Text(hit.shown ? "This frame has no line boxes to hide." : "The movie shows another display then, so there is nothing to hide.")
                             .font(.system(size: 11)).foregroundStyle(RecorderPalette.dim)
                     } else {
+                        let lines = hit.boxes.count == 1 ? "this line" : "these \(hit.boxes.count) lines"
                         GhostButton("Hide This Text", symbol: "eye.slash",
-                                    tooltip: "Blur \(hit.boxes.count == 1 ? "this line" : "these \(hit.boxes.count) lines") while the frame shows; the preview outlines them",
+                                    tooltip: "Blur \(lines) while the frame shows; the preview outlines them",
                                     fullWidth: true, identifier: "recorder.find.hide") { model.hideScreenText(hit) }
+                        GhostButton("Mark It", symbol: "square.dashed",
+                                    tooltip: "Draw a box round \(lines) while the frame shows",
+                                    fullWidth: true, identifier: "recorder.find.mark") { model.markScreenText(hit) }
+                    }
+                    if !hit.ops.cut.isEmpty {
+                        GhostButton("Cut This Moment", symbol: "scissors",
+                                    tooltip: "Cut the \(String(format: "%.1f s", hit.untilSec - hit.sec)) this frame shows from the movie",
+                                    fullWidth: true, identifier: "recorder.find.cut") { model.cutScreenMoment(hit) }
                     }
                 }
             }
@@ -242,7 +284,7 @@ private struct ScreenHitRow: View {
 }
 
 /// The Find tab on the preview: the selected moment's matching lines, outlined where the movie shows them (through the
-/// zoom and the frame) while the playhead is on that frame, each with a Hide button.
+/// zoom and the frame) while the playhead is on that frame, each with a Hide and a Mark button.
 struct ScreenBoxOverlay: View {
     let model: EditorModel
     let clock: PlayheadClock
@@ -256,7 +298,7 @@ struct ScreenBoxOverlay: View {
                 let hit = hits[index]
                 let map = model.sourceToCanvas(atOutput: clock.outUs)
                 ZStack(alignment: .topLeading) {
-                    ForEach(Array(hit.boxes.enumerated()), id: \.offset) { _, box in
+                    ForEach(Array(hit.boxes.enumerated()), id: \.offset) { index, box in
                         let mapped = map.rect(CGRect(x: box.x, y: box.y, width: box.width, height: box.height)).intersection(map.shown)
                         if !mapped.isNull {
                             let rect = CGRect(x: mapped.minX * size.width, y: mapped.minY * size.height,
@@ -267,11 +309,17 @@ struct ScreenBoxOverlay: View {
                                 .frame(width: rect.width, height: rect.height)
                                 .allowsHitTesting(false)
                                 .offset(x: rect.minX, y: rect.minY)
-                            IconButton(systemName: "eye.slash", tooltip: "Hide “\(box.text)” while this frame shows", size: 11) {
-                                model.hideScreenText(hit, boxes: [box])
+                            HStack(spacing: 4) {
+                                IconButton(systemName: "eye.slash", tooltip: "Hide “\(box.text)” while this frame shows", size: 11) {
+                                    model.hideScreenText(hit, box: index)
+                                }
+                                .background(Circle().fill(Color.black.opacity(0.7)))
+                                IconButton(systemName: "square.dashed", tooltip: "Draw a box round “\(box.text)” while this frame shows", size: 11) {
+                                    model.markScreenText(hit, box: index)
+                                }
+                                .background(Circle().fill(Color.black.opacity(0.7)))
                             }
-                            .background(Circle().fill(Color.black.opacity(0.7)))
-                            .offset(x: min(size.width - 24, rect.maxX + 4), y: max(0, rect.midY - 11))
+                            .offset(x: min(size.width - 48, rect.maxX + 4), y: max(0, rect.midY - 11))
                         }
                     }
                 }

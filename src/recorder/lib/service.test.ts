@@ -20,6 +20,7 @@ import {
 import { callRecorder, LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import type { z } from "zod";
 import goldenFixture from "./__fixtures__/editor-golden.json";
+import screenOpsFixture from "./__fixtures__/screen-hit-ops.json";
 import fixture from "./__fixtures__/service-protocol.json";
 import schemasFixture from "./__fixtures__/service-protocol.schemas.json";
 import * as edits from "./edit";
@@ -28,7 +29,7 @@ import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
 import { EDITOR_TABS } from "./library";
 import { applyEdit, serviceRoutedMovie, undoLastEdit } from "./movie-client";
-import { editorGolden, protocolJsonSchemas } from "./protocol-fixtures";
+import { editorGolden, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
 import { hostCloseEditor, hostStill, ServiceHost } from "./service-client";
 import {
@@ -1087,6 +1088,10 @@ describe("the protocol fixture the Swift host tests read", () => {
 
     test("the editor golden file is what the TypeScript side makes (bun scripts/recorder/write-protocol-fixtures.ts)", () => {
         expect(SafeJSON.parse(SafeJSON.stringify(editorGolden()), { strict: true })).toEqual(goldenFixture);
+    });
+
+    test("the screen hit ops file is what the TypeScript side makes (bun scripts/recorder/write-protocol-fixtures.ts)", () => {
+        expect(SafeJSON.parse(SafeJSON.stringify(screenHitOpsFixture()), { strict: true })).toEqual(screenOpsFixture);
     });
 
     test("the golden file has an example of every op tag, and its methods are what a live service's hello lists", async () => {

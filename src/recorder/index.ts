@@ -51,6 +51,7 @@ import { applyEdit, undoLastEdit } from "./lib/movie-client";
 import { type DisplayRange, PROXY_DISPLAY_POLICIES, type ProxyDisplay, parseDisplayPlan } from "./lib/proxy";
 import { copyRecording, revealRecording, trashRecording } from "./lib/quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./lib/review";
+import { screenHitsWithOps } from "./lib/screen-ops";
 import { findOnScreen } from "./lib/screen-search";
 import { hostCloseEditor, hostOpenEditor } from "./lib/service-client";
 import {
@@ -1356,6 +1357,16 @@ program
         }
     );
 
+/** The source length of a recording's movie in seconds, to keep the hits' ops inside it; undefined without a movie. */
+async function movieSeconds(folder: string): Promise<number | undefined> {
+    try {
+        return (await openProject(folder)).project.source.durationUs / 1_000_000;
+    } catch (error) {
+        log.debug({ error, folder }, "find-screen: no movie, so the ops keep the frames' own ends");
+        return undefined;
+    }
+}
+
 program
     .command("find-screen")
     .description("Where a text was on the screen of a frames recording or a meeting (OCR), at source seconds")
@@ -1365,10 +1376,11 @@ program
     .option("--json", "print JSON")
     .action(async (value: string, text: string, flags: { limit?: string; json?: boolean }) => {
         try {
-            const hits = findOnScreen(resolveRecording(value), text, { limit: Number(flags.limit ?? 50) });
+            const folder = resolveRecording(value);
+            const hits = findOnScreen(folder, text, { limit: Number(flags.limit ?? 50) });
 
             if (flags.json) {
-                out.result(hits);
+                out.result(screenHitsWithOps(hits, await movieSeconds(folder)));
                 return;
             }
 

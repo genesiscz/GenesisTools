@@ -20,6 +20,7 @@ import {
     proxyVideoFilter,
 } from "./proxy";
 import { currentGif, shareableMovie, trashRecording } from "./quick-actions";
+import { screenHitsWithOps } from "./screen-ops";
 import { findOnScreen } from "./screen-search";
 
 function writeState(state: Record<string, unknown>): void {
@@ -347,6 +348,43 @@ describe("text on the screen", () => {
         expect(
             findOnScreen(only1, "token rotation").map((hit) => [hit.sec, hit.untilSec, hit.shown, hit.boxes])
         ).toEqual([[4, 12.5, false, []]]);
+    });
+
+    // The plan's B2 (2026-11-04): a box the Find tab found becomes a hidden part, a box annotation or a cut, through
+    // the edit ops the answer names; the window sends them as they are.
+    it("names the ops that hide, mark or cut a hit, inside the picture and inside the movie", () => {
+        const [first, other, last] = screenHitsWithOps(screenSearch.hits, 15);
+        const [hide] = last.ops.hide;
+        const [mark] = last.ops.mark;
+
+        expect(hide).toMatchObject({ op: "redact", from: 12.5, to: 14.5, style: "blur", label: "Tokén list" });
+        expect(hide.op === "redact" && [hide.rect.x, hide.rect.y, hide.rect.width, hide.rect.height]).toEqual([
+            expect.closeTo(0.196, 9),
+            expect.closeTo(0.721, 9),
+            expect.closeTo(0.258, 9),
+            expect.closeTo(0.053, 9),
+        ]);
+        expect(mark).toMatchObject({ op: "shape", kind: "box", from: 12.5, to: 14.5 });
+        expect(mark.op === "shape" && [mark.start?.x, mark.start?.y, mark.end?.x, mark.end?.y]).toEqual([
+            expect.closeTo(0.192, 9),
+            expect.closeTo(0.717, 9),
+            expect.closeTo(0.458, 9),
+            expect.closeTo(0.778, 9),
+        ]);
+        expect(last.ops.cut).toEqual([{ op: "cut", from: 12.5, to: 14.5 }]);
+        expect(first.ops.hide).toHaveLength(first.boxes.length);
+        expect(other.ops).toEqual({ hide: [], mark: [], cut: [] });
+
+        // A box at the picture's edge stays inside it, and the frame's span stays inside the movie.
+        const [edge] = screenHitsWithOps(
+            [{ ...first, boxes: [{ text: "x", x: 0.99, y: 0, width: 0.01, height: 0.02 }] }],
+            5
+        );
+        const [edgeHide] = edge.ops.hide;
+        expect(edgeHide.op === "redact" && edgeHide.rect.x + edgeHide.rect.width).toBeLessThanOrEqual(1 + 1e-9);
+        expect(edgeHide).toMatchObject({ from: 0, to: 5, rect: { y: 0 } });
+        expect(edge.ops.cut).toEqual([{ op: "cut", from: 0, to: 5 }]);
+        expect(screenHitsWithOps([first], 0)[0].ops).toEqual({ hide: [], mark: [], cut: [] });
     });
 
     it("places a frame box in the proxy picture as the scale and pad of the video filter do", () => {

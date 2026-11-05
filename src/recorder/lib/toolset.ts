@@ -84,7 +84,8 @@ import {
 import { serviceRoutedMovie } from "./movie-client";
 import { copyRecording, revealRecording, trashRecording } from "./quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./review";
-import { findOnScreen, type ScreenHit } from "./screen-search";
+import { type ScreenHitWithOps, screenHitsWithOps } from "./screen-ops";
+import { findOnScreen } from "./screen-search";
 import { hostCloseEditor, hostOpenEditor, hostSheet, hostStill } from "./service-client";
 import { parseStartFlags, type RecordOptions, readStartArgs, recordOptionsSchema, startArgsOf } from "./start-options";
 
@@ -763,8 +764,9 @@ const movieMethods = [
         name: "findOnScreen",
         params: z.object({ text: z.string().min(1), limit: z.number().int().positive().optional() }).strict(),
         result: z.unknown(),
-        resultName: "{ sec, untilSec, displayId, file, lines, shown, boxes: { text, x, y, width, height }[] }[]",
-        doc: "Where a text was on the screen of a frames recording (a meeting, or a library recording with OCR): each frame whose OCR holds it (case and accents ignored), at source seconds until untilSec (its next frame), with the matching lines; shown: the proxy movie shows that display then; boxes: those lines over the proxy movie as fractions of its picture, so redact({ from: sec, to: untilSec, rect: { x, y, width, height } }) with a box's numbers hides it (the editor's Find tab does). Jump there with show({ at: sec }).",
+        resultName:
+            "{ sec, untilSec, displayId, file, lines, shown, boxes: { text, x, y, width, height }[], ops: { hide, mark, cut } }[]",
+        doc: "Where a text was on the screen of a frames recording (a meeting, or a library recording with OCR): each frame whose OCR holds it (case and accents ignored), at source seconds until untilSec (its next frame), with the matching lines; shown: the proxy movie shows that display then; boxes: those lines over the proxy movie as fractions of its picture. ops names what a hit can become, for apply({ ops }): ops.hide[i] blurs boxes[i] and ops.mark[i] draws a box round it while the frame shows, ops.cut cuts the frame's time (all empty when the movie does not show it); the editor's Find tab sends the same ops. Jump there with show({ at: sec }).",
         effect: "read",
     }),
     defineMethod({
@@ -1771,7 +1773,7 @@ export class Movie {
         return folder;
     }
 
-    async findOnScreen(input: { text: string; limit?: number }): Promise<ScreenHit[]> {
+    async findOnScreen(input: { text: string; limit?: number }): Promise<ScreenHitWithOps[]> {
         const opened = await openProject(this.recording);
         const folder = recordingFolderOf(opened);
 
@@ -1779,7 +1781,8 @@ export class Movie {
             throw new Error(`${opened.project.source.video} is a plain movie: it has no frames with OCR to search`);
         }
 
-        return findOnScreen(folder, input.text, input.limit !== undefined ? { limit: input.limit } : {});
+        const hits = findOnScreen(folder, input.text, input.limit !== undefined ? { limit: input.limit } : {});
+        return screenHitsWithOps(hits, opened.project.source.durationUs / 1_000_000);
     }
 
     async shortcuts() {

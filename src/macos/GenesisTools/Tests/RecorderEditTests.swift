@@ -205,8 +205,7 @@ final class RecorderScreenFindViewTests: XCTestCase {
 
     func testTheFindTabListsEachMomentWithItsDisplayAndAClickGoesThere() throws {
         let model = model()
-        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: SharedEditorFixture.url("screen-search.json"))) as? [String: Any])
-        let hits = try JSONDecoder().decode([ScreenHit].self, from: JSONSerialization.data(withJSONObject: try XCTUnwrap(fixture["hits"])))
+        let hits = try Self.hits()
         model.displayPlan = DisplayPlan(policy: "most-change", windowSec: 10,
                                         ranges: [.init(fromUs: 0, toUs: 10_000_000, displayId: 1), .init(fromUs: 10_000_000, toUs: 15_000_000, displayId: 4)],
                                         displays: [(1, "Built-in Retina Display"), (4, "Studio")])
@@ -227,7 +226,10 @@ final class RecorderScreenFindViewTests: XCTestCase {
 
         // The selected moment offers to hide its text, and the preview outlines the line where the movie shows it.
         let selected = try EditorShots.write(ScreenFindInspector(model: model).padding(18), name: "find-on-screen-selected", width: 300)
-        XCTAssertTrue(try EditorShots.text(selected).lowercased().contains("hide this text"))
+        let offers = try EditorShots.text(selected).lowercased()
+        for word in ["hide this text", "mark it", "cut this moment"] {
+            XCTAssertTrue(offers.contains(word), "\(word) missing from: \(offers)")
+        }
         let preview = ZStack {
             LinearGradient(colors: [Color(white: 0.25), Color(white: 0.1)], startPoint: .top, endPoint: .bottom)
             Text("Tokén list").font(.system(size: 13)).foregroundStyle(.white)
@@ -238,45 +240,42 @@ final class RecorderScreenFindViewTests: XCTestCase {
         try EditorShots.write(preview, name: "find-on-screen-box-on-preview", width: 640)
     }
 
-    /// A box becomes a hidden part through the `redact` op in `tools recorder apply`, over that frame's time, a little
-    /// larger than the OCR line; the picture fractions come from find-screen as they are.
-    func testHidingAScreenBoxSendsARedactOpOverTheFramesTime() throws {
+    /// The hits as find-screen --json and the REPL's findOnScreen answer them: with the ops that hide, mark or cut each.
+    private static func hits() throws -> [ScreenHit] {
+        let fixture = try RecorderFixtures.object("screen-hit-ops.json")
+        return try JSONDecoder().decode([ScreenHit].self, from: JSONSerialization.data(withJSONObject: try XCTUnwrap(fixture["hits"])))
+    }
+
+    // The plan's B2 (2026-11-04): a found box becomes a hidden part, a box annotation or a cut. The window sends the ops
+    // the answer names (src/recorder/lib/screen-ops.ts), as they are, one `tools recorder apply` each: one undo step.
+    func testAScreenBoxBecomesAHiddenPartAMarkOrACutThroughTheOpsTheAnswerNames() throws {
         let model = model()
-        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: SharedEditorFixture.url("screen-search.json"))) as? [String: Any])
-        let hits = try JSONDecoder().decode([ScreenHit].self, from: JSONSerialization.data(withJSONObject: try XCTUnwrap(fixture["hits"])))
+        let hits = try Self.hits()
         let hit = hits[2]
         XCTAssertEqual(hit.untilSec, 14.5)
         XCTAssertEqual(hit.boxes.first?.y ?? 0, 0.725, accuracy: 1e-9, "the 16:9 display sits between bars in the 16:10 movie")
-        XCTAssertTrue(hits[1].boxes.isEmpty, "a display the movie does not show has nothing to hide")
+        XCTAssertTrue(hits[1].ops.cut.isEmpty && hits[1].boxes.isEmpty, "a display the movie does not show has nothing to change")
+        let fixture = try XCTUnwrap(try RecorderFixtures.object("screen-hit-ops.json")["hits"] as? [[String: Any]])
+        let named = try XCTUnwrap(fixture[2]["ops"] as? [String: [Any]])
 
-        var sent: [String] = []
+        var sent: [[String]] = []
         model.runTools = { argv, done in
-            sent = argv
+            sent.append(argv)
             done(1, "", "no edit to change\n")
         }
         model.hideScreenText(hit)
-        XCTAssertEqual(Array(sent.prefix(3)), ["recorder", "apply", model.store.url.path])
-        let ops = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sent[3].utf8)) as? [[String: Any]])
-        XCTAssertEqual(ops.count, 1)
-        XCTAssertEqual(ops[0]["op"] as? String, "redact")
-        XCTAssertEqual(ops[0]["from"] as? Double, 12.5)
-        XCTAssertEqual(ops[0]["to"] as? Double, 14.5)
-        XCTAssertEqual(ops[0]["style"] as? String, "blur")
-        XCTAssertEqual(ops[0]["label"] as? String, "Tokén list")
-        let rect = try XCTUnwrap(ops[0]["rect"] as? [String: Double])
-        XCTAssertEqual(rect["x"] ?? 0, 0.196, accuracy: 1e-9)
-        XCTAssertEqual(rect["y"] ?? 0, 0.721, accuracy: 1e-9)
-        XCTAssertEqual(rect["width"] ?? 0, 0.258, accuracy: 1e-9)
-        XCTAssertEqual(rect["height"] ?? 0, 0.053, accuracy: 1e-9)
+        model.markScreenText(hit, box: 0)
+        model.cutScreenMoment(hit)
+        XCTAssertEqual(sent.map { Array($0.prefix(3)) }, Array(repeating: ["recorder", "apply", model.store.url.path], count: 3))
+        let ops = try sent.map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0[3].utf8)) as? [Any]) }
+        XCTAssertEqual(try normalized(ops[0]), try normalized(try XCTUnwrap(named["hide"])), "the blur the answer names")
+        XCTAssertEqual(try normalized(ops[1]), try normalized(try XCTUnwrap(named["mark"])), "the box round the line")
+        XCTAssertEqual(try normalized(ops[2]), try normalized(try XCTUnwrap(named["cut"])), "the frame's time")
         XCTAssertTrue(model.noticeIsError, "a refused op says so")
+    }
 
-        // A box at the picture's edge stays inside it, and the end stays inside the movie.
-        let edge = ScreenBox(text: "x", x: 0.99, y: 0, width: 0.01, height: 0.02)
-        let clamped = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(EditorModel.hideOps(hit, boxes: [edge], durationUs: 13_000_000).utf8)) as? [[String: Any]])
-        let edgeRect = try XCTUnwrap(clamped.first?["rect"] as? [String: Double])
-        XCTAssertLessThanOrEqual((edgeRect["x"] ?? 0) + (edgeRect["width"] ?? 0), 1.0000001)
-        XCTAssertEqual(edgeRect["y"], 0)
-        XCTAssertEqual(clamped.first?["to"] as? Double, 13)
+    private func normalized(_ value: Any) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
     }
 
     func testAMovieWithoutARecordingSaysWhyItHasNoScreenText() throws {

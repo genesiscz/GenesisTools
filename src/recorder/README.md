@@ -53,7 +53,10 @@ tools recorder proxy <recording> --undo-switch   # takes the last display switch
 tools recorder find-screen <recording> <text>    # where a text was on the screen (OCR), at source seconds until
                                                  # its frame's next one, with the lines' boxes over the proxy movie;
                                                  # the editor's Find tab (⌘F) lists them, a click goes there, and
-                                                 # Hide This Text (or a box's eye on the preview) blurs them
+                                                 # Hide This Text (or a box's eye on the preview) blurs them, Mark It
+                                                 # draws a box round them, Cut This Moment cuts the frame's time;
+                                                 # --json (and the REPL's findOnScreen) names those ops per hit:
+                                                 # ops.hide[i] and ops.mark[i] for boxes[i], ops.cut, for apply
 tools recorder words <recording> [--at T]       # each transcript line's words as cut-words splits and times them
 tools recorder cut-words <recording> --at T --words "you know" [--occurrence N] [--dry-run]  # cut words out of the
                                                  # line at T: every place, or with --occurrence only the Nth
