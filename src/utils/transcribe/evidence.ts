@@ -112,10 +112,10 @@ export function lineEvidence(
     const lines = new TranscriptLines(entries);
     const timed = entries.flatMap((entry, at) => {
         const span = lines.span(at);
-        return span ? [{ entry, span }] : [];
+        return span ? [{ entry, span, index: at }] : [];
     });
 
-    return timed.map(({ entry, span }, index) => {
+    return timed.map(({ entry, span, index }) => {
         const startSec = entry.startSec!;
         const fromSec = span.fromSec;
         const endSec = span.toSec;

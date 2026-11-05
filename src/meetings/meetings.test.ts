@@ -1939,6 +1939,7 @@ describe("evidence --raw", () => {
             evidence: null,
             points: [],
         });
+        expect(raw.lines.map((entry) => entry.index)).toEqual([1, 2, 3]);
         expect(raw.lines.map((entry) => [entry.label, entry.text])).toEqual([
             ["Bob Example", "To právě."],
             ["Carol Example", "Já ti ho pošlu novej."],
