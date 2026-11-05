@@ -19,16 +19,24 @@ function clipped(text: string): { shown: string; more: number } {
     return { shown: lines.slice(0, DETAIL_LINES).join("\n"), more: Math.max(0, lines.length - DETAIL_LINES) };
 }
 
-function Mono({ text, testID }: { text: string; testID?: string }) {
+export function Mono({ text, testID }: { text: string; testID?: string }) {
     const c = useThemeColors();
+    const [expanded, setExpanded] = useState(false);
     const { shown, more } = clipped(text);
 
     return (
         <View className="gap-1 rounded-xl p-3" style={{ backgroundColor: c.bgBase }}>
             <Text testID={testID} selectable style={{ color: c.textPrimary, fontFamily: "monospace", fontSize: 12 }}>
-                {shown}
+                {expanded ? text : shown}
             </Text>
-            {more > 0 ? <Text style={{ color: c.textMuted, fontSize: 11 }}>{`+${more} more lines`}</Text> : null}
+            {more > 0 ? (
+                <Pressable accessibilityRole="button" accessibilityLabel={expanded ? "Show fewer lines" : "Show full approval details"}
+                    accessibilityState={{ expanded }} onPress={() => setExpanded((value) => !value)}>
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                        {expanded ? "Show fewer lines" : `Show all ${more} more lines`}
+                    </Text>
+                </Pressable>
+            ) : null}
         </View>
     );
 }
