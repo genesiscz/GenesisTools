@@ -389,6 +389,8 @@ export async function runRecorder(options: {
         let paused = false;
         let pausedAt: string | undefined;
         let stopRequested = false;
+        /** The capture loop has ended (a stop, failed captures or an error): the finish runs, nothing changes any more. */
+        let ended = false;
         let wake: (() => void) | undefined;
         /** The captures of the running piece (shared capture coordination); its hooks are set below. */
         const pieceHooks: PieceCapturesOptions["hooks"] = {};
@@ -429,7 +431,7 @@ export async function runRecorder(options: {
             return display;
         };
         const refuseWhenStopping = () => {
-            if (stopRequested) {
+            if (stopRequested || ended) {
                 throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is stopping");
             }
         };
@@ -567,7 +569,7 @@ export async function runRecorder(options: {
                         return { ...audio, muted: { ...audio.muted } };
                     },
                     pause: async () => {
-                        if (stopRequested) {
+                        if (stopRequested || ended) {
                             throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is stopping");
                         }
 
@@ -584,7 +586,7 @@ export async function runRecorder(options: {
                         return { state: "paused" };
                     },
                     resume: async () => {
-                        if (!paused || stopRequested) {
+                        if (!paused || stopRequested || ended) {
                             throw new RpcError(RPC_ERRORS.notPaused, "the recording is not paused");
                         }
 
@@ -1073,6 +1075,8 @@ export async function runRecorder(options: {
             note(`the recorder stopped on an error: ${errorText(err)}`);
             state.stopReason = "error";
         } finally {
+            ended = true;
+            live.update({ state: "stopping" });
             process.off("SIGTERM", onSignal);
             process.off("SIGINT", onSignal);
             rmSync(pieceDir, { recursive: true, force: true });

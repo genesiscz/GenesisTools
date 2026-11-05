@@ -2179,6 +2179,11 @@ describe("the meetings recorder loop", () => {
         failurePauseMs?: number;
         /** What the test does over the socket as a capture fails. */
         onFail?: (call: (method: string, params?: unknown) => Promise<unknown>) => void;
+        /** What the test does over the socket while the failure notice is sent (inside the finish); its answer is `notified`. */
+        duringNotify?: (
+            call: (method: string, params?: unknown) => Promise<unknown>,
+            liveDir: string
+        ) => Promise<unknown>;
         /** What the test does over the socket at each hanging piece; after the last, it stops the recording. */
         actions?: Array<
             (
@@ -2203,6 +2208,7 @@ describe("the meetings recorder loop", () => {
         const notes: RecorderNote[] = [];
         const seenLive: string[] = [];
         const answers: unknown[] = [];
+        let notified: unknown;
         const call = (method: string, params?: unknown) =>
             callRecorder({ id: meetingLiveId(created.id), method, params, dir: liveDir }).catch(
                 (error: unknown) => error
@@ -2257,6 +2263,7 @@ describe("the meetings recorder loop", () => {
                 }),
                 notify: async (note) => {
                     notes.push(note);
+                    notified = await options.duringNotify?.(call, liveDir);
                 },
                 liveDir,
                 pieceSec: 1,
@@ -2264,7 +2271,18 @@ describe("the meetings recorder loop", () => {
             },
         });
         const folder = store.folder(created.id);
-        return { store, state, notes, recorder, liveDir, seenLive, answers, folder, saved: store.read(created.id) };
+        return {
+            store,
+            state,
+            notes,
+            recorder,
+            liveDir,
+            seenLive,
+            answers,
+            notified,
+            folder,
+            saved: store.read(created.id),
+        };
     }
 
     test("every display at once, named by id; a display that leaves between pieces leaves without an error", async () => {
@@ -2629,6 +2647,30 @@ describe("the meetings recorder loop", () => {
         expect(last).toMatchObject({ stopReason: "failed", warning: expect.stringContaining("did not end within") });
         expect(run.notes.map((note) => note.title)).toEqual(["Screen recording stopped"]);
         expect(run.notes[0]?.message).toContain("record start --meeting");
+    });
+
+    test("a recording that ended on failed captures refuses a pause or a change during its finish, shows it is stopping, and still takes a stop", async () => {
+        let liveState: string | undefined;
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["fail", "fail", "fail"],
+            duringNotify: async (call, liveDir) => {
+                liveState = listLiveRecordings(liveDir).at(0)?.state;
+                return [
+                    await call("pause"),
+                    await call("settings.set", { activeFps: 2 }),
+                    await call("stop", { wait: false }),
+                ];
+            },
+        });
+        const [pause, settings, stop] = run.notified as unknown[];
+
+        expect(pause).toMatchObject({ code: RPC_ERRORS.alreadyStopped });
+        expect(settings).toMatchObject({ code: RPC_ERRORS.alreadyStopped });
+        expect(stop).toEqual({ state: "stopping", job: expect.stringMatching(/^finish-/) });
+        expect(liveState).toBe("stopping");
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "failed" });
+        expect(run.saved?.history.map((entry) => entry.change)).not.toContain("paused");
     });
 
     test("an error outside the capture still ends the recording, with the reason", async () => {
