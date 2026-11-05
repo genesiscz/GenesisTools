@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { execTool } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { type RecordingStoreId, recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { exportAs } from "./edit";
@@ -112,7 +113,7 @@ export async function revealRecording(folder: string, { meeting = false }: { mee
 }
 
 /**
- * Moves a library recording to the Trash (Finder's Put Back undoes it). A folder its store keeps (a meeting's) is
+ * Moves a library recording through the shared removal policy. `tools rm trash` lists its restore command. A kept meeting is
  * refused. `roots` replaces a store's root, for a test.
  */
 export async function trashRecording(
@@ -127,7 +128,10 @@ export async function trashRecording(
         );
     }
 
-    await run(["/usr/bin/trash", folder]);
-    log.debug({ folder }, "moved a recording to the Trash");
+    const result = await execTool(["rm", folder], { timeout: 30_000 });
+    if (!result.success) {
+        throw new Error(result.stderr || result.stdout || "removal policy refused the recording; no file was moved");
+    }
+    log.debug({ folder }, "moved a recording through the removal policy");
     return { trashed: folder };
 }

@@ -871,7 +871,7 @@ const movieMethods = [
         params: z.object({}).strict(),
         result: z.unknown(),
         resultName: "{ trashed }",
-        doc: "Moves a library recording's folder to the Trash (Finder's Put Back restores it). A meeting's screen recording is refused: its folder holds the whole meeting.",
+        doc: `Moves a library recording through the shared removal policy and recovery trash. Use ${toolCommand("rm", "trash")} to find its restore command. A meeting's screen recording is refused: its folder holds the whole meeting.`,
         effect: "destructive",
     }),
     defineMethod({
