@@ -27,7 +27,9 @@ final class FaceLifecycleTests: XCTestCase {
         first()
         second()
         XCTAssertEqual(try String(contentsOf: log, encoding: .utf8), "widget\nhub\n")
-        let archives = try FileManager.default.contentsOfDirectory(at: scratch, includingPropertiesForKeys: nil).filter { $0 != log }
+        // By name: the listing gives /private/var/… URLs for the /var/… scratch folder, so the URLs never compare equal.
+        let archives = try FileManager.default.contentsOfDirectory(at: scratch, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent != log.lastPathComponent }
         XCTAssertEqual(archives.count, 2)
         let previous = try archives.map { try String(contentsOf: $0, encoding: .utf8) }.joined()
         XCTAssertTrue(previous.contains("widget\n"))
