@@ -3,6 +3,7 @@ import Foundation
 import XCTest
 @testable import GenesisKitBase
 @testable import GenesisKit
+@testable import GenesisKitCamera
 @testable import GenesisKitPosture
 
 /// Dev mode's debug recording: a movie of the analyzed frames and one NDJSON line per reading.

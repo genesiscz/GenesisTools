@@ -5,6 +5,7 @@ import ImageIO
 import XCTest
 @testable import GenesisKitBase
 @testable import GenesisKit
+@testable import GenesisKitCamera
 @testable import GenesisKitPosture
 
 /// Replays real camera frames through the Vision body engine and the scorer. The frames come from

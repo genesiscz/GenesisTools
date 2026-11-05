@@ -2,6 +2,7 @@ import Combine
 import XCTest
 @testable import GenesisKitBase
 @testable import GenesisKit
+@testable import GenesisKitCamera
 @testable import GenesisKitPosture
 
 /// Records the modes a monitor asks for, instead of a camera.

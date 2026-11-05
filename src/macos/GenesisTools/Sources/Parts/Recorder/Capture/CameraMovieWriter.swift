@@ -1,6 +1,6 @@
 import AVFoundation
 import Foundation
-import GenesisKitPosture
+import GenesisKitCamera
 
 /// Writes the camera's frames into one H.264 movie. Paused time is left out, as the screen recorder leaves it out of
 /// `screen.mp4`, so both movies keep one timeline. Frames arrive on the camera's delivery queue; every call holds

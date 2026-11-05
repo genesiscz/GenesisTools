@@ -33,7 +33,10 @@ the libraries it imports, so an optional part costs an app nothing until it uses
   layouts. Any app may import it. `Sparkline`, the native charts and `ChartColor` stay in the core.
 - `GenesisKitOverlay` (`Sources/GenesisKitOverlay/`): screen effects (`ScreenEffectsController`: tints, edge glow,
   a draggable message pill per display). Any app may import it; it needs only the core.
-- `GenesisKitPosture` (`Sources/GenesisKitPosture/`): PostureWatcher's `Camera/`, `Pose/` and `Posture/`. Genesis's.
+- `GenesisKitCamera` (`Sources/GenesisKitCamera/`): one webcam, its grant, preview and the reason it cannot watch
+  (`PostureCameraIssue`). Any app may import it; GenesisTools' recorder does for the camera bubble (2026-11-05).
+- `GenesisKitPosture` (`Sources/GenesisKitPosture/`): PostureWatcher's `Pose/` and `Posture/`, on the camera library,
+  which it re-exports (`CameraExport.swift`), so `import GenesisKitPosture` still sees the camera. Genesis's.
 - `GenesisKitDisk` (`Sources/GenesisKitDisk/`): the Disk Manager's `Disk/`. Genesis's.
 
 A part goes into the core only when GenesisTools.app uses it; otherwise into a library of its own. The libraries reach
@@ -59,7 +62,7 @@ A fixture an app test needs goes there under its own name, never into a test tar
 | `Cmux/` | `CmuxTree`, `CmuxTarget`, `CmuxTargetPicker` (Tree / Layout), `CmuxSessionPanel` |
 | `Settings/` | the settings window (`FeatureSettingsWindowController`, `NativeSettingsStore`, pages and controls, `NativeSettingsTilePicker`), the plug-in contract for a window that several parts of an app add pages to (`FeatureSettingsPlugin`, `FeatureSettingsPluginHost`, `FeatureSettingsMode`) with the two pages every such window has (`FeatureSettingsPages.general`, `.about(additionalInfo:)`), its look (`NativeSettingsAppearance`, `NativeSettingsBackdrop`, `NativePaneFill` / `NativePaneBackground` for a host that draws its panes in that look), and the hub's preferences with their Hub pages (`HubPreferences`, `HubSettingsPages`) |
 | `Alerts/` | Turning measured values into alert events (`AlertPolicy`: tiers, hysteresis, snooze, quiet hours), and the channels that show them (`AlertDispatcher`, `AlertChannelMatrix`) |
-| `GenesisKitPosture/Camera/` | One webcam at low energy (`CameraFrameSource`: VGA, device frame rate, interval bursts with the light off in between), its preview, the camera grant and the device list |
+| `GenesisKitCamera/` | One webcam at low energy (`CameraFrameSource`: VGA, device frame rate, interval bursts with the light off in between), its preview, the camera grant and the device list |
 | `GenesisKitDisk/Disk/` | Free-space sampling (`VolumeSpaceMonitor`), forecasts, history, a resumable FSEvents stream, the big-file radar, the du index reader and the decoders for the tools disk commands (`ToolsDiskProvider`); unrelated to `DiskCache` in `Tools/` |
 | `GenesisKitOverlay/` | Screen effects: click-through panels over every display (vignette, sepia, blur, dim, edge glow), a message pill and a camera bubble (`ScreenEffectsController`) |
 | `GenesisKitPosture/Pose/` | Pose samples, the Vision body and face engines and the AirPods engine, and the skeleton overlay |

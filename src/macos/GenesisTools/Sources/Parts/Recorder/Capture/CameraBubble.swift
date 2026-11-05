@@ -1,5 +1,5 @@
 import AppKit
-import GenesisKitPosture
+import GenesisKitCamera
 import SwiftUI
 
 /// The camera bubble beside a recording. With "Camera bubble" on in the capture picker, a round live preview floats

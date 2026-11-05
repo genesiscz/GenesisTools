@@ -4,6 +4,7 @@ import Foundation
 import XCTest
 @testable import GenesisKitBase
 @testable import GenesisKit
+@testable import GenesisKitCamera
 @testable import GenesisKitPosture
 
 /// The Vision engines on synthetic 640x480 frames: what they return, and what one request costs.
