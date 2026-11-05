@@ -109,7 +109,7 @@ struct MeetingDetailView: View {
             if !proposed.isEmpty {
                 items.append(.note("Proposed"))
                 items += proposed.map { proposal in
-                    .action("\(proposal.project)  (\(Int((proposal.score * 100).rounded())) %)", checked: proposal.project == current) {
+                    .action("\(proposal.project)  (\(Int(proposal.score.rounded())) points)", checked: proposal.project == current) {
                         detail.setProject(proposal.project)
                     }
                 }
