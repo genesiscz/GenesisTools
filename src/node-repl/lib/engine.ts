@@ -202,7 +202,11 @@ export class ReplEngine {
         void this.drainStderr(worker);
 
         for (const dir of this.moduleDirs) {
-            this.send(worker, { id: this.nextId++, op: "addDir", dir });
+            void this.send(worker, { id: this.nextId++, op: "addDir", dir }).catch((error: unknown) => {
+                if (this.worker === worker) {
+                    this.killWorker(`registering ${dir} failed: ${String(error)}`);
+                }
+            });
         }
 
         this.ready = this.preload(worker);
@@ -329,10 +333,13 @@ export class ReplEngine {
         }
     }
 
-    private send(worker: ReplWorker, request: Record<string, unknown>): void {
-        const stdin = worker.stdin as { write(data: string): void; flush(): void };
-        stdin.write(`${SafeJSON.stringify(request)}\n`);
-        stdin.flush();
+    private async send(worker: ReplWorker, request: Record<string, unknown>): Promise<void> {
+        const stdin = worker.stdin as {
+            write(data: string): number | Promise<number>;
+            flush(): number | Promise<number>;
+        };
+        await stdin.write(`${SafeJSON.stringify(request)}\n`);
+        await stdin.flush();
     }
 
     private killWorker(reason: string): void {
@@ -370,7 +377,11 @@ export class ReplEngine {
                 clearTimeout(timer);
                 resolve(response);
             });
-            this.send(worker, { ...payload, id });
+            void this.send(worker, { ...payload, id }).catch((error: unknown) => {
+                const settle = this.pending.get(id);
+                this.pending.delete(id);
+                settle?.({ id, ok: false, text: "", images: [], error: `worker write failed: ${String(error)}` });
+            });
         });
     }
 
