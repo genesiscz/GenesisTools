@@ -523,9 +523,8 @@ enum ContactSheet {
         context.setFillColor(CGColor(red: 0.08, green: 0.08, blue: 0.09, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         context.interpolationQuality = .high
-        let previous = NSGraphicsContext.current
-        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
-        defer { NSGraphicsContext.current = previous }
+        // Core Text, not AppKit string drawing, so a sheet draws on any thread (the host renders it off the main one).
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .semibold) as CTFont
         for (index, frame) in frames.enumerated() {
             let column = index % columns
             let row = index / columns
@@ -533,16 +532,19 @@ enum ContactSheet {
             let rect = CGRect(x: gap + column * (tileWidth + gap), y: height - (row + 1) * (tileHeight + gap),
                               width: tileWidth, height: tileHeight)
             context.draw(frame.image, in: rect)
-            let label = NSAttributedString(string: formatClock(Int64((frame.seconds * 1_000_000).rounded()), tenths: true), attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .semibold),
-                .foregroundColor: NSColor.white,
+            let text = NSAttributedString(string: formatClock(Int64((frame.seconds * 1_000_000).rounded()), tenths: true), attributes: [
+                NSAttributedString.Key(kCTFontAttributeName as String): font,
+                NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 1, alpha: 1),
             ])
-            let size = label.size()
-            let plate = CGRect(x: rect.minX + 8, y: rect.minY + 8, width: size.width + 14, height: size.height + 6)
+            let line = CTLineCreateWithAttributedString(text)
+            var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+            let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+            let plate = CGRect(x: rect.minX + 8, y: rect.minY + 8, width: width + 14, height: ascent + descent + leading + 6)
             context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.7))
             context.addPath(CGPath(roundedRect: plate, cornerWidth: 5, cornerHeight: 5, transform: nil))
             context.fillPath()
-            label.draw(at: CGPoint(x: plate.minX + 7, y: plate.minY + 3))
+            context.textPosition = CGPoint(x: plate.minX + 7, y: plate.minY + 3 + descent + leading)
+            CTLineDraw(line, context)
         }
         return context.makeImage()!
     }

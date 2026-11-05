@@ -401,6 +401,45 @@ final class RecorderServiceHostTests: XCTestCase {
         XCTAssertEqual(missing, -32603, "a render that fails answers its error")
     }
 
+    /// The three renders the host answers run off the main thread. A still and a sheet finish while the test holds the
+    /// main thread; an export opens the edit, builds its composition and writes its movie while the main thread is held,
+    /// and its progress reaches the main thread once it is free.
+    func testTheRendersRunWhileTheMainThreadIsHeld() async throws {
+        let movie = folder.appendingPathComponent("screen.mp4")
+        try await makeMovie(at: movie, frames: 90)
+        let stillOut = folder.appendingPathComponent("held-still.png").path
+        let sheetOut = folder.appendingPathComponent("held-sheet.png").path
+        let rendered = DispatchSemaphore(value: 0)
+        let renders = Task.detached { () throws -> [Bool] in
+            defer { rendered.signal() }
+            let still = try await RecorderRenders.still(source: movie.path, atSeconds: 1, out: stillOut, full: false)
+            let sheet = try await RecorderRenders.sheet(source: movie.path, times: [0.5, 1, 1.5], out: sheetOut)
+            return [still["ok"] as? Bool == true, sheet["ok"] as? Bool == true]
+        }
+        // This holds the main thread until the renders end, or 15 s.
+        XCTAssertEqual(rendered.wait(timeout: .now() + 15), .success, "a still and a sheet finish while the main thread is held")
+        let answered = try await renders.value
+        XCTAssertEqual(answered, [true, true])
+
+        let out = folder.appendingPathComponent("held.mp4")
+        let partial = folder.appendingPathComponent("held.partial.mp4")
+        let progress = ProgressCalls()
+        let export = Task.detached {
+            try await RecorderRenders.export(source: movie.path, out: out.path) { fraction in progress.append(fraction) }
+        }
+        let deadline = Date().addingTimeInterval(15)
+        // Held again: the export must get to its movie file without the main thread.
+        while !FileManager.default.fileExists(atPath: partial.path), !FileManager.default.fileExists(atPath: out.path), Date() < deadline {
+            usleep(5_000)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: partial.path) || FileManager.default.fileExists(atPath: out.path),
+                      "the export writes its movie while the main thread is held")
+        let result = try await export.value
+        XCTAssertGreaterThan(result.bytes, 0)
+        XCTAssertEqual(progress.fractions.last, 1, "the progress ends at 1")
+        XCTAssertTrue(progress.allOnMain, "every progress call runs on the main thread, as the host's notifications need")
+    }
+
     func testRenderExportSendsProgressThenTheHeadlessFields() async throws {
         let movie = folder.appendingPathComponent("screen.mp4")
         try await makeMovie(at: movie, frames: 180)
@@ -531,4 +570,18 @@ private enum LiveRecordingRPCClientIncomingStub {
     static func params(_ object: [String: Any]) -> RecorderHostMethods.Params {
         RecorderHostMethods.Params(method: "render.snapshot", object: object)
     }
+}
+
+/// An export's progress calls, with whether each one ran on the main thread.
+private final class ProgressCalls: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls: [(fraction: Double, onMain: Bool)] = []
+
+    func append(_ fraction: Double) {
+        let onMain = Thread.isMainThread
+        lock.withLock { calls.append((fraction, onMain)) }
+    }
+
+    var fractions: [Double] { lock.withLock { calls.map(\.fraction) } }
+    var allOnMain: Bool { lock.withLock { calls.allSatisfy(\.onMain) } }
 }

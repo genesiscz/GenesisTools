@@ -635,8 +635,9 @@ struct EditRenderer {
     }
 }
 
-/// Writes a project's movie with AVFoundation's hardware encoder. Progress comes from a 0.25 s timer on the
-/// session (AVAssetExportSession has no progress callback before macOS 15); the export never overwrites its input.
+/// Writes a project's movie with AVFoundation's hardware encoder, off the main actor; only the progress and the cancel
+/// check run on it, every 0.25 s (AVAssetExportSession has no progress callback before macOS 15). The export never
+/// overwrites its input.
 @MainActor
 final class EditExporter {
     struct Result {
@@ -655,7 +656,7 @@ final class EditExporter {
         return Int64(bitsPerSecond / 8 * Double(lengthUs) / 1_000_000)
     }
 
-    static func outputURL(for project: EditProject, format: EditProject.ExportFormat = .mp4) -> URL {
+    nonisolated static func outputURL(for project: EditProject, format: EditProject.ExportFormat = .mp4) -> URL {
         if !project.export.output.isEmpty {
             return URL(fileURLWithPath: (project.export.output as NSString).expandingTildeInPath)
                 .deletingPathExtension().appendingPathExtension(format.rawValue)
@@ -673,7 +674,7 @@ final class EditExporter {
     }
 
     /// The recording's title made safe for a file name, else `<movie>-edited`.
-    static func defaultName(for project: EditProject) -> String {
+    nonisolated static func defaultName(for project: EditProject) -> String {
         let source = URL(fileURLWithPath: project.source.video)
         let manifest = source.deletingLastPathComponent().appendingPathComponent("recording.json")
         if let data = try? Data(contentsOf: manifest),
@@ -686,9 +687,10 @@ final class EditExporter {
     }
 
     /// `isCancelled` is read every 0.25 s while the session runs; true stops it, removes the partial file and throws a
-    /// CancellationError.
-    static func export(project: EditProject, to url: URL, isCancelled: @escaping () -> Bool = { false },
-                       onProgress: @escaping (Double) -> Void) async throws -> Result {
+    /// CancellationError. Both closures run on the main actor; the rest (the cursor track, the composition, the files)
+    /// does not.
+    nonisolated static func export(project: EditProject, to url: URL, isCancelled: @escaping @MainActor () -> Bool = { false },
+                                   onProgress: @escaping @MainActor (Double) -> Void) async throws -> Result {
         let started = Date()
         guard url.standardizedFileURL.path != URL(fileURLWithPath: project.source.video).standardizedFileURL.path else {
             throw ExportError.overwritesInput(url.path)
@@ -709,18 +711,23 @@ final class EditExporter {
         session.videoComposition = rendered.videoComposition
         session.audioMix = rendered.audioMix
         session.shouldOptimizeForNetworkUse = true
-        let timer = Timer(timeInterval: 0.25, repeats: true) { _ in
-            MainActor.assumeIsolated {
-                if isCancelled() { session.cancelExport() }
-                onProgress(Double(session.progress))
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        defer { timer.invalidate() }
+        var watch: Task<Void, Never>?
+        defer { watch?.cancel() }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             session.exportAsynchronously { continuation.resume() }
+            // Started after the export: a cancel before it starts makes AVFoundation refuse the start.
+            watch = Task { @MainActor in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    guard !Task.isCancelled else { return }
+                    if isCancelled() { session.cancelExport() }
+                    onProgress(Double(session.progress))
+                }
+            }
         }
-        if session.status == .cancelled || isCancelled() {
+        watch?.cancel()
+        let cancelled = await MainActor.run { isCancelled() }
+        if session.status == .cancelled || cancelled {
             try? FileManager.default.removeItem(at: partial)
             throw CancellationError()
         }
@@ -734,7 +741,7 @@ final class EditExporter {
             throw ExportError.exists(url.path)
         }
         try FileManager.default.moveItem(at: partial, to: url)
-        onProgress(1)
+        await MainActor.run { onProgress(1) }
         let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
         return Result(url: url, seconds: Date().timeIntervalSince(started), bytes: bytes)
     }

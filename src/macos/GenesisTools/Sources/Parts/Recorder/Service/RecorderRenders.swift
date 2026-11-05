@@ -3,11 +3,10 @@ import AVFoundation
 import SwiftUI
 
 /// The renders the recorder face answers, once for both callers: the headless `--still`, `--sheet`, `--export` and
-/// `--snapshot` runs print what these return, and the recorder host answers `render.*` with the same fields. A still
-/// and a sheet build and decode the movie off the main actor (`EditRenderer.render` and the image generator are
-/// nonisolated); the main actor only opens the project (`ProjectStore` is main-actor), draws the sheet's labels
-/// (AppKit string drawing) and runs the exporter's 0.25 s progress timer. A snapshot draws a window, so it is
-/// main-actor work throughout; its awaits still give the main thread back between steps.
+/// `--snapshot` runs print what these return, and the recorder host answers `render.*` with the same fields. A still,
+/// a sheet and an export run off the main actor from start to end: the project is read by `ProjectStore.load`, the
+/// sheet's labels are drawn with Core Text, and the exporter only calls its progress on the main actor. A snapshot
+/// draws a window, so it is main-actor work throughout; its awaits still give the main thread back between steps.
 enum RecorderRenders {
     /// `--still`: one frame of the edit as it exports. `full` renders at the export's size (a poster).
     static func still(source: String, atSeconds: Double, out: String?, full: Bool) async throws -> [String: Any] {
@@ -28,7 +27,7 @@ enum RecorderRenders {
         let project = try await openProject(source)
         let zoom = ZoomState(project: project, cursor: CursorTrack.load(project.source.cursor))
         let frames = try await stillFrames(project: project, atOutput: times.map { Int64(($0 * 1_000_000).rounded()) }, zoom: zoom)
-        let sheet = await MainActor.run { ContactSheet.draw(frames: zip(times, frames).map { ($0, $1) }) }
+        let sheet = ContactSheet.draw(frames: zip(times, frames).map { ($0, $1) })
         let url = URL(fileURLWithPath: out ?? NSTemporaryDirectory() + "recorder-sheet-\(UUID().uuidString.prefix(8)).png")
         try writePNG(sheet, to: url, what: "the sheet")
         return ["ok": true, "path": url.path, "width": sheet.width, "height": sheet.height, "times": times]
@@ -36,10 +35,9 @@ enum RecorderRenders {
 
     /// `--export`: the movie, written by the editor's exporter. `onProgress` runs on the main actor every 0.25 s;
     /// `isCancelled` true stops the export, removes its partial file and throws a CancellationError.
-    @MainActor
-    static func export(source: String, out: String?, isCancelled: @escaping () -> Bool = { false },
-                       onProgress: @escaping (Double) -> Void) async throws -> EditExporter.Result {
-        var (_, project) = try await ProjectStore.open(path: source)
+    static func export(source: String, out: String?, isCancelled: @escaping @MainActor () -> Bool = { false },
+                       onProgress: @escaping @MainActor (Double) -> Void) async throws -> EditExporter.Result {
+        var project = try await ProjectStore.load(path: source).project
         if let out { project.export.output = out }
         return try await EditExporter.export(project: project, to: EditExporter.outputURL(for: project),
                                              isCancelled: isCancelled, onProgress: onProgress)
@@ -138,10 +136,9 @@ enum RecorderRenders {
         return "\(capture.method) (\(model.items.count) recordings)"
     }
 
-    /// Only the project: the store is a main-actor object, and these renders need nothing else of it.
-    @MainActor
+    /// Only the project, read off the main actor: these renders need nothing else of the store.
     private static func openProject(_ source: String) async throws -> EditProject {
-        try await ProjectStore.open(path: source).1
+        try await ProjectStore.load(path: source).project
     }
 
     private static func writePNG(_ image: CGImage, to url: URL, what: String) throws {

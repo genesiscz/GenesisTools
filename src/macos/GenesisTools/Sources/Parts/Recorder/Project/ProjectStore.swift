@@ -32,14 +32,19 @@ final class ProjectStore {
 
     /// The project for `path`, read from its edit file or made new (the whole movie) when there is none.
     static func open(path: String) async throws -> (ProjectStore, EditProject) {
+        let loaded = try await load(path: path)
+        let store = ProjectStore(url: loaded.url)
+        if loaded.onDisk { store.lastWritten = loaded.project.revision }
+        return (store, loaded.project)
+    }
+
+    /// The edit file for `path` and its project, read or made new, off the main actor: a render needs only these.
+    nonisolated static func load(path: String) async throws -> (url: URL, project: EditProject, onDisk: Bool) {
         let target = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
         var isFolder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isFolder) else { throw OpenError.missing(target.path) }
         if target.pathExtension == "json" {
-            let store = ProjectStore(url: target)
-            let project = try EditProject.decode(Data(contentsOf: target), at: target)
-            store.lastWritten = project.revision
-            return (store, project)
+            return (target, try EditProject.decode(Data(contentsOf: target), at: target), true)
         }
         let video: URL
         if isFolder.boolValue {
@@ -49,17 +54,13 @@ final class ProjectStore {
             video = target
         }
         let projectURL = EditProject.projectURL(forVideo: video)
-        let store = ProjectStore(url: projectURL)
         if let data = try? Data(contentsOf: projectURL) {
-            let project = try EditProject.decode(data, at: projectURL)
-            store.lastWritten = project.revision
-            return (store, project)
+            return (projectURL, try EditProject.decode(data, at: projectURL), true)
         }
-        let project = try await newProject(video: video)
-        return (store, project)
+        return (projectURL, try await newProject(video: video), false)
     }
 
-    static func newProject(video: URL) async throws -> EditProject {
+    nonisolated static func newProject(video: URL) async throws -> EditProject {
         let asset = AVURLAsset(url: video)
         let duration = try await asset.load(.duration)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
