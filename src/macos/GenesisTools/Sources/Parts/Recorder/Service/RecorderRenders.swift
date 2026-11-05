@@ -52,12 +52,15 @@ enum RecorderRenders {
 
     /// `--snapshot`: the editor (`edit`), the library or the capture picker drawn off screen into `path`. Answers how
     /// the window was captured. Every window the snapshot ordered in is closed after it, so a snapshot inside the
-    /// running app leaves nothing behind.
+    /// running app leaves nothing behind. A window made in code releases itself on close unless told not to, and the
+    /// code that made it still holds it, so the close would release it twice: the picker's did, and the face crashed in
+    /// the next autorelease pool pop (2026-11-05). Each window is kept alive through its close here.
     @MainActor
     static func snapshot(_ request: RecorderRequest, to path: String) async throws -> String {
         let before = Set(NSApp.windows.map(ObjectIdentifier.init))
         defer {
             for window in NSApp.windows where !before.contains(ObjectIdentifier(window)) && window.alphaValue == 0 && window.ignoresMouseEvents {
+                window.isReleasedWhenClosed = false
                 window.orderOut(nil)
                 window.close()
             }

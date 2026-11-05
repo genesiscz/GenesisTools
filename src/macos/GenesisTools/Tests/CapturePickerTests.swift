@@ -2,6 +2,23 @@ import XCTest
 @testable import GenesisToolsRecorder
 
 final class CapturePickerTests: XCTestCase {
+    /// The running recorder face draws the picker for `render.snapshot` and then closes the window it ordered in. A
+    /// window made in code releases itself on close by default, so the close and ARC released it twice and the face
+    /// crashed in the main queue's autorelease pool pop (EXC_BAD_ACCESS in objc_release, 2026-11-05 06:33).
+    @MainActor
+    func testThePickerSnapshotInsideTheRunningFaceClosesItsWindowWithoutAnOverRelease() async throws {
+        _ = NSApplication.shared
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("picker-snapshot-\(UUID().uuidString).png").path
+        defer { try? FileManager.default.removeItem(atPath: out) }
+        var request = RecorderRequest()
+        request.picker = true
+        for _ in 0..<2 {
+            _ = try await RecorderRenders.snapshot(request, to: out)
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out))
+    }
+
     func testEachChoiceNamesItsTargetTheWayTheStartCommandTakesIt() {
         XCTAssertEqual(CaptureChoice.target(.window(ids: [41, 42], app: "Editor", title: "notes", pid: 9)).arguments,
                        ["--window", "41,42", "--title", "notes"])

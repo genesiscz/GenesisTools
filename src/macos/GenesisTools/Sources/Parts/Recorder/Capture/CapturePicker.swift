@@ -170,6 +170,7 @@ final class CapturePicker {
         let size = hosting.fittingSize
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless],
                               backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
         window.backgroundColor = NSColor(white: 0.16, alpha: 1)
         window.contentView = hosting
         window.orderInForSnapshot()
