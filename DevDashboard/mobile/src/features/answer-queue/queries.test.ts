@@ -97,6 +97,16 @@ describe("answer queue over the fixture wire (the real client)", () => {
         expect(after.map((item) => [item.number, item.draftOption])).toEqual([[4, "a"]]);
     });
 
+    it("refuses the whole send when a shown decision is missing and keeps the valid draft", async () => {
+        await stagePick(client, { session: "s-parser", number: 4, option: "a", expectedRevision: 1, key: "missing-stage" });
+        await expect(sendStaged(client, {
+            session: "s-parser",
+            drafts: [{ number: 4, expectedRevision: 1 }, { number: 999, expectedRevision: 1 }],
+            key: "missing-send",
+        })).rejects.toThrow("DECISION 999 is not waiting");
+        expect(stagedOf((await queue()).sessions[0]).map((item) => item.number)).toEqual([4]);
+    });
+
     it("clears a staged note with an empty string, so a send never carries the old text", async () => {
         await stagePick(client, { session: "s-parser", number: 4, option: "a", text: "old note", expectedRevision: 1, key: "c1" });
         await stagePick(client, { session: "s-parser", number: 4, text: "", expectedRevision: 1, key: "c2" });
