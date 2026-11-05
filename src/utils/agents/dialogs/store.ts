@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
@@ -283,10 +284,50 @@ const QUESTION_SOURCES: ReadonlySet<string> = new Set<OpenQuestionSource>([
     "registry",
 ]);
 
-/**
- * A stored record of the right shape, optional fields included: a `closedAt: null` would read as open-or-closed by
- * accident and an `options: "yes"` would throw in the inbox, so the strict reader refuses both as damaged.
- */
+function isRecordedCaller(value: unknown): boolean {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        return false;
+    }
+    const caller = value as Record<string, unknown>;
+    const optionalString = (v: unknown) => v === undefined || typeof v === "string";
+    const nullableString = (v: unknown) => v === null || typeof v === "string";
+    if (
+        !(caller.transcriptPath === null || optionalString(caller.transcriptPath)) ||
+        ![caller.toolUseId, caller.subagentId, caller.turnId].every(optionalString)
+    ) {
+        return false;
+    }
+    if (caller.account !== undefined) {
+        if (typeof caller.account !== "object" || caller.account === null || Array.isArray(caller.account)) {
+            return false;
+        }
+        const account = caller.account as Record<string, unknown>;
+        if (
+            typeof account.harness !== "string" ||
+            !isAccountProviderAlias(account.harness) ||
+            !nullableString(account.account) ||
+            !nullableString(account.proxyTarget)
+        ) {
+            return false;
+        }
+    }
+    if (caller.host !== undefined) {
+        if (typeof caller.host !== "object" || caller.host === null || Array.isArray(caller.host)) {
+            return false;
+        }
+        const host = caller.host as Record<string, unknown>;
+        if (
+            host.app !== "t3code" ||
+            typeof host.threadId !== "string" ||
+            !(host.providerInstanceId === null || optionalString(host.providerInstanceId))
+        ) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** A stored record of the right shape, including optional fields. */
 function isOpenQuestion(value: unknown): value is OpenQuestion {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
         return false;
@@ -307,7 +348,6 @@ function isOpenQuestion(value: unknown): value is OpenQuestion {
         (record.options === undefined ||
             (Array.isArray(record.options) && record.options.every((option) => typeof option === "string"))) &&
         (record.questionCount === undefined || typeof record.questionCount === "number") &&
-        (record.caller === undefined ||
-            (typeof record.caller === "object" && record.caller !== null && !Array.isArray(record.caller)))
+        (record.caller === undefined || isRecordedCaller(record.caller))
     );
 }
