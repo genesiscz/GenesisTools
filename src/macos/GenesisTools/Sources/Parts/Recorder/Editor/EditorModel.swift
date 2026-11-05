@@ -91,6 +91,10 @@ final class EditorModel {
     @ObservationIgnored let session: EditorSession
     /// The continuous change in progress (a slider, a drag), one undo step once it rests.
     @ObservationIgnored var gesture: EditGesture?
+    @ObservationIgnored var savingGestures = 0
+    @ObservationIgnored var gestureSaveFailed = false
+    @ObservationIgnored var gestureWaiters: [(Bool) -> Void] = []
+    @ObservationIgnored var exportWaiting = false
     /// Another writer changed the edit during a drag: it is fetched once the drag ends.
     @ObservationIgnored var refetchPending = false
     let clock = PlayheadClock()
@@ -1326,8 +1330,16 @@ final class EditorModel {
     }
 
     func export() {
-        guard exportProgress == nil else { return }
-        saveNow()
+        guard exportProgress == nil, !exportWaiting else { return }
+        exportWaiting = true
+        afterGesturesSaved { [weak self] saved in
+            guard let self else { return }
+            self.exportWaiting = false
+            if saved { self.exportSavedProject() }
+        }
+    }
+
+    private func exportSavedProject() {
         let project = project
         if case let .tools(format) = Self.exportRoute(project) {
             exportThroughTools(format)

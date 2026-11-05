@@ -94,6 +94,7 @@ extension EditorModel {
             if session.isOnline { session.gesture("gesture.cancel", ["gesture": open.id]) { _ in } }
             return
         }
+        savingGestures += 1
         if session.isOnline {
             // The step goes on the Edit menu's stack now: a ⌘Z right after the drag (its commit not answered yet)
             // must name and undo the drag, and the service takes the commit before that undo.
@@ -110,6 +111,7 @@ extension EditorModel {
                     self.adopt(open.mark, rebuild: open.mark.clips != self.project.clips || open.mark.audio != self.project.audio)
                 }
                 self.refetchIfOutsideChanged()
+                if case .success = result { self.gestureSaved(true) } else { self.gestureSaved(false) }
             }
         } else {
             applyOffline(open.ops, before: open.mark) { [weak self] result in
@@ -117,8 +119,27 @@ extension EditorModel {
                     self?.show(failure.reason, error: true)
                     self?.adopt(open.mark, rebuild: true)
                 }
+                if case .success = result { self?.gestureSaved(true) } else { self?.gestureSaved(false) }
             }
         }
+    }
+
+    /// Waits for both the open gesture and any earlier commit whose answer is still pending.
+    func afterGesturesSaved(_ done: @escaping (Bool) -> Void) {
+        finishGesture()
+        if savingGestures == 0 { done(!gestureSaveFailed); gestureSaveFailed = false }
+        else { gestureWaiters.append(done) }
+    }
+
+    private func gestureSaved(_ succeeded: Bool) {
+        gestureSaveFailed = gestureSaveFailed || !succeeded
+        savingGestures -= 1
+        guard savingGestures == 0, !gestureWaiters.isEmpty else { return }
+        let waiters = gestureWaiters
+        gestureWaiters.removeAll()
+        let succeeded = !gestureSaveFailed
+        gestureSaveFailed = false
+        for done in waiters { done(succeeded) }
     }
 
     /// One change named by its ops: one undo step. `then` gets the edit before and after, to select what was added.
