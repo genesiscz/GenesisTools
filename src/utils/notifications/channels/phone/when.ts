@@ -6,7 +6,14 @@ export const PHONE_WHEN_DEFAULTS = { desk: "away", idleMinutes: 5 } as const;
 
 function minutesOf(clock: string): number | null {
     const match = /^(\d{1,2}):(\d{2})$/.exec(clock.trim());
-    return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+    if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) {
+        return null;
+    }
+    return Number(match[1]) * 60 + Number(match[2]);
+}
+
+export function validPhoneClock(value: string): boolean {
+    return minutesOf(value) !== null;
 }
 
 /** Whether local `now` falls in `from`–`to` (a span past midnight wraps). An unreadable clock never holds. */

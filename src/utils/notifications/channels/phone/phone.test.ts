@@ -14,7 +14,7 @@ import { memoryPhoneDeviceStore, type PhoneDevice, type PhoneRoute, registerPhon
 import { createPhoneChannel, retractPayload, TEXT_OFF_BODY } from "./index";
 import { openOnDevice, type PushKeyPair } from "./seal";
 import type { PushMessage, PushResult, PushTransportTable } from "./transports";
-import { inQuietHours, phoneHold } from "./when";
+import { inQuietHours, phoneHold, validPhoneClock } from "./when";
 
 const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 
@@ -256,6 +256,12 @@ describe("phone wire", () => {
 });
 
 describe("when the phone gets an alert (F14)", () => {
+    test("quiet time validation rejects impossible hours and minutes", () => {
+        expect(validPhoneClock("23:59")).toBe(true);
+        expect(validPhoneClock("24:00")).toBe(false);
+        expect(validPhoneClock("12:60")).toBe(false);
+        expect(inQuietHours({ from: "25:00", to: "07:00" }, new Date())).toBe(false);
+    });
     const atDesk = async () => ({ idleSeconds: 30, locked: false });
     const noon = new Date(2026, 10, 4, 12, 0);
 
