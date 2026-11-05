@@ -142,7 +142,7 @@ export function correctionsOf(
         (opts.withSuggested === true &&
             item.status === "suggested" &&
             (item.confidence === undefined || item.confidence >= applyAbove));
-    const used = record.items.filter(applies);
+    const used = record.items.filter(applies).sort((a, b) => Number(a.status === "confirmed") - Number(b.status === "confirmed"));
     // A label that tracks no one person marks its lines unclear, last: a question or a range's own guess says more.
     const unlabeled = used.flatMap((item): UnclearPassage[] =>
         item.kind === "label" ? [{ fromSec: item.fromSec, toSec: item.toSec, speaker: item.label, readings: [] }] : []
@@ -153,6 +153,7 @@ export function correctionsOf(
             : unclearPassages(record, { below: config.global.suggest.listenBelow })),
         ...unlabeled,
     ];
+
 
     const address = (item: MeetingItem) => {
         const line = lineOf(item);
@@ -166,7 +167,7 @@ export function correctionsOf(
     // A joined word makes the two lines one voice: the line before the cut takes the voice a range gives the line
     // after it, because joins apply before ranges and that range would no longer reach it.
     const voiceAt = (label: string, atSec: number) =>
-        ranges.find(
+        ranges.findLast(
             (range) =>
                 range.label === label &&
                 range.fromSec - LINE_AT_TOLERANCE_SEC <= atSec &&
