@@ -80,17 +80,17 @@ describe("runners", () => {
             project,
             runner: { kind: "playwright", config: "playwright.config.ts", baseUrl: "http://127.0.0.1:5173" },
             flags: { baseUrl: "http://127.0.0.1:4000" },
-            runDir: "/runs/x",
+            runDir: join(root, "playwright-run"),
         });
         const [spec] = listSpecs(project);
 
         expect(target.environment).toEqual({ [E2E_ENV.baseUrl]: "http://127.0.0.1:4000" });
         const command = target.command(spec, "/runs/x/agents.flow");
         expect(command.slice(0, 4)).toEqual(["bunx", "playwright", "test", spec.file]);
-        expect(command.find((part) => part.startsWith("--reporter="))).toMatch(
-            /^--reporter=list,.*playwright-reporter\.ts$/
-        );
-        expect(existsSync(command.find((part) => part.startsWith("--reporter="))?.split(",")[1] ?? "")).toBe(true);
+        expect(command.some((part) => part.startsWith("--reporter="))).toBe(false);
+        const wrapper = command[command.indexOf("--config") + 1];
+        expect(readFileSync(wrapper, "utf8")).toContain("playwright-reporter.ts");
+        expect(readFileSync(wrapper, "utf8")).toContain("original.reporter");
         expect(command).toContain("--output=/runs/x/agents.flow/artifacts");
     });
 });
@@ -132,7 +132,8 @@ describe("run loop", () => {
         expect(summary.specs[1].exitCode).toBe(1);
         expect(summary.notes).toHaveLength(1);
         expect(readFileSync(join(runDir, "summary.md"), "utf8")).toContain("- FAIL pairing.flow: 0/1 passed, exit 1");
-        expect(existsSync(join(runDir, "agents.flow", "runner.log"))).toBe(true);
+        expect(existsSync(summary.specs[0].log)).toBe(true);
+        expect(summary.specs[0].dir).not.toBe(summary.specs[1].dir);
     });
 });
 
@@ -179,8 +180,8 @@ describe("summary", () => {
         const before = summary([passed, { ...failed, state: "passed" as const }], "/runs/a");
         const after = summary([{ ...passed, state: "failed" as const }], "/runs/b");
         expect(compareRuns(before, after)).toEqual([
-            { test: "agents.flow > Agents flow > loads", before: "passed", after: "failed" },
-            { test: "agents.flow > Agents flow > lists", before: "passed", after: "absent" },
+            { test: "specs/agents.flow.spec.ts > Agents flow > loads", before: "passed", after: "failed" },
+            { test: "specs/agents.flow.spec.ts > Agents flow > lists", before: "passed", after: "absent" },
         ]);
         expect(stamp(new Date(2026, 10, 4, 21, 5, 33))).toBe("2026-11-04T21-05-33");
     });
