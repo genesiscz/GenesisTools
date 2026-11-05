@@ -10,6 +10,7 @@ import {
     REPLY_ACTION_ID,
 } from "../../phone-wire";
 import type { NotificationEvent } from "../../types";
+import { retractSystemNotice } from "../system";
 import { memoryPhoneDeviceStore, type PhoneDevice, type PhoneRoute, registerPhoneDevice } from "./devices";
 import { createPhoneChannel, retractPayload, TEXT_OFF_BODY } from "./index";
 import { openOnDevice, type PushKeyPair } from "./seal";
@@ -304,5 +305,15 @@ describe("when the phone gets an alert (F14)", () => {
         expect(
             await phoneHold({ event: { timeSensitive: true }, when: { quiet }, presence: AWAY, now: night })
         ).toBeNull();
+    });
+});
+
+describe("system channel retract", () => {
+    test("is true only when the app reports the notice removed", async () => {
+        expect(await retractSystemNotice("qa-decision-d3", async () => ["qa-decision-d3"])).toBe(true);
+        expect(await retractSystemNotice("qa-decision-d3", async () => "all")).toBe(true);
+        expect(await retractSystemNotice("qa-decision-d3", async () => [])).toBe(false);
+        // The app did not answer: the banner may still be in Notification Center.
+        expect(await retractSystemNotice("qa-decision-d3", async () => null)).toBe(false);
     });
 });

@@ -40,6 +40,24 @@ export async function dispatchSystem(event: NotificationEvent, config: SystemCha
     }
 }
 
+/**
+ * Takes one banner out of Notification Center. True only when the app reports that notice removed; false when the
+ * app did not answer (the banner may still show) or the notice was already gone. Throws what `remove` throws.
+ */
+export async function retractSystemNotice(
+    noticeId: string,
+    remove: typeof removeNotifications = removeNotifications
+): Promise<boolean> {
+    const removed = await remove({ ids: [noticeId] });
+
+    if (removed === null) {
+        logger.debug({ noticeId }, "GenesisTools.app did not answer; the banner may still be in Notification Center");
+        return false;
+    }
+
+    return removed === "all" || removed.includes(noticeId);
+}
+
 export const systemChannel: ChannelDefinition<"system"> = {
     name: "system",
     label: "System (macOS)",
@@ -58,8 +76,7 @@ export const systemChannel: ChannelDefinition<"system"> = {
         }
 
         try {
-            await removeNotifications({ ids: [noticeId] });
-            return true;
+            return await retractSystemNotice(noticeId);
         } catch (err) {
             logger.debug({ err, noticeId }, "could not take a banner out of Notification Center");
             return false;
