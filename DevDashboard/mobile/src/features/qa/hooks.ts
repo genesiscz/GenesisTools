@@ -10,6 +10,7 @@ import {
     type QaLiveStatus,
     type QaSubscriptionHandle,
 } from "@/features/qa/subscription";
+import { useLiveRefetchInterval } from "@/live/provider";
 
 /**
  * Component-facing QA hooks (D32). Components import THESE — never raw `useQuery`/`useMutation` or
@@ -21,7 +22,8 @@ import {
 
 /** Persisted Q&A log (TanStack v5 query over the injected client). */
 export function useQaLog(params: QaLogParams = {}) {
-    return useQuery(qaLogQuery(useDashboardClient(), params));
+    const refetchInterval = useLiveRefetchInterval("qa");
+    return useQuery({ ...qaLogQuery(useDashboardClient(), params), refetchInterval });
 }
 
 /**

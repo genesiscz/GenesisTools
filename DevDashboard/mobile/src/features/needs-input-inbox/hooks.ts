@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDashboardClient } from "@/api/client-provider";
 import { attentionKeys, attentionQuery } from "@/features/needs-input-inbox/queries";
+import { useLiveRefetchInterval } from "@/live/provider";
 
 /**
  * Component-facing Needs-Input Inbox hooks (D32). Components import THESE — never raw `useQuery`/
@@ -11,8 +12,11 @@ import { attentionKeys, attentionQuery } from "@/features/needs-input-inbox/quer
  * ► REFERENCE SHAPE: `useX = () => useQuery(xQuery(useDashboardClient()))`.
  */
 
+/** QA events refresh the list, while polling also covers terminal lifecycle and the day boundary. */
 export function useAttention() {
-    return useQuery(attentionQuery(useDashboardClient()));
+    const refetchInterval = useLiveRefetchInterval("qa");
+    const options = attentionQuery(useDashboardClient());
+    return useQuery({ ...options, refetchInterval: refetchInterval || options.refetchInterval });
 }
 
 export function useResolveAttention() {

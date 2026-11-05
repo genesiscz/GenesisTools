@@ -8,8 +8,10 @@ mock.module("react-native", () => ({
     TextInput: "TextInput",
     Pressable: "View",
     StyleSheet: { flatten: (style: unknown) => style ?? {} },
+    AppState: { currentState: "active", addEventListener: () => ({ remove() {} }) },
 }));
 mock.module("expo-router", () => ({ useIsFocused: () => true }));
+mock.module("@/live/provider", () => ({ useLiveRefetchInterval: () => false }));
 
 const picks: string[] = [];
 mock.module("@/api/client-provider", () => ({
