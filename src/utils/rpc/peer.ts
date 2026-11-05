@@ -235,7 +235,9 @@ export class RpcPeer {
         }
 
         for (const running of this.running.values()) {
-            running.controller.abort(new Error(reason));
+            const error = new RpcError(RPC_CANCELLED, reason);
+            running.controller.abort(error);
+            running.cancelled.reject(error);
         }
     }
 
@@ -395,7 +397,7 @@ export class RpcPeer {
         };
 
         try {
-            if (running.controller.signal.aborted && running.controller.signal.reason instanceof RpcError) {
+            if (this.closed || running.controller.signal.aborted) {
                 throw running.controller.signal.reason;
             }
 
