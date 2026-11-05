@@ -39,9 +39,16 @@ export class DisplayBook {
         }
     }
 
-    /** The recorded displays follow the running captures; true when they changed. */
+    /**
+     * The recorded displays follow the running captures, each by the display it records now (its frames can move to
+     * another display without a switch call, as a follow-focus capture does); true when they changed.
+     */
     sync(running: ReadonlyMap<number, SessionCapture>): boolean {
-        const ids = [...running.keys()].sort((a, b) => a - b).join(",");
+        const displayOf = (one: SessionCapture) => this.current.get(one)?.displayId ?? one.target.displayId;
+        const ids = [...running.values()]
+            .map(displayOf)
+            .sort((a, b) => a - b)
+            .join(",");
 
         if (ids === this.lastIds || running.size === 0) {
             return false;
@@ -49,8 +56,8 @@ export class DisplayBook {
 
         this.lastIds = ids;
         this.recorded = [...running.values()].map((one) => ({
-            id: one.target.displayId,
-            name: this.names.get(one.target.displayId) ?? one.target.label,
+            id: displayOf(one),
+            name: this.names.get(displayOf(one)) ?? one.target.label,
         }));
         return true;
     }

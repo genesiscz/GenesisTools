@@ -387,6 +387,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
                     if (!capture.controller.signal.aborted) {
                         this.openDisplay(capture, displayId);
+                        this.syncDisplays();
                     }
 
                     // Frames count as they land; the kind keeps them when the capture returns.

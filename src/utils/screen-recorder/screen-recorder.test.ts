@@ -20,6 +20,7 @@ import {
     type RecorderStatus,
     type StopAnswer,
 } from "./control";
+import { DisplayBook } from "./display-book";
 import { outputScaleFor, parseDisplayList } from "./displays";
 import { FrameOutput, type OcrRow, ocrSinkFor, SidecarOcrSink, sipsJpegWithin } from "./frame-output";
 import { readRecordingManifest, renameRecording } from "./library";
@@ -36,6 +37,7 @@ import {
 import { audioArgv, captureErrorKind, flagsInHelp, NativeFrameRecorder, NativeLiveCapture, nativeArgv } from "./native";
 import { blockInFrame, changedAreas, mergeAreaRead, planRead } from "./ocr-region";
 import { peekabooCaptureError } from "./peekaboo";
+import type { SessionCapture } from "./session";
 import { startRecording } from "./start";
 import {
     type CapturedFrame,
@@ -106,6 +108,32 @@ describe("displays", () => {
 
         expect(outputScaleFor(builtIn!, 2880)).toBeCloseTo(2880 / 2056);
         expect(outputScaleFor(external!, 2880)).toBe(1);
+    });
+
+    test("the recorded displays name the display a capture records now, after its frames moved to another", () => {
+        const book = new DisplayBook({
+            names: [
+                [1, "left"],
+                [4, "right"],
+            ],
+        });
+        const capture: SessionCapture = {
+            target: { target: { kind: "display", displayId: 1 }, displayId: 1, label: "display 1" },
+            startDisplayId: 1,
+            controller: new AbortController(),
+            streamed: 0,
+            audio: false,
+            outDir: join(tmpdir(), "d1-0"),
+            done: Promise.resolve(),
+        };
+        const running = new Map([[1, capture]]);
+        book.open(capture, 1);
+        expect(book.sync(running)).toBe(true);
+        expect(book.recorded).toEqual([{ id: 1, name: "left" }]);
+        book.open(capture, 4);
+        expect(book.sync(running)).toBe(true);
+        expect(book.recorded).toEqual([{ id: 4, name: "right" }]);
+        expect(book.sync(running)).toBe(false);
     });
 });
 
