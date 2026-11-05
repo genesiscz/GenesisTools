@@ -535,6 +535,13 @@ function presentAt(presence: Presence[], sec: number): Presence[] {
     );
 }
 
+function possiblyPresentAt(presence: Presence[], sec: number): Presence[] {
+    return presence.filter(
+        (stay) => (stay.joinedAtExact === false || sec >= stay.fromSec - PRESENCE_TOLERANCE_SEC) &&
+            (stay.leftAtExact === false || sec <= stay.toSec + PRESENCE_TOLERANCE_SEC)
+    );
+}
+
 /** Close times form one range; with `presence`, a range also ends where the set of people in the call changes. */
 function toRanges(times: number[], presence?: Presence[]): PresenceRange[] {
     const ranges: PresenceRange[] = [];
@@ -609,7 +616,7 @@ function presenceHints(lines: TranscriptEntry[], speakers: SpeakerStat[], presen
                 .map((line) => line.startSec!);
 
         if (stays.length > 0) {
-            const absent = timesOf((sec) => presentAt(stays, sec).length === 0);
+            const absent = timesOf((sec) => possiblyPresentAt(stays, sec).length === 0);
 
             if (absent.length > 0) {
                 hints.push({
@@ -624,16 +631,16 @@ function presenceHints(lines: TranscriptEntry[], speakers: SpeakerStat[], presen
         const byPerson = new Map<string, number[]>();
 
         for (const sec of timesOf(() => true)) {
-            const here = new Set(presentAt(presence, sec).map((stay) => stay.name));
+            const here = new Set(possiblyPresentAt(presence, sec).map((stay) => stay.name));
 
             if (here.size !== 1 || people.size < 2) {
                 continue;
             }
 
             const person = [...here][0]!;
-            const stay = presence.find((candidate) => candidate.name === person)!;
+            const confirmed = presentAt(presence, sec).filter((candidate) => candidate.name === person);
 
-            if (stays.includes(stay)) {
+            if (confirmed.length === 0 || confirmed.some((stay) => stays.includes(stay))) {
                 continue;
             }
 
