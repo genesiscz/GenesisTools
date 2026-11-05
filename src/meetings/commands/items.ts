@@ -1,13 +1,13 @@
 import { readFileSync } from "node:fs";
-import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
 import { logger, out } from "@genesiscz/utils/logger";
-import { MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
+import { languageSettings, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
+import { isMeetingPlatformId } from "@genesiscz/utils/meetings/platform";
 import {
     ITEM_STATUSES,
     type MeetingItem,
@@ -17,7 +17,7 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
-import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
+import type { CorrectionOutcome } from "@genesiscz/utils/transcribe/apply";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import {
     entriesToSrt,
@@ -30,21 +30,19 @@ import {
     transcriptTextLines,
 } from "@genesiscz/utils/transcribe/render";
 import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
-import { summaryPoints } from "@genesiscz/utils/transcribe/summary";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
-import { collectAndReport } from "../lib/collect";
-import { energyMicShareFor } from "../lib/energy";
 import { FINDING_KINDS, findingItems, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
-import { speakingEvidence } from "../lib/platforms";
-import { presenceFor } from "../lib/presence";
+import { playLinksFor } from "../lib/link";
+import { OpenedMeeting } from "../lib/opened-meeting";
+import { MEETING_PLATFORMS } from "../lib/platforms";
+import { questionIdOf, questionLabel, questionWarnings } from "../lib/questions";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
-import { linkedSource } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES, suggestItems } from "../lib/suggest";
-import { correctionsOf } from "../lib/transcript-corrections";
-import { DEFAULT_WORD_CHECK, WORD_CHECKS, type WordCheckChoice, wordCheckFor } from "../lib/word-check";
+import { checkAnchors, correctTranscript, ledgerEntryFor, outcomeText } from "../lib/transcript-corrections";
+import { DEFAULT_WORD_CHECK, WORD_CHECKS, type WordCheckChoice } from "../lib/word-check";
 
 const { log } = logger.scoped("meetings-items");
 
@@ -65,10 +63,8 @@ function requireMeeting(store: MeetingStore, ref: string): MeetingRecord | undef
     }
 }
 
-async function loadTranscript(record: MeetingRecord): Promise<SourceMeeting> {
-    const { source, sourceMeetingId } = await linkedSource(record);
-    log.debug({ meeting: record.id, source: source.id, sourceMeetingId }, "loading transcript");
-    return source.load(sourceMeetingId);
+async function loadTranscript(store: MeetingStore, record: MeetingRecord): Promise<SourceMeeting> {
+    return OpenedMeeting.of(store, record).meeting();
 }
 
 function itemWhat(item: MeetingItem): string {
@@ -87,6 +83,10 @@ function itemWhat(item: MeetingItem): string {
         return `${range} ${item.question} ${said}`.trim();
     }
 
+    if (item.kind === "label") {
+        return `${item.label} ${formatClock(item.fromSec)}–${formatClock(item.toSec)} tracks no one person`;
+    }
+
     const occurrences = typeof item.evidence?.occurrences === "number" ? ` ×${item.evidence.occurrences}` : "";
     return `${item.heard} → ${item.proposed ?? "?"}${occurrences}`;
 }
@@ -97,12 +97,13 @@ const STATUS_COLOR: Record<MeetingItem["status"], (text: string) => string> = {
     rejected: pc.dim,
 };
 
-function printItems(items: MeetingItem[]): void {
-    const table = createBoxTable(["ID", "KIND", "STATUS", "CONF", "WHAT", "RULES"]);
+function printItems(record: MeetingRecord, items: MeetingItem[]): void {
+    const table = createBoxTable(["ID", "Q", "KIND", "STATUS", "CONF", "WHAT", "RULES"]);
 
     for (const item of items) {
         table.push([
             pc.white(item.id),
+            item.kind === "question" ? pc.cyan(questionLabel(record, item.id)) : "",
             item.kind,
             STATUS_COLOR[item.status](item.status),
             item.confidence === undefined ? "—" : `${Math.round(item.confidence * 100)} %`,
@@ -115,8 +116,11 @@ function printItems(items: MeetingItem[]): void {
 }
 
 /** The word check for the term rules, or undefined when it is off or cannot run (said once, with the reason). */
-async function termWordCheck(choice: WordCheckChoice, meeting: SourceMeeting): Promise<WordCheck | undefined> {
-    const opened = await wordCheckFor(choice, meeting.transcript);
+async function termWordCheck(
+    choice: WordCheckChoice | undefined,
+    meeting: OpenedMeeting
+): Promise<WordCheck | undefined> {
+    const opened = await meeting.wordCheck(choice);
 
     if (!opened.check && choice !== "off") {
         ui.warn(`The word check is off (${opened.reason}); the term rules skip every word with a Czech letter.`);
@@ -145,46 +149,44 @@ async function suggest(
         return;
     }
 
-    const wordCheckChoice = await resolveEnum({
-        value: opts.wordCheck,
-        fallback: DEFAULT_WORD_CHECK,
-        values: WORD_CHECKS,
-        flag: "--word-check",
-        subcommand: ["suggest"],
-    });
+    // Without --word-check each language uses its own provider (`languages.<code>.wordCheck`).
+    const wordCheckChoice =
+        opts.wordCheck === undefined
+            ? undefined
+            : await resolveEnum({
+                  value: opts.wordCheck,
+                  values: WORD_CHECKS,
+                  flag: "--word-check",
+                  subcommand: ["suggest"],
+              });
 
-    if (!wordCheckChoice) {
+    if (opts.wordCheck !== undefined && !wordCheckChoice) {
         return;
     }
 
     try {
         // The platform, attendance and channel layout first, when the record lacks any of them.
-        const collected =
-            record.platform && record.attendance && record.evidence?.channels
-                ? record
-                : await collectAndReport(store, record);
-        const { source, sourceMeetingId } = await linkedSource(collected);
-        const meeting = await source.load(sourceMeetingId);
-        const config = await new MeetingsConfigStore().read();
-        const evidence = rules.includes("evidence")
-            ? speakingEvidence(collected, await source.evidence(sourceMeetingId))
-            : null;
-        const wordCheck = rules.includes("terms") ? await termWordCheck(wordCheckChoice, meeting) : undefined;
+        const opened = OpenedMeeting.of(store, record);
+        const collected = await opened.collectWhenIncomplete();
+        const meeting = await opened.meeting();
+        const config = await opened.config();
+        const evidence = rules.includes("evidence") ? await opened.evidence() : null;
+        const wordCheck = rules.includes("terms") ? await termWordCheck(wordCheckChoice, opened) : undefined;
         const inputs: Parameters<typeof suggestItems>[0] = {
             record: collected,
             meeting,
             rules,
-            dictionary: resolveDictionary(config, { project: record.project, meeting: record.dictionary }),
-            sourceWords: await source.dictionary(),
-            presence: await presenceFor(collected, meeting, opts.attendance),
+            dictionary: await opened.dictionary(),
+            sourceWords: await opened.sourceWords(),
+            presence: await opened.presence(opts.attendance),
             evidence,
-            energyMicShare: (await energyMicShareFor(store, collected, evidence)).share,
+            energyMicShare: (await opened.energy()).share,
             listenBelow: config.global.suggest.listenBelow,
-            questionBudget: config.global.playback.listen.budget,
+            questionBudget: config.global.suggest.questionCap,
             minPriority: config.global.playback.listen.minPriority,
-            points: meeting.summary ? summaryPoints(meeting.summary, config.global.summary) : [],
+            points: await opened.summaryPoints(),
             wordCheck,
-            sourceLabels: config.global.render,
+            sourceLabels: languageSettings(config).render,
             now: new Date().toISOString(),
         };
         let fresh: MeetingItem[] = [];
@@ -212,7 +214,7 @@ async function suggest(
             return;
         }
 
-        printItems(fresh);
+        printItems(store.read(record.id) ?? record, fresh);
         ui.dim(`Confirm or reject: ${TOOL} confirm ${record.id} <ids> · ${TOOL} reject ${record.id} <ids>`);
     } catch (err) {
         fail(errorText(err));
@@ -249,7 +251,7 @@ async function items(ref: string, opts: { status?: string | boolean; kind?: stri
         return;
     }
 
-    printItems(listed);
+    printItems(record, listed);
 }
 
 interface AddOptions {
@@ -270,6 +272,7 @@ interface AddOptions {
     choices?: string;
     decides?: string;
     confidence?: string;
+    priority?: string;
     reason?: string;
 }
 
@@ -301,7 +304,9 @@ function findingFromFlags(opts: AddOptions): Record<string, unknown> {
         choices: commaList(opts.choices),
         decides: commaList(opts.decides),
         confidence: opts.confidence === undefined ? undefined : Number(opts.confidence),
+        priority: opts.priority === undefined ? undefined : Number(opts.priority),
         reason: opts.reason,
+        ...(kind === "label" ? { meaningless: true } : {}),
     };
     return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
 }
@@ -350,16 +355,64 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
         return;
     }
 
+    // The transcript anchors each join and line-bound term to one line; with no source at hand, items are added as given.
+    const meeting = await loadTranscript(store, record).catch((err: unknown) => {
+        log.debug({ err, meeting: record.id }, "no transcript to check the anchors against");
+        return undefined;
+    });
+
     try {
         let added: MeetingItem[] = [];
-        await store.update(record.id, { command: "items add", change: `${parsed.data.length} findings` }, (current) => {
-            added = findingItems(parsed.data, current.items, new Date().toISOString());
-            current.items.push(...added);
-        });
+        let anchorWarnings: string[] = [];
+        const updated = await store.update(
+            record.id,
+            { command: "items add", change: `${parsed.data.length} findings` },
+            (current) => {
+                added = findingItems(parsed.data, current.items, new Date().toISOString());
+
+                if (meeting) {
+                    const anchors = checkAnchors(added, meeting.transcript);
+                    anchorWarnings = anchors.warnings;
+
+                    for (const item of added) {
+                        const line = anchors.addresses.get(item.id);
+
+                        if (line !== undefined) {
+                            item.evidence = { ...item.evidence, transcriptLine: line };
+                        }
+                    }
+                }
+
+                current.items.push(...added);
+            }
+        );
+
+        for (const warning of anchorWarnings) {
+            ui.warn(warning);
+        }
+
+        if (meeting) {
+            const ids = added.map((item) => item.id);
+            const config = await new MeetingsConfigStore().read();
+            const result = correctTranscript({
+                record: updated,
+                transcript: meeting.transcript,
+                config,
+                format: "txt",
+                dictionary: false,
+                include: ids,
+            });
+            reportOutcomes(result.outcomes.filter((outcome) => ids.includes(outcome.item)));
+        }
+
+        for (const warning of questionWarnings(updated, added)) {
+            ui.warn(warning);
+        }
 
         if (added.length === 1 && added[0]!.kind === "question") {
+            const label = questionLabel(updated, added[0]!.id);
             ui.ok(
-                `${added[0]!.id} added to ${record.id}. Answer it: ${TOOL} listen ${record.id} --item ${added[0]!.id}`
+                `${label} (${added[0]!.id}) added to ${record.id}. Answer it: ${TOOL} listen ${record.id} --item ${label}`
             );
             return;
         }
@@ -414,7 +467,12 @@ async function decide(
         return;
     }
 
-    const picked = pickItems(record, ids, minConfidence);
+    // A question is named by its number as people see it (Q12) as well as by its id.
+    const picked = pickItems(
+        record,
+        ids.map((id) => (/^q\d+$/i.test(id) ? questionIdOf(record, id) : id)),
+        minConfidence
+    );
 
     if (typeof picked === "string") {
         fail(picked);
@@ -434,7 +492,8 @@ async function decide(
     const questions: MeetingItem[] = status === "confirmed" ? picked.filter((item) => item.kind === "question") : [];
 
     for (const item of questions) {
-        ui.warn(`${item.id} is a question; answer it: ${TOOL} listen ${record.id} --item ${item.id}`);
+        const label = questionLabel(record, item.id);
+        ui.warn(`${label} (${item.id}) is a question; answer it: ${TOOL} listen ${record.id} --item ${label}`);
     }
 
     const deciding = picked.filter((item) => !unnamed.includes(item) && !questions.includes(item));
@@ -483,40 +542,14 @@ async function decide(
                         item.speaker = opts.speaker;
                     }
 
-                    if (item.kind === "term") {
-                        const fixed = opts.proposed ?? item.proposed;
-
-                        if (!fixed) {
-                            continue;
-                        }
-
-                        item.proposed = fixed;
-                        ledger.push({
-                            at: now,
-                            meeting: current.id,
-                            project: current.project,
-                            kind: "term",
-                            scope: item.scope ?? "everywhere",
-                            heard: item.heard,
-                            fixed,
-                            item: item.id,
-                        });
+                    if (item.kind === "term" && opts.proposed) {
+                        item.proposed = opts.proposed;
                     }
 
-                    if (item.kind === "join" && item.joined) {
-                        const evidence = item.evidence ?? {};
-                        const heard = [evidence.left, evidence.right]
-                            .filter((part) => typeof part === "string")
-                            .join(" ");
-                        ledger.push({
-                            at: now,
-                            meeting: current.id,
-                            project: current.project,
-                            kind: "join",
-                            heard,
-                            fixed: item.joined,
-                            item: item.id,
-                        });
+                    const entry = ledgerEntryFor(current, item, now);
+
+                    if (entry) {
+                        ledger.push(entry);
                     }
                 }
             }
@@ -529,7 +562,8 @@ async function decide(
 }
 
 async function speakersStats(ref: string, opts: { gap?: string; attendance?: string; json?: boolean }): Promise<void> {
-    const record = requireMeeting(new MeetingStore(), ref);
+    const store = new MeetingStore();
+    const record = requireMeeting(store, ref);
 
     if (!record) {
         return;
@@ -543,11 +577,12 @@ async function speakersStats(ref: string, opts: { gap?: string; attendance?: str
     }
 
     try {
-        const meeting = await loadTranscript(record);
+        const opened = OpenedMeeting.of(store, record);
+        const meeting = await opened.meeting();
         const stats = speakerStats(meeting.transcript, {
             gapSec,
             participants: meeting.speakers,
-            presence: await presenceFor(record, meeting, opts.attendance),
+            presence: await opened.presence(opts.attendance),
         });
 
         if (opts.json) {
@@ -555,7 +590,9 @@ async function speakersStats(ref: string, opts: { gap?: string; attendance?: str
             return;
         }
 
-        printSpeakerStats(stats);
+        const from = opts.attendance ?? record.attendance?.from;
+        const platform = from && isMeetingPlatformId(from) ? MEETING_PLATFORMS[from].label : undefined;
+        printSpeakerStats(stats, platform ? { attendance: `${platform} attendance` } : {});
     } catch (err) {
         fail(errorText(err));
     }
@@ -579,6 +616,17 @@ async function speakersRename(ref: string, label: string, name: string): Promise
     }
 }
 
+/** One warning per item that did not apply: `i42 did not apply: no "X" at 37:43`. */
+function reportOutcomes(outcomes: CorrectionOutcome[]): void {
+    for (const outcome of outcomes) {
+        const text = outcomeText(outcome);
+
+        if (text) {
+            ui.warn(text);
+        }
+    }
+}
+
 async function transcript(
     ref: string,
     opts: {
@@ -590,7 +638,8 @@ async function transcript(
         frontmatter?: boolean;
     }
 ): Promise<void> {
-    const record = requireMeeting(new MeetingStore(), ref);
+    const store = new MeetingStore();
+    const record = requireMeeting(store, ref);
     const format = await resolveEnum({
         value: opts.format,
         fallback: "md",
@@ -604,9 +653,10 @@ async function transcript(
     }
 
     try {
-        const meeting = await loadTranscript(record);
+        const meeting = await loadTranscript(store, record);
         const config = await new MeetingsConfigStore().read();
-        const applied = applyCorrections(meeting.transcript, correctionsOf(record, config, { ...opts, format }));
+        const applied = correctTranscript({ ...opts, record, transcript: meeting.transcript, config, format });
+        reportOutcomes(applied.outcomes);
         ui.dim(
             `applied: ${applied.labels} renamed lines, ${applied.ranges} re-attributed, ${applied.joins} joins, ${applied.terms} term fixes, ${applied.fixes} dictionary fixes, ${applied.spoken} spoken forms, ${applied.fuzzy} fuzzy, ${applied.expansions} expansions, ${applied.meanings} meanings, ${applied.marks} quotes and meanings of spoken words, ${applied.unclear} unclear marks`
         );
@@ -640,32 +690,25 @@ async function transcript(
                     ...(record.project ? { project: record.project } : {}),
                     meeting_id: record.id,
                     sources: Object.keys(record.sources),
-                    // An open speaker mark is not a speaker.
-                    speakers: [
-                        ...new Set(
-                            applied.entries
-                                .map((entry) => entry.speaker)
-                                .filter((name) => !name.startsWith(`[${config.global.render.unclearLabel}:`))
-                        ),
-                    ],
+                    // The people after the corrections, with their line counts; an open speaker mark is not a speaker.
+                    speakers: Object.fromEntries(applied.speakers.map((speaker) => [speaker.name, speaker.lines])),
+                    ...(applied.unattributed.length > 0
+                        ? {
+                              unattributed: Object.fromEntries(
+                                  applied.unattributed.map((speaker) => [speaker.name, speaker.lines])
+                              ),
+                          }
+                        : {}),
                 })
             );
         }
 
-        const playLink = opts.playLinks
-            ? (atSec: number) =>
-                  routerLink({
-                      preset: "meetings-play",
-                      action: "play",
-                      data: { meeting: record.id, at: formatClock(atSec) },
-                      fallback: () => "",
-                  }).link
-            : undefined;
+        // The links are written even while the router preset is off; the warning says how to make them open.
+        const links = opts.playLinks ? playLinksFor(record.id) : undefined;
+        const playLink = links?.link;
 
-        if (playLink && playLink(0) === null) {
-            ui.warn(
-                `No play links: switch the router preset on with "${toolCommand("browser-router", "presets", "enable", "meetings-play")}".`
-            );
+        if (links?.warning) {
+            ui.warn(links.warning);
         }
 
         parts.push(
@@ -684,10 +727,13 @@ export function registerItemCommands(program: Command): void {
         .argument("<meeting>", MEETING_REF)
         .description("Run the rules on the meeting's transcript and add what they find as suggested items")
         .option("--rules <list>", `which rule sets: ${SUGGEST_RULES.join(",")} (default all)`)
-        .option("--attendance <teams|file>", "who was in the call and when (Teams), for rule RA")
+        .option(
+            "--attendance <platform|file>",
+            "who was in the call and when, for rule RA: a platform (teams) or its export file (teams:<file>)"
+        )
         .option(
             "--word-check <provider>",
-            `${WORD_CHECKS.join(" | ")}: tells ordinary Czech words from unknown ones for the term rules; the dictionaries download on first use (default ${DEFAULT_WORD_CHECK})`
+            `${WORD_CHECKS.join(" | ")}: tells ordinary Czech words from unknown ones for the term rules; the dictionaries download on first use (default: each language's languages.<code>.wordCheck, else ${DEFAULT_WORD_CHECK})`
         )
         .option("--json", "print the new items")
         .action(suggest);
@@ -697,21 +743,24 @@ export function registerItemCommands(program: Command): void {
         .argument("<meeting>", MEETING_REF)
         .description("The meeting's items with their status, confidence and rules")
         .option("--status [status]", ITEM_STATUSES.join(" | "))
-        .option("--kind <kind>", "speaker-range | join | term | question")
+        .option("--kind <kind>", "speaker-range | label | join | term | question")
         .option("--json", "print JSON")
         .action(items)
         .command("add")
         .argument("<meeting>", MEETING_REF)
         .description(
-            `Add an agent's finding (a speaker range, a join or a term, with a confidence and a reason) or a question for ${toolCommand("meetings", "listen")}`
+            `Add an agent's finding (a speaker range, a join or a term, with a confidence and a reason; a label that tracks no one person in a stretch, with a reason) or a question for ${toolCommand("meetings", "listen")}`
         )
         .option("--kind <kind>", `${FINDING_KINDS.join(" | ")} (default question)`)
         .option("--listen", "same as --kind question")
         .option("--from-file <json>", "a batch: an array of findings in the shape the flags make (see the README)")
-        .option("--from <time>", "range start: 37:43, 1:02:10 or seconds (speaker-range, question)")
-        .option("--to <time>", "range end (speaker-range, question)")
+        .option("--from <time>", "range start: 37:43, 1:02:10 or seconds (speaker-range, label, question)")
+        .option("--to <time>", "range end (speaker-range, label, question)")
         .option("--at <time>", "term: where it is heard; join: the start of the line after the cut")
-        .option("--label <label>", "speaker-range: the source's label of those lines; join: whose voice speaks it")
+        .option(
+            "--label <label>",
+            "speaker-range: the source's label of those lines; label: the label that tracks no one person; join: whose voice speaks it"
+        )
         .option("--speaker <name>", "speaker-range: who it really is")
         .option(
             "--heard <words>",
@@ -725,7 +774,14 @@ export function registerItemCommands(program: Command): void {
         .option("--choices <list>", "question: comma-separated answers to offer")
         .option("--decides <ids>", "question: comma-separated items (or batch refs) the answer confirms or rejects")
         .option("--confidence <0..1>", "how sure the finding is (required for speaker-range, join and term)")
-        .option("--reason <text>", "why: the facts and context it rests on (required for speaker-range, join and term)")
+        .option(
+            "--priority <n>",
+            "question: (1 − confidence) × impact × reach, as suggest scores its own (about 1 to 3; under 0.5 asked only with --item)"
+        )
+        .option(
+            "--reason <text>",
+            "why: the facts and context it rests on (required for speaker-range, label, join and term)"
+        )
         .action(addItems);
 
     for (const [name, status] of [
@@ -735,7 +791,7 @@ export function registerItemCommands(program: Command): void {
         program
             .command(name)
             .argument("<meeting>", MEETING_REF)
-            .argument("[items...]", "item ids: i1 i2 …")
+            .argument("[items...]", "item ids: i1 i2 …, or a question's number: Q12")
             .description(
                 status === "confirmed"
                     ? "Confirm items: transcripts apply confirmed items"
@@ -757,7 +813,10 @@ export function registerItemCommands(program: Command): void {
         .argument("<meeting>", MEETING_REF)
         .description("Per label: origin, turns, spoken time and spans, with hints")
         .option("--gap <duration>", "a pause shorter than this keeps two turns in one span", "2m")
-        .option("--attendance <teams|file>", "who was in the call and when (Teams)")
+        .option(
+            "--attendance <platform|file>",
+            "who was in the call and when: a platform (teams) or its export file (teams:<file>)"
+        )
         .option("--json", "print JSON")
         .action(speakersStats);
 
