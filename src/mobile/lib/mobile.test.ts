@@ -1,4 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { type MobileProject, resolveRoute } from "@genesiscz/utils/mobile/project";
 import { Command } from "commander";
 import { registerUp } from "../commands/up";
@@ -10,6 +13,7 @@ import { mergeAndroidDevices } from "./platforms/android";
 import { clockBuildNumber, releasePlan } from "./release";
 import { selectRoutes } from "./routes";
 import { chooseDeviceType, chooseRuntime, fitsWidth, simulatorNameFor } from "./simulator-fit";
+import { readSince } from "./up";
 
 describe("build staleness", () => {
     it("names the inputs that changed, appeared or went", () => {
