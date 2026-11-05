@@ -6,6 +6,7 @@
  * SessionEnd. One bun start per call: a PostToolUse of a session with no open dialog record exits after one `stat`,
  * before the store and its logger load.
  */
+import type { IdentityFacet } from "@genesiscz/utils/agent/identity";
 import { env } from "@genesiscz/utils/env";
 import { loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { hookDiag, logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
@@ -30,9 +31,9 @@ const event = normalizeEvent(payload.event);
 const asks = event === "pretooluse" || event === "notification";
 
 try {
-    const callerForHook = async () => {
+    const callerForHook = async (facets: IdentityFacet[] | undefined = asks ? ["host"] : undefined) => {
         const { hookCaller } = await import("../lib/hooks/caller");
-        return hookCaller(payload, env.getProcessEnv(), asks ? { facets: ["host"] } : undefined);
+        return hookCaller(payload, env.getProcessEnv(), facets ? { facets } : undefined);
     };
     let caller = payload.sessionId ? undefined : await callerForHook();
     const sessionId = payload.sessionId || caller?.sessionId || undefined;
@@ -60,7 +61,14 @@ try {
     const { applyQuestionHookAction, questionHookAction } = await import("../lib/hooks/questions");
     caller ??= await callerForHook();
     const now = new Date().toISOString();
-    const action = questionHookAction(payload, now, caller);
+    let action = questionHookAction(payload, now, caller);
+
+    // A recorded question keeps the caller's transcript. The lookup runs only when a question is recorded and the
+    // payload named no transcript (Claude's always does), never on the path every tool call takes.
+    if (action?.ask && !caller.transcriptPath) {
+        caller = await callerForHook(["host", "transcript"]);
+        action = questionHookAction(payload, now, caller);
+    }
 
     if (action) {
         const result = await applyQuestionHookAction(payload, action, { now, caller });
