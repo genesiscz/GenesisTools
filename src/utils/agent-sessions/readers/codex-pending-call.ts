@@ -30,6 +30,15 @@ function scriptField(script: string, field: string): string | undefined {
  * `tools.exec_command({cmd:"touch codex-probe.txt",sandbox_permissions:"require_escalated",justification:"…"})`.
  */
 function codeModeDetail(script: string, cwd: string | undefined): PendingToolCall["detail"] {
+    try {
+        return parsedCodeModeDetail(script, cwd);
+    } catch {
+        // JavaScript string literals can contain escapes that JSON cannot decode. Show the complete script.
+        return pendingCallDetail("tool", script);
+    }
+}
+
+function parsedCodeModeDetail(script: string, cwd: string | undefined): PendingToolCall["detail"] {
     const cmd = scriptField(script, "cmd");
 
     // Only a script that is one exec_command call (its result may be assigned) shows as that command; any other code
