@@ -720,17 +720,25 @@ export async function undoEdit(value: string): Promise<OpenedProject> {
         // The edit now reads as it did after the step before; that step's revision is the one just saved, so a second
         // undo goes one step further back.
         const rest = steps.slice(0, -1);
-    
+
         if (rest.length) {
             rest[rest.length - 1] = { ...rest[rest.length - 1], afterRevision: saved.revision };
         }
-    
+
         atomicWriteFileSync(undoPath(opened.path), SafeJSON.stringify({ steps: rest }));
         log.debug({ path: opened.path, revision: saved.revision, left: rest.length, ops: last.ops }, "edit undone");
-        return { path: opened.path, project: saved, fresh: false as const, undone: last.ops ?? [], saved: true as const };
+        return {
+            path: opened.path,
+            project: saved,
+            fresh: false as const,
+            undone: last.ops ?? [],
+            saved: true as const,
+        };
     });
     if (attempt.outcome !== "saved") {
-        throw new Error(`undo refused: the edit ${attempt.outcome === "busy" ? "is being saved by another writer" : "changed since it was read"}`);
+        throw new Error(
+            `undo refused: the edit ${attempt.outcome === "busy" ? "is being saved by another writer" : "changed since it was read"}`
+        );
     }
     return attempt.value;
 }

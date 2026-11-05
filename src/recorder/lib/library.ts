@@ -355,14 +355,20 @@ export async function runFaceProcess(argv: string[], signal?: AbortSignal): Prom
         log.debug({ error, argv }, "recorder: the face run ended with an error");
     });
     const code = await new Promise<number>((done) => {
-        const timer = setTimeout(() => {
-            stderr += "headless renderer exceeded its deadline";
-            child.kill("SIGKILL");
-            child.stdout.destroy();
-            child.stderr.destroy();
-            done(1);
-        }, argv.includes("--export") ? 60 * 60_000 : 120_000);
-        child.once("close", (status) => { clearTimeout(timer); done(status ?? 1); });
+        const timer = setTimeout(
+            () => {
+                stderr += "headless renderer exceeded its deadline";
+                child.kill("SIGKILL");
+                child.stdout.destroy();
+                child.stderr.destroy();
+                done(1);
+            },
+            argv.includes("--export") ? 60 * 60_000 : 120_000
+        );
+        child.once("close", (status) => {
+            clearTimeout(timer);
+            done(status ?? 1);
+        });
         child.once("error", () => {
             clearTimeout(timer);
             child.kill("SIGKILL");

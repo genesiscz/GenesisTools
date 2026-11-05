@@ -1,4 +1,3 @@
-
 import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
@@ -7,8 +6,8 @@ import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
 import { CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
-import { recordingItemId, withItemIds } from "./item-ids";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
+import { recordingItemId, withItemIds } from "./item-ids";
 import {
     clipSpeed,
     cursorPointAt,

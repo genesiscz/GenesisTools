@@ -1,4 +1,3 @@
-
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";

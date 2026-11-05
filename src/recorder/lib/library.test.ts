@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import * as cli from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitration";
 import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
@@ -552,4 +553,41 @@ it("a library limit leaves older manifests unparsed", () => {
         })
     );
     expect(listLibrary({ root, limit: 1 }).map((row) => row.id)).toEqual(["new"]);
+});
+
+it("replays created text and its subsequent ID edit without changing the returned ID", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "edit-replay-"));
+    const path = join(folder, "edit.json");
+    const original = writeProject(
+        path,
+        wholeProject({ video: join(folder, "screen.mp4"), durationUs: 5_000_000, width: 640, height: 480 })
+    );
+    const sessions = new EditSessions({ onChange: () => undefined, saveDelayMs: 60_000 });
+    const session = await sessions.hold(path);
+    const added = await session.apply([{ op: "text", from: 0, to: 1, text: "Keep this ID" }], { by: "fixture" });
+    const id = added.project.texts![0].id;
+    await session.apply([{ op: "retime", id, from: 1, to: 2 }], { by: "fixture" });
+    writeProject(path, { ...original, audio: { ...original.audio, volume: 0.3 } });
+    session.flush();
+    const disk = SafeJSON.parse(readFileSync(path, "utf8"));
+    expect(disk.texts[0]).toMatchObject({ id, startUs: 1_000_000, endUs: 2_000_000 });
+    expect(disk.audio.volume).toBe(0.3);
+    sessions.release(path);
+});
+
+it("recording trash forwards policy refusal without touching the requested directory", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "recording-trash-policy-"));
+    const run = spyOn(cli, "execTool").mockResolvedValue({
+        success: false,
+        exitCode: 1,
+        stdout: "",
+        stderr: "policy refused",
+    });
+    try {
+        await expect(trashRecording(folder)).rejects.toThrow("policy refused");
+        expect(run).toHaveBeenCalledWith(["rm", folder], { timeout: 30_000 });
+        expect(existsSync(folder)).toBe(true);
+    } finally {
+        run.mockRestore();
+    }
 });
