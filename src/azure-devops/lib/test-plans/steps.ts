@@ -257,7 +257,10 @@ export function parseStepsMarkdown(markdown: string): TestStepInput[] {
             // The indented lines under a shared steps item are its expansion, printed for reading only.
             steps.push({ sharedStepsId: Number(shared[1]) });
         } else {
-            steps.push({ action: actionText, expected: (expected ?? []).join("\n").trim() });
+            steps.push({
+                action: actionText === "_(empty)_" ? "" : actionText,
+                expected: (expected ?? []).join("\n").trim(),
+            });
         }
 
         action = null;

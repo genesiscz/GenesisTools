@@ -161,6 +161,11 @@ describe("markdown steps", () => {
         ]);
     });
 
+    test("an empty action round trips through the displayed list", () => {
+        const rendered = renderStepsMarkdown([{ kind: "step", id: 1, action: "", expected: "Result" }]);
+        expect(parseStepsMarkdown(rendered)).toEqual([{ action: "", expected: "Result" }]);
+    });
+
     test("input text is JSON when it starts with a bracket, and a list otherwise", () => {
         expect(parseStepsInput('[{"action":"A","expected":"B"},{"sharedStepsId":3}]')).toEqual([
             { action: "A", expected: "B" },
