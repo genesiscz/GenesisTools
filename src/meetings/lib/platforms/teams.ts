@@ -15,7 +15,11 @@ const TEAMS_TIMEOUT_MS = 60_000;
 /** The part of `tools ms-teams meetings attendance --json` this reads. */
 const attendanceSchema = z.array(
     z.object({
-        meeting: z.object({ title: z.string().nullish(), startedAt: z.string().nullish() }),
+        meeting: z.object({
+            title: z.string().nullish(),
+            startedAt: z.string().nullish(),
+            endedAt: z.string().nullish(),
+        }),
         observer: z.object({ joinedAt: z.string().nullish() }).optional(),
         attendance: z.array(
             z.object({
@@ -62,13 +66,22 @@ export function teamsAttendanceFromJson(
         return null;
     }
 
+    // The call-ended message lists who took part without join or leave times: they count as present for the whole
+    // call, which still names the candidates (rule E2) and who was there at all (rule RA).
+    const callFrom = Date.parse(call.meeting.startedAt ?? "");
+    const callTo = Date.parse(call.meeting.endedAt ?? "");
+    let untimed = 0;
     const presence: Presence[] = call.attendance.flatMap((person) => {
-        const joined = Date.parse(person.joinedAt ?? "");
-        const left = Date.parse(person.leftAt ?? "");
+        const joinedAt = Date.parse(person.joinedAt ?? "");
+        const leftAt = Date.parse(person.leftAt ?? "");
+        const joined = Number.isFinite(joinedAt) ? joinedAt : callFrom;
+        const left = Number.isFinite(leftAt) ? leftAt : Number.isFinite(joinedAt) ? Number.NaN : callTo;
 
         if (!Number.isFinite(joined)) {
             return [];
         }
+
+        untimed += Number.isFinite(joinedAt) ? 0 : 1;
 
         return [
             {
@@ -81,11 +94,32 @@ export function teamsAttendanceFromJson(
             },
         ];
     });
+    const title = call.meeting.title ?? "untitled";
+    const listed = call.attendance.length;
+
+    if (listed === 0) {
+        return { presence, note: `attendance: Teams keeps no participant list for "${title}"` };
+    }
+
+    const missing = listed - presence.length;
+    const notes = [
+        untimed > 0 ? `${untimed} without join or leave times, counted present for the whole call` : "",
+        missing > 0 ? `${missing} left out: neither they nor the call have a start time` : "",
+    ].filter(Boolean);
 
     return {
         presence,
-        note: `attendance: ${presence.length} people from ${from} ("${call.meeting.title ?? "untitled"}")`,
+        note: `attendance: ${presence.length} people from ${from} ("${title}")${notes.length ? `; ${notes.join("; ")}` : ""}`,
     };
+}
+
+/** Whether a text is `tools ms-teams meetings attendance --json` output. */
+function readsTeamsAttendance(raw: string): boolean {
+    try {
+        return attendanceSchema.safeParse(SafeJSON.parse(raw, { strict: true })).success;
+    } catch {
+        return false;
+    }
 }
 
 export const teamsPlatform: MeetingPlatform = {
@@ -108,5 +142,11 @@ export const teamsPlatform: MeetingPlatform = {
         }
 
         return teamsAttendanceFromJson(result.stdout, target, toolCommand("ms-teams"));
+    },
+
+    attendanceFile: {
+        format: `${toolCommand("ms-teams", "meetings", "attendance", "--json")} output`,
+        reads: readsTeamsAttendance,
+        attendance: teamsAttendanceFromJson,
     },
 };
