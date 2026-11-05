@@ -2001,6 +2001,9 @@ describe("postReviewComment (the review window's GitHub writes)", () => {
         );
         expect(nothing.reviewUrl).toBeUndefined();
         expect(nothing.submitFailed?.reviewId).toBe("REV_new");
+        expect(batchOutcome(nothing, "acme/web#7").lines.map((line) => line.text).join(" ")).toContain(
+            "review was left pending"
+        );
         expect(none.calls.some((call) => call.startsWith("deletePullRequestReview"))).toBe(false);
         const foreign = fakeClient({ replyFailsFor: ["PRRT_2"], foreignDrafts: 1 });
         const protectedReview = await postRepliesAsOneReview(
@@ -2018,7 +2021,7 @@ describe("postReviewComment (the review window's GitHub writes)", () => {
         expect(none.lines.some((line) => line.level === "ok")).toBe(false);
         expect(none.lines.at(-1)).toEqual({
             level: "error",
-            text: "No reply was posted; the empty review was deleted",
+            text: "No reply was posted",
         });
 
         const some = batchOutcome(

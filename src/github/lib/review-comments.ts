@@ -352,14 +352,13 @@ export interface ThreadReply {
 }
 
 export interface OneReviewRepliesResult {
-    /** The submitted review; absent when no reply landed and the empty review was deleted. */
+    /** The submitted review URL, absent when the review was not submitted or submission failed. */
     reviewUrl?: string;
     posted: Array<{ threadId: string; commentId: string; url: string }>;
     failed: Array<{ threadId: string; error: string }>;
     /**
-     * Set when the replies landed but the review was not submitted: the submit call failed (the submit may still have
-     * gone through), or the review also held drafts the batch did not write, so it was left pending rather than
-     * publish them. It is never deleted here, because a retry would duplicate the replies.
+     * Identifies a review requiring manual recovery: no replies landed, another writer added drafts, the ownership
+     * check failed, or submission failed (and may still have gone through). The review is never deleted here.
      */
     submitFailed?: { reviewId: string; error: string };
 }
@@ -387,7 +386,7 @@ export function batchOutcome(
         lines.push(
             {
                 level: "error",
-                text: `${result.posted.length} reply(ies) were added to review ${result.submitFailed.reviewId}, but submitting it failed: ${result.submitFailed.error}`,
+                text: `Review ${result.submitFailed.reviewId} has ${result.posted.length} batch reply(ies): ${result.submitFailed.error}`,
             },
             {
                 level: "warn",
@@ -399,7 +398,7 @@ export function batchOutcome(
     }
 
     if (result.posted.length === 0) {
-        lines.push({ level: "error", text: "No reply was posted; the empty review was deleted" });
+        lines.push({ level: "error", text: "No reply was posted" });
 
         return { lines, failed: true };
     }
