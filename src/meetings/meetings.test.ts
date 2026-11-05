@@ -1909,6 +1909,19 @@ describe("a term fix for one line, and a word that a question and an unlinked lo
     });
 });
 
+test("raw evidence uses explicit attendance for both presence and stays", () => {
+    const presence = [{ name: "New Example", fromSec: 0, toSec: 100 }];
+    const raw = rawMeeting({
+        record: { ...record, sections: [{ fromSec: 0, toSec: 100, present: ["Old Example"] }] },
+        meeting: { ...meeting, transcript: [line("New Example", 10, "hello")] },
+        evidence: null,
+        presence,
+        points: [],
+    });
+    expect(raw.lines[0]?.present).toEqual(["New Example"]);
+    expect(raw.people.find((person) => person.name === "New Example")?.stays).toEqual([{ fromSec: 0, toSec: 100 }]);
+});
+
 describe("evidence --raw", () => {
     test("two lines that start in the same second keep their own text, after an untimed line too", () => {
         const raw = rawMeeting({

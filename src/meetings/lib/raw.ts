@@ -54,7 +54,8 @@ export interface RawMeeting {
 
 /** Who is present at a second: the record's sections when it has them, else the attendance stays. */
 function presentAt(record: MeetingRecord, presence: Presence[] | undefined, sec: number): string[] {
-    const section = record.sections?.find((part) => sec >= part.fromSec && sec <= part.toSec);
+    const section =
+        presence === undefined ? record.sections?.find((part) => sec >= part.fromSec && sec <= part.toSec) : undefined;
 
     if (section) {
         return section.present;
@@ -89,7 +90,7 @@ export function rawMeeting(options: {
     const selfName = record.participants.find((person) => person.self)?.name;
     const names = [
         ...new Set([
-            ...(record.attendance?.people.map((person) => person.name) ?? []),
+            ...((options.presence ?? record.attendance?.people)?.map((person) => person.name) ?? []),
             ...record.participants.map((person) => person.name),
             ...meeting.speakers.map((speaker) => speaker.name),
         ]),
@@ -111,7 +112,7 @@ export function rawMeeting(options: {
                 name,
                 ...(origin ? { origin } : {}),
                 ...(selfName && sameName(name, selfName) ? { self: true } : {}),
-                stays: (record.attendance?.people ?? [])
+                stays: (options.presence ?? record.attendance?.people ?? [])
                     .filter((stay) => sameName(stay.name, name))
                     .map((stay) => ({ fromSec: stay.fromSec, toSec: stay.toSec })),
             };
