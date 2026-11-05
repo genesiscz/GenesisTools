@@ -329,6 +329,18 @@ describe("fetchCmuxTree backoff after cmux does not answer", () => {
         expect(backoff.record).toBeNull();
     });
 
+    test("a restarted cmux that fails starts at the shortest backoff", async () => {
+        const backoff = memoryStore();
+        backoff.record = { failures: 5, until: Date.now() + 300_000, state: "socket-dead", appPid: 42, error: "dead" };
+        await fetchCmuxTree({
+            backoff,
+            appPid: () => 43,
+            fetchSnapshot: async () => ({ ...dead, unresponsive: { state: "socket-dead", appPid: 43 } }),
+        });
+        expect(backoff.record?.failures).toBe(1);
+        expect(backoff.record?.appPid).toBe(43);
+    });
+
     test("a failure that is not cmux hanging leaves no memory", async () => {
         const backoff = memoryStore();
         await fetchCmuxTree({
