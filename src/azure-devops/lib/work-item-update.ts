@@ -3,6 +3,7 @@ import { basename } from "node:path";
 
 import type { JsonPatchOperation, WorkItemLive } from "@app/azure-devops/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+import MarkdownIt from "markdown-it";
 
 /** An image already stored on the work item. Keyed by the file's base name. */
 export interface UploadedImage {
@@ -216,24 +217,18 @@ const HTML_ELEMENTS = new Set(
  * The server stores a `&lt;` it is sent as `&lt;`, the same form it gives a literal `<`.
  */
 export function escapeMarkdownTagLikes(markdown: string): string {
-    let fence: { marker: string; length: number } | undefined;
+    const codeLines = new Set<number>();
+    for (const token of new MarkdownIt().parse(markdown, {})) {
+        if ((token.type === "fence" || token.type === "code_block") && token.map) {
+            for (let line = token.map[0]; line < token.map[1]; line++) {
+                codeLines.add(line);
+            }
+        }
+    }
     return markdown
         .split(/(?<=\n)/)
-        .map((line) => {
-            const opening = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-            if (fence) {
-                const escaped = line.replace(/<(?=[A-Za-z/])/g, "&lt;");
-                const closing = /^ {0,3}(`{3,}|~{3,})[ \t]*(?:\r?\n)?$/.exec(line);
-                if (closing && closing[1][0] === fence.marker && closing[1].length >= fence.length) {
-                    fence = undefined;
-                }
-                return escaped;
-            }
-            if (opening) {
-                fence = { marker: opening[1][0], length: opening[1].length };
-                return line.replace(/<(?=[A-Za-z/])/g, "&lt;");
-            }
-            if (/^(?: {4}|\t)/.test(line)) {
+        .map((line, index) => {
+            if (codeLines.has(index)) {
                 return line.replace(/<(?=[A-Za-z/])/g, "&lt;");
             }
             return line.replace(
