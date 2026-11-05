@@ -215,7 +215,8 @@
             "enum": [
               "recording",
               "paused",
-              "stopping"
+              "stopping",
+              "stopped"
             ]
           },
           "displays": {
@@ -2842,7 +2843,8 @@
                   "enum": [
                     "recording",
                     "paused",
-                    "stopping"
+                    "stopping",
+                    "stopped"
                   ]
                 },
                 "displays": {
@@ -4398,7 +4400,8 @@
                 "enum": [
                   "recording",
                   "paused",
-                  "stopping"
+                  "stopping",
+                  "stopped"
                 ]
               },
               "displays": {
