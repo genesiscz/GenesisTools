@@ -393,7 +393,8 @@ struct EffectSegment: View {
 
     /// The source shift of a drag, kept inside the recording.
     private func shift(_ points: CGFloat, start: Int64, end: Int64) -> Int64 {
-        let delta = Int64(Double(points) / scale.pointsPerSecond * 1_000_000)
+        let delta = TimelineMap.sourceShift(outputDeltaUs: Int64(Double(points) / scale.pointsPerSecond * 1_000_000),
+                                            atSource: start, in: model.project)
         return min(max(delta, -start), model.project.source.durationUs - (end - start) - start)
     }
 
@@ -416,7 +417,8 @@ struct EffectSegment: View {
             .gesture(DragGesture(minimumDistance: 1).onChanged { value in
                 if moveFrom == nil { moveFrom = (item.startUs, item.endUs); model.selectEffect(item, seek: false) }
                 guard let (start, end) = moveFrom else { return }
-                let delta = Int64(Double(value.translation.width) / scale.pointsPerSecond * 1_000_000)
+                let delta = TimelineMap.sourceShift(outputDeltaUs: Int64(Double(value.translation.width) / scale.pointsPerSecond * 1_000_000),
+                                                    atSource: leading ? start : end, in: model.project)
                 let edge = model.snapped(leading ? start + delta : end + delta, excluding: item.id)
                 if leading {
                     model.moveEffect(item, startUs: max(0, min(edge, end - 100_000)), endUs: end)

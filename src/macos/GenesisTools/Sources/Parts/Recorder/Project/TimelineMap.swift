@@ -51,6 +51,12 @@ enum TimelineMap {
         return nil
     }
 
+    /// Convert a horizontal timeline move to source time through the kept clips and their speeds.
+    static func sourceShift(outputDeltaUs: Int64, atSource sourceUs: Int64, in project: EditProject) -> Int64 {
+        guard let output = outputTime(ofSource: sourceUs, in: project) else { return 0 }
+        return sourceTime(atOutput: output + outputDeltaUs, in: project) - sourceUs
+    }
+
     /// The edit cut down to what plays from `fromOut` to `toOut` (output microseconds): each clip's overlap with the
     /// range, at its speed. For exporting a part; nil when nothing plays there.
     static func part(_ project: EditProject, fromOut: Int64, toOut: Int64) -> EditProject? {
