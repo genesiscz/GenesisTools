@@ -806,6 +806,18 @@ describe("edits that run at the same time", () => {
         expect(readProject(path).texts).toHaveLength(1);
     });
 
+    // Regression test: 2026-11-05 recorder service review, finding 5 — the base check moved from the service into editProject
+    test("an edit.apply without a session that names a revision the file is not at is refused and saves nothing", async () => {
+        const { service } = await serviceFixture();
+        const path = editFixture("rs-base-stale-");
+        const agent = await connect(service.entry);
+
+        await expect(
+            agent.call<unknown>("edit.apply", { path, baseRevision: 4, ops: [{ op: "volume", volume: 0.2 }] })
+        ).rejects.toMatchObject({ code: RPC_ERRORS.staleRevision });
+        expect(readProject(path).audio.volume).toBe(1);
+    });
+
     // Regression test: 2026-11-05 recorder service review, finding 4 — a cancelled edit still saved after its answer
     test("an edit.apply cancelled while it computes is never saved to the file", async () => {
         const { service } = await serviceFixture();
