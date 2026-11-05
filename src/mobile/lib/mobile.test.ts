@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { MobileProject } from "@genesiscz/utils/mobile/project";
+import { Command } from "commander";
+import { registerUp } from "../commands/up";
 import { builtAppPath } from "./build";
 import { compareFingerprints } from "./fingerprint";
 import { stamp } from "./paths";
@@ -265,4 +267,16 @@ describe("review regression cases", () => {
             "no route matches"
         );
     });
+});
+
+it("rejects invalid startup numbers during argument parsing", async () => {
+    for (const [flag, value] of [
+        ["--launch-timeout", "Infinity"],
+        ["--width", "-1"],
+        ["--metro-port", "abc"],
+    ]) {
+        const program = new Command();
+        registerUp(program);
+        await expect(program.parseAsync(["up", flag, value], { from: "user" })).rejects.toThrow("finite and positive");
+    }
 });
