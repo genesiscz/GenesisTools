@@ -113,7 +113,7 @@ describe("the live cache table", () => {
 
         const board = queryClient.getQueryData<typeof MOCK_BOARD>(agentsKeys.board);
         expect(board?.sessions[0]).toMatchObject({ key: first.key, label: "waiting", project: first.project });
-        expect(queryClient.getQueryState(agentsKeys.board)?.isInvalidated).toBe(false);
+        expect(queryClient.getQueryState(agentsKeys.board)?.isInvalidated).toBe(true);
 
         applyLiveFrame(
             LIVE_CACHE_TABLE,
@@ -121,6 +121,16 @@ describe("the live cache table", () => {
             queryClient
         );
         expect(queryClient.getQueryState(agentsKeys.board)?.isInvalidated).toBe(true);
+    });
+
+    it("same-membership snapshots invalidate metadata absent from the phase payload", () => {
+        const queryClient = new QueryClient();
+        queryClient.setQueryData(agentsKeys.board, MOCK_BOARD);
+        applyLiveFrame(LIVE_CACHE_TABLE, {
+            v: 1, channel: "agents", type: "snapshot", payload: { sessions: MOCK_BOARD.sessions },
+        }, queryClient);
+        expect(queryClient.getQueryState(agentsKeys.board)?.isInvalidated).toBe(true);
+        expect(queryClient.getQueryData(agentsKeys.board)).toMatchObject({ sessions: MOCK_BOARD.sessions });
     });
 
     it("an agents snapshot with a session that ended refetches the board", () => {

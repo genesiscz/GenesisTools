@@ -120,7 +120,6 @@ export const LIVE_CACHE_TABLE: LiveCacheTable = {
 
             if (next) {
                 queryClient.setQueryData(agentsKeys.board, next);
-                return;
             }
 
             invalidate(queryClient, [agentsKeys.board]);
