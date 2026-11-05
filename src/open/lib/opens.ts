@@ -103,7 +103,14 @@ export async function openAndLog(request: OpenRequest): Promise<OpenRecord> {
         caller,
     };
     appendOpenRecord(record);
-    log.debug({ argv, exitCode, agent: caller.agent, sessionId: caller.sessionId }, "opened");
+    const fields = { argv, exitCode, agent: caller.agent, sessionId: caller.sessionId };
+
+    if (exitCode === 0) {
+        log.debug(fields, "opened");
+    } else {
+        log.warn({ ...fields, stderr: stderr.trim() }, "open failed");
+    }
+
     return record;
 }
 
