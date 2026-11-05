@@ -1,4 +1,3 @@
-import { logger } from "@genesiscz/utils/logger";
 import { AlertWatcher, alertBackendFor } from "./alerts";
 import type { MobileRoute } from "./project";
 import { attachSession, ensureAppium } from "./session";
@@ -6,7 +5,6 @@ import { installedAppInfo, launchApp, openUrl, screenshot as simctlScreenshot, w
 import { WdaClient } from "./wda";
 import type { AppiumSession } from "./webdriver";
 
-const log = logger.child({ component: "mobile.screen" });
 export const ROOT_TIMEOUT_MS = 15_000;
 
 /**
@@ -56,11 +54,7 @@ async function appiumDriver(context: ScreenDriverContext): Promise<ScreenDriver>
             }
 
             await Bun.sleep(context.settleMs);
-            const dismissed = await session.dismissAlerts();
-
-            if (dismissed > 0) {
-                log.info({ route: route.name, dismissed }, "dismissed system alerts after opening");
-            }
+            // Preserve permission prompts and app confirmations for capture and inspection.
         },
         async screenshot(file) {
             await Bun.write(file, await session.screenshot());
