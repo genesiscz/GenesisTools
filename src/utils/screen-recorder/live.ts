@@ -173,6 +173,7 @@ export class LiveRecordingServer {
     private readonly server: RpcSocketServer<undefined>;
     private readonly registration?: ServiceRegistration;
     private closed = false;
+    private mutations: Promise<unknown> = Promise.resolve();
 
     constructor(options: {
         id: string;
@@ -357,7 +358,14 @@ export class LiveRecordingServer {
             throw new RpcError(RPC_ERRORS.unsupported, `a ${control.kind} recording has no ${method}`);
         }
 
-        return RECORDER_DISPATCH[method](control, params);
+        if (method === "status" || method.endsWith(".list") || method === "settings.get") {
+            return RECORDER_DISPATCH[method](control, params);
+        }
+
+        // Changes run one after another whichever client sent them, so two clients never interleave a mutation.
+        const pending = this.mutations.then(() => RECORDER_DISPATCH[method](control, params));
+        this.mutations = pending.catch(() => undefined);
+        return pending;
     }
 }
 

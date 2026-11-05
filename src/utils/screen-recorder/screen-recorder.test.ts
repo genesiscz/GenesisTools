@@ -392,6 +392,48 @@ describe("renaming a recording", () => {
     });
 });
 
+test("mutations from two clients share one recorder queue", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const control = new TestControl();
+    let calls = 0;
+    control.pause = async () => {
+        calls += 1;
+        if (control.state !== "recording") {
+            throw new RpcError(RPC_ERRORS.alreadyPaused, "already paused");
+        }
+        entered.resolve();
+        await release.promise;
+        control.state = "paused";
+        return { state: "paused" };
+    };
+    const dir = mkdtempSync(join(tmpdir(), "live-queue-"));
+    const server = new LiveRecordingServer({ id: "queue", kind: "meeting", title: "Fixture", control, dir });
+    const first = await RecorderClient.connect("queue", { dir });
+    const second = await RecorderClient.connect("queue", { dir });
+    try {
+        const one = first.pause();
+        await withTimeout(entered.promise, 1000, new Error("first pause did not start"));
+        // A pending `expect(two).rejects` would block this test until two settles (bun 1.4.2), so it keeps the error.
+        const two = second.pause().then(
+            () => undefined,
+            (error: unknown) => error
+        );
+        await Bun.sleep(20);
+        expect(calls).toBe(1);
+        release.resolve();
+        await one;
+        expect(String(await two)).toContain("already paused");
+        expect(calls).toBe(2);
+        expect(await second.resume()).toEqual({ state: "recording" });
+    } finally {
+        release.resolve();
+        first.close();
+        second.close();
+        server.close();
+    }
+});
+
 describe("live recordings", () => {
     test("closing inside stop removes discovery immediately and delivers the final answer", async () => {
         const dir = mkdtempSync(join(tmpdir(), "live-rec-close-"));
