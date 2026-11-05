@@ -12,6 +12,7 @@ import { codexAnalysis } from "./readers/codex-analysis";
 import { discoverCodexHistorySources } from "./readers/codex-discovery";
 import { importNativeCodexSession } from "./readers/codex-import";
 import { codexClassifyPath } from "./readers/codex-locate";
+import { codexPendingCall } from "./readers/codex-pending-call";
 import { readCodexStatistics } from "./readers/codex-statistics";
 import { createGrokHistoryOperations } from "./readers/grok";
 import { grokAnalysis } from "./readers/grok-analysis";
@@ -51,12 +52,13 @@ export const claudeHistoryReader = createCompactHistoryReader({
 
 export const codexHistoryReader = createCompactHistoryReader({
     kind: "codex",
-    // Codex rollouts do not persist the app-server's live permission prompts.
+    // Codex rollouts do not persist the app-server's live permission prompts; the pending call is the rollout's own.
     dialog: {
         eventLogPath: () => null,
         openPermission: () => null,
         sessionAlive: () => null,
         registryDirectory: () => null,
+        pendingCall: codexPendingCall,
     },
     analysis: codexAnalysis,
     windowTurns: deferredWindowTurns(import.meta, "./readers/codex-turns", "codexNativeLinesToTurns"),

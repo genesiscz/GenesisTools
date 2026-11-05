@@ -375,3 +375,21 @@ export function isTaskReport(parts: readonly PromptPart[] | undefined): boolean 
 
     return parts.every((part) => part.kind === "task" || part.kind === "system");
 }
+
+/** The opening words of the summary a harness writes as the first prompt after it compacts a conversation. */
+const CONTINUATION_SUMMARY = "This session is being continued from a previous conversation";
+
+/**
+ * The user's own words in a prompt, or null when the prompt is a harness delivery (a task result, a peer's message, a
+ * notification) or the summary that opens a compacted conversation. A reader that shows "the last prompt" uses it.
+ */
+export function ownPromptText(raw: string): string | null {
+    const words = parsePromptParts(raw).flatMap((part) => (part.kind === "user" ? [part.text.trim()] : []));
+
+    if (words.some((text) => text.startsWith(CONTINUATION_SUMMARY))) {
+        return null;
+    }
+
+    const joined = words.filter((text) => text !== "").join("\n");
+    return joined === "" ? null : joined;
+}

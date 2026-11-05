@@ -80,5 +80,15 @@ export const grokHarness: HarnessDriver<"grok"> = {
             supported: false,
             reason: "the keys of the Grok ask_user_question dialog were not measured live yet; answer it in the terminal",
         },
+        approval: {
+            permission: {
+                supported: false,
+                reason: "Grok 1.0.70 opened no permission dialog under the always-approve config when measured on 2026-11-04, so its keys are not known; answer it in the terminal",
+            },
+            plan: {
+                supported: false,
+                reason: "Grok 1.0.70 opened no permission dialog under the always-approve config when measured on 2026-11-04, so its keys are not known; answer it in the terminal",
+            },
+        },
     },
 };

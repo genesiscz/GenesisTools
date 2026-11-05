@@ -51,6 +51,7 @@ test("a registered fourth history provider can be resolved without an account al
                 openPermission: () => null,
                 sessionAlive: () => null,
                 registryDirectory: () => null,
+                pendingCall: () => null,
             },
             windowTurns: () => [],
             readBackward: noBackwardRead,

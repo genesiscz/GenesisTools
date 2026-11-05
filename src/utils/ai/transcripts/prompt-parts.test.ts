@@ -3,7 +3,13 @@ import { isHarnessDeliveryText } from "@genesiscz/utils/agent-sessions/user-text
 import type { ConversationMessage, UserMessage } from "@genesiscz/utils/claude/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { claudeMessagesToTurns } from "./claude";
-import { isHarnessDelivery, isTaskReport, parsePromptParts, structuredPromptParts } from "./prompt-parts";
+import {
+    isHarnessDelivery,
+    isTaskReport,
+    ownPromptText,
+    parsePromptParts,
+    structuredPromptParts,
+} from "./prompt-parts";
 
 const PEER_NOTICE =
     "This came from another Claude session — not typed by your user, but very likely working on their behalf. " +
@@ -331,5 +337,21 @@ describe("claudeMessagesToTurns with prompt parts", () => {
         expect(byId.has("meta-peer")).toBe(false);
         expect(byId.has("reminder-only")).toBe(false);
         expect(turns.map((turn) => turn.id)).toEqual(["plain", "peer", "task", "midturn"]);
+    });
+});
+
+describe("ownPromptText", () => {
+    test("keeps the user's words and drops harness deliveries and the compaction summary", () => {
+        expect(ownPromptText("fix the test")).toBe("fix the test");
+        expect(ownPromptText("<task-notification> <task-id>x</task-id> </task-notification>")).toBeNull();
+        expect(
+            ownPromptText("This session is being continued from a previous conversation that ran out of context.")
+        ).toBeNull();
+        expect(ownPromptText("   ")).toBeNull();
+        expect(
+            ownPromptText(
+                "This session is being continued from a previous conversation.\n\nSummary: 1. Primary request"
+            )
+        ).toBeNull();
     });
 });

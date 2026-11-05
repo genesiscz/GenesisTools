@@ -49,6 +49,7 @@ function fixture() {
             openPermission: () => null,
             sessionAlive: () => null,
             registryDirectory: () => null,
+            pendingCall: () => null,
         },
         windowTurns: () => [],
         readBackward: noBackwardRead,

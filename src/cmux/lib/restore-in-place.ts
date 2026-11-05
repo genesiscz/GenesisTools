@@ -1,5 +1,4 @@
 import { agentKindFromLauncher, isAgentLauncher } from "@app/cmux/lib/launchers";
-import { liveTree } from "@app/cmux/lib/live-layout";
 import { profileSurfaces } from "@app/cmux/lib/profile-walk";
 import { resumeTargetFromCommand } from "@app/cmux/lib/render-resume";
 import { type RestoreOptions, replayTerminal } from "@app/cmux/lib/restore";
@@ -10,6 +9,7 @@ import type { Profile, TerminalSurface } from "@app/cmux/lib/types";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { runCmux, runCmuxJSON, runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
 import { cmuxIdKey } from "@genesiscz/utils/cmux/lib/target";
+import { liveTree } from "@genesiscz/utils/cmux/live-layout";
 import { appendSessionCmuxRef } from "@genesiscz/utils/cmux/session-refs";
 import { logger } from "@genesiscz/utils/logger";
 import { listProcesses } from "@genesiscz/utils/process/processes";

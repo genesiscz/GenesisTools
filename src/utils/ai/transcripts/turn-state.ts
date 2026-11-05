@@ -148,7 +148,7 @@ export function turnStateSources(provider: TurnProvider, transcriptPath: string)
 }
 
 /** Every whole JSON line of a raw tail, with the byte offset where it starts. */
-function tailRecords(tail: { raw: Buffer; start: number }): { records: JsonRecord[]; offsets: number[] } {
+export function tailRecords(tail: { raw: Buffer; start: number }): { records: JsonRecord[]; offsets: number[] } {
     const records: JsonRecord[] = [];
     const offsets: number[] = [];
     // Lines are cut from the raw bytes, so an offset stays exact past a line that holds invalid UTF-8.

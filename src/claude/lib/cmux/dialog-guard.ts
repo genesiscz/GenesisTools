@@ -10,23 +10,33 @@ import { isTestProcess } from "@genesiscz/utils/test-process";
 
 const { log } = logger.scoped("cmux-dialog-guard");
 
+/** The registry's `waitingFor` while a permission or plan dialog is open (Claude Code 2.1.314, 2026-11-04). */
+export const CLAUDE_PERMISSION_WAIT = "permission prompt";
+
 /**
  * Claude Code's own registry entry (`<config dir>/sessions/<pid>.json`) says `status: "waiting"` with `waitingFor:
- * "input needed"` while a question dialog is open, and `idle` or `busy` otherwise (observed live on 2.1.312,
- * 2026-10-30). It is the one signal that sees an open `AskUserQuestion` before it is answered: Claude Code writes the
- * assistant record that holds the tool call only after the tool returns, so the transcript's turn state cannot. The
- * entry does not say which dialog it is, so the kind stays `decision`; the signal is `registry`.
+ * "input needed"` while a question dialog is open (observed live on 2.1.312, 2026-10-30), `waitingFor: "permission
+ * prompt"` while a permission or plan dialog is open (2.1.314, 2026-11-04), and `idle` or `busy` otherwise. It is the
+ * one signal that sees an open `AskUserQuestion` before it is answered: Claude Code writes the assistant record that
+ * holds that tool call only after the tool returns, so the transcript's turn state cannot. A permission prompt is kind
+ * `permission`; any other wait stays `decision`. The signal is `registry`.
  */
 export function claudeRegistryDialog(
     sessionId: string,
     sessions: (directory?: string) => ClaudeLiveSession[] = (dir) => listClaudeSessionInventory({ dir }),
     directory?: string | null
 ): OpenDialog | null {
-    const waiting = sessions(directory ?? undefined).some(
+    const waiting = sessions(directory ?? undefined).find(
         (session) => session.sessionId === sessionId && session.status === "waiting" && !session.parkedJobId
     );
 
-    return waiting ? { kind: "decision", question: null, signal: "registry" } : null;
+    if (!waiting) {
+        return null;
+    }
+
+    // A permission and a plan dialog both write `permission prompt` (2.1.314); the pending tool call tells them apart.
+    const kind = waiting.waitingFor === CLAUDE_PERMISSION_WAIT ? "permission" : "decision";
+    return { kind, question: null, signal: "registry" };
 }
 
 /**

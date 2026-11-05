@@ -31,6 +31,7 @@ export const HARNESS_PART_LOADING = {
     worker: "eager",
     transcript: "eager",
     dialog: "eager",
+    approval: "eager",
 } as const satisfies {
     readonly [P in keyof HarnessPartContracts]: P extends keyof LazyPartContracts ? "lazy" : "eager";
 };

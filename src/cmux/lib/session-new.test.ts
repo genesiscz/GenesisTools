@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { grokLeaderSocket, recordedLeaderSockets } from "@app/grok/lib/leader";
@@ -709,7 +709,7 @@ test("agents list renders recorded and adoptable sessions as aligned tables with
         type: "created" as const,
         name: "codex-app-ab12cd",
         title: "fixture-codex",
-        state: "running" as const,
+        state: "thinking" as const,
         lastActivityAt: "2026-10-08T17:02:00.000Z",
         agent: "codex" as const,
         account: "side",
@@ -740,7 +740,7 @@ test("agents list renders recorded and adoptable sessions as aligned tables with
 
     expect(lines[0]).toMatch(/^Name\s+Title\s+Agent\s+State\s+Last activity/);
     expect(lines[2]).toContain("fixture-codex");
-    expect(lines[2]).toContain("running");
+    expect(lines[2]).toContain("thinking");
     // People read local time in the table; the JSON keeps the ISO instant.
     expect(lines[2]).toContain(formatDateTime("2026-10-08T17:02:00.000Z", { absolute: "datetime" }));
     expect(lines[2]).not.toContain("2026-10-08T17:02:00.000Z");
@@ -1132,5 +1132,47 @@ test("list omits screen probes while status retains held-message detection and t
     } finally {
         screen.mockRestore();
         resolve.mockRestore();
+    }
+});
+
+test("the inventory says waiting, not idle, for a session that asks a question", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "inventory-waiting-"));
+    const sessionId = "0199dddd-0000-7000-8000-00000000000d";
+    const transcriptPath = join(dir, `${sessionId}.jsonl`);
+    const at = new Date().toISOString();
+    const ask = {
+        type: "assistant",
+        timestamp: at,
+        message: {
+            id: "msg_1",
+            role: "assistant",
+            stop_reason: "tool_use",
+            content: [
+                { type: "tool_use", id: "q1", name: "AskUserQuestion", input: { questions: [{ question: "Go?" }] } },
+            ],
+        },
+    };
+    const prompt = { type: "user", timestamp: at, message: { role: "user", content: "start" } };
+    writeFileSync(transcriptPath, `${SafeJSON.stringify(prompt)}\n${SafeJSON.stringify(ask)}\n`);
+    const live = {
+        sessionId,
+        agent: "claude" as const,
+        cwd: "/fixture",
+        transcriptPath,
+        surface: {
+            id: "surface-id",
+            ref: "surface:1",
+            title: "fixture",
+            workspace: "workspace:1",
+            workspaceId: "workspace-id",
+            workspaceTitle: "fixture",
+            window: "window:1",
+            tty: "ttys001",
+        },
+    };
+    try {
+        expect((await inventory.readSessionDetails(live, { readScreen: false })).state).toBe("waiting");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
     }
 });

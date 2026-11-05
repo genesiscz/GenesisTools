@@ -1,5 +1,6 @@
+import { readLivePhase } from "@genesiscz/utils/ai/live-sessions/fleet";
+import { type FleetPhaseLabel, fleetPhaseLabel } from "@genesiscz/utils/ai/live-sessions/phase";
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
-import { readTurnState } from "@genesiscz/utils/ai/transcripts/turn-state";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { runCmux } from "@genesiscz/utils/cmux/lib/cli";
 import { logger } from "@genesiscz/utils/logger";
@@ -10,7 +11,11 @@ import { fileSessionStore, openSessions, type SessionCreatedRecord } from "./ses
 
 export interface SessionDetails {
     title: string | null;
-    state: "running" | "awaiting-input" | "stalled" | "held-message" | "unknown";
+    /**
+     * The fleet phase label (`FLEET_PHASES`): a session that asks a question is `waiting`, never `idle`. The screen
+     * can override it with `held-message`, which no transcript records.
+     */
+    state: FleetPhaseLabel | "held-message";
     lastActivityAt: string | null;
     lastMessage: string | null;
 }
@@ -33,12 +38,11 @@ export async function readSessionDetails(
     };
     try {
         const resolved = await resolveTranscript(live.transcriptPath ?? live.sessionId, {}, live.agent);
-        const snapshot = readTurnState(live.agent, resolved.filePath, { stallTimeoutMs: 15 * 60_000 });
-        if (snapshot) {
-            details.state =
-                snapshot.state === "STALLED" ? "stalled" : snapshot.state === "RUNNING" ? "running" : "awaiting-input";
-            details.lastActivityAt = new Date(snapshot.lastActivityAt).toISOString();
-            details.lastMessage = snapshot.lastText || null;
+        const read = readLivePhase({ provider: live.agent, filePath: resolved.filePath });
+        if (read) {
+            details.state = fleetPhaseLabel(read.activity);
+            details.lastActivityAt = new Date(read.snapshot.lastActivityAt).toISOString();
+            details.lastMessage = read.snapshot.lastText || null;
         }
     } catch (error) {
         logger.debug({ error, sessionId: live.sessionId }, "cmux agent transcript unavailable");
