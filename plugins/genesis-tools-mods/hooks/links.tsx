@@ -27,7 +27,7 @@ import {
     sameOwner,
     titleMatches,
 } from "./pr-repos";
-import { agentsDir, type Host, isRecord, logMod } from "./shared";
+import { agentsDir, type Host, isRecord, logMod, logReading } from "./shared";
 import { cliLacks } from "./shared-run";
 
 const DOC = new Set(["md", "mdx", "json", "jsonl", "yaml", "yml", "toml", "log", "txt", "csv"]);
@@ -1063,7 +1063,15 @@ export async function* linksStep(
         if (ctx && ctx.log.length > 0) {
             // What the mod changed in a reply is always logged, not as a reading: it is one line per changed message,
             // and it is the only record of a link the person later finds wrong.
-            await logMod(host, "links", { session: ctx.sessionId, turn: e.turnId, step: e.index, items: ctx.log });
+            const readings = ctx.log.filter((item) => item.kind === "miss" || item.kind === "pr-unsure");
+            const modifications = ctx.log.filter((item) => item.kind !== "miss" && item.kind !== "pr-unsure");
+            const context = { session: ctx.sessionId, turn: e.turnId, step: e.index };
+            if (modifications.length) {
+                await logMod(host, "links", { ...context, items: modifications });
+            }
+            if (readings.length) {
+                await logReading(host, "links", { ...context, items: readings });
+            }
         }
 
         // The recorded answer carries the links too, so a hook above and the transcript read what was shown.
