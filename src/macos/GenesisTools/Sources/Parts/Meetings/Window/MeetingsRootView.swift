@@ -214,7 +214,7 @@ struct MeetingRow: View, Equatable {
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
             }
             // Wraps to a second line in a narrow column instead of pushing the row taller with an empty band.
-            ChipFlow(spacing: 5) {
+            WrapLayout(spacing: 5, lineSpacing: 5) {
                 if let project = meeting.project {
                     Text(verbatim: project).font(.system(size: 11)).foregroundStyle(.secondary)
                 }

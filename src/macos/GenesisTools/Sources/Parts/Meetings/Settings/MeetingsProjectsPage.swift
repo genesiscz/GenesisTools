@@ -272,7 +272,7 @@ private struct FlowChips: View {
         if values.isEmpty {
             Text("None").font(.system(size: 12)).foregroundStyle(.tertiary)
         } else {
-            ChipFlow(spacing: 6) {
+            WrapLayout(spacing: 6, lineSpacing: 6) {
                 ForEach(values, id: \.self) { value in
                     HStack(spacing: 4) {
                         Text(verbatim: value).font(.system(size: 12))

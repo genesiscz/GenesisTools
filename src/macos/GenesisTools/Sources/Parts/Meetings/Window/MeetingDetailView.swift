@@ -47,7 +47,7 @@ struct MeetingDetailView: View {
                             identifier: "meetings.detail.export") { detail.export() }
                     .disabled(record == nil || detail.isBusy("export"))
             }
-            ChipFlow(spacing: 8) {
+            WrapLayout(spacing: 8, lineSpacing: 8) {
                 Text(verbatim: whenLine(overview)).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
                 if let overview { MeetingBadgesView(meeting: overview) }
             }

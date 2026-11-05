@@ -458,7 +458,7 @@ private struct QuestionRow: View {
                     .accessibilityHidden(true)
                 Text(verbatim: item.question ?? "").font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
             }
-            ChipFlow(spacing: 6) {
+            WrapLayout(spacing: 6, lineSpacing: 6) {
                 if let from = item.fromSec {
                     GhostButton("Play \(MeetingsFormat.clock(from))", symbol: "play.fill", tooltip: "Play the asked range in the meetings player") {
                         play(from)
