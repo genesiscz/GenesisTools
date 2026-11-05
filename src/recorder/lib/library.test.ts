@@ -9,6 +9,7 @@ import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/reco
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
 import { applyOp, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
+import { withEditCancel } from "./edit";
 import { EditSessions } from "./edit-session";
 import { displaySwitchDepth, keepingSwitchStep, keptPlan, stepDisplaySwitch } from "./frames-movie";
 import { editorOpenStatePath, listLibrary, movieOf, readEditorOpenState, resolveRecording } from "./library";
@@ -590,4 +591,30 @@ it("recording trash forwards policy refusal without touching the requested direc
     } finally {
         run.mockRestore();
     }
+});
+
+it("cancelled queued undo and redo preserve history and the project", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "edit-cancel-history-"));
+    const path = join(folder, "edit.json");
+    writeProject(
+        path,
+        wholeProject({ video: join(folder, "screen.mp4"), durationUs: 1_000_000, width: 640, height: 480 })
+    );
+    const sessions = new EditSessions({ onChange: () => undefined, saveDelayMs: 60_000 });
+    const session = await sessions.hold(path);
+    await session.apply([{ op: "volume", volume: 0.4 }], { by: "fixture" });
+    const undoCancel = new AbortController();
+    const undo = withEditCancel(undoCancel.signal, () => session.undo({ by: "fixture" }));
+    undoCancel.abort(new Error("cancelled queued undo"));
+    await expect(undo).rejects.toThrow("cancelled queued undo");
+    expect(session.current.project.audio.volume).toBe(0.4);
+    await session.undo({ by: "fixture" });
+    const redoCancel = new AbortController();
+    const redo = withEditCancel(redoCancel.signal, () => session.redo({ by: "fixture" }));
+    redoCancel.abort(new Error("cancelled queued redo"));
+    await expect(redo).rejects.toThrow("cancelled queued redo");
+    await session.redo({ by: "fixture" });
+    expect(session.current.project.audio.volume).toBe(0.4);
+    sessions.release(path);
+    expect(SafeJSON.parse(readFileSync(path, "utf8")).audio.volume).toBe(0.4);
 });

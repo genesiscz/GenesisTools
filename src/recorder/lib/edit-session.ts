@@ -209,6 +209,7 @@ export class EditSession {
     /** Puts the edit back as it was before its last change; the revision still rises. */
     undo(options: { by: string }): Promise<EditAnswer & { undone: string[] }> {
         return this.exclusive(async () => {
+            throwIfEditCancelled();
             this.syncWithDisk();
             const step = this.undoSteps.at(-1);
 
@@ -234,6 +235,7 @@ export class EditSession {
     /** Makes the last undone change again. */
     redo(options: { by: string }): Promise<EditAnswer & { redone: string[] }> {
         return this.exclusive(async () => {
+            throwIfEditCancelled();
             this.syncWithDisk();
             const step = this.redoSteps.pop();
 
