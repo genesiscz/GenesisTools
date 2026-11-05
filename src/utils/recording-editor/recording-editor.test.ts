@@ -263,6 +263,34 @@ describe("the editor on a recording folder", () => {
 });
 
 describe.skipIf(skip.integration)("the editor on a video, and the frame review over it", () => {
+    test("expanded extraction filenames cannot overwrite a video input", async () => {
+        const root = workspace();
+        const source = join(root, "source-00000.png");
+        await runVideoCommand({
+            command: [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=size=16x16:duration=1",
+                "-f",
+                "mp4",
+                source,
+            ],
+        });
+        const before = sha(source);
+        await expect(
+            new RecordingEditor().run(
+                { source: { file: source }, steps: [{ kind: "frames", fps: 1 }] },
+                { outputDir: root, layout: "flat" }
+            ).done
+        ).rejects.toThrow();
+        expect(sha(source)).toBe(before);
+    });
+
     test("prepareVideoEvidence gives the frames and grids the editor gives for the same settings", async () => {
         const root = workspace();
         const source = join(root, "source.mp4");

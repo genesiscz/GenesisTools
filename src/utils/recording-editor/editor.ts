@@ -224,6 +224,10 @@ async function extractVideoFrames(ctx: StepContext<EditState>, dir: string, fps:
     mkdirSync(dir, { recursive: true });
     ctx.progress({ done: 0, total: samples.length, unit: "frames", message: "extracting" });
     const expression = frameSelectExpression(indices);
+    for (const position of indices.keys()) {
+        ctx.claim(join(dir, `source-${String(position).padStart(5, "0")}.png`));
+    }
+
     await runVideoCommand({
         command: [
             "ffmpeg",
