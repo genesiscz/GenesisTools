@@ -30,10 +30,13 @@ const event = normalizeEvent(payload.event);
 const asks = event === "pretooluse" || event === "notification";
 
 try {
-    const { hookCaller } = await import("../lib/hooks/caller");
     // A question the hook records keeps the T3 Code thread's provider instance too (one read of T3's own store).
-    const caller = hookCaller(payload, env.getProcessEnv(), asks ? { facets: ["host"] } : undefined);
-    const sessionId = caller.sessionId ?? undefined;
+    const callerForHook = async () => {
+        const { hookCaller } = await import("../lib/hooks/caller");
+        return hookCaller(payload, env.getProcessEnv(), asks ? { facets: ["host"] } : undefined);
+    };
+    let caller = payload.sessionId ? undefined : await callerForHook();
+    const sessionId = payload.sessionId ?? caller?.sessionId ?? undefined;
 
     if (!asks && !hasOpenDialogRecords(payload.harness, sessionId)) {
         if (openMarkersIndexed()) {
@@ -56,6 +59,7 @@ try {
     }
 
     const { applyQuestionHookAction, questionHookAction } = await import("../lib/hooks/questions");
+    caller ??= await callerForHook();
     const now = new Date().toISOString();
     const action = questionHookAction(payload, now, caller);
 
