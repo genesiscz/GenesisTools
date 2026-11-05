@@ -5,7 +5,7 @@ import { type MobileProject, type MobileRoute, projectRoutes, resolveRoute } fro
 export function selectRoutes(routes: MobileRoute[], only?: string[]): MobileRoute[] {
     const picked = routes.filter((route) => !only?.length || only.includes(route.name));
 
-    if (picked.length === 0) {
+    if (picked.length === 0 || only?.some((name) => !routes.some((route) => route.name === name))) {
         throw new Error(
             `no route matches ${only?.join(", ") || "(the project names none)"}; list them with: ${toolCommand("mobile routes")}`
         );
