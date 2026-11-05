@@ -293,6 +293,13 @@ final class LiveRecordingOverlayTests: XCTestCase {
         XCTAssertEqual(overlay.warning, "stream error")
         overlay.applyStatus(["warning": NSNull()])
         XCTAssertNil(overlay.warning)
+        var warned = entry
+        warned.warning = "stale file warning"
+        XCTAssertNil(overlay.merged(into: warned).warning)
+        overlay.applyWarning(["warning": "fresh"])
+        XCTAssertEqual(overlay.merged(into: entry).warning, "fresh")
+        overlay.applyWarning(["warning": NSNull()])
+        XCTAssertNil(overlay.merged(into: warned).warning)
     }
 
     func testFileFramesWinWhenTheyAreAhead() {

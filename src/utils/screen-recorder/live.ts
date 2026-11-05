@@ -303,8 +303,8 @@ export class LiveRecordingServer {
             this.emit("state", { state: change.state });
         }
 
-        if (change.warning && change.warning !== before.warning) {
-            this.emit("warning", { warning: change.warning });
+        if ("warning" in change && change.warning !== before.warning) {
+            this.emit("warning", { warning: change.warning ?? null });
         }
     }
 

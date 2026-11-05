@@ -7,6 +7,7 @@ public struct LiveRecordingOverlay: Equatable, Sendable {
     public var frames: Int?
     public var lastFrameAt: Date?
     public var warning: String?
+    private var warningReceived = false
     public var mode: String?
     public var displays: [LiveRecording.ConnectedDisplay]?
     public var lastError: String?
@@ -24,7 +25,7 @@ public struct LiveRecordingOverlay: Equatable, Sendable {
         if let number = object["frames"] as? NSNumber { frames = number.intValue }
         if let at = LiveRecordingStore.date(object["lastFrameAt"]) { lastFrameAt = at }
         if let text = object["mode"] as? String { mode = text }
-        if object.keys.contains("warning") { warning = (object["warning"] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+        if object.keys.contains("warning") { applyWarning(object["warning"]) }
         if let list = object["connectedDisplays"] { applyDisplays(list) }
     }
 
@@ -50,6 +51,7 @@ public struct LiveRecordingOverlay: Equatable, Sendable {
 
     /// A `warning` notification: a string, or `{message}` / `{warning}`.
     public mutating func applyWarning(_ value: Any?) {
+        warningReceived = true
         let object = value as? [String: Any]
         let text = (value as? String) ?? (object?["message"] as? String) ?? (object?["warning"] as? String)
         warning = text.flatMap { $0.isEmpty ? nil : $0 }
@@ -60,7 +62,7 @@ public struct LiveRecordingOverlay: Equatable, Sendable {
         if let state { recording.state = state }
         if let frames { recording.frames = max(frames, entry.frames) }
         if let lastFrameAt { recording.lastFrameAt = lastFrameAt }
-        if let warning { recording.warning = warning }
+        if warningReceived { recording.warning = warning }
         recording.mode = mode
         recording.connectedDisplays = displays ?? []
         recording.lastError = lastError
