@@ -83,8 +83,11 @@ function shellWord(raw: string | null): string | null {
 function codeWord(scanned: ShellScan, token: Span): string | null {
     const { command, cleaned } = scanned;
     const start = token.start > 0 && /["']/.test(command[token.start - 1] ?? "") ? token.start - 1 : token.start;
-    const word = /^\S+/.exec(command.slice(start))?.[0] ?? token.text;
+    const raw = /^\S+/.exec(command.slice(start))?.[0] ?? token.text;
     const tokenEnd = token.start + token.text.length;
+    const closesBody =
+        start === token.start && /["']/.test(command[tokenEnd] ?? "") && cleaned[tokenEnd] !== command[tokenEnd];
+    const word = closesBody ? raw.slice(0, tokenEnd - start) : raw;
 
     for (let at = 0; at < word.length; at += 1) {
         const offset = start + at;

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveToObsidianUnique } from "./obsidian-save";
@@ -111,6 +111,28 @@ describe("saveToObsidianUnique", () => {
         expect(body).toContain("line two");
     });
 
+    test("aliases of a note and its directory share the append lock", async () => {
+        vaultRoot = await mkdtemp(join(tmpdir(), "vault-"));
+        await mkdir(join(vaultRoot, "inbox"));
+        await symlink(join(vaultRoot, "inbox"), join(vaultRoot, "alias"));
+        await writeFile(join(vaultRoot, "inbox", "shared.md"), "");
+        await symlink(join(vaultRoot, "inbox", "shared.md"), join(vaultRoot, "inbox", "linked.md"));
+        const lines = Array.from({ length: 20 }, (_, index) => `alias ${index}`);
+        await Promise.all(
+            lines.map((content, index) =>
+                saveToObsidianUnique({
+                    vaultRoot,
+                    relativeDir: index % 2 ? "alias" : "inbox",
+                    baseName: index % 3 ? "shared" : "linked",
+                    content,
+                    mode: "append",
+                })
+            )
+        );
+        const body = await readFile(join(vaultRoot, "inbox", "shared.md"), "utf8");
+        expect(body.split("\n").filter(Boolean).sort()).toEqual([...lines].sort());
+    });
+
     test("concurrent appends to one note keep every line", async () => {
         vaultRoot = await mkdtemp(join(tmpdir(), "vault-"));
         const lines = Array.from({ length: 20 }, (_, index) => `line ${index}`);
@@ -129,6 +151,6 @@ describe("saveToObsidianUnique", () => {
         );
 
         const body = await readFile(saved[0].path, "utf8");
-        expect(lines.filter((line) => !body.includes(line))).toEqual([]);
+        expect(body.split("\n").filter(Boolean).sort()).toEqual([...lines].sort());
     });
 });
