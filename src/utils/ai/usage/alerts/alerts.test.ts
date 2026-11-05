@@ -569,6 +569,12 @@ describe("the seed from the old notifier", () => {
 });
 
 describe("config", () => {
+    test("malformed quiet hours do not suppress delivery", () => {
+        for (const quiet of [{ start: "22:00" }, { start: 22, end: "08:00" }, { start: "25:00", end: "08:00" }, { start: "09:99", end: "08:00" }]) {
+            expect(inQuietHours(quiet as unknown as Parameters<typeof inQuietHours>[0], new Date(2026, 0, 1, 6))).toBe(false);
+        }
+    });
+
     test("quiet hours wrap over midnight", () => {
         const quiet = { start: "22:00", end: "07:00" };
         const local = (hour: number) => {

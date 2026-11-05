@@ -109,14 +109,20 @@ export function ruleEnabledFor(config: UsageAlertsConfig, rule: AlertRuleId, pro
     return provider === null || config.providers[provider]?.rules?.[rule]?.enabled !== false;
 }
 
-function minutesOf(clock: string): number | null {
+function minutesOf(clock: unknown): number | null {
+    if (typeof clock !== "string") {
+        return null;
+    }
+
     const match = /^(\d{1,2}):(\d{2})$/.exec(clock.trim());
 
     if (!match) {
         return null;
     }
 
-    return Number(match[1]) * 60 + Number(match[2]);
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    return hours <= 23 && minutes <= 59 ? hours * 60 + minutes : null;
 }
 
 /** Whether `now` falls in the quiet hours, read in the local zone; a span over midnight wraps. */
