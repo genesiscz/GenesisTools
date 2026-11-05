@@ -12,6 +12,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import type { ExportIfEdited, MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
@@ -160,7 +161,8 @@ function planExport(options: {
 
 /** `<id>.export-2026-11-05T0812.md`, then `-2`, `-3` … while one exists. */
 function besidePath(folder: string, id: string, now: Date): string {
-    const stamp = now.toISOString().slice(0, 16).replace(":", "");
+    // Local time, as the user reads it next to the note.
+    const stamp = formatLocalDateTimeStamp(now, { seconds: false }).replace(" ", "T").replace(":", "");
 
     for (let n = 1; ; n += 1) {
         const path = join(folder, `${id}.export-${stamp}${n === 1 ? "" : `-${n}`}.md`);
