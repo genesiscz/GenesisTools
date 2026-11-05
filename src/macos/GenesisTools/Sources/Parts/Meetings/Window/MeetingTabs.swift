@@ -444,6 +444,12 @@ private struct QuestionRow: View {
     let busy: Bool
     let play: (Double) -> Void
     let answer: (String) -> Void
+    @State private var typed = ""
+    @AppStorage(MeetingsPreferences.typedAnswerKey) private var typedAnswer = MeetingsPreferences.TypedAnswer.always.rawValue
+
+    private var showsField: Bool {
+        (MeetingsPreferences.TypedAnswer(rawValue: typedAnswer) ?? .always).shows(choices: item.choices ?? [])
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -470,8 +476,26 @@ private struct QuestionRow: View {
                 .disabled(busy)
                 if busy { ProgressView().controlSize(.small) }
             }
+            if showsField {
+                HStack(spacing: 6) {
+                    TextField(item.choices?.isEmpty == false ? "Or type what you heard" : "Type what you heard", text: $typed)
+                        .textFieldStyle(.roundedBorder).frame(maxWidth: 260)
+                        .onSubmit(submit)
+                        .accessibilityLabel("Answer to: \(item.question ?? "the question")")
+                    GhostButton("Answer", symbol: "return", tooltip: "Answer with the typed text; it decides the items this question settles") {
+                        submit()
+                    }
+                    .disabled(busy || MeetingsWords.typedAnswer(typed) == nil)
+                }
+            }
         }
         .padding(.vertical, 4)
+    }
+
+    private func submit() {
+        guard !busy, let text = MeetingsWords.typedAnswer(typed) else { return }
+        answer(text)
+        typed = ""
     }
 }
 

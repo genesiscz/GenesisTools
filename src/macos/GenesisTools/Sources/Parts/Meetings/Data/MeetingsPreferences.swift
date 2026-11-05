@@ -7,12 +7,19 @@ enum MeetingsPreferences {
     enum OpenOn: String, CaseIterable { case needs, all }
     enum TimelineLines: String, CaseIterable { case changed, all }
     enum AfterExport: String, CaseIterable { case genesis, finder, nothing }
+    /// When a question offers a field for an answer the choices do not hold: on every question, or only on one with
+    /// no choices.
+    enum TypedAnswer: String, CaseIterable {
+        case always, noChoices
+        func shows(choices: [String]) -> Bool { self == .always || choices.isEmpty }
+    }
 
     static let openOnKey = "meetings.window.openOn"
     static let daysKey = "meetings.window.days"
     static let timelineKey = "meetings.timeline.lines"
     static let afterExportKey = "meetings.export.after"
     static let undoSecondsKey = "meetings.items.undoSeconds"
+    static let typedAnswerKey = "meetings.questions.typedAnswer"
 
     static let dayChoices = [7, 14, 30, 90]
     static let undoChoices = [4, 8, 15]
@@ -32,6 +39,10 @@ enum MeetingsPreferences {
 
     static func afterExport(_ defaults: UserDefaults = .standard) -> AfterExport {
         defaults.string(forKey: afterExportKey).flatMap(AfterExport.init(rawValue:)) ?? .genesis
+    }
+
+    static func typedAnswer(_ defaults: UserDefaults = .standard) -> TypedAnswer {
+        defaults.string(forKey: typedAnswerKey).flatMap(TypedAnswer.init(rawValue:)) ?? .always
     }
 
     static func undoSeconds(_ defaults: UserDefaults = .standard) -> Int {

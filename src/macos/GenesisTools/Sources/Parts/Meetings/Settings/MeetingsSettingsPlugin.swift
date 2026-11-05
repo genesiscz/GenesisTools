@@ -256,6 +256,7 @@ struct MeetingsWindowPage: View {
     @State private var timeline: String
     @State private var afterExport: String
     @State private var undoSeconds: Int
+    @State private var typedAnswer: String
 
     /// The first frame shows the saved choices, never a default that snaps to them.
     init(defaults: UserDefaults) {
@@ -265,6 +266,7 @@ struct MeetingsWindowPage: View {
         _timeline = State(initialValue: MeetingsPreferences.timelineLines(defaults).rawValue)
         _afterExport = State(initialValue: MeetingsPreferences.afterExport(defaults).rawValue)
         _undoSeconds = State(initialValue: MeetingsPreferences.undoSeconds(defaults))
+        _typedAnswer = State(initialValue: MeetingsPreferences.typedAnswer(defaults).rawValue)
     }
 
     var body: some View {
@@ -295,6 +297,11 @@ struct MeetingsWindowPage: View {
                                  identifier: "meetings.window.undoSeconds",
                                  options: MeetingsPreferences.undoChoices.map { NativeSettingsOption($0, "\($0) s") },
                                  selection: Binding(get: { undoSeconds }, set: { undoSeconds = $0; defaults.set($0, forKey: MeetingsPreferences.undoSecondsKey) }))
+            Divider()
+            NativeSettingsSegmented("Type an answer", identifier: "meetings.window.typedAnswer", options: [
+                NativeSettingsOption(MeetingsPreferences.TypedAnswer.always.rawValue, "On every question", detail: "A field beside the choices takes the word you heard."),
+                NativeSettingsOption(MeetingsPreferences.TypedAnswer.noChoices.rawValue, "Without choices", detail: "Only a question with no choices gets the field."),
+            ], selection: binding($typedAnswer, key: MeetingsPreferences.typedAnswerKey))
         }
     }
 

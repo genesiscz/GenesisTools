@@ -403,6 +403,12 @@ enum MeetingsWords {
         }
     }
 
+    /// A typed answer as the listen door takes it, or nil when there is nothing to send.
+    static func typedAnswer(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     static func confidence(_ value: Double?) -> String? {
         value.map { "\(Int(($0 * 100).rounded())) %" }
     }

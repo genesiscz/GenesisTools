@@ -247,4 +247,16 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertFalse(item.needsSpelling, "the quote is what a confirm applies")
         XCTAssertEqual(MeetingsWords.itemTitle(item), "“lomeno type” → “/{type}” (from Harbor spec)")
     }
+
+    func testAQuestionWithoutChoicesTakesATypedAnswer() {
+        XCTAssertTrue(MeetingsPreferences.TypedAnswer.noChoices.shows(choices: []), "no choice: the field is the only answer")
+        XCTAssertFalse(MeetingsPreferences.TypedAnswer.noChoices.shows(choices: ["wiki"]))
+        XCTAssertTrue(MeetingsPreferences.TypedAnswer.always.shows(choices: ["wiki"]))
+        let suite = "meetings.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(MeetingsPreferences.typedAnswer(defaults), .always)
+        XCTAssertEqual(MeetingsWords.typedAnswer("  Northwind \n"), "Northwind")
+        XCTAssertNil(MeetingsWords.typedAnswer("   "))
+    }
 }
