@@ -9,6 +9,7 @@ import {
     type ResolvedDictionary,
 } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
+import { MEETING_SOURCE_IDS, type MeetingSourceId } from "./sources";
 
 const { log } = logger.scoped("meetings-config");
 
@@ -22,21 +23,51 @@ export const projectNameSchema = z
 
 const strings = z.array(z.string().trim().min(1)).default([]);
 
-/**
- * How a meeting finds its project when no `--project` is given. One block per origin of the fact, because each
- * names things its own way: Wispr Flow by folder, the calendar by calendar name and event title.
- */
+/** The config shape this code writes. Version 1 files are migrated on the first read (`migrateMeetingsConfig`). */
+export const MEETINGS_CONFIG_VERSION = 2;
+
+/** How a meeting finds its project from the calendar. A source's own facts (Wispr folders) sit in `sources.<id>.match`. */
 const projectMatchSchema = z.object({
-    wisprflow: z.object({ folders: strings }).optional(),
     calendar: z.object({ calendars: strings, titles: strings }).optional(),
 });
+
+const FRAME_RECORDER_IDS = ["native", "peekaboo"] as const;
+type FrameRecorderId = (typeof FRAME_RECORDER_IDS)[number];
 
 const projectSchema = z.object({
     dictionary: dictionaryLevelSchema.optional(),
     match: projectMatchSchema.optional(),
 });
 
+export const DISPLAY_POLICIES = ["all", "follow-focus", "main"] as const;
+/** Which displays the recorder records: every connected one, the one with the focused window, the main one, or an index. */
+export const displayPolicySchema = z.union([z.enum(DISPLAY_POLICIES), z.number().int().nonnegative()]);
+export type DisplayPolicy = z.infer<typeof displayPolicySchema>;
+
+/** Keys only GenesisTools' own ScreenCaptureKit recorder reads. Unset keeps ax-tool's own value. */
+const nativeRecorderSchema = z.object({
+    /** How long the screen must stay still before a change counts as settled, in milliseconds. */
+    quietMs: z.number().int().min(0).max(10_000).optional(),
+    /** A frame at least this often while nothing changes. */
+    heartbeatSec: z.number().positive().optional(),
+    /** The most megabytes of frames one capture writes. */
+    maxMb: z.number().positive().optional(),
+});
+
+/** Peekaboo reads only the shared capture policy. */
+const peekabooRecorderSchema = z.object({});
+
+/** One block per frame recorder, holding only the keys that recorder reads. */
+const recordersSchema = z.object({
+    native: nativeRecorderSchema.prefault({}),
+    peekaboo: peekabooRecorderSchema.prefault({}),
+}) satisfies z.ZodType<Record<FrameRecorderId, object>>;
+
+/** The capture policy every recorder follows, the recorder that runs, and each recorder's own keys. */
 const captureSchema = z.object({
+    /** The frame recorder: GenesisTools' own ScreenCaptureKit recorder (`native`) or `peekaboo`. */
+    backend: z.enum(FRAME_RECORDER_IDS).default("native"),
+    displays: displayPolicySchema.default("all"),
     /** Frames per second while the screen changes. */
     activeFps: z.number().positive().default(1),
     /** Frames per second while it does not. */
@@ -46,13 +77,17 @@ const captureSchema = z.object({
     jpegQuality: z.number().min(0.1).max(1).default(0.75),
     /** The longest side of a frame in pixels. Smaller text than this keeps is lost to OCR on a large display. */
     resolutionCap: z.number().int().min(640).max(8192).default(2880),
-    /** Frames and OCR older than this are deleted; the meeting record stays. */
+    /** The watcher deletes a meeting's frames and OCR this many days after its last frame; the meeting record stays. */
     retentionDays: z.number().int().positive().default(30),
+    recorders: recordersSchema.prefault({}),
 });
 
-/** Wispr Flow's own keys. Only Wispr code reads them. */
-const wisprflowSourceSchema = z.object({
-    /** Start a screen recording when Wispr Flow starts recording a meeting. Off by default. */
+/** The keys every transcript source has: how its own facts match a project, and what `dictionary suggest` skips. */
+const sourceBaseShape = {
+    /** Per project, the source's folders that put a meeting in it (`sources.wisprflow.match.work.folders`). */
+    match: z.record(projectNameSchema, z.object({ folders: strings })).default({}),
+    suggest: z.object({ ignore: strings }).prefault({}),
+    /** Start a screen recording when the source starts recording a meeting. Off by default. */
     autoRecord: z
         .object({
             enabled: z.boolean().default(false),
@@ -64,10 +99,19 @@ const wisprflowSourceSchema = z.object({
             notify: z.boolean().default(true),
         })
         .prefault({}),
-    suggest: z.object({ ignore: strings }).prefault({}),
-});
+};
 
-/** The players `tools meetings play` can start, in the order it tries them. */
+/** Wispr Flow's block. Only Wispr has a live recording to follow so far, so it holds no keys beyond the shared ones. */
+const wisprflowSourceSchema = z.object(sourceBaseShape);
+
+/** One block per transcript source. A new source is one entry here (MEETING_SOURCE_IDS) and one implementation. */
+const sourcesSchema = z.object({
+    wisprflow: wisprflowSourceSchema.prefault({}),
+}) satisfies z.ZodType<Record<MeetingSourceId, object>>;
+
+export type SourceSettings = z.infer<typeof wisprflowSourceSchema>;
+
+/** The players `tools meetings play` can start at a time, in the order it tries them. */
 export const MEETING_PLAYERS = ["vlc", "ffplay"] as const;
 
 /** The players `tools meetings listen` can play a cut clip with, in the order it tries them. */
@@ -78,8 +122,8 @@ const listenSchema = z.object({
     player: z.enum(LISTEN_PLAYERS).default("afplay"),
     /** Seconds of audio around the question's range. No default: the first `listen` asks and saves it. */
     padSec: z.number().min(0).max(60).optional(),
-    /** Questions one `listen` round asks at most; the rest stay as suggestions, marked in the transcript. */
-    budget: z.number().int().min(1).max(500).default(12),
+    /** Questions one `listen` round asks at most; the next round asks the rest. */
+    roundCap: z.number().int().min(1).max(500).default(12),
     /** A question under this priority is not worth a person's time; it stays a marked suggestion. */
     minPriority: z.number().min(0).default(0.5),
     /** Seconds between showing a question and playing its clip, so the question is read before the audio starts. */
@@ -108,69 +152,218 @@ const summarySchema = z.object({
     decisionHeadings: z.array(z.string().trim().min(1)).default(["Přijatá rozhodnutí", "Rozhodnutí", "Decisions"]),
 });
 
-const renderSchema = z.object({
-    /** The word an open passage starts with in a transcript: `[nejasné: "<raw>"; 1) … 2) …]`. */
-    unclearLabel: z.string().trim().min(1).default("nejasné"),
-    /** How a quote names its source: `(<readAloudLabel> WikiProposals, <lineLabel> 33)`. */
-    readAloudLabel: z.string().trim().min(1).default("čte z"),
-    lineLabel: z.string().trim().min(1).default("ř."),
+interface LanguageDefaults {
+    ocr: string[];
+    render: { unclearLabel: string; readAloudLabel: string; lineLabel: string };
+}
+
+const label = z.string().trim().min(1);
+
+/** One spoken language: the Vision OCR languages for screen frames, the transcript's labels, and its word check. */
+function languageSchema(defaults: LanguageDefaults) {
+    return z.object({
+        /** Vision OCR languages for the screen frames of a meeting in this language, in order of preference. */
+        ocr: z.array(label).min(1).default(defaults.ocr),
+        render: z
+            .object({
+                /** The word an open passage starts with in a transcript: `[nejasné: "<raw>"; 1) … 2) …]`. */
+                unclearLabel: label.default(defaults.render.unclearLabel),
+                /** How a quote names its source: `(<readAloudLabel> WikiProposals, <lineLabel> 33)`. */
+                readAloudLabel: label.default(defaults.render.readAloudLabel),
+                lineLabel: label.default(defaults.render.lineLabel),
+            })
+            .prefault({}),
+        /** The spell provider of this language's word check (`hunspell`, `hunspell-cc0`, `macos`); unset is the default one. */
+        wordCheck: label.optional(),
+    });
+}
+
+/** A language with no block of defaults here: every key is written out. */
+const customLanguageSchema = z.object({
+    ocr: z.array(label).min(1),
+    render: z.object({ unclearLabel: label, readAloudLabel: label, lineLabel: label }),
+    wordCheck: label.optional(),
 });
 
-export const meetingsConfigSchema = z.object({
-    version: z.literal(1).default(1),
-    global: z
-        .object({
-            dictionary: dictionaryLevelSchema.prefault({}),
-            capture: captureSchema.prefault({}),
-            playback: playbackSchema.prefault({}),
-            render: renderSchema.prefault({}),
-            summary: summarySchema.prefault({}),
-            suggest: z
-                .object({
-                    /** An item under this confidence that matters (enough words, or a decision) becomes a question. */
-                    listenBelow: z.number().min(0).max(1).default(0.6),
-                    /** `--with-suggested` applies a suggested item at this confidence or more; a lower one is marked unclear. */
-                    applyAbove: z.number().min(0).max(1).default(0.5),
-                })
-                .prefault({}),
-        })
-        .prefault({}),
-    /** The known projects. `--project` with a new name adds one here. */
-    projects: z.record(projectNameSchema, projectSchema).default({}),
-    /** One block per transcript source, holding only the keys that source reads. */
-    sources: z.object({ wisprflow: wisprflowSourceSchema.prefault({}) }).prefault({}),
-});
+/** One block per spoken language. A new one is a block here (or in the file, with every key) and a class in the word check. */
+const languagesSchema = z
+    .object({
+        cs: languageSchema({
+            ocr: ["cs-CZ", "en-US"],
+            render: { unclearLabel: "nejasné", readAloudLabel: "čte z", lineLabel: "ř." },
+        }).prefault({}),
+        sk: languageSchema({
+            ocr: ["sk-SK", "cs-CZ", "en-US"],
+            render: { unclearLabel: "nejasné", readAloudLabel: "číta z", lineLabel: "r." },
+        }).prefault({}),
+    })
+    .catchall(customLanguageSchema);
+
+export type LanguageSettings = z.infer<typeof customLanguageSchema>;
+
+const storedConfigSchema = z
+    .object({
+        version: z.literal(MEETINGS_CONFIG_VERSION).default(MEETINGS_CONFIG_VERSION),
+        global: z
+            .object({
+                dictionary: dictionaryLevelSchema.prefault({}),
+                /** The language meetings are held in: its block in `languages` labels the transcript and reads the screen. */
+                language: z.string().trim().min(1).default("cs"),
+                capture: captureSchema.prefault({}),
+                playback: playbackSchema.prefault({}),
+                summary: summarySchema.prefault({}),
+                suggest: z
+                    .object({
+                        /** An item under this confidence that matters (enough words, or a decision) becomes a question. */
+                        listenBelow: z.number().min(0).max(1).default(0.6),
+                        /** `--with-suggested` applies a suggested item at this confidence or more; a lower one is marked unclear. */
+                        applyAbove: z.number().min(0).max(1).default(0.5),
+                        /** Questions one `items suggest` run makes at most, speakers and terms together; the rest stay marked. */
+                        questionCap: z.number().int().min(1).max(500).default(12),
+                    })
+                    .prefault({}),
+            })
+            .prefault({}),
+        /** The known projects. `--project` with a new name adds one here. */
+        projects: z.record(projectNameSchema, projectSchema).default({}),
+        /** One block per transcript source, holding only the keys that source reads. */
+        sources: sourcesSchema.prefault({}),
+        languages: languagesSchema.prefault({}),
+    })
+    .superRefine((config, ctx) => {
+        if (!(config.global.language in config.languages)) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["global", "language"],
+                message: `no block languages.${config.global.language}; known: ${Object.keys(config.languages).join(", ")}`,
+            });
+        }
+    });
+
+type StoredConfig = z.infer<typeof storedConfigSchema>;
+
+function isObject(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Moves a version 1 config to the version 2 places, in place: `global.render` to `languages.<language>.render`,
+ * `global.playback.listen.budget` to `global.suggest.questionCap` and `global.playback.listen.roundCap`, and
+ * `projects.<p>.match.wisprflow.folders` to `sources.wisprflow.match.<p>.folders`. A key already in its new place
+ * wins. Returns whether anything changed; a version 2 config is left alone.
+ */
+export function migrateMeetingsConfig(raw: Record<string, unknown>): boolean {
+    if (typeof raw.version === "number" && raw.version >= MEETINGS_CONFIG_VERSION) {
+        return false;
+    }
+
+    const global = isObject(raw.global) ? raw.global : undefined;
+
+    if (global && isObject(global.render)) {
+        const language = typeof global.language === "string" ? global.language : "cs";
+        const block = objectAt(objectAt(raw, "languages"), language);
+        block.render = { ...global.render, ...(isObject(block.render) ? block.render : {}) };
+        delete global.render;
+    }
+
+    const playback = global && isObject(global.playback) ? global.playback : undefined;
+    const listen = playback && isObject(playback.listen) ? playback.listen : undefined;
+
+    if (global && listen && listen.budget !== undefined) {
+        const suggest = objectAt(global, "suggest");
+        suggest.questionCap ??= listen.budget;
+        listen.roundCap ??= listen.budget;
+        delete listen.budget;
+    }
+
+    for (const [project, settings] of Object.entries(isObject(raw.projects) ? raw.projects : {})) {
+        const match = isObject(settings) && isObject(settings.match) ? settings.match : undefined;
+
+        if (!match || !isObject(match.wisprflow)) {
+            continue;
+        }
+
+        const wispr = objectAt(objectAt(objectAt(raw, "sources"), "wisprflow"), "match");
+        wispr[project] ??= match.wisprflow;
+        delete match.wisprflow;
+
+        if (Object.keys(match).length === 0 && isObject(settings)) {
+            delete settings.match;
+        }
+    }
+
+    raw.version = MEETINGS_CONFIG_VERSION;
+    return true;
+}
+
+/** The config as the code reads it: a version 1 shape is migrated first, every default is filled in. */
+export const meetingsConfigSchema = z.preprocess((value) => {
+    if (!isObject(value)) {
+        return value;
+    }
+
+    const copy = structuredClone(value);
+    migrateMeetingsConfig(copy);
+    return copy;
+}, storedConfigSchema);
 
 export type MeetingsConfig = z.infer<typeof meetingsConfigSchema>;
 export type ProjectConfig = z.infer<typeof projectSchema>;
 
+/** The block of a language: the meeting language (`global.language`) by default. */
+export function languageSettings(config: Pick<StoredConfig, "global" | "languages">, code?: string): LanguageSettings {
+    const wanted = code ?? config.global.language;
+    const block = config.languages[wanted];
+
+    if (!block) {
+        throw new Error(`No languages.${wanted} block in the meetings config`);
+    }
+
+    return block;
+}
+
+/** What a recorder takes beyond the shared capture policy: its own block of `capture.recorders`. */
+export function recorderSettings(
+    capture: MeetingsConfig["global"]["capture"],
+    id: FrameRecorderId = capture.backend
+): Partial<z.infer<typeof nativeRecorderSchema>> {
+    return capture.recorders[id];
+}
+
 /** Facts about a meeting that a project's match rules can test. */
 export interface ProjectMatchFacts {
-    wisprflowFolders?: string[];
+    /** The source the meeting came from, with the source's own folders for it. */
+    source?: { id: MeetingSourceId; folders: string[] };
     calendar?: string;
     title?: string;
 }
 
+/** The folders of each source that put a meeting into `project`, as `{ source, folder }` pairs. */
+export function sourceFolders(
+    config: MeetingsConfig,
+    project: string
+): Array<{ source: MeetingSourceId; folder: string }> {
+    return MEETING_SOURCE_IDS.flatMap((source) =>
+        (config.sources[source].match[project]?.folders ?? []).map((folder) => ({ source, folder }))
+    );
+}
+
 /** The known projects whose match rules fit these facts, in config order. */
 export function matchProjects(config: MeetingsConfig, facts: ProjectMatchFacts): string[] {
-    const folders = new Set((facts.wisprflowFolders ?? []).map((name) => name.toLowerCase()));
+    const folders = new Set((facts.source?.folders ?? []).map((name) => name.toLowerCase()));
+    const sourceMatch = facts.source ? config.sources[facts.source.id].match : {};
     const title = facts.title?.toLowerCase() ?? "";
     const calendar = facts.calendar?.toLowerCase();
 
     return Object.entries(config.projects)
-        .filter(([, project]) => {
+        .filter(([name, project]) => {
+            const byFolder = (sourceMatch[name]?.folders ?? []).some((folder) => folders.has(folder.toLowerCase()));
             const match = project.match;
-
-            if (!match) {
-                return false;
-            }
-
-            const byFolder = (match.wisprflow?.folders ?? []).some((name) => folders.has(name.toLowerCase()));
             const byCalendar =
                 calendar !== undefined &&
-                (match.calendar?.calendars ?? []).some((name) => name.toLowerCase() === calendar);
+                (match?.calendar?.calendars ?? []).some((one) => one.toLowerCase() === calendar);
             const byTitle =
-                title !== "" && (match.calendar?.titles ?? []).some((word) => title.includes(word.toLowerCase()));
+                title !== "" && (match?.calendar?.titles ?? []).some((word) => title.includes(word.toLowerCase()));
 
             return byFolder || byCalendar || byTitle;
         })
@@ -206,9 +399,27 @@ export class MeetingsConfigStore {
         return this.storage.getConfigPath();
     }
 
-    /** The config with every default filled in. A missing file is the defaults; an invalid one throws with each issue. */
+    /**
+     * The config with every default filled in. A missing file is the defaults; an invalid one throws with each issue.
+     * A version 1 file is rewritten in the version 2 shape once, under the lock.
+     */
     async read(): Promise<MeetingsConfig> {
-        const raw = (await this.storage.getConfig<Record<string, unknown>>()) ?? {};
+        let raw = (await this.storage.getConfig<Record<string, unknown>>()) ?? {};
+
+        if (Object.keys(raw).length > 0 && migrateMeetingsConfig(structuredClone(raw))) {
+            raw = await this.storage.atomicConfigUpdate<Record<string, unknown>>((current) => {
+                if (migrateMeetingsConfig(current)) {
+                    const parsed = meetingsConfigSchema.safeParse(current);
+
+                    if (!parsed.success) {
+                        throw new Error(formatIssues(parsed.error, this.path));
+                    }
+
+                    log.debug({ path: this.path, version: MEETINGS_CONFIG_VERSION }, "meetings config migrated");
+                }
+            });
+        }
+
         const parsed = meetingsConfigSchema.safeParse(raw);
 
         if (!parsed.success) {
@@ -220,13 +431,13 @@ export class MeetingsConfigStore {
 
     /**
      * Changes the file under its lock. `mutate` edits the raw JSON (so keys a person wrote stay as written), and the
-     * result must still validate, or nothing is written.
+     * result must still validate, or nothing is written. A version 1 file is migrated before `mutate` sees it.
      */
     async update(mutate: (raw: Record<string, unknown>) => void): Promise<MeetingsConfig> {
         let validated: MeetingsConfig | undefined;
 
         await this.storage.atomicConfigUpdate<Record<string, unknown>>((raw) => {
-            raw.version ??= 1;
+            migrateMeetingsConfig(raw);
             mutate(raw);
             const parsed = meetingsConfigSchema.safeParse(raw);
 

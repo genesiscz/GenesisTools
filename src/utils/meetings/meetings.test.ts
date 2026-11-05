@@ -1,9 +1,21 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { MeetingsConfigStore, matchProjects, meetingsConfigSchema, resolveDictionary } from "./config";
+import {
+    languageSettings,
+    MEETINGS_CONFIG_VERSION,
+    MeetingsConfigStore,
+    matchProjects,
+    meetingsConfigSchema,
+    migrateMeetingsConfig,
+    recorderSettings,
+    resolveDictionary,
+    sourceFolders,
+} from "./config";
 import { calibrateChannels, channelEnergy, micShare } from "./energy";
 import { MeetingStore, nextId, titleSlug } from "./record";
 
@@ -16,6 +28,15 @@ function store(): MeetingsConfigStore {
 }
 
 describe("meetings config", () => {
+    test("invalid legacy migration preserves the original bytes", async () => {
+        const config = store();
+        mkdirSync(dirname(config.path), { recursive: true });
+        const original = '{"version":1,"global":{"playback":{"listen":{"budget":-1}}}}\n';
+        writeFileSync(config.path, original);
+        await expect(config.read()).rejects.toThrow();
+        expect(fs.readFileSync(config.path, "utf8")).toBe(original);
+    });
+
     test("an empty file is every default, with autoRecord off", () => {
         const config = meetingsConfigSchema.parse({});
 
@@ -28,6 +49,79 @@ describe("meetings config", () => {
             notify: true,
         });
         expect(config.projects).toEqual({});
+        expect(config.global.playback.listen.roundCap).toBe(12);
+        expect(config.global.suggest.questionCap).toBe(12);
+        expect(languageSettings(config).ocr).toEqual(["cs-CZ", "en-US"]);
+        expect(languageSettings(config, "sk").render.readAloudLabel).toBe("číta z");
+        expect(recorderSettings(config.global.capture)).toEqual({});
+    });
+
+    test("a version 1 file moves each key to its axis, and the old places still read", () => {
+        const v1 = {
+            version: 1,
+            global: {
+                render: { unclearLabel: "unclear" },
+                playback: { listen: { budget: 7, padSec: 2 } },
+                capture: { retentionDays: 9 },
+            },
+            projects: { work: { match: { wisprflow: { folders: ["Work"] }, calendar: { titles: ["Wiki"] } } } },
+        };
+        const raw: Record<string, unknown> = structuredClone(v1);
+
+        expect(migrateMeetingsConfig(raw)).toBe(true);
+        expect(raw).toEqual({
+            version: MEETINGS_CONFIG_VERSION,
+            global: {
+                playback: { listen: { padSec: 2, roundCap: 7 } },
+                suggest: { questionCap: 7 },
+                capture: { retentionDays: 9 },
+            },
+            projects: { work: { match: { calendar: { titles: ["Wiki"] } } } },
+            languages: { cs: { render: { unclearLabel: "unclear" } } },
+            sources: { wisprflow: { match: { work: { folders: ["Work"] } } } },
+        });
+        expect(migrateMeetingsConfig(raw)).toBe(false);
+
+        const config = meetingsConfigSchema.parse(v1);
+        expect(languageSettings(config).render).toEqual({
+            unclearLabel: "unclear",
+            readAloudLabel: "čte z",
+            lineLabel: "ř.",
+        });
+        expect(config.global.suggest.questionCap).toBe(7);
+        expect(sourceFolders(config, "work")).toEqual([{ source: "wisprflow", folder: "Work" }]);
+    });
+
+    test("a version 1 file on disk is rewritten once, and a later change keeps the new shape", async () => {
+        const config = store();
+        await config.storage.setConfig({ version: 1, global: { playback: { listen: { budget: 5 } } } });
+
+        expect((await config.read()).global.playback.listen.roundCap).toBe(5);
+        expect(await config.storage.getConfig()).toEqual({
+            version: MEETINGS_CONFIG_VERSION,
+            global: { playback: { listen: { roundCap: 5 } }, suggest: { questionCap: 5 } },
+        });
+        await config.setListenPad(3);
+        expect(await config.storage.getConfig()).toMatchObject({
+            global: { playback: { listen: { padSec: 3, roundCap: 5 } } },
+        });
+    });
+
+    test("a meeting language needs its block in languages", () => {
+        expect(() => meetingsConfigSchema.parse({ version: 2, global: { language: "de" } })).toThrow(
+            "no block languages.de"
+        );
+        const config = meetingsConfigSchema.parse({
+            version: 2,
+            global: { language: "de" },
+            languages: {
+                de: {
+                    ocr: ["de-DE"],
+                    render: { unclearLabel: "unklar", readAloudLabel: "liest aus", lineLabel: "Z." },
+                },
+            },
+        });
+        expect(languageSettings(config).render.lineLabel).toBe("Z.");
     });
 
     test("a change that would break the config is refused and nothing is written", async () => {
@@ -63,7 +157,7 @@ describe("meetings config", () => {
         ).toBe("off");
     });
 
-    test("projects match by Wispr folder, calendar name or a title word", () => {
+    test("projects match by a source's folder, calendar name or a title word", () => {
         const config = meetingsConfigSchema.parse({
             projects: {
                 work: { match: { wisprflow: { folders: ["Work"] }, calendar: { titles: ["Wiki"] } } },
@@ -72,10 +166,29 @@ describe("meetings config", () => {
             },
         });
 
-        expect(matchProjects(config, { wisprflowFolders: ["work"] })).toEqual(["work"]);
+        expect(matchProjects(config, { source: { id: "wisprflow", folders: ["work"] } })).toEqual(["work"]);
         expect(matchProjects(config, { title: "Změny ve wiki" })).toEqual(["work"]);
         expect(matchProjects(config, { calendar: "Side" })).toEqual(["side"]);
         expect(matchProjects(config, { title: "Lunch" })).toEqual([]);
+    });
+});
+
+describe("a GENESIS_TOOLS_HOME one level too deep", () => {
+    test("no meeting says where the records are and what to set", async () => {
+        const home = join(mkdtempSync(join(tmpdir(), "gt-layout-")), ".genesis-tools");
+        mkdirSync(join(home, "meetings", "2026-11-02_15-00-planning"), { recursive: true });
+        writeFileSync(join(home, "meetings", "2026-11-02_15-00-planning", "meeting.json"), "{}");
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const records = new MeetingStore();
+
+            expect(records.layoutHint()).toContain(`set it to ${dirname(home)}`);
+            expect(() => records.resolve("last-week")).toThrow(`the records are in ${join(home, "meetings")}`);
+        });
+    });
+
+    test("the usual layout gives no hint", () => {
+        expect(new MeetingStore().layoutHint()).toBeUndefined();
     });
 });
 
