@@ -1,13 +1,12 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { E2eHookContext, E2eProject } from "@genesiscz/utils/e2e/project";
 import { E2E_ENV } from "@genesiscz/utils/e2e/spec-env";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { prepareRunner } from "./runners";
 import type { RunNote, RunTarget } from "./runners/types";
 import type { SpecFile } from "./specs";
@@ -17,41 +16,37 @@ const log = logger.child({ component: "e2e.run" });
 
 export const RESULTS_FILE = "results.jsonl";
 
-function runSpec(options: {
+async function runSpec(options: {
     command: string[];
     cwd: string;
     environment: Record<string, string | undefined>;
     logPath: string;
     onLine?: (line: string) => void;
 }): Promise<number | null> {
-    return new Promise((resolve) => {
-        const fd = openSync(options.logPath, "a");
-        const [file, ...args] = options.command;
-        const child = spawn(file, args, {
-            cwd: options.cwd,
-            env: options.environment,
-            stdio: ["ignore", "pipe", "pipe"],
-        });
-        const pump = (chunk: Buffer) => {
-            appendFileSync(fd, chunk);
+    const fd = openSync(options.logPath, "a");
+    const pump = (chunk: Uint8Array) => {
+        appendFileSync(fd, chunk);
 
-            for (const line of chunk.toString("utf8").split("\n")) {
-                if (line.trim()) {
-                    options.onLine?.(line);
-                }
+        for (const line of Buffer.from(chunk).toString("utf8").split("\n")) {
+            if (line.trim()) {
+                options.onLine?.(line);
             }
-        };
-        child.stdout.on("data", pump);
-        child.stderr.on("data", pump);
-        child.once("close", (code) => {
-            closeSync(fd);
-            resolve(code);
+        }
+    };
+
+    try {
+        const result = await boundedCommand({
+            command: options.command,
+            cwd: options.cwd,
+            environment: options.environment,
+            timeoutMs: 1_800_000,
+            onStdout: pump,
+            onStderr: pump,
         });
-        child.once("error", (error) => {
-            appendFileSync(fd, `\n[${toolCommand("e2e")}] spawn failed: ${error.message}\n`);
-            log.error({ error, command: options.command.join(" ") }, "runner spawn failed");
-        });
-    });
+        return result.status ?? 1;
+    } finally {
+        closeSync(fd);
+    }
 }
 
 /**
