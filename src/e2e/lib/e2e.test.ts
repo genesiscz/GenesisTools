@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as childProcess from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { E2eProject } from "@genesiscz/utils/e2e/project";
@@ -9,6 +9,7 @@ import * as mobileAppium from "@genesiscz/utils/mobile/appium";
 import * as mobileProject from "@genesiscz/utils/mobile/project";
 import * as mobileSession from "@genesiscz/utils/mobile/session";
 import * as mobileSimulator from "@genesiscz/utils/mobile/simulator";
+import { runDirOf } from "../commands/report";
 import { listRunDirs, runsRoot, stamp } from "./paths";
 import { runE2e, runSpec } from "./run";
 import { RUNNERS, runnerFlags } from "./runners";
@@ -455,4 +456,17 @@ it("discovers only summary-bearing suite runs, excluding later screen captures",
     mkdirSync(join(folder, "2026-11-05T11-00-00"), { recursive: true });
     writeFileSync(join(folder, "2026-11-05T10-00-00", "summary.json"), "{}");
     expect(listRunDirs("fixture-report-discovery")).toEqual([join(folder, "2026-11-05T10-00-00")]);
+});
+
+it("recognizes an existing single-component relative run directory", async () => {
+    const folder = join(root, "artifacts");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "summary.json"), "{}");
+    const previous = process.cwd();
+    try {
+        process.chdir(root);
+        expect(realpathSync(await runDirOf({}, "artifacts"))).toBe(realpathSync(folder));
+    } finally {
+        process.chdir(previous);
+    }
 });
