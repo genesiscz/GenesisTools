@@ -229,6 +229,8 @@ describe("release plan", () => {
             env: { BUILD_NUMBER: "202611042105" },
         });
         expect(plan.steps[1].command).toContain("DEVELOPMENT_TEAM=<TEAM_ID>");
+        expect(plan.steps[1].command).toContain("CURRENT_PROJECT_VERSION=202611042105");
+        expect(plan.steps[1].command).toContain("INFOPLIST_KEY_CFBundleVersion=202611042105");
         expect(plan.archivePath).toBe("/out/Shop.xcarchive");
         expect(plan.missing).toHaveLength(4);
         expect(plan.exportOptions).toContain("<string>upload</string>");

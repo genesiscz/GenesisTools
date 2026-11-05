@@ -147,6 +147,8 @@ export function releasePlan(input: ReleaseInput): ReleasePlan {
                     "-allowProvisioningUpdates",
                     ...auth,
                     `DEVELOPMENT_TEAM=${teamId}`,
+                    `CURRENT_PROJECT_VERSION=${buildNumber}`,
+                    `INFOPLIST_KEY_CFBundleVersion=${buildNumber}`,
                     "CODE_SIGN_STYLE=Automatic",
                     ...settings,
                 ],
