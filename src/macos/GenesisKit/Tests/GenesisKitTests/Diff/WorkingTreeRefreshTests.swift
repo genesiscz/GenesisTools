@@ -212,5 +212,12 @@ final class WorkingTreeRefreshTests: XCTestCase {
         XCTAssertEqual(layout.classify("/repo/main/.git/worktrees/other/HEAD", flags: file | modified), .refs)
         XCTAssertNil(layout.classify("/repo/main/.git/worktrees/other/HEAD", flags: file | cloned))
         XCTAssertEqual(layout.classify("/repo/wt/src", flags: UInt32(kFSEventStreamEventFlagMustScanSubDirs)), .rescan)
+        // A commit in a submodule moves its gitlink in this diff without a working file changing.
+        XCTAssertEqual(layout.classify("/repo/main/.git/modules/child/HEAD", flags: file | modified), .rescan)
+        XCTAssertEqual(layout.classify("/repo/main/.git/modules/child/refs/heads/main", flags: file | created), .rescan)
+        XCTAssertEqual(layout.classify("/repo/main/.git/modules/vendor/lib/packed-refs", flags: file | modified), .rescan)
+        XCTAssertEqual(layout.classify("/repo/main/.git/modules/a/modules/b/HEAD", flags: file | modified), .rescan)
+        XCTAssertNil(layout.classify("/repo/main/.git/modules/child/objects/ab/cdef", flags: file | created), "a submodule's objects")
+        XCTAssertNil(layout.classify("/repo/main/.git/modules/child/index", flags: file | modified), "a submodule's index")
     }
 }

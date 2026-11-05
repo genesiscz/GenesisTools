@@ -94,6 +94,9 @@ extension ReviewRepositoryLayout {
         for directory in [gitDirectory.path, commonDirectory.path] where path == directory || path.hasPrefix(directory + "/") {
             // The other Git files (objects, locks, logs, other worktrees' indexes) change no diff of this checkout.
             if path == commonDirectory.path + "/info/exclude" { return .rescan }
+            // A commit in a submodule moves its HEAD or a ref under `modules/` and its gitlink in this diff, with no
+            // working file changed, so the whole diff is read again.
+            if movesSubmoduleRef(path) { return .rescan }
             return path == gitDirectory.path + "/index" ? .index : nil
         }
         if path == root.path {
@@ -107,6 +110,14 @@ extension ReviewRepositoryLayout {
         guard !wrapped.contains("/.git/"), !wrapped.contains("/node_modules/"), !wrapped.contains("/.build/") else { return nil }
         if flags & UInt32(kFSEventStreamEventFlagItemIsDir) != 0, flags & Self.folderFlags == 0 { return nil }
         return .path(relative)
+    }
+
+    /// A submodule's HEAD, packed refs or a ref, nested submodules included (`modules/a/modules/b/HEAD`).
+    private func movesSubmoduleRef(_ path: String) -> Bool {
+        let modules = commonDirectory.path + "/modules/"
+        guard path.hasPrefix(modules) else { return false }
+        let inside = "/" + String(path.dropFirst(modules.count))
+        return inside.hasSuffix("/HEAD") || inside.hasSuffix("/packed-refs") || inside.contains("/refs/")
     }
 }
 
