@@ -91,7 +91,11 @@ export class AIXAITranscriptionProvider implements AITranscriptionProvider {
         const blob = new Blob([new Uint8Array(audio)], { type: contentType });
         form.append("file", blob, filename);
 
-        const response = await this.client.fetch("/stt", { method: "POST", body: form });
+        const response = await this.client.fetch("/stt", {
+            method: "POST",
+            body: form,
+            ...(options?.signal ? { signal: options.signal } : {}),
+        });
 
         if (!response.ok) {
             const body = await response.text().catch(() => "");

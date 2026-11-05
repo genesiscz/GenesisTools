@@ -42,6 +42,8 @@ export function toTranscriptionModel({
                 ...(typeof own.language === "string" ? { language: own.language } : {}),
                 ...(typeof own.diarize === "boolean" ? { diarize: own.diarize } : {}),
                 ...(typeof own.speakers === "number" ? { speakers: own.speakers } : {}),
+                // The SDK's cancel reaches the provider's request, so an aborted transcription does not keep uploading.
+                ...(options.abortSignal ? { signal: options.abortSignal } : {}),
             };
 
             const result = await provider.transcribe(audio, transcribeOptions);

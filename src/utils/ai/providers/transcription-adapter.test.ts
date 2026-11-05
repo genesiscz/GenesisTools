@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { TranscriptionModelV3 } from "@ai-sdk/provider";
 import type { AITask, AITranscriptionProvider, TranscribeOptions, TranscriptionResult } from "../types";
 import { toTranscriptionModel } from "./transcription-adapter";
+import { AIXAITranscriptionProvider } from "./xai/AIXAITranscriptionProvider";
 
 /**
  * `TranscriptionModel` (from "ai") is a version union, so `doGenerate` is only
@@ -35,6 +36,34 @@ function fakeProvider(seen: { options?: TranscribeOptions; bytes?: number }): AI
 }
 
 describe("toTranscriptionModel", () => {
+    test("an aborted SDK transcription cancels the xAI request it started", async () => {
+        let requestSignal: AbortSignal | undefined;
+        const hanging = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+            requestSignal = init?.signal ?? undefined;
+            return new Promise<Response>((_resolve, reject) => {
+                init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+            });
+        }) as typeof fetch;
+        const model = asV3(
+            toTranscriptionModel({
+                provider: new AIXAITranscriptionProvider({ apiKey: "test-key", fetch: hanging }),
+                providerId: "xai",
+                modelId: "grok-voice-transcribe-2.0",
+            })
+        );
+        const controller = new AbortController();
+        const pending = model.doGenerate({
+            audio: Buffer.from("ID3fake"),
+            mediaType: "audio/mpeg",
+            abortSignal: controller.signal,
+        });
+        await Bun.sleep(0);
+        controller.abort(new Error("stopped by the caller"));
+
+        await expect(pending).rejects.toThrow("stopped by the caller");
+        expect(requestSignal?.aborted).toBe(true);
+    });
+
     test("maps our result onto the SDK's segment shape", async () => {
         const seen: { options?: TranscribeOptions; bytes?: number } = {};
         const model = asV3(

@@ -79,6 +79,8 @@ export interface TranscribeOptions {
     smartFormat?: boolean;
     /** Post-process repetition-loop cleanup. Default true; --no-clean disables. */
     clean?: boolean;
+    /** Stops the transcription: a provider that sends the audio over the network passes it to its request. */
+    signal?: AbortSignal;
 }
 
 export interface WhisperThresholds {
