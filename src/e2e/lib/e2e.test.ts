@@ -109,6 +109,29 @@ describe("runners", () => {
 });
 
 describe("run loop", () => {
+    it("refuses an existing run directory before preparing a target", async () => {
+        const project = fixtureProject("reuse");
+        const runDir = join(root, "reused-run");
+        mkdirSync(runDir);
+        writeFileSync(join(runDir, "results.jsonl"), "old results");
+        let prepared = false;
+        await expect(
+            runE2e({
+                project,
+                specs: listSpecs(project).slice(0, 1),
+                runDir,
+                flags: {},
+                extraEnv: {},
+                prepare: async () => {
+                    prepared = true;
+                    throw new Error("must not prepare");
+                },
+            })
+        ).rejects.toThrow();
+        expect(prepared).toBe(false);
+        expect(readFileSync(join(runDir, "results.jsonl"), "utf8")).toBe("old results");
+    });
+
     it("refuses duplicate artifact names before preparing a target", async () => {
         const project = fixtureProject("duplicate");
         const spec = listSpecs(project)[0];
