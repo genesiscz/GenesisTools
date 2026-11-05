@@ -1042,7 +1042,14 @@ describe("spawnRunner", () => {
 
     it("clears forced colour for bounded origin commands", async () => {
         await env.testing.withOverrides({ CLICOLOR_FORCE: "1", FORCE_COLOR: "1", GH_FORCE_TTY: "1" }, async () => {
-            const res = await spawnRunner(["sh", "-c", 'printf "%s %s %s %s" "${CLICOLOR_FORCE-unset}" "${FORCE_COLOR-unset}" "${GH_FORCE_TTY-unset}" "$NO_COLOR"'], { cwd: process.cwd(), timeoutMs: 5_000 });
+            const res = await spawnRunner(
+                [
+                    "sh",
+                    "-c",
+                    'printf "%s %s %s %s" "${CLICOLOR_FORCE-unset}" "${FORCE_COLOR-unset}" "${GH_FORCE_TTY-unset}" "$NO_COLOR"',
+                ],
+                { cwd: process.cwd(), timeoutMs: 5_000 }
+            );
             expect(res.code).toBe(0);
             expect(res.stdout).toBe("unset unset unset 1");
         });
