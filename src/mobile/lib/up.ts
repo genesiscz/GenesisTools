@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -91,13 +91,22 @@ function saveInstallRecord(options: {
     writeFileSync(path, SafeJSON.stringify(record, null, 2));
 }
 
-function readSince(path: string, offset: number): string {
+export function readSince(path: string, offset: number): string {
     if (!existsSync(path)) {
         return "";
     }
 
-    const text = readFileSync(path, "utf8");
-    return text.slice(Math.min(offset, text.length));
+    const size = statSync(path).size;
+    const start = Math.max(size < offset ? 0 : offset, size - 512_000);
+    const buffer = Buffer.alloc(size - start);
+    const fd = openSync(path, "r");
+
+    try {
+        const bytes = readSync(fd, buffer, 0, buffer.length, start);
+        return buffer.subarray(0, bytes).toString("utf8");
+    } finally {
+        closeSync(fd);
+    }
 }
 
 /**
