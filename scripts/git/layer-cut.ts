@@ -204,6 +204,8 @@ const CUT: readonly CutBranch[] = [
             `${APP}/Tests/Recorder*`,
             `${APP}/Tests/CapturePickerTests.swift`,
             `${APP}/Tests/CameraBubbleTests.swift`,
+            // The service fake the recorder tests above use; in a later layer this layer's test target did not compile.
+            `${APP}/Tests/FakeServiceLink.swift`,
             `${APP}/Info.plist`,
             // The camera library the bubble links (a8c6527dad split it out of GenesisKitPosture, which the app must
             // never compile): its new folder, the old one's deletions, the Posture re-export, the kit's Package.swift
