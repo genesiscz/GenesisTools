@@ -55,10 +55,14 @@ const HOST_WAIT_MS = 10_000;
 const RIVAL_WAIT_MS = 15_000;
 
 interface ConnectionState {
+    /** Unique in this service: a gesture id a client picks is its own under it. */
+    id: number;
     role?: ServiceRole;
     pid?: number;
     /** The edit paths this connection holds sessions of. */
     holds: Set<string>;
+    /** The gestures this connection began and has not ended: the session's key of each, to its edit path. */
+    gestures: Map<string, string>;
     /** A `recording` connection: the ids of the live recordings it registered. */
     recordings: Set<string>;
 }
@@ -190,6 +194,10 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
         };
         server?.emit("project.changed", { ...change });
     };
+
+    /** A session's gestures are shared by every holder, so a client's gesture id is keyed by its connection. */
+    const gestureKey = (connection: Connection, gesture: string): string => `${connection.state.id}:${gesture}`;
+    let lastConnectionId = 0;
 
     const sessionOf = (path: string): EditSession => {
         const session = sessions.get(editPathOf(path));
@@ -417,11 +425,24 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
 
             return answer;
         },
-        "gesture.begin": (params) => sessionOf(params.path).beginGesture(params.gesture),
-        "gesture.preview": (params) => sessionOf(params.path).previewGesture(params.gesture, params.ops),
-        "gesture.commit": (params, { connection }: HandlerContext) =>
-            sessionOf(params.path).commitGesture(params.gesture, { by: byOf(connection) }),
-        "gesture.cancel": (params) => sessionOf(params.path).cancelGesture(params.gesture),
+        "gesture.begin": (params, { connection }: HandlerContext) => {
+            const key = gestureKey(connection, params.gesture);
+            const answer = sessionOf(params.path).beginGesture(key);
+            connection.state.gestures.set(key, editPathOf(params.path));
+            return answer;
+        },
+        "gesture.preview": (params, { connection }: HandlerContext) =>
+            sessionOf(params.path).previewGesture(gestureKey(connection, params.gesture), params.ops),
+        "gesture.commit": (params, { connection }: HandlerContext) => {
+            const key = gestureKey(connection, params.gesture);
+            connection.state.gestures.delete(key);
+            return sessionOf(params.path).commitGesture(key, { by: byOf(connection) });
+        },
+        "gesture.cancel": (params, { connection }: HandlerContext) => {
+            const key = gestureKey(connection, params.gesture);
+            connection.state.gestures.delete(key);
+            return sessionOf(params.path).cancelGesture(key);
+        },
         "recordings.register": (params, { connection }: HandlerContext) => {
             if (connection.state.role !== "recording") {
                 throw new RpcError(RPC_ERRORS.invalidParams, 'recordings.register needs a hello with role "recording"');
@@ -609,7 +630,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
 
         const listening = new RpcSocketServer<ConnectionState>({
             socket,
-            state: () => ({ holds: new Set(), recordings: new Set() }),
+            state: () => ({ id: ++lastConnectionId, holds: new Set(), gestures: new Map(), recordings: new Set() }),
             // A cancelled request's edit never lands: every edit it makes checks this request's signal before it saves.
             call: ({ method, params, connection, context }) =>
                 withEditCancel(context.signal, () => answer(method, params, connection, context)),
@@ -618,6 +639,12 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             },
             onClose: (connection) => {
                 lastBusy = Date.now();
+
+                for (const [key, path] of connection.state.gestures) {
+                    sessions.get(path)?.cancelGesture(key);
+                }
+
+                connection.state.gestures.clear();
 
                 for (const path of connection.state.holds) {
                     sessions.release(path);

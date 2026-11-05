@@ -448,6 +448,27 @@ describe("the recorder service", () => {
         ]);
     });
 
+    // Regression test: 2026-11-05 recorder service review, finding 6 — a second client's gesture took over the first's
+    test("two clients' gestures with the same id stay apart, so each commit makes its own client's draft", async () => {
+        const { service } = await serviceFixture({ saveDelayMs: 10_000 });
+        const path = editFixture("rs-gesture-owner-");
+        const a = await connect(service.entry);
+        const b = await connect(service.entry);
+        await a.call<unknown>("session.open", { path });
+        await b.call<unknown>("session.open", { path });
+
+        await a.call<unknown>("gesture.begin", { path, gesture: "drag-1" });
+        await a.call<unknown>("gesture.preview", { path, gesture: "drag-1", ops: [{ op: "volume", volume: 0.2 }] });
+        await b.call<unknown>("gesture.begin", { path, gesture: "drag-1" });
+        await b.call<unknown>("gesture.preview", { path, gesture: "drag-1", ops: [{ op: "volume", volume: 0.8 }] });
+        const committed = await a.call<{ project: { audio: { volume: number } } }>("gesture.commit", {
+            path,
+            gesture: "drag-1",
+        });
+
+        expect(committed.project.audio.volume).toBe(0.2);
+    });
+
     test("a host method reaches the connected host and its answer, progress and cancel go both ways", async () => {
         const { service, faceRuns } = await serviceFixture({ saveDelayMs: 10_000 });
         const path = editFixture("rs-host-");
