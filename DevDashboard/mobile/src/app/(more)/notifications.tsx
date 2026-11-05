@@ -42,7 +42,7 @@ export default function NotificationsScreen() {
         setRegistration({ state: "working" });
 
         try {
-            const reason = await registerForPush(client);
+            const reason = await registerForPush();
             setRegistration(reason ? { state: "refused", reason } : { state: "registered" });
         } catch (err) {
             setRegistration({ state: "refused", reason: err instanceof Error ? err.message : String(err) });

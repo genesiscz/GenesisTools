@@ -2,7 +2,7 @@ import {
     type ActReceiptDto,
     answerActionId,
     answerCategories,
-    type DashboardClient,
+
     ENDPOINTS,
     letterOfAction,
     type PushDeviceRegistration,
@@ -17,6 +17,7 @@ import * as TaskManager from "expo-task-manager";
 import { openSealed, pushIdentity, rememberMacKey } from "@/push/push-keys";
 import { noticeDataOf, pushDataOf } from "@/push/wire";
 import { useConnectionStore } from "@/state/connection-store";
+import { buildTransportFor, getConnection } from "@/features/connections/store";
 
 /** The task iOS runs for a silent push (a retraction) while the app is in the background. */
 export const PUSH_TASK = "gt-push-background";
@@ -72,7 +73,13 @@ function simulatorUdid(): string | null {
  * simulator id) and its push key. Runs on every start, so a new token or a new Mac is picked up. Returns why it could
  * not register, or null when it did.
  */
-export async function registerForPush(client: DashboardClient): Promise<string | null> {
+export async function registerForPush(): Promise<string | null> {
+    const { activeId: connectionId, transport } = useConnectionStore.getState();
+    if (!connectionId || !transport) {
+        return "No Mac is connected.";
+    }
+    const client = transport.client();
+
     const permission = await Notifications.requestPermissionsAsync({
         ios: { allowAlert: true, allowSound: true, allowBadge: true },
     });
@@ -114,32 +121,8 @@ export async function registerForPush(client: DashboardClient): Promise<string |
         },
         { idempotencyKey: `push-register-${identity.id}-${Date.now()}` }
     );
-    await rememberMacKey(receipt.macPublicKey);
+    await rememberMacKey(receipt.macPublicKey, connectionId);
     return null;
-}
-
-/** The dashboard client of the active connection; a background launch waits for the root layout's restore. */
-async function activeClient(): Promise<DashboardClient | null> {
-    const state = useConnectionStore.getState();
-
-    if (!state.restored) {
-        await new Promise<void>((resolve) => {
-            const stop = useConnectionStore.subscribe((next) => {
-                if (next.restored) {
-                    stop();
-                    resolve();
-                }
-            });
-            // The layout normally restores; with no React tree yet, restore here.
-            setTimeout(() => {
-                if (!useConnectionStore.getState().restored) {
-                    void useConnectionStore.getState().restore();
-                }
-            }, 3000);
-        });
-    }
-
-    return useConnectionStore.getState().transport?.client() ?? null;
 }
 
 function receiptLine(letter: string, receipt: ActReceiptDto): string {
@@ -180,7 +163,8 @@ export async function answerFromNotification(response: Notifications.Notificatio
         return;
     }
 
-    const client = await activeClient();
+    const connection = await getConnection(secrets.connectionId);
+    const client = connection ? (await buildTransportFor(connection)).client() : null;
 
     if (!client) {
         await tell("Not answered", "No Mac is connected. Open the app and answer there.");
