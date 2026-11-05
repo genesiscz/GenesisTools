@@ -8,12 +8,14 @@
  * This ffmpeg build has no `drawtext` (no freetype), and a `drawbox` graph with thousands of boxes crashes it
  * (exit 138), so the script draws each frame itself from filled boxes (a 5x7 pixel font for every letter and digit)
  * and pipes the raw frames into ffmpeg, which encodes the movie and a soft two-tone sound. Nothing is read from the screen and nothing is written
- * outside `--out`: the script runs its own process with `GENESIS_TOOLS_HOME` pointed at a temporary home, so the
- * logger and every other `~/.genesis-tools` path stay off the real one.
+ * outside `--out`.
+ *
+ * This file is the writer, and it runs only with `GENESIS_TOOLS_HOME` set: its imports open the logger (and the day log
+ * file) as they load. Start it through `scripts/fixtures/recording-sandbox.ts`, which imports none of them and runs
+ * this file with a temporary home, so the logger and every other `~/.genesis-tools` path stay off the real one.
  */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { computeEdit, openProject } from "@app/recorder/lib/edit";
 import { runTool } from "@genesiscz/utils/cli";
@@ -1098,23 +1100,6 @@ async function makeRecording(outInput: string): Promise<void> {
     out.println(`  tools recorder edit ${folder}`);
 }
 
-/** Runs this script again with a temporary `GENESIS_TOOLS_HOME`, so no part of it writes the real `~/.genesis-tools`. */
-async function runInSandboxHome(): Promise<number> {
-    const home = mkdtempSync(join(tmpdir(), "recording-sandbox-home-"));
-
-    try {
-        const proc = Bun.spawn([process.execPath, import.meta.path, ...process.argv.slice(2)], {
-            env: { ...process.env, GENESIS_TOOLS_HOME: home },
-            stdin: "inherit",
-            stdout: "inherit",
-            stderr: "inherit",
-        });
-        return await proc.exited;
-    } finally {
-        rmSync(home, { recursive: true, force: true });
-    }
-}
-
 async function main(): Promise<void> {
     const program = new Command()
         .name("recording-sandbox")
@@ -1133,9 +1118,9 @@ async function main(): Promise<void> {
 }
 
 if (import.meta.main) {
-    if (env.tools.hasExplicitHome()) {
-        await main();
-    } else {
-        process.exitCode = await runInSandboxHome();
+    if (!env.tools.hasExplicitHome()) {
+        throw new Error("Run bun scripts/fixtures/recording-sandbox.ts: it gives this writer a temporary home first");
     }
+
+    await main();
 }
