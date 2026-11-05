@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
 import { foldText, imageSize } from "@genesiscz/utils/macos/ocr-boxes";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
@@ -49,16 +50,24 @@ export interface ScreenHit {
 }
 
 /** Each frame's OCR text: a meeting's (or a jsonl-sink recording's) `ocr.jsonl`, else the `<frame>.ocr.json` sidecars. */
-function frameTexts(folder: string, files: string[]): Map<string, FrameText> {
+function frameTexts(folder: string, files: string[], wanted: string, limit: number): Map<string, FrameText> {
     const texts = new Map<string, FrameText>();
+    const keep = (file: string, text: FrameText) => {
+        if (foldText(text.text).includes(wanted)) {
+            texts.set(file, text);
+        }
+        return texts.size >= limit;
+    };
     const jsonl = join(folder, "ocr.jsonl");
 
     if (existsSync(jsonl)) {
-        for (const line of readFileSync(jsonl, "utf8").split("\n")) {
+        for (const line of readLinesSync(jsonl)) {
             const row = line.trim() ? ocrRowSchema.safeParse(SafeJSON.parse(line, { strict: true })) : undefined;
 
             if (row?.success) {
-                texts.set(row.data.file, { text: row.data.text, blocks: row.data.blocks });
+                if (keep(row.data.file, { text: row.data.text, blocks: row.data.blocks })) {
+                    break;
+                }
             }
         }
 
@@ -72,7 +81,9 @@ function frameTexts(folder: string, files: string[]): Map<string, FrameText> {
             const parsed = sidecarSchema.safeParse(SafeJSON.parse(readFileSync(sidecar, "utf8"), { strict: true }));
 
             if (parsed.success) {
-                texts.set(file, parsed.data);
+                if (keep(file, parsed.data)) {
+                    break;
+                }
             }
         }
     }
@@ -154,7 +165,9 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
     const frames = [...manifest.frames].sort((a, b) => a.atMs - b.atMs);
     const texts = frameTexts(
         folder,
-        frames.map((frame) => frame.file)
+        frames.map((frame) => frame.file),
+        wanted,
+        limit
     );
     const plan = readDisplayPlan(folder);
     const sizes = displaySizes(folder, frames);
