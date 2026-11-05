@@ -191,6 +191,26 @@ describe("listen session", () => {
         });
     });
 
+    test("line-scoped look-alikes keep their separate corrections and questions", async () => {
+        const fx = await fixture([
+            term("i1", 50, { proposed: "ADA", scope: "line" }),
+            term("i2", 70, { proposed: "ADP", scope: "line" }),
+            question("i3", { about: "term", heard: "Ada", fromSec: 50, toSec: 54, decides: ["i1"] }),
+            question("i4", { about: "term", heard: "Ada", fromSec: 70, toSec: 74, decides: ["i2"] }),
+        ]);
+        const adapter = new ScriptedAdapter([
+            { answer: "ADO" },
+            async () => {
+                expect(fx.item("i2")).toMatchObject({ status: "suggested", proposed: "ADP" });
+                return { answer: "ADP" };
+            },
+        ]);
+        expect(await fx.session(adapter).run()).toBe("done");
+        expect(adapter.asked.map((asked) => asked.label)).toEqual(["Q1", "Q2"]);
+        expect(fx.item("i1")).toMatchObject({ status: "confirmed", proposed: "ADO" });
+        expect(fx.item("i2")).toMatchObject({ status: "confirmed", proposed: "ADP" });
+    });
+
     test("Esc undoes only what the answer changed: an items add made during the round stays", async () => {
         const fx = await fixture([
             {

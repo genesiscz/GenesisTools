@@ -675,8 +675,17 @@ export function settleLookAlikes(
     }
 
     const heard = heardKey(answered);
+    const globalTerms = (question: QuestionItem) =>
+        question.decides.length > 0 &&
+        question.decides.every((id) => {
+            const item = record.items.find((item) => item.id === id);
+            return (
+                item?.kind === "term" &&
+                (item.scope ?? (item.quote || item.meaning ? "line" : "everywhere")) === "everywhere"
+            );
+        });
 
-    if (!heard || options.answer.trim().toLowerCase() === NONE_OF_THESE) {
+    if (!heard || !globalTerms(answered) || options.answer.trim().toLowerCase() === NONE_OF_THESE) {
         return { settled: [], corrections: [] };
     }
 
@@ -684,7 +693,14 @@ export function settleLookAlikes(
     const corrections: Correction[] = [];
 
     for (const question of openQuestions(record)) {
-        if (question.id === answered.id || question.about === "speaker" || heardKey(question) !== heard) {
+        if (
+            question.id === answered.id ||
+            question.about === "speaker" ||
+            heardKey(question) !== heard ||
+            !globalTerms(question) ||
+            question.choices.length !== answered.choices.length ||
+            question.choices.some((choice, index) => choice !== answered.choices[index])
+        ) {
             continue;
         }
 
