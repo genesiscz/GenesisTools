@@ -352,10 +352,11 @@ struct PRThreadFileGroup: Identifiable, Equatable {
     }
 
     /// The first groups holding `threads` threads in all; the last one is cut to fit.
-    static func prefix(_ groups: [PRThreadFileGroup], threads limit: Int) -> [PRThreadFileGroup] {
+    static func prefix(_ groups: [PRThreadFileGroup], threads limit: Int, folded: Set<String> = []) -> [PRThreadFileGroup] {
         var left = limit
         var kept: [PRThreadFileGroup] = []
         for group in groups where left > 0 {
+            if folded.contains(group.path) { kept.append(group); continue }
             kept.append(group.threads.count <= left ? group : PRThreadFileGroup(path: group.path, threads: Array(group.threads.prefix(left))))
             left -= group.threads.count
         }
@@ -477,7 +478,7 @@ struct PRThreadsList: View {
         let placed = placements(all)
         let threads = visible(all, placed)
         let groups = PRThreadFileGroup.groups(threads, order: fileOrder)
-        let built = PRThreadFileGroup.prefix(groups, threads: mounted)
+        let built = PRThreadFileGroup.prefix(groups, threads: mounted, folded: folded)
         // A file's header counts all its threads, also while its cards are still being built.
         let whole = Dictionary(groups.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         let fresh = newNotes(all)

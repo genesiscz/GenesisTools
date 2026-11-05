@@ -568,6 +568,14 @@ final class PRThreadsTests: XCTestCase {
         XCTAssertEqual(PRThreadFileGroup.prefix(groups, threads: 50), groups, "the last batch holds every thread")
     }
 
+    func testFoldedGroupsDoNotSpendTheCardMountBudget() throws {
+        let first = PRThreadFileGroup(path: "first.ts", threads: try (0..<50).map { try thread("a\($0)", path: "first.ts", line: $0) })
+        let later = PRThreadFileGroup(path: "later.ts", threads: [try thread("b", path: "later.ts", line: 1)])
+        let built = PRThreadFileGroup.prefix([first, later], threads: 12, folded: ["first.ts"])
+        XCTAssertEqual(built.map(\.path), ["first.ts", "later.ts"])
+        XCTAssertEqual(built.last?.threads.map(\.id), ["b"])
+    }
+
     // MARK: references, head files, card clicks
 
     private let gitlab = ForgeWeb(kind: "gitlab", web: "https://gitlab.example.com/group/shop")
