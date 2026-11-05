@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { AdoRequest, AdoResponse, AdoTransport } from "@app/azure-devops/api.types";
-import { show } from "@app/azure-devops/commands/test-plan";
+import { registerTestPlanCommand, show } from "@app/azure-devops/commands/test-plan";
 import { parseIdList, parsePlanRef, parseSuiteRef } from "@app/azure-devops/lib/test-plans/refs";
 import { renderSuiteTree } from "@app/azure-devops/lib/test-plans/render";
 import { TestPlans } from "@app/azure-devops/lib/test-plans/service";
 import type { AzureConfig } from "@app/azure-devops/types";
+import { Command } from "commander";
 
 const CONFIG: AzureConfig = {
     org: "https://dev.azure.com/acme",
@@ -185,6 +186,35 @@ describe("listPlans", () => {
 });
 
 describe("writes", () => {
+    test("case create refuses a suite without a plan before calling the service", async () => {
+        const transport = new FakeTransport([
+            ["POST /wit/workitems/$Test%20Case", () => ({ id: 500, rev: 1, fields: {} })],
+            ["POST /testplan/Plans/10/Suites/12/TestCase", () => ({ value: [{ workItem: { id: 500 } }] })],
+        ]);
+        let serviceCalls = 0;
+        const program = new Command();
+        registerTestPlanCommand(program, () => {
+            serviceCalls++;
+            return { plans: new TestPlans(transport, CONFIG), org: CONFIG.org };
+        });
+        const previousExitCode = process.exitCode;
+        try {
+            await program.parseAsync(["testplan", "case", "create", "--title", "Pay", "--suite", "12", "--confirm"], {
+                from: "user",
+            });
+            expect(process.exitCode).toBe(1);
+            expect(serviceCalls).toBe(0);
+            expect(transport.calls).toEqual([]);
+            process.exitCode = previousExitCode;
+            await program.parseAsync(
+                ["testplan", "case", "create", "--title", "Pay", "--plan", "10", "--suite", "12", "--confirm"],
+                { from: "user" }
+            );
+            expect(transport.writes()).toHaveLength(2);
+        } finally {
+            process.exitCode = previousExitCode;
+        }
+    });
     test("case updates test the work item type before modifying it", async () => {
         const transport = new FakeTransport([
             [
