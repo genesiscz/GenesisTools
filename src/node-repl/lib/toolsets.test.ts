@@ -691,7 +691,9 @@ describe("recorder and editor toolsets", () => {
                 await engine.shutdown();
             }
         }
-    }, 10_000);
+        // Three REPL engines start one after another; inside the full parallel suite on a busy Mac (2026-11-05) the
+        // test ran past 10 s while it passes alone, so the ceiling leaves room for slow starts.
+    }, 30_000);
 
     test("OCR sidecars include the minimum length and exclude a read one character shorter", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-rec-ocr-boundary-"));
