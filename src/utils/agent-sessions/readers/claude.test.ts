@@ -1,4 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { appendFileSync, mkdirSync, mkdtempSync, renameSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ import { searchHistorySource } from "../search-source";
 import type { NativeSessionSource } from "../types";
 import { createClaudeHistoryOperations, readClaudeMetadata, readClaudeRecords, scanClaudeRecords } from "./claude";
 import { canonicalClaudeTranscript } from "./claude-locate";
-import { SESSION_MODEL_TAIL_BYTES } from "./session-model";
+import { SESSION_MODEL_FIRST_TAIL_BYTES, SESSION_MODEL_TAIL_BYTES } from "./session-model";
 
 const MAIN_ID = "11111111-2222-4333-8444-555555555555";
 
@@ -814,6 +815,32 @@ test("currentModel is the newest assistant model of the session's own chain, nev
     expect(reader.currentModel(longResult)).toBe("claude-sonnet-5-5");
     expect(reader.currentModel(transcript("none.jsonl", [{ type: "user", message: { content: "hi" } }]))).toBeNull();
     expect(reader.currentModel(join(dir, "missing.jsonl"))).toBeNull();
+});
+
+test("currentModel reads the short tail first and the whole tail only when the short one names no model", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-claude-model-window-"));
+    const assistant = (model: string) => jsonl({ type: "assistant", message: { model, content: [] } });
+    const user = (text: string) => jsonl({ type: "user", message: { content: text } });
+    const recent = join(dir, "recent.jsonl");
+    writeFileSync(
+        recent,
+        `${assistant("claude-opus-5-5")}${user("x".repeat(200 * 1024))}${assistant("claude-sonnet-5-5")}`
+    );
+    const deep = join(dir, "deep.jsonl");
+    writeFileSync(deep, `${assistant("claude-opus-5-5")}${user("x".repeat(100 * 1024))}`);
+    const reader = spyOn(fs, "readSync");
+    try {
+        expect(claudeHistoryReader.currentModel(recent)).toBe("claude-sonnet-5-5");
+        expect(reader.mock.calls.map((args) => args[1].byteLength)).toEqual([SESSION_MODEL_FIRST_TAIL_BYTES]);
+        reader.mockClear();
+        expect(claudeHistoryReader.currentModel(deep)).toBe("claude-opus-5-5");
+        expect(reader.mock.calls.map((args) => args[1].byteLength)).toEqual([
+            SESSION_MODEL_FIRST_TAIL_BYTES,
+            fs.statSync(deep).size,
+        ]);
+    } finally {
+        reader.mockRestore();
+    }
 });
 
 test("rowAnchors names a row's uuid, its message id and its tool calls", () => {
