@@ -157,25 +157,33 @@ final class HubOpsFeaturesTests: XCTestCase {
 
     @MainActor
     func testReadinessRunsThreeCallsAndPublishesBeforeSlowCallsFinish() async {
-        let probe = ReadinessConcurrencyProbe()
+        let entered = expectation(description: "three calls entered")
+        let first = expectation(description: "priority result published")
+        let probe = ReadinessConcurrencyProbe(entered: entered)
         var received: [Int] = []
         var activeAtFirst = 0
-        await PRReadinessStore.fetch((0..<6).map { [String($0)] }, run: { batch in
-            await probe.begin()
-            try? await Task.sleep(for: .milliseconds(batch[0] == "0" ? 100 : 300))
-            await probe.end()
-            return .success([])
-        }, receive: { index, _ in
-            if received.isEmpty { activeAtFirst = await probe.active }
-            received.append(index)
-        })
+        let delivery = Task {
+            await PRReadinessStore.fetch((0..<6).map { [String($0)] }, run: { batch in
+                await probe.run(Int(batch[0])!)
+                return .success([])
+            }, receive: { index, _ in
+                if received.isEmpty { activeAtFirst = await probe.active }
+                received.append(index)
+                if index == 0 { first.fulfill() }
+            })
+        }
+        await fulfillment(of: [entered], timeout: 5)
+        await probe.release(0)
+        await fulfillment(of: [first], timeout: 5)
+        // Release registered and future calls even when an expectation timed out.
+        await probe.releaseAll()
+        await delivery.value
         let maximum = await probe.maximum
         XCTAssertEqual(maximum, 3)
         XCTAssertEqual(Set(received), Set(0..<6))
         XCTAssertEqual(received.first, 0)
-        XCTAssertGreaterThan(activeAtFirst, 0, "the fast priority answer is published while slower calls still run")
+        XCTAssertEqual(activeAtFirst, 2, "the other two initial calls stay held until publication")
     }
-
     func testReadinessAsksForOpenPRsOnlyWithTheirKnownHead() throws {
         let prs = [try decodePR(state: "OPEN", headSha: "aaaa"), try decodePR(state: "MERGED", headSha: "bbbb", number: 13),
                    try decodePR(state: "OPEN", headSha: nil, number: 14)]
@@ -217,6 +225,35 @@ final class HubOpsFeaturesTests: XCTestCase {
 private actor ReadinessConcurrencyProbe {
     private(set) var active = 0
     private(set) var maximum = 0
-    func begin() { active += 1; maximum = max(maximum, active) }
-    func end() { active -= 1 }
+    private let entered: XCTestExpectation
+    private var started = 0
+    private var released: Set<Int> = []
+    private var allReleased = false
+    private var waiting: [Int: CheckedContinuation<Void, Never>] = [:]
+
+    init(entered: XCTestExpectation) { self.entered = entered }
+
+    func run(_ index: Int) async {
+        active += 1
+        maximum = max(maximum, active)
+        started += 1
+        if started == 3 { entered.fulfill() }
+        await withCheckedContinuation { continuation in
+            if allReleased || released.contains(index) { continuation.resume() }
+            else { waiting[index] = continuation }
+        }
+        active -= 1
+    }
+
+    func release(_ index: Int) {
+        released.insert(index)
+        waiting.removeValue(forKey: index)?.resume()
+    }
+
+    func releaseAll() {
+        allReleased = true
+        let held = waiting.values
+        waiting = [:]
+        for continuation in held { continuation.resume() }
+    }
 }
