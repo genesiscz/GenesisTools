@@ -173,6 +173,37 @@ final class CameraBubbleTests: XCTestCase {
         XCTAssertEqual(model.project.camera?.x ?? 0, 0.25, accuracy: 0.0001, "removing the bubble is its own step")
     }
 
+    @MainActor
+    func testChangingAnotherCameraControlKeepsThePreviousControl() throws {
+        var project = EditProject.whole(video: "/tmp/none.mp4", durationUs: 10_000_000, width: 1920, height: 1080, cursor: nil, recording: nil)
+        project.camera = EditProject.Camera(file: "camera.mov")
+        let service = FakeServiceLink(project: project, rules: FakeRules.basic)
+        let model = EditorModel.on(service, store: ProjectStore(url: FileManager.default.temporaryDirectory.appendingPathComponent("camera-\(UUID().uuidString).json")))
+        model.changeCamera(.init(size: 0.4))
+        model.changeCamera(.init(x: 0.3, y: 0.5))
+        model.finishGesture()
+        XCTAssertEqual(service.project.camera?.size, 0.4)
+        XCTAssertEqual(service.project.camera?.x, 0.3)
+        XCTAssertEqual(service.count("gesture.commit"), 2)
+    }
+
+    @MainActor
+    func testExportWaitsForAnAlreadySubmittedGestureCommit() throws {
+        var project = EditProject.whole(video: "/tmp/none.mp4", durationUs: 10_000_000, width: 1920, height: 1080, cursor: nil, recording: nil)
+        project.camera = EditProject.Camera(file: "camera.mov")
+        let service = FakeServiceLink(project: project, rules: FakeRules.basic)
+        let model = EditorModel.on(service, store: ProjectStore(url: FileManager.default.temporaryDirectory.appendingPathComponent("camera-\(UUID().uuidString).json")))
+        model.changeCamera(.init(size: 0.4))
+        service.holdAnswers = true
+        model.finishGesture()
+        var saved: Bool?
+        model.afterGesturesSaved { saved = $0 }
+        XCTAssertNil(saved)
+        service.deliver()
+        XCTAssertEqual(saved, true)
+        XCTAssertEqual(model.project.camera?.size, 0.4)
+    }
+
     /// A ⌘Z right after a drag, before the service has answered its commit, takes back that drag (the service takes
     /// the commit, then the undo), and the Edit menu names it.
     @MainActor
