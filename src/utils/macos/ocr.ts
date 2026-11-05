@@ -10,6 +10,11 @@ export interface OcrOptions {
     languages?: string[];
     /** "fast" for speed, "accurate" for quality. Default: "accurate" */
     level?: OcrLevel;
+    /**
+     * An accurate read that finds nothing is read again at the fast level. Default: true. A caller that reads a crop
+     * which may hold no text turns it off, so an empty crop costs one read, not two.
+     */
+    fastFallback?: boolean;
 }
 
 /** Vision accurate OCR returns empty results above ~6k px on one side (macOS 15). */
@@ -214,7 +219,7 @@ export async function recognizeText(imagePath: string, options: OcrOptions = {})
 
     const result = await callVisionOcr(imagePath, languages, level);
 
-    if (level === "accurate" && isEmptyOcrResult(result)) {
+    if (level === "accurate" && options.fastFallback !== false && isEmptyOcrResult(result)) {
         logger.debug({ imagePath }, "darwin-ocr: accurate empty, falling back to fast");
         return callVisionOcr(imagePath, languages, "fast");
     }

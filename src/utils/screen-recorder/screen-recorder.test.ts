@@ -11,6 +11,7 @@ import * as rm from "@genesiscz/utils/rm";
 import { z } from "zod";
 import {
     type DisplayEntry,
+    OCR_READ_DEFAULTS,
     RECORDER_DISPATCH,
     RecorderControl,
     type RecorderMethod,
@@ -19,7 +20,7 @@ import {
     type StopAnswer,
 } from "./control";
 import { outputScaleFor, parseDisplayList } from "./displays";
-import { FrameOutput, ocrSinkFor, SidecarOcrSink, sipsJpegWithin } from "./frame-output";
+import { FrameOutput, type OcrRow, ocrSinkFor, SidecarOcrSink, sipsJpegWithin } from "./frame-output";
 import { readRecordingManifest, renameRecording } from "./library";
 import {
     type LiveNotification,
@@ -32,9 +33,11 @@ import {
     readLiveRecording,
 } from "./live";
 import { audioArgv, captureErrorKind, flagsInHelp, NativeFrameRecorder, NativeLiveCapture, nativeArgv } from "./native";
+import { planRead } from "./ocr-region";
 import { peekabooCaptureError } from "./peekaboo";
 import { startRecording } from "./start";
 import {
+    type CapturedFrame,
     CaptureError,
     type CaptureRequest,
     type CaptureResult,
@@ -42,6 +45,7 @@ import {
     FrameRecorder,
     type FrameRecorderSupport,
     type LiveCapture,
+    type MotionBox,
 } from "./types";
 
 test("an unreadable live entry does not break the inventory", () => {
@@ -773,7 +777,7 @@ describe("frame output", () => {
             naming: "elapsed",
             format: { kind: "original" },
             ocr: {
-                settings: () => ({ enabled, languages: ["en-US"], minChars: 4 }),
+                settings: () => ({ enabled, languages: ["en-US"], minChars: 4, ...OCR_READ_DEFAULTS }),
                 sink: new SidecarOcrSink(),
                 recognize,
             },
@@ -793,7 +797,7 @@ describe("frame output", () => {
             naming: "elapsed",
             format: { kind: "original" },
             ocr: {
-                settings: () => ({ enabled, languages: ["en-US"], minChars: 0 }),
+                settings: () => ({ enabled, languages: ["en-US"], minChars: 0, ...OCR_READ_DEFAULTS }),
                 sink: ocrSinkFor("jsonl", dir),
                 recognize,
             },
@@ -825,7 +829,7 @@ describe("frame output", () => {
                 writeFileSync(target, readFileSync(source));
             },
             ocr: {
-                settings: () => ({ enabled: false, languages: [], minChars: 0 }),
+                settings: () => ({ enabled: false, languages: [], minChars: 0, ...OCR_READ_DEFAULTS }),
                 sink: { write: (row) => rows.push(row.file) },
             },
         });
@@ -839,6 +843,182 @@ describe("frame output", () => {
         expect(readdirSync(output.framesDir).sort()).toEqual(["23-33-16-102-d4.jpg", "23-33-16-103-d4.jpg"]);
         expect(rows).toEqual([first.file, second.file]);
         expect(second.at.getTime()).toBe(atMs);
+    });
+});
+
+/** A PNG holding only its signature, the IHDR chunk with this size, and IEND: enough for a header read of its size. */
+function pngHeader(width: number, height: number): Buffer {
+    const ihdr = Buffer.alloc(25);
+    ihdr.writeUInt32BE(13, 0);
+    ihdr.write("IHDR", 4, "ascii");
+    ihdr.writeUInt32BE(width, 8);
+    ihdr.writeUInt32BE(height, 12);
+    ihdr.writeUInt8(8, 16);
+    const iend = Buffer.alloc(12);
+    iend.write("IEND", 4, "ascii");
+    return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), ihdr, iend]);
+}
+
+/** A Vision block at a pixel rectangle of a 1000×500 frame (normalized, bottom-left origin, as Vision reports it). */
+function blockAt(text: string, x: number, y: number, width: number, height: number) {
+    return {
+        text,
+        confidence: 1,
+        bounds: { x: x / 1000, y: 1 - (y + height) / 500, width: width / 1000, height: height / 500 },
+    };
+}
+
+describe("OCR read savings: which kept frames are read", () => {
+    const size = () => ({ width: 1000, height: 500 });
+    const previous = [blockAt("Agenda", 100, 50, 200, 20)];
+    const on = { threshold: 1, skipTextless: true };
+
+    test("a frame without a previous read, without motion facts, or not a change is read whole", () => {
+        const change = { changePercent: 0.2, reason: "change", motionBoxes: [[600, 300, 40, 40]] as MotionBox[] };
+
+        expect(planRead({ frame: change, settings: on, previous: undefined, size })).toEqual({ kind: "frame" });
+        expect(
+            planRead({ frame: { ...change, motionBoxes: undefined }, settings: on, previous, size }),
+            "a streamed frame has no change percent: it is never skipped"
+        ).toEqual({ kind: "frame" });
+        expect(planRead({ frame: { ...change, reason: "first" }, settings: on, previous, size })).toEqual({
+            kind: "frame",
+        });
+        expect(planRead({ frame: { ...change, reason: "display-switch" }, settings: on, previous, size })).toEqual({
+            kind: "frame",
+        });
+    });
+
+    test("a change below the OCR threshold skips; the default threshold 0 never does", () => {
+        const frame = { changePercent: 0.5, reason: "change", motionBoxes: [[100, 50, 16, 16]] as MotionBox[] };
+
+        expect(planRead({ frame, settings: on, previous, size })).toEqual({ kind: "skip", reason: "below-threshold" });
+        expect(
+            planRead({ frame: { ...frame, reason: "heartbeat", motionBoxes: [] }, settings: on, previous, size })
+        ).toEqual({
+            kind: "skip",
+            reason: "below-threshold",
+        });
+        expect(planRead({ frame, settings: OCR_READ_DEFAULTS, previous, size })).toEqual({ kind: "frame" });
+    });
+
+    test("only a changed area with no text before is checked, padded and inside the frame", () => {
+        const at = (motionBoxes: MotionBox[]) => ({ changePercent: 3, reason: "change", motionBoxes });
+
+        expect(planRead({ frame: at([[600, 300, 40, 40]]), settings: on, previous, size })).toEqual({
+            kind: "check-textless",
+            area: { x: 576, y: 276, width: 88, height: 88 },
+        });
+        expect(planRead({ frame: at([[980, 490, 16, 16]]), settings: on, previous, size })).toEqual({
+            kind: "check-textless",
+            area: { x: 956, y: 466, width: 44, height: 34 },
+        });
+        expect(planRead({ frame: at([[250, 60, 16, 16]]), settings: on, previous, size }), "text was there").toEqual({
+            kind: "frame",
+        });
+        expect(planRead({ frame: at([[0, 0, 800, 400]]), settings: on, previous, size }), "most of the frame").toEqual({
+            kind: "frame",
+        });
+        expect(
+            planRead({ frame: at([[600, 300, 40, 40]]), settings: { ...on, skipTextless: false }, previous, size })
+        ).toEqual({
+            kind: "frame",
+        });
+    });
+
+    test("a skipped frame keeps the previous text of its display and says why in its row", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-frame-skip-"));
+        const rows: OcrRow[] = [];
+        const calls: string[] = [];
+        let cropText = "";
+        const output = new FrameOutput({
+            folder: dir,
+            naming: "elapsed",
+            format: { kind: "original" },
+            crop: async (_source, target, box) => {
+                calls.push(`crop ${box.x},${box.y},${box.width}x${box.height}`);
+                writeFileSync(target, pngHeader(box.width, box.height));
+            },
+            ocr: {
+                settings: () => ({ enabled: true, languages: ["en-US"], minChars: 0, ...on }),
+                sink: { write: (row) => rows.push(row) },
+                recognize: async (image, _languages, options) => {
+                    const crop = image.includes("gt-ocr-crop-");
+                    calls.push(`${crop ? "crop" : "frame"} read ${options?.level ?? "accurate"}`);
+                    return crop
+                        ? { text: cropText, blocks: cropText ? [blockAt(cropText, 0, 0, 10, 10)] : [] }
+                        : {
+                              text: `Agenda ${calls.length}`,
+                              blocks: [blockAt(`Agenda ${calls.length}`, 100, 50, 200, 20)],
+                          };
+                },
+            },
+        });
+        let n = 0;
+        const keep = (frame: Omit<CapturedFrame, "path" | "atMs">, displayId = 2) => {
+            const path = join(dir, `in-${++n}.png`);
+            writeFileSync(path, pngHeader(1000, 500));
+            return output.keep({ path, atMs: 0, ...frame }, { atMs: 1_000 * n, originMs: 0, displayId });
+        };
+
+        await keep({ changePercent: 100, reason: "first", motionBoxes: [] });
+        const small = await keep({ changePercent: 0.4, reason: "change", motionBoxes: [[100, 50, 16, 16]] });
+        await keep({ changePercent: 4, reason: "change", motionBoxes: [[600, 300, 40, 40]] });
+        cropText = "New";
+        await keep({ changePercent: 4, reason: "change", motionBoxes: [[600, 300, 40, 40]] });
+        await keep({ changePercent: 0.4, reason: "change", motionBoxes: [[100, 50, 16, 16]] }, 4);
+
+        expect(calls).toEqual([
+            "frame read accurate",
+            "crop 576,276,88x88",
+            "crop read fast",
+            "crop 576,276,88x88",
+            "crop read fast",
+            "frame read accurate",
+            "frame read accurate",
+        ]);
+        expect(rows.map((row) => [row.displayId, row.text, row.skipped])).toEqual([
+            [2, "Agenda 1", undefined],
+            [2, "Agenda 1", "below-threshold"],
+            [2, "Agenda 1", "no-text"],
+            [2, "Agenda 6", undefined],
+            [4, "Agenda 7", undefined],
+        ]);
+        expect(rows[1]?.blocks).toEqual(rows[0]?.blocks ?? []);
+        expect(small.read?.text).toBe("Agenda 1");
+        expect(readdirSync(tmpdir()).filter((name) => name.startsWith(`gt-ocr-crop-${process.pid}-`))).toEqual([]);
+    });
+
+    test("with the default settings every kept frame is read whole and no row says skipped", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-frame-skip-"));
+        const rows: OcrRow[] = [];
+        let reads = 0;
+        const output = new FrameOutput({
+            folder: dir,
+            naming: "elapsed",
+            format: { kind: "original" },
+            crop: async () => {
+                throw new Error("no crop with the defaults");
+            },
+            ocr: {
+                settings: () => ({ enabled: true, languages: ["en-US"], minChars: 0, ...OCR_READ_DEFAULTS }),
+                sink: { write: (row) => rows.push(row) },
+                recognize: async () => ({ text: `read ${++reads}`, blocks: [] }),
+            },
+        });
+
+        for (const [index, frame] of [
+            { changePercent: 100, reason: "first", motionBoxes: [] as MotionBox[] },
+            { changePercent: 0.1, reason: "change", motionBoxes: [[600, 300, 40, 40]] as MotionBox[] },
+            { changePercent: 0, reason: "heartbeat", motionBoxes: [] as MotionBox[] },
+        ].entries()) {
+            const path = join(dir, `in-${index}.png`);
+            writeFileSync(path, pngHeader(1000, 500));
+            await output.keep({ path, atMs: 0, ...frame }, { atMs: 1_000 * (index + 1), originMs: 0, displayId: 2 });
+        }
+
+        expect(rows.map((row) => row.text)).toEqual(["read 1", "read 2", "read 3"]);
+        expect(rows.every((row) => !("skipped" in row))).toBe(true);
     });
 });
 
@@ -1381,7 +1561,13 @@ describe("characterization: what a library recording asks its recorder for", () 
                 threshold: "number",
                 maxLongSide: "number",
                 heartbeatSec: "number",
-                ocr: { enabled: "boolean", languages: ["string"], minChars: "number" },
+                ocr: {
+                    enabled: "boolean",
+                    languages: ["string"],
+                    minChars: "number",
+                    threshold: "number",
+                    skipTextless: "boolean",
+                },
                 audio: { sources: [], muted: { mic: "boolean", system: "boolean" } },
                 tracks: [],
             },

@@ -79,7 +79,13 @@ export class MeetingRun {
             threshold: capture.threshold * 100,
             maxLongSide: capture.resolutionCap,
             heartbeatSec: nativeKeys.heartbeatSec ?? 0,
-            ocr: { enabled: true, languages: options.ocrLanguages ?? defaultOcrLanguages(), minChars: 0 },
+            ocr: {
+                enabled: true,
+                languages: options.ocrLanguages ?? defaultOcrLanguages(),
+                minChars: 0,
+                threshold: capture.ocr.threshold * 100,
+                skipTextless: capture.ocr.skipTextless,
+            },
         };
         this.audio = {
             sources: options.audio ?? audioConfig?.sources ?? [],

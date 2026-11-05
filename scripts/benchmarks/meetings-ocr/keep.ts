@@ -26,6 +26,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { recognizeText } from "@genesiscz/utils/macos/ocr";
 import { captureSync, listPsTable, parseCpuTime } from "@genesiscz/utils/process/ps";
+import { OCR_READ_DEFAULTS } from "@genesiscz/utils/screen-recorder/control";
 import { FrameOutput, JsonlOcrSink, sipsJpeg, wallClockFrameName } from "@genesiscz/utils/screen-recorder/frame-output";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { median } from "../fs/shared";
@@ -163,7 +164,7 @@ async function main(): Promise<void> {
             naming: "wall-clock",
             format: { kind: "jpeg", quality: QUALITY },
             ocr: {
-                settings: () => ({ enabled: true, languages: LANGUAGES, minChars: 0 }),
+                settings: () => ({ enabled: true, languages: LANGUAGES, minChars: 0, ...OCR_READ_DEFAULTS }),
                 sink: new JsonlOcrSink(join(sharedDir, "ocr.jsonl")),
             },
         });

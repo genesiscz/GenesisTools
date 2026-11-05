@@ -118,8 +118,21 @@ export const recorderSettingsSchema = z.object({
         languages: z.array(z.string().trim().min(1)).min(1),
         /** OCR text shorter than this is stored as no text. */
         minChars: z.number().int().min(0).max(1000),
+        /**
+         * The OCR-only change threshold, in percent: a kept frame that changed less than this keeps the previous frame's
+         * text for its display. 0 reads every kept frame.
+         */
+        threshold: z.number().min(0).max(100),
+        /** A kept frame whose changed area holds no text, now or before, keeps the previous text (a fast read decides). */
+        skipTextless: z.boolean(),
     }),
 });
+
+/** What the OCR settings are when a recorder names none of the read savings: every kept frame read whole. */
+export const OCR_READ_DEFAULTS = { threshold: 0, skipTextless: false } as const satisfies Pick<
+    RecorderSettings["ocr"],
+    "threshold" | "skipTextless"
+>;
 export type RecorderSettings = z.infer<typeof recorderSettingsSchema>;
 export const recorderSettingsPatchSchema = recorderSettingsSchema
     .omit({ ocr: true })
@@ -318,7 +331,7 @@ export const RECORDER_DISPATCH: Record<
             parse(
                 recorderSettingsPatchSchema,
                 params,
-                "any of { activeFps, idleFps, threshold, maxLongSide, heartbeatSec, ocr: { enabled, languages, minChars } }"
+                "any of { activeFps, idleFps, threshold, maxLongSide, heartbeatSec, ocr: { enabled, languages, minChars, threshold, skipTextless } }"
             )
         ),
 };

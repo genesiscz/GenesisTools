@@ -102,6 +102,15 @@ const captureSchema = z.object({
     idleFps: z.number().positive().default(0.1),
     /** The share of the screen that must change for a new frame (0 to 1). */
     threshold: z.number().min(0).max(1).default(0.02),
+    /** How the kept frames are read by OCR. The defaults read every kept frame whole, as before these keys existed. */
+    ocr: z
+        .object({
+            /** The OCR-only change threshold (0 to 1): a kept frame that changed less keeps the previous frame's text. */
+            threshold: z.number().min(0).max(1).default(0),
+            /** A kept frame whose changed area holds no text, now or before, keeps the previous frame's text. */
+            skipTextless: z.boolean().default(false),
+        })
+        .prefault({}),
     jpegQuality: z.number().min(0.1).max(1).default(0.75),
     /** The longest side of a frame in pixels. Smaller text than this keeps is lost to OCR on a large display. */
     resolutionCap: z.number().int().min(640).max(8192).default(2880),

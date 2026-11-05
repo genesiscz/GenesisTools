@@ -128,6 +128,12 @@ each frame to JPEG under the meeting's `frames/` as `<HH-MM-SS-mmm>-d<displayId>
 (`languages.<global.language>.ocr`, `cs-CZ` and `en-US` for `cs`). Each capture ends at its duration plus 30 s; a
 hung one is stopped and counts as a failed capture.
 
+`capture.ocr` decides which kept frames OCR reads. `threshold` (0 to 1, default 0) is an OCR-only change threshold
+beside `capture.threshold`: a kept frame that changed less keeps the previous frame's text for its display.
+`skipTextless` (default off) reads the changed area at Vision's fast level first, and a frame whose changed area holds
+no text, before or now, keeps the previous text too. A skipped frame's `ocr.jsonl` row carries the copied text and
+`skipped` (`below-threshold` or `no-text`). The first frame of each capture and each display switch is always read.
+
 `capture.displays` picks what is recorded: `all` (default) records every connected display at once, one capture per
 display per piece; `main`; `follow-focus` (the display of the focused window, when the recorder supports it, else the
 main one); or a screen index. Each piece reads the display list again by id, so a display that is connected joins at

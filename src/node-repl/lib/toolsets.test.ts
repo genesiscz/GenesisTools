@@ -944,7 +944,7 @@ class SettingsControl extends RecorderControl {
         threshold: 3,
         maxLongSide: 1600,
         heartbeatSec: 30,
-        ocr: { enabled: true, languages: ["en-US"], minChars: 4 },
+        ocr: { enabled: true, languages: ["en-US"], minChars: 4, threshold: 0, skipTextless: false },
     });
     readonly patches: RecorderSettingsPatch[] = [];
 

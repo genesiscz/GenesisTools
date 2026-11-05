@@ -13,7 +13,14 @@ import {
     rmCallerFromRuntime,
 } from "@genesiscz/utils/rm";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
-import { type AudioSource, type RecorderMethod, type RecorderSettings, RPC_ERRORS, type StopAnswer } from "./control";
+import {
+    type AudioSource,
+    OCR_READ_DEFAULTS,
+    type RecorderMethod,
+    type RecorderSettings,
+    RPC_ERRORS,
+    type StopAnswer,
+} from "./control";
 import { ChosenDisplays } from "./display-choice";
 import {
     type FrameNaming,
@@ -137,7 +144,7 @@ export class LibraryRecording extends FrameRecording<number> {
                 threshold: options.threshold ?? 1,
                 maxLongSide: options.maxLongSide ?? 2560,
                 heartbeatSec: options.heartbeatSec ?? 0,
-                ocr: { enabled: false, languages: ["en-US"], minChars: 20, ...options.ocr },
+                ocr: { enabled: false, languages: ["en-US"], minChars: 20, ...OCR_READ_DEFAULTS, ...options.ocr },
             },
             audio: { sources, muted: { mic: false, system: false }, micDevice: options.audio?.micDeviceId },
             displays: choice,

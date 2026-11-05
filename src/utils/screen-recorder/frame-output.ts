@@ -1,12 +1,18 @@
-import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { recognizeText } from "@genesiscz/utils/macos/ocr";
-import type { OcrBlock, OcrResult } from "@genesiscz/utils/macos/types";
+import { imageSize, type PixelBox } from "@genesiscz/utils/macos/ocr-boxes";
+import type { OcrBlock, OcrLevel, OcrResult } from "@genesiscz/utils/macos/types";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import type { RecorderSettings } from "./control";
+import { type OcrSkipReason, planRead } from "./ocr-region";
 import type { CapturedFrame, MotionBox } from "./types";
+
+const { log } = logger.scoped("frame-output");
 
 /**
  * Where a recording's kept frames go and what each gets beside it: a name under `frames/`, a format (the recorder's
@@ -52,7 +58,14 @@ export function frameFileName(naming: FrameNaming, input: FrameNameInput): strin
 export type FrameFormat = { kind: "original" } | { kind: "jpeg"; quality: number };
 
 export type JpegConverter = (source: string, target: string, quality: number) => Promise<void>;
-export type OcrRecognizer = (image: string, languages: string[]) => Promise<OcrResult>;
+/** One OCR read; `options` asks for the fast level or no fast retry of an empty accurate read (a crop). */
+export type OcrRecognizer = (
+    image: string,
+    languages: string[],
+    options?: { level?: OcrLevel; fastFallback?: boolean }
+) => Promise<OcrResult>;
+/** Writes the `box` of an image (pixels, top-left origin) to `target` as a PNG. */
+export type ImageCropper = (source: string, target: string, box: PixelBox) => Promise<void>;
 
 /** One frame's JPEG conversion ends within this; a hung `sips` must not hold a piece or the finish forever. */
 const SIPS_TIMEOUT_MS = 30_000;
@@ -93,7 +106,37 @@ export function sipsJpegWithin(timeoutMs: number): JpegConverter {
 /** An image to a reduced JPEG with the system's own `sips`. */
 export const sipsJpeg: JpegConverter = sipsJpegWithin(SIPS_TIMEOUT_MS);
 
-export const visionOcr: OcrRecognizer = (image, languages) => recognizeText(image, { languages });
+/** A part of an image as a PNG, cut by `sips` (`-c <height> <width> --cropOffset <y> <x>`). */
+export const sipsCrop: ImageCropper = async (source, target, box) => {
+    const result = await boundedCommand({
+        command: [
+            "sips",
+            "-s",
+            "format",
+            "png",
+            "-c",
+            String(box.height),
+            String(box.width),
+            "--cropOffset",
+            String(box.y),
+            String(box.x),
+            source,
+            "--out",
+            target,
+        ],
+        timeoutMs: SIPS_TIMEOUT_MS,
+    });
+
+    if (result.error) {
+        throw result.error;
+    }
+
+    if (result.status !== 0) {
+        throw new Error(`sips crop failed for ${source}: ${result.stderr.trim()}`);
+    }
+};
+
+export const visionOcr: OcrRecognizer = (image, languages, options) => recognizeText(image, { languages, ...options });
 
 /** One kept frame's OCR, as a line of a meeting's `ocr.jsonl`. */
 export interface OcrRow {
@@ -105,6 +148,8 @@ export interface OcrRow {
     reason: string;
     text: string;
     blocks: OcrBlock[];
+    /** Set when no read ran: the row holds the previous frame's text of its display, and why it was not read. */
+    skipped?: OcrSkipReason;
 }
 
 /** Where a kept frame's OCR goes. `row.text` is empty when the read held fewer than `minChars` characters. */
@@ -162,6 +207,8 @@ export interface FrameOutputOptions {
         onError?: (error: unknown, framePath: string) => void;
     };
     convert?: JpegConverter;
+    /** Cuts the changed area out of a frame for a read of it alone; default `sips`. */
+    crop?: ImageCropper;
 }
 
 export interface KeptFrame {
@@ -176,7 +223,7 @@ export interface KeptFrame {
     reason: string;
     motionBoxes?: MotionBox[];
     bytes: number;
-    /** The OCR read before the `minChars` cut; absent when OCR is off. */
+    /** The OCR read before the `minChars` cut (a skipped frame's is the previous one); absent when OCR is off. */
     read?: OcrResult;
 }
 
@@ -187,6 +234,9 @@ export class FrameOutput {
     readonly framesDir: string;
     /** Names given out so far: two frames still converting must not share one. */
     private readonly named = new Set<string>();
+    /** The last read of each display, before the `minChars` cut: what a skipped frame keeps. */
+    private readonly lastRead = new Map<number, OcrResult>();
+    private crops = 0;
 
     constructor(private readonly options: FrameOutputOptions) {
         this.framesDir = join(options.folder, "frames");
@@ -236,12 +286,8 @@ export class FrameOutput {
         }
 
         const settings = ocr.settings();
-        const read = settings.enabled
-            ? await (ocr.recognize ?? visionOcr)(path, settings.languages).catch((error: unknown) => {
-                  ocr.onError?.(error, path);
-                  return EMPTY_READ;
-              })
-            : undefined;
+        const outcome = settings.enabled ? await this.read(frame, path, at.displayId, settings) : undefined;
+        const read = outcome?.read;
         const used = !read || read.text.trim().length < settings.minChars ? EMPTY_READ : read;
         ocr.sink.write(
             {
@@ -256,10 +302,61 @@ export class FrameOutput {
                     confidence: block.confidence,
                     bounds: block.bounds,
                 })),
+                ...(outcome?.skipped ? { skipped: outcome.skipped } : {}),
             },
             path
         );
         return read ? { ...kept, read } : kept;
+    }
+
+    /**
+     * The OCR of one kept frame: the previous read of its display when the plan skips it (`planRead`), else a read of
+     * the whole frame. A read that throws counts as an empty one and is reported to `onError`.
+     */
+    private async read(
+        frame: CapturedFrame,
+        path: string,
+        displayId: number,
+        settings: RecorderSettings["ocr"]
+    ): Promise<{ read: OcrResult; skipped?: OcrSkipReason }> {
+        const ocr = this.options.ocr;
+        const recognize = ocr?.recognize ?? visionOcr;
+        const previous = this.lastRead.get(displayId);
+        const plan = planRead({ frame, settings, previous: previous?.blocks, size: () => imageSize(path) });
+
+        if (plan.kind === "skip" && previous) {
+            return { read: previous, skipped: plan.reason };
+        }
+
+        if (plan.kind === "check-textless" && previous) {
+            const crop = join(tmpdir(), `gt-ocr-crop-${process.pid}-${++this.crops}.png`);
+
+            try {
+                await (this.options.crop ?? sipsCrop)(path, crop, plan.area);
+                const found = await recognize(crop, settings.languages, { level: "fast", fastFallback: false });
+
+                if (found.text.trim().length === 0 && found.blocks.length === 0) {
+                    return { read: previous, skipped: "no-text" };
+                }
+            } catch (error) {
+                log.debug({ error, path }, "the changed-area check failed; the frame is read whole");
+            } finally {
+                if (existsSync(crop)) {
+                    unlinkSync(crop);
+                }
+            }
+        }
+
+        try {
+            const read = await recognize(path, settings.languages);
+            this.lastRead.set(displayId, read);
+            return { read };
+        } catch (error) {
+            ocr?.onError?.(error, path);
+            // The next frame is read whole: a skip must not keep an empty text that only stands for a failure.
+            this.lastRead.delete(displayId);
+            return { read: EMPTY_READ };
+        }
     }
 
     /**
