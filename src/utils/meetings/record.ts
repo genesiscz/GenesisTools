@@ -402,7 +402,14 @@ export class MeetingStore {
             return undefined;
         }
 
-        const parsed = meetingRecordSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8")));
+        const raw: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
+        if (raw && typeof raw === "object" && "recording" in raw) {
+            const recording = raw.recording;
+            if (recording && typeof recording === "object" && "status" in recording && recording.status === "failed") {
+                raw.recording = { ...recording, status: "stopped", stopReason: "error" };
+            }
+        }
+        const parsed = meetingRecordSchema.safeParse(raw);
 
         if (!parsed.success) {
             log.warn({ path, issues: parsed.error.issues }, "meeting record does not validate; left out");

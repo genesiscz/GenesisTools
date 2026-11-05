@@ -3245,6 +3245,20 @@ test("a recorder that fails before its capture loop persists the error and retir
     expect(existsSync(recorderFiles(store).pid)).toBe(false);
 });
 
+test("a legacy failed recording remains readable and updateable", async () => {
+    const store = new MeetingStore(new Storage("legacy-failed-recording"));
+    const record = await store.create(
+        { title: "Legacy fixture", start: meeting.start, createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    writeFileSync(store.path(record.id), SafeJSON.stringify({ ...record, recording: { status: "failed", frames: 0 } }));
+    expect(store.read(record.id)?.recording).toMatchObject({ status: "stopped", stopReason: "error", frames: 0 });
+    await store.update(record.id, { command: "test", change: "recovery" }, (current) => {
+        current.title = "Recovered";
+    });
+    expect(store.read(record.id)?.title).toBe("Recovered");
+});
+
 describe("transcriptDocument", () => {
     const stamped = meetingRecordSchema.parse({
         ...record,
