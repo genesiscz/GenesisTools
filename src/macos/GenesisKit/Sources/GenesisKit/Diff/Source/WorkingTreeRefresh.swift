@@ -190,7 +190,10 @@ extension GitWorkingTreeSource {
         let anyDeleted = kept.contains { $0.status == .deleted } || status.entries.contains { $0.status == .deleted }
         let newDeleted = status.entries.contains { $0.status == .deleted && known[$0.path]?.status != .deleted }
         let newAdded = status.entries.contains { $0.status == .added && known[$0.path]?.status != .added }
-        if (newDeleted && anyAdded) || (newAdded && anyDeleted) { return .full(reason: "a rename may have formed") }
+        let addedContentChanged = before.contains { $0.status == .added }
+        if (newDeleted && anyAdded) || ((newAdded || addedContentChanged) && anyDeleted) {
+            return .full(reason: "a rename may have formed")
+        }
 
         var olds = Blobs()
         var unread: [(rev: String, path: String)] = []
