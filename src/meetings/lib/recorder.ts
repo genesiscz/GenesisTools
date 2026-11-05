@@ -34,7 +34,6 @@ import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import {
     type AudioSource,
     type AudioState,
-    type RecorderMethod,
     type RecorderSettings,
     RPC_ERRORS,
 } from "@genesiscz/utils/screen-recorder/control";
@@ -50,7 +49,11 @@ import {
 } from "@genesiscz/utils/screen-recorder/frame-output";
 import { liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
-import { FrameRecording } from "@genesiscz/utils/screen-recorder/recording";
+import {
+    captureErrorVerdict,
+    FRAME_RECORDING_METHODS,
+    FrameRecording,
+} from "@genesiscz/utils/screen-recorder/recording";
 import { settingsChange } from "@genesiscz/utils/screen-recorder/session";
 import { type PieceTarget, pieceTargets } from "@genesiscz/utils/screen-recorder/targets";
 import { CaptureError, type CaptureResult, type FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
@@ -138,24 +141,6 @@ export function framesOnDisk(framesDir: string): { frames: number; bytes: number
 
 /** The displays of a piece: moved to the shared capture session (`@genesiscz/utils/screen-recorder/targets`). */
 export { pieceTargets };
-
-const METHODS: readonly RecorderMethod[] = [
-    "status",
-    "pause",
-    "resume",
-    "stop",
-    "displays.list",
-    "displays.add",
-    "displays.remove",
-    "displays.switch",
-    "displays.mode",
-    "jobs.list",
-    "audio.list",
-    "audio.mute",
-    "audio.setInput",
-    "settings.get",
-    "settings.set",
-];
 
 export interface RecorderNote {
     title: string;
@@ -269,7 +254,6 @@ export async function runRecorder(options: {
         let failureNoticeOpen = Boolean(record?.recording?.failureNotifiedAt);
         let runFrames = 0;
         const saveState = () => stateFile.save(state);
-        const onSignal = () => recording.requestStop();
         const closeSpan = (stopReason: RecordingStopReason, at?: string) => recordingRecord.closeSpan(stopReason, at);
         /** Moves a capture's `.m4a` files to the meeting's `audio/` and lists each in `audio.jsonl`. */
         const keepTracks = (result: CaptureResult, target: PieceTarget): void => {
@@ -352,7 +336,7 @@ export async function runRecorder(options: {
         });
         const recording: FrameRecording<string[]> = new FrameRecording<string[]>({
             kind: "meeting",
-            methods: METHODS,
+            methods: FRAME_RECORDING_METHODS,
             recorder: deps.recorder,
             live: { id: meetingLiveId(meetingId), title: record?.title || meetingId, folder, dir: deps.liveDir },
             history: {
@@ -361,6 +345,7 @@ export async function runRecorder(options: {
             },
             settings,
             audio,
+            stopOnSignals: true,
             displays,
             keptFrames: () => state.frames,
             pieces: {
@@ -372,25 +357,7 @@ export async function runRecorder(options: {
                 failures: {
                     max: MAX_FAILURES,
                     pauseMs: deps.failurePauseMs,
-                    // Only a capture fails a piece; anything else (a frame that cannot be converted) ends the
-                    // recording.
-                    verdict: ({ outcome, error }, now) => {
-                        const failure =
-                            error ??
-                            (outcome && !outcome.recorded && !now.paused && !now.stopping
-                                ? outcome.lastError
-                                : undefined);
-
-                        if (failure === undefined) {
-                            return outcome?.recorded ? "recorded" : "neither";
-                        }
-
-                        if (failure instanceof CaptureError) {
-                            return "failed";
-                        }
-
-                        throw failure;
-                    },
+                    verdict: captureErrorVerdict,
                     gaveUp: (count, err) => {
                         note(`capture failed ${count} times in a row: ${errorText(err)}`);
                         state.stopReason = "failed";
@@ -413,8 +380,6 @@ export async function runRecorder(options: {
             },
             hooks: {
                 beforeLoop: async () => {
-                    process.on("SIGTERM", onSignal);
-                    process.on("SIGINT", onSignal);
                     rmSync(pieceDir, { recursive: true, force: true });
                     mkdirSync(pieceDir, { recursive: true });
                     saveState();
@@ -427,8 +392,6 @@ export async function runRecorder(options: {
                     });
                 },
                 afterLoop: () => {
-                    process.off("SIGTERM", onSignal);
-                    process.off("SIGINT", onSignal);
                     rmSync(pieceDir, { recursive: true, force: true });
                 },
                 onError: (err) => {

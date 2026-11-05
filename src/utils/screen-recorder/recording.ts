@@ -96,6 +96,55 @@ export interface PieceResult {
 }
 
 /** When failed pieces end a recording, and how long it waits after one. */
+/** The methods every frame recording serves; a kind adds its own (the library recording's `discard`). */
+export const FRAME_RECORDING_METHODS = [
+    "status",
+    "pause",
+    "resume",
+    "stop",
+    "displays.list",
+    "displays.add",
+    "displays.remove",
+    "displays.switch",
+    "displays.mode",
+    "jobs.list",
+    "audio.list",
+    "audio.mute",
+    "audio.setInput",
+    "settings.get",
+    "settings.set",
+] as const satisfies readonly RecorderMethod[];
+
+/**
+ * A verdict rule for the meetings recorder: only a capture that threw a `CaptureError` fails a piece (a missing
+ * display included); any other error (a frame that cannot be converted) ends the recording. A piece cut by a pause or
+ * a stop is neither.
+ */
+export function captureErrorVerdict(piece: PieceResult, now: { paused: boolean; stopping: boolean }): PieceVerdict {
+    const { outcome, error } = piece;
+    const failure =
+        error ?? (outcome && !outcome.recorded && !now.paused && !now.stopping ? outcome.lastError : undefined);
+
+    if (failure === undefined) {
+        return outcome?.recorded ? "recorded" : "neither";
+    }
+
+    if (failure instanceof CaptureError) {
+        return "failed";
+    }
+
+    throw failure;
+}
+
+/** A verdict rule for the library recording: a piece that kept no frame failed, whatever the cause; an error ends it. */
+export function emptyPieceVerdict(piece: PieceResult): PieceVerdict {
+    if (piece.error !== undefined) {
+        throw piece.error;
+    }
+
+    return piece.outcome && piece.outcome.frames > 0 ? "recorded" : "failed";
+}
+
 export interface PieceFailureRule {
     /** Failed pieces in a row after which the recording ends. */
     max: number;
@@ -196,6 +245,8 @@ export interface RecorderConfig<S> {
     settings: RecorderSettings;
     /** The sound it records; a recorder without sound records none. */
     audio: AudioState;
+    /** SIGTERM and SIGINT stop the recording while its captures run (a recorder process of its own). */
+    stopOnSignals?: boolean;
     /** Which displays it records, and what the display calls do. */
     displays: DisplayChoice;
     /** The frames the kind has kept so far; the live count adds those the running captures announced. */
@@ -683,6 +734,12 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
     private async run(): Promise<void> {
         const { hooks } = this.config;
+        const onSignal = () => this.requestStop();
+
+        if (this.config.stopOnSignals) {
+            process.on("SIGTERM", onSignal);
+            process.on("SIGINT", onSignal);
+        }
 
         try {
             await hooks.beforeLoop?.();
@@ -695,6 +752,8 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             this.ended = true;
             this.phase = "stopping";
             this.update({ state: "stopping" });
+            process.off("SIGTERM", onSignal);
+            process.off("SIGINT", onSignal);
             hooks.afterLoop?.();
         }
     }

@@ -25,7 +25,7 @@ import {
 } from "./frame-output";
 import { RECORDING_MANIFEST, type RecordingManifest, recordingsLibraryDir } from "./library";
 import { liveRecordingId } from "./live";
-import { FrameRecording } from "./recording";
+import { emptyPieceVerdict, FRAME_RECORDING_METHODS, FrameRecording } from "./recording";
 import { patchChange, type SessionCapture } from "./session";
 import { type AudioTrack, type CapturedFrame, CaptureError, type CaptureResult, type FrameRecorder } from "./types";
 
@@ -84,24 +84,7 @@ interface PendingFrame {
 export const FRAME_FLUSHES = ["finish", "piece"] as const;
 export type FrameFlush = (typeof FRAME_FLUSHES)[number];
 
-const METHODS: readonly RecorderMethod[] = [
-    "status",
-    "pause",
-    "resume",
-    "stop",
-    "discard",
-    "displays.list",
-    "displays.add",
-    "displays.remove",
-    "displays.switch",
-    "displays.mode",
-    "jobs.list",
-    "audio.list",
-    "audio.mute",
-    "audio.setInput",
-    "settings.get",
-    "settings.set",
-];
+const METHODS: readonly RecorderMethod[] = [...FRAME_RECORDING_METHODS, "discard"];
 
 function stamp(date: Date): string {
     const pad = (value: number) => String(value).padStart(2, "0");
@@ -169,13 +152,7 @@ export class LibraryRecording extends FrameRecording<number> {
                 failures: {
                     max: 3,
                     pauseMs: 0,
-                    verdict: ({ outcome, error }) => {
-                        if (error !== undefined) {
-                            throw error;
-                        }
-
-                        return outcome && outcome.frames > 0 ? "recorded" : "failed";
-                    },
+                    verdict: emptyPieceVerdict,
                     gaveUp: () => this.warn("three captures in a row recorded nothing; the recording ends"),
                 },
             },
