@@ -1,0 +1,534 @@
+import { type ExportedEntry, exportMonth, type MonthExport } from "@app/azure-devops/lib/timelog/export";
+import type { TimeLogApi } from "@app/azure-devops/timelog-api";
+import type { ClarityMapping } from "@app/clarity/config";
+import { buildPeriodComment, type CommentEntry } from "@app/clarity/lib/comment-builder";
+import { checkUnmapped, type UnmappedVerdict } from "@app/clarity/lib/fill-guard";
+import {
+    buildFillMap,
+    buildMonthAwareTimeSegments,
+    type FillEntry,
+    fillMinutesInPeriod,
+    replacementChangesActuals,
+    requestedMonthActualSeconds,
+    type UnmappedEntry,
+} from "@app/clarity/lib/fill-utils";
+import {
+    type FillWeeks,
+    loadTimesheetPeriods,
+    type TimesheetPeriods,
+    type TimesheetRecord,
+    type TimesheetWeekReader,
+} from "@app/clarity/lib/timesheet-weeks";
+import {
+    type ApiDebugInfo,
+    type ClarityApi,
+    ClarityApiError,
+    type TimeEntryRecord,
+    type TimeSegment,
+    type TimeSeriesValue,
+} from "@genesiscz/utils/clarity";
+import { addDay, isDateInHalfOpenRange } from "@genesiscz/utils/date";
+
+/** One month of ADO time, grouped by Clarity task. */
+export interface FillMonth {
+    month: number;
+    year: number;
+    adoExport: MonthExport;
+    fillMap: Map<number, FillEntry>;
+    unmappedByWi: Map<number, number>;
+    unmappedEntries: UnmappedEntry[];
+    unmapped: UnmappedVerdict;
+    /** Sorted days that carry mapped minutes. */
+    dates: string[];
+}
+
+export async function loadFillMonth({
+    adoApi,
+    mappings,
+    month,
+    year,
+    allowUnmapped,
+    enrich,
+}: {
+    adoApi: TimeLogApi;
+    mappings: ClarityMapping[];
+    month: number;
+    year: number;
+    allowUnmapped: boolean;
+    /** Fills in work item titles and types before the entries are grouped. */
+    enrich?: (entries: ExportedEntry[]) => Promise<void>;
+}): Promise<FillMonth> {
+    const adoExport = await exportMonth(adoApi, month, year, adoApi.user.userId);
+
+    if (enrich) {
+        await enrich(adoExport.entries);
+    }
+
+    const { fillMap, unmappedByWi, unmappedEntries } = buildFillMap(adoExport.entries, mappings, {
+        trackEntries: true,
+    });
+    const dates = [...new Set([...fillMap.values()].flatMap((fill) => Object.keys(fill.dayMinutes)))].sort();
+
+    return {
+        month,
+        year,
+        adoExport,
+        fillMap,
+        unmappedByWi,
+        unmappedEntries,
+        unmapped: checkUnmapped({ unmappedByWi, allowUnmapped }),
+        dates,
+    };
+}
+
+/** The month's timesheet periods, the opened weeks a fill writes, and the fill days no opened period covers. */
+export interface FillDiscovery extends FillWeeks {
+    periods: TimesheetPeriods;
+}
+
+export async function discoverFillWeeks(api: TimesheetWeekReader, fill: FillMonth): Promise<FillDiscovery> {
+    const periods = await loadTimesheetPeriods(api, { month: fill.month, year: fill.year });
+
+    return { periods, ...periods.fillWeeks(fill.dates, { includeMonthWeeks: true }) };
+}
+
+/** Unmapped minutes per work item inside one period, in first-seen order. */
+export function unmappedInPeriod(
+    entries: UnmappedEntry[],
+    periodStart: string,
+    periodFinishExclusive: string
+): Array<{ workItemId: number; minutes: number }> {
+    const byWorkItem = new Map<number, number>();
+
+    for (const entry of entries) {
+        if (isDateInHalfOpenRange(entry.date, periodStart, periodFinishExclusive)) {
+            byWorkItem.set(entry.workItemId, (byWorkItem.get(entry.workItemId) ?? 0) + entry.minutes);
+        }
+    }
+
+    return [...byWorkItem.entries()].map(([workItemId, minutes]) => ({ workItemId, minutes }));
+}
+
+/**
+ * - `write`: the replacement changes the row.
+ * - `unchanged`: Clarity already holds exactly these hours.
+ * - `nothing-to-clear`: no ADO minutes this week and no requested-month hours to clear.
+ * - `no-row`: the timesheet has no row for the task, nor one replacement row (see `findTaskRow`).
+ */
+export type FillEntryAction = "write" | "unchanged" | "nothing-to-clear" | "no-row";
+
+export interface PlannedFillEntry {
+    fill: FillEntry;
+    action: FillEntryAction;
+    row?: { timeEntryId: number; taskId: number; taskCode: string };
+    /** Mapped task ids whose hours go on `row` although it belongs to another task with the same name. */
+    replacedTaskIds: number[];
+    existingSegments: TimeSegment[];
+    /** The whole-period replacement, for `write` and `unchanged`. */
+    segments: TimeSegment[];
+}
+
+export interface ReadyFillWeek {
+    status: "ready";
+    timesheetId: number;
+    periodStart: string;
+    /** Clarity's `timePeriodFinish`: the LAST day of the period. */
+    periodFinishInclusive: string;
+    existingNotes: number;
+    entries: PlannedFillEntry[];
+    unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
+}
+
+export type PlannedFillWeek =
+    | ReadyFillWeek
+    | { status: "unreadable"; timesheetId: number; startDate: string; error: unknown }
+    | { status: "missing"; timesheetId: number; startDate?: string };
+
+export interface FillPlan {
+    month: number;
+    year: number;
+    /** Clarity user id, the author of a timesheet note. */
+    userId?: number;
+    weeks: PlannedFillWeek[];
+}
+
+/**
+ * Which weeks a plan covers.
+ * - `discovered`: every opened week of the month, reusing the reads discovery made. A failed read
+ *   marks the week unreadable, and a clearing-only week with nothing to write is left out.
+ * - `requested`: exactly these timesheet ids, each read again. A failed read fails the plan.
+ */
+export type FillWeekSelection = "discovered" | { requested: number[] };
+
+/**
+ * Where a missing row is reported.
+ * - `tasks-with-work`: only for a task with minutes or requested-month hours in the week.
+ * - `every-task`: for every mapped task, before anything else is checked.
+ */
+export type MissingRowReporting = "tasks-with-work" | "every-task";
+
+function exclusiveEnd(periodFinishInclusive: string): string {
+    return `${addDay(periodFinishInclusive.split("T")[0])}T00:00:00`;
+}
+
+/**
+ * The row a mapped task books on: its own, else the ONE row of a task with the same name in the same
+ * investment. Clarity closes a task for time entry and opens a renumbered copy, so weeks before the
+ * switch carry only the old id and weeks after it only the new one.
+ */
+export function findTaskRow(rows: TimeEntryRecord[], mapping: ClarityMapping): TimeEntryRecord | undefined {
+    const own = rows.find((row) => row.taskId === mapping.clarityTaskId);
+
+    if (own) {
+        return own;
+    }
+
+    const copies = rows.filter(
+        (row) => row.taskName === mapping.clarityTaskName && row.investmentCode === mapping.clarityInvestmentCode
+    );
+
+    return copies.length === 1 ? copies[0] : undefined;
+}
+
+/** One entry for the fills that book on one row, since a write replaces the row's whole period. */
+function mergeOnRow(fills: FillEntry[], timeEntry: TimeEntryRecord): FillEntry {
+    if (fills.length === 1) {
+        return fills[0];
+    }
+
+    const dayMinutes: Record<string, number> = {};
+
+    for (const fill of fills) {
+        for (const [day, minutes] of Object.entries(fill.dayMinutes)) {
+            dayMinutes[day] = (dayMinutes[day] ?? 0) + minutes;
+        }
+    }
+
+    const tracked = fills.some((fill) => fill.timelogEntries);
+
+    return {
+        mapping: (fills.find((fill) => fill.mapping.clarityTaskId === timeEntry.taskId) ?? fills[0]).mapping,
+        dayMinutes,
+        totalMinutes: fills.reduce((sum, fill) => sum + fill.totalMinutes, 0),
+        ...(tracked ? { timelogEntries: fills.flatMap((fill) => fill.timelogEntries ?? []) } : {}),
+    };
+}
+
+function planEntry({
+    fills,
+    timeEntry,
+    record,
+    month,
+    year,
+    missingRows,
+}: {
+    fills: FillEntry[];
+    timeEntry: TimeEntryRecord | undefined;
+    record: TimesheetRecord;
+    month: number;
+    year: number;
+    missingRows: MissingRowReporting;
+}): PlannedFillEntry {
+    const periodFinishExclusive = exclusiveEnd(record.timePeriodFinish);
+    const fill = timeEntry ? mergeOnRow(fills, timeEntry) : fills[0];
+    const replacedTaskIds = timeEntry
+        ? fills.map((each) => each.mapping.clarityTaskId).filter((taskId) => taskId !== timeEntry.taskId)
+        : [];
+    // A row with no actuals yet comes back without the series.
+    const existingSegments = timeEntry?.actuals?.segmentList?.segments ?? [];
+    // A week with no ADO minutes is written only to clear requested-month hours Clarity still holds.
+    const nothingToClear =
+        fillMinutesInPeriod(fill.dayMinutes, record.timePeriodStart, periodFinishExclusive) === 0 &&
+        requestedMonthActualSeconds(existingSegments, { year, month }) === 0;
+
+    if (!timeEntry) {
+        const action = missingRows === "tasks-with-work" && nothingToClear ? "nothing-to-clear" : "no-row";
+
+        return { fill, action, replacedTaskIds, existingSegments, segments: [] };
+    }
+
+    const row = { timeEntryId: timeEntry._internalId, taskId: timeEntry.taskId, taskCode: timeEntry.taskCode };
+
+    if (nothingToClear) {
+        return { fill, action: "nothing-to-clear", row, replacedTaskIds, existingSegments, segments: [] };
+    }
+
+    const segments = buildMonthAwareTimeSegments({
+        periodStart: record.timePeriodStart,
+        periodFinishExclusive,
+        year,
+        month,
+        dayMinutes: fill.dayMinutes,
+        existingSegments,
+    });
+    const action = replacementChangesActuals(segments, existingSegments) ? "write" : "unchanged";
+
+    return { fill, action, row, replacedTaskIds, existingSegments, segments };
+}
+
+/** Each mapped task's row in the week; fills that land on the same row plan as one entry, in map order. */
+function planWeekEntries({
+    record,
+    fill,
+    missingRows,
+}: {
+    record: TimesheetRecord;
+    fill: FillMonth;
+    missingRows: MissingRowReporting;
+}): PlannedFillEntry[] {
+    const rows = record.timeentries?._results ?? [];
+    const onRow = new Map<number, { timeEntry: TimeEntryRecord; fills: FillEntry[] }>();
+    const groups: Array<{ timeEntry: TimeEntryRecord | undefined; fills: FillEntry[] }> = [];
+
+    for (const entry of fill.fillMap.values()) {
+        const timeEntry = findTaskRow(rows, entry.mapping);
+        const shared = timeEntry ? onRow.get(timeEntry._internalId) : undefined;
+
+        if (shared) {
+            shared.fills.push(entry);
+            continue;
+        }
+
+        const group = { timeEntry, fills: [entry] };
+        groups.push(group);
+
+        if (timeEntry) {
+            onRow.set(timeEntry._internalId, { timeEntry, fills: group.fills });
+        }
+    }
+
+    return groups.map(({ timeEntry, fills }) =>
+        planEntry({ fills, timeEntry, record, month: fill.month, year: fill.year, missingRows })
+    );
+}
+
+function planWeek({
+    timesheetId,
+    record,
+    fill,
+    missingRows,
+}: {
+    timesheetId: number;
+    record: TimesheetRecord;
+    fill: FillMonth;
+    missingRows: MissingRowReporting;
+}): ReadyFillWeek {
+    return {
+        status: "ready",
+        timesheetId,
+        periodStart: record.timePeriodStart,
+        periodFinishInclusive: record.timePeriodFinish,
+        existingNotes: record.numberOfNotes ?? 0,
+        entries: planWeekEntries({ record, fill, missingRows }),
+        unmappedWorkItems: unmappedInPeriod(
+            fill.unmappedEntries,
+            record.timePeriodStart,
+            exclusiveEnd(record.timePeriodFinish)
+        ),
+    };
+}
+
+/** Decide, per week and mapped task, what a fill would write and why. Reads Clarity, never writes. */
+export async function planFill({
+    api,
+    fill,
+    discovery,
+    weeks,
+    missingRows,
+}: {
+    api: Pick<ClarityApi, "getTimesheet">;
+    fill: FillMonth;
+    discovery: FillDiscovery;
+    weeks: FillWeekSelection;
+    missingRows: MissingRowReporting;
+}): Promise<FillPlan> {
+    const planned: PlannedFillWeek[] = [];
+
+    if (weeks === "discovered") {
+        for (const week of discovery.weeks) {
+            let record = discovery.periods.records.get(week.timesheetId);
+
+            try {
+                record ??= (await api.getTimesheet(week.timesheetId)).timesheets._results[0];
+            } catch (error) {
+                planned.push({ status: "unreadable", timesheetId: week.timesheetId, startDate: week.startDate, error });
+                continue;
+            }
+
+            if (!record) {
+                planned.push({ status: "missing", timesheetId: week.timesheetId, startDate: week.startDate });
+                continue;
+            }
+
+            const plan = planWeek({ timesheetId: record._internalId, record, fill, missingRows });
+            const idle = plan.entries.every((entry) => entry.action === "nothing-to-clear");
+
+            if (discovery.clearingOnlyWeekIds.has(week.timesheetId) && idle) {
+                continue;
+            }
+
+            planned.push(plan);
+        }
+    } else {
+        for (const timesheetId of weeks.requested) {
+            const record = (await api.getTimesheet(timesheetId)).timesheets._results[0];
+
+            planned.push(
+                record ? planWeek({ timesheetId, record, fill, missingRows }) : { status: "missing", timesheetId }
+            );
+        }
+    }
+
+    return { month: fill.month, year: fill.year, userId: discovery.periods.userId, weeks: planned };
+}
+
+export function readyWeeks(plan: FillPlan): ReadyFillWeek[] {
+    return plan.weeks.filter((week): week is ReadyFillWeek => week.status === "ready");
+}
+
+function commentEntries(entries: PlannedFillEntry[]): CommentEntry[] {
+    return entries.flatMap((entry) =>
+        (entry.fill.timelogEntries ?? []).map((source) => ({
+            workItemId: source.workItemId,
+            timeTypeDescription: source.timeTypeDescription ?? "",
+            comment: source.comment ?? null,
+            date: source.date,
+        }))
+    );
+}
+
+/** The timesheet note for a week, built from the ADO entries of the given planned entries. */
+export function weekNote(week: ReadyFillWeek, entries: PlannedFillEntry[]): string {
+    return buildPeriodComment({
+        entries: commentEntries(entries),
+        periodStart: week.periodStart,
+        periodFinishInclusive: week.periodFinishInclusive,
+    });
+}
+
+export interface FillWriteOutcome {
+    status: "success" | "error";
+    totalSeconds: number;
+    debug?: ApiDebugInfo;
+    error?: string;
+}
+
+export interface FillNoteOutcome {
+    timesheetId: number;
+    status: "posted" | "kept-existing" | "failed";
+    existingNotes: number;
+    error?: unknown;
+}
+
+export interface FillExecution {
+    writes: Map<PlannedFillEntry, FillWriteOutcome>;
+    /** Absent unless notes were asked for. */
+    notes?: { missingUserId: boolean; weeks: FillNoteOutcome[] };
+}
+
+function actualsFor(week: ReadyFillWeek, segments: TimeSegment[]): TimeSeriesValue {
+    return {
+        isFiscal: false,
+        curveType: "value",
+        dataType: "numeric",
+        _type: "tsv",
+        start: week.periodStart,
+        finish: week.periodFinishInclusive,
+        segmentList: {
+            total: segments.reduce((sum, segment) => sum + segment.value, 0),
+            defaultValue: 0,
+            segments,
+        },
+    };
+}
+
+/**
+ * Write every `write` entry of the ready weeks. With `postNotes`, each week then gets a note built
+ * from the entries that actually wrote, unless the timesheet already carries one.
+ */
+export async function executeFillPlan({
+    api,
+    plan,
+    postNotes,
+    onWeek,
+    onWrite,
+}: {
+    api: Pick<ClarityApi, "updateTimeEntryVerbose" | "createTimesheetNote">;
+    plan: FillPlan;
+    postNotes: boolean;
+    onWeek?: (week: ReadyFillWeek) => void;
+    onWrite?: (week: ReadyFillWeek, entry: PlannedFillEntry, outcome: FillWriteOutcome) => void;
+}): Promise<FillExecution> {
+    const writes = new Map<PlannedFillEntry, FillWriteOutcome>();
+    const weeks = readyWeeks(plan);
+
+    for (const week of weeks) {
+        onWeek?.(week);
+
+        for (const entry of week.entries) {
+            if (entry.action !== "write" || !entry.row) {
+                continue;
+            }
+
+            const actuals = actualsFor(week, entry.segments);
+            let outcome: FillWriteOutcome;
+
+            try {
+                const { debug } = await api.updateTimeEntryVerbose(week.timesheetId, entry.row.timeEntryId, {
+                    taskId: entry.row.taskId,
+                    actuals,
+                });
+                outcome = { status: "success", totalSeconds: actuals.segmentList.total, debug };
+            } catch (err) {
+                outcome = {
+                    status: "error",
+                    totalSeconds: actuals.segmentList.total,
+                    error: err instanceof Error ? err.message : String(err),
+                    debug: err instanceof ClarityApiError ? err.debug : undefined,
+                };
+            }
+
+            writes.set(entry, outcome);
+            onWrite?.(week, entry, outcome);
+        }
+    }
+
+    if (!postNotes) {
+        return { writes };
+    }
+
+    const userId = plan.userId;
+
+    if (userId === undefined) {
+        return { writes, notes: { missingUserId: true, weeks: [] } };
+    }
+
+    const notes: FillNoteOutcome[] = [];
+
+    for (const week of weeks) {
+        // The note documents what Clarity holds after the run: rows this run wrote and rows that already
+        // held these hours (a re-run). Unmapped work and failed writes stay out of it.
+        const booked = week.entries.filter(
+            (entry) => entry.action === "unchanged" || writes.get(entry)?.status === "success"
+        );
+        const text = weekNote(week, booked);
+
+        if (!text) {
+            continue;
+        }
+
+        if (week.existingNotes > 0) {
+            notes.push({ timesheetId: week.timesheetId, status: "kept-existing", existingNotes: week.existingNotes });
+            continue;
+        }
+
+        try {
+            await api.createTimesheetNote(week.timesheetId, text, userId);
+            notes.push({ timesheetId: week.timesheetId, status: "posted", existingNotes: 0 });
+        } catch (error) {
+            notes.push({ timesheetId: week.timesheetId, status: "failed", existingNotes: 0, error });
+        }
+    }
+
+    return { writes, notes: { missingUserId: false, weeks: notes } };
+}

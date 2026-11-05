@@ -1,3 +1,5 @@
+import { listClarityTasks } from "@app/clarity/lib/tasks";
+import type { ClarityTask } from "@app/clarity/lib/types";
 import type { TimesheetAppResponse, TimesheetResponse } from "@genesiscz/utils/clarity";
 import { isDateInHalfOpenRange } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -222,7 +224,7 @@ function monthBounds(year: number, month: number): { monthStart: string; monthEn
  * The periods that reach into a month. A period's finish date is exclusive, so one ending on the
  * first of the month belongs to the month before it.
  */
-export function weeksTouchingMonth<T extends { startDate: string; finishDate: string }>(
+function weeksTouchingMonth<T extends { startDate: string; finishDate: string }>(
     weeks: T[],
     year: number,
     month: number
@@ -310,7 +312,7 @@ async function widenToCoverMonth({
     return merged;
 }
 
-export interface TimesheetWeeks {
+interface TimesheetWeeks {
     weeks: TimesheetWeek[];
     userId?: number;
     /**
@@ -320,42 +322,18 @@ export interface TimesheetWeeks {
     records: Map<number, TimesheetRecord>;
 }
 
-/** Reuse a full timesheet read from discovery, fetching it only when discovery had no record. */
-export async function getTimesheetRecord({
-    api,
-    records,
-    timesheetId,
-}: {
-    api: Pick<TimesheetWeekReader, "getTimesheet">;
-    records: Map<number, TimesheetRecord>;
-    timesheetId: number;
-}): Promise<TimesheetRecord | undefined> {
-    const known = records.get(timesheetId);
-
-    if (known) {
-        return known;
-    }
-
-    const record = (await api.getTimesheet(timesheetId)).timesheets._results[0];
-
-    if (record) {
-        records.set(timesheetId, record);
-    }
-
-    return record;
+/** The day a month's own period is looked up by: the middle, which no split period misses. */
+function midMonth(year: number, month: number): string {
+    return `${year}-${String(month).padStart(2, "0")}-15`;
 }
 
-export async function getTimesheetWeeks(
-    api: TimesheetWeekReader,
-    month?: number,
-    year?: number
-): Promise<TimesheetWeeks> {
+async function getTimesheetWeeks(api: TimesheetWeekReader, month?: number, year?: number): Promise<TimesheetWeeks> {
     // When a month is requested, navigate to a period covering it so the window is anchored there.
     const seedTimePeriodId = await resolveCarouselSeed({ api });
     let timePeriodId = seedTimePeriodId;
 
     if (month !== undefined && year !== undefined && seedTimePeriodId !== undefined) {
-        const targetDate = `${year}-${String(month).padStart(2, "0")}-15`;
+        const targetDate = midMonth(year, month);
 
         try {
             const reached = await navigateToPeriodForDate({ api, seedTimePeriodId, date: targetDate });
@@ -442,7 +420,7 @@ export async function getTimesheetWeeks(
  * Pick the period covering a date, opened or not. Clarity periods share a boundary date, so the
  * range is half-open: the finish date belongs to the next period, not this one.
  */
-export function findPeriodForDate(weeks: TimesheetWeek[], date: string): TimesheetWeek | undefined {
+function findPeriodForDate(weeks: TimesheetWeek[], date: string): TimesheetWeek | undefined {
     return weeks.find((week) => isDateInHalfOpenRange(date, week.startDate, week.finishDate));
 }
 
@@ -451,7 +429,7 @@ export function findPeriodForDate(weeks: TimesheetWeek[], date: string): Timeshe
  * the API rejects `timesheetId=undefined`. Use `findPeriodForDate` when an unopened period should
  * be reported rather than dropped.
  */
-export function findWeekForDate(weeks: TimesheetWeek[], date: string): IdentifiedTimesheetWeek | undefined {
+function findWeekForDate(weeks: TimesheetWeek[], date: string): IdentifiedTimesheetWeek | undefined {
     const week = findPeriodForDate(weeks, date);
 
     return week && hasTimesheetId(week) ? week : undefined;
@@ -462,7 +440,7 @@ export function findWeekForDate(weeks: TimesheetWeek[], date: string): Identifie
  * a `YYYY-MM` picks every period that reaches into that month. Periods Clarity has not opened yet
  * are included, so a caller that writes can report them instead of silently doing less.
  */
-export function selectWeeksForDateArg(weeks: TimesheetWeek[], dateArg: string): TimesheetWeek[] {
+function selectWeeksForDateArg(weeks: TimesheetWeek[], dateArg: string): TimesheetWeek[] {
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateArg)) {
         const week = findPeriodForDate(weeks, dateArg);
 
@@ -482,10 +460,188 @@ export function selectWeeksForDateArg(weeks: TimesheetWeek[], dateArg: string): 
  * Order the periods to try when looking for the Clarity task catalogue. A month's own timesheet
  * can exist with no task rows yet, so fall back to the newest other period that does have them.
  */
-export function taskSourceWeekOrder(weeks: TimesheetWeek[], preferred: TimesheetWeek | undefined): TimesheetWeek[] {
+function taskSourceWeekOrder(weeks: TimesheetWeek[], preferred: TimesheetWeek | undefined): TimesheetWeek[] {
     const rest = weeks
         .filter((week) => week.timesheetId && week.timesheetId !== preferred?.timesheetId)
         .sort((a, b) => b.startDate.localeCompare(a.startDate));
 
     return preferred?.timesheetId ? [preferred, ...rest] : rest;
+}
+
+/** The weeks a fill writes, and the fill days no opened period covers. */
+export interface FillWeeks {
+    weeks: IdentifiedTimesheetWeek[];
+    unresolvedDates: string[];
+    /**
+     * Open weeks of the month that no fill date reached. They are in `weeks` only so a fill can
+     * clear requested-month hours Clarity still holds there; with nothing to clear, skip them.
+     */
+    clearingOnlyWeekIds: Set<number>;
+}
+
+/**
+ * The timesheet periods one carousel walk found, and every question asked of them: which period
+ * covers a date, which touch a month, which a `--date` argument names, where to look for the task
+ * catalogue, and which weeks a fill writes.
+ */
+export class TimesheetPeriods {
+    readonly weeks: TimesheetWeek[];
+    /** Timesheets already read during discovery; `record()` adds to it. */
+    readonly records: Map<number, TimesheetRecord>;
+    /** Clarity user id, needed as the author of a timesheet note. */
+    readonly userId?: number;
+    private readonly month?: number;
+    private readonly year?: number;
+    private readonly api?: Pick<TimesheetWeekReader, "getTimesheet">;
+
+    constructor(options: {
+        weeks: TimesheetWeek[];
+        records?: Map<number, TimesheetRecord>;
+        userId?: number;
+        month?: number;
+        year?: number;
+        api?: Pick<TimesheetWeekReader, "getTimesheet">;
+    }) {
+        this.weeks = options.weeks;
+        this.records = options.records ?? new Map();
+        this.userId = options.userId;
+        this.month = options.month;
+        this.year = options.year;
+        this.api = options.api;
+    }
+
+    /**
+     * The period covering a date, opened or not. With `requireTimesheet`, only a period Clarity has
+     * opened a timesheet for, because the API rejects `timesheetId=undefined`.
+     */
+    covering(date: string, options: { requireTimesheet: true }): IdentifiedTimesheetWeek | undefined;
+    covering(date: string, options?: { requireTimesheet?: boolean }): TimesheetWeek | undefined;
+    covering(date: string, options: { requireTimesheet?: boolean } = {}): TimesheetWeek | undefined {
+        return options.requireTimesheet ? findWeekForDate(this.weeks, date) : findPeriodForDate(this.weeks, date);
+    }
+
+    /** The periods Clarity has opened a timesheet for. */
+    opened(): IdentifiedTimesheetWeek[] {
+        return this.weeks.filter(hasTimesheetId);
+    }
+
+    touchingMonth(year: number, month: number): TimesheetWeek[] {
+        return weeksTouchingMonth(this.weeks, year, month);
+    }
+
+    forDateArg(dateArg: string): TimesheetWeek[] {
+        return selectWeeksForDateArg(this.weeks, dateArg);
+    }
+
+    taskSourceOrder(preferred: TimesheetWeek | undefined): TimesheetWeek[] {
+        return taskSourceWeekOrder(this.weeks, preferred);
+    }
+
+    /** A full timesheet, reusing a discovery read and reading it only once otherwise. */
+    async record(timesheetId: number): Promise<TimesheetRecord | undefined> {
+        const known = this.records.get(timesheetId);
+
+        if (known || !this.api) {
+            return known;
+        }
+
+        const record = (await this.api.getTimesheet(timesheetId)).timesheets._results[0];
+
+        if (record) {
+            this.records.set(timesheetId, record);
+        }
+
+        return record;
+    }
+
+    /**
+     * The opened weeks covering the fill dates, in date order. With `includeMonthWeeks`, every other
+     * opened week of the loaded month follows, so a month replacement can clear stale hours there.
+     */
+    fillWeeks(dates: string[], options: { includeMonthWeeks?: boolean } = {}): FillWeeks {
+        const weeks: IdentifiedTimesheetWeek[] = [];
+        const unresolvedDates: string[] = [];
+
+        for (const date of dates) {
+            const week = this.covering(date, { requireTimesheet: true });
+
+            if (!week) {
+                unresolvedDates.push(date);
+                continue;
+            }
+
+            if (!weeks.some((known) => known.timesheetId === week.timesheetId)) {
+                weeks.push(week);
+            }
+        }
+
+        const clearingOnlyWeekIds = new Set<number>();
+
+        if (options.includeMonthWeeks && this.month !== undefined && this.year !== undefined) {
+            for (const week of this.touchingMonth(this.year, this.month).filter(hasTimesheetId)) {
+                if (!weeks.some((known) => known.timesheetId === week.timesheetId)) {
+                    weeks.push(week);
+                    clearingOnlyWeekIds.add(week.timesheetId);
+                }
+            }
+        }
+
+        return { weeks, unresolvedDates, clearingOnlyWeekIds };
+    }
+}
+
+/**
+ * Walk the carousel once. With a month, the periods touching it; without, the window around the
+ * current period.
+ */
+export async function loadTimesheetPeriods(
+    api: TimesheetWeekReader,
+    scope: { month?: number; year?: number } = {}
+): Promise<TimesheetPeriods> {
+    const { weeks, userId, records } = await getTimesheetWeeks(api, scope.month, scope.year);
+
+    return new TimesheetPeriods({ weeks, records, userId, month: scope.month, year: scope.year, api });
+}
+
+/**
+ * The first period in the given order that actually carries task rows. A month's own timesheet can
+ * exist with no catalogue yet, so the search has to fall through to another period.
+ */
+async function firstNonEmptyCatalogue(api: TimesheetWeekReader, candidates: TimesheetWeek[]): Promise<ClarityTask[]> {
+    for (const candidate of candidates) {
+        if (!hasTimesheetId(candidate)) {
+            continue;
+        }
+
+        const tasks = await listClarityTasks({ api, timesheetId: candidate.timesheetId });
+
+        if (tasks.length > 0) {
+            return tasks;
+        }
+    }
+
+    return [];
+}
+
+/**
+ * The Clarity task catalogue for a month: the mid-month week's rows, else the newest other week of
+ * the month that has rows, else the newest week of the current window that has them.
+ */
+export async function loadTaskCatalogue(
+    api: TimesheetWeekReader,
+    { month, year }: { month: number; year: number }
+): Promise<ClarityTask[]> {
+    const periods = await loadTimesheetPeriods(api, { month, year });
+    const preferred = periods.covering(midMonth(year, month), { requireTimesheet: true });
+    const tasks = await firstNonEmptyCatalogue(api, periods.taskSourceOrder(preferred));
+
+    if (tasks.length > 0) {
+        return tasks;
+    }
+
+    // A month whose timesheets exist but carry no rows yet has no catalogue of its own.
+    // Widen past the month filter and take the newest period that does have rows.
+    const current = await loadTimesheetPeriods(api);
+
+    return firstNonEmptyCatalogue(api, current.taskSourceOrder(undefined));
 }

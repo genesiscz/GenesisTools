@@ -15,12 +15,15 @@ const MappingSchema = z.object({
 
 const ClarityConfigSchema = z.object({
     baseUrl: z.url(),
-    authToken: z.string(),
-    sessionId: z.string(),
+    /** The session, only while the file session store keeps it here (lib/auth/session-store.ts). */
+    authToken: z.string().optional(),
+    sessionId: z.string().optional(),
     cookies: z.string().optional(),
     resourceId: z.number().optional(),
     uniqueName: z.string().optional(),
     mappings: z.array(MappingSchema).default([]),
+    /** Absent in configs saved before drivers existed; those were cURL pastes. */
+    auth: z.object({ driver: z.string() }).optional(),
 });
 
 export type ClarityMapping = z.infer<typeof MappingSchema>;

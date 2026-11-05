@@ -1,15 +1,30 @@
 import { describe, expect, test } from "bun:test";
 import {
-    findPeriodForDate,
-    findWeekForDate,
-    getTimesheetRecord,
     parseTimesheetArg,
-    selectWeeksForDateArg,
+    TimesheetPeriods,
     type TimesheetWeek,
-    taskSourceWeekOrder,
-    weeksTouchingMonth,
+    type TimesheetWeekReader,
 } from "@app/clarity/lib/timesheet-weeks";
 import type { LookupField, TimesheetRecord, TimesheetResponse } from "@genesiscz/utils/clarity";
+
+// The lookups as these tests first knew them, answered by TimesheetPeriods over a fixed week list.
+const findPeriodForDate = (weeks: TimesheetWeek[], date: string) => new TimesheetPeriods({ weeks }).covering(date);
+const findWeekForDate = (weeks: TimesheetWeek[], date: string) =>
+    new TimesheetPeriods({ weeks }).covering(date, { requireTimesheet: true });
+const selectWeeksForDateArg = (weeks: TimesheetWeek[], arg: string) => new TimesheetPeriods({ weeks }).forDateArg(arg);
+const taskSourceWeekOrder = (weeks: TimesheetWeek[], preferred: TimesheetWeek | undefined) =>
+    new TimesheetPeriods({ weeks }).taskSourceOrder(preferred);
+const weeksTouchingMonth = (weeks: TimesheetWeek[], year: number, month: number) =>
+    new TimesheetPeriods({ weeks }).touchingMonth(year, month);
+const getTimesheetRecord = ({
+    api,
+    records,
+    timesheetId,
+}: {
+    api: Pick<TimesheetWeekReader, "getTimesheet">;
+    records: Map<number, TimesheetRecord>;
+    timesheetId: number;
+}) => new TimesheetPeriods({ weeks: [], records, api }).record(timesheetId);
 
 // Clarity carousel periods share a boundary date: one ends 2026-08-24 and the next starts
 // 2026-08-24, while the timesheet itself reports 2026-08-24..2026-08-30. The finish date is

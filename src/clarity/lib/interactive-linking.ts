@@ -1,13 +1,14 @@
-import { TimeLogApi } from "@app/azure-devops/timelog-api";
-import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import { getConfig, getMappingForWorkItem, requireConfig, saveConfig } from "@app/clarity/config";
-import { applyAssignments } from "@app/clarity/lib/assignments";
+import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
+import { requireTimeLogConfig } from "@app/azure-devops/utils";
+import { getConfig, getMappingForWorkItem, requireConfig } from "@app/clarity/config";
+import { getClarityApi } from "@app/clarity/lib/api";
+import { MappingStore } from "@app/clarity/lib/mapping-store";
 import { listClarityTasks } from "@app/clarity/lib/tasks";
 import { getTimelogWorkItems, type TimelogWorkItemGroup } from "@app/clarity/lib/timelog-workitems";
-import { getTimesheetWeeks, hasTimesheetId, type IdentifiedTimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
+import { type IdentifiedTimesheetWeek, loadTimesheetPeriods } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
 import * as clack from "@clack/prompts";
-import { ClarityApi } from "@genesiscz/utils/clarity";
+
 import pc from "picocolors";
 
 const MONTH_NAMES = [
@@ -39,20 +40,15 @@ function formatWeekLabel(week: IdentifiedTimesheetWeek): string {
  * "Step 1/2/3" mirrors.
  */
 export async function runInteractiveLinking(): Promise<void> {
-    const config = await requireConfig();
+    // Fails before the first prompt when Clarity is not configured.
+    await requireConfig();
 
     clack.intro(pc.bgCyan(pc.black(" Link ADO Work Items to Clarity Tasks ")));
 
-    const api = new ClarityApi({
-        baseUrl: config.baseUrl,
-        authToken: config.authToken,
-        sessionId: config.sessionId,
-        cookies: config.cookies,
-    });
-
+    const api = getClarityApi();
     const adoConfig = requireTimeLogConfig();
-    const adoUser = requireTimeLogUser(adoConfig);
-    const adoApi = new TimeLogApi(adoConfig.orgId!, adoConfig.projectId, adoConfig.timelog!.functionsKey, adoUser);
+    const adoApi = getTimeLogApi({ config: adoConfig });
+    const adoUser = adoApi.user;
 
     const now = new Date();
     const currentMonth = now.getMonth() + 1;
@@ -98,10 +94,10 @@ export async function runInteractiveLinking(): Promise<void> {
     let selectableWeeks: IdentifiedTimesheetWeek[];
 
     try {
-        const result = await getTimesheetWeeks(api, selectedMonth, selectedYear);
+        const periods = await loadTimesheetPeriods(api, { month: selectedMonth, year: selectedYear });
         // A period Clarity has not opened a timesheet for has no id to read entries with, so it
         // cannot be picked here at all.
-        selectableWeeks = result.weeks.filter(hasTimesheetId);
+        selectableWeeks = periods.opened();
         weeksSpinner.stop(`Found ${selectableWeeks.length} weeks`);
     } catch (err) {
         weeksSpinner.stop("Failed to load weeks");
@@ -300,17 +296,15 @@ export async function runInteractiveLinking(): Promise<void> {
                 continue;
             }
 
-            freshConfig.mappings = applyAssignments({
-                mappings: freshConfig.mappings,
-                pairs: selected.map((wi) => ({
+            await new MappingStore().upsert(
+                freshConfig,
+                selected.map((wi) => ({
                     workItemId: wi.id,
                     task: chosenTask,
                     title: wi.title,
                     type: wi.type || undefined,
-                })),
-            });
-
-            await saveConfig(freshConfig);
+                }))
+            );
 
             for (const wi of selected) {
                 clack.log.success(`Linked: ADO #${wi.id} → ${chosenTask.taskName}`);

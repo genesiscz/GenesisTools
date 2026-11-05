@@ -10,10 +10,12 @@
 import { Api } from "@app/azure-devops/api";
 import { AzAuthError, isAuthError } from "@app/azure-devops/cli.utils";
 import { loadConfig as loadAdoConfig } from "@app/azure-devops/config";
-import { TimeLogApi } from "@app/azure-devops/timelog-api";
+import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
 import type { AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import { type ClarityConfig, getConfig as getClarityConfig } from "@app/clarity/config";
-import { ClarityApi } from "@genesiscz/utils/clarity";
+import { getClarityApi } from "@app/clarity/lib/api";
+import { isClarityAuthError } from "@app/clarity/lib/auth/client";
+
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 
 export type AuthStatus = "ok" | "expired" | "error" | "unknown";
@@ -60,23 +62,17 @@ export async function pingClarity(config: ClarityConfig | null): Promise<Service
     }
 
     try {
-        const api = new ClarityApi({
-            baseUrl: config.baseUrl,
-            authToken: config.authToken,
-            sessionId: config.sessionId,
-            cookies: config.cookies,
-        });
-        await api.getTimesheetApp();
+        await getClarityApi().getTimesheetApp();
         return { status: "ok" };
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        const lower = msg.toLowerCase();
-        const looksAuth =
-            msg.includes("401") || msg.includes("403") || lower.includes("session") || lower.includes("token");
+        const looksAuth = isClarityAuthError(err);
         return {
             status: looksAuth ? "expired" : "error",
             error: msg,
-            fix: looksAuth ? "Paste a fresh cURL in Settings → Clarity Configuration" : undefined,
+            fix: looksAuth
+                ? `${toolCommand("clarity configure update-auth")}, or paste a fresh cURL in Settings → Clarity Configuration`
+                : undefined,
         };
     }
 }
@@ -94,8 +90,7 @@ export async function pingTimelog(config: AzureConfigWithTimeLog | null): Promis
         ({ userId: "preflight", userName: "preflight", userEmail: "preflight@local" } as TimeLogUser);
 
     try {
-        const api = new TimeLogApi(config.orgId ?? "", config.projectId, functionsKey, user);
-        await api.getAllTimeTypes();
+        await getTimeLogApi({ config, user }).getAllTimeTypes();
         return { status: "ok" };
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

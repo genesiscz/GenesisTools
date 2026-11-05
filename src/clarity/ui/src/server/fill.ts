@@ -1,26 +1,12 @@
-import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
 import { requireConfig } from "@app/clarity/config";
-import { checkUnmapped } from "@app/clarity/lib/fill-guard";
-import {
-    buildFillMap,
-    buildMonthAwareTimeSegments,
-    type ExecuteFillResult,
-    type FillEntryResult,
-    fillMinutesInPeriod,
-    replacementChangesActuals,
-    requestedMonthActualSeconds,
-} from "@app/clarity/lib/fill-utils";
-import {
-    findWeekForDate,
-    getTimesheetRecord,
-    getTimesheetWeeks,
-    hasTimesheetId,
-} from "@app/clarity/lib/timesheet-weeks";
+import { getClarityApi } from "@app/clarity/lib/api";
+import { discoverFillWeeks, executeFillPlan, loadFillMonth, planFill, unmappedInPeriod } from "@app/clarity/lib/fill";
+import type { ExecuteFillResult, FillEntryResult } from "@app/clarity/lib/fill-utils";
 import { requireAdoTimeLogConfig } from "@app/clarity/ui/src/server/ado-config";
-import type { ApiDebugInfo, TimeEntryRecord, TimeSeriesValue } from "@genesiscz/utils/clarity";
-import { ClarityApi } from "@genesiscz/utils/clarity";
-import { addDay, isDateInHalfOpenRange } from "@genesiscz/utils/date";
+import type { TimeEntryRecord } from "@genesiscz/utils/clarity";
+
+import { isDateInHalfOpenRange } from "@genesiscz/utils/date";
 
 interface WeekPreviewTimelogEntry {
     workItemId: number;
@@ -68,39 +54,39 @@ export interface FillPreviewResult {
 
 export async function getFillPreview(month: number, year: number, allowUnmapped = false): Promise<FillPreviewResult> {
     const clarityConfig = await requireConfig();
-    const { config: adoConfig, user: adoUser, api: adoApi } = requireAdoTimeLogConfig();
-    const clarityApi = new ClarityApi({
-        baseUrl: clarityConfig.baseUrl,
-        authToken: clarityConfig.authToken,
-        sessionId: clarityConfig.sessionId,
-        cookies: clarityConfig.cookies,
-    });
+    const clarityApi = getClarityApi();
+    const { config: adoConfig, api: adoApi } = requireAdoTimeLogConfig();
 
-    const adoExport = await exportMonth(adoApi, month, year, adoUser.userId);
+    const fill = await loadFillMonth({
+        adoApi,
+        mappings: clarityConfig.mappings,
+        month,
+        year,
+        allowUnmapped,
+        enrich: async (entries) => {
+            const uniqueIds = [...new Set(entries.map((e) => e.workItemId))];
 
-    // Enrich work item titles/types from ADO
-    const uniqueIds = [...new Set(adoExport.entries.map((e) => e.workItemId))];
-
-    if (uniqueIds.length > 0) {
-        try {
-            const workItems = await enrichWorkItems(adoConfig, uniqueIds);
-
-            for (const entry of adoExport.entries) {
-                const wi = workItems.get(entry.workItemId);
-
-                if (wi) {
-                    entry.workItemTitle = wi.title;
-                    entry.workItemType = wi.type ?? "";
-                }
+            if (uniqueIds.length === 0) {
+                return;
             }
-        } catch {
-            // Non-fatal — titles will show as "#ID"
-        }
-    }
 
-    const { fillMap, unmappedByWi, unmappedEntries } = buildFillMap(adoExport.entries, clarityConfig.mappings, {
-        trackEntries: true,
+            try {
+                const workItems = await enrichWorkItems(adoConfig, uniqueIds);
+
+                for (const entry of entries) {
+                    const wi = workItems.get(entry.workItemId);
+
+                    if (wi) {
+                        entry.workItemTitle = wi.title;
+                        entry.workItemType = wi.type ?? "";
+                    }
+                }
+            } catch {
+                // Non-fatal — titles will show as "#ID"
+            }
+        },
     });
+    const { fillMap, unmappedByWi, adoExport, unmapped } = fill;
 
     const totalMapped = [...fillMap.values()].reduce((s, f) => s + f.totalMinutes, 0);
     const totalUnmapped = [...unmappedByWi.values()].reduce((s, v) => s + v, 0);
@@ -144,8 +130,6 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
 
     // Checked before week discovery, the order the CLI uses: an unmapped work item is the
     // actionable problem and must not sit behind an unrelated one.
-    const unmapped = checkUnmapped({ unmappedByWi, allowUnmapped });
-
     if (unmapped.blocked) {
         return {
             weeks: [],
@@ -159,12 +143,10 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
         };
     }
 
-    const { weeks: clarityWeeks, userId, records } = await getTimesheetWeeks(clarityApi, month, year);
-    // The same check `resolveFillWeeks` runs for the CLI: a day carrying mapped hours that no
-    // opened period covers is dropped by the write.
-    const unresolvedDates = [...new Set([...fillMap.values()].flatMap((fill) => Object.keys(fill.dayMinutes)))]
-        .sort()
-        .filter((date) => !findWeekForDate(clarityWeeks, date));
+    const { weeks: discovered, unresolvedDates, periods } = await discoverFillWeeks(clarityApi, fill);
+    const { userId } = periods;
+    // Discovery lists the weeks carrying fill dates first; the preview shows the month in date order.
+    const clarityWeeks = [...discovered].sort((a, b) => a.startDate.localeCompare(b.startDate));
 
     if (clarityWeeks.length === 0) {
         return {
@@ -199,16 +181,14 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
 
     const weekPreviews: WeekPreview[] = [];
 
-    // A period Clarity has not opened has no id to read or write with, and WeekPreview.timesheetId
-    // is sent straight to the API. Drop them here rather than letting `undefined` through.
-    for (const cw of clarityWeeks.filter(hasTimesheetId)) {
+    for (const cw of clarityWeeks) {
         const weekEntries: WeekPreview["entries"] = [];
 
-        for (const fill of fillMap.values()) {
+        for (const fillEntry of fillMap.values()) {
             const weekDayValues: Record<string, number> = {};
             let weekTotal = 0;
 
-            for (const [date, mins] of Object.entries(fill.dayMinutes)) {
+            for (const [date, mins] of Object.entries(fillEntry.dayMinutes)) {
                 if (isDateInHalfOpenRange(date, cw.startDate, cw.finishDate)) {
                     weekDayValues[date] = mins;
                     weekTotal += mins;
@@ -216,13 +196,13 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
             }
 
             if (weekTotal > 0) {
-                const weekTimelogs = (fill.timelogEntries ?? []).filter((e) =>
+                const weekTimelogs = (fillEntry.timelogEntries ?? []).filter((e) =>
                     isDateInHalfOpenRange(e.date, cw.startDate, cw.finishDate)
                 );
 
                 weekEntries.push({
-                    clarityTaskName: fill.mapping.clarityTaskName,
-                    clarityTaskCode: fill.mapping.clarityTaskCode,
+                    clarityTaskName: fillEntry.mapping.clarityTaskName,
+                    clarityTaskCode: fillEntry.mapping.clarityTaskCode,
                     dayValues: weekDayValues,
                     totalMinutes: weekTotal,
                     timelogEntries: weekTimelogs,
@@ -230,25 +210,12 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
             }
         }
 
-        // Filter unmapped entries to this week's date range, then aggregate per work item
-        const weekUnmappedMap = new Map<number, number>();
-
-        for (const ue of unmappedEntries) {
-            if (isDateInHalfOpenRange(ue.date, cw.startDate, cw.finishDate)) {
-                weekUnmappedMap.set(ue.workItemId, (weekUnmappedMap.get(ue.workItemId) ?? 0) + ue.minutes);
-            }
-        }
-
-        const weekUnmapped: WeekPreview["unmappedWorkItems"] = [...weekUnmappedMap.entries()].map(
-            ([workItemId, minutes]) => ({ workItemId, minutes })
-        );
-
         weekPreviews.push({
             timesheetId: cw.timesheetId,
             periodStart: cw.startDate,
             periodFinish: cw.finishDate,
             entries: weekEntries,
-            unmappedWorkItems: weekUnmapped,
+            unmappedWorkItems: unmappedInPeriod(fill.unmappedEntries, cw.startDate, cw.finishDate),
         });
     }
 
@@ -256,7 +223,7 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
     await Promise.all(
         weekPreviews.map(async (wp) => {
             try {
-                const ts = await getTimesheetRecord({ api: clarityApi, records, timesheetId: wp.timesheetId });
+                const ts = await periods.record(wp.timesheetId);
 
                 if (!ts) {
                     return;
@@ -265,7 +232,7 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
                 const matchedTaskCodes = new Set<string>();
 
                 for (const entry of wp.entries) {
-                    const te = ts.timeentries._results.find(
+                    const te = (ts.timeentries?._results ?? []).find(
                         (e: TimeEntryRecord) => e.taskCode === entry.clarityTaskCode
                     );
                     const totalSeconds = te?.actuals?.segmentList?.total ?? 0;
@@ -284,7 +251,7 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
                 }
 
                 // Add Clarity-only entries (tasks with hours in Clarity but no ADO mapping)
-                for (const te of ts.timeentries._results as TimeEntryRecord[]) {
+                for (const te of (ts.timeentries?._results ?? []) as TimeEntryRecord[]) {
                     if (matchedTaskCodes.has(te.taskCode)) {
                         continue;
                     }
@@ -317,7 +284,7 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
                 // Sum total from ALL Clarity timesheet entries (not just ADO-matched ones)
                 let weekClarityTotal = 0;
 
-                for (const te of ts.timeentries._results) {
+                for (const te of ts.timeentries?._results ?? []) {
                     weekClarityTotal += Math.round(((te as TimeEntryRecord).actuals?.segmentList?.total ?? 0) / 60);
                 }
 
@@ -332,24 +299,23 @@ export async function getFillPreview(month: number, year: number, allowUnmapped 
 
     return {
         weeks: weekPreviews,
-        totalMapped: [...fillMap.values()].reduce((s, f) => s + f.totalMinutes, 0),
-        totalUnmapped: [...unmappedByWi.values()].reduce((s, v) => s + v, 0),
+        totalMapped,
+        totalUnmapped,
         adoConfig: adoInfo,
         userId,
     };
 }
 
 export async function postTimesheetNote(timesheetId: number, noteText: string, userId: number): Promise<void> {
-    const clarityConfig = await requireConfig();
-    const clarityApi = new ClarityApi({
-        baseUrl: clarityConfig.baseUrl,
-        authToken: clarityConfig.authToken,
-        sessionId: clarityConfig.sessionId,
-        cookies: clarityConfig.cookies,
-    });
+    const clarityApi = getClarityApi();
 
     await clarityApi.createTimesheetNote(timesheetId, noteText, userId);
 }
+
+const SkipReasons = {
+    "nothing-to-clear": "No minutes for this task in this week",
+    unchanged: "Clarity already holds these hours",
+} as const;
 
 export async function executeFill(
     month: number,
@@ -358,48 +324,45 @@ export async function executeFill(
     allowUnmapped = false
 ): Promise<ExecuteFillResult> {
     const clarityConfig = await requireConfig();
-    const { user: adoUser, api: adoApi } = requireAdoTimeLogConfig();
-    const clarityApi = new ClarityApi({
-        baseUrl: clarityConfig.baseUrl,
-        authToken: clarityConfig.authToken,
-        sessionId: clarityConfig.sessionId,
-        cookies: clarityConfig.cookies,
-    });
+    const clarityApi = getClarityApi();
+    const { api: adoApi } = requireAdoTimeLogConfig();
 
-    const adoExport = await exportMonth(adoApi, month, year, adoUser.userId);
-    const { fillMap, unmappedByWi } = buildFillMap(adoExport.entries, clarityConfig.mappings);
+    const fill = await loadFillMonth({ adoApi, mappings: clarityConfig.mappings, month, year, allowUnmapped });
 
     // The preview refusing is not a guard: it only stops the client from OFFERING the write. This
     // is the path that actually books hours, and it takes weekIds straight from the request.
-    const unmapped = checkUnmapped({ unmappedByWi, allowUnmapped });
-
-    if (unmapped.blocked) {
+    if (fill.unmapped.blocked) {
         throw new Error(
-            `Refusing to fill: ${unmapped.items.length} work item(s) carrying ${(unmapped.totalMinutes / 60).toFixed(1)}h have no Clarity mapping.`
+            `Refusing to fill: ${fill.unmapped.items.length} work item(s) carrying ${(fill.unmapped.totalMinutes / 60).toFixed(1)}h have no Clarity mapping.`
         );
     }
 
     // The sibling check. Hours on a day no opened period covers are never written, and the response
     // would still report success for the weeks that did write.
-    const { weeks: reachable } = await getTimesheetWeeks(clarityApi, month, year);
-    const unreachable = [...new Set([...fillMap.values()].flatMap((fill) => Object.keys(fill.dayMinutes)))]
-        .sort()
-        .filter((date) => !findWeekForDate(reachable, date));
+    const discovery = await discoverFillWeeks(clarityApi, fill);
 
-    if (unreachable.length > 0) {
-        throw new Error(`Refusing to fill: no Clarity period covers ${unreachable.join(", ")}.`);
+    if (discovery.unresolvedDates.length > 0) {
+        throw new Error(`Refusing to fill: no Clarity period covers ${discovery.unresolvedDates.join(", ")}.`);
     }
+
+    const plan = await planFill({
+        api: clarityApi,
+        fill,
+        discovery,
+        weeks: { requested: weekIds },
+        missingRows: "every-task",
+    });
+    const { writes } = await executeFillPlan({ api: clarityApi, plan, postNotes: false });
 
     let success = 0;
     let failed = 0;
     let skipped = 0;
     const resultEntries: FillEntryResult[] = [];
 
-    for (const timesheetId of weekIds) {
-        const tsData = await clarityApi.getTimesheet(timesheetId);
-        const ts = tsData.timesheets._results[0];
+    for (const week of plan.weeks) {
+        const timesheetId = week.timesheetId;
 
-        if (!ts) {
+        if (week.status !== "ready") {
             resultEntries.push({
                 clarityTaskName: `Timesheet #${timesheetId}`,
                 clarityTaskCode: "",
@@ -414,16 +377,16 @@ export async function executeFill(
             continue;
         }
 
-        for (const fill of fillMap.values()) {
-            const timeEntry = ts.timeentries._results.find(
-                (e: TimeEntryRecord) => e.taskId === fill.mapping.clarityTaskId
-            );
+        for (const entry of week.entries) {
+            const base = {
+                clarityTaskName: entry.fill.mapping.clarityTaskName,
+                clarityTaskCode: entry.row?.taskCode ?? entry.fill.mapping.clarityTaskCode,
+                timesheetId,
+            };
 
-            if (!timeEntry) {
+            if (entry.action === "no-row" || !entry.row) {
                 resultEntries.push({
-                    clarityTaskName: fill.mapping.clarityTaskName,
-                    clarityTaskCode: fill.mapping.clarityTaskCode,
-                    timesheetId,
+                    ...base,
                     timeEntryId: 0,
                     totalHours: 0,
                     segments: [],
@@ -434,85 +397,38 @@ export async function executeFill(
                 continue;
             }
 
-            // timePeriodFinish is inclusive (last day e.g. Sunday "2026-02-08T00:00:00")
-            // buildTimeSegments needs exclusive end for its loop
-            const exclusiveEnd = `${addDay(ts.timePeriodFinish.split("T")[0])}T00:00:00`;
-            // A row with no actuals yet comes back without the series.
-            const existingSegments = timeEntry.actuals?.segmentList?.segments ?? [];
-            const segments = buildMonthAwareTimeSegments({
-                periodStart: ts.timePeriodStart,
-                periodFinishExclusive: exclusiveEnd,
-                year,
-                month,
-                dayMinutes: fill.dayMinutes,
-                existingSegments,
-            });
-            const totalSeconds = segments.reduce((sum, s) => sum + s.value, 0);
-            // Same rule as the CLI: a week with no ADO minutes is written only to clear
-            // requested-month hours Clarity still holds, and an unchanged week is never written.
-            // Gating on the fill, not on totalSeconds, keeps adjacent-month actuals out of it.
-            const nothingToClear =
-                fillMinutesInPeriod(fill.dayMinutes, ts.timePeriodStart, exclusiveEnd) === 0 &&
-                requestedMonthActualSeconds(existingSegments, { year, month }) === 0;
-
-            if (nothingToClear || !replacementChangesActuals(segments, existingSegments)) {
+            if (entry.action !== "write") {
                 resultEntries.push({
-                    clarityTaskName: fill.mapping.clarityTaskName,
-                    clarityTaskCode: fill.mapping.clarityTaskCode,
-                    timesheetId,
-                    timeEntryId: timeEntry._internalId,
+                    ...base,
+                    timeEntryId: entry.row.timeEntryId,
                     totalHours: 0,
                     segments: [],
                     status: "skipped",
-                    error: nothingToClear
-                        ? "No minutes for this task in this week"
-                        : "Clarity already holds these hours",
+                    error: SkipReasons[entry.action],
                 });
                 skipped++;
                 continue;
             }
 
-            const actuals: TimeSeriesValue = {
-                isFiscal: false,
-                curveType: "value",
-                dataType: "numeric",
-                _type: "tsv",
-                start: ts.timePeriodStart,
-                finish: ts.timePeriodFinish,
-                segmentList: {
-                    total: totalSeconds,
-                    defaultValue: 0,
-                    segments,
-                },
-            };
+            const outcome = writes.get(entry)!;
 
-            const entryResult: FillEntryResult = {
-                clarityTaskName: fill.mapping.clarityTaskName,
-                clarityTaskCode: fill.mapping.clarityTaskCode,
-                timesheetId,
-                timeEntryId: timeEntry._internalId,
-                totalHours: totalSeconds / 3600,
-                segments: segments
+            resultEntries.push({
+                ...base,
+                timeEntryId: entry.row.timeEntryId,
+                totalHours: outcome.totalSeconds / 3600,
+                segments: entry.segments
                     .filter((s) => s.value > 0)
                     .map((s) => ({ date: s.start.split("T")[0], hours: s.value / 3600 })),
-                status: "success",
-            };
+                status: outcome.status,
+                ...(outcome.status === "error" ? { error: outcome.error } : {}),
+                debug: outcome.debug,
+            });
 
-            try {
-                const { debug } = await clarityApi.updateTimeEntryVerbose(timesheetId, timeEntry._internalId, {
-                    taskId: timeEntry.taskId,
-                    actuals,
-                });
-                entryResult.debug = debug;
-                success++;
-            } catch (err) {
-                entryResult.status = "error";
-                entryResult.error = err instanceof Error ? err.message : String(err);
-                entryResult.debug = (err as Error & { debug?: ApiDebugInfo }).debug;
+            if (outcome.status === "error") {
                 failed++;
+            } else {
+                success++;
             }
-
-            resultEntries.push(entryResult);
         }
     }
 

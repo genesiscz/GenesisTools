@@ -5,11 +5,16 @@ import { extractOrgName, findConfigPath, loadConfig as loadAdoConfig } from "@ap
 import { buildAdoConfig, checkAzureCliLogin, saveAdoConfig } from "@app/azure-devops/lib/ado-configure";
 import { fetchTimeLogFunctionsKey } from "@app/azure-devops/lib/timelog-configure";
 import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
-import { getConfig, saveConfig } from "@app/clarity/config";
+import { getConfig } from "@app/clarity/config";
+import { getClarityApi } from "@app/clarity/lib/api";
+import { saveSignIn } from "@app/clarity/lib/auth/client";
+import { curlAuthDriver } from "@app/clarity/lib/auth/curl-driver";
+import { authDrivers, findAuthDriver } from "@app/clarity/lib/auth/drivers";
+import { claritySessionStore } from "@app/clarity/lib/auth/session-store";
 import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
 import { type AuthStatus, pingAdo, pingClarity, pingTimelog, type ServiceAuthState } from "@app/clarity/lib/preflight";
 import { invalidateAssignmentView } from "@app/clarity/ui/src/server/assignments";
-import { ClarityApi } from "@genesiscz/utils/clarity";
+
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -26,27 +31,7 @@ export interface StatusResult {
 }
 
 export async function getStatus(): Promise<StatusResult> {
-    const config = await getConfig();
-
-    if (!config) {
-        return {
-            configured: false,
-            baseUrl: null,
-            hasAuth: false,
-            mappingsCount: 0,
-            resourceId: null,
-            uniqueName: null,
-        };
-    }
-
-    return {
-        configured: true,
-        baseUrl: config.baseUrl,
-        hasAuth: !!config.authToken && !!config.sessionId,
-        mappingsCount: config.mappings.length,
-        resourceId: config.resourceId ?? null,
-        uniqueName: config.uniqueName ?? null,
-    };
+    return buildClarityShape(await getConfig(), (await claritySessionStore.read()) !== null);
 }
 
 export async function testConnection(): Promise<{ success: boolean; message: string }> {
@@ -57,14 +42,7 @@ export async function testConnection(): Promise<{ success: boolean; message: str
     }
 
     try {
-        const api = new ClarityApi({
-            baseUrl: config.baseUrl,
-            authToken: config.authToken,
-            sessionId: config.sessionId,
-            cookies: config.cookies,
-        });
-
-        await api.getTimesheetApp();
+        await getClarityApi().getTimesheetApp();
         return { success: true, message: "Connected successfully" };
     } catch (err) {
         return {
@@ -99,43 +77,50 @@ export async function searchAdoWorkItems(
     return { items };
 }
 
-export async function updateAuth(curl: string): Promise<{ success: boolean; message: string }> {
+export interface UnaskedSignIn {
+    driver: string;
+    label: string;
+    identity: string;
+}
+
+/** Drivers that can sign in with no questions, and the account each would use. */
+export async function listUnaskedSignIns(): Promise<UnaskedSignIn[]> {
+    const offers = await Promise.all(
+        authDrivers()
+            .filter((d) => d.renew && d.identity)
+            .map(async (d) => ({ driver: d.id, label: d.label, identity: (await d.identity?.()) ?? null }))
+    );
+
+    return offers.filter((o): o is UnaskedSignIn => o.identity !== null);
+}
+
+export async function signInUnasked(driverId: string): Promise<{ success: boolean; message: string }> {
     try {
-        const { baseUrl, authToken, sessionId, cookies } = parseAuthCurl(curl);
+        const driver = findAuthDriver(driverId);
 
-        const existing = await getConfig();
-
-        if (existing) {
-            existing.authToken = authToken;
-            existing.sessionId = sessionId;
-            existing.cookies = cookies;
-            if (baseUrl) {
-                existing.baseUrl = baseUrl;
-            }
-
-            await saveConfig(existing);
-            invalidateAssignmentView();
-            return { success: true, message: "Auth tokens updated" };
+        if (!driver.renew) {
+            return { success: false, message: `The ${driver.label} sign-in needs a terminal.` };
         }
 
-        // First-time setup: create config from cURL, then fetch resource info
-        const api = new ClarityApi({ baseUrl, authToken, sessionId, cookies });
-        const appData = await api.getTimesheetApp(0);
-        const resource = appData.resource._results[0];
+        const existing = await getConfig();
+        const auth = await driver.renew({ baseUrl: existing?.baseUrl });
+        const { resource } = await saveSignIn({ auth, driver, existing });
+        invalidateAssignmentView();
 
-        await saveConfig({
-            baseUrl,
-            authToken,
-            sessionId,
-            cookies,
-            resourceId: resource?.id,
-            uniqueName: resource?.email,
-            mappings: [],
-        });
+        return { success: true, message: `Signed in${resource ? ` as ${resource.full_name}` : ""}` };
+    } catch (err) {
+        return { success: false, message: err instanceof Error ? err.message : String(err) };
+    }
+}
+
+export async function updateAuth(curl: string): Promise<{ success: boolean; message: string }> {
+    try {
+        const existing = await getConfig();
+        const { resource } = await saveSignIn({ auth: parseAuthCurl(curl), driver: curlAuthDriver, existing });
         invalidateAssignmentView();
 
         const name = resource ? ` as ${resource.full_name}` : "";
-        return { success: true, message: `Clarity configured${name}` };
+        return { success: true, message: existing ? `Auth updated${name}` : `Clarity configured${name}` };
     } catch (err) {
         return {
             success: false,
@@ -176,7 +161,7 @@ export interface GranularStatus {
     projectCwd: string;
 }
 
-function buildClarityShape(config: Awaited<ReturnType<typeof getConfig>>): ClarityShape {
+function buildClarityShape(config: Awaited<ReturnType<typeof getConfig>>, hasSession: boolean): ClarityShape {
     if (!config) {
         return {
             configured: false,
@@ -191,7 +176,7 @@ function buildClarityShape(config: Awaited<ReturnType<typeof getConfig>>): Clari
     return {
         configured: true,
         baseUrl: config.baseUrl,
-        hasAuth: !!config.authToken && !!config.sessionId,
+        hasAuth: hasSession,
         mappingsCount: config.mappings.length,
         resourceId: config.resourceId ?? null,
         uniqueName: config.uniqueName ?? null,
@@ -232,7 +217,7 @@ export async function getGranularStatus(): Promise<GranularStatus> {
     ]);
 
     return {
-        clarity: { ...buildClarityShape(clarityConfig), ...clarityAuth },
+        clarity: { ...buildClarityShape(clarityConfig, (await claritySessionStore.read()) !== null), ...clarityAuth },
         ado: { ...buildAdoShape(adoConfig), ...adoAuth },
         timelog: { ...buildTimelogShape(adoConfig), ...timelogAuth },
         projectCwd,

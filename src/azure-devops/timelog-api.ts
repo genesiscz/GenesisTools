@@ -25,6 +25,10 @@ export class TimeLogApi {
     private currentUser: TimeLogUser;
     private baseUrl: string;
 
+    get user(): TimeLogUser {
+        return this.currentUser;
+    }
+
     constructor(orgId: string, projectId: string, functionsKey: string, currentUser: TimeLogUser) {
         this.projectId = projectId;
         this.functionsKey = functionsKey;

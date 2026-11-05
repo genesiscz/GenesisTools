@@ -53,6 +53,46 @@ function named(task: DesiredTask, names: Map<number, string>): DesiredTask {
     return taskName === undefined ? { taskId: task.taskId } : { taskId: task.taskId, taskName };
 }
 
+export interface ClosedTask {
+    closed: DesiredTask & { error: string };
+    /** Tasks with exactly the closed task's name; Clarity replaces a closed task with a renumbered copy. */
+    copies: Array<{ taskId: number; code: string; name: string }>;
+}
+
+/** Clarity's error code for a row on a task it closed for time entry (TMA-1026). */
+const TASK_CLOSED_ERROR = "TASK_NOT_OPEN_FOR_TE";
+
+/** For each task Clarity refused as closed, the tasks that carry its exact name. A nameless task is skipped. */
+export async function findOpenCopies({
+    api,
+    failed,
+}: {
+    api: { searchTasks(prefix: string): Promise<Array<{ taskId: number; code: string; name: string }>> };
+    failed: AddRowsResult["failed"];
+}): Promise<ClosedTask[]> {
+    const found: ClosedTask[] = [];
+
+    for (const task of failed) {
+        const { taskName } = task;
+
+        if (
+            !taskName ||
+            !task.error.includes(TASK_CLOSED_ERROR) ||
+            found.some((each) => each.closed.taskId === task.taskId)
+        ) {
+            continue;
+        }
+
+        const hits = await api.searchTasks(taskName);
+        found.push({
+            closed: task,
+            copies: hits.filter((hit) => hit.name === taskName && hit.taskId !== task.taskId),
+        });
+    }
+
+    return found;
+}
+
 /**
  * Put the wanted task rows on a week, posting only the ones it does not already carry. A failed
  * post is recorded rather than thrown, so one rejected task cannot lose the rest of the batch.

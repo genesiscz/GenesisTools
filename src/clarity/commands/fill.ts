@@ -1,76 +1,40 @@
-import { exportMonth } from "@app/azure-devops/lib/timelog/export";
-import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
-import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
-import type { TimeEntryRecord, TimeSegment, TimeSeriesValue } from "@genesiscz/utils/clarity";
-import { ClarityApi } from "@genesiscz/utils/clarity";
+import { getTimeLogApi } from "@app/azure-devops/lib/timelog-client";
+import { formatMinutes } from "@app/azure-devops/timelog-api";
+import { getClarityApi } from "@app/clarity/lib/api";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { addDay, getDaysInPeriodInclusive, isDateInHalfOpenRange } from "@genesiscz/utils/date";
+import { getDaysInPeriodInclusive } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import Table from "cli-table3";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { requireConfig } from "../config.js";
-import { buildPeriodComment } from "../lib/comment-builder.js";
-import { checkUnmapped } from "../lib/fill-guard.js";
+
 import {
-    buildFillMap,
-    buildMonthAwareTimeSegments,
-    type FillEntry,
-    fillMinutesInPeriod,
-    replacementChangesActuals,
-    requestedMonthActualSeconds,
-} from "../lib/fill-utils.js";
-import { resolveFillWeeks } from "../lib/fill-weeks.js";
+    discoverFillWeeks,
+    executeFillPlan,
+    loadFillMonth,
+    type PlannedFillEntry,
+    planFill,
+    type ReadyFillWeek,
+    readyWeeks,
+    weekNote,
+} from "../lib/fill.js";
 
-type TimesheetRecordLike = Awaited<ReturnType<ClarityApi["getTimesheet"]>>["timesheets"]["_results"][number];
-
-interface WeekPlan {
-    timesheetId: number;
-    periodStart: string;
-    /**
-     * Clarity's `timePeriodFinish`: the LAST day of the period. The dashboard's `WeekPreview`
-     * carries an EXCLUSIVE end under a similar name, so both spell out which one they mean.
-     */
-    periodFinishInclusive: string;
-    /** Notes already on the timesheet, so a re-run does not append a duplicate. */
-    existingNotes: number;
-    entries: Array<{
-        fill: FillEntry;
-        timeEntryId: number;
-        taskId: number;
-        existingSegments: TimeSegment[];
-    }>;
-    unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
+/** The rows a week books or leaves as they are; the other tasks have nothing to do there. */
+function shownEntries(week: ReadyFillWeek): PlannedFillEntry[] {
+    return week.entries.filter((entry) => entry.action === "write" || entry.action === "unchanged");
 }
 
-/**
- * The note the week would get if every planned write succeeded. The executed run rebuilds it from
- * what actually wrote, so a failed entry never shows up in the posted note.
- */
-function plannedNote(plan: WeekPlan): string {
-    return buildPeriodComment({
-        entries: plan.entries.flatMap((entry) =>
-            (entry.fill.timelogEntries ?? []).map((source) => ({
-                workItemId: source.workItemId,
-                timeTypeDescription: source.timeTypeDescription ?? "",
-                comment: source.comment ?? null,
-                date: source.date,
-            }))
-        ),
-        periodStart: plan.periodStart,
-        periodFinishInclusive: plan.periodFinishInclusive,
-    });
-}
+function renderWeekPreview(week: ReadyFillWeek, noteText: string): void {
+    const start = week.periodStart.split("T")[0];
+    const end = week.periodFinishInclusive.split("T")[0];
+    const entries = shownEntries(week);
 
-function renderWeekPreview(plan: WeekPlan, noteText: string): void {
-    const start = plan.periodStart.split("T")[0];
-    const end = plan.periodFinishInclusive.split("T")[0];
+    out.println(`\n${pc.bold(`Week: ${start} to ${end}`)} (Timesheet: ${week.timesheetId})`);
 
-    out.println(`\n${pc.bold(`Week: ${start} to ${end}`)} (Timesheet: ${plan.timesheetId})`);
-
-    if (plan.entries.length === 0 && plan.unmappedWorkItems.length === 0) {
+    if (entries.length === 0 && week.unmappedWorkItems.length === 0) {
         out.println(pc.dim("  No entries for this week"));
         return;
     }
@@ -78,7 +42,7 @@ function renderWeekPreview(plan: WeekPlan, noteText: string): void {
     // timePeriodFinish names the LAST day of the period, so the range is inclusive. The shared
     // helper parses as UTC; building Dates locally and then reading getUTCDay() shifted every day
     // back one in CEST, which turned a one-day period into a Sunday and dropped it entirely.
-    const workDays = getDaysInPeriodInclusive(plan.periodStart, plan.periodFinishInclusive).filter(
+    const workDays = getDaysInPeriodInclusive(week.periodStart, week.periodFinishInclusive).filter(
         (day) => day.dow >= 1 && day.dow <= 5
     );
     const workLabels = workDays.map((day) => day.label);
@@ -88,7 +52,7 @@ function renderWeekPreview(plan: WeekPlan, noteText: string): void {
         style: { head: ["cyan"] },
     });
 
-    for (const entry of plan.entries) {
+    for (const entry of entries) {
         const dayValues: string[] = [];
         let total = 0;
 
@@ -108,10 +72,10 @@ function renderWeekPreview(plan: WeekPlan, noteText: string): void {
 
     out.println(table.toString());
 
-    if (plan.unmappedWorkItems.length > 0) {
+    if (week.unmappedWorkItems.length > 0) {
         out.println(pc.yellow("\n  Unmapped work items (skipped):"));
 
-        for (const wi of plan.unmappedWorkItems) {
+        for (const wi of week.unmappedWorkItems) {
             out.println(pc.yellow(`    #${wi.workItemId}: ${formatMinutes(wi.minutes)}`));
         }
 
@@ -125,10 +89,16 @@ function renderWeekPreview(plan: WeekPlan, noteText: string): void {
             out.println(pc.dim(`    ${line}`));
         }
 
-        if (plan.existingNotes > 0) {
-            out.println(pc.yellow(`  Not posted: the timesheet already carries ${plan.existingNotes} note(s).`));
+        if (week.existingNotes > 0) {
+            out.println(pc.yellow(`  Not posted: the timesheet already carries ${week.existingNotes} note(s).`));
         }
     }
+}
+
+function shortTaskName(entry: PlannedFillEntry): string {
+    const name = entry.fill.mapping.clarityTaskName;
+
+    return name.length > 40 ? `${name.slice(0, 37)}...` : name;
 }
 
 export function registerFillCommand(program: Command): void {
@@ -158,6 +128,7 @@ export function registerFillCommand(program: Command): void {
                 return;
             }
 
+            const month = options.month;
             const year = options.year ?? new Date().getFullYear();
 
             if (options.confirm && options.dryRun) {
@@ -168,42 +139,35 @@ export function registerFillCommand(program: Command): void {
             const isDryRun = Boolean(options.dryRun) || !options.confirm;
             const verbose = options.verbose ?? false;
 
-            if (options.month < 1 || options.month > 12) {
+            if (month < 1 || month > 12) {
                 out.error("Month must be between 1 and 12");
                 process.exit(1);
             }
 
             const clarityConfig = await requireConfig();
-            const adoConfig = requireTimeLogConfig();
-            const adoUser = requireTimeLogUser(adoConfig);
-            const adoApi = new TimeLogApi(
-                adoConfig.orgId!,
-                adoConfig.projectId,
-                adoConfig.timelog!.functionsKey,
-                adoUser
-            );
-            const clarityApi = new ClarityApi({
-                baseUrl: clarityConfig.baseUrl,
-                authToken: clarityConfig.authToken,
-                sessionId: clarityConfig.sessionId,
-                cookies: clarityConfig.cookies,
-            });
+            const clarityApi = getClarityApi();
+            const adoApi = getTimeLogApi();
 
-            out.println(pc.bold(`\nFilling Clarity for ${options.month}/${year}${isDryRun ? " (DRY RUN)" : ""}`));
+            out.println(pc.bold(`\nFilling Clarity for ${month}/${year}${isDryRun ? " (DRY RUN)" : ""}`));
 
             out.println("Exporting ADO timelog data...");
-            const adoExport = await exportMonth(adoApi, options.month, year, adoUser.userId);
-            out.println(`  Found ${adoExport.entries.length} ADO entries (${adoExport.summary.totalHours}h total)`);
+            const fill = await loadFillMonth({
+                adoApi,
+                mappings: clarityConfig.mappings,
+                month,
+                year,
+                allowUnmapped: Boolean(options.allowUnmapped),
+            });
+            out.println(
+                `  Found ${fill.adoExport.entries.length} ADO entries (${fill.adoExport.summary.totalHours}h total)`
+            );
 
-            if (adoExport.entries.length === 0) {
+            if (fill.adoExport.entries.length === 0) {
                 out.println("No ADO timelog entries found for this month.");
                 return;
             }
 
-            const { fillMap, unmappedByWi, unmappedEntries } = buildFillMap(adoExport.entries, clarityConfig.mappings, {
-                trackEntries: true,
-            });
-            const unmapped = checkUnmapped({ unmappedByWi, allowUnmapped: Boolean(options.allowUnmapped) });
+            const { unmapped } = fill;
 
             if (unmapped.items.length > 0) {
                 out.println(pc.yellow(`\n${unmapped.items.length} work item(s) have no Clarity mapping:`));
@@ -225,33 +189,17 @@ export function registerFillCommand(program: Command): void {
                 process.exit(1);
             }
 
-            const allDatesSet = new Set<string>();
-
-            for (const fill of fillMap.values()) {
-                for (const date of Object.keys(fill.dayMinutes)) {
-                    allDatesSet.add(date);
-                }
-            }
-
-            const allDates = [...allDatesSet].sort();
-
-            if (allDates.length === 0 && unmappedByWi.size > 0) {
+            if (fill.dates.length === 0 && fill.unmappedByWi.size > 0) {
                 out.println(pc.yellow(`\nAll entries are unmapped. Run '${toolCommand("clarity mappings")}' first.`));
                 return;
             }
 
             out.println("Loading Clarity timesheet data...");
 
-            const { weeks, unresolvedDates, userId, records, clearingOnlyWeekIds } = await resolveFillWeeks({
-                api: clarityApi,
-                dates: allDates,
-                month: options.month,
-                year,
-                includeMonthWeeks: true,
-            });
+            const discovery = await discoverFillWeeks(clarityApi, fill);
 
-            if (unresolvedDates.length > 0) {
-                for (const date of unresolvedDates) {
+            if (discovery.unresolvedDates.length > 0) {
+                for (const date of discovery.unresolvedDates) {
                     out.error(pc.red(`  No Clarity period covers ${date}`));
                 }
 
@@ -259,116 +207,56 @@ export function registerFillCommand(program: Command): void {
                 process.exit(1);
             }
 
-            const weekPlans: WeekPlan[] = [];
+            const plan = await planFill({
+                api: clarityApi,
+                fill,
+                discovery,
+                weeks: "discovered",
+                missingRows: "tasks-with-work",
+            });
             let missingRowCount = 0;
             let unreadableWeeks = 0;
-            const bookedEntries: Array<{
-                timesheetId: number;
-                workItemId: number;
-                timeTypeDescription: string;
-                comment: string | null;
-                date: string;
-            }> = [];
 
-            for (const week of weeks) {
-                // Discovery already read most of these while counting entries; refetching them
-                // here doubled the request count for every fill.
-                let ts: TimesheetRecordLike | undefined = records.get(week.timesheetId);
-
-                try {
-                    ts ??= (await clarityApi.getTimesheet(week.timesheetId)).timesheets._results[0];
-                } catch (err) {
+            for (const week of plan.weeks) {
+                if (week.status === "unreadable") {
                     out.error(
-                        pc.red(`  Could not read timesheet ${week.timesheetId} for week ${week.startDate}: ${err}`)
+                        pc.red(
+                            `  Could not read timesheet ${week.timesheetId} for week ${week.startDate}: ${week.error}`
+                        )
                     );
                     unreadableWeeks++;
                     continue;
                 }
 
-                if (!ts) {
+                if (week.status === "missing") {
                     out.error(pc.red(`  Timesheet ${week.timesheetId} for week ${week.startDate} came back empty`));
                     unreadableWeeks++;
                     continue;
                 }
 
-                const plan: WeekPlan = {
-                    timesheetId: ts._internalId,
-                    periodStart: ts.timePeriodStart,
-                    periodFinishInclusive: ts.timePeriodFinish,
-                    existingNotes: ts.numberOfNotes ?? 0,
-                    entries: [],
-                    unmappedWorkItems: unmappedEntries
-                        .filter((entry) =>
-                            isDateInHalfOpenRange(
-                                entry.date,
-                                ts.timePeriodStart,
-                                `${addDay(ts.timePeriodFinish.split("T")[0])}T00:00:00`
-                            )
-                        )
-                        .reduce<Array<{ workItemId: number; minutes: number }>>((acc, entry) => {
-                            const known = acc.find((item) => item.workItemId === entry.workItemId);
-
-                            if (known) {
-                                known.minutes += entry.minutes;
-                            } else {
-                                acc.push({ workItemId: entry.workItemId, minutes: entry.minutes });
-                            }
-
-                            return acc;
-                        }, []),
-                };
-
-                for (const fill of fillMap.values()) {
-                    const weekMinutes = fillMinutesInPeriod(
-                        fill.dayMinutes,
-                        ts.timePeriodStart,
-                        `${addDay(ts.timePeriodFinish.split("T")[0])}T00:00:00`
-                    );
-
-                    const timeEntry = ts.timeentries._results.find(
-                        (e: TimeEntryRecord) => e.taskId === fill.mapping.clarityTaskId
-                    );
-                    // A row with no actuals yet comes back without the series.
-                    const existingSegments = timeEntry?.actuals?.segmentList?.segments ?? [];
-
-                    // A week with no ADO minutes is written only to clear requested-month hours
-                    // Clarity still holds for this task; otherwise there is nothing to replace.
-                    if (
-                        weekMinutes === 0 &&
-                        requestedMonthActualSeconds(existingSegments, { year, month: options.month }) === 0
-                    ) {
-                        continue;
-                    }
-
-                    if (!timeEntry) {
-                        out.error(
-                            pc.red(
-                                `  No time entry row for task ${fill.mapping.clarityTaskName} in timesheet ${ts._internalId}; its hours cannot be booked`
+                for (const entry of week.entries.filter((planned) => planned.action !== "nothing-to-clear")) {
+                    for (const taskId of entry.replacedTaskIds) {
+                        out.warn(
+                            pc.yellow(
+                                `  ${entry.fill.mapping.clarityTaskName}: timesheet ${week.timesheetId} has no row for task ${taskId}, so its hours go on task ${entry.row?.taskId}, the task with the same name`
                             )
                         );
-                        missingRowCount++;
-                        continue;
                     }
-
-                    plan.entries.push({
-                        fill,
-                        timeEntryId: timeEntry._internalId,
-                        taskId: timeEntry.taskId,
-                        existingSegments,
-                    });
                 }
 
-                if (clearingOnlyWeekIds.has(week.timesheetId) && plan.entries.length === 0) {
-                    // An empty ADO week with no requested-month hours to clear: nothing to write.
-                    continue;
+                for (const entry of week.entries.filter((planned) => planned.action === "no-row")) {
+                    out.error(
+                        pc.red(
+                            `  No time entry row for task ${entry.fill.mapping.clarityTaskName} in timesheet ${week.timesheetId}; its hours cannot be booked`
+                        )
+                    );
+                    missingRowCount++;
                 }
-
-                weekPlans.push(plan);
             }
 
             // Preview
-            for (const plan of weekPlans) {
-                renderWeekPreview(plan, options.comments === false ? "" : plannedNote(plan));
+            for (const week of readyWeeks(plan)) {
+                renderWeekPreview(week, options.comments === false ? "" : weekNote(week, shownEntries(week)));
             }
 
             if (isDryRun) {
@@ -383,135 +271,65 @@ export function registerFillCommand(program: Command): void {
             let noteCount = 0;
             let noteErrorCount = 0;
 
-            for (const plan of weekPlans) {
-                const weekLabel = `${plan.periodStart.split("T")[0]} to ${plan.periodFinishInclusive.split("T")[0]}`;
-                out.println(`\n${pc.dim(`TS#${plan.timesheetId} (${weekLabel})`)}`);
+            const execution = await executeFillPlan({
+                api: clarityApi,
+                plan,
+                postNotes: options.comments !== false,
+                onWeek: (week) => {
+                    const weekLabel = `${week.periodStart.split("T")[0]} to ${week.periodFinishInclusive.split("T")[0]}`;
+                    out.println(`\n${pc.dim(`TS#${week.timesheetId} (${weekLabel})`)}`);
+                },
+                onWrite: (_week, entry, outcome) => {
+                    const taskName = shortTaskName(entry);
 
-                for (const entry of plan.entries) {
-                    // periodFinish is inclusive (last day) — add 1 day for exclusive loop bound
-                    const exclusiveEnd = `${addDay(plan.periodFinishInclusive.split("T")[0])}T00:00:00`;
-                    const segments = buildMonthAwareTimeSegments({
-                        periodStart: plan.periodStart,
-                        periodFinishExclusive: exclusiveEnd,
-                        year,
-                        month: options.month,
-                        dayMinutes: entry.fill.dayMinutes,
-                        existingSegments: entry.existingSegments,
-                    });
-                    const totalSeconds = segments.reduce((sum, s) => sum + s.value, 0);
+                    if (outcome.status === "error") {
+                        errorCount++;
+                        out.error(pc.red(`  ${pc.bold("FAIL")} ${taskName}: ${outcome.error}`));
 
-                    if (!replacementChangesActuals(segments, entry.existingSegments)) {
-                        continue;
+                        if (verbose && outcome.debug) {
+                            out.println(pc.dim(`     Debug: ${SafeJSON.stringify(outcome.debug)}`));
+                        }
+
+                        return;
                     }
 
-                    const totalHours = totalSeconds / 3600;
-
-                    const actuals: TimeSeriesValue = {
-                        isFiscal: false,
-                        curveType: "value",
-                        dataType: "numeric",
-                        _type: "tsv",
-                        start: plan.periodStart,
-                        finish: plan.periodFinishInclusive,
-                        segmentList: {
-                            total: totalSeconds,
-                            defaultValue: 0,
-                            segments,
-                        },
-                    };
-
-                    const taskName =
-                        entry.fill.mapping.clarityTaskName.length > 40
-                            ? `${entry.fill.mapping.clarityTaskName.slice(0, 37)}...`
-                            : entry.fill.mapping.clarityTaskName;
-
-                    const dayBreakdown = segments
+                    successCount++;
+                    const dayBreakdown = entry.segments
                         .filter((s) => s.value > 0)
                         .map((s) => `${s.start.slice(5, 10)}=${(s.value / 3600).toFixed(1)}h`)
                         .join(" ");
+                    out.println(
+                        pc.green(
+                            `  ${pc.bold("OK")} ${taskName}: ${(outcome.totalSeconds / 3600).toFixed(2)}h [${dayBreakdown}]`
+                        )
+                    );
 
-                    try {
-                        const { debug } = await clarityApi.updateTimeEntryVerbose(plan.timesheetId, entry.timeEntryId, {
-                            taskId: entry.taskId,
-                            actuals,
-                        });
-                        successCount++;
-
-                        for (const source of entry.fill.timelogEntries ?? []) {
-                            bookedEntries.push({
-                                timesheetId: plan.timesheetId,
-                                workItemId: source.workItemId,
-                                timeTypeDescription: source.timeTypeDescription ?? "",
-                                comment: source.comment ?? null,
-                                date: source.date,
-                            });
-                        }
-                        out.println(
-                            pc.green(`  ${pc.bold("OK")} ${taskName}: ${totalHours.toFixed(2)}h [${dayBreakdown}]`)
-                        );
-
-                        if (verbose) {
-                            out.println(pc.dim(`     PUT ${debug.url}`));
-                            out.println(pc.dim(`     Status: ${debug.responseStatus}`));
-                            out.println(pc.dim(`     Request:  ${SafeJSON.stringify(debug.requestBody)}`));
-                            out.println(pc.dim(`     Response: ${SafeJSON.stringify(debug.responseBody)}`));
-                        }
-                    } catch (err) {
-                        errorCount++;
-                        const msg = err instanceof Error ? err.message : String(err);
-                        out.error(pc.red(`  ${pc.bold("FAIL")} ${taskName}: ${msg}`));
-
-                        if (verbose) {
-                            const debug = (err as Error & { debug?: unknown }).debug;
-
-                            if (debug) {
-                                out.println(pc.dim(`     Debug: ${SafeJSON.stringify(debug)}`));
-                            }
-                        }
+                    if (verbose && outcome.debug) {
+                        out.println(pc.dim(`     PUT ${outcome.debug.url}`));
+                        out.println(pc.dim(`     Status: ${outcome.debug.responseStatus}`));
+                        out.println(pc.dim(`     Request:  ${SafeJSON.stringify(outcome.debug.requestBody)}`));
+                        out.println(pc.dim(`     Response: ${SafeJSON.stringify(outcome.debug.responseBody)}`));
                     }
-                }
+                },
+            });
+
+            if (execution.notes?.missingUserId) {
+                noteErrorCount++;
+                out.error(pc.red("  No Clarity user id resolved, the timesheet notes were not posted"));
             }
 
-            if (options.comments !== false) {
-                if (userId === undefined) {
+            for (const note of execution.notes?.weeks ?? []) {
+                if (note.status === "kept-existing") {
+                    out.warn(
+                        pc.yellow(
+                            `  Timesheet ${note.timesheetId} already carries ${note.existingNotes} note(s), not adding another`
+                        )
+                    );
+                } else if (note.status === "failed") {
                     noteErrorCount++;
-                    out.error(pc.red("  No Clarity user id resolved, the timesheet notes were not posted"));
-                }
-
-                for (const plan of weekPlans) {
-                    if (userId === undefined) {
-                        break;
-                    }
-
-                    // The note documents what was booked, so it is built from the entries that
-                    // actually wrote. Feeding it every ADO entry would describe unmapped work and
-                    // failed writes as if they had landed.
-                    const noteText = buildPeriodComment({
-                        entries: bookedEntries.filter((entry) => entry.timesheetId === plan.timesheetId),
-                        periodStart: plan.periodStart,
-                        periodFinishInclusive: plan.periodFinishInclusive,
-                    });
-
-                    if (!noteText) {
-                        continue;
-                    }
-
-                    if (plan.existingNotes > 0) {
-                        out.warn(
-                            pc.yellow(
-                                `  Timesheet ${plan.timesheetId} already carries ${plan.existingNotes} note(s), not adding another`
-                            )
-                        );
-                        continue;
-                    }
-
-                    try {
-                        await clarityApi.createTimesheetNote(plan.timesheetId, noteText, userId);
-                        noteCount++;
-                    } catch (err) {
-                        noteErrorCount++;
-                        out.error(pc.red(`  Note failed for timesheet ${plan.timesheetId}: ${err}`));
-                    }
+                    out.error(pc.red(`  Note failed for timesheet ${note.timesheetId}: ${note.error}`));
+                } else {
+                    noteCount++;
                 }
             }
 
@@ -528,7 +346,7 @@ export function registerFillCommand(program: Command): void {
                 pc.dim(
                     `  A fill REPLACES the hours on each row, so there is no undo. Review with: ${suggestCommand(
                         "tools clarity",
-                        { replaceCommand: ["timesheet", "--month", String(options.month), "--year", String(year)] }
+                        { replaceCommand: ["timesheet", "--month", String(month), "--year", String(year)] }
                     )}`
                 )
             );
@@ -540,7 +358,7 @@ export function registerFillCommand(program: Command): void {
                             replaceCommand: [
                                 "tasks",
                                 "--date",
-                                `${year}-${String(options.month).padStart(2, "0")}`,
+                                `${year}-${String(month).padStart(2, "0")}`,
                                 "--add-from",
                                 "<a week that has them>",
                             ],

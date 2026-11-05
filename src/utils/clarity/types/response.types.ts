@@ -62,7 +62,8 @@ export interface TimesheetRecord {
     employmentType: LookupField;
     resourceType: LookupField;
     _authorization: TimesheetAuthorization;
-    timeentries: TimeEntriesSection;
+    /** Absent on a timesheet that has no rows at all. */
+    timeentries?: TimeEntriesSection;
     timesheetNotes: { _self: string } | TimesheetNotesExpanded;
     timeEntries: { _self: string }; // camelCase variant
     // Optional fields

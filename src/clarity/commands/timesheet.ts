@@ -1,12 +1,12 @@
 import * as clack from "@clack/prompts";
 import type { TimeEntryRecord, TimesheetRecord } from "@genesiscz/utils/clarity";
-import { ClarityApi } from "@genesiscz/utils/clarity";
+
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import Table from "cli-table3";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { requireConfig } from "../config.js";
+import { getClarityApi } from "../lib/api.js";
 
 function formatSeconds(seconds: number): string {
     const hours = seconds / 3600;
@@ -105,13 +105,7 @@ export function registerTimesheetCommand(program: Command): void {
         .description("Show timesheet with time entries")
         .option("--format <format>", "Output format: table|json", "table")
         .action(async (timesheetIdStr: string, options: { format: string }) => {
-            const config = await requireConfig();
-            const api = new ClarityApi({
-                baseUrl: config.baseUrl,
-                authToken: config.authToken,
-                sessionId: config.sessionId,
-                cookies: config.cookies,
-            });
+            const api = getClarityApi();
 
             const timesheetId = parseInt(timesheetIdStr, 10);
 
@@ -141,7 +135,7 @@ export function registerTimesheetCommand(program: Command): void {
                 return;
             }
 
-            renderTimesheetTable(ts, ts.timeentries._results);
+            renderTimesheetTable(ts, ts.timeentries?._results ?? []);
         });
 
     ts.command("list")
@@ -149,13 +143,7 @@ export function registerTimesheetCommand(program: Command): void {
         .option("--period <id>", "Clarity time period ID (find via the Clarity web UI)", parseInt)
         .option("--format <format>", "Output format: table|json", "table")
         .action(async (options: { period?: number; format: string }) => {
-            const config = await requireConfig();
-            const api = new ClarityApi({
-                baseUrl: config.baseUrl,
-                authToken: config.authToken,
-                sessionId: config.sessionId,
-                cookies: config.cookies,
-            });
+            const api = getClarityApi();
 
             if (!options.period) {
                 out.error("--period <timePeriodId> is required. Find it via the Clarity web UI.");
@@ -200,13 +188,7 @@ export function registerTimesheetCommand(program: Command): void {
     ts.command("submit <timesheetId>")
         .description("Submit a timesheet for approval")
         .action(async (timesheetIdStr: string) => {
-            const config = await requireConfig();
-            const api = new ClarityApi({
-                baseUrl: config.baseUrl,
-                authToken: config.authToken,
-                sessionId: config.sessionId,
-                cookies: config.cookies,
-            });
+            const api = getClarityApi();
 
             const timesheetId = parseInt(timesheetIdStr, 10);
 
@@ -244,13 +226,7 @@ export function registerTimesheetCommand(program: Command): void {
     ts.command("revert <timesheetId>")
         .description("Revert a submitted timesheet to allow edits")
         .action(async (timesheetIdStr: string) => {
-            const config = await requireConfig();
-            const api = new ClarityApi({
-                baseUrl: config.baseUrl,
-                authToken: config.authToken,
-                sessionId: config.sessionId,
-                cookies: config.cookies,
-            });
+            const api = getClarityApi();
 
             const timesheetId = parseInt(timesheetIdStr, 10);
 

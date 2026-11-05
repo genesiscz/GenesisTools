@@ -37,6 +37,37 @@ async function updateAuthApi(curl: string) {
     return res.json();
 }
 
+interface UnaskedSignIn {
+    driver: string;
+    label: string;
+    identity: string;
+}
+
+async function unaskedSignInsApi(): Promise<UnaskedSignIn[]> {
+    const res = await fetch("/api/sign-in-unasked");
+
+    if (!res.ok) {
+        throw new Error(`Failed to list sign-in options (${res.status})`);
+    }
+
+    return res.json();
+}
+
+async function signInUnaskedApi(driver: string) {
+    const res = await fetch("/api/sign-in-unasked", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: SafeJSON.stringify({ driver }),
+    });
+
+    if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Sign-in failed (${res.status})`);
+    }
+
+    return res.json() as Promise<{ success: boolean; message: string }>;
+}
+
 async function configureAdoApi(url: string) {
     const res = await fetch("/api/configure-ado", {
         method: "POST",
@@ -121,6 +152,17 @@ function SettingsPage() {
         onSuccess: (result) => {
             if (result.success) {
                 setCurlInput("");
+                queryClient.invalidateQueries();
+            }
+        },
+    });
+
+    const unaskedSignIns = useQuery({ queryKey: ["unasked-sign-ins"], queryFn: unaskedSignInsApi });
+
+    const unaskedMutation = useMutation({
+        mutationFn: signInUnaskedApi,
+        onSuccess: (result) => {
+            if (result.success) {
                 queryClient.invalidateQueries();
             }
         },
@@ -478,6 +520,25 @@ function SettingsPage() {
                     <CardTitle className="text-sm font-mono text-gray-400">Clarity Configuration</CardTitle>
                 </CardHeader>
                 <CardContent>
+                    {(unaskedSignIns.data ?? []).map((offer) => (
+                        <div key={offer.driver} className="mb-4 flex items-center gap-3">
+                            <Button
+                                onClick={() => unaskedMutation.mutate(offer.driver)}
+                                disabled={unaskedMutation.isPending}
+                                className="bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30 font-mono text-xs"
+                            >
+                                {unaskedMutation.isPending ? "Signing in..." : `Sign in with ${offer.label}`}
+                            </Button>
+                            <span className="font-mono text-xs text-gray-400">as {offer.identity}</span>
+                            {unaskedMutation.data && (
+                                <span
+                                    className={`font-mono text-xs ${unaskedMutation.data.success ? "text-green-400" : "text-red-400"}`}
+                                >
+                                    {unaskedMutation.data.message}
+                                </span>
+                            )}
+                        </div>
+                    ))}
                     <div className="text-xs text-gray-500 font-mono mb-3 space-y-1">
                         <p>Paste a cURL command from your browser to set up or refresh auth tokens:</p>
                         <ol className="list-decimal list-inside space-y-0.5 text-gray-600 pl-1">

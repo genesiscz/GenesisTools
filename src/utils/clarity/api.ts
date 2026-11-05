@@ -1,5 +1,6 @@
 import { isDateInHalfOpenRange } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { verifiedFetch } from "@genesiscz/utils/net/verified-tls";
 import type {
     ApiDebugInfo,
     CarouselEntry,
@@ -19,33 +20,76 @@ export interface ClarityApiConfig {
     cookies?: string;
 }
 
+/** A request Clarity answered with an error. `debug` is set by the verbs that record the exchange. */
+export class ClarityApiError extends Error {
+    constructor(
+        message: string,
+        readonly status: number,
+        readonly debug?: ApiDebugInfo
+    ) {
+        super(message);
+        this.name = "ClarityApiError";
+    }
+}
+
+/** A session, or a loader that produces one on the first request. */
+export type ClarityApiSource = ClarityApiConfig | (() => Promise<ClarityApiConfig>);
+
 const SEARCH_PAGE_SIZE = 100;
 const SEARCH_MAX_PAGES = 50;
 
 export class ClarityApi {
-    private config: ClarityApiConfig;
+    private readonly source: ClarityApiSource;
+    private current: Promise<ClarityApiConfig> | null = null;
 
-    constructor(config: ClarityApiConfig) {
-        this.config = config;
+    constructor(source: ClarityApiSource) {
+        this.source = source;
+    }
+
+    /** The session every request uses. A loader runs once, on the first request. */
+    protected session(): Promise<ClarityApiConfig> {
+        this.current ??= typeof this.source === "function" ? this.source() : Promise.resolve(this.source);
+
+        return this.current;
+    }
+
+    /** Replace the session, e.g. after `renewAuth()` signed in again. */
+    protected replaceSession(config: ClarityApiConfig): void {
+        this.current = Promise.resolve(config);
+    }
+
+    /** Called once when a request answers 401. Return true after `replaceSession()` got a fresh session. */
+    protected async renewAuth(): Promise<boolean> {
+        return false;
     }
 
     /** The one place headers and TLS are set, so an auth change cannot land in half the verbs. */
     private async send(path: string, options: RequestInit = {}): Promise<Response> {
-        const url = `${this.config.baseUrl}/ppm/rest/v1${path}`;
+        const response = await this.sendOnce(path, options);
+
+        if (response.status !== 401 || !(await this.renewAuth())) {
+            return response;
+        }
+
+        return this.sendOnce(path, options);
+    }
+
+    private async sendOnce(path: string, options: RequestInit): Promise<Response> {
+        const config = await this.session();
+        const url = `${config.baseUrl}/ppm/rest/v1${path}`;
         const signal = options.signal ?? AbortSignal.timeout(30_000);
 
-        return fetch(url, {
+        return verifiedFetch(url, {
             ...options,
             signal,
-            tls: { rejectUnauthorized: false },
             headers: {
                 Accept: "application/json, text/plain, */*",
                 "Content-Type": "application/json",
-                authToken: this.config.authToken,
+                authToken: config.authToken,
                 "Cache-Control": "no-cache",
                 "x-api-force-patch": "true",
                 "x-api-full-response": "true",
-                Cookie: this.config.cookies || `sessionId=${this.config.sessionId}`,
+                Cookie: config.cookies || `sessionId=${config.sessionId}`,
                 ...(options.headers as Record<string, string>),
             },
         });
@@ -56,7 +100,7 @@ export class ClarityApi {
         const text = await response.text();
 
         if (!response.ok) {
-            throw new Error(`Clarity API error ${response.status}: ${text.slice(0, 500)}`);
+            throw new ClarityApiError(`Clarity API error ${response.status}: ${text.slice(0, 500)}`, response.status);
         }
 
         if (text.trim() === "") {
@@ -68,7 +112,7 @@ export class ClarityApi {
         } catch {
             const isHtml = text.trimStart().startsWith("<");
             const hint = isHtml ? "Session expired — re-authenticate in Settings" : text.slice(0, 300);
-            throw new Error(`Clarity API returned non-JSON (${response.status}): ${hint}`);
+            throw new ClarityApiError(`Clarity API returned non-JSON (${response.status}): ${hint}`, response.status);
         }
     }
 
@@ -78,13 +122,16 @@ export class ClarityApi {
         const text = await response.text();
 
         if (!response.ok) {
-            throw new Error(`Clarity API error ${response.status}: ${text.slice(0, 500)}`);
+            throw new ClarityApiError(`Clarity API error ${response.status}: ${text.slice(0, 500)}`, response.status);
         }
 
         // An expired session answers 200 with an HTML login page. Trusting `response.ok` alone
         // would report a write that never reached Clarity as a success.
         if (text.trimStart().startsWith("<")) {
-            throw new Error(`Clarity API returned a login page (${response.status}): session expired`);
+            throw new ClarityApiError(
+                `Clarity API returned a login page (${response.status}): session expired`,
+                response.status
+            );
         }
     }
 
@@ -185,23 +232,10 @@ export class ClarityApi {
         body: UpdateTimeEntryRequest
     ): Promise<{ data: unknown; debug: ApiDebugInfo }> {
         const path = `/timesheets/${timesheetId}/timeEntries/${timeEntryId}`;
-        const url = `${this.config.baseUrl}/ppm/rest/v1${path}`;
+        const url = `${(await this.session()).baseUrl}/ppm/rest/v1${path}`;
         const bodyStr = SafeJSON.stringify(body);
 
-        const response = await fetch(url, {
-            method: "PUT",
-            tls: { rejectUnauthorized: false },
-            headers: {
-                Accept: "application/json, text/plain, */*",
-                "Content-Type": "application/json",
-                authToken: this.config.authToken,
-                "Cache-Control": "no-cache",
-                "x-api-force-patch": "true",
-                "x-api-full-response": "true",
-                Cookie: this.config.cookies || `sessionId=${this.config.sessionId}`,
-            },
-            body: bodyStr,
-        });
+        const response = await this.send(path, { method: "PUT", body: bodyStr });
 
         const text = await response.text();
         let responseBody: unknown;
@@ -221,9 +255,11 @@ export class ClarityApi {
         };
 
         if (!response.ok) {
-            const err = new Error(`Clarity API error ${response.status}: ${text.slice(0, 500)}`);
-            (err as Error & { debug: ApiDebugInfo }).debug = debug;
-            throw err;
+            throw new ClarityApiError(
+                `Clarity API error ${response.status}: ${text.slice(0, 500)}`,
+                response.status,
+                debug
+            );
         }
 
         return { data: responseBody, debug };
@@ -239,27 +275,19 @@ export class ClarityApi {
 
     /** Post a note to a timesheet. Returns void — API returns 200 with empty body. */
     async createTimesheetNote(timesheetId: number, noteText: string, authorUserId: number): Promise<void> {
-        const url = `${this.config.baseUrl}/ppm/rest/v1/timesheets/${timesheetId}/timesheetNotes`;
         const body: CreateTimesheetNoteRequest = { noteText, author: authorUserId };
-
-        const response = await fetch(url, {
+        const response = await this.send(`/timesheets/${timesheetId}/timesheetNotes`, {
             method: "POST",
-            signal: AbortSignal.timeout(30_000),
-            tls: { rejectUnauthorized: false },
-            headers: {
-                Accept: "application/json, text/plain, */*",
-                "Content-Type": "application/json;charset=UTF-8",
-                authToken: this.config.authToken,
-                "Cache-Control": "no-cache",
-                "x-api-full-response": "true",
-                Cookie: this.config.cookies || `sessionId=${this.config.sessionId}`,
-            },
+            headers: { "Content-Type": "application/json;charset=UTF-8" },
             body: SafeJSON.stringify(body),
         });
 
         if (!response.ok) {
             const text = await response.text();
-            throw new Error(`Failed to post timesheet note (${response.status}): ${text.slice(0, 500)}`);
+            throw new ClarityApiError(
+                `Failed to post timesheet note (${response.status}): ${text.slice(0, 500)}`,
+                response.status
+            );
         }
     }
 
