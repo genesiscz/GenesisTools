@@ -1302,3 +1302,17 @@ test("a still trim keeps the image already on screen for each display", async ()
     expect(result.stills?.map((frame) => frame.atUs)).toEqual([0, 0]);
     expect(result.frames).toHaveLength(2);
 });
+
+test("a grid refuses frames invalidated by a transformation", async () => {
+    for (const transform of [
+        { kind: "trim", from: 1, to: 3 },
+        { kind: "speed", factor: 2 },
+    ] as const) {
+        await expect(
+            new RecordingEditor().run({
+                source: { file: recordingFolder() },
+                steps: [{ kind: "frames" }, transform, { kind: "grid", perImage: 4 }],
+            }).done
+        ).rejects.toThrow("A grid needs current frames");
+    }
+});

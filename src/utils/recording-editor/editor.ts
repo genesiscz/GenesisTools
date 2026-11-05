@@ -607,7 +607,12 @@ function compile(options: {
                     name: `grid-${index}`,
                     key,
                     outputs: (state) => state.sheets.map((sheet) => sheet.path),
-                    run: async (ctx) => ({ ...ctx.state, sheets: await composeSheets(ctx, dir, step) }),
+                    run: async (ctx) => {
+                        if (!ctx.state.frames?.some((frame) => frame.kept)) {
+                            throw new Error("A grid needs current frames; sample frames after trim or speed");
+                        }
+                        return { ...ctx.state, sheets: await composeSheets(ctx, dir, step) };
+                    },
                 });
                 break;
             case "export":
