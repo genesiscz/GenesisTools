@@ -280,10 +280,11 @@ export class MeetingRun {
             (next) => {
                 const recordingBlock: RecordingBlock = {
                     ...next.recording,
-                    startedAt: state.startedAt,
+                    startedAt: next.recording?.startedAt ?? state.startedAt,
                     stoppedAt,
-                    frames: total.frames,
-                    bytes: total.bytes,
+                    // A restart that fails before its first frame keeps the totals of the earlier runs.
+                    frames: Math.max(next.recording?.frames ?? 0, total.frames),
+                    bytes: Math.max(next.recording?.bytes ?? 0, total.bytes),
                     status: "stopped",
                     stopReason: state.stopReason,
                     displayPolicy: this.displays.policy,

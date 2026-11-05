@@ -234,8 +234,8 @@ async function saveFailedRun(store: MeetingStore, meetingId: string, err: unknow
                 status: "stopped",
                 stopReason: "error",
                 stoppedAt: new Date().toISOString(),
-                frames: last?.frames ?? current.recording?.frames ?? 0,
-                bytes: last?.bytes ?? current.recording?.bytes ?? 0,
+                frames: Math.max(current.recording?.frames ?? 0, last?.frames ?? 0),
+                bytes: Math.max(current.recording?.bytes ?? 0, last?.bytes ?? 0),
                 warning,
             };
         })

@@ -99,7 +99,8 @@ export class RecordingRecord {
             (current) => {
                 current.recording = {
                     ...current.recording,
-                    startedAt: options.startedAt,
+                    // A restart keeps the first run's start: the record's totals and movie time 0 count from it.
+                    startedAt: current.recording?.startedAt ?? options.startedAt,
                     backend: options.backend,
                     displayPolicy: options.displayPolicy,
                     framesDir: "frames",
