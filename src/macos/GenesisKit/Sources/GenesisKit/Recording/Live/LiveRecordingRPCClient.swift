@@ -124,6 +124,15 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
     private var nextID = 1
     private var pending: [Int: (Result<Any?, Error>) -> Void] = [:]
     private var progressHandlers: [Int: (CallProgress) -> Void] = [:]
+    /// Each waiting call's deadline. A `$/progress` for the call starts it again (as the TypeScript side does), so a
+    /// timer armed before that step finds a newer generation and does nothing.
+    private struct Deadline {
+        let method: String
+        let timeout: TimeInterval
+        var generation = 0
+    }
+
+    private var deadlines: [Int: Deadline] = [:]
     private var handlers: [String: Handler] = [:]
     /// The peer's requests still waiting for their answer, by `key(of:)` of their id.
     private var incoming: [String: Incoming] = [:]
@@ -214,14 +223,22 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
                 return
             }
 
-            self.queue.asyncAfter(deadline: .now() + timeout) {
-                if let waiting = self.pending.removeValue(forKey: id) {
-                    self.progressHandlers[id] = nil
-                    self.deliver(waiting, .failure(Failure.timeout(method: method)))
-                }
-            }
+            self.deadlines[id] = Deadline(method: method, timeout: timeout)
+            self.armDeadline(id)
         }
         return id
+    }
+
+    /// Fails the call when its deadline passes with no answer and no newer step.
+    private func armDeadline(_ id: Int) {
+        guard let deadline = deadlines[id] else { return }
+        queue.asyncAfter(deadline: .now() + deadline.timeout) {
+            guard self.deadlines[id]?.generation == deadline.generation,
+                  let waiting = self.pending.removeValue(forKey: id) else { return }
+            self.deadlines[id] = nil
+            self.progressHandlers[id] = nil
+            self.deliver(waiting, .failure(Failure.timeout(method: deadline.method)))
+        }
     }
 
     /// Asks the peer to stop a call still waiting (`$/cancel { id }`); its answer (error 1013) ends the call.
@@ -294,6 +311,7 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
 
         if let id = (object["id"] as? NSNumber)?.intValue, object["method"] == nil {
             progressHandlers[id] = nil
+            deadlines[id] = nil
             guard let waiting = pending.removeValue(forKey: id) else { return }
             if let error = object["error"] as? [String: Any] {
                 let failure = Failure.remote(code: (error["code"] as? NSNumber)?.intValue ?? 0,
@@ -395,7 +413,13 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
     }
 
     private func progressArrived(_ params: [String: Any]?) {
-        guard let id = (params?["id"] as? NSNumber)?.intValue, let handler = progressHandlers[id] else { return }
+        guard let id = (params?["id"] as? NSNumber)?.intValue else { return }
+        if var deadline = deadlines[id] {
+            deadline.generation += 1
+            deadlines[id] = deadline
+            armDeadline(id)
+        }
+        guard let handler = progressHandlers[id] else { return }
         let step = CallProgress(fraction: (params?["fraction"] as? NSNumber)?.doubleValue, label: params?["label"] as? String)
         callbackQueue.async { handler(step) }
     }
@@ -429,6 +453,7 @@ public final class LiveRecordingRPCClient: @unchecked Sendable {
         let waiting = pending.values
         pending = [:]
         progressHandlers = [:]
+        deadlines = [:]
         for completion in waiting {
             deliver(completion, .failure(Failure.closed))
         }

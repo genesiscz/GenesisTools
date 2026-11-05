@@ -544,6 +544,30 @@ final class LiveRecordingRPCAnswerTests: XCTestCase {
         XCTAssertTrue(notified.isEmpty, "$/progress never reaches onNotification")
     }
 
+    // Regression test: 2026-11-05 recorder service review, finding 11 — progress did not extend the call's deadline
+    func testEachProgressStartsTheDeadlineAgainSoALongCallGetsItsAnswer() throws {
+        try client.connect()
+        let ended = expectation(description: "call ended")
+        var outcome: Result<Any?, Error>?
+        // No progress handler: the deadline follows the peer's steps all the same.
+        let id = client.request("render.export", timeout: 0.5) { result in
+            outcome = result
+            ended.fulfill()
+        }
+        _ = try peer.line { $0["method"] as? String == "render.export" }
+        for _ in 0..<3 {
+            Thread.sleep(forTimeInterval: 0.3)
+            peer.send(["jsonrpc": "2.0", "method": "$/progress", "params": ["id": id, "fraction": 0.5]])
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+        peer.send(["jsonrpc": "2.0", "id": id, "result": ["ok": true]])
+        wait(for: [ended], timeout: 2)
+        guard case let .success(value)? = outcome else {
+            return XCTFail("the call failed although each step came within its deadline: \(String(describing: outcome))")
+        }
+        XCTAssertEqual((value as? [String: Any])?["ok"] as? Bool, true)
+    }
+
     func testNotifySendsAMessageWithNoID() throws {
         try client.connect()
         client.notify("window.changed", params: ["open": []])
