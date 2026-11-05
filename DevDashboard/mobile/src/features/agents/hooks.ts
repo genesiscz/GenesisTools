@@ -150,20 +150,22 @@ export function useSteerComposer(sessionKey: string, store: DraftStore = kvDraft
                 if (!onlineManager.isOnline()) {
                     await addDraft(store, { ...draft, lastError: "offline" });
                     setResult({ kind: "waiting", draft });
-                    return;
+                    return true;
                 }
 
                 const receipt = await send(draft);
                 setResult({ kind: "receipt", receipt });
                 void queryClient.invalidateQueries({ queryKey: agentsKeys.transcript(sessionKey) });
+                return receipt.outcome !== "refused" && receipt.outcome !== "unknown";
             } catch (error) {
                 if (isOfflineError(error)) {
                     await addDraft(store, { ...draft, attempts: 1, lastError: String(error) });
                     setResult({ kind: "waiting", draft });
-                    return;
+                    return true;
                 }
 
                 setResult({ kind: "failed", error: error instanceof Error ? error.message : String(error) });
+                return false;
             } finally {
                 setSending(false);
                 await reload();
