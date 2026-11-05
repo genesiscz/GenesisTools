@@ -1546,6 +1546,12 @@ describe("files the command NAMES rather than works in", () => {
         expect(namedArguments(`python3 - <<'EOF'\nprint('wrapup.md is long')\nEOF`, [vault])).toEqual([]);
     });
 
+    it("keeps the last path in a quoted shell body", () => {
+        const note = join(vault, "last.md");
+        writeFileSync(note, "x");
+        expect(namedArguments(`bash -c "sed -i '' s/a/b/ ${note}"`, [vault])).toContain(note);
+    });
+
     it("reads a relative literal in the folder the command last cd-ed into, before the session folder", () => {
         const sub = join(vault, "relative-cd");
         mkdirSync(sub, { recursive: true });

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { normalizeObsidianBaseName } from "@genesiscz/utils/obsidian/filename";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -73,7 +73,14 @@ export async function saveToObsidianUnique(opts: {
         // append is lost. The lock lives outside the vault, so Obsidian never lists it.
         const locks = toolDataDir("dev-dashboard", "vault-locks");
         await mkdir(locks, { recursive: true });
-        const lock = join(locks, `${createHash("sha256").update(path).digest("hex").slice(0, 16)}.lock`);
+        const canonical = await realpath(path).catch(async (error: unknown) => {
+            if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+                return join(await realpath(dirname(path)), basename(path));
+            }
+
+            throw error;
+        });
+        const lock = join(locks, `${createHash("sha256").update(canonical).digest("hex").slice(0, 16)}.lock`);
         await withFileLock(lock, async () => {
             const existing = await readExistingMarkdown(path);
             const sep = existing && !existing.endsWith("\n") ? "\n\n" : existing ? "\n" : "";
