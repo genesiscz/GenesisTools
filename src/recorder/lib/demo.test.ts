@@ -1,6 +1,20 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import * as captureRunner from "@app/control/lib/capture-runner";
+import * as runner from "@app/control/lib/runner";
+import * as cli from "@genesiscz/utils/cli";
 import type { EditOp } from "@genesiscz/utils/recording-editor/project";
+import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
+import { runVideoCommand } from "@genesiscz/utils/video/process";
+import { z } from "zod";
 import { type DemoDriver, demoEditOps, demoScriptSchema, runDemo, subtractRanges } from "./demo";
+import * as edit from "./edit";
+import * as library from "./library";
+import { movieDemoDriver } from "./toolset";
+import { recordVideo } from "./video-recording";
 
 const steps = [
     { caption: "Open the settings", startMs: 2000, runEndMs: 3000, endMs: 4000 },
@@ -179,4 +193,157 @@ describe("demo script (the JSON door)", () => {
         expect(demoScriptSchema.safeParse({ steps: [{ shell: "true" }] }).success).toBe(false);
         expect(demoScriptSchema.safeParse({ steps: [] }).success).toBe(false);
     });
+});
+
+const markerList = z.array(z.object({ atMs: z.number(), label: z.string() }));
+const hasFfmpeg = Bun.which("ffmpeg") !== null;
+
+/**
+ * `movieDemoDriver` on a real recording. What runs for real: the driver, `record()` with its start gate and its wait
+ * for the live entry, `recordVideo`, the session control and its marker door over the live socket, the segment join,
+ * the project open, the idle search and the edit. What is faked, each at the lowest seam that needs a screen or the
+ * app: the detached `tools recorder start` process (the test runs `recordVideo` in this process instead, so the
+ * commander flag parsing of src/recorder/index.ts is not covered), the ScreenCaptureKit capture child (it writes a
+ * small real movie), the native build, and the editor part's export render.
+ */
+describe.skipIf(!hasFfmpeg)("movieDemoDriver on a recording session", () => {
+    let scratch: string;
+    let clip: string;
+
+    beforeAll(async () => {
+        scratch = mkdtempSync(join(tmpdir(), "gt-demo-driver-"));
+        clip = join(scratch, "clip.mp4");
+        await runVideoCommand({
+            command: [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=160x120:rate=10:duration=3",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                clip,
+            ],
+        });
+    });
+
+    afterAll(async () => {
+        const { rm } = await import("node:fs/promises");
+        await rm(scratch, { recursive: true, force: true });
+    });
+
+    test("starts the recorder with its start gate, marks each step over the live socket, edits the recorded movie", async () => {
+        const argvs: string[][] = [];
+        const recordings: Array<ReturnType<typeof recordVideo>> = [];
+        const exported: Array<{ path: string; out?: string }> = [];
+        const spies = [
+            spyOn(runner, "ensureBinaryAsync").mockResolvedValue("/unused"),
+            spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(
+                async ({ plan, signal, onRecording }) => {
+                    const output = plan.capture?.videoOut;
+
+                    if (!output) {
+                        throw new Error("the segment names no movie");
+                    }
+
+                    copyFileSync(clip, output);
+                    onRecording?.();
+
+                    if (!signal.aborted) {
+                        await new Promise<void>((resolve) =>
+                            signal.addEventListener("abort", () => resolve(), { once: true })
+                        );
+                    }
+
+                    return {
+                        ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+                        captureFailed: false,
+                        sessionDir: join(scratch, "no-session"),
+                        warnings: [],
+                        capture: { data: { stats: { durationMs: 3000 } } },
+                    };
+                }
+            ),
+            // `tools recorder start`, run in this process: it reads --title and --start-gate the way the command does.
+            spyOn(cli, "spawnToolDetached").mockImplementation((args) => {
+                argvs.push(args);
+                const flagValue = (flag: string) => args[args.indexOf(flag) + 1];
+                recordings.push(
+                    recordVideo({
+                        target: { kind: "display", screenIndex: 0, name: "Built-in" },
+                        title: flagValue("--title"),
+                        startGate: flagValue("--start-gate"),
+                        audio: args.includes("--audio") ? ["system"] : undefined,
+                    })
+                );
+                return process.pid;
+            }),
+            spyOn(library, "ensureRecorderPart").mockResolvedValue(undefined as never),
+            spyOn(edit, "exportAs").mockImplementation(async (value, options) => {
+                exported.push({ path: value, out: options?.out });
+                const project = await edit.openProject(value);
+                return { ok: true, path: project.project.source.video, bytes: 1, seconds: 0 };
+            }),
+        ];
+
+        try {
+            const driver = movieDemoDriver({ title: "Northwind checkout", audio: ["system"] });
+            const result = await runDemo({
+                driver,
+                settleSeconds: 0.1,
+                holdSeconds: 0.1,
+                steps: [
+                    { caption: "Open the cart", run: () => Bun.sleep(150) },
+                    {
+                        caption: "Break",
+                        run: () => {
+                            throw new Error("no such button");
+                        },
+                    },
+                    { caption: "Pay", run: () => Bun.sleep(150) },
+                ],
+            });
+            await recordings[0];
+
+            // What the driver sent: one detached `recorder start` with the recording's options and a start gate.
+            expect(argvs).toHaveLength(1);
+            expect(argvs[0].slice(0, 2)).toEqual(["recorder", "start"]);
+            expect(argvs[0]).toEqual(expect.arrayContaining(["--title", "Northwind checkout", "--audio", "system"]));
+            expect(argvs[0]).toContain("--start-gate");
+
+            // What the demo recorded: the recording ended, its marks are the step captions, and the steps start at them.
+            const manifest = readRecordingManifest(result.folder);
+            expect(manifest?.endedAt).toBeDefined();
+            expect(manifest?.title).toBe("Northwind checkout");
+            const markers = markerList.parse(manifest?.settings.markers);
+            expect(markers.map((marker) => marker.label)).toEqual(["Open the cart", "Break", "Pay"]);
+            expect(result.steps.map((step) => step.startMs)).toEqual(markers.map((marker) => marker.atMs));
+            expect(result.failed).toEqual([{ caption: "Break", error: "no such button" }]);
+
+            // The recording stopped: no live entry is left, and the driver read the movie it made.
+            expect(listLiveRecordings().filter((entry) => entry.folder === result.folder)).toEqual([]);
+            expect(result.sourceSeconds).toBe(3);
+
+            // The edit reached the project of that movie: one caption per step.
+            const { project } = await edit.openProject(result.folder);
+            const captions = readFileSync(join(result.folder, "edit.json"), "utf8");
+            expect(project.source.video).toBe(join(result.folder, "screen.mp4"));
+            for (const caption of ["Open the cart", "Break", "Pay"]) {
+                expect(captions).toContain(caption);
+            }
+
+            expect(result.ops).toBeGreaterThanOrEqual(3);
+            expect(exported).toHaveLength(1);
+            expect(result.exported?.outputSeconds).toBe(3);
+        } finally {
+            for (const spy of spies) {
+                spy.mockRestore();
+            }
+        }
+    }, 60_000);
 });
