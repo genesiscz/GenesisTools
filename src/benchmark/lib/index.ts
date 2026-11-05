@@ -15,11 +15,13 @@ export {
     type BaselineDelta,
     type BaselineDirOption,
     type BaselineMetrics,
+    type BaselineRun,
     baselinePath,
     compareToBaseline,
     formatComparison,
     readBaseline,
     recordBaseline,
+    recordRun,
 } from "./baseline";
 export { type FsCounterResult, withFsCounter } from "./fs-counter";
 export { type LoopStallMonitor, type LoopStallReport, monitorLoopStalls } from "./loop-stall";

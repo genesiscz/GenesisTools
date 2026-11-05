@@ -9,11 +9,14 @@
  * agree between the arms of a comparison. It only reads the transcripts.
  *
  *   bun scripts/benchmarks/agent-sessions/prefix-mark.ts [--files 3] [--runs 7] [--baseline [name]] [--compare [name]]
+ *       [--record-run <change>]
+ *
+ * `--record-run` appends this run to the baseline's history with HEAD's commit and the change it measures.
  */
 
 import { closeSync, openSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { compareToBaseline, formatComparison, recordBaseline } from "@app/benchmark/lib";
+import { compareToBaseline, formatComparison, recordBaseline, recordRun } from "@app/benchmark/lib";
 import { readPrefixMark } from "@genesiscz/utils/ai/transcripts/file-scan";
 import { runTool } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
@@ -66,65 +69,83 @@ const program = new Command()
     .option("--runs <n>", "measured passes over the files", wholeNumber, 7)
     .option("--baseline [name]", "record the result as a baseline")
     .option("--compare [name]", "compare the result with a baseline")
-    .action((options: { files: number; runs: number; baseline?: string | true; compare?: string | true }) => {
-        const files = largestTranscripts(options.files);
-        const loadBefore = uptime();
-        const cpuPerMb: number[] = [];
-        let megabytes = 0;
-        for (let run = 0; run <= options.runs; run++) {
-            const start = process.cpuUsage();
-            megabytes = 0;
-            for (const file of files) {
-                const fd = openSync(file.path, "r");
-                try {
-                    // Another offset each run: the cache never answers, every call hashes the prefix.
-                    const offset = Math.max(0, file.size - 1 - run);
-                    readPrefixMark(fd, offset).finish();
-                    megabytes += offset / 1_048_576;
-                } finally {
-                    closeSync(fd);
+    .option("--record-run <change>", "append this run to the baseline's history, naming the change it measures")
+    .action(
+        (options: {
+            files: number;
+            runs: number;
+            baseline?: string | true;
+            compare?: string | true;
+            recordRun?: string;
+        }) => {
+            const files = largestTranscripts(options.files);
+            const loadBefore = uptime();
+            const cpuPerMb: number[] = [];
+            let megabytes = 0;
+            for (let run = 0; run <= options.runs; run++) {
+                const start = process.cpuUsage();
+                megabytes = 0;
+                for (const file of files) {
+                    const fd = openSync(file.path, "r");
+                    try {
+                        // Another offset each run: the cache never answers, every call hashes the prefix.
+                        const offset = Math.max(0, file.size - 1 - run);
+                        readPrefixMark(fd, offset).finish();
+                        megabytes += offset / 1_048_576;
+                    } finally {
+                        closeSync(fd);
+                    }
+                }
+
+                const used = process.cpuUsage(start);
+                if (run > 0) {
+                    cpuPerMb.push((used.user + used.system) / 1000 / megabytes);
                 }
             }
 
-            const used = process.cpuUsage(start);
-            if (run > 0) {
-                cpuPerMb.push((used.user + used.system) / 1000 / megabytes);
-            }
+            const metrics = { prefixCpuMsPerMb: median(cpuPerMb) };
+            const check = `files=${files.length} mb=${megabytes.toFixed(0)}`;
+            out.println(
+                [
+                    `files: ${files.map((file) => `${(file.size / 1_048_576).toFixed(0)} MB`).join(", ")} (Bun ${Bun.version})`,
+                    `cpu per MB ms: ${cpuPerMb.map((value) => value.toFixed(3)).join(" ")} (median ${metrics.prefixCpuMsPerMb.toFixed(3)})`,
+                    `per pass: ${(metrics.prefixCpuMsPerMb * megabytes).toFixed(0)} ms for ${megabytes.toFixed(0)} MB`,
+                    `check: ${check}`,
+                    `load before: ${loadBefore}`,
+                    `load after: ${uptime()}`,
+                ].join("\n")
+            );
+
+            const name = (value: string | true) => (value === true ? NAME : value);
+            return (async () => {
+                if (options.baseline) {
+                    await recordBaseline({
+                        name: name(options.baseline),
+                        metrics,
+                        notes: `runs=${options.runs} | ${check} | Bun ${Bun.version} | ${uptime()}`,
+                    });
+                }
+
+                if (options.compare) {
+                    const comparison = await compareToBaseline({
+                        name: name(options.compare),
+                        metrics,
+                        tolerancePct: 50,
+                        lowerIsBetter: Object.keys(metrics),
+                    });
+                    out.println(formatComparison(comparison));
+                }
+
+                if (options.recordRun) {
+                    await recordRun({
+                        name: options.compare ? name(options.compare) : NAME,
+                        metrics,
+                        change: options.recordRun,
+                        notes: `runs=${options.runs} | ${check} | Bun ${Bun.version} | ${uptime()}`,
+                    });
+                }
+            })();
         }
-
-        const metrics = { prefixCpuMsPerMb: median(cpuPerMb) };
-        const check = `files=${files.length} mb=${megabytes.toFixed(0)}`;
-        out.println(
-            [
-                `files: ${files.map((file) => `${(file.size / 1_048_576).toFixed(0)} MB`).join(", ")} (Bun ${Bun.version})`,
-                `cpu per MB ms: ${cpuPerMb.map((value) => value.toFixed(3)).join(" ")} (median ${metrics.prefixCpuMsPerMb.toFixed(3)})`,
-                `per pass: ${(metrics.prefixCpuMsPerMb * megabytes).toFixed(0)} ms for ${megabytes.toFixed(0)} MB`,
-                `check: ${check}`,
-                `load before: ${loadBefore}`,
-                `load after: ${uptime()}`,
-            ].join("\n")
-        );
-
-        const name = (value: string | true) => (value === true ? NAME : value);
-        return (async () => {
-            if (options.baseline) {
-                await recordBaseline({
-                    name: name(options.baseline),
-                    metrics,
-                    notes: `runs=${options.runs} | ${check} | Bun ${Bun.version} | ${uptime()}`,
-                });
-            }
-
-            if (options.compare) {
-                const comparison = await compareToBaseline({
-                    name: name(options.compare),
-                    metrics,
-                    tolerancePct: 50,
-                    lowerIsBetter: Object.keys(metrics),
-                });
-                out.println(formatComparison(comparison));
-            }
-        })();
-    });
+    );
 
 await runTool(program, { tool: "benchmark" });
