@@ -403,16 +403,25 @@ export function newestCrashReport(opts: { appName: string; sinceMs: number; dir?
     const prefixes = [`${opts.appName}-`, `${opts.appName} Helper`];
     let newest: { path: string; mtimeMs: number } | null = null;
 
-    for (const name of readdirSync(dir)) {
+    let names: string[];
+    try {
+        names = readdirSync(dir);
+    } catch {
+        return null;
+    }
+    for (const name of names) {
         if (!name.endsWith(".ips") || !prefixes.some((prefix) => name.startsWith(prefix))) {
             continue;
         }
 
         const path = join(dir, name);
-        const { mtimeMs } = statSync(path);
-
-        if (mtimeMs >= opts.sinceMs && (!newest || mtimeMs > newest.mtimeMs)) {
-            newest = { path, mtimeMs };
+        try {
+            const { mtimeMs } = statSync(path);
+            if (mtimeMs >= opts.sinceMs && (!newest || mtimeMs > newest.mtimeMs)) {
+                newest = { path, mtimeMs };
+            }
+        } catch {
+            // ReportCrash can remove or rename a report between the directory read and stat.
         }
     }
 

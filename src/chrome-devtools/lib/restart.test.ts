@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -554,10 +554,12 @@ describe("second check after the relaunch", () => {
         write("Brave Browser-2026-11-02-172237.0002.ips", 2_000);
         write("Brave Browser Helper-2026-11-02-172237.ips", 2_001);
         write("Google Chrome-2026-11-02-172240.ips", 2_005);
+        symlinkSync(join(dir, "missing"), join(dir, "Brave Browser-gone.ips"));
 
         expect(newestCrashReport({ appName: "Brave Browser", sinceMs: 1_500_000, dir })).toBe(
             join(dir, "Brave Browser Helper-2026-11-02-172237.ips")
         );
         expect(newestCrashReport({ appName: "Brave Browser", sinceMs: 3_000_000, dir })).toBeNull();
+        expect(newestCrashReport({ appName: "Brave Browser", sinceMs: 0, dir: join(dir, "Brave Browser-2026-11-02-100000.ips") })).toBeNull();
     });
 });
