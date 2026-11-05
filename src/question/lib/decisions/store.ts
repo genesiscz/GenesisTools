@@ -321,14 +321,14 @@ function keepUsersAnswer(row: DecisionRecord, patch: DecisionPatch): DecisionPat
     const theirs = answer?.trim() ?? "";
     const replaced = theirs !== "" && theirs !== (row.answer ?? "").trim();
     const picked = row.answeredVia === "inbox" ? row.option : undefined;
-    const repicked = option !== undefined && picked !== undefined && option !== picked;
+    const repicked = option !== undefined && row.answeredVia === "inbox" && option !== picked;
 
     if (replaced) {
         notes.push(`The agent's reading of the answer: ${theirs}`);
     }
 
     if (repicked) {
-        notes.push(`The agent named ${option || "no letter"}; the user's pick ${picked} stays.`);
+        notes.push(`The agent named ${option || "no letter"}; the user's pick ${picked ?? "no letter"} stays.`);
     }
 
     if (notes.length > 0) {
