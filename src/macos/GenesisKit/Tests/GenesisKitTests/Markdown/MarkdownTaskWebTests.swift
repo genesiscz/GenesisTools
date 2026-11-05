@@ -144,6 +144,17 @@ final class MarkdownTaskWebTests: XCTestCase {
         XCTAssertEqual(lines, [3, 4, 11])
     }
 
+    func testFenceEdgeCasesAgreeWithTheScanner() async throws {
+        for note in [
+            "- ```foo`bar\n\n```\n- [ ] hidden\n```\n- [ ] visible",
+            "- ```\n      ```\n  - [ ] hidden\n  ```\n- [ ] visible",
+        ] {
+            let (web, _) = try await page(view(note, tasks: Self.editable))
+            let lines = try await boxes(web).map { Int($0.split(separator: "|")[0]) ?? -1 }
+            XCTAssertEqual(lines, MarkdownTaskList.items(in: Array(note.utf8)).map(\.line))
+        }
+    }
+
     func testALockedPageShowsDisabledBoxesWithTheReasonAndCanBeUnlockedInPlace() async throws {
         let (web, coordinator) = try await page(view(Self.note, tasks: .locked("A past version of the note.")))
         let locked = try await boxes(web)

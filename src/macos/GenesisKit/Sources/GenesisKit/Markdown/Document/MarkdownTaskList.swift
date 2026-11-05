@@ -136,7 +136,7 @@ enum MarkdownTaskList {
                 // own (`> ```` then a line without `>`: the quote, and its code, are over).
                 if belongs(line, toQuotes: opened.depth, column: opened.column) {
                     if let mark = fenceMark(line), mark.mark == opened.mark, mark.count >= opened.count, mark.bare,
-                       lead(line).depth == opened.depth {
+                       lead(line).depth == opened.depth, lead(line).column <= opened.column + 3 {
                         fence = nil
                     }
                     continue
@@ -317,6 +317,7 @@ enum MarkdownTaskList {
         let start = i
         while i < end, line[i] == mark { i += 1 }
         guard i - start >= 3 else { return nil }
+        if mark == backtick, line[i..<end].contains(backtick) { return nil }
         let bare = line[i..<end].allSatisfy { $0 == space || $0 == tab }
         return (mark, i - start, bare)
     }
