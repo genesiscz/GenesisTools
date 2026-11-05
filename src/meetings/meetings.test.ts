@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -1847,4 +1847,32 @@ test("recorder failure persists a terminal state before releasing ownership", as
     });
     expect(existsSync(recorderFiles(store).state)).toBe(false);
     expect(existsSync(recorderFiles(store).pid)).toBe(false);
+});
+
+test("exhausted capture retries persist failure without capturing a frame", async () => {
+    const store = new MeetingStore(new Storage("recorder-exhausted-retries"));
+    const record = await store.create(
+        { title: "Retry fixture", start: meeting.start, createdBy: "new" },
+        { command: "test", change: "fixture" }
+    );
+    const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
+        throw new Error("capture unavailable");
+    });
+    const sleep = spyOn(Bun, "sleep").mockResolvedValue(undefined);
+    try {
+        await expect(
+            runRecorder({
+                store,
+                meetingId: record.id,
+                display: 1,
+                capture: meetingsConfigSchema.parse({}).global.capture,
+            })
+        ).rejects.toThrow("capture failed 3 times in a row");
+        expect(spawn).toHaveBeenCalledTimes(3);
+        expect(store.read(record.id)?.recording).toMatchObject({ status: "failed", frames: 0 });
+        expect(existsSync(recorderFiles(store).pid)).toBe(false);
+    } finally {
+        spawn.mockRestore();
+        sleep.mockRestore();
+    }
 });

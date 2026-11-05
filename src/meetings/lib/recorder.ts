@@ -239,7 +239,7 @@ export async function runRecorder(options: {
 
                     if (failures >= MAX_FAILURES) {
                         state.warning = `capture failed ${failures} times in a row: ${err instanceof Error ? err.message : String(err)}`;
-                        break;
+                        throw new Error(state.warning, { cause: err });
                     }
 
                     await Bun.sleep(5_000);
