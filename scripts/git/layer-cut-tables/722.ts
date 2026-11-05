@@ -3,7 +3,7 @@ import type { CutBranch, CutTable } from "./types";
 const groups = [
     [
         "shared-agents",
-        "Shared session readers, harness approvals, agent delivery and cmux",
+        "the session readers, harness approvals, agent delivery and cmux pieces the phone app builds on",
         [],
         [
             "src/utils/agent-sessions/**",
@@ -27,7 +27,7 @@ const groups = [
     ],
     [
         "phone-notifications",
-        "Phone notification transport, decisions and monitor channels",
+        "the phone notification channel, decisions answered from the phone and the monitor channels",
         [],
         [
             "src/utils/notifications/**",
@@ -41,13 +41,13 @@ const groups = [
     ],
     [
         "hub-services",
-        "Hub capabilities and commands consumed by the dashboard gateway",
+        "the hub capabilities and commands the dashboard gateway serves to the phone",
         [],
         ["src/hub/**", "src/dev-dashboard/lib/front-proxy.test.ts", "src/dev-dashboard/server/routes/ports.ts"],
     ],
     [
         "gateway-mobile-tools",
-        "Dashboard contracts, live gateway and native mobile tooling",
+        "the dashboard contracts, the live gateway and the native mobile tooling",
         [],
         [
             "src/dev-dashboard/**",
@@ -60,7 +60,7 @@ const groups = [
     ],
     [
         "phone-features",
-        "Phone feature queries, fixtures and live cache",
+        "the phone app's feature queries, fixtures and live cache",
         [],
         [
             "DevDashboard/mobile/src/features/accounts/**",
@@ -92,7 +92,7 @@ const groups = [
     // The live cache needs agents/queries.ts first; agent interactions, timesheet and wake can follow with the routes.
     [
         "phone-app",
-        "Phone routes, security, push and application configuration",
+        "the phone app's screens, security, push and app configuration",
         [],
         [
             "DevDashboard/mobile/src/features/approvals/details.test.tsx",
@@ -110,7 +110,7 @@ const groups = [
     ],
     [
         "e2e",
-        "Generic e2e runner and the phone end-to-end flows",
+        "the generic e2e runner and the phone app's end-to-end flows",
         [],
         ["src/e2e/**", "src/utils/e2e/**", "e2e/**", "DevDashboard/mobile/e2e/**", "scripts/tools-entrypoint.test.ts"],
     ],
