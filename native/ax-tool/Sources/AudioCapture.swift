@@ -156,6 +156,7 @@ private final class AudioTrack {
     let sidecarURL: URL?
     private var sidecar: AVAssetWriter?
     private var sidecarInput: AVAssetWriterInput?
+    private var sidecarStartFailed = false
     var muted = false
     var peak: Float = 0
     var first: CMTime?
@@ -174,7 +175,7 @@ private final class AudioTrack {
     }
 
     func appendSidecar(_ buffer: CMSampleBuffer, at time: CMTime) {
-        guard let sidecarURL else { return }
+        guard let sidecarURL, !sidecarStartFailed else { return }
         if sidecar == nil {
             do {
                 let writer = try AVAssetWriter(outputURL: sidecarURL, fileType: .m4a)
@@ -188,6 +189,7 @@ private final class AudioTrack {
                 sidecar = writer
                 sidecarInput = input
             } catch {
+                sidecarStartFailed = true
                 failures.append("the \(source.rawValue) sidecar could not start: \(error.localizedDescription)")
                 return
             }
