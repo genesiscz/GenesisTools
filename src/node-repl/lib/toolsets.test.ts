@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { meetingLiveId } from "@app/meetings/lib/recorder";
+import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { ReplEngine } from "@app/node-repl/lib/engine";
 import { MeetingsToolset } from "@app/node-repl/lib/toolsets/meetings";
 import {

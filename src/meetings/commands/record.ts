@@ -28,14 +28,8 @@ import { collectAndReport } from "../lib/collect";
 import { ensureScreenRecording } from "../lib/grants";
 import { linkSource } from "../lib/link";
 import { resolveProject } from "../lib/project";
-import {
-    framesOnDisk,
-    meetingLiveId,
-    readRecorderState,
-    recorderFiles,
-    runRecorder,
-    stateDisplays,
-} from "../lib/recorder";
+import { runRecorder, stateDisplays } from "../lib/recorder";
+import { framesOnDisk, meetingLiveId, readRecorderState, recorderFiles } from "../lib/recorder-shared";
 import { meetingScreen, type ScreenBoxFrame } from "../lib/screen-boxes";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { askProjectAtEnd } from "./watch";

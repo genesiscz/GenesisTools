@@ -8,7 +8,7 @@ import { type LiveRecording, MEETING_SOURCE_IDS, type MeetingSourceId } from "@g
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { assignSweep, hasOpenAssignSteps } from "./assign";
 import { linkSource } from "./link";
-import { readRecorderState } from "./recorder";
+import { readRecorderState } from "./recorder-shared";
 import { pruneCapturesDaily } from "./retention";
 import { meetingSource } from "./sources";
 import {

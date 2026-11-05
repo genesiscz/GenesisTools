@@ -4,7 +4,7 @@ import { itemWhat } from "@app/meetings/lib/item-text";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { resolveProject } from "@app/meetings/lib/project";
 import { questionLabel } from "@app/meetings/lib/questions";
-import { meetingLiveId } from "@app/meetings/lib/recorder";
+import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { runSuggest } from "@app/meetings/lib/suggest-run";

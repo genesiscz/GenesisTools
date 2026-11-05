@@ -13,6 +13,7 @@ import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { buildPidRecord, clearPidFile, serializePidRecord, writePidFile } from "@genesiscz/utils/process/pidfile";
 import { callRecorder, listLiveRecordings, RecorderClient, RPC_ERRORS } from "@genesiscz/utils/screen-recorder/live";
+import { pieceTargets } from "@genesiscz/utils/screen-recorder/targets";
 import {
     CaptureError,
     type CaptureRequest,
@@ -44,14 +45,8 @@ import {
     splitQuestion,
 } from "./lib/questions";
 import { rawMeeting } from "./lib/raw";
-import {
-    meetingLiveId,
-    pieceTargets,
-    RecorderFailedError,
-    type RecorderNote,
-    recorderFiles,
-    runRecorder,
-} from "./lib/recorder";
+import { runRecorder } from "./lib/recorder";
+import { meetingLiveId, RecorderFailedError, type RecorderNote, recorderFiles } from "./lib/recorder-shared";
 import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from "./lib/screen";
 import { framesMatching, ocrRowSchema, renderScreenBoxes } from "./lib/screen-boxes";
 import { showText } from "./lib/show-text";

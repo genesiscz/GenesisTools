@@ -17,7 +17,7 @@ import {
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { z } from "zod";
 import { CallTimeline } from "./call-timeline";
-import { readRecorderState } from "./recorder";
+import { readRecorderState } from "./recorder-shared";
 import {
     type DisplayFrames,
     framesAtPerDisplay,
