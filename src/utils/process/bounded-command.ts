@@ -161,7 +161,7 @@ export async function boundedCommand(options: {
                 return;
             }
             if (options.streamOnly) {
-                stdout.splice(0, stdout.length, Buffer.from(value.subarray(-16_384)));
+                stdout.splice(0, stdout.length, Buffer.from(Buffer.concat([...stdout, value]).subarray(-16_384)));
                 child.stdout?.pause();
                 pendingConsumers++;
                 Promise.resolve()
@@ -204,7 +204,7 @@ export async function boundedCommand(options: {
                 return;
             }
             if (options.streamOnly) {
-                stderr.splice(0, stderr.length, Buffer.from(value.subarray(-16_384)));
+                stderr.splice(0, stderr.length, Buffer.from(Buffer.concat([...stderr, value]).subarray(-16_384)));
                 child.stderr?.pause();
                 pendingConsumers++;
                 Promise.resolve()
