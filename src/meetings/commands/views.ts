@@ -35,12 +35,15 @@ async function overview(opts: { days?: string; json?: boolean }): Promise<void> 
     }
 
     try {
+        const now = new Date();
+        const bounded = new MeetingStore().listBounded({ since: new Date(now.getTime() - days * 86_400_000) });
         const view = meetingsOverview({
-            records: new MeetingStore().list(),
+            records: bounded.records,
             config: await new MeetingsConfigStore().read(),
-            now: new Date(),
+            now,
             days,
         });
+        view.olderMeetings += bounded.olderMeetings;
 
         if (opts.json) {
             out.result(SafeJSON.stringify(view, null, 2));
