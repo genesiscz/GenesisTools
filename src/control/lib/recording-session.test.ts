@@ -36,21 +36,26 @@ import {
     type RecordingTarget,
 } from "./recording-targets";
 
-it("the benchmark scene exceeds its one percent threshold on a 4K display", async () => {
-    const proc = Bun.spawn(
-        ["swift", "src/control/scripts/recorder-benchmark-scene.swift", "--geometry", "3840", "2160"],
-        { stdout: "pipe", stderr: "pipe" }
-    );
-    const [output, error, code] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
-    expect(error).toBe("");
-    expect(code).toBe(0);
-    const [width, height] = output.trim().split(" ").map(Number);
-    expect((width! * height!) / (3840 * 2160)).toBeGreaterThan(0.01);
-}, 60_000);
+// AppKit and the swift interpreter exist only on macOS.
+it.skipIf(process.platform !== "darwin")(
+    "the benchmark scene exceeds its one percent threshold on a 4K display",
+    async () => {
+        const proc = Bun.spawn(
+            ["swift", "src/control/scripts/recorder-benchmark-scene.swift", "--geometry", "3840", "2160"],
+            { stdout: "pipe", stderr: "pipe", env: process.env }
+        );
+        const [output, error, code] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+        expect(error).toBe("");
+        expect(code).toBe(0);
+        const [width, height] = output.trim().split(" ").map(Number);
+        expect((width! * height!) / (3840 * 2160)).toBeGreaterThan(0.01);
+    },
+    60_000
+);
 
 it("rejects benchmark durations beyond the backend cap and invalid plans", () => {
     for (const seconds of [0, -1, NaN, Infinity, 181]) {
