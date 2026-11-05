@@ -24,6 +24,7 @@ import {
     type RetiredBundlesSummary,
     readManifest,
     retiredBundlesSummary,
+    testApp,
     trustCodesignKeys,
 } from "../../lib/permissions/app";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "../../lib/permissions/kinds";
@@ -353,6 +354,17 @@ export function registerPermissionsCommand(program: Command): void {
             }
 
             ui.raw(`  Next: ${toolCommand("macos permissions")}   (then grant the panes it lists)`);
+        });
+
+    permissions
+        .command("test")
+        .description(
+            "Run the app's Swift tests (swift test) in the app build's own scratch tree, with its flags, so a checkout keeps one build tree"
+        )
+        .argument("[swift-test-args...]", "passed to swift test as they are, after --: -- --filter HubUsageTests")
+        .allowUnknownOption()
+        .action(async (swiftTestArgs: string[]) => {
+            process.exitCode = await testApp(swiftTestArgs);
         });
 
     permissions

@@ -655,6 +655,87 @@ async function buildAppLocked(options?: BuildAppOptions): Promise<BuildResult> {
     }
 }
 
+/**
+ * The `swift build` / `swift test` arguments the app build and the app tests share, so both use one scratch tree per
+ * parts set and never rebuild each other's targets (`testApp`).
+ */
+function appSwiftArgs(parts: readonly string[], scratchPath: string, fileListChanged: boolean): string[] {
+    return [
+        "-c",
+        "debug",
+        "-Xswiftc",
+        "-O",
+        // No `-Xswiftc -module-cache-path`: the Swift Build engine (SwiftPM 6.4's default) sets its own module
+        // cache, `<scratch>/out/ModuleCache.noindex`, so the flag had no effect. Measured 2026-11-05: cold builds
+        // given `.build/mc-<name>` or `~/Library/Caches/GenesisTools/swift-module-cache` never created either.
+        "--scratch-path",
+        scratchPath,
+        // No SourceKit-LSP index in the app's scratch folder: nothing reads it (the editor indexes its own build).
+        // Measured 2026-11-05 on a cold build of every part: tree 1203 to 1138 MiB real (5.4%), an incremental
+        // build after touching one file 6.2 to 4.0 s, cold build 143 to 155 s (one run each, a busy machine).
+        "--disable-index-store",
+        "--manifest-cache",
+        "local",
+        ...(fileListChanged ? ["--disable-build-manifest-caching"] : []),
+        // A host-only build declares no external package (GENESIS_KIT_BASE_ONLY below). Resolving would rewrite
+        // the shared Package.resolved without its pins (it deleted the file, 2026-10-18), and the next full build
+        // would write it back: never let a host-only build touch it.
+        ...(parts.length === 0 ? ["--disable-automatic-resolution"] : []),
+    ];
+}
+
+/**
+ * A host-only build also tells ../GenesisKit to declare only its base library (GENESIS_KIT_BASE_ONLY), so SwiftPM
+ * resolves none of the markdown packages the host never compiles.
+ */
+function appSwiftEnvironment(
+    parts: readonly string[],
+    sdkRoot: string | undefined
+): Record<string, string | undefined> {
+    return {
+        ...env.getProcessEnv(),
+        GENESIS_APP_PARTS: partsEnvValue(parts),
+        GENESIS_KIT_BASE_ONLY: parts.length === 0 ? "1" : undefined,
+        ...(sdkRoot ? { SDKROOT: sdkRoot } : {}),
+    };
+}
+
+/**
+ * `swift test` for the app package, in the scratch tree of the full app build (every part, the app's flags), so a
+ * checkout that builds and tests the app keeps one tree. Plain `swift test` builds a second full tree in `.build`
+ * without `-O`. Measured 2026-11-05: after a cold app build (1203 MiB), building the tests here took 18.9 s and grew
+ * the tree to 1463 MiB, and the next app build took 2.6 s (nothing rebuilt). `args` go to `swift test` as they are
+ * (`--filter HubUsageTests`). Returns its exit code.
+ */
+export async function testApp(args: readonly string[]): Promise<number> {
+    if (!Bun.which("swift")) {
+        throw new Error("swift not found. Install Xcode or the Command Line Tools, then re-run.");
+    }
+
+    const { sdkRoot } = requireAppBuildSdk(resolveAppBuildSdk());
+    syncSwiftFaceTable();
+    const parts = [...ALL_PART_IDS];
+    const scratchPath = appScratchPath(parts);
+    const fileListMarker = join(scratchPath, "genesis-swift-files.sha256");
+    const fileList = swiftFileListHash();
+    const fileListChanged = !existsSync(fileListMarker) || readFileSync(fileListMarker, "utf8") !== fileList;
+    const cmd = ["swift", "test", ...appSwiftArgs(parts, scratchPath, fileListChanged), ...args];
+    logger.debug({ cmd, cwd: APP_SOURCE_DIR }, "app tests in the app build's scratch tree");
+    const proc = Bun.spawn(cmd, {
+        cwd: APP_SOURCE_DIR,
+        env: appSwiftEnvironment(parts, sdkRoot),
+        stdio: ["inherit", "inherit", "inherit"],
+    });
+    const code = await proc.exited;
+
+    if (code === 0) {
+        mkdirSync(scratchPath, { recursive: true });
+        writeFileSync(fileListMarker, fileList);
+    }
+
+    return code;
+}
+
 async function buildAppSteps(
     step: (message: string) => void,
     relaunch: boolean,
@@ -700,42 +781,10 @@ async function buildAppSteps(
     );
     const reportProgress = options?.onProgress ? createSwiftProgressReporter(options.onProgress, 1000) : () => {};
     const build = await runStreaming({
-        cmd: [
-            "swift",
-            "build",
-            "-c",
-            "debug",
-            "-Xswiftc",
-            "-O",
-            // No `-Xswiftc -module-cache-path`: the Swift Build engine (SwiftPM 6.4's default) sets its own module
-            // cache, `<scratch>/out/ModuleCache.noindex`, so the flag had no effect. Measured 2026-11-05: cold builds
-            // given `.build/mc-<name>` or `~/Library/Caches/GenesisTools/swift-module-cache` never created either.
-            "--scratch-path",
-            scratchPath,
-            // Only the app and what it links: a plain `swift build` compiles every target, unlinked parts included.
-            "--product",
-            GENESIS_APP_NAME,
-            // No SourceKit-LSP index in the app's scratch folder: nothing reads it (the editor indexes its own build).
-            // Measured 2026-11-05 on a cold build of every part: tree 1203 to 1138 MiB real (5.4%), an incremental
-            // build after touching one file 6.2 to 4.0 s, cold build 143 to 155 s (one run each, a busy machine).
-            "--disable-index-store",
-            "--manifest-cache",
-            "local",
-            ...(fileListChanged ? ["--disable-build-manifest-caching"] : []),
-            // A host-only build declares no external package (GENESIS_KIT_BASE_ONLY below). Resolving would rewrite
-            // the shared Package.resolved without its pins (it deleted the file, 2026-10-18), and the next full build
-            // would write it back: never let a host-only build touch it.
-            ...(parts.length === 0 ? ["--disable-automatic-resolution"] : []),
-        ],
+        // Only the app and what it links: a plain `swift build` compiles every target, unlinked parts included.
+        cmd: ["swift", "build", ...appSwiftArgs(parts, scratchPath, fileListChanged), "--product", GENESIS_APP_NAME],
         cwd: APP_SOURCE_DIR,
-        // A host-only build also tells ../GenesisKit to declare only its base library (GENESIS_KIT_BASE_ONLY), so
-        // SwiftPM resolves none of the markdown packages the host never compiles.
-        environment: {
-            ...env.getProcessEnv(),
-            GENESIS_APP_PARTS: partsEnvValue(parts),
-            GENESIS_KIT_BASE_ONLY: parts.length === 0 ? "1" : undefined,
-            ...(sdkRoot ? { SDKROOT: sdkRoot } : {}),
-        },
+        environment: appSwiftEnvironment(parts, sdkRoot),
         onLine: reportProgress,
     });
 

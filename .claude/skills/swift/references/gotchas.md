@@ -101,7 +101,7 @@
 - **`swift build --scratch-path "$S"` with an empty `$S`** builds into the package folder itself
   (`.lock`, `build.db`, `arm64-apple-macosx/`, `debug.yaml` next to `Package.swift`). Check the variable,
   or spell the path out (`--scratch-path .build/opt`).
-- **Swift test suites:** `swift test` in GenesisTools (368 tests) and in GenesisKit; run both after a
+- **Swift test suites:** `bun run app:test` in GenesisTools (886 tests on 2026-11-05) and `swift test` in GenesisKit; run both after a
   GenesisKit change, because the app compiles against it.
 
 ## Caches

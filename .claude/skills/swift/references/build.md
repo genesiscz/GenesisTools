@@ -3,9 +3,9 @@
 | Goal | Command |
 | --- | --- |
 | Compile the shared package | `cd src/macos/GenesisKit && swift build` |
-| Compile the app as installed | `cd src/macos/GenesisTools && swift build -c debug -Xswiftc -O --scratch-path .build/opt` |
+| Compile the app as installed | `bun run app` (its `swift build` flags are `appSwiftArgs` in `src/macos/lib/permissions/app.ts`) |
 | Install (build, sign, swap, reap) | `bun run app`; `bun run app:status` names the installed commit |
-| Tests | `swift test` in GenesisTools and in GenesisKit |
+| Tests | `bun run app:test` in GenesisTools (the app build's tree, no second `.build`), `swift test` in GenesisKit |
 | Off-screen picture | `GenesisTools --hub … --snapshot /tmp/cc/<…>/x.png` (`.claude/rules/macos-app.md`, "Verify without a screen") |
 | Bench | `GenesisTools --hub --bench <out.json> …` (measuring.md §4) |
 | Widget preview | `bun scripts/build-widget-preview.ts` in its worktree, then restart the app |
