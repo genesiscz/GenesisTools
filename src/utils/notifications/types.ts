@@ -11,6 +11,7 @@ export interface TelegramChannelConfig {
     enabled: boolean;
     botToken?: string;
     chatId?: string;
+    apiRoot?: string;
 }
 
 export interface WebhookChannelConfig {
