@@ -65,8 +65,6 @@ import { createSwiftProgressReporter } from "./swift-progress";
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
 /** GenesisKit's markdown renderer (markdown-it, highlight.js, mermaid); the viewer reads Contents/Resources/webview first. */
 const MARKDOWN_WEBVIEW_SOURCE = resolve(APP_SOURCE_DIR, "../GenesisKit/Sources/GenesisKit/Markdown/Resources/webview");
-/** The app build's own SwiftPM scratch folder, apart from `.build/debug` (tests, benches) so the two never rebuild each other. */
-const APP_MODULE_CACHE_PATH = join(APP_SOURCE_DIR, ".build", "module-cache");
 
 /** One SwiftPM scratch folder per parts set (parts.ts `scratchName`): `.build/opt` for every part. */
 function appScratchPath(parts: readonly string[]): string {
@@ -709,13 +707,9 @@ async function buildAppSteps(
             "debug",
             "-Xswiftc",
             "-O",
-            // One module cache for every parts set, outside the scratch folders: the SDK's clang modules are built
-            // once, so a first build of another set does not rebuild them (host only: 12.2 s cold without, 8.7 s
-            // with, measured 2026-10-18 for .claude/plans/2026-10-17-FastPermissionsBuild.md).
-            "-Xswiftc",
-            "-module-cache-path",
-            "-Xswiftc",
-            APP_MODULE_CACHE_PATH,
+            // No `-Xswiftc -module-cache-path`: the Swift Build engine (SwiftPM 6.4's default) sets its own module
+            // cache, `<scratch>/out/ModuleCache.noindex`, so the flag had no effect. Measured 2026-11-05: cold builds
+            // given `.build/mc-<name>` or `~/Library/Caches/GenesisTools/swift-module-cache` never created either.
             "--scratch-path",
             scratchPath,
             // Only the app and what it links: a plain `swift build` compiles every target, unlinked parts included.
