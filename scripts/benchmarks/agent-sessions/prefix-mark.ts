@@ -85,6 +85,11 @@ const program = new Command()
             }
 
             const files = largestTranscripts(options.files);
+            if (!files.some((file) => file.size > options.runs + 1)) {
+                throw new Error(
+                    "No selected transcript has a positive prefix for every pass; select nonempty transcripts or reduce --runs"
+                );
+            }
             const loadBefore = uptime();
             const cpuPerMb: number[] = [];
             let megabytes = 0;

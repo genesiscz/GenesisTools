@@ -1,28 +1,48 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { baselinePath, compareToBaseline, formatComparison, readBaseline, recordBaseline, recordRun } from "./baseline";
 
 const BENCHMARK_SCRIPTS = ["agent-sessions/prefix-mark.ts", "widget/roster-read.ts", "widget/snapshot.ts"];
+const CLI_HOME = mkdtempSync(join(tmpdir(), "gt-benchmark-cli-"));
+mkdirSync(join(CLI_HOME, "projects"));
+const CLI_ENV = {
+    HOME: CLI_HOME,
+    GENESIS_TOOLS_HOME: join(CLI_HOME, "tools"),
+    CLAUDE_CONFIG_DIR: CLI_HOME,
+    CODEX_HOME: join(CLI_HOME, "codex"),
+    GROK_HOME: join(CLI_HOME, "grok"),
+};
+
+async function benchmarkCommand(script: string, args: string[]) {
+    let exitCode = 0;
+    let stderr = "";
+    await env.testing.withOverrides(CLI_ENV, () => {
+        const proc = Bun.spawnSync(
+            [process.execPath, join(import.meta.dir, "../../../scripts/benchmarks", script), ...args],
+            { env: CLI_ENV, stdout: "pipe", stderr: "pipe", timeout: 10_000 }
+        );
+        exitCode = proc.exitCode;
+        stderr = new TextDecoder().decode(proc.stderr);
+    });
+    return { exitCode, stderr };
+}
 
 for (const script of BENCHMARK_SCRIPTS) {
-    test(`${script} rejects recording and comparing together before reading workload or writing a baseline`, () => {
-        const proc = Bun.spawnSync(
-            [
-                process.execPath,
-                join(import.meta.dir, "../../../scripts/benchmarks", script),
-                "--baseline",
-                "fixture",
-                "--compare",
-                "fixture",
-            ],
-            { stdout: "pipe", stderr: "pipe" }
-        );
+    test(`${script} rejects recording and comparing together before reading workload or writing a baseline`, async () => {
+        const proc = await benchmarkCommand(script, ["--baseline", "fixture", "--compare", "fixture"]);
         expect(proc.exitCode).not.toBe(0);
-        expect(new TextDecoder().decode(proc.stderr)).toContain("--baseline and --compare cannot be used together");
+        expect(proc.stderr).toContain("--baseline and --compare cannot be used together");
     });
 }
+
+test("prefix benchmark refuses an empty project listing before measuring or recording", async () => {
+    const proc = await benchmarkCommand("agent-sessions/prefix-mark.ts", ["--baseline", "fixture"]);
+    expect(proc.exitCode).not.toBe(0);
+    expect(proc.stderr).toContain("No selected transcript has a positive prefix");
+});
 
 const DIR = mkdtempSync(join(tmpdir(), "gt-benchmark-baseline-"));
 const TOLERANCE = 10;
