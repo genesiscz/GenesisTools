@@ -1557,6 +1557,41 @@ describe("cutting by the transcript", () => {
             expect(run().clips.map((clip) => [clip.fromUs, clip.toUs, clip.speed])).toEqual(item.after);
         });
     }
+
+    // Regression test: 2026-11-05 review of the editor gaps, R1.2. The window named a picked word by its place in the
+    // line only, so a transcript that gained an earlier "go" cut that one instead of the word the picker showed.
+    test("a word pick sent with its times cuts those words after the transcript changed, and refuses when they are gone", () => {
+        const project = wholeProject({ video: "/rec/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 });
+        // The window read the line as "go go" and picked the second word, 5 s to 6 s; now the line has an earlier "go".
+        const now = transcriptSegmentSchema.array().parse([
+            {
+                start: 3,
+                end: 7,
+                text: "go go go",
+                words: [
+                    { word: "go", start: 3, end: 4 },
+                    { word: "go", start: 4, end: 5 },
+                    { word: "go", start: 5, end: 6 },
+                ],
+            },
+        ]);
+        const pick = { op: "cutWords", at: 4, words: "go", occurrence: 2, from: 5, to: 6 };
+        const cut = applyOp(project, editOpSchema.parse(pick), { transcript: now });
+        expect(cut.clips.map((clip) => [clip.fromUs, clip.toUs])).toEqual([
+            [0, 4_960_000],
+            [6_040_000, 10_000_000],
+        ]);
+        expect(() => applyOp(project, editOpSchema.parse({ ...pick, from: 7.5, to: 8 }), { transcript: now })).toThrow(
+            "the transcript changed since the words were picked"
+        );
+    });
+
+    test("a word pick with only one of its times is refused, so a half-sent place never falls back to the count", () => {
+        const project = wholeProject({ video: "/rec/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 });
+        const now = transcriptSegmentSchema.array().parse([{ start: 3, end: 7, text: "go go", words: [] }]);
+        const half = editOpSchema.parse({ op: "cutWords", at: 4, words: "go", occurrence: 2, from: 5 });
+        expect(() => applyOp(project, half, { transcript: now })).toThrow("cutWords takes from and to together");
+    });
 });
 
 describe("camera bubble", () => {

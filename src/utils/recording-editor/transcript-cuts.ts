@@ -112,13 +112,16 @@ export function lineAt(segments: readonly TranscriptSegment[], atSec: number): T
 
 /**
  * Where `words` (one or more words, in order) are said in the line at `atSec`: every place they occur, or with
- * `occurrence` only that one (1 is the first place in the line), as the editor cuts the words picked in a line.
+ * `occurrence` only that one (1 is the first place in the line). `picked` (the words' start and end, source seconds,
+ * as the editor's word picker showed them) names the place by its times instead, so a transcript that changed since
+ * the pick still cuts the words that were picked, and a pick whose words are no longer there is refused.
  */
 export function wordCuts(options: {
     segments: readonly TranscriptSegment[];
     atSec: number;
     words: string;
     occurrence?: number;
+    picked?: { start: number; end: number };
     padMs?: number;
 }): CutMatch[] {
     const segment = lineAt(options.segments, options.atSec);
@@ -135,12 +138,14 @@ export function wordCuts(options: {
 
     const spans = wordSpans(segment);
     const matches: CutMatch[] = [];
+    const runs: WordSpan[][] = [];
 
     for (let index = 0; index + wanted.length <= spans.length; index++) {
         const run = spans.slice(index, index + wanted.length);
 
         if (run.every((span, at) => foldWord(span.word) === wanted[at])) {
             matches.push(toMatch(run, segment, (options.padMs ?? 40) / 1000));
+            runs.push(run);
         }
     }
 
@@ -148,6 +153,21 @@ export function wordCuts(options: {
         throw new RangeError(
             `the line at ${segment.start} s ("${segment.text.trim()}") does not say "${options.words}"`
         );
+    }
+
+    if (options.picked) {
+        const { start, end } = options.picked;
+        const at = runs.findIndex(
+            (run) => Math.abs(run[0].start - start) <= 0.005 && Math.abs((run.at(-1) as WordSpan).end - end) <= 0.005
+        );
+
+        if (at < 0) {
+            throw new RangeError(
+                `the transcript changed since the words were picked: the line at ${segment.start} s no longer says "${options.words}" from ${start} s to ${end} s; pick them again`
+            );
+        }
+
+        return [matches[at]];
     }
 
     if (options.occurrence === undefined) {

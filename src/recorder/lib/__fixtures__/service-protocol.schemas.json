@@ -1733,6 +1733,12 @@
                 "minimum": 1,
                 "maximum": 9007199254740991
               },
+              "from": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "to": {
+                "$ref": "#/$defs/__schema3"
+              },
               "padMs": {
                 "type": "integer",
                 "minimum": 0,

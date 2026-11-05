@@ -1248,6 +1248,12 @@ export const editOpSchema = z.discriminatedUnion("op", [
             words: z.string().min(1),
             /** Only this place of the words in the line (1 is the first); absent cuts every place. */
             occurrence: z.number().int().min(1).optional(),
+            /**
+             * Where the picked words start and end (source seconds, as `tools recorder words` timed them): this place,
+             * whatever its count is now; refused when the line no longer says the words there. Give both or neither.
+             */
+            from: timeSchema.optional(),
+            to: timeSchema.optional(),
             /** Kept off the words' edges, so the next word is not clipped. Default 40. */
             padMs: z.number().int().min(0).max(500).optional(),
         })
@@ -1897,6 +1903,10 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 );
             }
 
+            if (op.op === "cutWords" && (op.from === undefined) !== (op.to === undefined)) {
+                throw new RangeError("cutWords takes from and to together: the picked words' start and end");
+            }
+
             const cuts =
                 op.op === "cutWords"
                     ? wordCuts({
@@ -1904,6 +1914,9 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                           atSec: timeToUs(op.at) / 1_000_000,
                           words: op.words,
                           ...(op.occurrence !== undefined ? { occurrence: op.occurrence } : {}),
+                          ...(op.from !== undefined && op.to !== undefined
+                              ? { picked: { start: timeToUs(op.from) / 1_000_000, end: timeToUs(op.to) / 1_000_000 } }
+                              : {}),
                           ...(op.padMs !== undefined ? { padMs: op.padMs } : {}),
                       })
                     : fillerCuts({
