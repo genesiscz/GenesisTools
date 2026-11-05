@@ -66,24 +66,13 @@ const KIT = "src/macos/GenesisKit";
  * branches share no ancestor that could hold both. Each branch gets unified's file without the other part's lines.
  */
 function partRegistration(drop: "recorder" | "meetings"): DerivedFile[] {
-    const define = `GENESIS_PART_${drop.toUpperCase()}`;
-    const target = drop === "recorder" ? "GenesisToolsRecorder" : "GenesisToolsMeetings";
-    const parts: [RegExp, string][] = [
-        [new RegExp(` \\|\\| ${define}`), ""],
-        [new RegExp(`\\n#if ${define}\\nimport ${target}\\n#endif\\n`), ""],
-        [new RegExp(`\\n {4}#if ${define}\\n {4}AppParts\\.register[^\\n]*\\n {4}#endif`), ""],
-    ];
-    if (drop === "meetings") {
-        parts.push([/\n {8}#if GENESIS_PART_MEETINGS\n {8}FeatureSettingsPlugins[^\n]*\n {8}#endif/, ""]);
-    }
-
-    const packageLine =
-        drop === "recorder"
-            ? /\n {4}\/\/ The recorder[^\n]*\n {4}\/\/ GenesisKitPosture[^\n]*\n {4}AppPart\(id: "recorder"[^\n]*/
-            : /\n {4}AppPart\(id: "meetings"[^\n]*/;
+    // Package.swift: the part's entry with the comment lines right above it; an entry may wrap over lines.
+    const packageEntry = new RegExp(`(\\n {4}//[^\\n]*)*\\n {4}AppPart\\(id: "${drop}",[\\s\\S]*?\\),(?=\\n)`);
     return [
-        { file: `${APP}/Package.swift`, edits: [[packageLine, ""]] },
-        { file: `${APP}/Sources/GenesisTools/Parts.swift`, edits: parts },
+        { file: `${APP}/Package.swift`, edits: [[packageEntry, ""]] },
+        // Parts.swift keeps unified's text: a part's \`#if GENESIS_PART_<ID>\` blocks compile away when Package.swift
+        // does not link it.
+        { file: `${APP}/Sources/GenesisTools/Parts.swift`, edits: [] },
         { file: `${APP}/Sources/Host/AppParts.swift`, edits: [[new RegExp(`\\n {8}"--${drop}": "${drop}",`), ""]] },
         {
             file: "src/macos/lib/permissions/parts.ts",
@@ -202,6 +191,7 @@ const CUT: readonly CutBranch[] = [
 const MIN_FILES = 50;
 const MAX_FILES = 90;
 const MAX_TYPECHECK_ROUNDS = 10;
+const TEST_FILE = /\.test\.tsx?$/;
 /** How many re-export hops the error tracer follows from a failing file's imports. */
 const IMPORT_DEPTH = 3;
 const CUT_REF_PREFIX = "refs/heads/cut/";
@@ -1169,6 +1159,27 @@ async function main(): Promise<number> {
                     if (targetIndex < index) {
                         restartAt = Math.min(restartAt ?? targetIndex, targetIndex);
                     }
+
+                    // A test of the moved file comes with it: left behind, it tests the old code against the new one,
+                    // which typechecks but fails at run time (a config test and its migration, 2026-11-05).
+                    for (const [test, testOwner] of [...owner]) {
+                        if (
+                            TEST_FILE.test(test) &&
+                            testOwner !== target &&
+                            !lineage(target).includes(testOwner) &&
+                            importsOf(test, unifiedSha, exists).includes(file)
+                        ) {
+                            const testMove: Move = {
+                                file: test,
+                                from: testOwner,
+                                to: target,
+                                reason: `the test of ${file}, which moved to ${target}`,
+                            };
+                            movedNow.set(test, testMove);
+                            owner.set(test, target);
+                            moves.get(target)?.push(testMove);
+                        }
+                    }
                 };
 
                 for (const error of fresh) {
@@ -1361,9 +1372,21 @@ async function runChecks(params: {
         }
 
         await scratchTree.checkout(commit);
-        if (options.tests) {
-            const folders = testFolders(files, params.unifiedTree);
-            const log = join(logDir, `tests-${position + 1}.log`);
+        const folders = testFolders(files, params.unifiedTree);
+        const log = join(logDir, `tests-${position + 1}.log`);
+        if (options.tests && folders.length === 0) {
+            // `bun scripts/test.ts` with no path runs the whole suite, which this must never start.
+            checks.tests.set(branch.name, {
+                ok: true,
+                exitCode: 0,
+                summary: "no TypeScript test folder",
+                log,
+                folders,
+            });
+            say(`  tests ${branch.name}: no TypeScript test folder, skipped`);
+        }
+
+        if (options.tests && folders.length > 0) {
             const tests = await run({ cmd: ["bun", "scripts/test.ts", ...folders], cwd: scratchTree.dir, log });
             const summary = summarizeTests(tests.text);
             checks.tests.set(branch.name, {
