@@ -66,9 +66,12 @@ function isCoarse(question: NewQuestion, items: MeetingItem[]): boolean {
     return coveredSec(question.fromSec, question.toSec, finer) / span >= COVERED_SHARE;
 }
 
-/** Two speaker questions offering the same people can be answered as one. */
+/** Only questions about the same labeled audio passage can share one answer. */
 function clusterKey(question: NewQuestion): string | undefined {
-    return question.about === "speaker" ? [...question.choices].sort().join("|") : undefined;
+    if (question.about !== "speaker" || !question.clip || labelsOf(question).length !== 1) {
+        return undefined;
+    }
+    return `${labelsOf(question)[0]}|${question.fromSec}|${question.toSec}|${question.clip.fromSec}|${question.clip.toSec}|${[...question.choices].sort().join("|")}`;
 }
 
 function clipLength(question: NewQuestion): number {

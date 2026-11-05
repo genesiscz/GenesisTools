@@ -227,12 +227,27 @@ export function propagateAnswer(
         return [];
     }
 
+    const labels = answered.evidence?.labels;
+    if (!Array.isArray(labels) || labels.length !== 1) {
+        return [];
+    }
+
     const settled: string[] = [];
 
     for (const question of openQuestions(record)) {
         const offers = question.choices.some((choice) => sameName(choice, options.answer));
 
-        if (question.id === answered.id || question.signature !== answered.signature || !offers) {
+        const otherLabels = question.evidence?.labels;
+        if (
+            question.id === answered.id ||
+            question.signature !== answered.signature ||
+            !offers ||
+            question.fromSec !== answered.fromSec ||
+            question.toSec !== answered.toSec ||
+            !Array.isArray(otherLabels) ||
+            otherLabels.length !== 1 ||
+            otherLabels[0] !== labels[0]
+        ) {
             continue;
         }
 

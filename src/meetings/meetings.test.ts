@@ -1239,7 +1239,7 @@ describe("questions (R2.3)", () => {
         expect(questionFor(term({ proposed: "PentahoDI" }), context())).toBeDefined();
     });
 
-    test("neighbours offering the same people become one question, and a shared signature raises its priority", () => {
+    test("neighbouring candidate lists do not establish voice identity, while signatures still affect priority", () => {
         const question = (id: string, fromSec: number, choices: string[], confidence: number) => ({
             kind: "question" as const,
             status: "suggested" as const,
@@ -1263,13 +1263,23 @@ describe("questions (R2.3)", () => {
             ],
             []
         );
-        expect(picked.map((item) => item.decides)).toEqual([["i1", "i2"], ["i4"], ["i3"]]);
-        // The cluster: (1 − 0.4) × (4 + log2 2) × 2 questions with its signature.
-        expect(picked[0]).toMatchObject({ priority: 6, toSec: 135 });
+        expect(picked.map((item) => item.decides)).toEqual([["i1"], ["i2"], ["i4"], ["i3"]]);
+        expect(picked[0]).toMatchObject({ priority: 4.8, toSec: 110 });
         expect(picked[1]).toMatchObject({ priority: 2 });
+        const same = question("i5", 100, ["Bob Example", "Carol Example"], 0.4);
+        const passage = { fromSec: 100, toSec: 110 };
+        expect(
+            selectQuestions(
+                [
+                    { ...same, clip: passage },
+                    { ...same, decides: ["i6"], clip: passage, evidence: { ...same.evidence, labels: ["Speaker 6"] } },
+                ],
+                []
+            ).map((item) => item.decides)
+        ).toEqual([["i5"], ["i6"]]);
     });
 
-    test("an answer settles the questions with the same signature, and two voices split per line", () => {
+    test("an answer keeps other passages open even with the same signature, and two voices split per line", () => {
         const ask = (id: string, decides: string[]) => ({
             id,
             kind: "question",
@@ -1296,8 +1306,8 @@ describe("questions (R2.3)", () => {
             question.kind === "question"
                 ? propagateAnswer(meetingRecord, question, { answer: "Carol Example", listenBelow: 0.6, now })
                 : [];
-        expect(settled).toEqual(["i4"]);
-        expect(meetingRecord.items[1]).toMatchObject({ speaker: "Carol Example", confidence: 0.65 });
+        expect(settled).toEqual([]);
+        expect(meetingRecord.items[1]).toMatchObject({ confidence: 0.35 });
 
         const split = withItems([{ ...range, confidence: 0.4 }, ask("i2", ["i1"])]);
         const lines = splitQuestion(split, "i2", { transcript, now });
