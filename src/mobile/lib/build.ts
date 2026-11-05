@@ -35,7 +35,6 @@ export async function buildAndInstall(options: {
     udid: string;
     logDir: string;
     install?: boolean;
-    timeoutMs?: number;
     /** The DerivedData folder; default `<app>/ios/build`. Give each session its own, so two builds never share one. */
     derivedData?: string;
     /** Overrides the project's configuration (`up` builds Debug, which loads its JS from Metro). */

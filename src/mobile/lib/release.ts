@@ -190,11 +190,7 @@ export function clockBuildNumber(now = new Date()): string {
 /** Runs the plan's steps in order, each step's output into its own log; stops at the first failure. */
 export async function runRelease(
     plan: ReleasePlan,
-    {
-        outDir,
-        onStep,
-        timeoutMs,
-    }: { outDir: string; onStep: (step: ReleaseStep, index: number) => void; timeoutMs?: number }
+    { outDir, onStep }: { outDir: string; onStep: (step: ReleaseStep, index: number) => void }
 ): Promise<void> {
     mkdirSync(outDir, { recursive: true });
     writeFileSync(plan.exportOptionsPath, plan.exportOptions);
