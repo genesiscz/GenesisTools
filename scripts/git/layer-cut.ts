@@ -4,7 +4,8 @@
  *
  *   bun scripts/git/layer-cut.ts --scratch <dir> [--unified <ref>] [--unified-branch <name>] [--base <ref>]
  *                                [--master <ref>] [--plan-only] [--no-typecheck] [--tests] [--swift] [--json <file>]
- *   bun scripts/git/layer-cut.ts --scratch <dir> --checks-only [--tests] [--swift]   (on the cut/ refs of the last run)
+ *   bun scripts/git/layer-cut.ts --scratch <dir> --checks-only [--tests] [--swift] [--only <branch>]   (on the cut/
+ *                                refs of the last run; --only limits the checks to one branch)
  *
  * --unified takes a sha to pin a moving branch; --unified-branch names its PR head (never an exclusion source).
  * --tests runs `bun scripts/test.ts <folders>` per tree, serially; --swift runs one app `swift build` per Swift branch
@@ -245,11 +246,15 @@ const CUT: readonly CutBranch[] = [
         // the face lifecycle and quit flow, the app faces table, the permissions relaunch, mobile, toolCommand hints).
         scopes: [...new Set([...CAPTURE_SCOPES, ...MEETINGS_SCOPES, "GenesisKit", "GenesisHub"])],
         globs: ["**"],
+        // The app lifecycle and the approval windows: their `(GenesisHub, app)` and `(GenesisKit, permissions)` commits
+        // are outside the selection, so the branch takes their folders whole.
         sweep: [
             `${APP}/Sources/Host/**`,
+            `${APP}/Tests/PartQuitTests.swift`,
+            `${KIT}/Sources/GenesisKitBase/Permissions/**`,
+            `${KIT}/Tests/GenesisKitTests/GateAuditTests.swift`,
             "src/macos/lib/permissions/**",
             "scripts/native/**",
-            `${APP}/Tests/PartQuitTests.swift`,
         ],
         // This branch merges after both app parts, so its registration is unified's, meetings part included
         // (relaunch.test.ts knows the meetings face). Package.swift stays the recorder branch's: an unlinked part's face
@@ -262,6 +267,15 @@ const CUT: readonly CutBranch[] = [
         swift: true,
     },
 ];
+
+/**
+ * Files the cut leaves at their base form on purpose, with the reason. For a dependency the import tracer cannot see
+ * (Swift) on code another open PR holds. A TypeScript file never needs an entry: the tracer keeps it at base itself.
+ */
+const KEEP_AT_BASE: Record<string, string> = {
+    [`${APP}/Sources/Parts/Widget/WidgetWindow.swift`]:
+        "its unified form passes openUsage to WidgetCoordinator, the AI usage widget of PRs #711 and #712",
+};
 
 const MIN_FILES = 50;
 const MAX_FILES = 90;
@@ -282,6 +296,8 @@ interface Options {
     scratch: string;
     planOnly: boolean;
     checksOnly: boolean;
+    /** --only: run the checks of this branch only. */
+    only: string | null;
     typecheck: boolean;
     tests: boolean;
     swift: boolean;
@@ -570,7 +586,7 @@ function assignFiles(commits: Commit[], differing: Set<string>, onOpenPr: (commi
     const owner = new Map<string, string>();
     const unplaced: string[] = [];
     for (const [file, fileCommits] of [...touching].sort(([a], [b]) => a.localeCompare(b))) {
-        if (derivedFiles.has(file)) {
+        if (derivedFiles.has(file) || KEEP_AT_BASE[file]) {
             continue;
         }
 
@@ -617,7 +633,7 @@ function assignFiles(commits: Commit[], differing: Set<string>, onOpenPr: (commi
 
     for (const branch of CUT) {
         for (const file of [...differing].sort()) {
-            if (owner.has(file) || derivedFiles.has(file)) {
+            if (owner.has(file) || derivedFiles.has(file) || KEEP_AT_BASE[file]) {
                 continue;
             }
 
@@ -1026,18 +1042,20 @@ function parseOptions(argv: string[]): Options {
         scratch: "",
         planOnly: false,
         checksOnly: false,
+        only: null,
         typecheck: true,
         tests: false,
         swift: false,
         json: null,
     };
-    const valueFlags: Record<string, "unified" | "unifiedBranch" | "base" | "master" | "scratch" | "json"> = {
+    const valueFlags: Record<string, "unified" | "unifiedBranch" | "base" | "master" | "scratch" | "json" | "only"> = {
         "--unified": "unified",
         "--unified-branch": "unifiedBranch",
         "--base": "base",
         "--master": "master",
         "--scratch": "scratch",
         "--json": "json",
+        "--only": "only",
     };
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
@@ -1491,6 +1509,10 @@ async function runChecks(params: {
             continue;
         }
 
+        if (options.only && branch.name !== options.only) {
+            continue;
+        }
+
         await scratchTree.checkout(commit);
         const folders = testFolders(files, params.unifiedTree);
         const log = join(logDir, `tests-${position + 1}.log`);
@@ -1675,6 +1697,10 @@ function finish(state: {
         if (report.sizeWarning) {
             say(`  ! size: ${report.sizeWarning}`);
         }
+    }
+
+    for (const [file, why] of Object.entries(KEEP_AT_BASE)) {
+        say(`kept at base by the table: ${file}: ${why}`);
     }
 
     if (state.assignment.unplaced.length > 0) {
