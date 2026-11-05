@@ -844,7 +844,19 @@ describe("characterization: what a library recording asks its recorder for", () 
         muteFails = false;
         /** The device list throws. */
         devicesFail = false;
+        /** The live switch throws this. */
+        switchFails?: Error;
+        /** The live switch waits for this before it answers. */
+        switchGate?: Promise<void>;
         private readonly waiters: Array<{ count: number; resolve: () => void }> = [];
+        private readonly running = new Set<() => void>();
+
+        /** Ends every running capture as if its piece had run out. */
+        finishAll(): void {
+            for (const finish of this.running) {
+                finish();
+            }
+        }
 
         constructor(
             private readonly script: {
@@ -913,6 +925,12 @@ describe("characterization: what a library recording asks its recorder for", () 
             if (this.script.live !== false) {
                 request.hooks?.onLive?.({
                     switchDisplay: async (id) => {
+                        await this.switchGate;
+
+                        if (this.switchFails) {
+                            throw this.switchFails;
+                        }
+
                         this.commands.push(`switch ${id}`);
                     },
                     pause: () => this.commands.push(`pause ${displayId}`),
@@ -963,11 +981,14 @@ describe("characterization: what a library recording asks its recorder for", () 
             }
 
             await new Promise<void>((resolve) => {
-                const timer = setTimeout(resolve, request.durationSec * 1000);
-                signal?.addEventListener("abort", () => {
+                const finish = () => {
                     clearTimeout(timer);
+                    this.running.delete(finish);
                     resolve();
-                });
+                };
+                const timer = setTimeout(finish, request.durationSec * 1000);
+                this.running.add(finish);
+                signal?.addEventListener("abort", finish);
             });
             return { startedAtMs, frames };
         }
@@ -1171,6 +1192,32 @@ describe("characterization: what a library recording asks its recorder for", () 
         await Bun.sleep(50);
         expect(recorder.requests).toHaveLength(2);
         await recording.stop();
+    });
+
+    test("a live switch answers a missing display as unknownDisplay, and a switch whose capture ended meanwhile restarts instead of reviving it", async () => {
+        const recorder = new ScriptRecorder();
+        const recording = await start(recorder, { displays: "main" });
+        await recorder.waitFor(1);
+        recorder.switchFails = new CaptureError("display-missing", "display 4 left");
+
+        await expect(recording.switchDisplay(4)).rejects.toMatchObject({ code: RPC_ERRORS.unknownDisplay });
+
+        recorder.switchFails = undefined;
+        const gate = Promise.withResolvers<void>();
+        recorder.switchGate = gate.promise;
+        const switching = recording.switchDisplay(4);
+        recorder.finishAll();
+        await recorder.waitFor(2);
+        gate.resolve();
+
+        expect(await switching).toEqual({ mode: "all", chosen: [4], applied: "restart" });
+        await recorder.waitFor(3);
+        await recording.stop();
+        expect(recorder.requests.map((request) => request.target)).toEqual([
+            { kind: "display", displayId: 1 },
+            { kind: "display", displayId: 1 },
+            { kind: "display", displayId: 4 },
+        ]);
     });
 
     test("stage 7 (pause): a pause without a live channel ends the piece, no capture starts while paused, and resume starts the next", async () => {

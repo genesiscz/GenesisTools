@@ -668,17 +668,32 @@ export class LibraryRecording extends RecorderControl {
 
     override async switchDisplay(displayId: number): Promise<DisplaySelection> {
         const [to] = this.pick([displayId]);
-        const captures = [...this.running.values()];
+        const [only, ...others] = [...this.running.values()];
 
-        if (captures[0]?.live) {
-            await captures[0].live.switchDisplay(to);
-            for (const other of captures.slice(1)) {
+        if (only?.live) {
+            try {
+                await only.live.switchDisplay(to);
+            } catch (error) {
+                throw new RpcError(
+                    error instanceof CaptureError && error.kind === "display-missing"
+                        ? RPC_ERRORS.unknownDisplay
+                        : RPC_ERRORS.internal,
+                    error instanceof Error ? error.message : String(error)
+                );
+            }
+
+            // The capture may have ended while the switch was in flight; the next captures record the display.
+            if (this.running.get(only.target.displayId) !== only) {
+                return this.choose([to]);
+            }
+
+            for (const other of others) {
                 other.controller.abort();
             }
 
-            this.running.delete(captures[0].target.displayId);
-            captures[0].target = this.targetOf(to);
-            this.running.set(to, captures[0]);
+            this.running.delete(only.target.displayId);
+            only.target = this.targetOf(to);
+            this.running.set(to, only);
             this.chosen = [to];
             this.server?.update({ displays: this.recordedDisplays() });
             return { mode: "all", chosen: [to], applied: "live" };
