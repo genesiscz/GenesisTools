@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { JobInfo } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -198,7 +198,8 @@ export class LiveRecordingServer {
         service?: ServiceJoin;
     }) {
         const dir = options.dir ?? liveRecordingsDir();
-        mkdirSync(dir, { recursive: true });
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        chmodSync(dir, 0o700);
         this.entryPath = join(dir, `${options.id}.json`);
         const socket = liveSocketPath(dir, options.id);
         const control = options.control;
@@ -235,6 +236,8 @@ export class LiveRecordingServer {
             }
 
             const listener = this.listen(socket, control);
+            // Only the owner may reach the control socket.
+            chmodSync(socket, 0o600);
             this.write();
             return listener;
         });

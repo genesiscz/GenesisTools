@@ -1,5 +1,15 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -437,7 +447,10 @@ test("mutations from two clients share one recorder queue", async () => {
         return { state: "paused" };
     };
     const dir = mkdtempSync(join(tmpdir(), "live-queue-"));
+    chmodSync(dir, 0o755);
     const server = new LiveRecordingServer({ id: "queue", kind: "meeting", title: "Fixture", control, dir });
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    expect(statSync(liveSocketPath(dir, "queue")).mode & 0o777).toBe(0o600);
     const first = await RecorderClient.connect("queue", { dir });
     const second = await RecorderClient.connect("queue", { dir });
     try {
