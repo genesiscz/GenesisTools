@@ -830,7 +830,13 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             this.update({ state: "stopping" });
             process.off("SIGTERM", onSignal);
             process.off("SIGINT", onSignal);
-            hooks.afterLoop?.();
+
+            try {
+                hooks.afterLoop?.();
+            } catch (error) {
+                log.warn({ error, id: this.config.live.id }, "the recording's cleanup after the loop failed");
+                hooks.onError?.(error);
+            }
         }
     }
 

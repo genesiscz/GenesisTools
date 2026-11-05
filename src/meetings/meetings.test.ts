@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -2780,6 +2780,37 @@ describe("the meetings recorder loop", () => {
         expect(run.saved?.recording?.warning).toContain("disk full");
         expect(run.notes).toHaveLength(1);
         expect(listLiveRecordings(run.liveDir)).toEqual([]);
+    });
+
+    test("a cleanup that fails after the last piece still ends the recording as an error and releases the pid", async () => {
+        let locked: string | undefined;
+        const run = await withTimeout(
+            recordWith({
+                displays: [[builtIn]],
+                steps: ["frames", "hang"],
+                actions: [
+                    async (send, live) => {
+                        // A directory that cannot lose its file: the piece folder's removal after the loop fails.
+                        locked = join(live.folder, ".piece", "locked");
+                        mkdirSync(locked, { recursive: true });
+                        writeFileSync(join(locked, "keep"), "x");
+                        chmodSync(locked, 0o500);
+                        return send("stop");
+                    },
+                ],
+            }),
+            3_000
+        ).finally(() => {
+            if (locked) {
+                chmodSync(locked, 0o700);
+            }
+        });
+
+        expect(run.rejected).toBeInstanceOf(RecorderFailedError);
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "error" });
+        expect(run.saved?.recording?.warning).toMatch(/ENOTEMPTY|EACCES/);
+        expect(existsSync(recorderFiles(run.store).pid)).toBe(false);
+        expect(existsSync(recorderFiles(run.store).state)).toBe(false);
     });
 
     test("a recording without a single frame says so", async () => {
