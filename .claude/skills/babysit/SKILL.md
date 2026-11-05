@@ -359,6 +359,13 @@ file> --dedicated-review`); after a merge they go to a follow-up PR from master 
 Never count a reply-only round, or a label, as a fix round: on 2026-10-14 the report said "#500 merged after 3
 rounds" when GitHub showed two round summaries.
 
+**In T3 Code, or for any worker without the review harness, chunk the diff before the review starts** (2026-11-05).
+Split the PR's files into chunks of at most 8 files and give each chunk to its own reader (`delegate_task`,
+`isolation: "shared"`). Each reader writes its findings file as it goes, and its report ends with `Files reviewed: n
+of N`. A report under N is split again, never steered again. Measured on 2026-11-05: chunks of 8 files or fewer
+finished in 27 of 27 runs; chunks of 10 to 47 files stopped after 1 to 12 files, because a Terra turn at effort
+`high` ended after about 70,000 input tokens.
+
 ## 7b. Optional: land a PR in master (only with the user's explicit approval)
 
 Off unless the user approves it in their own words for this run ("drive the PRs into master"), and
