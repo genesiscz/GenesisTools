@@ -32,14 +32,18 @@ function scriptField(script: string, field: string): string | undefined {
 function codeModeDetail(script: string, cwd: string | undefined): PendingToolCall["detail"] {
     const cmd = scriptField(script, "cmd");
 
-    if (/\btools\.exec_command\s*\(/.test(script) && cmd) {
+    const singleCall =
+        /^\s*(?:await\s+)?tools\.exec_command\(\s*\{\s*(?:\w+\s*:\s*"(?:[^"\\]|\\.)*"\s*,?\s*)+\}\s*\)\s*;?\s*$/.test(
+            script
+        );
+    const fields = [...script.matchAll(/(?:\{|,)\s*(\w+)\s*:/g)].map((match) => match[1]);
+    if (singleCall && new Set(fields).size === fields.length && cmd) {
         const justification = scriptField(script, "justification");
         const workdir = scriptField(script, "workdir");
         return pendingCallDetail("command", { cmd, justification, workdir }, cwd);
     }
 
-    const patch = /\*\*\* Begin Patch[\s\S]*?\*\*\* End Patch/.exec(script.replace(/\\n/g, "\n"));
-    return patch ? pendingCallDetail("patch", patch[0]) : pendingCallDetail("tool", script);
+    return pendingCallDetail("tool", script);
 }
 
 function parsedArguments(value: unknown): unknown {
