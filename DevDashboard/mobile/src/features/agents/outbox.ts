@@ -1,4 +1,5 @@
 import type { AgentSendReceiptDto, AgentSendTiming } from "@dd/contract";
+import { SafeJSON } from "@genesiscz/utils/json";
 import Storage from "expo-sqlite/kv-store";
 
 /**
@@ -55,14 +56,14 @@ export const kvDraftStore: DraftStore = {
         }
 
         try {
-            const parsed: unknown = JSON.parse(raw);
+            const parsed: unknown = SafeJSON.parse(raw, { strict: true });
             return Array.isArray(parsed) ? parsed.filter(isDraft) : [];
         } catch {
             return [];
         }
     },
     async write(drafts) {
-        await Storage.setItem(STORE_KEY, JSON.stringify(drafts));
+        await Storage.setItem(STORE_KEY, SafeJSON.stringify(drafts));
     },
 };
 

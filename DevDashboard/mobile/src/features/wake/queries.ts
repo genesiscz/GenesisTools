@@ -1,4 +1,5 @@
 import { type DashboardClient, ENDPOINTS, type HealthDto, type WakeRelayDto } from "@dd/contract";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { queryOptions } from "@tanstack/react-query";
 import type { RelayStore } from "@/features/wake/relay-store";
 
@@ -56,7 +57,7 @@ export function wakeRequest(relay: WakeRelayDto | null): { url: string; init: Re
                 "Content-Type": "application/json",
                 ...(relay.token ? { Authorization: `Bearer ${relay.token}` } : {}),
             },
-            body: JSON.stringify({ name: relay.name, password: relay.password }),
+            body: SafeJSON.stringify({ name: relay.name, password: relay.password }),
         },
     };
 }
