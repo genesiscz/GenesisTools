@@ -3924,8 +3924,9 @@ test("recorder failure persists a terminal state before releasing ownership", as
         { command: "test", change: "fixture" }
     );
     mkdirSync(join(store.folder(record.id), "frames"), { recursive: true });
-    for (let index = 0; index < 12; index++) {
-        writeFileSync(join(store.folder(record.id), "frames", `${index}.jpg`), new Uint8Array(index === 11 ? 60 : 40));
+    // Three more frames on disk than the record's totals: the failure path must count the disk, not keep the record.
+    for (let index = 0; index < 15; index++) {
+        writeFileSync(join(store.folder(record.id), "frames", `${index}.jpg`), new Uint8Array(index === 14 ? 60 : 40));
     }
     const update = store.update.bind(store);
     let calls = 0;
@@ -3953,8 +3954,8 @@ test("recorder failure persists a terminal state before releasing ownership", as
         status: "stopped",
         stopReason: "error",
         warning: expect.stringContaining("injected recording failure"),
-        frames: 12,
-        bytes: 500,
+        frames: 15,
+        bytes: 620,
         startedAt: meeting.start,
     });
     expect(existsSync(recorderFiles(store).state)).toBe(false);
@@ -3974,6 +3975,31 @@ test("a recorder that fails before its capture loop persists the error and retir
     expect(store.read(record.id)?.recording).toMatchObject({ status: "stopped", stopReason: "error" });
     expect(existsSync(recorderFiles(store).state)).toBe(false);
     expect(existsSync(recorderFiles(store).pid)).toBe(false);
+});
+
+test("a setup failure keeps the record's totals when the frames folder cannot be read", async () => {
+    const store = new MeetingStore(new Storage("recorder-failed-totals"));
+    const record = await store.create(
+        {
+            title: "Failure fixture",
+            start: meeting.start,
+            createdBy: "new",
+            recording: { frames: 12, bytes: 500, startedAt: meeting.start },
+        },
+        { command: "test", change: "fixture" }
+    );
+    // A file where the frames folder belongs: the setup fails before the capture loop, in the catch block.
+    writeFileSync(join(store.folder(record.id), "frames"), "blocks the frames directory");
+    await expect(
+        runRecorder({ store, meetingId: record.id, capture: meetingsConfigSchema.parse({}).global.capture })
+    ).rejects.toThrow();
+    expect(store.read(record.id)?.recording).toMatchObject({
+        status: "stopped",
+        stopReason: "error",
+        frames: 12,
+        bytes: 500,
+        startedAt: meeting.start,
+    });
 });
 
 test("a legacy failed recording remains readable and updateable", async () => {

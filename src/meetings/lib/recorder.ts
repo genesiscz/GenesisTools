@@ -1,9 +1,10 @@
-import { rmSync } from "node:fs";
+import { existsSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { MeetingRun } from "@app/meetings/lib/meeting-run";
 import {
     defaultDeps,
     errorText,
+    framesOnDisk,
     log,
     MAX_FAILURES,
     meetingLiveId,
@@ -11,7 +12,6 @@ import {
     RecorderFailedError,
     type RecorderState,
     type RunRecorderOptions,
-    readRecorderState,
     recorderFiles,
     STOP_ANSWER_MS,
 } from "@app/meetings/lib/recorder-shared";
@@ -226,7 +226,9 @@ function meetingRecorderConfig(run: MeetingRun) {
  */
 async function saveFailedRun(store: MeetingStore, meetingId: string, err: unknown): Promise<void> {
     const warning = errorText(err);
-    const last = readRecorderState(store).state;
+    // The frames on disk are the meeting's true totals (earlier runs and this one); without the folder the record's stay.
+    const framesDir = join(store.folder(meetingId), "frames");
+    const onDisk = existsSync(framesDir) && statSync(framesDir).isDirectory() ? framesOnDisk(framesDir) : undefined;
     await store
         .update(meetingId, { command: "record stop", change: `error: ${warning}` }, (current) => {
             current.recording = {
@@ -234,8 +236,8 @@ async function saveFailedRun(store: MeetingStore, meetingId: string, err: unknow
                 status: "stopped",
                 stopReason: "error",
                 stoppedAt: new Date().toISOString(),
-                frames: Math.max(current.recording?.frames ?? 0, last?.frames ?? 0),
-                bytes: Math.max(current.recording?.bytes ?? 0, last?.bytes ?? 0),
+                frames: onDisk?.frames ?? current.recording?.frames ?? 0,
+                bytes: onDisk?.bytes ?? current.recording?.bytes ?? 0,
                 warning,
             };
         })
