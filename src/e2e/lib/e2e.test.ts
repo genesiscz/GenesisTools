@@ -14,7 +14,15 @@ import { listRunDirs, runsRoot, stamp } from "./paths";
 import { runE2e, runSpec } from "./run";
 import { RUNNERS, runnerFlags } from "./runners";
 import { listSpecs, resolveSpecs, specName, suiteSpecs } from "./specs";
-import { compareRuns, countResults, formatSummary, type RunSummary, readResults, specFailed } from "./summary";
+import {
+    compareRuns,
+    countResults,
+    formatSummary,
+    type RunSummary,
+    readResults,
+    readSummary,
+    specFailed,
+} from "./summary";
 
 const root = mkdtempSync(join(tmpdir(), "gt-e2e-run-"));
 
@@ -110,6 +118,37 @@ describe("runners", () => {
 });
 
 describe("run loop", () => {
+    it("persists a failed summary when tests pass but project teardown fails", async () => {
+        const project = fixtureProject("teardown-report");
+        const runDir = join(root, "teardown-report-run");
+        project.config.hooks = {
+            afterRun: async () => {
+                throw new Error("teardown failed");
+            },
+        };
+        const script =
+            'require("node:fs").appendFileSync(process.env.E2E_RESULTS_FILE, JSON.stringify({suite:"s",title:"t",state:"passed",durationMs:1})+"\\n")';
+        await expect(
+            runE2e({
+                project,
+                specs: listSpecs(project).slice(0, 1),
+                runDir,
+                flags: {},
+                extraEnv: {},
+                prepare: async () => ({
+                    facts: {},
+                    environment: {},
+                    command: () => [process.execPath, "-e", script],
+                    finish: async () => [],
+                }),
+            })
+        ).rejects.toThrow("teardown failed");
+        const saved = readSummary(runDir);
+        expect(saved.counts.passed).toBe(1);
+        expect(saved.ok).toBe(false);
+        expect(saved.notes.some((note) => note.source === "teardown")).toBe(true);
+    });
+
     it("runs both cleanup paths after setup fails and preserves the setup error", async () => {
         const project = fixtureProject("setup-failure");
         const calls: string[] = [];

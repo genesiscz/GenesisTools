@@ -93,6 +93,7 @@ export async function runE2e(options: {
     const specs: SpecRun[] = [];
     let notes: RunNote[] = [];
     let succeeded = false;
+    let summary: RunSummary | undefined;
     let failed = false;
     const cleanup = async (run: () => Promise<void>) => {
         try {
@@ -157,7 +158,7 @@ export async function runE2e(options: {
         }
 
         const counts = countResults(specs);
-        const summary: RunSummary = {
+        summary = {
             project: project.config.id,
             runner: project.config.runner.kind,
             runDir,
@@ -169,16 +170,29 @@ export async function runE2e(options: {
             notes,
             ok: counts.specsFailed === 0 && specs.length > 0,
         };
-        writeFileSync(join(runDir, "summary.json"), SafeJSON.stringify(summary, null, 2));
-        writeFileSync(join(runDir, "summary.md"), formatSummary(summary));
         succeeded = summary.ok;
         return summary;
     } catch (error) {
         failed = true;
         throw error;
     } finally {
-        await cleanup(async () => {
-            await project.config.hooks?.afterRun?.({ ...hookContext, ok: succeeded });
-        });
+        try {
+            await cleanup(async () => {
+                await project.config.hooks?.afterRun?.({ ...hookContext, ok: succeeded });
+            });
+        } finally {
+            if (summary) {
+                if (summary.ok && failed) {
+                    summary.notes.push({
+                        at: new Date().toISOString(),
+                        source: "teardown",
+                        text: "Run teardown failed; see the command error.",
+                    });
+                }
+                summary.ok = summary.ok && !failed;
+                writeFileSync(join(runDir, "summary.json"), SafeJSON.stringify(summary, null, 2));
+                writeFileSync(join(runDir, "summary.md"), formatSummary(summary));
+            }
+        }
     }
 }
