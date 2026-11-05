@@ -133,7 +133,10 @@ const program = new Command()
                     tolerancePct: 50,
                     lowerIsBetter: Object.keys(metrics),
                 });
-                out.println(formatComparison(comparison));
+                out.log.info(formatComparison(comparison));
+                if (!comparison.ok) {
+                    process.exitCode = 1;
+                }
             }
 
             if (options.recordRun) {
