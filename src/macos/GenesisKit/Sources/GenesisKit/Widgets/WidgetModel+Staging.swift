@@ -436,6 +436,7 @@ extension WidgetModel {
         let draftAtSend = draft
         let ids = Set(items.map(\.sourceId))
         sendingDecisionIDs.formUnion(ids)
+        for id in ids { sendingStageVersions[id] = pendingStageVersions[id] }
         // Every staged send says it started: a Send now that changed nothing on screen read as a dead button.
         if staged { postNote("Sending " + Plural.count(items.count, "decision") + "…") }
         // The "Sending…" note this send put up; a failure takes it down, unless another note replaced it meanwhile.
@@ -453,7 +454,10 @@ extension WidgetModel {
             + titles.values.sorted().joined(separator: ", "))
         afterMutations { [weak self] in
             guard let self else { return }
-            defer { self.sendingDecisionIDs.subtract(ids) }
+            defer {
+                self.sendingDecisionIDs.subtract(ids)
+                for id in ids { self.sendingStageVersions[id] = nil }
+            }
             do {
                 let result = try await self.call(DecisionAnswering.sendRequest(action, ids: items.map(\.sourceId),
                                                                                targets: targets))
@@ -568,7 +572,10 @@ extension WidgetModel {
     /// A decision whose send runs is on its way, not staged: on 2026-11-04 two sends waited 100 s for a slow hub, the
     /// leave question called them staged, and their Send now read as a button that only staged.
     public var stagedForLeave: [WidgetInboxItem] {
-        stagedOrPending.filter { !sendingDecisionIDs.contains($0.sourceId) }
+        stagedOrPending.filter {
+            !sendingDecisionIDs.contains($0.sourceId)
+                || pendingStageVersions[$0.sourceId] != sendingStageVersions[$0.sourceId]
+        }
     }
 
     private var stagedOrPending: [WidgetInboxItem] {
