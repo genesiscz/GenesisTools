@@ -16,7 +16,7 @@ import { type InboxCommandDeps, registerInboxCommand } from "../../commands/inbo
 import { paneMiss } from "../decisions/deliver";
 import { livePaneTargets, noNativeReceivers } from "../decisions/deliver.fixtures";
 import { RELAYED_ANSWER_HEAD } from "../decisions/delivery-text";
-import { decisionOptionLabels, shownDecisionText } from "../decisions/option-labels";
+import { decisionOptionLabels, recommendedLetters, shownDecisionText } from "../decisions/option-labels";
 import { decisionFiles } from "../decisions/paths";
 import { decisionLine, parseDecisionBlocks } from "../decisions/read";
 import {
@@ -245,6 +245,11 @@ describe("decision option labels", () => {
         // A row saved before the fix reads the same in the hub's Inbox: four buttons, three of them recommended.
         const item = fromRecord(storedRow({ prompt, options: [], recommended: "abd" }));
         expect(item.choices.map((choice) => choice.label)).toEqual(words);
+        expect(item.choices.map((choice) => choice.recommended)).toEqual([true, true, false, true]);
+        // Several letters in any written form name a set; a word's letters do not rise, so it never does.
+        expect([...recommendedLetters("a + b + d")]).toEqual(["a", "b", "d"]);
+        expect([...recommendedLetters(" A, C ")]).toEqual(["a", "c"]);
+        expect(recommendedLetters("keep it").size).toBe(0);
         // One line alone, or a list that does not start at a), is no set of options.
         expect(decisionOptionLabels("Which one?\na) the only line", [])).toEqual([]);
         expect(decisionOptionLabels("Which one?\nb) only b\nc) and c", [])).toEqual([]);

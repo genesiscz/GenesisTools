@@ -133,6 +133,30 @@ function withoutLetter(label: string, letter: string): string {
     return found && found.letter === letter ? found.text : label.trim();
 }
 
+/**
+ * The options a recommendation names by letter: one ("b"), or several in order ("abd", "a, b, d", "a + b + d"), as a
+ * decision that takes any set of letters recommends them. Decision 12 of 2026-11-05 recommended "abd", and no button
+ * read recommended. Free text names no letter here. The letters must rise, so a word ("keep it") is never a set.
+ * GenesisKit's `WidgetOptionText.recommendedLetters` is the same rule for the widget.
+ */
+export function recommendedLetters(recommended: string | null | undefined): Set<string> {
+    const plain = (recommended ?? "").trim().toLowerCase();
+
+    if (!/^[a-z](?:[\s,+&/]*[a-z])*$/.test(plain)) {
+        return new Set();
+    }
+
+    const letters = plain.replace(/[^a-z]/g, "");
+
+    for (let index = 1; index < letters.length; index++) {
+        if (letters.charCodeAt(index) <= letters.charCodeAt(index - 1)) {
+            return new Set();
+        }
+    }
+
+    return new Set(letters);
+}
+
 /** Whether `label` names nothing beyond its letter: "", "a", "a)", "(a)", "a.", "**a)**". */
 export function isBareOptionLabel(label: string, letter: string): boolean {
     const plain = label

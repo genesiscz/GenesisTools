@@ -2,7 +2,7 @@ import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dial
 import { isTaskReport } from "@genesiscz/utils/ai/transcripts/prompt-parts";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { looksLikeDump, whySentence } from "../decisions/delivery-text";
-import { shownDecisionText } from "../decisions/option-labels";
+import { recommendedLetters, shownDecisionText } from "../decisions/option-labels";
 import { parseDecisionBlocks } from "../decisions/read";
 import { findRefs } from "../decisions/reply-text";
 import {
@@ -313,11 +313,12 @@ function choicesOf(
     rationales: readonly (string | null)[] | undefined,
     recommended: string | null
 ): InboxChoice[] {
+    const picks = recommendedLetters(recommended);
     return options.map((label, index) => ({
         id: letter(index),
         label,
         rationale: rationales?.[index] ?? null,
-        recommended: recommended === letter(index),
+        recommended: picks.has(letter(index)),
     }));
 }
 
