@@ -1,6 +1,9 @@
-import { join, resolve } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { E2E_ENV } from "@genesiscz/utils/e2e/spec-env";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { type E2eRunner, type RunTarget, stringFlag } from "./types";
 
 /** The reporter that writes one result line per test; Playwright loads it by path beside the project's reporters. */
@@ -15,9 +18,27 @@ export const playwrightRunner: E2eRunner<"playwright"> = {
     kind: "playwright",
     title: "Playwright Test against a site",
     flags: [{ flags: "--base-url <url>", description: "playwright: the site under test (default: runner.baseUrl)" }],
-    async prepare({ project, runner, flags }): Promise<RunTarget> {
+    async prepare({ project, runner, flags, runDir }): Promise<RunTarget> {
         const baseUrl = stringFlag(flags.baseUrl) ?? runner.baseUrl;
         const config = resolve(project.dir, runner.config);
+        const wrapper = join(runDir, "playwright.config.mjs");
+        mkdirSync(runDir, { recursive: true });
+        writeFileSync(
+            wrapper,
+            `import original from ${SafeJSON.stringify(pathToFileURL(config).href)};
+import { resolve } from "node:path";
+const base = ${SafeJSON.stringify(dirname(config))};
+const reporters = original.reporter ?? [["list"]];
+const list = typeof reporters === "string" ? [[reporters]] : reporters;
+const builtins = new Set(["list", "line", "dot", "html", "json", "junit", "null", "github", "blob"]);
+const reporter = list.map(([name, ...options]) => [builtins.has(name) ? name : resolve(base, name), ...options]);
+const directories = (value) => ({ ...value, testDir: resolve(base, value.testDir ?? original.testDir ?? "."), ...(value.snapshotDir ? { snapshotDir: resolve(base, value.snapshotDir) } : {}) });
+export default { ...directories(original), ...(original.projects ? { projects: original.projects.map(directories) } : {}),
+ reporter: [...reporter, [${SafeJSON.stringify(RESULTS_REPORTER)}]],
+ ...(original.globalSetup ? { globalSetup: resolve(base, original.globalSetup) } : {}),
+ ...(original.globalTeardown ? { globalTeardown: resolve(base, original.globalTeardown) } : {}) };
+`
+        );
 
         return {
             facts: baseUrl ? { site: baseUrl } : {},
@@ -28,8 +49,7 @@ export const playwrightRunner: E2eRunner<"playwright"> = {
                 "test",
                 spec.file,
                 "--config",
-                config,
-                `--reporter=list,${RESULTS_REPORTER}`,
+                wrapper,
                 `--output=${join(specDir, "artifacts")}`,
             ],
             finish: async () => [],
