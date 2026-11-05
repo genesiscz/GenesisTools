@@ -39,9 +39,13 @@ export interface PushRetractData {
 
 export type PushData = PushNoticeData | PushRetractData;
 
-/** The category of a notice with `count` answer letters, the recommended one marked; one id per shape. */
+/**
+ * The category of a notice with `count` answer letters, the recommended one marked; one id per shape. The mark is
+ * the lowercase letter, because the phone registers only those ids (a decision may say `B` or ` b `).
+ */
 export function answerCategoryId(count: number, recommended?: string): string {
-    const marked = recommended && letterIndex(recommended) < count ? `-${recommended}` : "";
+    const letter = recommended?.trim().toLowerCase() ?? "";
+    const marked = /^[a-z]$/.test(letter) && letterIndex(letter) < count ? `-${letter}` : "";
     return `gt-answer-${count}${marked}`;
 }
 
