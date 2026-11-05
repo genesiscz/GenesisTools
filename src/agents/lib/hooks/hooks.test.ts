@@ -1499,6 +1499,33 @@ describe("hookCallerFacts", () => {
             cwd: "/w",
         });
     });
+
+    it("a subagent's transcript is its own where its harness keeps one beside the session, else the payload's", () => {
+        const lead = "/fixture/.claude/projects/-fixture/lead-1.jsonl";
+        const claude = parseHookPayload(
+            SafeJSON.stringify({
+                hook_event_name: "PreToolUse",
+                session_id: "lead-1",
+                agent_id: "a1",
+                transcript_path: lead,
+            })
+        );
+        const rollout = "/fixture/.codex/sessions/2026/11/05/rollout-2026-11-05T01-00-00-t1.jsonl";
+        const codex = parseHookPayload(
+            SafeJSON.stringify({
+                hook_event_name: "PreToolUse",
+                session_id: "root-1",
+                agent_id: "a1",
+                transcript_path: rollout,
+            })
+        );
+
+        expect(claude && hookCallerFacts(claude).transcriptPath).toBe(
+            "/fixture/.claude/projects/-fixture/lead-1/subagents/agent-a1.jsonl"
+        );
+        expect(codex && hookCallerFacts(codex).transcriptPath).toBe(rollout);
+        expect(HARNESS_HOOK_FACTS.grok.subagentTranscript("/fixture/updates.jsonl", "a1")).toBeNull();
+    });
 });
 
 describe("characterization: parseHookPayload per harness", () => {
@@ -2687,6 +2714,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             modsDrawDiffs: true,
             settingsModel: true,
             currentModel: claudeCurrentModel,
+            subagentTranscript: expect.any(Function),
             honoursBareGlobQualifier: false,
             rendersAnsiDiffs: true,
             turnIsPromptId: true,
@@ -2705,6 +2733,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             modsDrawDiffs: false,
             settingsModel: false,
             currentModel: grokCurrentModel,
+            subagentTranscript: expect.any(Function),
             honoursBareGlobQualifier: true,
             rendersAnsiDiffs: false,
             turnIsPromptId: false,
@@ -2723,6 +2752,7 @@ describe("HARNESS_HOOK_FACTS", () => {
             modsDrawDiffs: false,
             settingsModel: false,
             currentModel: codexCurrentModel,
+            subagentTranscript: expect.any(Function),
             honoursBareGlobQualifier: true,
             rendersAnsiDiffs: true,
             turnIsPromptId: false,

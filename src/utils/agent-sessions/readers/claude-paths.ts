@@ -1,9 +1,9 @@
 import { basename, dirname, join, relative, sep } from "node:path";
 import { resolveProjectNameFromEncoded } from "@genesiscz/utils/claude/projects";
 import type { NativeSessionSource, SessionPathRole } from "../types";
-import { isClaudeSubagentPath } from "./claude-subagent-path";
+import { claudeSubagentFiles, claudeSubagentsDir, isClaudeSubagentPath, SUBAGENTS } from "./claude-subagent-path";
 
-export { isClaudeSubagentPath };
+export { claudeSubagentFiles, claudeSubagentsDir, isClaudeSubagentPath };
 
 export function claudeNativeId(source: Pick<NativeSessionSource<string>, "root" | "filePath">): string {
     if (!isClaudeSubagentPath(source.filePath)) {
@@ -48,21 +48,7 @@ export function claudeProjectName(options: {
  * `<project>/<session>/subagents/agent-<id>.jsonl` with an `agent-<id>.meta.json` beside each, and a workflow's agents
  * deeper under `subagents/`. Every reader of the layout asks these, so a layout change is one edit here.
  */
-const SUBAGENTS = "subagents";
 const AGENT_FILE = /^agent-(.+)\.(jsonl|meta\.json)$/;
-
-/** The folder of a session's sub-agents, from the session's transcript path. */
-export function claudeSubagentsDir(sessionTranscript: string): string {
-    return join(dirname(sessionTranscript), basename(sessionTranscript, ".jsonl"), SUBAGENTS);
-}
-
-/** A sub-agent's transcript and its metadata file in a session's sub-agent folder. */
-export function claudeSubagentFiles(subagentsDir: string, agentId: string): { transcript: string; meta: string } {
-    return {
-        transcript: join(subagentsDir, `agent-${agentId}.jsonl`),
-        meta: join(subagentsDir, `agent-${agentId}.meta.json`),
-    };
-}
 
 /** The agent id of a sub-agent transcript's file name (`agent-<id>.jsonl`), or null for any other file. */
 export function claudeSubagentIdOf(fileName: string): string | null {

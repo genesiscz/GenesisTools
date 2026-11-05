@@ -8,6 +8,8 @@ export const codexHooks: HookFacts = {
     modsDrawDiffs: false,
     settingsModel: false,
     currentModel: codexCurrentModel,
+    // A Codex subagent thread writes its own rollout, which the thread id in its shell (CODEX_THREAD_ID) finds.
+    subagentTranscript: () => null,
     honoursBareGlobQualifier: true,
     rendersAnsiDiffs: true,
     turnIsPromptId: false,

@@ -1,3 +1,4 @@
+import type { AgentIdentity } from "@genesiscz/utils/agent/identity";
 import { closeQuestions, upsertQuestion } from "@genesiscz/utils/agents/dialogs/store";
 import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dialogs/types";
 import { questionCountOf, questionOptionsOf, questionTextOf } from "@genesiscz/utils/ai/transcripts/turn-state-core";
@@ -14,12 +15,16 @@ export interface QuestionHookAction {
     closes: "none" | "permissions" | "all";
 }
 
+/** Who ran the hook, as `hookCaller` names it: the payload first, then the env it inherited for the same caller. */
+export type QuestionHookCaller = Pick<AgentIdentity, "sessionId">;
+
 const PLAN_QUESTION = "Approve the plan?";
 const PERMISSION_QUESTION = "Permission needed";
 
 /**
  * The record change a hook payload asks for, or null when it says nothing about a question. Pure: the caller applies
- * it (`applyQuestionHookAction`).
+ * it (`applyQuestionHookAction`). The session is the caller's (`hookCaller`): the payload's own, or for a payload
+ * that names none, the session variable of the same harness the hook process inherited.
  *
  * - PreToolUse on a question tool: an open `decision` (AskUserQuestion, Grok `ask_user_question`) or `plan`
  *   (ExitPlanMode, `exit_plan_mode`), keyed by the call's `tool_use_id`. A payload without one is left to the hub
@@ -30,8 +35,14 @@ const PERMISSION_QUESTION = "Permission needed";
  *   session closes, because the harness only runs a tool after its prompt was answered.
  * - UserPromptSubmit and SessionEnd: every open record closes; a session at its prompt shows no dialog.
  */
-export function questionHookAction(payload: HookPayload, now: string): QuestionHookAction | null {
-    if (!payload.sessionId) {
+export function questionHookAction(
+    payload: HookPayload,
+    now: string,
+    caller: QuestionHookCaller
+): QuestionHookAction | null {
+    const sessionId = caller.sessionId;
+
+    if (!sessionId) {
         return null;
     }
 
@@ -49,7 +60,7 @@ export function questionHookAction(payload: HookPayload, now: string): QuestionH
         return {
             ask: {
                 provider: payload.harness,
-                sessionId: payload.sessionId,
+                sessionId,
                 toolCallId: payload.toolUseId,
                 kind: toolKind,
                 question: (toolKind === "plan" ? PLAN_QUESTION : questionTextOf(payload.toolInput)) ?? "",
@@ -70,7 +81,7 @@ export function questionHookAction(payload: HookPayload, now: string): QuestionH
         return {
             ask: {
                 provider: payload.harness,
-                sessionId: payload.sessionId,
+                sessionId,
                 toolCallId: `permission:${now}`,
                 kind: "permission",
                 question: payload.notificationMessage?.trim() || PERMISSION_QUESTION,
@@ -101,13 +112,13 @@ export interface QuestionHookResult {
     closed: string[];
 }
 
-/** Applies the action to the session's dialog records; `root` is the records root, for tests. */
+/** Applies the action to the caller's dialog records; `root` is the records root, for tests. */
 export async function applyQuestionHookAction(
     payload: HookPayload,
     action: QuestionHookAction,
-    { now, root }: { now: string; root?: string }
+    { now, root, caller }: { now: string; root?: string; caller: QuestionHookCaller }
 ): Promise<QuestionHookResult> {
-    const sessionId = payload.sessionId;
+    const sessionId = caller.sessionId;
 
     if (!sessionId) {
         return { recorded: null, closed: [] };

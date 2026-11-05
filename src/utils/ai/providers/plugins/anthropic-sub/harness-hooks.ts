@@ -1,4 +1,5 @@
 import { claudeCurrentModel } from "@genesiscz/utils/agent-sessions/readers/claude-model";
+import { claudeSubagentFiles, claudeSubagentsDir } from "@genesiscz/utils/agent-sessions/readers/claude-subagent-path";
 import type { HookFacts } from "@genesiscz/utils/harness/parts";
 
 /** The Claude driver's `hooks` part. */
@@ -8,6 +9,8 @@ export const claudeHooks: HookFacts = {
     modsDrawDiffs: true,
     settingsModel: true,
     currentModel: claudeCurrentModel,
+    subagentTranscript: (sessionTranscript, subagentId) =>
+        claudeSubagentFiles(claudeSubagentsDir(sessionTranscript), subagentId).transcript,
     // Claude Code sets NO_BARE_GLOB_QUAL, so `(N)` misfires in its shell.
     honoursBareGlobQualifier: false,
     rendersAnsiDiffs: true,

@@ -357,7 +357,7 @@ describe("a remote caller never takes the gateway's own env, terminal or account
 
         withGatewayEnv(() => {
             const identity = whoIsCalling(
-                { origin: "remote", peer: PEER },
+                { origin: "remote", caller: resolveCallerFromPeer(PEER) },
                 { facets: ["cwd", "git", "title", "transcript", "model", "host", "process"] }
             );
 
@@ -375,7 +375,10 @@ describe("a remote caller never takes the gateway's own env, terminal or account
         loopbackOwners = [];
 
         withGatewayEnv(() => {
-            const identity = whoIsCalling({ origin: "remote", peer: PEER }, { facets: ["host", "transcript"] });
+            const identity = whoIsCalling(
+                { origin: "remote", caller: resolveCallerFromPeer(PEER) },
+                { facets: ["host", "transcript"] }
+            );
 
             expect(identity).toMatchObject({ agent: "unknown", sessionId: null, isInAgent: false });
             expect(identity.terminal).toBeUndefined();

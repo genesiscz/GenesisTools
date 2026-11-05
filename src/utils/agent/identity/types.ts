@@ -4,7 +4,7 @@ import type { HarnessId } from "@genesiscz/utils/harness/types";
 export type { CallerAgent, CallerCore, ScopedCaller };
 
 /**
- * Where one fact came from. A source names the caller (`hook-payload`, `caller-scope`, `mcp-peer`, `env`); a facet
+ * Where one fact came from. A source names the caller (`hook-payload`, `caller-scope`, `env`); a facet
  * or an enricher describes it (`git`, `history`, `process`, `transcript`, `cmux`, `tmux`, `terminal` for the terminal
  * app, `account`, `t3code` for the
  * host's env thread id and `t3code-store` for the details read from the host's own database); `override` is a value
@@ -13,7 +13,6 @@ export type { CallerAgent, CallerCore, ScopedCaller };
 export type FactSource =
     | "hook-payload"
     | "caller-scope"
-    | "mcp-peer"
     | "env"
     | "override"
     | "fallback-cwd"
@@ -154,7 +153,7 @@ export interface HookCallerFacts {
     cwd?: string;
 }
 
-/** The loopback connection of a remote MCP caller, which the peer source resolves to its owning process. */
+/** The loopback connection of a remote MCP caller, which the gateway resolves to its owning process (`readPeerCaller`). */
 export interface PeerQuery {
     clientPort: number;
     serverPort: number;
@@ -178,10 +177,8 @@ export interface LocalCallerInput {
  */
 export interface RemoteCallerInput {
     origin: "remote";
-    /** The caller a request scope already holds. */
+    /** The caller a request scope holds; the gateway resolves it once per request from the connection's owner. */
     caller?: ScopedCaller;
-    /** The connection to resolve to its owning process. */
-    peer?: PeerQuery;
 }
 
 export type CallerInput = LocalCallerInput | RemoteCallerInput;

@@ -50,12 +50,16 @@ if (!asks && !hasOpenDialogRecords(payload.harness, payload.sessionId)) {
 }
 
 try {
-    const { applyQuestionHookAction, questionHookAction } = await import("../lib/hooks/questions");
+    const [{ applyQuestionHookAction, questionHookAction }, { hookCaller }] = await Promise.all([
+        import("../lib/hooks/questions"),
+        import("../lib/hooks/caller"),
+    ]);
     const now = new Date().toISOString();
-    const action = questionHookAction(payload, now);
+    const caller = hookCaller(payload, env.getProcessEnv());
+    const action = questionHookAction(payload, now, caller);
 
     if (action) {
-        const result = await applyQuestionHookAction(payload, action, { now });
+        const result = await applyQuestionHookAction(payload, action, { now, caller });
 
         if (result.recorded || result.closed.length > 0) {
             logDecision(
@@ -63,7 +67,7 @@ try {
                     at: now,
                     phase: "question",
                     harness: payload.harness,
-                    session: payload.sessionId,
+                    session: caller.sessionId ?? undefined,
                     toolUseId: payload.toolUseId,
                     decision: result.recorded ? "recorded" : "closed",
                     reason: `${payload.event}${payload.tool ? ` ${payload.tool}` : ""}`,

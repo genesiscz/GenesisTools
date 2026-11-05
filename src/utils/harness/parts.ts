@@ -255,6 +255,14 @@ export interface HookFacts {
      * (`readers/<harness>-model.ts`), here so a hook or the failure log reads it without loading a reader.
      */
     currentModel(transcriptPath: string): string | null;
+    /**
+     * The transcript of one of a session's subagents, from the session's transcript and the subagent's id. A Claude
+     * subagent's hook names the MAIN session's `transcript_path` (code.claude.com/docs/en/hooks, SubagentStop), and
+     * Claude keeps the subagent's own beside it (`<session>/subagents/agent-<id>.jsonl`), so its hook reads the
+     * subagent's model, not the parent's. Null where the lead's path names no such file: a Codex subagent thread has
+     * its own rollout, found by the thread id its shell carries, and no Grok subagent id was established.
+     */
+    subagentTranscript(sessionTranscript: string, subagentId: string): string | null;
     /** Its shell honours a bare zsh glob qualifier such as `(N)`, so the guard allows `zsh-glob-qualifier` there. */
     readonly honoursBareGlobQualifier: boolean;
     /** It renders a hook message with ANSI colour and in full, so the diff hook shows its diffs there. */

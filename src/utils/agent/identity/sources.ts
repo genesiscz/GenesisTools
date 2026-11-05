@@ -1,7 +1,6 @@
 import { copilotHost } from "@genesiscz/utils/agent/hosts/copilot";
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { envSource } from "./env";
-import { readPeerCaller } from "./peer";
 import type { CallerReading, CallerSource } from "./types";
 
 /** The hook payload of a local caller: it names the harness that ran the hook, read from the payload, not the env. */
@@ -27,7 +26,12 @@ export const hookPayloadSource: CallerSource = {
     },
 };
 
-/** The caller a resident server's request scope holds (`runAsCaller`); it replaces the env host completely. */
+/**
+ * The caller a resident server's request scope holds (`runAsCaller`); it replaces the env host completely. The MCP
+ * gateway fills the scope once per request from the connection's owner (`readPeerCaller`), so every caller in that
+ * request reads the scope and none repeats the `lsof` lookup. Its pid (when the request knows it) is the start of the
+ * `process` facet.
+ */
 export const callerScopeSource: CallerSource = {
     id: "caller-scope",
     read: (input) => {
@@ -35,11 +39,15 @@ export const callerScopeSource: CallerSource = {
             return undefined;
         }
 
-        const { agent, sessionId, cwd, sourceMessage } = input.caller;
+        const { agent, sessionId, cwd, sourceMessage, pid } = input.caller;
         const reading: CallerReading = { agent, sessionId, isInAgent: agent !== "unknown", aiAgent: null };
 
         if (cwd !== null) {
             reading.cwd = cwd;
+        }
+
+        if (typeof pid === "number") {
+            reading.process = { pid, ancestry: [] };
         }
 
         if (sourceMessage) {
@@ -50,39 +58,11 @@ export const callerScopeSource: CallerSource = {
     },
 };
 
-/** A remote MCP caller's connection, resolved to the host process that holds it (`lsof` and the process table). */
-export const mcpPeerSource: CallerSource = {
-    id: "mcp-peer",
-    read: (input) => {
-        if (input.origin !== "remote" || !input.peer) {
-            return undefined;
-        }
-
-        const peer = readPeerCaller(input.peer);
-        const reading: CallerReading = {
-            agent: peer.agent,
-            sessionId: peer.sessionId,
-            isInAgent: peer.agent !== "unknown",
-            aiAgent: null,
-        };
-
-        if (peer.cwd !== null) {
-            reading.cwd = peer.cwd;
-        }
-
-        if (peer.pid !== null) {
-            reading.process = { pid: peer.pid, ancestry: [] };
-        }
-
-        return reading;
-    },
-};
-
 /**
  * THE precedence rule, written once. A hook payload names the caller when there is one (a Codex worker spawned from
- * Claude inherits every CLAUDE_CODE_* variable, so the payload outranks the env); a resident server's request scope,
- * then the connection's owner, name a remote caller; the environment's host chain names a local one, outer host first.
+ * Claude inherits every CLAUDE_CODE_* variable, so the payload outranks the env); a resident server's request scope
+ * names a remote caller; the environment's host chain names a local one, outer host first.
  * The first source that names an agent chooses the caller; a later source adds facts only for the same agent and
  * session.
  */
-export const CALLER_SOURCES: readonly CallerSource[] = [hookPayloadSource, callerScopeSource, mcpPeerSource, envSource];
+export const CALLER_SOURCES: readonly CallerSource[] = [hookPayloadSource, callerScopeSource, envSource];

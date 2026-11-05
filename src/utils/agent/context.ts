@@ -21,6 +21,8 @@ export interface CallerCore {
 export interface ScopedCaller extends CallerCore {
     cwd: string | null;
     sourceMessage?: SourceMessage;
+    /** The caller's process, when the request knows it (the gateway's connection owner): the `process` facet starts here. */
+    pid?: number | null;
 }
 
 /**

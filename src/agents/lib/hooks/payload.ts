@@ -33,6 +33,11 @@ export interface HookPayload {
      * `no-hook-payload-read`): a harness that spells a field another way is one line in `parseHookPayload`.
      */
     transcriptPath?: string;
+    /**
+     * SubagentStop: the subagent's own transcript (Claude's `agent_transcript_path`). A subagent's other events name
+     * only the main session's `transcriptPath`.
+     */
+    agentTranscriptPath?: string;
     /** Stop hooks: the text of the reply the turn ended with, when the harness sends it. */
     lastAssistantMessage?: string;
     /** Stop hooks: true when this stop is already the result of a Stop hook's "continue". */
@@ -260,6 +265,7 @@ function readHookPayload(text: string): HookPayload | null {
         ...(turnField && str(raw[turnField]) ? { turnId: str(raw[turnField]) } : {}),
         nativeDiffFiles,
         transcriptPath: str(raw.transcriptPath) ?? str(raw.transcript_path),
+        agentTranscriptPath: str(raw.agentTranscriptPath) ?? str(raw.agent_transcript_path),
         lastAssistantMessage: str(raw.lastAssistantMessage) ?? str(raw.last_assistant_message),
         stopHookActive: bool(raw.stopHookActive) ?? bool(raw.stop_hook_active),
         toolInput: input,
@@ -274,8 +280,28 @@ function readHookPayload(text: string): HookPayload | null {
 }
 
 /**
+ * The transcript of the agent that made the call. A subagent's payload names the MAIN session's `transcript_path`, so
+ * its own is the payload's `agent_transcript_path` (SubagentStop) or the file its harness keeps beside the session
+ * (`HookFacts.subagentTranscript`); where the harness names none, the payload's path stands as it is.
+ */
+function callerTranscriptPath(payload: HookPayload): string | undefined {
+    const lead = payload.transcriptPath || undefined;
+
+    if (!payload.agentId || payload.agentTranscriptPath) {
+        return payload.agentTranscriptPath || lead;
+    }
+
+    const own =
+        lead && payload.caller !== "copilot"
+            ? HARNESS_HOOK_FACTS[payload.caller].subagentTranscript(lead, payload.agentId)
+            : null;
+    return own ?? lead;
+}
+
+/**
  * What the payload says about its caller, for the agent identity module (`whoIsCalling({ origin: "local", env, hook
- * })`). The cwd is the payload's own, never the `process.cwd()` fallback of `HookPayload.cwd`.
+ * })`). The cwd is the payload's own, never the `process.cwd()` fallback of `HookPayload.cwd`, and a subagent's
+ * transcript is its own (`callerTranscriptPath`), so its model is never its parent's.
  */
 export function hookCallerFacts(payload: HookPayload): HookCallerFacts {
     return {
@@ -285,7 +311,7 @@ export function hookCallerFacts(payload: HookPayload): HookCallerFacts {
         subagentId: payload.agentId,
         turnId: payload.turnId,
         model: payload.model || undefined,
-        transcriptPath: payload.transcriptPath || undefined,
+        transcriptPath: callerTranscriptPath(payload),
         cwd: str(payload.raw.cwd) || undefined,
     };
 }
