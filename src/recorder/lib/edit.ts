@@ -111,7 +111,7 @@ export interface OwnedEdit {
     readonly undoDepth: number;
     apply(
         ops: readonly EditOp[],
-        options: { by: string }
+        options: { by: string; baseRevision?: number }
     ): Promise<{
         project: EditProject;
         warnings?: string[];
@@ -308,19 +308,30 @@ const ARBITER_BUSY_WAIT_MS = 25;
 /**
  * Applies ops in order to the file as it is now (the window may have saved since the last read) and saves once. One
  * op that fails leaves the file as it was and names the op. When another writer saved while the ops ran, they run
- * again on its file; the save only happens on the file the ops last ran on.
+ * again on its file; the save only happens on the file the ops last ran on. `baseRevision`: refused with
+ * `staleRevision` when the edit is at another revision, then or when it saves, instead of running again.
  */
-export async function editProject(value: string, ops: readonly EditOp[]): Promise<OpenedProject> {
+export async function editProject(
+    value: string,
+    ops: readonly EditOp[],
+    options: { baseRevision?: number } = {}
+): Promise<OpenedProject> {
     const path = editPathOf(value);
     const owned = ownedEdit(path);
+    const { baseRevision } = options;
 
     if (owned) {
-        const answer = await owned.apply(ops, { by: "agent" });
+        const answer = await owned.apply(ops, { by: "agent", baseRevision });
         owned.flush();
         return { path, fresh: false, ...answer };
     }
 
     let opened = await openProject(value);
+
+    if (baseRevision !== undefined && opened.project.revision !== baseRevision) {
+        throw notAtBase(opened.project.revision, baseRevision);
+    }
+
     let edit = await computeEdit({ project: opened.project, ops, fresh: opened.fresh });
     let saved: EditProject | undefined;
 
@@ -347,6 +358,10 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
         if (attempt.outcome === "saved") {
             saved = attempt.value;
             break;
+        }
+
+        if (baseRevision !== undefined && attempt.outcome === "moved") {
+            throw notAtBase(diskRevision(base.path) ?? 0, baseRevision);
         }
 
         if (replay >= EDIT_REPLAYS) {
@@ -380,6 +395,11 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
         ...(edit.loudness ? { loudness: edit.loudness } : {}),
         ...(edit.warnings.length ? { warnings: edit.warnings } : {}),
     };
+}
+
+/** The refusal of an edit that named `baseRevision` while the edit is at another one. */
+function notAtBase(revision: number, baseRevision: number): RpcError {
+    return new RpcError(RPC_ERRORS.staleRevision, `the edit is at revision ${revision}, not ${baseRevision}`);
 }
 
 /** The revision of the edit file now, or null when it has none. */

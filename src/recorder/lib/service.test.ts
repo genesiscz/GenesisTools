@@ -690,6 +690,31 @@ describe("edits that run at the same time", () => {
         return answer;
     }
 
+    // Regression test: 2026-11-05 recorder service review, finding 5 — two edits naming one base revision both succeeded
+    test("of two edit.apply calls at once that name the same base revision, the second is refused", async () => {
+        const { service } = await serviceFixture();
+        const path = editFixture("rs-base-");
+        const clients = [await connect(service.entry), await connect(service.entry)];
+        const held = holdComputations(2);
+        const answers = clients.map((client, index) =>
+            client
+                .call<{ revision: number }>("edit.apply", {
+                    path,
+                    baseRevision: 1,
+                    ops: [{ op: "text", from: 1, to: 2, text: `client ${index}` }],
+                })
+                .then(
+                    (answer) => answer.revision,
+                    (error: unknown) => Reflect.get(Object(error), "code")
+                )
+        );
+        await held.entered;
+        held.release();
+
+        expect((await Promise.all(answers)).sort((a, b) => a - b)).toEqual([2, RPC_ERRORS.staleRevision]);
+        expect(readProject(path).texts).toHaveLength(1);
+    });
+
     // Regression test: 2026-11-05 recorder service review, finding 4 — a cancelled edit still saved after its answer
     test("an edit.apply cancelled while it computes is never saved to the file", async () => {
         const { service } = await serviceFixture();

@@ -6,7 +6,6 @@ import { logger } from "@genesiscz/utils/logger";
 import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { claimPidFile, clearPidFile } from "@genesiscz/utils/process/pidfile";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
-import { readProject } from "@genesiscz/utils/recording-editor/project";
 import type { RpcCallContext } from "@genesiscz/utils/rpc/peer";
 import { type RpcConnection, RpcSocketServer } from "@genesiscz/utils/rpc/socket-server";
 import { RPC_ERRORS, RpcError } from "@genesiscz/utils/screen-recorder/control";
@@ -357,19 +356,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
                 return answer;
             }
 
-            if (params.baseRevision !== undefined) {
-                const path = editPathOf(params.path);
-                const revision = existsSync(path) ? readProject(path).revision : 0;
-
-                if (revision !== params.baseRevision) {
-                    throw new RpcError(
-                        RPC_ERRORS.staleRevision,
-                        `the edit is at revision ${revision}, not ${params.baseRevision}`
-                    );
-                }
-            }
-
-            const opened = await editProject(params.path, params.ops);
+            const opened = await editProject(params.path, params.ops, { baseRevision: params.baseRevision });
             return {
                 revision: opened.project.revision,
                 project: opened.project,
