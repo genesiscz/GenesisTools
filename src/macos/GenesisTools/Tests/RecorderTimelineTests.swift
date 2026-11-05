@@ -543,6 +543,35 @@ final class RecorderTimelineTests: XCTestCase {
         return EditorModel.on(service, store: ProjectStore(url: own.appendingPathComponent("edit.json")))
     }
 
+    // The plan's A7 (2026-11-04): a comment from a board names its annotation. The sheet sends the board's link and the
+    // annotation's number; the recorder writes the annotation's link (board-comments.ts commentLink), which the comment opens.
+    func testTheCommentSheetSendsTheBoardLinkAndTheAnnotationNumberAndAnAnnotationLinkOpensAsOne() throws {
+        let model = cameraModel()
+        service.serviceMethods.append("movie.comment")
+        let board = "https://app.example.test/w/team/boards/demo?card=4"
+        model.addComment(fromOut: 2_000_000, toOut: nil, text: "the cursor jumps", link: board, annotation: 12)
+        let sent = try XCTUnwrap(service.calls.first { $0.method == "movie.comment" }?.params)
+        XCTAssertEqual(sent["text"] as? String, "the cursor jumps")
+        XCTAssertEqual(sent["link"] as? String, board)
+        XCTAssertEqual((sent["annotation"] as? NSNumber)?.intValue, 12)
+        model.addComment(fromOut: 3_000_000, toOut: nil, text: "no link", link: " ", annotation: nil)
+        let plain = try XCTUnwrap(service.calls.last { $0.method == "movie.comment" }?.params)
+        XCTAssertNil(plain["link"], "an empty link field sends no link")
+        XCTAssertNil(plain["annotation"])
+
+        XCTAssertEqual(try EditorModel.annotationNumber(""), nil)
+        XCTAssertEqual(try EditorModel.annotationNumber(" #12 "), 12)
+        XCTAssertEqual(try EditorModel.annotationNumber("7"), 7)
+        XCTAssertThrowsError(try EditorModel.annotationNumber("twelve"))
+        XCTAssertThrowsError(try EditorModel.annotationNumber("0"))
+
+        func comment(_ link: String?) -> ReviewComment {
+            ReviewComment(id: "c1", atUs: 0, text: "x", link: link, at: "2026-11-05T07:00:00Z")
+        }
+        XCTAssertEqual(comment("\(board)#annotation-12").linkTitle, "Open the Annotation")
+        XCTAssertEqual(comment("https://github.example.test/acme/demo/pull/9").linkTitle, "Open Its Page")
+    }
+
     // The lead's list of 2026-11-05 07:55, item 1: window.close closes the editor its path names, and refuses while a
     // drag is not saved yet, since closing would drop the drag.
     func testAnEditorWithADragNotSavedYetRefusesToCloseAndItsPathIsItsFolderEditOrMovie() {

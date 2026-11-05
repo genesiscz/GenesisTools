@@ -682,7 +682,7 @@ private struct CommentPopover: View {
             .font(.system(size: 11)).foregroundStyle(.secondary)
             HStack(spacing: 10) {
                 if let link = comment.link, let url = URL(string: link) {
-                    Button("Open Its Page") { NSWorkspace.shared.open(url) }
+                    Button(comment.linkTitle) { NSWorkspace.shared.open(url) }
                         .buttonStyle(.genHoverPlain())
                         .instantTooltip(link)
                 }

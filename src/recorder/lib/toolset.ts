@@ -803,12 +803,13 @@ const movieMethods = [
                 text: z.string().min(1).max(2000),
                 author: z.string().max(80).optional(),
                 link: z.string().url().optional(),
+                annotation: z.number().int().positive().optional(),
                 source: z.boolean().optional(),
             })
             .strict(),
         result: z.unknown(),
         resultName: "{ path, comment }",
-        doc: 'A review comment at `at` (to: the end of a range) in OUTPUT seconds or "m:ss", what plays, as a reviewer of the export sees it; source: true takes times of the recording itself. link: the page it came from (a vitrinka board, a PR). The editor window shows it at once.',
+        doc: "A review comment at `at` (to: the end of a range) in OUTPUT seconds or \"m:ss\", what plays, as a reviewer of the export sees it; source: true takes times of the recording itself. link: the page it came from (a vitrinka annotation's link, a board, a PR); annotation: that annotation's number on the board link names, so the comment opens it. The editor window shows it at once.",
         effect: "reversible",
     }),
     defineMethod({
@@ -1859,6 +1860,7 @@ export class Movie {
         text: string;
         author?: string;
         link?: string;
+        annotation?: number;
         source?: boolean;
     }) {
         return commentOn(this.recording, options);

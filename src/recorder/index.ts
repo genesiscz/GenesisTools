@@ -442,23 +442,45 @@ const reviewFail = (error: unknown) => {
 const commentCommand = program
     .command("comment")
     .description(
-        "Add a review comment at a time of the edit (OUTPUT seconds or m:ss, what plays); the editor shows it as a marker on the timeline"
+        "Add a review comment at a time of the edit (OUTPUT seconds or m:ss, what plays); the editor shows it as a marker on the timeline. `comment add <recording> <at> <text>` is the same command"
     )
     .argument("<recording>", "a library id, `last`, `open` or a recording folder")
     .argument("<at>", "where it is: seconds, m:ss or h:mm:ss of what plays")
     .argument("<text>", "the comment")
     .option("--to <time>", "the end of the commented range")
     .option("--author <name>", "who wrote it")
-    .option("--link <url>", "the page it came from (a review board, a PR)")
+    .option(
+        "--link <url>",
+        "the page it came from: a vitrinka annotation's link, a board's link (with --annotation), a PR"
+    )
+    .option("--annotation <number>", "the annotation's number on the board --link names: the comment opens it")
     .option("--source", "at and --to are times of the recording itself, not of the edit")
+    // `comment add …` is taken here, not as a subcommand: commander would give an `add` subcommand's options to
+    // `comment` itself, which has the same ones.
+    .allowExcessArguments()
     .action(
         async (
-            value: string,
-            at: string,
-            text: string,
-            flags: { to?: string; author?: string; link?: string; source?: boolean }
+            _recording: string,
+            _at: string,
+            _text: string,
+            flags: { to?: string; author?: string; link?: string; annotation?: string; source?: boolean },
+            command: Command
         ) => {
             try {
+                const words = command.args;
+                const named = words[0] === "add" ? words.slice(1) : words;
+
+                if (named.length !== 3) {
+                    throw new Error(
+                        `comment${words[0] === "add" ? " add" : ""} takes <recording> <at> <text>, not ${named.length} words; quote a comment that has spaces`
+                    );
+                }
+
+                if (flags.annotation !== undefined && !/^\d+$/.test(flags.annotation)) {
+                    throw new Error(`--annotation takes the annotation's number, not "${flags.annotation}"`);
+                }
+
+                const [value, at, text] = named;
                 out.result(
                     await commentOn(value, {
                         at: parseTime(at, "<at>"),
@@ -466,6 +488,7 @@ const commentCommand = program
                         text,
                         author: flags.author,
                         link: flags.link,
+                        annotation: flags.annotation === undefined ? undefined : Number(flags.annotation),
                         source: flags.source,
                     })
                 );

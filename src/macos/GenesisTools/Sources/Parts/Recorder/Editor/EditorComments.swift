@@ -5,8 +5,10 @@ import AppKit
 /// side writes them (src/utils/recording-editor/comments.ts) and the window reads the file (ReviewComments.swift).
 extension EditorModel {
     /// Adds a comment over what plays from `fromOut` (to `toOut`), stored at the source times there: the REPL's
-    /// comment() on the recorder service, else `tools recorder comment --source`.
-    func addComment(fromOut: Int64, toOut: Int64?, text: String) {
+    /// comment() on the recorder service, else `tools recorder comment --source`. `link` is the page it came from: a
+    /// vitrinka annotation's link, or the board's link with `annotation`, the annotation's number; the recorder writes
+    /// the annotation's link from them (src/recorder/lib/board-comments.ts `commentLink`), so the comment opens it.
+    func addComment(fromOut: Int64, toOut: Int64?, text: String, link: String? = nil, annotation: Int? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let at = EditOpDiff.seconds(TimelineMap.sourceTime(atOutput: fromOut, in: project))
@@ -16,6 +18,14 @@ extension EditorModel {
         if let to {
             params["to"] = to
             argv += ["--to", String(format: "%.6f", to)]
+        }
+        if let page = link?.trimmingCharacters(in: .whitespacesAndNewlines), !page.isEmpty {
+            params["link"] = page
+            argv += ["--link", page]
+        }
+        if let annotation {
+            params["annotation"] = annotation
+            argv += ["--annotation", String(annotation)]
         }
         if !NSFullUserName().isEmpty {
             params["author"] = NSFullUserName()
@@ -45,22 +55,48 @@ extension EditorModel {
         }
     }
 
-    /// Asks for the comment's words, then adds it at the playhead (or over `range`).
+    /// The annotation number typed in the comment sheet ("12" or "#12"); nil when the field is empty.
+    nonisolated static func annotationNumber(_ typed: String) throws -> Int? {
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard let number = Int(trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed), number > 0 else {
+            throw ApplyFailure(reason: "the annotation is its number on the board, such as 12, not “\(trimmed)”")
+        }
+        return number
+    }
+
+    /// Asks for the comment's words, and optionally the page it came from (a board annotation's link, or the board's
+    /// link and the annotation's number), then adds it at the playhead (or over `range`).
     func commentPrompt(range: TimelineRange? = nil) {
         let from = range?.fromUs ?? clock.outUs
         let alert = NSAlert()
         alert.messageText = range == nil ? "Comment at \(formatClock(from, tenths: true))"
             : "Comment on \(formatClock(from, tenths: true)) – \(formatClock(range?.toUs ?? from, tenths: true))"
-        alert.informativeText = "It shows as a marker on the timeline, and tools recorder comments lists it."
+        alert.informativeText = "It shows as a marker on the timeline, and tools recorder comments lists it. A board annotation's link, or the board's link and the annotation's number, makes it open that annotation."
         let field = NSTextField(string: "")
         field.placeholderString = "What should change here?"
-        field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
-        alert.accessoryView = field
+        let page = NSTextField(string: "")
+        page.placeholderString = "Link (optional): a board annotation, a board, a PR"
+        let number = NSTextField(string: "")
+        number.placeholderString = "Annotation number on that board (optional)"
+        let fields = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 88))
+        for (row, each) in [number, page, field].enumerated() {
+            each.frame = NSRect(x: 0, y: CGFloat(row) * 32, width: 320, height: 24)
+            fields.addSubview(each)
+        }
+        field.nextKeyView = page
+        page.nextKeyView = number
+        alert.accessoryView = fields
         alert.addButton(withTitle: "Add Comment")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        addComment(fromOut: from, toOut: range?.toUs, text: field.stringValue)
+        do {
+            addComment(fromOut: from, toOut: range?.toUs, text: field.stringValue, link: page.stringValue,
+                       annotation: try Self.annotationNumber(number.stringValue))
+        } catch {
+            show("The comment was not saved: \((error as? ApplyFailure)?.reason ?? error.localizedDescription)", error: true)
+        }
     }
 
     func resolveComment(_ id: String, _ resolved: Bool) {

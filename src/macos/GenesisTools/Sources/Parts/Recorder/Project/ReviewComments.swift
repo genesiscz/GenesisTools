@@ -18,6 +18,9 @@ struct ReviewComment: Codable, Equatable, Identifiable {
     var at: String
 
     var isResolved: Bool { resolved == true }
+
+    /// The comment popover's link button: a board annotation's link opens the annotation, any other link its page.
+    var linkTitle: String { link?.contains("#annotation-") == true ? "Open the Annotation" : "Open Its Page" }
 }
 
 enum ReviewComments {

@@ -9,7 +9,7 @@ import {
 } from "@genesiscz/utils/recording-editor/comments";
 import { type TimeValue, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import { type EditProject, outputTimeOf, sourceTimeOf } from "@genesiscz/utils/recording-editor/project";
-import { type BoardDigestReader, parseBoardRef, planBoardImport, readBoardDigest } from "./board-comments";
+import { type BoardDigestReader, commentLink, parseBoardRef, planBoardImport, readBoardDigest } from "./board-comments";
 import { openProject } from "./edit";
 
 /**
@@ -46,10 +46,23 @@ export async function commentsOf(value: string) {
     return { path, comments: readComments(path).map((comment) => shown(comment, project)) };
 }
 
+/**
+ * A comment at `at` (to `to`). `link` is the page it came from; a vitrinka annotation link, or the board's link with
+ * `annotation` (the annotation's number), is kept as the annotation's link (`commentLink`), so the comment opens it.
+ */
 export async function commentOn(
     value: string,
-    options: { at: TimeValue; to?: TimeValue; text: string; author?: string; link?: string; source?: boolean }
+    options: {
+        at: TimeValue;
+        to?: TimeValue;
+        text: string;
+        author?: string;
+        link?: string;
+        annotation?: number;
+        source?: boolean;
+    }
 ) {
+    const link = commentLink({ link: options.link, annotation: options.annotation });
     const { project, path } = await opened(value);
     const toSource = (time: TimeValue) => (options.source ? timeToUs(time) : sourceTimeOf(project, timeToUs(time)));
     const comment = addComment(path, {
@@ -57,7 +70,7 @@ export async function commentOn(
         ...(options.to === undefined ? {} : { toUs: toSource(options.to) }),
         text: options.text,
         author: options.author,
-        link: options.link,
+        link,
     });
     return { path, comment: shown(comment, project) };
 }

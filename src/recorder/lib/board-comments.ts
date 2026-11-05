@@ -143,7 +143,10 @@ export function promptTime(prompt: string): { atSec: number; toSec?: number; res
     };
 }
 
-/** The link a comment keeps: the board at the annotation's card, the annotation as the fragment. Also the import key. */
+/**
+ * The link a comment keeps: the board at the annotation's card (when known), the annotation as the fragment. Also the
+ * import key.
+ */
 export function annotationLink({
     origin,
     workspace,
@@ -154,10 +157,54 @@ export function annotationLink({
     origin: string;
     workspace: string;
     board: string;
-    card: number;
+    card?: number;
     annotation: number;
 }): string {
-    return `${origin}/w/${encodeURIComponent(workspace)}/boards/${encodeURIComponent(board)}?card=${card}#annotation-${annotation}`;
+    const at = card === undefined ? "" : `?card=${card}`;
+    return `${origin}/w/${encodeURIComponent(workspace)}/boards/${encodeURIComponent(board)}${at}#annotation-${annotation}`;
+}
+
+/**
+ * The link a typed comment keeps. A board annotation (`link` an annotation link `…/boards/<slug>?card=<id>#annotation-<n>`,
+ * or `link` the board's link and `annotation` its number) is written as `annotationLink` writes it, so the comment
+ * opens the annotation and a later import of the board finds it taken in already; any other link stays as given. Reads
+ * no board: the card is the link's `?card=`, or none.
+ */
+export function commentLink({ link, annotation }: { link?: string; annotation?: number }): string | undefined {
+    if (link === undefined) {
+        if (annotation !== undefined) {
+            throw new Error(`annotation ${annotation} needs the board's link (https://…/w/<workspace>/boards/<slug>)`);
+        }
+
+        return undefined;
+    }
+
+    const url = URL.canParse(link) ? new URL(link) : undefined;
+    const named = url ? /^#annotation-(\d+)$/.exec(url.hash)?.[1] : undefined;
+    const number = annotation ?? (named === undefined ? undefined : Number(named));
+
+    if (number === undefined) {
+        return link;
+    }
+
+    if (!url || !/^\/w\/[^/]+\/boards\/[^/?#]+/.test(url.pathname)) {
+        throw new Error(
+            `${link} is not a vitrinka board link (…/w/<workspace>/boards/<slug>), so annotation ${number} has no board`
+        );
+    }
+
+    if (named !== undefined && Number(named) !== number) {
+        throw new Error(`${link} names annotation ${named}, not ${number}`);
+    }
+
+    const ref = parseBoardRef(link);
+    return annotationLink({
+        origin: url.origin,
+        workspace: ref.workspace ?? "",
+        board: ref.board,
+        card: ref.card,
+        annotation: number,
+    });
 }
 
 /**

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { readComments } from "@genesiscz/utils/recording-editor/comments";
 import { wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import { type BoardDigestReader, type BoardRef, parseBoardRef, promptTime } from "./board-comments";
-import { importBoardComments, uncomment } from "./review";
+import { commentOn, importBoardComments, uncomment } from "./review";
 
 const root = mkdtempSync(join(tmpdir(), "gt-test-board-comments-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -184,5 +184,53 @@ describe("importing a board's annotations as review comments", () => {
         expect(result.wouldAdd).toHaveLength(3);
         expect(result.added).toEqual([]);
         expect(existsSync(result.path)).toBe(false);
+    });
+});
+
+// The plan's A7 (2026-11-04): a comment typed from a board names its annotation, so the comment opens it there.
+describe("a comment from a board annotation", () => {
+    const board = "https://app.example.test/w/team/boards/demo-review";
+
+    it("keeps the annotation's link, from an annotation link or the board's link and a number, as the import writes it", async () => {
+        const path = recording("typed");
+        const byNumber = await commentOn(path, {
+            at: 12,
+            text: "the cursor jumps",
+            link: `${board}?card=11`,
+            annotation: 101,
+        });
+        const byLink = await commentOn(path, {
+            at: 3,
+            text: "too early",
+            link: `${board}?view=grid&card=11#annotation-102`,
+        });
+        const noCard = await commentOn(path, { at: 4, text: "a note", link: board, annotation: 7 });
+        const page = await commentOn(path, {
+            at: 5,
+            text: "see the PR",
+            link: "https://github.example.test/acme/demo/pull/9",
+        });
+
+        expect(byNumber.comment.link).toBe(`${board}?card=11#annotation-101`);
+        expect(byLink.comment.link).toBe(`${board}?card=11#annotation-102`);
+        expect(noCard.comment.link).toBe(`${board}#annotation-7`);
+        expect(page.comment.link).toBe("https://github.example.test/acme/demo/pull/9");
+
+        const { read } = fixtureReader();
+        const imported = await importBoardComments(path, { board: `${board}?card=11`, read });
+        expect(imported.added).toEqual([]);
+        expect(imported.alreadyImported).toBe(2);
+    });
+
+    it("refuses a number without a board's link, and a link that names another annotation", async () => {
+        const path = recording("typed-refused");
+
+        await expect(commentOn(path, { at: 1, text: "x", annotation: 101 })).rejects.toThrow("needs the board's link");
+        await expect(
+            commentOn(path, { at: 1, text: "x", link: "https://github.example.test/acme/demo/pull/9", annotation: 101 })
+        ).rejects.toThrow("not a vitrinka board link");
+        await expect(
+            commentOn(path, { at: 1, text: "x", link: `${board}#annotation-5`, annotation: 6 })
+        ).rejects.toThrow("names annotation 5");
     });
 });
