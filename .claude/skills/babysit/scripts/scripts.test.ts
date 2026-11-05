@@ -39,9 +39,11 @@ import {
     judge,
     judgeOwn,
     moveBlocker,
+    OpenFiles,
     openPaths,
     ownBuildOutput,
     ownSessionDirs,
+    recentOpenFiles,
 } from "./tmp-reclaim";
 import {
     conflictedFiles,
@@ -1705,6 +1707,41 @@ describe("round 1 regression guards", () => {
         }
     });
 
+    test("OpenFiles holds an open path and every folder above it, never a sibling that shares a prefix", () => {
+        const open = new OpenFiles(["/fixture/root/a/b/held.log", "/fixture/root/other.txt"]);
+        for (const path of [
+            "/fixture/root/a/b/held.log",
+            "/fixture/root/a/b",
+            "/fixture/root/a",
+            "/fixture/root",
+            "/fixture/root/other.txt",
+        ]) {
+            expect(open.holds(path)).toBe(true);
+        }
+        for (const path of ["/fixture/root/a/bc", "/fixture/root/a/b/held", "/fixture/elsewhere", "/"]) {
+            expect(open.holds(path)).toBe(false);
+        }
+    });
+
+    test("recentOpenFiles reads a new listing only once the last one is older than the limit", () => {
+        let clock = 1_000;
+        let reads = 0;
+        const recent = recentOpenFiles(
+            5_000,
+            () => {
+                reads++;
+                return new OpenFiles([], clock);
+            },
+            () => clock
+        );
+        const first = recent();
+        clock += 5_000;
+        expect(recent()).toBe(first);
+        clock += 1;
+        expect(recent()).not.toBe(first);
+        expect(reads).toBe(2);
+    });
+
     test("executable probes remain on disk after success and timeout", async () => {
         const original = Bun.spawn;
         const files: string[] = [];
@@ -3166,28 +3203,33 @@ describe("round 7 additional review regressions", () => {
 });
 
 describe("round 8 review regressions", () => {
-    test("reclaim refreshes lsof before every rename and stops closed if that refresh fails", () => {
+    test("reclaim judges with one recent lsof listing, reads one more after the last move, and puts back what it shows open", () => {
         for (const mode of ["open", "failure"]) {
-            const dir = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "babysit-open-refresh-")));
+            const dir = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "babysit-open-after-move-")));
             const root = join(dir, "tmp");
             const run = join(dir, "run");
-            for (const folder of [root, run, join(root, "fixture-first"), join(root, "fixture-second")]) {
+            const names = [
+                "fixture-first",
+                "fixture-second",
+                ...Array.from({ length: 20 }, (_, index) => `fixture-extra-${index}`),
+            ];
+            for (const folder of [root, run, ...names.map((name) => join(root, name))]) {
                 fs.mkdirSync(folder);
             }
-            const first = join(root, "fixture-first");
             const second = join(root, "fixture-second");
             fs.writeFileSync(join(second, "held.txt"), "fixture");
             const plan = join(dir, "plan.json");
             const moves = join(dir, "moves.txt");
+            const reads = join(dir, "reads.txt");
             const preload = join(dir, "preload.ts");
             fs.writeFileSync(
                 plan,
                 SafeJSON.stringify({
                     createdAt: Date.now(),
                     minAgeHours: 0,
-                    candidates: [first, second].map((path) => ({
-                        path,
-                        ino: fs.lstatSync(path).ino,
+                    candidates: names.map((name) => ({
+                        path: join(root, name),
+                        ino: fs.lstatSync(join(root, name)).ino,
                         bytes: 0,
                         newest: 0,
                     })),
@@ -3206,12 +3248,22 @@ describe("round 8 review regressions", () => {
                     "mock.module(" +
                         SafeJSON.stringify(providers) +
                         ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
-                    "let reads=0; Bun.spawnSync=(args)=>{if(args[0] !== 'lsof') throw new Error('unexpected command'); reads++;",
-                    "const failure=reads >= 3 && " + SafeJSON.stringify(mode) + " === 'failure';",
-                    "const open=reads >= 3 ? " +
-                        SafeJSON.stringify(second + "/held.txt") +
-                        " : '/unrelated-fixture-file';",
-                    "return {exitCode:failure?1:0,stdout:Buffer.from('p1\\nn'+open+'\\n'),stderr:Buffer.alloc(0)};};",
+                    // The first listing shows nothing in the fixtures. The one after the moves shows held.txt where
+                    // lsof names it by then, inside this apply's quarantine, or fails in the failure mode.
+                    "Bun.spawnSync=(args)=>{if(args[0] !== 'lsof') throw new Error('unexpected command');",
+                    "original.appendFileSync(" +
+                        SafeJSON.stringify(reads) +
+                        ",'x'); const n=original.readFileSync(" +
+                        SafeJSON.stringify(reads) +
+                        ",'utf8').length;",
+                    "if(n >= 2 && " +
+                        SafeJSON.stringify(mode) +
+                        " === 'failure') return {exitCode:1,stdout:Buffer.alloc(0),stderr:Buffer.from('fixture failure')};",
+                    "const held=n >= 2 ? original.readdirSync(" +
+                        SafeJSON.stringify(root) +
+                        ",{recursive:true}).map(String).find((p)=>p.includes('.tmp-reclaim-') && p.endsWith('fixture-second/held.txt')) : undefined;",
+                    "const open=held ? " + SafeJSON.stringify(root) + "+'/'+held : '/unrelated-fixture-file';",
+                    "return {exitCode:0,stdout:Buffer.from('p1\\nn'+open+'\\n'),stderr:Buffer.alloc(0)};};",
                 ].join("\n")
             );
             const result = Bun.spawnSync(
@@ -3228,15 +3280,24 @@ describe("round 8 review regressions", () => {
                 ],
                 { stdout: "pipe", stderr: "pipe", env: { ...env.getProcessEnv(), TMPDIR: root }, timeout: 5000 }
             );
-            expect(result.exitCode).toBe(mode === "open" ? 0 : 1);
-            expect(fs.existsSync(first)).toBe(false);
-            expect(fs.existsSync(second)).toBe(true);
-            expect(fs.readFileSync(moves, "utf8").trim().split("\n")).toEqual([first]);
+            // One listing judged all 22 entries and one more cleared the delete, never one listing per entry.
+            expect(fs.readFileSync(reads, "utf8").length).toBe(2);
             expect(fs.readdirSync(root).filter((name) => name.startsWith(".tmp-reclaim-"))).toEqual([]);
+            const renames = fs.readFileSync(moves, "utf8").trim().split("\n");
             if (mode === "open") {
+                expect(result.exitCode).toBe(0);
+                // The held entry is back at its place with its file; every other entry is gone.
+                expect(fs.readFileSync(join(second, "held.txt"), "utf8")).toBe("fixture");
+                expect(names.filter((name) => fs.existsSync(join(root, name)))).toEqual(["fixture-second"]);
+                expect(renames).toHaveLength(names.length + 1);
+                expect(result.stdout.toString()).toContain(`removed ${names.length - 1} of ${names.length}`);
                 expect(result.stdout.toString()).toContain('"open-file":1');
             } else {
+                // No listing after the moves clears nothing: every moved entry goes back and nothing is deleted.
+                expect(result.exitCode).toBe(1);
                 expect(result.stderr.toString()).toContain("lsof listing incomplete");
+                expect(names.filter((name) => fs.existsSync(join(root, name)))).toEqual(names);
+                expect(renames).toHaveLength(names.length * 2);
             }
         }
     });
@@ -6409,19 +6470,21 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         fs.writeFileSync(join(triple, "fix.patch"), "a patch");
         expect(fs.lstatSync(triple).ino).toBe(before);
         expect(buildOutputKind(triple)).toBeNull();
-        expect(judgeOwn(triple, { sessionDirs: [dir], open: [], minAgeMinutes: 0 })).toBe("not-build-output");
+        expect(judgeOwn(triple, { sessionDirs: [dir], open: new OpenFiles([]), minAgeMinutes: 0 })).toBe(
+            "not-build-output"
+        );
     });
 
     test("judgeOwn keeps the guards: recent, open, FIFO, outside the session, not build output", () => {
         const { cc, dir } = plantSession();
         // A change time can sit a millisecond ahead of Date.now(); with a zero age limit that still reads as recent.
         Bun.sleepSync(20);
-        const options = { sessionDirs: [dir], open: [] as string[], minAgeMinutes: 0 };
+        const options = { sessionDirs: [dir], open: new OpenFiles([]), minAgeMinutes: 0 };
         const hub = join(dir, "pluggable/b-hub");
         const verdict = judgeOwn(hub, options);
         expect(typeof verdict === "string" ? verdict : verdict.path).toBe(hub);
         expect(judgeOwn(hub, { ...options, minAgeMinutes: 10 })).toBe("recent");
-        expect(judgeOwn(hub, { ...options, open: [join(hub, "build.db")] })).toBe("open-file");
+        expect(judgeOwn(hub, { ...options, open: new OpenFiles([join(hub, "build.db")]) })).toBe("open-file");
         const asideInHub = { dir: join(hub, "arm64-apple-macosx"), requestId: "asdown" };
         expect(judgeOwn(hub, { ...options, pending: [asideInHub] })).toBe("aside-pending");
         expect(judgeOwn(join(dir, "pluggable/b-notes"), options)).toBe("not-build-output");
@@ -6456,7 +6519,7 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         const listed = ownBuildOutput(dir);
         expect(listed.filter((path) => path.includes("/.tmp-reclaim-"))).toEqual([legacy, orphan, shared, live].sort());
         Bun.sleepSync(20);
-        const options = { sessionDirs: [dir], open: [] as string[], minAgeMinutes: 0 };
+        const options = { sessionDirs: [dir], open: new OpenFiles([]), minAgeMinutes: 0 };
         for (const taken of [orphan, legacy]) {
             const verdict = judgeOwn(taken, options);
             expect(typeof verdict === "string" ? verdict : verdict.path).toBe(taken);
@@ -6464,9 +6527,9 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         expect(judgeOwn(live, options)).toBe("live-quarantine");
         expect(judgeOwn(shared, options)).toBe("not-build-output");
         expect(judgeOwn(nested, options)).toBe("not-build-output");
-        expect(judgeOwn(orphan, { ...options, open: [join(orphan, "0-arm64-apple-macosx/debug/App.o")] })).toBe(
-            "open-file"
-        );
+        expect(
+            judgeOwn(orphan, { ...options, open: new OpenFiles([join(orphan, "0-arm64-apple-macosx/debug/App.o")]) })
+        ).toBe("open-file");
     });
 
     test("the session is found by its full uuid only", () => {
@@ -6564,7 +6627,7 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         Bun.sleepSync(20);
         // The dry run's own steps: list, then judge each entry.
         const planned = ownBuildOutput(dir).flatMap((path) => {
-            const verdict = judgeOwn(path, { sessionDirs: [dir], open: [], minAgeMinutes: 0 });
+            const verdict = judgeOwn(path, { sessionDirs: [dir], open: new OpenFiles([]), minAgeMinutes: 0 });
             return typeof verdict === "string" || verdict.path !== orphan ? [] : [verdict];
         });
         expect(planned.map((candidate) => candidate.path)).toEqual([orphan]);
@@ -6617,11 +6680,11 @@ describe("tmp-reclaim never lists a pending aside copy", () => {
         const protection = { ids: [], paths: [] };
         saveRmRequest(request);
 
-        expect(judge(scratch, protection, [], pendingAsideDirs())).toBe("aside-pending");
-        expect(judge(asideDir, protection, [], pendingAsideDirs())).toBe("aside-pending");
+        expect(judge(scratch, protection, new OpenFiles([]), pendingAsideDirs())).toBe("aside-pending");
+        expect(judge(asideDir, protection, new OpenFiles([]), pendingAsideDirs())).toBe("aside-pending");
 
         saveRmRequest({ ...request, status: "denied" });
-        expect(judge(scratch, protection, [], pendingAsideDirs())).not.toBe("aside-pending");
+        expect(judge(scratch, protection, new OpenFiles([]), pendingAsideDirs())).not.toBe("aside-pending");
     });
 
     test("the guard right before an apply move reads the pending asides again, so one made during the scan counts", () => {
@@ -6630,7 +6693,7 @@ describe("tmp-reclaim never lists a pending aside copy", () => {
         fs.mkdirSync(asideDir, { recursive: true });
         fs.writeFileSync(join(asideDir, "0-y-copy.txt"), "y");
         // The plan was judged before this request existed; the move guard must not trust that snapshot.
-        expect(moveBlocker(scratch, { open: [] })).toBeNull();
+        expect(moveBlocker(scratch, { open: new OpenFiles([]) })).toBeNull();
         const request: RmRequest = {
             id: "asdlat",
             kind: "delete",
@@ -6652,12 +6715,14 @@ describe("tmp-reclaim never lists a pending aside copy", () => {
         };
         saveRmRequest(request);
 
-        expect(moveBlocker(scratch, { open: [] })).toBe("aside-pending");
-        expect(moveBlocker(asideDir, { open: [] })).toBe("aside-pending");
-        expect(moveBlocker(scratch, { open: [join(scratch, "held.log")], pending: [] })).toBe("open-file");
-        expect(moveBlocker(join(scratch, "nothing-here"), { open: [], pending: [] })).toBe("gone");
+        expect(moveBlocker(scratch, { open: new OpenFiles([]) })).toBe("aside-pending");
+        expect(moveBlocker(asideDir, { open: new OpenFiles([]) })).toBe("aside-pending");
+        expect(moveBlocker(scratch, { open: new OpenFiles([join(scratch, "held.log")]), pending: [] })).toBe(
+            "open-file"
+        );
+        expect(moveBlocker(join(scratch, "nothing-here"), { open: new OpenFiles([]), pending: [] })).toBe("gone");
 
         saveRmRequest({ ...request, status: "denied" });
-        expect(moveBlocker(scratch, { open: [] })).toBeNull();
+        expect(moveBlocker(scratch, { open: new OpenFiles([]) })).toBeNull();
     });
 });
