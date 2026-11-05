@@ -163,6 +163,8 @@ export const simctlTransport: PushTransport<Extract<PhoneRoute, { kind: "simctl"
         const command = ["xcrun", "simctl", "push", route.udid, message.topic, "-"];
         log.debug({ command: command.join(" ") }, "simctl push");
         const proc = Bun.spawn(command, {
+            timeout: APNS_TIMEOUT_MS,
+            killSignal: "SIGKILL",
             stdin: new TextEncoder().encode(SafeJSON.stringify(message.payload)),
             stdout: "pipe",
             stderr: "pipe",
