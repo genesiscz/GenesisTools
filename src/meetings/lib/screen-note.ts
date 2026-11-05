@@ -57,6 +57,12 @@ export function placeNoteFrames({
 
     for (const file of new Set(files)) {
         const source = resolve(meetingFolder, file);
+        const destination = join(framesDir, basename(file));
+        if (existsSync(destination)) {
+            placed.links.set(file, linkPath(relative(noteDir, destination)));
+            placed.kept++;
+            continue;
+        }
 
         if (!existsSync(source)) {
             placed.missing.push(file);
@@ -69,13 +75,7 @@ export function placeNoteFrames({
             continue;
         }
 
-        const destination = join(framesDir, basename(file));
         placed.links.set(file, linkPath(relative(noteDir, destination)));
-
-        if (existsSync(destination)) {
-            placed.kept++;
-            continue;
-        }
 
         mkdirSync(framesDir, { recursive: true });
         const how = cloneOrCopy({ source, destination, mode: 0o644, mayCopy: true, ...(copyFile ? { copyFile } : {}) });

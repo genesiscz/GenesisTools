@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CopyFile } from "@genesiscz/utils/fs/clone";
@@ -132,4 +132,19 @@ describe("the screen note of a meeting", () => {
         expect(readFileSync(notePath, "utf8")).toBe("# My plan\n");
         expect(existsSync(noteFramesDir(notePath))).toBe(false);
     });
+});
+it("keeps placed picture links after recording retention removes the originals", () => {
+    const folder = meetingFolder("retained-note");
+    const notePath = join(root, "retained-note", "vault", "note.md");
+    writeScreenNote({ record, meetingFolder: folder, notePath, zeroMs: ZERO_MS });
+    const before = pictureLinks(notePath);
+    for (const name of ["10-00-05-000-d2.jpg", "10-01-00-000-d2.jpg", "10-01-30-000-d2.jpg"]) {
+        unlinkSync(join(folder, "frames", name));
+    }
+    const rerun = writeScreenNote({ record, meetingFolder: folder, notePath, zeroMs: ZERO_MS });
+    expect(pictureLinks(notePath)).toEqual(before);
+    expect(rerun.missing).toEqual(["frames/10-02-00-000-d2.jpg"]);
+    for (const link of before) {
+        expect(existsSync(join(dirname(notePath), link))).toBe(true);
+    }
 });
