@@ -58,8 +58,7 @@ export function registerPhoneCommands(program: Command): void {
         .requiredOption("--team <id>", "the Apple Developer team id")
         .requiredOption("--key-id <id>", "the key id App Store Connect shows beside the key")
         .requiredOption("--key-path <file>", "the AuthKey_<id>.p8 file")
-        .option("--topic <bundleId>", "the app's bundle id, when it differs from the one each phone registers")
-        .action(async (options: { team: string; keyId: string; keyPath: string; topic?: string }) => {
+        .action(async (options: { team: string; keyId: string; keyPath: string }) => {
             const keyPath = resolve(options.keyPath);
 
             if (!existsSync(keyPath)) {
@@ -75,7 +74,6 @@ export function registerPhoneCommands(program: Command): void {
                     teamId: options.team,
                     keyId: options.keyId,
                     keyPath,
-                    ...(options.topic ? { topic: options.topic } : {}),
                 },
             });
             out.println(`APNs key set (team ${options.team}, key ${options.keyId}).`);
