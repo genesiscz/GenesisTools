@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 
 import { join } from "node:path";
+import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { voiceRuns } from "@genesiscz/utils/meetings/energy";
@@ -2123,6 +2124,8 @@ describe("the meetings recorder loop", () => {
         readonly requests: CaptureRequest[] = [];
         /** What the live channel of a running capture was told (`liveControl` scripts only). */
         readonly commands: string[] = [];
+        /** The display each live switch was sent to the capture of (`liveControl` scripts only). */
+        readonly switchedFrom: number[] = [];
         private piece = 0;
         private notified = -1;
         private finishCapture?: () => void;
@@ -2204,6 +2207,7 @@ describe("the meetings recorder loop", () => {
                             });
                         }
                         this.commands.push(`switch ${id}`);
+                        this.switchedFrom.push(displayId);
                         current = id;
                         if (this.script.delayedFrame) {
                             switchedAtMs = Date.now() - startedAtMs;
@@ -2309,6 +2313,7 @@ describe("the meetings recorder loop", () => {
         displays: DisplayInfo[][];
         steps: Step[];
         failOnJpeg?: boolean;
+        beforeJpeg?: (png: string) => Promise<void>;
         liveControl?: boolean;
         liveSettings?: boolean;
         rejectMic?: boolean;
@@ -2370,6 +2375,7 @@ describe("the meetings recorder loop", () => {
             deps: {
                 recorder,
                 toJpeg: async (_png, jpg) => {
+                    await options.beforeJpeg?.(_png);
                     if (options.failOnJpeg) {
                         throw new Error("sips failed for keep-0001.png: disk full");
                     }
@@ -2583,6 +2589,39 @@ describe("the meetings recorder loop", () => {
         ]);
     });
 
+    test("switching onto a recorded display waits for its displaced capture processing", async () => {
+        const displaced = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang", "hang"],
+            liveControl: true,
+            beforeJpeg: async (png) => {
+                if (png.includes("/d4-")) {
+                    displaced.resolve();
+                    await withTimeout(release.promise, 2_000);
+                    expect(existsSync(png)).toBe(true);
+                }
+            },
+            actions: [
+                async (call) => {
+                    await call("displays.switch", { displayId: 4 });
+                    await withTimeout(displaced.promise, 2_000);
+                    const stopped = call("stop");
+                    try {
+                        expect(
+                            await Promise.race([stopped.then(() => "stopped"), Bun.sleep(100).then(() => "waiting")])
+                        ).toBe("waiting");
+                    } finally {
+                        release.resolve();
+                    }
+                    return stopped;
+                },
+            ],
+        });
+        expect(readdirSync(join(run.folder, "frames"))).toHaveLength(2);
+    });
+
     test("removing the audio owner restarts audio on the remaining display", async () => {
         const run = await recordWith({
             displays: [[builtIn, external]],
@@ -2595,6 +2634,31 @@ describe("the meetings recorder loop", () => {
             target: { kind: "display", displayId: 4 },
             audio: { sources: ["mic"] },
         });
+    });
+
+    test("a live switch moves the capture that records the sound, even when it started last", async () => {
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["frames", "hang", "hang"],
+            liveControl: true,
+            audio: true,
+            // The second action runs once the capture displays.add started is up.
+            actions: [
+                async (call) => call("displays.add", { displayId: 1 }),
+                async (call) => [await call("displays.switch", { displayId: 4 }), await call("stop")],
+            ],
+        });
+        const [added, [switched]] = run.answers as [unknown, unknown[]];
+
+        expect(added).toMatchObject({ applied: "started" });
+        expect(switched).toMatchObject({ applied: "live", chosen: [4] });
+        // Display 1's first capture ended, so the one display 1 got back took the sound and sits after display 4's.
+        expect(run.recorder.requests.map((request) => [request.target, request.audio !== undefined])).toEqual([
+            [{ kind: "display", displayId: 1 }, true],
+            [{ kind: "display", displayId: 4 }, false],
+            [{ kind: "display", displayId: 1 }, true],
+        ]);
+        expect(run.recorder.switchedFrom).toEqual([1]);
     });
 
     test("disabling heartbeat passes zero to the restarted capture", async () => {
