@@ -1,9 +1,14 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
+import * as childProcess from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { E2eProject } from "@genesiscz/utils/e2e/project";
 import { E2E_ENV, type E2eTestResult } from "@genesiscz/utils/e2e/spec-env";
+import * as mobileAppium from "@genesiscz/utils/mobile/appium";
+import * as mobileProject from "@genesiscz/utils/mobile/project";
+import * as mobileSession from "@genesiscz/utils/mobile/session";
+import * as mobileSimulator from "@genesiscz/utils/mobile/simulator";
 import { listRunDirs, runsRoot, stamp } from "./paths";
 import { runE2e } from "./run";
 import { RUNNERS, runnerFlags } from "./runners";
@@ -257,4 +262,80 @@ it("selects completed run summaries while ignoring newer screen captures", () =>
     }
     writeFileSync(join(history, "2026-01-03-capture", "screen.png"), "fixture");
     expect(listRunDirs("history-fixture")).toEqual([join(history, "2026-01-02"), join(history, "2026-01-01")]);
+});
+
+it("starts device logging only after preparation succeeds and stops it at finish", async () => {
+    const project = fixtureProject("wdio-preparation");
+    const runDir = join(root, "wdio-preparation-run");
+    mkdirSync(runDir, { recursive: true });
+    const config = mobileProject.parseMobileConfig(
+        {
+            id: "shop",
+            platforms: {
+                ios: {
+                    bundleId: "com.example.shop",
+                    build: {
+                        workspace: "ios/Shop.xcworkspace",
+                        scheme: "Shop",
+                        configuration: "Debug",
+                        productName: "Shop",
+                    },
+                },
+            },
+        },
+        join(project.dir, "mobile.config.ts")
+    );
+    const child = new childProcess.ChildProcess();
+    const spawn = spyOn(childProcess, "spawn").mockReturnValue(child);
+    const kill = spyOn(child, "kill").mockReturnValue(true);
+    const status = spyOn(mobileAppium, "appiumStatus").mockRejectedValue(new Error("fixture-status-failure"));
+    const mocks = [
+        spawn,
+        kill,
+        status,
+        spyOn(mobileProject, "loadMobileProject").mockResolvedValue({
+            config,
+            configPath: join(project.dir, "mobile.config.ts"),
+            appDir: project.dir,
+        }),
+        spyOn(mobileSession, "pickSimulator").mockResolvedValue({
+            udid: "fixture-device",
+            name: "Fixture",
+            state: "Booted",
+            runtime: "fixture",
+            osVersion: "1.0",
+            isAvailable: true,
+        }),
+        spyOn(mobileSession, "requireAppInstalled").mockResolvedValue(undefined),
+        spyOn(mobileSession, "ensureAppium").mockResolvedValue(4777),
+        spyOn(mobileSimulator, "simulatorUiRunning").mockResolvedValue(false),
+        spyOn(mobileSimulator, "installedAppInfo").mockResolvedValue(null),
+    ];
+    const prepare = () =>
+        RUNNERS.wdio.prepare({
+            project,
+            runner: { kind: "wdio", config: "wdio.conf.ts" },
+            flags: { alertWatcher: false },
+            runDir,
+        });
+    try {
+        await expect(prepare()).rejects.toThrow("fixture-status-failure");
+        expect(spawn).not.toHaveBeenCalled();
+        status.mockResolvedValue({
+            port: 4777,
+            answers: true,
+            version: "1",
+            owned: "none",
+            pid: null,
+            log: join(root, "missing-appium.log"),
+        });
+        const target = await prepare();
+        expect(spawn).toHaveBeenCalledTimes(1);
+        await target.finish();
+        expect(kill).toHaveBeenCalledWith("SIGTERM");
+    } finally {
+        for (const mock of mocks) {
+            mock.mockRestore();
+        }
+    }
 });
