@@ -1966,6 +1966,8 @@ describe("the meetings recorder loop", () => {
                 liveSettings?: boolean;
                 /** The first capture ends while its live switch is still in flight. */
                 lateSwitch?: boolean;
+                /** A live switch's first frame reaches the hook 100 ms after it was captured. */
+                delayedFrame?: boolean;
                 audio?: boolean;
             },
             private readonly whenDone: () => void
@@ -2017,6 +2019,8 @@ describe("the meetings recorder loop", () => {
             const displayId = request.target.kind === "display" ? request.target.displayId : 0;
 
             let current = displayId;
+            const startedAtMs = Date.now();
+            let switchedAtMs = 0;
             let streamed: string | undefined;
 
             if (step === "hang" && this.script.liveControl) {
@@ -2034,6 +2038,18 @@ describe("the meetings recorder loop", () => {
 
                         this.commands.push(`switch ${id}`);
                         current = id;
+
+                        if (this.script.delayedFrame) {
+                            switchedAtMs = Date.now() - startedAtMs;
+                            await Bun.sleep(100);
+                            request.hooks?.onFrame?.({
+                                path,
+                                atMs: switchedAtMs,
+                                displayId: id,
+                                changePercent: 10,
+                                reason: "display-switch",
+                            });
+                        }
                     },
                     pause: () => this.commands.push("pause"),
                     resume: () => this.commands.push("resume"),
@@ -2070,6 +2086,11 @@ describe("the meetings recorder loop", () => {
                     this.finishCapture = resolve;
                     signal?.addEventListener("abort", () => resolve(), { once: true });
                 });
+
+                if (this.script.delayedFrame) {
+                    await Bun.sleep(100);
+                }
+
                 const track = request.audio ? join(request.outDir, "audio-mic.m4a") : undefined;
 
                 if (track) {
@@ -2080,9 +2101,17 @@ describe("the meetings recorder loop", () => {
                     ...(track
                         ? { tracks: [{ source: "mic" as const, path: track, durationMs: 900, mutedSpans: [] }] }
                         : {}),
-                    startedAtMs: Date.now(),
+                    startedAtMs: this.script.delayedFrame ? startedAtMs : Date.now(),
                     frames: streamed
-                        ? [{ path: streamed, atMs: 0, displayId: current, changePercent: 10, reason: "first" }]
+                        ? [
+                              {
+                                  path: streamed,
+                                  atMs: switchedAtMs,
+                                  displayId: current,
+                                  changePercent: 10,
+                                  reason: "first",
+                              },
+                          ]
                         : [],
                     endedEarly: "stopped",
                 };
@@ -2122,6 +2151,7 @@ describe("the meetings recorder loop", () => {
         liveControl?: boolean;
         liveSettings?: boolean;
         lateSwitch?: boolean;
+        delayedFrame?: boolean;
         audio?: boolean;
         /** What the test does over the socket at each hanging piece; after the last, it stops the recording. */
         actions?: Array<
@@ -2152,6 +2182,7 @@ describe("the meetings recorder loop", () => {
                 liveControl: options.liveControl,
                 liveSettings: options.liveSettings,
                 lateSwitch: options.lateSwitch,
+                delayedFrame: options.delayedFrame,
                 audio: options.audio,
             },
             () => {
@@ -2524,6 +2555,32 @@ describe("the meetings recorder loop", () => {
         expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "requested", frames: 1 });
         expect(listLiveRecordings(run.liveDir)).toEqual([]);
         expect(existsSync(join(run.folder, "recorder-last.json"))).toBe(true);
+    });
+
+    test("a delayed switch event still includes its first captured frame in the display interval", async () => {
+        let stopAnswerAt = 0;
+        const run = await recordWith({
+            displays: [[builtIn], [builtIn, external]],
+            steps: ["hang"],
+            liveControl: true,
+            delayedFrame: true,
+            actions: [
+                async (call) => {
+                    await call("displays.switch", { displayId: 4 });
+                    const answer = await call("stop", { wait: false });
+                    stopAnswerAt = Date.now();
+                    return answer;
+                },
+            ],
+        });
+        const frame = SafeJSON.parse(readFileSync(join(run.folder, "ocr.jsonl"), "utf8").trim(), { strict: true });
+        const at = Date.parse(frame.at);
+        expect(
+            run.saved?.recording?.displaySpans?.some(
+                (span) => span.displayId === 4 && Date.parse(span.from) <= at && Date.parse(span.to!) >= at
+            )
+        ).toBe(true);
+        expect(Date.parse(run.saved!.recording!.displaySpans!.at(-1)!.to!)).toBeLessThanOrEqual(stopAnswerAt);
     });
 
     test("captures that fail three times stop it as failed, with one notice and the reason in recorder-last.json", async () => {

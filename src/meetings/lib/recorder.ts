@@ -751,6 +751,41 @@ export async function runRecorder(options: {
         };
         /** The interval each running capture records now; a switch or a frame from another display opens the next. */
         const displayIntervals = new WeakMap<SessionCapture, RecordingDisplaySpan>();
+        /** Every interval a capture opened, in order, so its result can move their starts onto its own clock. */
+        const captureIntervals = new WeakMap<SessionCapture, RecordingDisplaySpan[]>();
+        // A hook can arrive after the frame it reports: the capture's own clock moves each interval's start back to
+        // the first frame of its display, before the frames become queryable.
+        const alignFrameTimes = (entry: SessionCapture, result: CaptureResult) => {
+            const intervals = captureIntervals.get(entry) ?? [];
+            let cursor = 0;
+            let previousId: number | undefined;
+
+            for (const frame of [...result.frames].sort((a, b) => a.atMs - b.atMs)) {
+                const id = frame.displayId ?? entry.target.displayId;
+
+                if (id === previousId) {
+                    continue;
+                }
+
+                previousId = id;
+                const index = intervals.findIndex((span, position) => position >= cursor && span.displayId === id);
+
+                if (index < 0) {
+                    continue;
+                }
+
+                const span = intervals[index]!;
+                const first = Math.min(Date.parse(span.from), result.startedAtMs + frame.atMs);
+                span.from = new Date(first).toISOString();
+                const previous = intervals[index - 1];
+
+                if (previous?.to && Date.parse(previous.to) > first) {
+                    previous.to = span.from;
+                }
+
+                cursor = index + 1;
+            }
+        };
         const closeDisplay = (entry: SessionCapture) => {
             const span = displayIntervals.get(entry);
 
@@ -774,15 +809,23 @@ export async function runRecorder(options: {
             const span = { displayId, from: new Date().toISOString() };
             displaySpans.push(span);
             displayIntervals.set(entry, span);
+            const intervals = captureIntervals.get(entry) ?? [];
+            intervals.push(span);
+            captureIntervals.set(entry, intervals);
             saveState();
         };
         // The displays first: opening the interval saves the state file, which then names every running display.
         pieceHooks.onStart = (entry) => {
             syncDisplays();
             openDisplay(entry, entry.target.displayId);
+            // The interval ends when the capture is told to stop, not when its post-processing ends.
+            entry.controller.signal.addEventListener("abort", () => closeDisplay(entry), { once: true });
         };
         pieceHooks.onFrame = (entry, frame) => {
-            openDisplay(entry, frame.displayId ?? entry.target.displayId);
+            if (!entry.controller.signal.aborted) {
+                openDisplay(entry, frame.displayId ?? entry.target.displayId);
+            }
+
             entry.streamed += 1;
             live.update({ frames: liveFrames(), lastFrameAt: new Date().toISOString() });
             live.emit("frame", {
@@ -797,6 +840,7 @@ export async function runRecorder(options: {
             }
         };
         pieceHooks.onResult = async (entry, result) => {
+            alignFrameTimes(entry, result);
             closeDisplay(entry);
             keepTracks(result, entry.target);
             await jobs.task("ocr", (ctx) =>
