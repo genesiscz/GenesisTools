@@ -1,4 +1,4 @@
-import { resolveAgentHost } from "@genesiscz/utils/agent/host";
+import { whoIsCalling } from "@genesiscz/utils/agent/identity";
 import { type FocusStealGuard, loadJevSettings } from "@genesiscz/utils/ai/evaluation/settings";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
@@ -118,7 +118,7 @@ export function guardApplies(guard: FocusStealGuard | undefined, environment: No
     const mode = guard ?? "always";
     const applies: Record<FocusStealGuard, () => boolean> = {
         always: () => true,
-        agents: () => resolveAgentHost(environment).isInAgent === true,
+        agents: () => whoIsCalling({ origin: "local", env: environment }).isInAgent,
         off: () => false,
     };
 

@@ -1,6 +1,5 @@
 import { hostname } from "node:os";
-import { resolveAgentHost } from "@genesiscz/utils/agent/host";
-import { env } from "@genesiscz/utils/env";
+import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import type { GitContext, TodoContext } from "./types";
 
@@ -22,7 +21,7 @@ export function resolveSessionOption(value: string | undefined): string | undefi
         return undefined;
     }
 
-    const sessionId = resolveAgentHost(env.getProcessEnv()).sessionId;
+    const sessionId = whoIsCallingHere().sessionId;
     if (!sessionId) {
         // Returning undefined here would drop the filter and list every todo in
         // the project — the opposite of what `--session current` asked for.
@@ -34,7 +33,7 @@ export function resolveSessionOption(value: string | undefined): string | undefi
 
 /** The session id to stamp on new records: the explicit flag, else the host's. */
 export function defaultSessionId(value: string | undefined): string | undefined {
-    return resolveSessionOption(value) ?? resolveAgentHost(env.getProcessEnv()).sessionId ?? undefined;
+    return resolveSessionOption(value) ?? whoIsCallingHere().sessionId ?? undefined;
 }
 
 async function git(args: string[], cwd: string): Promise<string | null> {

@@ -2,7 +2,8 @@ import { closeSync, existsSync, openSync, readFileSync, statSync } from "node:fs
 import { resolve } from "node:path";
 import { formatCostLine } from "@app/ai-spend/lib/workers/cost";
 import { recordWorkerTurnCost } from "@app/ai-spend/lib/workers/ledger";
-import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
+import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
+import { assignedSessionId } from "@genesiscz/utils/agent/host";
 import { grokAuthPath } from "@genesiscz/utils/ai/grok/paths";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
@@ -549,8 +550,7 @@ export async function runSession(options: RunSessionOptions): Promise<TurnResult
         createdAt: new Date().toISOString(),
         // Pinned once: every later steer must land in the same swarm, even if
         // the steering command is issued from a different session.
-        rendezvousSession:
-            assignedSessionId(env.getProcessEnv()) ?? resolveAgentHost(env.getProcessEnv()).sessionId ?? undefined,
+        rendezvousSession: assignedSessionId(env.getProcessEnv()) ?? whoIsCallingHere().sessionId ?? undefined,
     };
     store.createMeta(meta);
 

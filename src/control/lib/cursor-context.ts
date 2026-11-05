@@ -1,4 +1,4 @@
-import { agentSessionIds } from "@genesiscz/utils/agent/host";
+import { whoIsCalling } from "@genesiscz/utils/agent/identity";
 import { harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
 import { logger } from "@genesiscz/utils/logger";
 import { ancestry, readExecutablePath } from "@genesiscz/utils/process/processes";
@@ -72,9 +72,9 @@ export function cursorSessionLabel({
     ancestors?: () => string[];
 }): string | undefined {
     const name = environment[AGENT_NAME_ENV]?.trim() || undefined;
-    const [host] = agentSessionIds(environment);
-    if (host) {
-        return [hostLabel(host.agent), host.id.slice(0, 8), name].filter(Boolean).join(" · ");
+    const caller = whoIsCalling({ origin: "local", env: environment });
+    if (caller.sessionId) {
+        return [hostLabel(caller.agent), caller.sessionId.slice(0, 8), name].filter(Boolean).join(" · ");
     }
 
     const parent = ancestors?.().find((command) => !PLUMBING.has(command));
