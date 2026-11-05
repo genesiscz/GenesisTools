@@ -55,11 +55,6 @@ async function evidence(
         const meeting = await opened.meeting();
         const found = await opened.evidence();
 
-        if (!found) {
-            fail(`${source.label} keeps no speaker evidence for this meeting on this Mac.`);
-            return;
-        }
-
         const presence = await opened.presence(opts.attendance);
         const energy = await opened.energy();
 
@@ -106,6 +101,11 @@ async function evidence(
                 check.check?.dispose();
             }
 
+            return;
+        }
+
+        if (!found) {
+            fail(`${source.label} keeps no speaker evidence for this meeting on this Mac.`);
             return;
         }
 
