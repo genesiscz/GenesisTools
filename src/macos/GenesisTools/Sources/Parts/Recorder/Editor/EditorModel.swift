@@ -685,6 +685,21 @@ final class EditorModel {
     /// Each recording marker in the kept movie as a 2.5 s step title, "1. Open the settings", in one undo step: the
     /// REPL's titleMarkers() on the service.
     func titleMarkers() {
+        if !session.isOnline {
+            let kept = markers.filter { TimelineMap.outputTime(ofSource: $0.us, in: project) != nil }
+            let ops = kept.enumerated().compactMap { index, marker -> EditOp? in
+                guard !(project.texts ?? []).contains(where: { abs($0.startUs - marker.us) <= 100_000 }) else { return nil }
+                return .text(EditOp.Text(from: EditOpDiff.seconds(marker.us),
+                    to: EditOpDiff.seconds(min(project.source.durationUs, marker.us + 2_500_000)),
+                    text: String("\(index + 1). \(marker.label)".prefix(200))))
+            }
+            guard !ops.isEmpty else {
+                show("No new marker titles in the kept movie.", error: false)
+                return
+            }
+            edit(ops) { [weak self] _, _ in self?.tab = .text }
+            return
+        }
         movie("titleMarkers", argv: []) { [weak self] result, _ in
             guard let self else { return }
             switch result {
