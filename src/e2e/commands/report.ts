@@ -40,6 +40,10 @@ export function registerReport(program: Command): void {
             const dir = await runDirOf(options, run);
             const summary = readSummary(dir);
 
+            if (!summary.ok) {
+                process.exitCode = 1;
+            }
+
             if (options.json) {
                 out.result(summary);
                 return;
@@ -68,6 +72,10 @@ export function registerReport(program: Command): void {
                 const older = readSummary(await runDirOf(options, before ?? "previous"));
                 const newer = readSummary(await runDirOf(options, after ?? "latest"));
                 const changes = compareRuns(older, newer);
+
+                if (changes.some((change) => change.after === "failed")) {
+                    process.exitCode = 1;
+                }
 
                 if (options.json) {
                     out.result({ before: older.runDir, after: newer.runDir, changes });
