@@ -39,7 +39,18 @@ export function registerAppCommands(program: Command): void {
         )
         .option("--udid <udid>", "the simulator; default: the only booted one")
         .option("--watch", "keep answering until Ctrl-C")
-        .option("--timeout <s>", "without --watch: how long to look for alerts", "5")
+        .option(
+            "--timeout <s>",
+            "without --watch: how long to look for alerts",
+            (value: string) => {
+                const n = Number(value);
+                if (!Number.isFinite(n) || n <= 0) {
+                    throw new Error("--timeout must be positive");
+                }
+                return value;
+            },
+            "5"
+        )
         .option("--backend <kind>", `${ALERT_BACKEND_KINDS.join(" or ")} (default: WDA when it runs, else idb)`)
         .option("--json", "print the answers as JSON")
         .action(
@@ -105,8 +116,28 @@ export function registerAppCommands(program: Command): void {
         .description("Read React Native's LogBox (Debug builds) and Metro's errors, then minimize or clear the LogBox")
         .option("--udid <udid>", "the simulator; default: the only booted one")
         .option("--clear <mode>", `after reading: ${LOGBOX_CLEAR_MODES.join(" or ")}`, "minimize")
-        .option("--metro-port <port>", "also read this Metro's log from the newest bundle on (default: the app's)")
-        .option("--appium-port <port>", "the Appium server (default: the simulator's own, started when missing)")
+        .option(
+            "--metro-port <port>",
+            "also read this Metro's log from the newest bundle on (default: the app's)",
+            (value: string) => {
+                const n = Number(value);
+                if (!Number.isFinite(n) || n <= 0) {
+                    throw new Error("--metro-port must be positive");
+                }
+                return value;
+            }
+        )
+        .option(
+            "--appium-port <port>",
+            "the Appium server (default: the simulator's own, started when missing)",
+            (value: string) => {
+                const n = Number(value);
+                if (!Number.isFinite(n) || n <= 0) {
+                    throw new Error("--appium-port must be positive");
+                }
+                return value;
+            }
+        )
         .option("--json", "print as JSON")
         .action(
             async (options: {
@@ -181,7 +212,18 @@ export function registerAppCommands(program: Command): void {
         .option("--configuration <name>", "Debug or Release, for the default --app-path", "Release")
         .option("--keep-install", "do not reinstall; only grant and answer prompts")
         .option("--reset-keychain", "also empty the simulator's keychain (an uninstall keeps an app's saved logins)")
-        .option("--answer <s>", "how long to answer prompts after the launch", "15")
+        .option(
+            "--answer <s>",
+            "how long to answer prompts after the launch",
+            (value: string) => {
+                const n = Number(value);
+                if (!Number.isFinite(n) || n <= 0) {
+                    throw new Error("--answer must be positive");
+                }
+                return value;
+            },
+            "15"
+        )
         .option("--json", "print the report as JSON")
         .action(
             async (options: {
