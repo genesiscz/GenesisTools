@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { accessSync, constants, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { idbApprove, idbAvailable } from "@genesiscz/utils/mobile/idb";
 import type { IosApp } from "@genesiscz/utils/mobile/project";
@@ -11,6 +12,8 @@ import {
     uninstallApp,
     writeAppDefault,
 } from "@genesiscz/utils/mobile/simulator";
+import { isObject } from "@genesiscz/utils/object";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 const log = logger.child({ component: "mobile.first-run" });
@@ -104,20 +107,58 @@ export async function preseedFirstRun(options: {
  * Uninstalls the app and installs the build again. iOS keeps an app's keychain items across an uninstall, so a saved login
  * survives it; `resetKeychain` empties the simulator's whole keychain as well.
  */
+async function validateReplacementApp(appPath: string, bundleId: string): Promise<void> {
+    if (!appPath.endsWith(".app") || !statSync(appPath).isDirectory()) {
+        throw new Error("replacement must be an existing .app directory");
+    }
+    const result = await boundedCommand({
+        command: ["/usr/bin/plutil", "-convert", "json", "-o", "-", join(appPath, "Info.plist")],
+        timeoutMs: 5_000,
+    });
+    const info: unknown = result.status === 0 ? SafeJSON.parse(result.stdout) : null;
+    if (
+        !isObject(info) ||
+        info.CFBundleIdentifier !== bundleId ||
+        typeof info.CFBundleExecutable !== "string" ||
+        basename(info.CFBundleExecutable) !== info.CFBundleExecutable
+    ) {
+        throw new Error("replacement .app has invalid metadata or a different bundle identifier");
+    }
+    const executable = join(appPath, info.CFBundleExecutable);
+    if (!statSync(executable).isFile()) {
+        throw new Error("replacement app executable is missing");
+    }
+    accessSync(executable, constants.X_OK);
+}
+
 export async function freshInstall(options: {
     udid: string;
     bundleId: string;
     appPath: string;
     resetKeychain?: boolean;
+    effects?: Partial<{
+        validate: typeof validateReplacementApp;
+        appInstalled: typeof appInstalled;
+        uninstallApp: typeof uninstallApp;
+        resetKeychain: typeof resetKeychain;
+        installApp: typeof installApp;
+    }>;
 }): Promise<void> {
-    if (await appInstalled(options.udid, options.bundleId)) {
-        await uninstallApp(options.udid, options.bundleId);
+    const effects = {
+        validate: validateReplacementApp,
+        appInstalled,
+        uninstallApp,
+        resetKeychain,
+        installApp,
+        ...options.effects,
+    };
+    await effects.validate(options.appPath, options.bundleId);
+    if (await effects.appInstalled(options.udid, options.bundleId)) {
+        await effects.uninstallApp(options.udid, options.bundleId);
     }
-
     if (options.resetKeychain) {
-        await resetKeychain(options.udid);
+        await effects.resetKeychain(options.udid);
     }
-
-    await installApp(options.udid, options.appPath);
+    await effects.installApp(options.udid, options.appPath);
     log.info(options, "fresh install");
 }

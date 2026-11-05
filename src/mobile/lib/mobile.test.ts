@@ -7,6 +7,7 @@ import { Command } from "commander";
 import { registerUp } from "../commands/up";
 import { builtAppPath } from "./build";
 import { compareFingerprints } from "./fingerprint";
+import { freshInstall } from "./first-run";
 import { stamp } from "./paths";
 import { chooseDevice, choosePlatform, PLATFORMS } from "./platforms";
 import { mergeAndroidDevices } from "./platforms/android";
@@ -285,4 +286,51 @@ it("rejects invalid startup numbers during argument parsing", async () => {
         registerUp(program);
         await expect(program.parseAsync(["up", flag, value], { from: "user" })).rejects.toThrow("finite and positive");
     }
+});
+
+test("fresh install validates before destructive effects and a valid replacement still installs", async () => {
+    const calls: string[] = [];
+    const forbidden = async () => {
+        throw new Error("irreversible effect must not run");
+    };
+    await expect(
+        freshInstall({
+            udid: "SIM-1",
+            bundleId: "com.example.shop",
+            appPath: "/missing/Replacement.app",
+            resetKeychain: true,
+            effects: {
+                appInstalled: async () => {
+                    calls.push("probe");
+                    return true;
+                },
+                uninstallApp: forbidden,
+                resetKeychain: forbidden,
+                installApp: forbidden,
+            },
+        })
+    ).rejects.toThrow();
+    expect(calls).toEqual([]);
+    await freshInstall({
+        udid: "SIM-1",
+        bundleId: "com.example.shop",
+        appPath: "/test/Replacement.app",
+        resetKeychain: true,
+        effects: {
+            validate: async () => {
+                calls.push("validate");
+            },
+            appInstalled: async () => true,
+            uninstallApp: async () => {
+                calls.push("uninstall");
+            },
+            resetKeychain: async () => {
+                calls.push("reset");
+            },
+            installApp: async () => {
+                calls.push("install");
+            },
+        },
+    });
+    expect(calls).toEqual(["validate", "uninstall", "reset", "install"]);
 });
