@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { checkProjects, installStamp, ScratchTree, testFolders } from "./layer-cut";
 import { loadTable } from "./layer-cut-tables/load";
 import unified from "./layer-cut-tables/unified";
@@ -74,9 +74,13 @@ test("cut preserves foreign refs and checks recorded tests without resolving a m
     git("init");
     git("config", "user.name", "Fixture");
     git("config", "user.email", "alice@example.com");
-    writeFileSync(join(root, "package.json"), SafeJSON.stringify({
-        name: "fixture", scripts: { prepare: "git config layercut.prepare ran" },
-    }));
+    writeFileSync(
+        join(root, "package.json"),
+        SafeJSON.stringify({
+            name: "fixture",
+            scripts: { prepare: "git config layercut.prepare ran" },
+        })
+    );
     invoke(["bun", "install", "--ignore-scripts"]);
     git("add", "package.json");
     // Bun can omit a lock for a package with no dependencies.
@@ -90,21 +94,50 @@ test("cut preserves foreign refs and checks recorded tests without resolving a m
     writeFileSync(join(root, "src/widget/index.ts"), "export const widget = 1;\n");
     writeFileSync(join(root, "src/widget/index.test.ts"), "// test fixture\n");
     const proof = join(root, "tests-ran");
-    writeFileSync(join(root, "scripts/test.ts"), `await Bun.write(${SafeJSON.stringify(proof)}, process.argv.slice(2).join(","));`);
+    writeFileSync(
+        join(root, "scripts/test.ts"),
+        `await Bun.write(${SafeJSON.stringify(proof)}, process.argv.slice(2).join(","));`
+    );
     git("add", "src/widget/index.ts", "src/widget/index.test.ts", "scripts/test.ts");
     git("-c", "core.hooksPath=/dev/null", "commit", "-m", "fixture source");
     const source = git("rev-parse", "HEAD");
     git("update-ref", "refs/heads/cut/feat/foreign-table", base);
     const configBefore = git("config", "--local", "--list");
     const tableFile = join(root, "table.ts");
-    writeFileSync(tableFile, `export default ${SafeJSON.stringify({
-        branches: [{ name: "feat/fixture", parent: null, subject: "feat(tools): fixture cut", scopes: [], globs: ["**"] }],
-        keepAtBase: {}, defaults: { unified: source, unifiedBranch: "fixture", base }, selection: "diff", refPrefix: "refs/heads/cut/",
-    })};`);
+    writeFileSync(
+        tableFile,
+        `export default ${SafeJSON.stringify({
+            branches: [
+                {
+                    name: "feat/fixture",
+                    parent: null,
+                    subject: "feat(tools): fixture cut",
+                    scopes: [],
+                    globs: ["**"],
+                    sweep: ["src/**", "scripts/**"],
+                },
+            ],
+            keepAtBase: {},
+            defaults: { unified: source, unifiedBranch: "fixture", base },
+            selection: "diff",
+            refPrefix: "refs/heads/cut/",
+        })};`
+    );
     const scratch = join(root, "scratch");
     invoke(["bun", script, "--table", tableFile, "--scratch", scratch, "--no-typecheck"]);
     expect(git("rev-parse", "refs/heads/cut/feat/foreign-table")).toBe(base);
-    invoke(["bun", script, "--table", tableFile, "--scratch", scratch, "--checks-only", "--tests", "--unified", "missing-moving-source"]);
+    invoke([
+        "bun",
+        script,
+        "--table",
+        tableFile,
+        "--scratch",
+        scratch,
+        "--checks-only",
+        "--tests",
+        "--unified",
+        "missing-moving-source",
+    ]);
     expect(readFileSync(proof, "utf8")).toBe("src/widget");
     expect(git("config", "--local", "--list")).toBe(configBefore);
     const checks = SafeJSON.parse(readFileSync(join(scratch, "checks.json"), "utf8"));

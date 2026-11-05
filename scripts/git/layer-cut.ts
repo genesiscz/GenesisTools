@@ -701,8 +701,13 @@ export function checkProjects(files: string[], tree: Map<string, TreeEntry>): st
 
 /** Every tracked manifest and lock can affect workspace resolution, even with an unchanged root lock. */
 export function installStamp(tree: Map<string, TreeEntry>): string {
-    return [...tree].filter(([file]) => /(^|\/)(package\.json|bun\.lockb?|package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$/.test(file))
-        .sort(([a], [b]) => a.localeCompare(b)).map(([file, entry]) => `${file}:${entry.sha}`).join("\n");
+    return [...tree]
+        .filter(([file]) =>
+            /(^|\/)(package\.json|bun\.lockb?|package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$/.test(file)
+        )
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([file, entry]) => `${file}:${entry.sha}`)
+        .join("\n");
 }
 
 export class ScratchTree {
@@ -734,10 +739,16 @@ export class ScratchTree {
 
     private assertOwnedClean(): void {
         const top = realpathSync(git(["rev-parse", "--show-toplevel"], { cwd: this.dir }).trim());
-        const common = realpathSync(git(["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: this.dir }).trim());
+        const common = realpathSync(
+            git(["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: this.dir }).trim()
+        );
         const marker = this.markerPath();
-        if (top !== realpathSync(this.dir) || !existsSync(marker) ||
-            readFileSync(marker, "utf8") !== this.identity() || !this.identity().endsWith(`\n${common}\n`)) {
+        if (
+            top !== realpathSync(this.dir) ||
+            !existsSync(marker) ||
+            readFileSync(marker, "utf8") !== this.identity() ||
+            !this.identity().endsWith(`\n${common}\n`)
+        ) {
             throw new Error(`refusing unowned scratch tree: ${this.dir}`);
         }
 
@@ -778,14 +789,19 @@ export class ScratchTree {
         const tree = readTree(git(["rev-parse", "HEAD"], { cwd: this.dir }).trim());
         const results = [];
         for (const config of checkProjects(this.files, tree)) {
-            results.push(await run({
-                cmd: ["tsc-rs", "--noEmit", "-p", config],
-                cwd: this.dir,
-                log: join(this.logDir, `tsc-${label}-${config.replaceAll("/", "_")}.log`),
-            }));
+            results.push(
+                await run({
+                    cmd: ["tsc-rs", "--noEmit", "-p", config],
+                    cwd: this.dir,
+                    log: join(this.logDir, `tsc-${label}-${config.replaceAll("/", "_")}.log`),
+                })
+            );
         }
 
-        const result = { text: results.map((r) => r.text).join("\n"), exitCode: results.find((r) => r.exitCode !== 0)?.exitCode ?? 0 };
+        const result = {
+            text: results.map((r) => r.text).join("\n"),
+            exitCode: results.find((r) => r.exitCode !== 0)?.exitCode ?? 0,
+        };
         const errors: TsError[] = [];
         for (const line of result.text.split("\n")) {
             const located = TS_ERROR_RE.exec(line);
@@ -1458,11 +1474,14 @@ async function checksOnly(options: Options): Promise<number> {
     const logDir = join(options.scratch, "logs");
     const checks = await runChecks({
         options,
-        scratchTree: new ScratchTree(join(options.scratch, "tree"), logDir, branches.flatMap((entry) => entry.files)),
+        scratchTree: new ScratchTree(
+            join(options.scratch, "tree"),
+            logDir,
+            branches.flatMap((entry) => entry.files)
+        ),
         logDir,
         baseSha: revParse(options.base),
         branches,
-
     });
     const output = {
         tests: Object.fromEntries(checks.tests),
