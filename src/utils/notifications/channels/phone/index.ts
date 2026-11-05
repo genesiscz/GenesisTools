@@ -77,6 +77,13 @@ function send(transports: PushTransportTable, device: PhoneDevice, message: Push
         : transports.simctl.send(route, message, config.apns);
 }
 
+function sameRoute(a: PhoneRoute, b: PhoneRoute): boolean {
+    if (a.kind === "apns" && b.kind === "apns") {
+        return a.token === b.token && a.environment === b.environment;
+    }
+    return a.kind === "simctl" && b.kind === "simctl" && a.udid === b.udid;
+}
+
 /**
  * Sends to one device, and keeps the registry true to what Apple answered: a token from the other environment is
  * retried there once and remembered, and an unregistered device is dropped.
@@ -106,8 +113,9 @@ async function sendToDevice({
 
         if (result.ok) {
             await deps.devices.update((devices) => {
-                if (devices[device.id]) {
-                    devices[device.id] = { ...devices[device.id], route: flipped.route };
+                const current = devices[device.id];
+                if (current && sameRoute(current.route, device.route)) {
+                    devices[device.id] = { ...current, route: flipped.route };
                 }
             });
         }
@@ -116,7 +124,10 @@ async function sendToDevice({
     if (!result.ok && result.gone) {
         log.info({ device: device.id, reason: result.reason }, "a phone unregistered; it is dropped");
         await deps.devices.update((devices) => {
-            delete devices[device.id];
+            const current = devices[device.id];
+            if (current && sameRoute(current.route, device.route)) {
+                delete devices[device.id];
+            }
         });
     }
 
