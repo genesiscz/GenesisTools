@@ -60,8 +60,10 @@ export async function sendWake(
         return { sent: false, detail: relay?.note ?? "No wakeup relay is set for this Mac." };
     }
 
+    const signal = AbortSignal.timeout(10_000);
+
     try {
-        const response = await fetchFn(request.url, request.init);
+        const response = await fetchFn(request.url, { ...request.init, signal });
         const text = await response.text();
 
         if (!response.ok) {
@@ -70,6 +72,10 @@ export async function sendWake(
 
         return { sent: true, detail: "The relay sent the wake packet. Waiting for the Mac to answer." };
     } catch (error) {
+        if (signal.aborted) {
+            return { sent: false, detail: "The wake relay request timed out. Try again when the relay is reachable." };
+        }
+
         return { sent: false, detail: `Could not reach the relay: ${error instanceof Error ? error.message : String(error)}` };
     }
 }

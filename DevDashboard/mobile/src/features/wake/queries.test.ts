@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { fixtureDashboardClient } from "@/api/fixture-wire";
 import { MOCK_HEALTH, MOCK_WAKE } from "@/api/fixtures/wake";
 import { healthQuery, relayQuery, sendWake, wakeRequest } from "@/features/wake/queries";
@@ -18,6 +18,34 @@ describe("Wake my Mac", () => {
         expect(tokened?.url).toBe("http://relay.example.lan:8787/wake");
         expect(tokened?.init.headers).toMatchObject({ Authorization: "Bearer t1" });
         expect(wakeRequest({ ...MOCK_WAKE, configured: false })).toBeNull();
+    });
+
+    it("bounds both the connection and a stalled response body", async () => {
+        for (const bodyStalls of [false, true]) {
+            const controller = new AbortController();
+            const timeout = spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+            try {
+                const pending = sendWake(MOCK_WAKE, async (_url, init) => {
+                    expect(init.signal).toBe(controller.signal);
+                    if (bodyStalls) {
+                        return new Response(new ReadableStream({
+                            start(stream) {
+                                init.signal!.addEventListener("abort", () => stream.error(new Error("aborted")));
+                            },
+                        }));
+                    }
+                    return new Promise<Response>((_resolve, reject) => {
+                        init.signal!.addEventListener("abort", () => reject(new Error("aborted")));
+                    });
+                });
+                await Promise.resolve();
+                controller.abort();
+                expect(await pending).toMatchObject({ sent: false, detail: expect.stringContaining("timed out") });
+                expect(timeout).toHaveBeenCalledWith(10_000);
+            } finally {
+                timeout.mockRestore();
+            }
+        }
     });
 
     it("reports a relay refusal and an unreachable relay without throwing", async () => {
