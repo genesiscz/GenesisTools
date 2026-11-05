@@ -7,7 +7,7 @@ import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/reco
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
 import { applyOp, wholeProject } from "@genesiscz/utils/recording-editor/project";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
-import { keptPlan } from "./frames-movie";
+import { displaySwitchDepth, keepingSwitchStep, keptPlan, stepDisplaySwitch } from "./frames-movie";
 import { editorOpenStatePath, movieOf, readEditorOpenState, resolveRecording } from "./library";
 import {
     boxInProxy,
@@ -147,6 +147,51 @@ describe("a display switch from the editor", () => {
             { fromUs: 5_000_000, toUs: 25_000_000, displayId: 2 },
             { fromUs: 25_000_000, toUs: 40_000_000, displayId: 4 },
         ]);
+    });
+
+    it("a switch is one step in proxy.undo.json that the CLI and the REPL undo and redo, refused after another plan", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-switch-undo-"));
+        const plan = (displayId: number) => ({
+            version: 1 as const,
+            policy: "most-change" as const,
+            windowSec: 10,
+            ranges: [{ fromUs: 0, toUs: 20_000_000, displayId }],
+        });
+        const write = (value: unknown) => writeFileSync(join(folder, "proxy.json"), SafeJSON.stringify(value));
+        // The proxy maker, as prepareFramesMovie saves its plan; `asked` keeps what each undo or redo asked for.
+        const asked: unknown[] = [];
+        const make = async (options: { plan?: unknown }) => {
+            asked.push(options);
+            write({ version: 1, ...(options.plan ?? plan(9)) });
+            return { path: join(folder, "proxy.mp4"), frames: 1, audioPieces: 0, plan: plan(1) };
+        };
+
+        await expect(stepDisplaySwitch(folder, "undo", make)).rejects.toThrow("no display switch to undo");
+        write(plan(1));
+        await keepingSwitchStep(folder, async () => write(plan(2)));
+        expect(displaySwitchDepth(folder)).toEqual({ undo: 1, redo: 0 });
+
+        await stepDisplaySwitch(folder, "undo", make);
+        expect(asked.at(-1)).toEqual({ plan: plan(1) });
+        expect(displaySwitchDepth(folder)).toEqual({ undo: 0, redo: 1 });
+        await stepDisplaySwitch(folder, "redo", make);
+        expect(asked.at(-1)).toEqual({ plan: plan(2) });
+        expect(displaySwitchDepth(folder)).toEqual({ undo: 1, redo: 0 });
+
+        // Another plan since (a proxy made with --plan): the undo would throw it away, so it is refused.
+        write(plan(3));
+        await expect(stepDisplaySwitch(folder, "undo", make)).rejects.toThrow("changed since that switch");
+        expect(displaySwitchDepth(folder)).toEqual({ undo: 1, redo: 0 });
+
+        // A switch on a proxy from before plans undoes to the policy's own pick.
+        const old = mkdtempSync(join(tmpdir(), "gt-switch-undo-old-"));
+        await keepingSwitchStep(old, async () => writeFileSync(join(old, "proxy.json"), SafeJSON.stringify(plan(2))));
+        const calls: unknown[] = [];
+        await stepDisplaySwitch(old, "undo", async (options) => {
+            calls.push(options);
+            return { path: join(old, "proxy.mp4"), frames: 1, audioPieces: 0, plan: plan(1) };
+        });
+        expect(calls).toEqual([{}]);
     });
 
     it("an undo makes the proxy with exactly the plan from before the switch, never the policy's pick", () => {

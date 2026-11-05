@@ -401,8 +401,9 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertFalse(model.canRedo, "redo needs the service")
     }
 
-    /// A display switch is one undo step: ⌘Z makes the proxy again with exactly the plan from before, through
-    /// `tools recorder proxy --plan <file>`, ⇧⌘Z with the plan after it, and the edit's own steps keep their order.
+    /// A display switch is one undo step: ⌘Z takes it back through the recorder's display undo (the REPL's
+    /// undoDisplaySwitch() on the service, else `tools recorder proxy --undo-switch`), which the CLI and the REPL use
+    /// too, ⇧⌘Z makes it again, and the edit's own steps keep their order.
     func testADisplaySwitchIsOneUndoStepThatMakesTheMovieAgainWithThePlanBeforeIt() throws {
         let recording = folder.appendingPathComponent("meeting-undo")
         try FileManager.default.createDirectory(at: recording, withIntermediateDirectories: true)
@@ -422,20 +423,13 @@ final class RecorderTimelineTests: XCTestCase {
         })
         let model = EditorModel.on(service, store: ProjectStore(url: recording.appendingPathComponent("edit.json")))
         let first = try XCTUnwrap(model.displayPlan)
-        // The CLI, as the editor calls it: a switch writes the new plan, --plan writes the file's plan as it is.
+        // The CLI, as the editor calls it: a switch and a redo write the plan after it, an undo the plan before it.
         var calls: [[String]] = []
-        var plansGiven: [String] = []
         var fails = false
         model.runTools = { argv, done in
             calls.append(argv)
             if fails { return done(1, "", "ffmpeg failed\n") }
-            if let index = argv.firstIndex(of: "--plan") {
-                let text = (try? String(contentsOfFile: argv[index + 1], encoding: .utf8)) ?? ""
-                plansGiven.append(text)
-                try? Data(text.utf8).write(to: planFile)
-            } else {
-                try? Data(after.utf8).write(to: planFile)
-            }
+            try? Data((argv.contains("--undo-switch") ? before : after).utf8).write(to: planFile)
             done(0, "{}", "")
         }
 
@@ -450,15 +444,12 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(model.project.outputDurationUs, 10_000_000, "the cut made after the switch goes back first")
         XCTAssertEqual(calls.count, 1, "an edit's undo needs no movie")
         model.undo()
-        XCTAssertEqual(Array(calls.last?.prefix(4) ?? []), ["recorder", "proxy", recording.path, "--plan"])
+        XCTAssertEqual(calls.last, ["recorder", "proxy", recording.path, "--undo-switch"])
         XCTAssertEqual(model.displayPlan, first, "the plan from before the switch is back")
-        let given = try XCTUnwrap(plansGiven.last.flatMap { $0.data(using: .utf8) })
-        XCTAssertEqual(try JSONSerialization.jsonObject(with: given) as? NSDictionary,
-                       try JSONSerialization.jsonObject(with: Data(before.utf8)) as? NSDictionary)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: calls.last?.last ?? ""), "the plan file is removed after the call")
         XCTAssertEqual(model.redoName, "Display Switch")
 
         model.redo()
+        XCTAssertEqual(calls.last, ["recorder", "proxy", recording.path, "--redo-switch"])
         XCTAssertEqual(model.displayPlan?.ranges.map(\.displayId), [1, 2, 4])
         XCTAssertEqual(model.undoName, "Display Switch")
 
@@ -467,6 +458,21 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(model.displayPlan?.ranges.map(\.displayId), [1, 2, 4], "a failed remake leaves the movie as it was")
         XCTAssertEqual(model.undoName, "Display Switch", "and keeps the step to try again")
         XCTAssertTrue(model.noticeIsError)
+
+        // With a service that has the REPL's display undo, ⌘Z is that method, on the recording's folder.
+        fails = false
+        service.serviceMethods += ["movie.undoDisplaySwitch", "movie.redoDisplaySwitch"]
+        service.movieAnswer = { name, _ in
+            try? Data((name == "undoDisplaySwitch" ? before : after).utf8).write(to: planFile)
+            return ["path": recording.appendingPathComponent("proxy.mp4").path]
+        }
+        let toolsCalls = calls.count
+        model.undo()
+        let undone = service.calls.filter { $0.method == "movie.undoDisplaySwitch" }
+        XCTAssertEqual(undone.count, 1)
+        XCTAssertEqual(undone.first?.params["recording"] as? String, recording.path)
+        XCTAssertEqual(calls.count, toolsCalls, "no tools process while the service answers")
+        XCTAssertEqual(model.displayPlan, first)
     }
 
     func testADisplayPlanReadsItsRangesAndNamesAddsItsLaneAndSwitchesThroughTheCLI() throws {

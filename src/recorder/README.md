@@ -36,7 +36,10 @@ tools recorder proxy <recording> [--display most-change|ID] [--window S] [--swit
                                                  # or one display; a meeting also gets its transcript as captions
                                                  # with the speakers' names
 tools recorder proxy <recording> --plan <file>   # the proxy with exactly that display plan (a copy of an earlier
-                                                 # proxy.json); the editor's ⌘Z of a display switch runs it
+                                                 # proxy.json)
+tools recorder proxy <recording> --undo-switch   # takes the last display switch back (--redo-switch makes it again):
+                                                 # proxy.undo.json keeps each switch, and the editor's ⌘Z and the
+                                                 # REPL's undoDisplaySwitch() take back the same one
 tools recorder find-screen <recording> <text>    # where a text was on the screen (OCR), at source seconds until
                                                  # its frame's next one, with the lines' boxes over the proxy movie;
                                                  # the editor's Find tab (⌘F) lists them, a click goes there, and

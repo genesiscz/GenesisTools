@@ -1,9 +1,10 @@
 import AVFoundation
 import Foundation
 
-/// The display plan's actions: show another display over a range of a frames recording's proxy movie, through
-/// `tools recorder proxy --keep-plan --switch`, then load the new movie. Each switch is one undo step; its undo and
-/// redo make the movie again with the plan from before or after it (`tools recorder proxy --plan <file>`).
+/// The display plan's actions: show another display over a range of a frames recording's proxy movie (the REPL's
+/// switchDisplay() on the recorder service, else `tools recorder proxy --keep-plan --switch`), then load the new movie.
+/// Each switch is one undo step; its undo and redo are the recorder's (proxy.undo.json), so the CLI and the REPL take
+/// back the same switch.
 extension EditorModel {
     /// Shows `displayId` from `fromUs` to `toUs` (source microseconds) and makes the proxy movie again.
     func switchDisplay(fromUs: Int64, toUs: Int64, displayId: Int) {
@@ -35,26 +36,20 @@ extension EditorModel {
                       toUs: TimelineMap.sourceTime(atOutput: range.toUs, in: project), displayId: displayId)
     }
 
-    /// Makes the proxy movie again with exactly `plan` (an undo or a redo of a switch); `done` says whether it was made.
-    func remakeProxy(plan: DisplayPlan, doing: String, done: @escaping @MainActor (Bool) -> Void) {
+    /// Takes the last display switch back (`undo`) or makes it again: the REPL's undoDisplaySwitch() or
+    /// redoDisplaySwitch() on the service, else `tools recorder proxy --undo-switch` or `--redo-switch`. `done` says
+    /// whether the movie was made.
+    func stepDisplaySwitch(undo: Bool, doing: String, done: @escaping @MainActor (Bool) -> Void) {
         let folder = URL(fileURLWithPath: project.source.video).deletingLastPathComponent()
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("genesis-recorder-plan-\(UUID().uuidString).json")
-        do {
-            try plan.fileData().write(to: file, options: .atomic)
-        } catch {
-            show("\(doing) did not start: \(error.localizedDescription)", error: true)
-            done(false)
-            return
-        }
         isSwitchingDisplay = true
         show("\(doing): making the movie again…", error: false)
-        HubPerf.log("recorder.editor.display: \(folder.path) plan of \(plan.ranges.count) ranges")
-        runTools(["recorder", "proxy", folder.path, "--plan", file.path]) { [weak self] status, _, stderr in
-            try? FileManager.default.removeItem(at: file)
+        HubPerf.log("recorder.editor.display: \(undo ? "undo" : "redo") a switch in \(folder.path)")
+        movie(undo ? "undoDisplaySwitch" : "redoDisplaySwitch", recording: folder.path,
+              argv: ["recorder", "proxy", folder.path, undo ? "--undo-switch" : "--redo-switch"], timeout: 30 * 60) { [weak self] result, _ in
             guard let self else { return }
             self.isSwitchingDisplay = false
-            guard status == 0 else {
-                self.show("\(doing) did not work: \(stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")", error: true)
+            if case let .failure(failure) = result {
+                self.show("\(doing) did not work: \(failure.reason)", error: true)
                 done(false)
                 return
             }

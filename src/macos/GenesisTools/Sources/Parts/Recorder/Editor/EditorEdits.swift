@@ -192,8 +192,8 @@ extension EditorModel {
         finishGesture()
         guard let step = undoStack.last else { return }
         let change = name(of: step, undoing: true)
-        if case let .display(switchStep) = step {
-            undoDisplaySwitch(step, plan: switchStep.before, change: change)
+        if case .display = step {
+            undoDisplaySwitch(step, change: change)
             return
         }
         if session.isOnline {
@@ -236,8 +236,8 @@ extension EditorModel {
         finishGesture()
         guard let step = redoStack.last else { return }
         let change = name(of: step, undoing: false)
-        if case let .display(switchStep) = step {
-            redoDisplaySwitch(step, plan: switchStep.after, change: change)
+        if case .display = step {
+            redoDisplaySwitch(step, change: change)
             return
         }
         guard session.isOnline else {

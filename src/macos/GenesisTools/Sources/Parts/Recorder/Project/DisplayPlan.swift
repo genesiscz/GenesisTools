@@ -52,19 +52,6 @@ struct DisplayPlan: Equatable {
         return DisplayPlan(policy: file.policy, windowSec: file.windowSec, ranges: file.ranges, displays: displays)
     }
 
-    /// The plan as proxy.json holds it, for `tools recorder proxy --plan <file>` (the display names stay in recording.json).
-    func fileData() throws -> Data {
-        struct File: Encodable {
-            let version = 1
-            let policy: String
-            let windowSec: Double
-            let ranges: [Range]
-        }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        return try encoder.encode(File(policy: policy, windowSec: windowSec, ranges: ranges))
-    }
-
     /// The `tools` arguments that show `displayId` from `fromUs` to `toUs` and keep the rest of the plan: the CLI's own
     /// command (`--keep-plan --switch`), so the window, an agent and a script make the same movie.
     static func switchArguments(folder: URL, fromUs: Int64, toUs: Int64, displayId: Int) -> [String] {

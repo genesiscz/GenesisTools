@@ -116,7 +116,7 @@ export interface DisplayRange {
     displayId: number;
 }
 
-const displayPlanSchema = z.object({
+export const displayPlanSchema = z.object({
     version: z.literal(1),
     policy: z.enum(["most-change", "display"]),
     windowSec: z.number(),

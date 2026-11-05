@@ -12,7 +12,7 @@ final class PlayheadClock {
 }
 
 /// One step of the editor's undo: the edit as it was before a change, or a display switch, which changed the proxy
-/// movie and not the edit file, so its undo makes the movie again with the plan from before.
+/// movie and not the edit file, so its undo is the recorder's display undo (proxy.undo.json).
 enum UndoStep {
     case edit(EditProject)
     case display(DisplaySwitchStep)
@@ -468,12 +468,12 @@ final class EditorModel {
 
     /// ⌘Z on a display switch: the movie is made again with the plan from before; the step moves to the redo list
     /// only once it was.
-    func undoDisplaySwitch(_ step: UndoStep, plan: DisplayPlan, change: (name: String, tab: InspectorTab?)) {
+    func undoDisplaySwitch(_ step: UndoStep, change: (name: String, tab: InspectorTab?)) {
         guard !isSwitchingDisplay else {
             show("The movie is still being made; undo again once it is ready.", error: false)
             return
         }
-        remakeProxy(plan: plan, doing: "Undoing the display switch") { [weak self] made in
+        stepDisplaySwitch(undo: true, doing: "Undoing the display switch") { [weak self] made in
             guard let self, made else { return }
             self.undoStack.removeLast()
             self.redoStack.append(step)
@@ -482,12 +482,12 @@ final class EditorModel {
         }
     }
 
-    func redoDisplaySwitch(_ step: UndoStep, plan: DisplayPlan, change: (name: String, tab: InspectorTab?)) {
+    func redoDisplaySwitch(_ step: UndoStep, change: (name: String, tab: InspectorTab?)) {
         guard !isSwitchingDisplay else {
             show("The movie is still being made; redo again once it is ready.", error: false)
             return
         }
-        remakeProxy(plan: plan, doing: "Redoing the display switch") { [weak self] made in
+        stepDisplaySwitch(undo: false, doing: "Redoing the display switch") { [weak self] made in
             guard let self, made else { return }
             self.redoStack.removeLast()
             self.undoStack.append(step)

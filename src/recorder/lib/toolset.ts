@@ -67,7 +67,7 @@ import {
     undoEdit,
     writeSubtitles,
 } from "./edit";
-import { switchDisplay } from "./frames-movie";
+import { stepDisplaySwitch, switchDisplay } from "./frames-movie";
 import { EDITOR_TABS, type EditorTab, ensureRecorderPart, listLibrary } from "./library";
 import { chaptersOf, markersOf, recordingFolderOf, searchLibrary, spreadTimes } from "./moments";
 import { serviceRoutedMovie } from "./movie-client";
@@ -746,7 +746,23 @@ const movieMethods = [
         params: z.object({ from: timeSchema, to: timeSchema, display: z.number().int().nonnegative() }).strict(),
         result: z.unknown(),
         resultName: "{ path, frames, plan: { policy, windowSec, ranges: { fromUs, toUs, displayId }[] } }",
-        doc: `A frames recording of several displays (a meeting): its proxy movie shows \`display\` from \`from\` to \`to\` (source seconds or "m:ss") and is made again, the rest of its display plan (proxy.json) kept. The same as ${toolCommand("recorder proxy")} <rec> --keep-plan --switch from-to=display, and the editor's display lane.`,
+        doc: `A frames recording of several displays (a meeting): its proxy movie shows \`display\` from \`from\` to \`to\` (source seconds or "m:ss") and is made again, the rest of its display plan (proxy.json) kept. The same as ${toolCommand("recorder proxy")} <rec> --keep-plan --switch from-to=display, and the editor's display lane. undoDisplaySwitch() takes it back.`,
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "undoDisplaySwitch",
+        params: z.object({}).strict(),
+        result: z.unknown(),
+        resultName: "{ path, frames, plan: { policy, windowSec, ranges: { fromUs, toUs, displayId }[] } }",
+        doc: `Takes the last display switch back: the proxy movie is made again with the display plan from before it (proxy.undo.json keeps each switch). Refused when proxy.json changed since in another way. The same as ${toolCommand("recorder proxy")} <rec> --undo-switch, and the editor's ⌘Z after a switch.`,
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "redoDisplaySwitch",
+        params: z.object({}).strict(),
+        result: z.unknown(),
+        resultName: "{ path, frames, plan: { policy, windowSec, ranges: { fromUs, toUs, displayId }[] } }",
+        doc: `Makes the last undone display switch again. The same as ${toolCommand("recorder proxy")} <rec> --redo-switch, and the editor's ⇧⌘Z.`,
         effect: "reversible",
     }),
     defineMethod({
@@ -1716,6 +1732,28 @@ export class Movie {
             toUs: timeToUs(input.to),
             displayId: input.display,
         });
+    }
+
+    async undoDisplaySwitch() {
+        return stepDisplaySwitch(await this.framesFolder("undo a display switch"), "undo");
+    }
+
+    async redoDisplaySwitch() {
+        return stepDisplaySwitch(await this.framesFolder("redo a display switch"), "redo");
+    }
+
+    /** The frames folder of this recording; a plain movie has no displays to switch. */
+    private async framesFolder(doing: string): Promise<string> {
+        const opened = await openProject(this.recording);
+        const folder = recordingFolderOf(opened);
+
+        if (!folder) {
+            throw new Error(
+                `${opened.project.source.video} is a plain movie: it has no displays, so nothing to ${doing}`
+            );
+        }
+
+        return folder;
     }
 
     async findOnScreen(input: { text: string; limit?: number }): Promise<ScreenHit[]> {

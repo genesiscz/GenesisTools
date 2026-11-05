@@ -31,7 +31,13 @@ import {
     transcriptWords,
     writeSubtitles,
 } from "./lib/edit";
-import { keptPlan, prepareFramesMovie, restoreDisplayPlan } from "./lib/frames-movie";
+import {
+    keepingSwitchStep,
+    keptPlan,
+    prepareFramesMovie,
+    restoreDisplayPlan,
+    stepDisplaySwitch,
+} from "./lib/frames-movie";
 import {
     EDITOR_TABS,
     type EditorTab,
@@ -1218,15 +1224,43 @@ program
     )
     .option(
         "--plan <file>",
-        "make it with exactly the display plan in this file (a copy of an earlier proxy.json), which puts a switch back, as the editor's undo does; not with --display, --switch or --keep-plan"
+        "make it with exactly the display plan in this file (a copy of an earlier proxy.json); not with --display, --switch or --keep-plan"
     )
+    .option(
+        "--undo-switch",
+        "take the last display switch back: the movie is made again with the plan from before it (proxy.undo.json), as the editor's ⌘Z does"
+    )
+    .option("--redo-switch", "make the last undone display switch again")
     .action(
         async (
             value: string,
-            flags: { display?: string; window?: string; switch?: string[]; keepPlan?: boolean; plan?: string }
+            flags: {
+                display?: string;
+                window?: string;
+                switch?: string[];
+                keepPlan?: boolean;
+                plan?: string;
+                undoSwitch?: boolean;
+                redoSwitch?: boolean;
+            }
         ) => {
             try {
                 const folder = resolveRecording(value);
+
+                if (flags.undoSwitch || flags.redoSwitch) {
+                    if (
+                        (flags.undoSwitch && flags.redoSwitch) ||
+                        flags.plan ||
+                        flags.display !== undefined ||
+                        flags.switch?.length ||
+                        flags.keepPlan
+                    ) {
+                        throw new Error("--undo-switch and --redo-switch take only the recording");
+                    }
+
+                    out.result(await stepDisplaySwitch(folder, flags.undoSwitch ? "undo" : "redo"));
+                    return;
+                }
 
                 if (flags.plan) {
                     if (flags.display !== undefined || flags.switch?.length || flags.keepPlan) {
@@ -1242,12 +1276,14 @@ program
 
                 const display = flags.display === undefined ? undefined : parseProxyDisplay(flags.display);
                 const switches = (flags.switch ?? []).map(parseDisplaySwitch);
-                const result = await prepareFramesMovie(folder, {
-                    ...(display !== undefined ? { display } : {}),
-                    windowSec: Number(flags.window ?? 10),
-                    ...(flags.keepPlan ? keptPlan(folder, switches) : { overrides: switches }),
-                });
-                out.result(result);
+                const make = () =>
+                    prepareFramesMovie(folder, {
+                        ...(display !== undefined ? { display } : {}),
+                        windowSec: Number(flags.window ?? 10),
+                        ...(flags.keepPlan ? keptPlan(folder, switches) : { overrides: switches }),
+                    });
+                // A switch is one step that --undo-switch, the REPL and the editor take back.
+                out.result(switches.length > 0 ? await keepingSwitchStep(folder, make) : await make());
             } catch (error) {
                 out.printlnErr(error instanceof Error ? error.message : String(error));
                 process.exitCode = 1;
