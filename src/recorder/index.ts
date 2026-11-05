@@ -25,12 +25,10 @@ import { demoScriptSchema, runDemo, scriptSteps } from "./lib/demo";
 import {
     EXPORT_FORMATS,
     type ExportFormat,
-    editProject,
     exportAs,
     finishExport,
     openProject,
     transcriptWords,
-    undoEdit,
     writeSubtitles,
 } from "./lib/edit";
 import { keptPlan, prepareFramesMovie, restoreDisplayPlan } from "./lib/frames-movie";
@@ -47,10 +45,12 @@ import {
     waitForEditorOpen,
 } from "./lib/library";
 import { chaptersOf, markersOf, searchLibrary } from "./lib/moments";
+import { applyEdit, undoLastEdit } from "./lib/movie-client";
 import { type DisplayRange, PROXY_DISPLAY_POLICIES, type ProxyDisplay, parseDisplayPlan } from "./lib/proxy";
 import { copyRecording, revealRecording, trashRecording } from "./lib/quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./lib/review";
 import { findOnScreen } from "./lib/screen-search";
+import { hostOpenEditor } from "./lib/service-client";
 import { Movie, movieDemoDriver } from "./lib/toolset";
 import { recordVideo, VIDEO_RECORDING_MAX_SECONDS } from "./lib/video-recording";
 
@@ -402,7 +402,7 @@ program
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .action(async (value: string) => {
         try {
-            const undone = await undoEdit(value);
+            const undone = await undoLastEdit(value);
             out.result({ undone: undone.undone ?? [], ...describeProject(undone.project, undone.path) });
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
@@ -936,7 +936,7 @@ program
             }
 
             await ensureRecorderPart((line) => out.printlnErr(line));
-            openEditor(path, { focus: flags.focus !== false, atSeconds, tab });
+            await hostOpenEditor(path, { focus: flags.focus !== false, atSeconds, tab });
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
@@ -968,7 +968,7 @@ program
         try {
             const raw = text === "-" ? await Bun.stdin.text() : text;
             const ops = parseEditOps(SafeJSON.parse(raw, { strict: true }));
-            const edited = await editProject(value, ops);
+            const edited = await applyEdit(value, ops);
             // A normalize op also answers the loudness it measured, which the editor shows beside its button.
             out.result({
                 ...describeProject(edited.project, edited.path),

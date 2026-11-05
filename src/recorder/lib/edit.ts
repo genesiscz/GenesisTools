@@ -47,8 +47,9 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { probeVideo, type VideoProbeLimits } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
-import { type ExportAnswer, exportEdit, movieOf, resolveRecording } from "./library";
+import { type ExportAnswer, movieOf, resolveRecording } from "./library";
 import { chapterMetadata, chapterPoints, chaptersOfPart, markersOf } from "./moments";
+import { hostExport } from "./service-client";
 
 const { log } = logger.scoped("recorder-edit");
 
@@ -873,12 +874,12 @@ export async function exportAs(
                 : chosenMp4 || freeOutput(opened.project.source.video, "mp4");
             return finishExport({
                 value,
-                answer: await withDenoisedSource(opened, (render) => exportEdit(render, out)),
+                answer: await withDenoisedSource(opened, (render) => hostExport(render, out)),
                 subtitles,
             });
         }
 
-        return finishExport({ value, answer: await exportEdit(resolveRecording(value), options.out), subtitles });
+        return finishExport({ value, answer: await hostExport(resolveRecording(value), options.out), subtitles });
     }
 
     const format = asked;
@@ -903,7 +904,7 @@ export async function exportAs(
     const scratch = await mkdtemp(join(tmpdir(), "recorder-export-"));
 
     try {
-        const movie = await withDenoisedSource(opened, (render) => exportEdit(render, join(scratch, "render.mp4")));
+        const movie = await withDenoisedSource(opened, (render) => hostExport(render, join(scratch, "render.mp4")));
 
         if (!movie.ok || !movie.path) {
             return movie;

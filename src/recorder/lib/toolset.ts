@@ -67,19 +67,13 @@ import {
     writeSubtitles,
 } from "./edit";
 import { switchDisplay } from "./frames-movie";
-import {
-    EDITOR_TABS,
-    type EditorTab,
-    ensureRecorderPart,
-    listLibrary,
-    openEditor,
-    sheetOfEdit,
-    stillOfEdit,
-} from "./library";
+import { EDITOR_TABS, type EditorTab, ensureRecorderPart, listLibrary } from "./library";
 import { chaptersOf, markersOf, recordingFolderOf, searchLibrary, spreadTimes } from "./moments";
+import { serviceRoutedMovie } from "./movie-client";
 import { copyRecording, revealRecording, trashRecording } from "./quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./review";
 import { findOnScreen, type ScreenHit } from "./screen-search";
+import { hostOpenEditor, hostSheet, hostStill } from "./service-client";
 
 const { log } = logger.scoped("recorder-toolset");
 
@@ -1584,7 +1578,7 @@ export class Movie {
         }
 
         await ensureRecorderPart();
-        const answer = await stillOfEdit({ path: opened.path, atSeconds: atUs / 1_000_000, out, full: true });
+        const answer = await hostStill({ path: opened.path, atSeconds: atUs / 1_000_000, out, full: true });
 
         if (!answer.ok || !answer.path) {
             throw new Error(answer.error ?? "the poster failed without a reason");
@@ -1627,7 +1621,7 @@ export class Movie {
 
         await ensureRecorderPart();
         const out = options.out ?? join(this.ctx?.scratchDir ?? tmpdir(), `sheet-${Date.now()}.png`);
-        const answer = await sheetOfEdit({ path: opened.path, times: times.map((us) => us / 1_000_000), out });
+        const answer = await hostSheet({ path: opened.path, times: times.map((us) => us / 1_000_000), out });
 
         if (!answer.ok || !answer.path) {
             throw new Error(answer.error ?? "the sheet failed without a reason");
@@ -1701,7 +1695,7 @@ export class Movie {
 
         await ensureRecorderPart();
         const out = keep ? resolve(keep) : join(this.ctx?.scratchDir ?? tmpdir(), `still-${Date.now()}.png`);
-        const answer = await stillOfEdit({ path: opened.path, atSeconds: atUs / 1_000_000, out });
+        const answer = await hostStill({ path: opened.path, atSeconds: atUs / 1_000_000, out });
 
         if (!answer.ok || !answer.path) {
             throw new Error(answer.error ?? "the still failed without a reason");
@@ -1870,9 +1864,14 @@ export class Movie {
         }
 
         await ensureRecorderPart();
-        openEditor(opened.path, { focus: options.focus === true, atSeconds: options.at, tab: options.tab });
+        const shown = await hostOpenEditor(opened.path, {
+            focus: options.focus === true,
+            atSeconds: options.at,
+            tab: options.tab,
+        });
         return {
             opened: opened.path,
+            window: shown.window,
             ...(options.at === undefined ? {} : { at: options.at }),
             ...(options.tab ? { tab: options.tab } : {}),
         };
@@ -2103,7 +2102,7 @@ export class MoviesToolset extends ReplToolset {
         return {
             movies: {
                 list: (options: { limit?: number } = {}) => listLibrary().slice(0, options.limit ?? 20),
-                open: (recording: string) => new Movie(recording, ctx),
+                open: (recording: string) => serviceRoutedMovie(new Movie(recording, ctx), movieMethods),
                 record: (options: z.infer<typeof recordSchema> = {}) => record(options, ctx),
                 demo: (options: z.input<typeof demoParamsSchema> & { steps: DemoStep[] }) => recordDemo(options, ctx),
                 search: (text: string) => searchLibrary(text),

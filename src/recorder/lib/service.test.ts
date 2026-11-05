@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import type { RpcProgress } from "@genesiscz/utils/rpc/peer";
 import { type RpcNotification, RpcSocketClient, type RpcSocketClientOptions } from "@genesiscz/utils/rpc/socket-client";
@@ -10,7 +11,9 @@ import fixture from "./__fixtures__/service-protocol.json";
 import { readUndoSteps, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
+import { applyEdit, serviceRoutedMovie, undoLastEdit } from "./movie-client";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
+import { hostStill, ServiceHost } from "./service-client";
 import {
     HOST_METHODS,
     hostApi,
@@ -20,7 +23,7 @@ import {
     type ServiceEntry,
     serviceApi,
 } from "./service-protocol";
-import { moviesApi } from "./toolset";
+import { Movie, moviesApi } from "./toolset";
 
 const closing: Array<() => void> = [];
 
@@ -420,6 +423,102 @@ describe("the recorder service", () => {
         expect(await Promise.race([changing.service.stopped, Bun.sleep(1_000).then(() => "still running")])).toBe(
             "code-changed"
         );
+    });
+});
+
+describe("the REPL's and the CLI's way to the service", () => {
+    /** A saved edit as text, with its folder and its random ids out, so two copies compare. */
+    function comparable(path: string): unknown {
+        const project = readProject(path);
+        const root = path.slice(0, path.lastIndexOf("/"));
+        return SafeJSON.parse(
+            SafeJSON.stringify(project)
+                .replaceAll(root, "<root>")
+                .replace(/"id":"[^"]+"/g, '"id":"<id>"'),
+            {
+                strict: true,
+            }
+        );
+    }
+
+    test("one op saves the same project through the service as in process, and undoes the same way", async () => {
+        const ops = [
+            { op: "volume", volume: 0.6 },
+            { op: "mute", track: 0 },
+            { op: "text", from: 1, to: 3, text: "Both ways" },
+        ] as const;
+        const local = editFixture("rs-local-");
+        const nobody = mkdtempSync(join(tmpdir(), "rs-none-"));
+        const inProcess = await applyEdit(local, [...ops], { dir: nobody });
+
+        const { dir } = await serviceFixture();
+        const remote = editFixture("rs-remote-");
+        const throughService = await applyEdit(remote, [...ops], { dir });
+
+        expect(throughService.project.revision).toBe(inProcess.project.revision);
+        expect(comparable(remote)).toEqual(comparable(local));
+        expect((await undoLastEdit(remote, { dir })).undone).toEqual(["volume", "mute", "text"]);
+        expect((await undoLastEdit(local, { dir: nobody })).undone).toEqual(["volume", "mute", "text"]);
+        expect(comparable(remote)).toEqual(comparable(local));
+    });
+
+    test("the REPL's still reaches the connected host over the service and its answer comes back", async () => {
+        const { service } = await serviceFixture();
+        const path = editFixture("rs-repl-");
+        const asked: unknown[] = [];
+        const host = await connect(service.entry, async ({ method, params }) => {
+            asked.push({ method, params });
+            return { ok: true, path: "/tmp/host-fixture.png", width: 1280, height: 720, atSeconds: 1.5 };
+        });
+        await host.call<unknown>("hello", hello("host", ["render.still"]));
+
+        // In this process the service answers the REPL's helper itself; another process goes over the socket.
+        expect(await hostStill({ path, atSeconds: 1.5, out: "/tmp/out.png" })).toMatchObject({
+            ok: true,
+            path: "/tmp/host-fixture.png",
+            width: 1280,
+        });
+        expect(await new ServiceHost(service.entry).call("render.still", { path, atSeconds: 2 })).toMatchObject({
+            path: "/tmp/host-fixture.png",
+        });
+        expect(asked).toEqual([
+            { method: "render.still", params: { path, atSeconds: 1.5, out: "/tmp/out.png" } },
+            { method: "render.still", params: { path, atSeconds: 2 } },
+        ]);
+    });
+
+    test("a REPL Movie's edit goes into the window's open session through the service, and runs locally without one", async () => {
+        const { dir, service } = await serviceFixture({ saveDelayMs: 10_000 });
+        const path = editFixture("rs-movie-");
+        const window = await connect(service.entry);
+        const heard: RpcNotification[] = [];
+        window.onNotification((notification) => heard.push(notification));
+        await window.call<unknown>("hello", hello("host"));
+        await window.call<unknown>("subscribe", { events: ["project.changed"] });
+        await window.call<unknown>("session.open", { path });
+
+        const methods = moviesApi.handles.find((handle) => handle.name === "Movie")?.methods ?? [];
+        // Its own volume() throws: only a call that went to the service, whose Movie runs it, passes.
+        const local = {
+            recording: path,
+            volume: async (_volume: number): Promise<unknown> => {
+                throw new Error("ran in the caller's process");
+            },
+        };
+        await serviceRoutedMovie(local, methods, { dir }).volume(0.25);
+        await Bun.sleep(10);
+
+        expect(service.sessions.get(path)?.current.project.audio.volume).toBe(0.25);
+        expect(readProject(path).audio.volume).toBe(0.25);
+        expect(heard.map((notification) => Reflect.get(Object(notification.params), "by"))).toEqual(["agent"]);
+        expect((await serviceRoutedMovie(new Movie(path), methods, { dir }).info()).audio).toMatchObject({
+            volume: 0.25,
+        });
+
+        const alone = editFixture("rs-alone-");
+        const offline = serviceRoutedMovie(new Movie(alone), methods, { dir: mkdtempSync(join(tmpdir(), "rs-none-")) });
+        await offline.volume(0.75);
+        expect(readProject(alone).audio.volume).toBe(0.75);
     });
 });
 

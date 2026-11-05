@@ -17,6 +17,7 @@ import { type EditSession, EditSessions } from "./edit-session";
 import { ConnectedAppHost, type HeadlessDeps, HeadlessHost, type HostCallContext, type RecorderHost } from "./host";
 import { listLibrary } from "./library";
 import { searchLibrary } from "./moments";
+import { setRecorderHostResolver } from "./service-client";
 import {
     HOST_METHODS,
     HOST_SCHEMAS,
@@ -490,6 +491,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
         );
         sessions.closeAll();
         setEditOwner(undefined);
+        setRecorderHostResolver(undefined);
         server?.endConnections();
 
         try {
@@ -537,6 +539,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
         return listening;
     });
     setEditOwner({ sessionOf: (path) => sessions.get(path) });
+    setRecorderHostResolver(() => host);
 
     const idleMs = options.idleMs ?? SERVICE_IDLE_MS;
     const check = setInterval(() => {
