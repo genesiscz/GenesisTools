@@ -60,6 +60,18 @@ final class MarkdownPictureRefusalTests: XCTestCase {
         XCTAssertNotEqual(allowed, context, "a changed allow list makes the page render again")
     }
 
+    func testAPictureAllowanceDoesNotAdmitJSONDocuments() throws {
+        let file = outside.appendingPathComponent("private.json")
+        try Data("{}".utf8).write(to: file)
+        var allowed = context!
+        allowed.extraRoots = [outside]
+        XCTAssertNil(MarkdownMedia.admitted(file, in: allowed))
+        XCTAssertNil(answer("[document](\(file.path))", allowed)[file.path]?["token"])
+        let local = vault.appendingPathComponent("local.json")
+        try Data("{}".utf8).write(to: local)
+        XCTAssertNotNil(MarkdownMedia.admitted(local, in: allowed))
+    }
+
     func testAPictureTheProcessCannotReadIsNotReadable() throws {
         let file = vault.appendingPathComponent("locked.png")
         try Data([0x89]).write(to: file)

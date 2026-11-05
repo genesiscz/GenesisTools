@@ -221,7 +221,8 @@ enum MarkdownMedia {
     }
 
     private static func isInsideRoots(_ real: URL, in context: Context) -> Bool {
-        let roots = [context.vaultRoot, context.folder].compactMap { $0 } + context.extraRoots
+        let pictureRoots = kind(ofExtension: real.pathExtension) == .image ? context.extraRoots : []
+        let roots = [context.vaultRoot, context.folder].compactMap { $0 } + pictureRoots
         let path = real.path
         for root in roots {
             guard let base = realPath(root)?.path else { continue }
