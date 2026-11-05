@@ -346,8 +346,13 @@ function meetingAudioPieces(folder: string, startedMs: number): Array<{ path: st
         .split("\n")
         .filter((line) => line.trim())
         .flatMap((line) => {
-            const row = audioRowSchema.safeParse(SafeJSON.parse(line, { strict: true }));
-            return row.success ? [row.data] : [];
+            try {
+                const row = audioRowSchema.safeParse(SafeJSON.parse(line, { strict: true }));
+                return row.success ? [row.data] : [];
+            } catch (err) {
+                log.warn({ err, index }, "skipping malformed audio index row");
+                return [];
+            }
         })
         .map((row) => ({ path: join(folder, row.file), delayMs: Math.max(0, Date.parse(row.at) - startedMs) }))
         .filter((piece) => existsSync(piece.path));
