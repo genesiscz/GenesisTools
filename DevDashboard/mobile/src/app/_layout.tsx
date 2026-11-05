@@ -8,10 +8,16 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ClientProvider } from "@/api/client-provider";
 import { wireAppStateFocus } from "@/lib/query";
+import { LiveCacheProvider } from "@/live/provider";
+import { GlanceBadge } from "@/features/glance/GlanceBadge";
+import { registerForPush, startPush } from "@/push/push";
 import { createConnectionQueryClient } from "@/lib/query-client";
 import { useConnectionStore } from "@/state/connection-store";
 import { ErrorBoundary } from "@/ui/ErrorBoundary";
 import { ScreenLoader } from "@/ui/ScreenLoader";
+
+// Before React mounts: an answer pressed on the lock screen launches the app in the background (F7).
+startPush();
 
 export default function RootLayout() {
     useEffect(() => wireAppStateFocus(), []);
@@ -23,6 +29,18 @@ export default function RootLayout() {
     useEffect(() => {
         void useConnectionStore.getState().restore();
     }, []);
+
+    // Every connect registers this install for push with that Mac (F2): a new token or a new Mac is picked up.
+    const transport = useConnectionStore((s) => s.transport);
+    useEffect(() => {
+        if (!transport) {
+            return;
+        }
+
+        void registerForPush()
+            .then((reason) => reason && console.warn(`[push] not registered: ${reason}`))
+            .catch((err: unknown) => console.warn("[push] register", err));
+    }, [transport]);
 
     const connected = useConnectionStore((s) => s.transport !== null);
     const restored = useConnectionStore((s) => s.restored);
@@ -74,7 +92,12 @@ function ConnectionSession({ children }: { children: ReactNode }) {
 
     return (
         <QueryClientProvider client={queryClient}>
-            <ClientProvider>{children}</ClientProvider>
+            <ClientProvider>
+                <LiveCacheProvider>
+                    <GlanceBadge />
+                    {children}
+                </LiveCacheProvider>
+            </ClientProvider>
         </QueryClientProvider>
     );
 }

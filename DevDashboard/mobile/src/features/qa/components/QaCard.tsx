@@ -2,6 +2,8 @@ import type { QaRow } from "@dd/contract";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { QaAnswerHtml } from "@/features/qa/components/QaAnswerHtml";
+import { useAppendToVault } from "@/features/vault/hooks";
+import { qaNoteTarget, qaNoteText } from "@/features/vault/queries";
 import { DASH, isAnswerTruncated, plainPreview, relativeTime, tagTone } from "@/features/qa/units";
 import { Card } from "@/ui/Card";
 import { StatusPill } from "@/ui/StatusPill";
@@ -23,6 +25,7 @@ interface QaCardProps {
 export function QaCard({ entry, unread, onToggleRead }: QaCardProps) {
     const c = useThemeColors();
     const [expanded, setExpanded] = useState(false);
+    const save = useAppendToVault();
     const truncated = isAnswerTruncated(entry.answerMd);
     const id = entry.id ?? "";
 
@@ -88,6 +91,26 @@ export function QaCard({ entry, unread, onToggleRead }: QaCardProps) {
                         {expanded ? (entry.answerMd ?? DASH) : collapsedAnswer}
                     </Text>
                 )}
+
+                <View className="flex-row items-center gap-4">
+                    <Pressable
+                        testID={`qa-save-vault-${id}`}
+                        accessibilityRole="button"
+                        accessibilityLabel="Save the answer to the vault"
+                        hitSlop={8}
+                        disabled={save.isPending || save.isSuccess}
+                        onPress={() => save.mutate({ text: qaNoteText(entry), ...qaNoteTarget(entry.project) })}
+                    >
+                        <Text className="text-xs" style={{ color: c.accent, fontFamily: "monospace" }}>
+                            {save.isSuccess ? `saved to ${save.data.note}` : save.isPending ? "saving…" : "save to vault"}
+                        </Text>
+                    </Pressable>
+                    {save.isError ? (
+                        <Text className="text-xs" style={{ color: c.danger }}>
+                            {String(save.error)}
+                        </Text>
+                    ) : null}
+                </View>
 
                 {truncated || hasRichAnswer ? (
                     <Pressable

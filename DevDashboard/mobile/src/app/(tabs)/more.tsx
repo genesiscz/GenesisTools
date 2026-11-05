@@ -35,14 +35,21 @@ const MORE_GROUPS: MoreGroup[] = [
     {
         heading: "Attention",
         links: [
+            { title: "Agents", route: "/agents", testID: "more-link-agents", icon: "users" },
+            { title: "PR triage", route: "/prs", testID: "more-link-prs", icon: "git-pull-request" },
+            { title: "Approvals", route: "/approvals", testID: "more-link-approvals", icon: "shield" },
             { title: "Needs Input", route: "/needs-input-inbox", testID: "more-link-needs-input-inbox", icon: "inbox" },
+            { title: "Touch ID", route: "/touch-id", testID: "more-link-touch-id", icon: "lock" },
+            { title: "Watching", route: "/watching", testID: "more-link-watching", icon: "eye" },
         ],
     },
     {
         heading: "Configuration",
         links: [
             { title: "Connections", route: "/connections", testID: "more-link-connections", icon: "link" },
+            { title: "Notifications", route: "/notifications", testID: "more-link-notifications", icon: "bell" },
             { title: "Network", route: "/network-status", testID: "more-link-network-status", icon: "activity" },
+            { title: "Wake my Mac", route: "/wake", testID: "more-link-wake", icon: "power" },
         ],
     },
     {
@@ -54,7 +61,12 @@ const MORE_GROUPS: MoreGroup[] = [
     {
         heading: "Productivity",
         links: [
+            { title: "Morning brief", route: "/brief", testID: "more-link-brief", icon: "sunrise" },
             { title: "Reminders", route: "/reminders-todos", testID: "more-link-reminders-todos", icon: "check-square" },
+            { title: "Timesheet", route: "/timesheet", testID: "more-link-timesheet", icon: "clock" },
+            { title: "Send to vault", route: "/vault", testID: "more-link-vault", icon: "book" },
+            { title: "Memos", route: "/memos", testID: "more-link-memos", icon: "mic" },
+            { title: "Snap to agent", route: "/snap", testID: "more-link-snap", icon: "camera" },
         ],
     },
     {
@@ -67,6 +79,7 @@ const MORE_GROUPS: MoreGroup[] = [
         heading: "Insights",
         links: [
             { title: "Activity", route: "/activity-timeline", testID: "more-link-activity-timeline", icon: "activity" },
+            { title: "Accounts", route: "/accounts", testID: "more-link-accounts", icon: "pie-chart" },
             { title: "Claude Usage", route: "/claude-usage", testID: "more-link-claude-usage", icon: "bar-chart-2" },
         ],
     },

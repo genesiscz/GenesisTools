@@ -1,15 +1,20 @@
 import type { ConfigContext, ExpoConfig } from "expo/config";
 import { withEntitlementsPlist } from "expo/config-plugins";
 
-// expo-notifications adds `aps-environment`, which makes a device build demand a push-capable
-// provisioning profile. Nothing here sends a remote push, so the entitlement is dropped.
-// Applied to the config object rather than listed in `plugins`: an ExpoConfig plugin entry is
-// a serializable `name` or `[name, props]` pair, never an inline mod function.
-const withoutPushEntitlement = (config: ExpoConfig): ExpoConfig =>
+// Push (F2): the app receives remote notices. The expo-notifications plugin writes `aps-environment` (its `mode`), and
+// this adds the time-sensitive entitlement. A device build then needs a push-capable provisioning profile (Xcode's
+// automatic signing makes one). Applied to the config object rather than listed in `plugins`: an ExpoConfig plugin entry is a serializable `name`
+// or `[name, props]` pair, never an inline mod function.
+const withTimeSensitiveEntitlement = (config: ExpoConfig): ExpoConfig =>
     withEntitlementsPlist(config, (mod) => {
-        delete mod.modResults["aps-environment"];
+        mod.modResults["com.apple.developer.usernotifications.time-sensitive"] = true;
         return mod;
     });
+
+/** `tools mobile release` sets `GT_APS_ENVIRONMENT=production`, so a TestFlight build gets production tokens. */
+const APS_MODE = process.env.GT_APS_ENVIRONMENT === "production" ? "production" : "development";
+
+const FACE_ID_PERMISSION = "Confirm an act that cannot be undone, such as stopping an agent session on your Mac.";
 
 // Dynamic config (plan 02). Expo loads the static `app.json` first and passes it in as
 // `config`; we MERGE the transport/trust native requirements onto it so no app.json key is
@@ -18,6 +23,8 @@ const withoutPushEntitlement = (config: ExpoConfig): ExpoConfig =>
 // `expo-camera` config plugin (zeroconf is autolinked — see the note on `plugins` below); and
 // the `devdashboard` deep-link scheme used by the pairing QR.
 const CAMERA_PERMISSION = "Scan the pairing QR shown by the DevDashboard agent.";
+// The walkie-talkie (F12) records a short clip for an agent; the Mac transcribes it. Foreground only.
+const MICROPHONE_PERMISSION = "Record a short voice message for an agent; your Mac turns it into text.";
 
 export default ({ config }: ConfigContext): ExpoConfig => {
     const existingScheme = config.scheme;
@@ -27,13 +34,15 @@ export default ({ config }: ConfigContext): ExpoConfig => {
           ? [existingScheme, "devdashboard"]
           : "devdashboard";
 
-    return withoutPushEntitlement({
+    return withTimeSensitiveEntitlement({
         ...config,
         name: config.name ?? "DevDashboard",
         slug: config.slug ?? "devdashboard-mobile",
         scheme: schemes,
         ios: {
             ...config.ios,
+            // Each upload needs a higher build number; `tools mobile release` sets one from the clock.
+            ...(process.env.GT_BUILD_NUMBER ? { buildNumber: process.env.GT_BUILD_NUMBER } : {}),
             infoPlist: {
                 ...config.ios?.infoPlist,
                 NSBonjourServices: ["_devdashboard._tcp"],
@@ -59,6 +68,10 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         plugins: [
             ...(config.plugins ?? []),
             ["expo-camera", { cameraPermission: CAMERA_PERMISSION }],
+            ["expo-audio", { microphonePermission: MICROPHONE_PERMISSION, enableBackgroundRecording: false }],
+            ["expo-local-authentication", { faceIDPermission: FACE_ID_PERMISSION }],
+            // Background remote notifications: a silent push takes an answered notice off the lock screen.
+            ["expo-notifications", { mode: APS_MODE, enableBackgroundRemoteNotifications: true }],
         ],
     });
 };
