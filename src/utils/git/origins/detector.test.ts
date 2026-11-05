@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { repoFacts } from "../repo-facts";
 import { TestRepo } from "../test-repo";
@@ -1037,6 +1038,14 @@ describe("spawnRunner", () => {
                 ? "gt-no-such-cli-7f3a is not installed (brew install gt-no-such-cli-7f3a)"
                 : "gt-no-such-cli-7f3a is not installed"
         );
+    });
+
+    it("clears forced colour for bounded origin commands", async () => {
+        await env.testing.withOverrides({ CLICOLOR_FORCE: "1", FORCE_COLOR: "1", GH_FORCE_TTY: "1" }, async () => {
+            const res = await spawnRunner(["sh", "-c", 'printf "%s %s %s %s" "${CLICOLOR_FORCE-unset}" "${FORCE_COLOR-unset}" "${GH_FORCE_TTY-unset}" "$NO_COLOR"'], { cwd: process.cwd(), timeoutMs: 5_000 });
+            expect(res.code).toBe(0);
+            expect(res.stdout).toBe("unset unset unset 1");
+        });
     });
 
     it("still runs a CLI that exists", async () => {
