@@ -1,6 +1,7 @@
 import type { PolicyClass } from "@app/dev-dashboard/contract/endpoint-table";
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import type { TranscriptProvider } from "@genesiscz/utils/ai/transcripts/types";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { hoursArg, limitArg } from "../../commands/agents-args";
 
 /**
@@ -208,6 +209,161 @@ export const HUB_CAPABILITIES = {
         },
     } satisfies HubCapability<AgentsInput>,
 
+    /**
+     * `hub board --json`: every live Claude, Codex and Grok session with its phase, stuck verdict, project, account,
+     * model, newest prompt and folded sub-agents and workers (the phone's agents board, F9).
+     */
+    board: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { agentsBoard } = await import("../board/index");
+            return agentsBoard();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
+    /** `hub ping --json`: the sessions the Mac watches for "ping me when done" (F15). Read only. */
+    pings: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { listPings } = await import("../ping/index");
+            return listPings();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
+    /**
+     * `hub glance --json`: the phone's glance (F13, F16, F17, F18), its badge, widgets and Live Activity numbers. Read
+     * only: it mints no act token and fetches no account.
+     */
+    glance: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { buildGlance } = await import("../glance/index");
+            return buildGlance();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
+    /**
+     * `hub approvals --json`: every tool call that waits for allow or deny, with its exact command, file changes or
+     * plan (the phone's Approvals screen, F8). Read only; the answer is its own keyed-write route.
+     */
+    approvals: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { listPendingApprovals } = await import("../approvals/index");
+            return { pending: await listPendingApprovals() };
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
+    /** `hub gates --json`: what waits on the Mac's Touch ID (the phone's waiting card, F22). Read only. */
+    gates: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { gateLedger } = await import("../gates/index");
+            return gateLedger();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
+    /**
+     * `hub launch --json`: the harnesses, their accounts ranked by headroom and the repos the phone's New agent sheet
+     * offers (F21). Cached usage readings only: no account is fetched, so no refresh token is spent.
+     */
+    launch: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { launchOptions } = await import("../launch/index");
+            return launchOptions();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
+    /** `hub brief --json`: the stored morning brief (F29). Read only: the daemon task builds it, this asks Waze nothing. */
+    brief: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { readBrief } = await import("../brief/index");
+            return readBrief();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
+    /**
+     * `hub timesheet --json [--date d]`: the Clarity week of a day as the phone's Friday swipe shows it (F27). It reads
+     * Clarity and the time logs; it writes nothing (the fill is its own keyed route).
+     */
+    timesheet: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse(input) {
+            const date = text(input, "date");
+
+            if (date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+                throw new CapabilityRefusedError("bad-input", "date: YYYY-MM-DD");
+            }
+
+            return { date: date ?? new Date().toLocaleDateString("sv-SE") };
+        },
+        async run({ date }, { signal }) {
+            signal.throwIfAborted();
+            const { timesheetWeek } = await import("../timesheet/index");
+            return timesheetWeek(date);
+        },
+    } satisfies HubCapability<{ date: string }>,
+
+    /** `hub memos --json`: Voice Memos turned into actions (the phone's Memos screen, F28). Read only. */
+    memos: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { listMemoActions } = await import("../memos/index");
+            return listMemoActions();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
+    /** `hub wake --json`: the wakeup relay this Mac is registered with (F26), login included. Read only. */
+    wake: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { wakeRelay } = await import("../wake/index");
+            return wakeRelay();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
+    /** `hub watching --json`: every watch on the Mac in one list (the phone's Watching screen, F30). Read only. */
+    watching: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse: () => ({}),
+        async run(_input, { signal }) {
+            signal.throwIfAborted();
+            const { watching } = await import("../watching/index");
+            return watching();
+        },
+    } satisfies HubCapability<Record<string, never>>,
+
     /** `ai sessions tail <q> --json [--limit N] [--offset N] [--provider P]`: one page of a session's transcript. */
     transcript: {
         policy: "read",
@@ -259,6 +415,89 @@ export const HUB_CAPABILITIES = {
             return listPrompts();
         },
     } satisfies HubCapability<Record<string, never>>,
+
+    /**
+     * `hub prompts prepare <name> [--session] [--var k=v]`: one saved prompt rendered for one session, each variable
+     * with its value and source (F23). `vars` is a JSON object of given values.
+     */
+    promptPrepare: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse(input): { name: string; session?: string; vars: Record<string, string> } {
+            const name = text(input, "name");
+
+            if (!name) {
+                throw new CapabilityRefusedError("bad-input", "name: the saved prompt's name");
+            }
+
+            const vars = parsedWith(text(input, "vars"), "vars", (raw) => {
+                const parsed: unknown = SafeJSON.parse(raw, { strict: true });
+
+                if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+                    throw new Error("a JSON object of name to value");
+                }
+
+                return Object.fromEntries(
+                    Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === "string")
+                );
+            });
+            return { name, session: text(input, "session"), vars: vars ?? {} };
+        },
+        async run(input, { signal }) {
+            signal.throwIfAborted();
+            const { HubPromptError, preparePrompt } = await import("../prompts");
+
+            try {
+                return await preparePrompt(input);
+            } catch (err) {
+                if (err instanceof HubPromptError && (err.code === "not-found" || err.code === "ambiguous")) {
+                    throw new CapabilityRefusedError(err.code === "not-found" ? "not-found" : "bad-input", err.message);
+                }
+
+                throw err;
+            }
+        },
+    } satisfies HubCapability<{ name: string; session?: string; vars: Record<string, string> }>,
+
+    /** `hub triage --json [--mine] [--limit n]`: the open PRs of the configured projects with readiness (F20). */
+    prs: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse(input): { mine: boolean; limit: number } {
+            const limit = wholeNumber(input, "limit", 30) as number;
+
+            if (limit < 1 || limit > 100) {
+                throw new CapabilityRefusedError("bad-input", "limit must be between 1 and 100");
+            }
+
+            return { mine: text(input, "mine") === "1" || input.mine === true, limit };
+        },
+        async run(input, { signal }) {
+            signal.throwIfAborted();
+            const { prTriage } = await import("../triage/index");
+            return prTriage(input);
+        },
+    } satisfies HubCapability<{ mine: boolean; limit: number }>,
+
+    /** A PR's checks and the failing step's log tail (F20). */
+    prChecks: {
+        policy: "read",
+        rules: READ_ONLY,
+        parse(input): { url: string } {
+            const url = text(input, "url");
+
+            if (!url) {
+                throw new CapabilityRefusedError("bad-input", "url: the PR's web URL");
+            }
+
+            return { url };
+        },
+        async run(input, { signal }) {
+            signal.throwIfAborted();
+            const { prChecks } = await import("../triage/index");
+            return prChecks(input);
+        },
+    } satisfies HubCapability<{ url: string }>,
 
     /** `hub widget snapshot --json [--selected key]`: what the notch widget shows, read once. */
     widgetSnapshot: {

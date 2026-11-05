@@ -3,16 +3,25 @@ import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { FoundPr, PrBackend } from "./pr";
 import {
+    CLAIM_STALE_MS,
+    claimDraft,
+    decideDraft,
     listProposals,
     listProposalsFor,
     ProposalError,
+    type ProposalIntentDeps,
     parseProposal,
     proposalFor,
     proposalKey,
     proposalMarkdown,
+    reconcileProposal,
+    recordDraftSent,
+    releaseDraftClaim,
     saveProposal,
 } from "./proposal";
+import { discardProposal, type ProposalPublishDeps, publishProposal } from "./proposal-publish";
 
 function input(overrides: Record<string, unknown> = {}) {
     return {
@@ -361,5 +370,180 @@ describe("review proposal", () => {
 
         await saveProposal(parseProposal(input({ repoPath: join(checkout, "gone"), threads })), base);
         expect(proposalFor(ref, base)?.repoPath).toBeNull();
+    });
+});
+
+describe("proposal intents (M11)", () => {
+    const at = (ms: number) => new Date(Date.parse("2026-11-04T10:00:00.000Z") + ms);
+    const deps = (ms: number, alive = true): ProposalIntentDeps => ({ now: () => at(ms), alive: () => alive });
+
+    async function stored() {
+        const base = mkdtempSync(join(tmpdir(), "gt-proposal-intents-"));
+        const proposal = parseProposal(input());
+        await saveProposal(proposal, base);
+        return { base, ref: proposal, path: join(base, "proposals", `${proposalKey(proposal)}.json`) };
+    }
+
+    const draftOf = (path: string) => SafeJSON.parse(readFileSync(path, "utf8")).drafts[0];
+
+    test("decide, claim, record the provider draft, then a publish reconciles it to posted", async () => {
+        const { base, ref, path } = await stored();
+
+        await decideDraft(
+            { ref, draftId: "d1", decision: "edited", editedBody: "Reset after the POST.", base },
+            deps(0)
+        );
+        const claimed = await claimDraft({ ref, draftId: "d1", pid: 4242, base }, deps(1_000));
+        expect(claimed.body).toBe("Reset after the POST.");
+        await expect(claimDraft({ ref, draftId: "d1", pid: 4343, base }, deps(2_000))).rejects.toThrow(/being sent/);
+
+        await recordDraftSent({ ref, draftId: "d1", status: "drafted", providerId: "PRRC_1", base }, deps(3_000));
+        expect(draftOf(path)).toMatchObject({ status: "drafted", providerId: "PRRC_1" });
+        expect(draftOf(path).claim).toBeUndefined();
+
+        const reconciled = await reconcileProposal({ ref, submittedIds: ["PRRC_1"], base }, deps(4_000));
+        expect(reconciled).toEqual({ posted: ["d1"], staleClaims: [] });
+        expect(draftOf(path)).toMatchObject({ status: "posted", decidedAt: at(4_000).toISOString() });
+        await expect(decideDraft({ ref, draftId: "d1", decision: "rejected", base }, deps(5_000))).rejects.toThrow(
+            /already posted/
+        );
+    });
+
+    test("a push keeps the decision and its time; a crashed claim is cleared and reported", async () => {
+        const { base, ref, path } = await stored();
+        await decideDraft({ ref, draftId: "d1", decision: "accepted", base }, deps(0));
+        await claimDraft({ ref, draftId: "d1", pid: 4242, base }, deps(0));
+
+        await saveProposal(parseProposal(input()), base);
+        expect(draftOf(path)).toMatchObject({
+            status: "accepted",
+            decidedAt: at(0).toISOString(),
+            claim: { pid: 4242 },
+        });
+
+        const gone = await reconcileProposal({ ref, submittedIds: [], base }, deps(1_000, false));
+        expect(gone.staleClaims).toEqual(["d1"]);
+        expect(draftOf(path).claim).toBeUndefined();
+
+        await claimDraft({ ref, draftId: "d1", pid: 4242, base }, deps(0));
+        await expect(claimDraft({ ref, draftId: "d1", base }, deps(CLAIM_STALE_MS + 1))).resolves.toBeDefined();
+        await releaseDraftClaim({ ref, draftId: "d1", base });
+        expect(draftOf(path)).toMatchObject({ status: "accepted" });
+        expect(draftOf(path).claim).toBeUndefined();
+    });
+});
+
+describe("proposal publish and discard (M11, F20)", () => {
+    const now: ProposalIntentDeps = { now: () => new Date("2026-11-04T10:00:00.000Z"), alive: () => true };
+    const twoDrafts = () =>
+        input({
+            drafts: [
+                { id: "d1", path: "src/a.ts", line: 12, severity: "blocker", body: "One.", meta: { verdict: "a" } },
+                { id: "d2", path: "src/b.ts", line: 3, severity: "nit", body: "Two.", meta: { verdict: "b" } },
+            ],
+        });
+
+    const FOUND: FoundPr = {
+        provider: "gitlab",
+        host: "gitlab.example.com",
+        project: "group/app",
+        number: 42,
+        url: "https://gitlab.example.com/group/app/-/merge_requests/42",
+        webUrl: "https://gitlab.example.com/group/app/-/merge_requests/42",
+        title: "Invented MR",
+        state: "OPEN",
+        draft: false,
+        author: "alice",
+        sourceBranch: "feat/a",
+        targetBranch: "main",
+        headSha: "bbb",
+        baseSha: "aaa",
+        crossRepository: false,
+        headRepo: null,
+        repoPath: null,
+    };
+
+    function fakePr(calls: string[], fail: Set<string> = new Set()): ProposalPublishDeps["pr"] {
+        // Only draftAdd and publish may run; any other member fails the test.
+        const unexpected = (name: string) => async (): Promise<never> => {
+            throw new Error(`unexpected backend call ${name}`);
+        };
+        const backend: PrBackend = {
+            threads: unexpected("threads"),
+            reply: unexpected("reply"),
+            comment: unexpected("comment"),
+            draftUpdate: unexpected("draftUpdate"),
+            draftDelete: unexpected("draftDelete"),
+            resolve: unexpected("resolve"),
+            versions: unexpected("versions"),
+            draftAdd: async ({ path, body }) => {
+                calls.push(`draft:${path}:${body}`);
+
+                if (fail.has(path)) {
+                    throw new Error("host said 422");
+                }
+
+                return { draftId: `P-${path}` };
+            },
+            publish: async ({ event }) => {
+                calls.push(`publish:${event}`);
+                return { event, published: 1, submittedIds: ["P-src/a.ts"] };
+            },
+        };
+        return async () => ({ found: FOUND, backend });
+    }
+
+    test("posts only accepted or edited drafts, submits GitLab's request-changes verdict as a comment, reconciles", async () => {
+        const base = mkdtempSync(join(tmpdir(), "gt-proposal-publish-"));
+        const proposal = parseProposal(twoDrafts());
+        await saveProposal(proposal, base);
+        await decideDraft({ ref: proposal, draftId: "d1", decision: "edited", editedBody: "Edited.", base }, now);
+
+        const calls: string[] = [];
+        const result = await publishProposal({ pr: "mr" }, { pr: fakePr(calls), intent: now, base });
+        expect(calls).toEqual(["draft:src/a.ts:Edited.", "publish:COMMENT"]);
+        expect(result.reconciled?.posted).toEqual(["d1"]);
+        expect(listProposalsFor(proposal, base)[0]?.drafts.map((draft) => draft.status)).toEqual([
+            "posted",
+            "proposed",
+        ]);
+    });
+
+    test("a failed draft keeps its decision and stops the submit; discard then rejects only what was not sent", async () => {
+        const base = mkdtempSync(join(tmpdir(), "gt-proposal-publish-"));
+        const proposal = parseProposal(twoDrafts());
+        await saveProposal(proposal, base);
+        await decideDraft({ ref: proposal, draftId: "d1", decision: "accepted", base }, now);
+        await decideDraft({ ref: proposal, draftId: "d2", decision: "accepted", base }, now);
+
+        const calls: string[] = [];
+        const result = await publishProposal(
+            { pr: "mr" },
+            { pr: fakePr(calls, new Set(["src/b.ts"])), intent: now, base }
+        );
+        expect(result.published).toBeNull();
+        expect(result.drafts.map((draft) => draft.sent)).toEqual([true, false]);
+        expect(calls).not.toContain("publish:COMMENT");
+
+        const discarded = await discardProposal({ pr: "mr" }, { pr: fakePr([]), intent: now, base });
+        expect(discarded.rejected).toEqual(["d2"]);
+        expect(listProposalsFor(proposal, base)[0]?.drafts.map((draft) => draft.status)).toEqual([
+            "drafted",
+            "rejected",
+        ]);
+    });
+
+    test("a proposal for another head is refused before anything is posted", async () => {
+        const base = mkdtempSync(join(tmpdir(), "gt-proposal-publish-"));
+        await saveProposal(parseProposal(twoDrafts()), base);
+        const calls: string[] = [];
+        const moved: ProposalPublishDeps["pr"] = async (ref) => {
+            const real = await fakePr(calls)(ref);
+            return { ...real, found: { ...real.found, headSha: "ccc" } };
+        };
+        await expect(publishProposal({ pr: "mr" }, { pr: moved, intent: now, base })).rejects.toThrow(
+            /head is now ccc/
+        );
+        expect(calls).toEqual([]);
     });
 });

@@ -1,18 +1,18 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import type { PreparedPromptDto, PromptVariableDto } from "@app/dev-dashboard/contract/agents";
 import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
-import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { repoFacts } from "@genesiscz/utils/git/repo-facts";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
 import { type JsonDocument, jsonDocument, prettyJson } from "@genesiscz/utils/storage/locked-document";
 import { promptVariables, renderPrompt } from "@genesiscz/utils/template";
-import { noPaneMatched } from "./fix-threads";
+import { handOffError, handOffToSession } from "./send/hand-off";
 
 // The hub's prompt library: `~/.genesis-tools/hub/prompts.json`. A prompt is a text with named
-// variables (`{{branch}}`, `{{pr}}`, `{{file}}`); sending renders it and types it into a session's
-// cmux pane through `tools claude cmux send`, the path every other hub send takes. Written by
+// variables (`{{branch}}`, `{{pr}}`, `{{file}}`); sending renders it and types it into the
+// session through the hub's one hand-off (`send/hand-off.ts`, the session's harness sender). Written by
 // `tools hub prompts add|remove` and by each send (its use count, for "most used" ordering).
 
 const log = logger.child({ component: "hub/prompts" });
@@ -54,7 +54,6 @@ export class HubPromptError extends Error {
 const NAME = /^[A-Za-z0-9][\w .:-]{0,63}$/;
 /** cmux reads these escapes as keys (Enter, Tab): a text holding one cannot be typed as it is. */
 const CMUX_ESCAPE = /\\[nrt]/;
-const SEND_TIMEOUT_MS = 30_000;
 
 /** Shown until the first `add`; then they live in the file like any other prompt. */
 export function defaultPrompts(now = new Date()): SavedPrompt[] {
@@ -390,19 +389,7 @@ export const realSendPromptDeps: SendPromptDeps = {
         const facts = await repoFacts({ path: cwd, withPr });
         return { branch: facts.branch, root: facts.root, pr: facts.pr ? String(facts.pr.number) : null };
     },
-    send: async (session, text) => {
-        // After `--`: a line that starts with a hyphen is text, not an option.
-        const run = await execTool(["claude", "cmux", "send", "--first", "--json", "--", session, text], {
-            timeout: SEND_TIMEOUT_MS,
-        });
-
-        if (run.success) {
-            return null;
-        }
-
-        const reason = noPaneMatched(run.stdout) ? "no cmux pane runs this session" : run.stderr || run.stdout;
-        return reason.split("\n").slice(-3).join(" ").slice(0, 300) || `exit ${run.exitCode}`;
-    },
+    send: async (session, text) => handOffError(await handOffToSession({ sessionId: session, text })),
     write: async (file, text) => {
         await mkdir(dirname(file), { recursive: true });
         // Exclusive: two sends in one millisecond share a name, and the second must not replace the first.
@@ -411,6 +398,84 @@ export const realSendPromptDeps: SendPromptDeps = {
     dir: join(new Storage("hub").getBaseDir(), "prompts-sent"),
     now: () => new Date(),
 };
+
+/**
+ * The one prepare intent of a saved prompt (F23): each variable with its value and where it came from (`given` by the
+ * caller, filled from the `session`'s folder, or `missing`), the rendered text (a missing variable stays `{{name}}`)
+ * and how a pane send would deliver it. It reads only: no send, no use count. `sendPrompt`, the Swift picker and the
+ * phone all start here.
+ */
+export async function preparePrompt({
+    name,
+    session,
+    vars = {},
+    path = promptsPath(),
+    deps = realSendPromptDeps,
+}: {
+    name: string;
+    session?: string;
+    vars?: Record<string, string>;
+    path?: string;
+    deps?: Pick<SendPromptDeps, "cwdOf" | "facts">;
+}): Promise<PreparedPromptDto> {
+    const prompt = findPrompt(readPrompts(path).prompts, name);
+    const wanted = promptVariables(prompt.text);
+    const values: Record<string, string> = {};
+    const sources = new Map<string, PromptVariableDto["source"]>();
+
+    for (const variable of wanted) {
+        if (Object.hasOwn(vars, variable) && vars[variable]) {
+            values[variable] = vars[variable];
+            sources.set(variable, "given");
+        }
+    }
+
+    const needed = wanted.filter((variable) => !values[variable] && CONTEXT_VARIABLES.has(variable));
+
+    if (session && needed.length > 0) {
+        const context: Record<string, string | null> = { session };
+        const cwd = deps.cwdOf(session);
+        context.cwd = cwd;
+
+        if (cwd && needed.some((variable) => variable !== "session" && variable !== "cwd")) {
+            try {
+                const facts = await deps.facts(cwd, needed.includes("pr"));
+                context.branch = facts.branch;
+                context.pr = facts.pr;
+                context.project = facts.root ? basename(facts.root) : null;
+            } catch (err) {
+                log.warn(
+                    { err, cwd },
+                    "prompt prepare: the session's checkout facts failed; those variables stay missing"
+                );
+            }
+        }
+
+        for (const variable of needed) {
+            const value = context[variable];
+
+            if (value) {
+                values[variable] = value;
+                sources.set(variable, "session");
+            }
+        }
+    }
+
+    const rendered = renderPrompt(prompt.text, values);
+    return {
+        name: prompt.name,
+        description: prompt.description,
+        session: session ?? null,
+        variables: wanted.map((variable) => ({
+            name: variable,
+            value: values[variable] ?? null,
+            source: sources.get(variable) ?? "missing",
+        })),
+        text: rendered.text,
+        missing: rendered.missing,
+        mode: deliveryMode(rendered.text),
+    };
+}
 
 /**
  * Render a saved prompt for one session and type it into its cmux pane. Variables come from `vars`
@@ -432,51 +497,28 @@ export async function sendPrompt({
     path?: string;
     deps?: SendPromptDeps;
 }): Promise<SendPromptResult> {
-    const prompt = findPrompt(readPrompts(path).prompts, name);
-    const wanted = promptVariables(prompt.text);
-    const values: Record<string, string> = { ...vars };
-    const filled: string[] = [];
-    const needed = wanted.filter((variable) => !values[variable] && CONTEXT_VARIABLES.has(variable));
+    const prepared = await preparePrompt({ name, session, vars, path, deps });
 
-    if (needed.length > 0) {
-        const context: Record<string, string | null> = { session };
-        const cwd = deps.cwdOf(session);
-        context.cwd = cwd;
-
-        if (cwd && needed.some((variable) => variable !== "session" && variable !== "cwd")) {
-            try {
-                const facts = await deps.facts(cwd, needed.includes("pr"));
-                context.branch = facts.branch;
-                context.pr = facts.pr;
-                context.project = facts.root ? basename(facts.root) : null;
-            } catch (err) {
-                log.warn(
-                    { err, cwd },
-                    "prompt send: the session's checkout facts failed; those variables stay missing"
-                );
-            }
-        }
-
-        for (const variable of needed) {
-            const value = context[variable];
-
-            if (value) {
-                values[variable] = value;
-                filled.push(variable);
-            }
-        }
-    }
-
-    const rendered = renderPrompt(prompt.text, values);
-
-    if (rendered.missing.length > 0) {
+    if (prepared.missing.length > 0) {
         throw new HubPromptError(
             "missing-vars",
-            `"${prompt.name}" needs ${rendered.missing.map((variable) => `--var ${variable}=…`).join(" ")}`,
-            rendered.missing
+            `"${prepared.name}" needs ${prepared.missing.map((variable) => `--var ${variable}=…`).join(" ")}`,
+            prepared.missing
         );
     }
 
+    const values: Record<string, string> = { ...vars };
+    const filled: string[] = [];
+
+    for (const variable of prepared.variables) {
+        if (variable.source === "session" && variable.value !== null) {
+            values[variable.name] = variable.value;
+            filled.push(variable.name);
+        }
+    }
+
+    const prompt = { name: prepared.name };
+    const rendered = { text: prepared.text };
     const mode = deliveryMode(rendered.text);
     const stamp = deps.now().toISOString().replace(/[:.]/g, "-");
     const file = mode === "file" ? join(deps.dir, `${stamp}-${prompt.name.replace(/[^\w.-]+/g, "_")}.md`) : null;
