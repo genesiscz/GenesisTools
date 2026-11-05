@@ -56,14 +56,16 @@ export function openLogPath(): string {
 
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
+/** A local file wins over a scheme-like name: `report:2026.txt` in the cwd is that file, not a URL. */
 export function classifyTarget(given: string, cwd: string): OpenTarget {
-    if (URL_SCHEME.test(given) && !given.startsWith("/")) {
+    const path = resolve(cwd, given.replace(/^~(?=\/|$)/, homedir()));
+    const exists = existsSync(path);
+
+    if (URL_SCHEME.test(given) && !given.startsWith("/") && !exists) {
         return { given, kind: "url" };
     }
 
-    const path = resolve(cwd, given.replace(/^~(?=\/|$)/, homedir()));
-
-    if (!existsSync(path)) {
+    if (!exists) {
         return { given, path, kind: "missing" };
     }
 

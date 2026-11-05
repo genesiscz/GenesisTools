@@ -51,9 +51,12 @@ describe("tools open", () => {
 
     it("names each target and gives open the absolute path of a file", () => {
         writeFileSync(join(dir, "a.md"), "x");
-        const targets = ["a.md", dir, "https://example.org/", "gone.txt"].map((given) => classifyTarget(given, dir));
+        writeFileSync(join(dir, "report:2026.txt"), "x");
+        const targets = ["a.md", dir, "https://example.org/", "gone.txt", "report:2026.txt"].map((given) =>
+            classifyTarget(given, dir)
+        );
 
-        expect(targets.map((target) => target.kind)).toEqual(["file", "folder", "url", "missing"]);
+        expect(targets.map((target) => target.kind)).toEqual(["file", "folder", "url", "missing", "file"]);
         expect(openArgv({ targets: [], reveal: true, app: "Cursor" }, targets.slice(0, 1))).toEqual([
             "open",
             "-a",
