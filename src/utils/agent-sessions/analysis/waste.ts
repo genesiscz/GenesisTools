@@ -1,5 +1,6 @@
 import { findCacheLosses } from "@genesiscz/utils/ai/usage/cache-stats";
 import type { AgentId } from "@genesiscz/utils/ai/usage/spend/drivers";
+import { costOf } from "@genesiscz/utils/ai/usage/spend/pricing";
 import type { SessionCall, SessionCompaction } from "../analysis-types";
 import { priceOfCall } from "./cost";
 import { cacheCallsOf } from "./report";
@@ -66,12 +67,20 @@ export function sessionWaste(input: {
         // The drop in reads only detects the loss; the call rebuilt at most what it wrote and sent uncached (a
         // compaction falls to a short summary, a truncation rebuilds nothing it dropped).
         const tokens = Math.min(Math.max(0, loss.before - loss.after), call.cacheWrite + call.input);
+        const rebuilt = {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: tokens,
+            cacheWrite1h: Math.min(tokens, call.cacheWrite1h ?? 0),
+        };
+        const cached = { ...rebuilt, cacheRead: tokens, cacheWrite: 0, cacheWrite1h: 0 };
         items.push({
             kind: KIND_OF_CAUSE[loss.cause] ?? "cache-rebuild-other",
             t: call.t,
             model: call.model,
             tokens,
-            usd: (tokens * Math.max(0, price.cacheWrite - price.cacheRead)) / 1e6,
+            usd: Math.max(0, costOf(rebuilt, price) - costOf(cached, price)),
             evidence: `${loss.reason}; read ${loss.before} then ${loss.after} after ${loss.gapMin} min`,
         });
     }
