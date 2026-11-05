@@ -510,6 +510,6 @@ checklist.md or motion.md as well.
   first clip's, and the zoom lane read the pointer one inset (28 pt) to the left, so a new zoom started right of
   the pointer (fixed in bd94636630 and cf8df6da07). How to see it: send real mouse events to an off-screen window and
   check what changed (`RecorderTimelineTests`). Rule: `.offset` is the last modifier of anything that takes a
-  click, or place it with a layout (`.padding(.leading:)`, `.position`). A synthetic click in such a test sends a
-  `mouseMoved` first: a `.liveRow` row turns live on hover, and without the move every second click was lost to
-  the change, which a real pointer never causes.
+  click, or place it with a layout (`.padding(.leading:)`, `.position`). A stationary real pointer can also miss
+  the hover event when a row opens, scrolls or refreshes, so its first click must work without a mouse move. The
+  resting label now handles the same tap (dafe8e779f). Test a click with no preceding move.

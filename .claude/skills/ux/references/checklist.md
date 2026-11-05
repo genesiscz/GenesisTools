@@ -215,6 +215,7 @@ Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overl
 - The primary action of a pane (Send, Apply, Save) has a shortcut, and the button or its tooltip shows it.
 
 ## Errors and recovery
+- A failure state must fit the same window as the success state. A long error made an 848 pt window's split view 3,193 pt tall (485d28d73a). Test a real long error at the smallest window size and check that the first rows remain visible.
 - Errors say what happened and what to do, in one sentence, with Retry where a retry can work, in a dialog when the
   user must act. Raw output (stderr, a stack, `localizedDescription`) goes behind a Details disclosure.
 - The tone (success, warning, error) is stored with the message by the code that knows it. Picking a colour from
@@ -230,6 +231,7 @@ Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overl
   `bun scripts/native/staging.ts deny <kind>`.
 
 ## Undo and destructive actions
+- An asynchronous Undo owns its history step until the operation completes. A late callback lost a newer edit or crashed on an empty redo stack (ea1e4fdc37). Test success and failure after making another edit before completion.
 - A frequent destructive action (dismiss, discard, remove, clear) gets Undo: a note with an Undo button for a few
   seconds, and ⌘Z. Undo beats a confirmation for things done many times a day.
 - A rare, large one (delete a project, forget a key) asks first; its button is marked destructive and is not the
@@ -276,6 +278,8 @@ Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overl
   per alert.
 
 ## Attention and notifications
+- Ask for confirmation when approval arrives within the configured interval after the window appears. An accidental Touch ID or click approved unread requests (88ba68faae). The saved `approvals.confirmWithinMs` key is in milliseconds, defaults to 1,000 and uses 0 to disable the extra question. Hide password fallback while awaiting the final approval click (9d84d08365). Test early and late approvals, denial and 0.
+- A notification that opens a window keeps focus until the target takes it. Giving focus back first left the opened window behind the terminal (323e9f75d0). Test an open action and a run-only action with a terminal in front.
 - Anything that appears by itself (a popup, a HUD, a flash, a sound) can be closed without acting (× and Esc), says
   what caused it, and has its duration and its sound as settings.
 - A notification is for something the user must act on, never for progress. No system notification for a session
@@ -307,6 +311,7 @@ Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overl
   (white at 40 to 50% on a dark fill) fails both.
 
 ## Settings
+- Headless, snapshot and benchmark runs must not save the selected page or window frame, or start a widget (ad8607934c, a6fd2ac0df). Deliberate settings writes still use the real defaults. Check the saved page before and after a headless run.
 - Every setting can be found: a search field once the window has more than a few pages.
 - One setting, one place, one name and one range. A quick control elsewhere (a popover) writes the same key with the
   same words and the same choices.
