@@ -870,18 +870,22 @@ describe("handoff project (a handoff names the project it is for)", () => {
 
     test("modify_handoff moves the project, records from → to in the events, and stays a poster verb", () => {
         const env = freshEnv();
-        const posted = postHandoff({ title: "Filed wrong", tasks }, env.depsFor(A));
+        // A clock that ticks per event: two writes in the same millisecond have no defined "newest" (the uid is random).
+        const base = Date.now();
+        let tick = 0;
+        const nowIso = () => new Date(base + ++tick).toISOString();
+        const posted = postHandoff({ title: "Filed wrong", tasks }, { ...env.depsFor(A), nowIso });
 
         const stranger = executeHandoffActions(
             { id: posted.handoff.id, actions: [{ action: "modify_handoff", project: "acme-tools" }] },
-            env.depsFor(B)
+            { ...env.depsFor(B), nowIso }
         );
         expect(stranger.results[0].ok).toBe(false);
         expect(stranger.handoff.project).toBe("TestProj");
 
         const moved = executeHandoffActions(
             { id: posted.handoff.id, actions: [{ action: "modify_handoff", project: "acme-tools" }] },
-            env.depsFor(A)
+            { ...env.depsFor(A), nowIso }
         );
         expect(moved.results[0].ok).toBe(true);
         expect(moved.handoff.project).toBe("acme-tools");
