@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
+import { completeExport } from "../commands/trip";
 import {
     alertLabel,
     categoryOf,
@@ -328,9 +329,10 @@ function fakeTransport(
 test("a long Retry-After fails without delaying the next request", async () => {
     let refused = true;
     const transport = fakeTransport({
-        answer: () => refused
-            ? { status: 429, body: "rate limited", retryAfter: "3600", retried: false }
-            : { status: 200, body: '{"alerts":[],"jams":[]}', retried: false },
+        answer: () =>
+            refused
+                ? { status: 429, body: "rate limited", retryAfter: "3600", retried: false }
+                : { status: 200, body: '{"alerts":[],"jams":[]}', retried: false },
     });
     const client = new WazeClient(transport, { minIntervalMs: 0 });
     const box = { top: 1, bottom: 0, left: 0, right: 1 };
@@ -338,6 +340,34 @@ test("a long Retry-After fails without delaying the next request", async () => {
     refused = false;
     expect(await client.georss(box)).toEqual({ alerts: [], jams: [] });
     expect(transport.seen).toHaveLength(2);
+});
+
+test("cancellation prevents a Waze client from sending the next request", async () => {
+    const controller = new AbortController();
+    const transport = fakeTransport();
+    const client = new WazeClient(transport, { minIntervalMs: 0, signal: controller.signal });
+    const box = { top: 1, bottom: 0, left: 0, right: 1 };
+    await client.georss(box);
+    controller.abort();
+    await expect(client.georss(box)).rejects.toThrow();
+    expect(transport.seen).toHaveLength(1);
+});
+
+test("cancelled export never writes after its work completes", async () => {
+    const controller = new AbortController();
+    let finish: (value: string) => void = () => {};
+    const work = new Promise<string>((resolve) => {
+        finish = resolve;
+    });
+    const written: string[] = [];
+    const pending = completeExport(work, controller.signal, (value) => written.push(value));
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+    finish("late");
+    await Promise.resolve();
+    expect(written).toEqual([]);
+    await completeExport(Promise.resolve("normal"), new AbortController().signal, (value) => written.push(value));
+    expect(written).toEqual(["normal"]);
 });
 
 function road(name: string, withVignette: boolean): RouteAlternative {

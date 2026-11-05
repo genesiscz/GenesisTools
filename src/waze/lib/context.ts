@@ -19,6 +19,11 @@ export class WazeContext {
     private clientPromise: Promise<WazeClient> | undefined;
     private storeInstance: WazeStore | undefined;
     private storeReadOnly = false;
+    private signal: AbortSignal | undefined;
+
+    setSignal(signal: AbortSignal): void {
+        this.signal = signal;
+    }
 
     constructor(readonly options: WazeContextOptions = {}) {}
 
@@ -30,11 +35,12 @@ export class WazeContext {
     }
 
     client(): Promise<WazeClient> {
+        this.signal?.throwIfAborted();
         this.clientPromise ??= BrowserTabTransport.open({
             port: this.options.port,
             keepTab: this.options.keepTab,
         }).then((transport) => {
-            this.opened = new WazeClient(transport);
+            this.opened = new WazeClient(transport, { signal: this.signal });
             return this.opened;
         });
         // A failed open must not stay cached: the next call (an MCP retry after the user starts Brave) tries again.

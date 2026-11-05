@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { abortableSleep } from "@genesiscz/utils/async";
+import { abortableSleep, untilAborted } from "@genesiscz/utils/async";
 import { pickEnumFlag } from "@genesiscz/utils/cli/enum-flag";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -26,6 +26,17 @@ import {
     runOperation,
     TOOL,
 } from "./run";
+
+/** Runs the output step only while the export is still wanted. */
+export async function completeExport<T>(
+    work: Promise<T>,
+    signal: AbortSignal,
+    output: (result: T) => void
+): Promise<void> {
+    const result = await untilAborted(work, signal);
+    signal.throwIfAborted();
+    output(result);
+}
 
 interface TripFlags {
     corridor?: number;
@@ -135,35 +146,48 @@ export function registerTripCommands(program: Command): void {
 
             const ctx = openContext(command);
             try {
-                const result = await withInterrupt(() =>
-                    findOperation("export").run(ctx, { ...tripInput(from, to, flags), format, types })
-                );
-                const data = result.data;
-                const content =
-                    typeof data === "object" && data !== null && "content" in data && typeof data.content === "string"
-                        ? data.content
-                        : result.markdown;
-                // Incomplete coverage goes to stderr, so a file or a piped stdout stays a valid document.
-                const warnings =
-                    typeof data === "object" && data !== null && "warnings" in data && Array.isArray(data.warnings)
-                        ? data.warnings.filter((warning): warning is string => typeof warning === "string")
-                        : [];
-                for (const warning of warnings) {
-                    out.log.warn(warning);
-                }
-                if (flags.output) {
-                    const path = resolve(flags.output);
-                    writeFileSync(path, content);
-                    out.log.success(`Wrote ${format} to ${path}`);
-                    return;
-                }
+                await withInterrupt(async (signal) => {
+                    ctx.setSignal(signal);
+                    await completeExport(
+                        findOperation("export").run(ctx, { ...tripInput(from, to, flags), format, types }),
+                        signal,
+                        (result) => {
+                            const data = result.data;
+                            const content =
+                                typeof data === "object" &&
+                                data !== null &&
+                                "content" in data &&
+                                typeof data.content === "string"
+                                    ? data.content
+                                    : result.markdown;
+                            // Incomplete coverage goes to stderr, so a file or a piped stdout stays a valid document.
+                            const warnings =
+                                typeof data === "object" &&
+                                data !== null &&
+                                "warnings" in data &&
+                                Array.isArray(data.warnings)
+                                    ? data.warnings.filter((warning): warning is string => typeof warning === "string")
+                                    : [];
+                            for (const warning of warnings) {
+                                out.log.warn(warning);
+                            }
+                            if (flags.output) {
+                                const path = resolve(flags.output);
+                                signal.throwIfAborted();
+                                writeFileSync(path, content);
+                                out.log.success(`Wrote ${format} to ${path}`);
+                                return;
+                            }
 
-                if (globalOptions(command).json) {
-                    printResult(command, result);
-                    return;
-                }
+                            if (globalOptions(command).json) {
+                                printResult(command, result);
+                                return;
+                            }
 
-                out.print(content);
+                            out.print(content);
+                        }
+                    );
+                });
             } catch (error) {
                 logger.debug({ error }, "waze export failed");
                 out.log.error(errorMessage(error));

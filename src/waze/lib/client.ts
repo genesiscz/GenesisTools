@@ -1,4 +1,4 @@
-import { concurrentMap } from "@genesiscz/utils/async";
+import { abortableSleep, concurrentMap } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { dedupeById, mergeTwins, normalizeAlert, normalizeJam } from "./alerts";
@@ -165,7 +165,7 @@ export class WazeClient {
 
     constructor(
         readonly transport: WazeTransport,
-        opts: { minIntervalMs?: number } = {}
+        private readonly opts: { minIntervalMs?: number; signal?: AbortSignal } = {}
     ) {
         this.minIntervalMs = opts.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
     }
@@ -176,16 +176,19 @@ export class WazeClient {
         const slot = Math.max(now, this.nextSlot);
         this.nextSlot = slot + this.minIntervalMs;
         if (slot > now) {
-            await Bun.sleep(slot - now);
+            await abortableSleep(slot - now, this.opts.signal);
         }
     }
 
     /** `budget`: every wire attempt, the backoff retries below and the transport's own retry, is taken from it. */
     private async json(req: WazeRequest, budget?: WazeRequestBudget): Promise<unknown> {
         for (let attempt = 0; ; attempt++) {
+            this.opts.signal?.throwIfAborted();
             await this.pace();
+            this.opts.signal?.throwIfAborted();
             const room = budget?.take();
             const response = await this.transport.request(room ? { ...req, retry: room.retry } : req);
+            this.opts.signal?.throwIfAborted();
             if (room) {
                 budget?.settle(room, response.retried);
             }
