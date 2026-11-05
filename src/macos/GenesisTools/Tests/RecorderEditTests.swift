@@ -277,7 +277,7 @@ final class RecorderScreenFindViewTests: XCTestCase {
         model.hideScreenText(hit)
         model.markScreenText(hit, box: 0)
         model.cutScreenMoment(hit)
-        XCTAssertEqual(sent.map { Array($0.prefix(3)) }, Array(repeating: ["recorder", "apply", model.store.url.path], count: 3))
+        XCTAssertEqual(sent.map { Array($0.prefix(3)) }, Array(repeating: ["recorder", "apply", model.project.source.video], count: 3))
         let ops = try sent.map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0[3].utf8)) as? [Any]) }
         XCTAssertEqual(try normalized(ops[0]), try normalized(try XCTUnwrap(named["hide"])), "the blur the answer names")
         XCTAssertEqual(try normalized(ops[1]), try normalized(try XCTUnwrap(named["mark"])), "the box round the line")

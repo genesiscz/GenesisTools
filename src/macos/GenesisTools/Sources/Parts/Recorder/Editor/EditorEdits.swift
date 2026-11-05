@@ -377,7 +377,8 @@ extension EditorModel {
 
     private func runOps(_ ops: String, done: @escaping @MainActor (Result<EditProject, ApplyFailure>) -> Void) {
         ownOpsRunning += 1
-        runTools(["recorder", "apply", store.url.path, ops]) { [weak self] status, stdout, stderr in
+        let target = FileManager.default.fileExists(atPath: store.url.path) ? store.url.path : project.source.video
+        runTools(["recorder", "apply", target, ops]) { [weak self] status, stdout, stderr in
             guard let self else { return }
             defer { self.ownOpsRunning -= 1 }
             guard status == 0 else {
