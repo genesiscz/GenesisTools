@@ -37,4 +37,8 @@ re-deriving how it was produced.
   Predates these conventions and uses relative imports rather than `@app/benchmark/lib`.
 - [`agent-sessions/`](agent-sessions/) — `session-listing.ts` (the session list and each provider's discovery) and
   `read-backward.ts` (`readSessionBackward` on real Claude transcripts, the decision Stop hook's read; `--before
-  <checkout>` runs an older commit's code beside the current one, with a check that both read the same entries).
+  <checkout>` runs an older commit's code beside the current one, with a check that both read the same entries),
+  and `prefix-mark.ts` (the prefix check of the append-only transcript scans, CPU per MB over the largest Claude
+  transcripts, every call a cache miss as after an append).
+- [`widget/`](widget/) — `snapshot.ts` (one warm widget snapshot over the cached roster, as the resident watch takes
+  it; `--dump` writes the snapshot for a parity diff between two commits).

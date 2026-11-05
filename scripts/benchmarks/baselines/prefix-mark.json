@@ -1,0 +1,15 @@
+{
+    "name": "prefix-mark",
+    "capturedAt": "2026-11-05T00:33:07.283Z",
+    "commit": "04404b79fe",
+    "loadAvg": [
+        119.34619140625,
+        68.19775390625,
+        66.794921875
+    ],
+    "hostname": "MacBook-Pro-2299.local",
+    "metrics": {
+        "prefixCpuMsPerMb": 0.4078447560293243
+    },
+    "notes": "runs=7 | files=3 mb=1862 | Bun 1.4.2 | 1:33  up 2 days, 14:42, 24 users, load averages: 119.35 68.20 66.79"
+}
