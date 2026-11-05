@@ -575,6 +575,44 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertFalse(model.canRedo)
     }
 
+    // Regression test: 2026-11-05 review of the editor gaps, R1.1, the failure side of the fix. A step leaves its list
+    // when its undo or redo starts, so a remake that fails must put it back, and a redo that failed after a new edit
+    // must not come back as a redo (the new edit emptied that list).
+    func testAFailedRemakePutsTheSwitchBackAndAFailedRedoAfterAnEditLeavesNoRedo() throws {
+        let (model, held) = try displayModel()
+        model.switchDisplay(fromUs: 2_000_000, toUs: 10_000_000, displayId: 2)
+        let remakes = model.runTools
+        var failing: [() -> Void] = []
+        let failRemakes = {
+            model.runTools = { argv, done in
+                if argv.contains("--undo-switch") || argv.contains("--redo-switch") {
+                    failing.append { done(1, "", "the movie was not made\n") }
+                } else {
+                    remakes(argv, done)
+                }
+            }
+        }
+        failRemakes()
+
+        model.undo()
+        for answer in failing { answer() }
+        failing.removeAll()
+        XCTAssertEqual(model.undoName, "Display Switch", "the failed undo puts the switch back")
+        XCTAssertFalse(model.canRedo, "and takes back the redo it offered")
+
+        model.runTools = remakes
+        model.undo()
+        for answer in held() { answer() }
+        XCTAssertEqual(model.redoName, "Display Switch")
+        failRemakes()
+        model.redo()
+        model.addZoom(atOutput: 4_000_000)
+        for answer in failing { answer() }
+        XCTAssertEqual(model.undoName, "Add Zoom")
+        XCTAssertEqual(model.undoStack.count, 1, "the failed redo took its switch off the list again")
+        XCTAssertFalse(model.canRedo, "the zoom came after the redo, so the switch is not offered again")
+    }
+
     func testADisplayPlanReadsItsRangesAndNamesAddsItsLaneAndSwitchesThroughTheCLI() throws {
         let recording = folder.appendingPathComponent("meeting")
         try FileManager.default.createDirectory(at: recording, withIntermediateDirectories: true)
