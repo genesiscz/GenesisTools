@@ -776,6 +776,26 @@ export function readCursorTrack(path: string | undefined): CursorSample[] {
         });
 }
 
+/** Clicks closer than this are one group: one auto zoom, one row of a movie's clickGroups(). */
+export const CLICK_GROUP_GAP_MS = 3000;
+
+/** The recorded clicks in time order, in groups: a click less than `gapMs` after the one before joins its group. */
+export function groupClicks(samples: readonly CursorSample[], gapMs = CLICK_GROUP_GAP_MS): CursorSample[][] {
+    const groups: CursorSample[][] = [];
+
+    for (const click of samples.filter((sample) => sample.click)) {
+        const group = groups.at(-1);
+
+        if (group && click.ms - (group.at(-1)?.ms ?? 0) < gapMs) {
+            group.push(click);
+        } else {
+            groups.push([click]);
+        }
+    }
+
+    return groups;
+}
+
 /**
  * Zooms on the recorded clicks, as the window's Auto zoom does: clicks under 3 s apart are one zoom from 0.6 s before
  * the first to 1.6 s after the last, following the cursor. It replaces the zooms an earlier auto zoom made (mode
@@ -783,17 +803,7 @@ export function readCursorTrack(path: string | undefined): CursorSample[] {
  * and nothing changes.
  */
 export function autoZoom(project: EditProject, samples: readonly CursorSample[], scale = 1.6): EditProject {
-    const groups: CursorSample[][] = [];
-
-    for (const click of samples.filter((sample) => sample.click)) {
-        const group = groups.at(-1);
-
-        if (group && click.ms - (group.at(-1)?.ms ?? 0) < 3000) {
-            group.push(click);
-        } else {
-            groups.push([click]);
-        }
-    }
+    const groups = groupClicks(samples);
 
     if (groups.length === 0) {
         throw new RangeError(

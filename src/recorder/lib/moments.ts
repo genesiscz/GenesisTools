@@ -3,9 +3,12 @@ import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
+    CLICK_GROUP_GAP_MS,
     type EditProject,
+    groupClicks,
     outputTimeOf,
     projectPathFor,
+    readCursorTrack,
     readProject,
     transcriptCachePath,
     transcriptLines,
@@ -63,6 +66,46 @@ export function markersOf(opened: {
         id: marker.id,
     }));
     return [...recorded, ...edited].sort((a, b) => a.at - b.at);
+}
+
+/** One group of clicks: source seconds, how many, where it plays (its first and last click not cut) and how many a cut hides. */
+export interface ClickGroup {
+    from: number;
+    to: number;
+    count: number;
+    /** OUTPUT seconds of its first and last click that still play; null when a cut hides every click of it. */
+    plays: { from: number; to: number } | null;
+    /** How many of its clicks fall in cut time. */
+    cut: number;
+}
+
+/**
+ * The movie's recorded clicks grouped as autoZoom groups them (a click under `gapSeconds`, default 3, after the one
+ * before joins its group), in time order. A movie without a cursor track has no clicks to read: that throws, so it
+ * never reads as "no clicks".
+ */
+export function clickGroupsOf(project: EditProject, options: { gapSeconds?: number } = {}): ClickGroup[] {
+    const track = project.source.cursor;
+
+    if (!track || !existsSync(track)) {
+        throw new Error("this movie has no cursor track, so there are no clicks to read");
+    }
+
+    const round = (us: number) => Math.round(us / 1000) / 1000;
+    const gapMs = options.gapSeconds === undefined ? CLICK_GROUP_GAP_MS : options.gapSeconds * 1000;
+    return groupClicks(readCursorTrack(track), gapMs).map((group) => {
+        const played = group.flatMap((click) => {
+            const plays = outputTimeOf(project, Math.round(click.ms * 1000));
+            return plays === undefined ? [] : [round(plays)];
+        });
+        return {
+            from: (group[0]?.ms ?? 0) / 1000,
+            to: (group.at(-1)?.ms ?? 0) / 1000,
+            count: group.length,
+            plays: played.length ? { from: played[0] ?? 0, to: played.at(-1) ?? 0 } : null,
+            cut: group.length - played.length,
+        };
+    });
 }
 
 /**

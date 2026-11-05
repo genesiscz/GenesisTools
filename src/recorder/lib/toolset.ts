@@ -66,7 +66,7 @@ import {
 } from "./edit";
 import { stepDisplaySwitch, switchDisplay } from "./frames-movie";
 import { EDITOR_TABS, type EditorTab, ensureRecorderPart, listLibrary } from "./library";
-import { chaptersOf, markersOf, recordingFolderOf, searchLibrary, spreadTimes } from "./moments";
+import { chaptersOf, clickGroupsOf, markersOf, recordingFolderOf, searchLibrary, spreadTimes } from "./moments";
 import { serviceRoutedMovie } from "./movie-client";
 import { copyRecording, revealRecording, trashRecording } from "./quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./review";
@@ -276,7 +276,7 @@ const movieMethods = [
     edit(
         "autoZoom",
         z.object({ scale: z.number().min(1).max(4).optional() }).strict(),
-        "One zoom per group of recorded clicks, following the cursor; replaces earlier auto zooms, keeps manual ones, and throws when there are no clicks."
+        "One zoom per group of recorded clicks (the groups clickGroups() lists), following the cursor; replaces earlier auto zooms, keeps manual ones, and throws when there are no clicks."
     ),
     edit(
         "titleMarkers",
@@ -466,7 +466,7 @@ const movieMethods = [
                 sound: z.boolean().optional(),
             })
             .strict(),
-        'Draws each recorded click as a disc that grows and fades: highlight, color "#RRGGBB", radius (a fraction of the height, 0.03), durationMs (450); sound: true adds a soft tick at each click to the sound (off by default).'
+        'Draws each recorded click as a disc that grows and fades: highlight, color "#RRGGBB", radius (a fraction of the height, 0.03), durationMs (450); sound: true adds a soft tick at each click to the sound (off by default). It draws the clicks; clickGroups() reads them.'
     ),
     edit(
         "keys",
@@ -760,6 +760,14 @@ const movieMethods = [
             "The moments marked while it recorded (recording.mark(label) or " +
             toolCommand("recorder mark") +
             "), at source seconds, plays: where each is in the edit (null when cut).",
+        effect: "read",
+    }),
+    defineMethod({
+        name: "clickGroups",
+        params: z.object({ gapSeconds: z.number().min(0.1).max(60).optional() }),
+        result: z.unknown(),
+        resultName: "{ from, to, count, plays: { from, to } | null, cut }[]",
+        doc: "The recorded clicks in groups, as autoZoom() groups them (a click under gapSeconds, default 3, after the one before joins its group), in time order. from and to are SOURCE seconds of the first and last click; plays is where they play in OUTPUT seconds (the first and last click not cut, null when a cut hides all of them); cut counts the clicks in cut time. Sort by count for the part with the most clicking. Throws when the movie has no cursor track. Reads only.",
         effect: "read",
     }),
     defineMethod({
@@ -1752,6 +1760,11 @@ export class Movie {
     /** The moments marked while it recorded (`recording.mark()`, `tools recorder mark`), with where each plays. */
     async markers() {
         return markersOf(await openProject(this.recording));
+    }
+
+    /** The recorded clicks in groups, as autoZoom groups them, with where each group plays. */
+    async clickGroups(options: { gapSeconds?: number } = {}) {
+        return clickGroupsOf((await openProject(this.recording)).project, options);
     }
 
     async titleMarkers(options: { seconds?: number; numbered?: boolean; y?: number } = {}) {

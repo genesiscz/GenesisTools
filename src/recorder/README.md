@@ -22,6 +22,7 @@ tools recorder demo <script.json | -> [--no-export]  # a finished demo from a JS
 tools recorder stop|pause|resume|status [id]     # the newest live recording, or the id given
 tools recorder mark <label> [id]                 # a marker at this moment (a movie, frames or meeting recording); the editor and movie.markers() show it
 tools recorder markers <recording> [--chapters]  # its markers as JSON with where each plays, or "0:00 Intro" chapter lines
+tools recorder click-groups <recording> [--gap 3] # its clicks in groups (count, source seconds, where each plays), as movie.clickGroups()
 tools recorder rename <recording> <title>        # a new title for the library, the editor window and movies.list()
 tools recorder undo <recording>                  # back one step of apply or the REPL (30 steps in <edit>.undo.json)
 tools recorder search <text> [--json]            # titles, marker labels and cached transcript lines across the library

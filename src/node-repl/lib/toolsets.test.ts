@@ -33,7 +33,7 @@ import {
     readStartArgs,
     type StartRequest,
 } from "@app/recorder/lib/start-options";
-import { type MovieRecorderDeps, MoviesToolset, moviesApi } from "@app/recorder/lib/toolset";
+import { Movie, type MovieRecorderDeps, MoviesToolset, moviesApi } from "@app/recorder/lib/toolset";
 import { RecordingStartCancelled, recordVideo } from "@app/recorder/lib/video-recording";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -294,6 +294,56 @@ describe("markers of a recording and of its edit", () => {
             { at: 3, plays: 1, label: "Recorded" },
             { at: 6, plays: 4, label: "Edited", id: "m2" },
         ]);
+    });
+});
+
+describe("the clicks of a movie, grouped", () => {
+    test("clicks under 3 s apart are one group, with its source and output time and the clicks a cut hides", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-click-groups-"));
+        const cursor = join(folder, "cursor.jsonl");
+        // Source 20 s; the edit keeps 0-4, 6-12 and 16-20, so 4-6 and 12-16 are cut.
+        const rows = [
+            { t: 1000, x: 0.1, y: 0.1, click: "left" },
+            { t: 1500, x: 0.1, y: 0.1, click: "left" },
+            { t: 2000, x: 0.2, y: 0.2, click: "left" },
+            { t: 3000, x: 0.3, y: 0.3 },
+            { t: 5000, x: 0.4, y: 0.4, click: "left" },
+            { t: 7000, x: 0.5, y: 0.5, click: "right" },
+            { t: 14000, x: 0.6, y: 0.6, click: "left" },
+            { t: 14500, x: 0.6, y: 0.6, click: "left" },
+            { t: 18000, x: 0.7, y: 0.7, click: "left" },
+        ];
+        writeFileSync(cursor, `${rows.map((row) => SafeJSON.stringify(row)).join("\n")}\n`);
+        const path = join(folder, "screen.edit.json");
+        writeProject(path, {
+            ...wholeProject({
+                video: join(folder, "screen.mp4"),
+                cursor,
+                durationUs: 20_000_000,
+                width: 100,
+                height: 100,
+            }),
+            clips: [
+                { id: "a", fromUs: 0, toUs: 4_000_000, speed: 1 },
+                { id: "b", fromUs: 6_000_000, toUs: 12_000_000, speed: 1 },
+                { id: "c", fromUs: 16_000_000, toUs: 20_000_000, speed: 1 },
+            ],
+        });
+
+        expect(await new Movie(path).clickGroups()).toEqual([
+            { from: 1, to: 2, count: 3, plays: { from: 1, to: 2 }, cut: 0 },
+            { from: 5, to: 7, count: 2, plays: { from: 5, to: 5 }, cut: 1 },
+            { from: 14, to: 14.5, count: 2, plays: null, cut: 2 },
+            { from: 18, to: 18, count: 1, plays: { from: 12, to: 12 }, cut: 0 },
+        ]);
+
+        // A movie with no cursor track has no clicks to read, which is not the same as no clicks.
+        const bare = join(folder, "bare.edit.json");
+        writeProject(
+            bare,
+            wholeProject({ video: join(folder, "bare.mp4"), durationUs: 1_000_000, width: 1, height: 1 })
+        );
+        await expect(new Movie(bare).clickGroups()).rejects.toThrow("no cursor track");
     });
 });
 
