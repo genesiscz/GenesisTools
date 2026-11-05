@@ -52,7 +52,7 @@ test("phone targets use global transport and timing settings", async () => {
     });
     const post = spyOn(CHANNELS.phone, "post").mockResolvedValue({ ok: true });
     try {
-        expect(await dispatchToTarget({ id: 1, name: "phone", channel: "phone", enabled: true, config: { text: false }, createdAt: "", updatedAt: "", watcherCount: 0 }, { message: "hello" })).toBe(true);
+        expect(await dispatchToTarget({ id: 1, name: "phone", channel: "phone", enabled: true, config: { text: false }, createdAt: "", updatedAt: "", watcherCount: 0 }, { app: "monitor", message: "hello" })).toBe(true);
         expect(post.mock.calls[0][1]).toMatchObject({ enabled: true, text: false, apns: { teamId: "TEAM" }, when: { desk: "always" } });
     } finally {
         post.mockRestore();
