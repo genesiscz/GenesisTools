@@ -24,16 +24,62 @@ const EVEN_SIZE = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
  * H.264 stream cannot change its size and ffmpeg would stretch every later frame to the first one's.
  */
 export function proxyVideoFilter(sizes: ReadonlyArray<{ width: number; height: number }>): string {
-    const distinct = new Set(sizes.map((size) => `${size.width}x${size.height}`));
+    const canvas = proxyCanvas(sizes);
 
-    if (distinct.size <= 1) {
+    if (!canvas.letterboxed) {
         return EVEN_SIZE;
     }
 
-    const even = (value: number) => Math.ceil(value / 2) * 2;
-    const width = even(Math.max(...sizes.map((size) => size.width)));
-    const height = even(Math.max(...sizes.map((size) => size.height)));
+    const { width, height } = canvas;
     return `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`;
+}
+
+/**
+ * The proxy's picture for the shown frame sizes, as proxyVideoFilter makes it: one size fills the picture; several are
+ * each fitted into the largest width and height (even sides) and centred with black bars.
+ */
+export function proxyCanvas(sizes: ReadonlyArray<{ width: number; height: number }>): {
+    width: number;
+    height: number;
+    letterboxed: boolean;
+} {
+    const distinct = new Set(sizes.map((size) => `${size.width}x${size.height}`));
+
+    if (distinct.size <= 1) {
+        return { width: sizes[0]?.width ?? 0, height: sizes[0]?.height ?? 0, letterboxed: false };
+    }
+
+    const even = (value: number) => Math.ceil(value / 2) * 2;
+    return {
+        width: even(Math.max(...sizes.map((size) => size.width))),
+        height: even(Math.max(...sizes.map((size) => size.height))),
+        letterboxed: true,
+    };
+}
+
+/**
+ * A box of a frame (fractions of it, from its top left) as fractions of the proxy's picture, so it covers the same
+ * text in the movie: the frame's own fractions when one size fills the picture, else moved and scaled by its bars.
+ */
+export function boxInProxy(
+    box: { x: number; y: number; width: number; height: number },
+    frame: { width: number; height: number },
+    canvas: { width: number; height: number; letterboxed: boolean }
+): { x: number; y: number; width: number; height: number } {
+    if (!canvas.letterboxed) {
+        return { ...box };
+    }
+
+    const scale = Math.min(canvas.width / frame.width, canvas.height / frame.height);
+    const shown = { width: frame.width * scale, height: frame.height * scale };
+    const left = (canvas.width - shown.width) / 2;
+    const top = (canvas.height - shown.height) / 2;
+    return {
+        x: (left + box.x * shown.width) / canvas.width,
+        y: (top + box.y * shown.height) / canvas.height,
+        width: (box.width * shown.width) / canvas.width,
+        height: (box.height * shown.height) / canvas.height,
+    };
 }
 
 /** The pixel size of the first shown frame of each display (frames of one display share a size). */

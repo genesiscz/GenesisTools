@@ -1685,6 +1685,8 @@ private struct PreviewView: View {
                         TextHandles(model: model, clock: model.clock)
                         ShapeHandles(model: model, clock: model.clock)
                     }
+                } else if model.tab == .find && !model.isPlaying {
+                    ScreenBoxOverlay(model: model, clock: model.clock)
                 }
             }
             .shadow(color: .black.opacity(0.5), radius: 18, y: 6)

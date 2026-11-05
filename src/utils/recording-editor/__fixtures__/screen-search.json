@@ -1,5 +1,5 @@
 {
-    "about": "A meeting's frames recording (recording.json, ocr.jsonl, proxy.json) and what tools recorder find-screen prints for query (src/recorder/lib/screen-search.ts findOnScreen). library.test.ts builds the folder and checks the door still prints hits; the editor's Find tab decodes hits (Tests/RecorderEditTests.swift).",
+    "about": "A meeting's frames recording (recording.json, ocr.jsonl, proxy.json, frames of two sizes per display in frameSizes) and what tools recorder find-screen prints for query (src/recorder/lib/screen-search.ts findOnScreen): each hit's span and its matching lines' boxes over the proxy movie, whose picture letterboxes the smaller display. library.test.ts builds the folder and checks the door still prints hits; the editor's Find tab decodes hits and turns a box into a hidden part (Tests/RecorderEditTests.swift).",
     "recording": {
         "manifest": {
             "version": 1,
@@ -145,36 +145,68 @@
                     "displayId": 4
                 }
             ]
+        },
+        "frameSizes": {
+            "1": [
+                2880,
+                1800
+            ],
+            "4": [
+                2560,
+                1440
+            ]
         }
     },
     "query": "token",
     "hits": [
         {
             "sec": 0,
+            "untilSec": 9,
             "displayId": 1,
             "file": "frames/0001.jpg",
             "lines": [
                 "API token: sk-123"
             ],
-            "shown": true
+            "shown": true,
+            "boxes": [
+                {
+                    "text": "API token: sk-123",
+                    "x": 0.1,
+                    "y": 0.35,
+                    "width": 0.4,
+                    "height": 0.05
+                }
+            ]
         },
         {
             "sec": 4,
+            "untilSec": 12.5,
             "displayId": 4,
             "file": "frames/0002.jpg",
             "lines": [
                 "Token rotation"
             ],
-            "shown": false
+            "shown": false,
+            "boxes": []
         },
         {
             "sec": 12.5,
+            "untilSec": 14.5,
             "displayId": 4,
             "file": "frames/0004.jpg",
             "lines": [
                 "Tokén list"
             ],
-            "shown": true
+            "shown": true,
+            "boxes": [
+                {
+                    "text": "Tokén list",
+                    "x": 0.2,
+                    "y": 0.725,
+                    "width": 0.25,
+                    "height": 0.045
+                }
+            ]
         }
     ]
 }

@@ -5,9 +5,19 @@ import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
+import { applyOp, wholeProject } from "@genesiscz/utils/recording-editor/project";
 import { keptPlan } from "./frames-movie";
 import { editorOpenStatePath, movieOf, readEditorOpenState, resolveRecording } from "./library";
-import { chosenPlan, framesForPlan, overrideRanges, parseDisplayPlan, planMostChange, proxyVideoFilter } from "./proxy";
+import {
+    boxInProxy,
+    chosenPlan,
+    framesForPlan,
+    overrideRanges,
+    parseDisplayPlan,
+    planMostChange,
+    proxyCanvas,
+    proxyVideoFilter,
+} from "./proxy";
 import { currentGif, isMeetingFolder, meetingOf, shareableMovie, trashRecording } from "./quick-actions";
 import { findOnScreen } from "./screen-search";
 
@@ -206,9 +216,24 @@ describe("the movie of a recording folder", () => {
 
 // The editor's Find tab decodes these hits (RecorderEditTests.swift), so it reads what find-screen prints.
 describe("text on the screen", () => {
-    it("finds the shared fixture's hits: accents ignored, each frame on the shown display or not", () => {
+    it("finds the shared fixture's hits: accents ignored, the shown display's line boxes placed in the letterboxed picture", () => {
         const folder = mkdtempSync(join(tmpdir(), "gt-screen-"));
         mkdirSync(join(folder, "frames"));
+
+        // The first 33 bytes of a PNG of each display's size: enough for imageSize, which reads only the header.
+        for (const frame of screenSearch.recording.manifest.frames) {
+            const [width, height] = screenSearch.recording.frameSizes[String(frame.displayId) as "1" | "4"];
+            const header = Buffer.alloc(33);
+            Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+            header.writeUInt32BE(13, 8);
+            header.write("IHDR", 12, "ascii");
+            header.writeUInt32BE(width, 16);
+            header.writeUInt32BE(height, 20);
+            header.writeUInt8(8, 24);
+            header.writeUInt8(6, 25);
+            writeFileSync(join(folder, frame.file), header);
+        }
+
         writeFileSync(join(folder, "recording.json"), SafeJSON.stringify(screenSearch.recording.manifest));
         writeFileSync(
             join(folder, "ocr.jsonl"),
@@ -219,6 +244,37 @@ describe("text on the screen", () => {
         expect(findOnScreen(folder, screenSearch.query)).toEqual(screenSearch.hits);
         expect(findOnScreen(folder, "   ")).toEqual([]);
         expect(findOnScreen(folder, "token", { limit: 1 })).toHaveLength(1);
+
+        // A box is a hidden part's rect as it is: the redact op hides that line while its frame shows.
+        const [first] = findOnScreen(folder, "token");
+        const [box] = first.boxes;
+        const hidden = applyOp(
+            wholeProject({ video: join(folder, "proxy.mp4"), durationUs: 15_000_000, width: 2880, height: 1800 }),
+            {
+                op: "redact",
+                from: first.sec,
+                to: first.untilSec,
+                rect: { x: box.x, y: box.y, width: box.width, height: box.height },
+            }
+        );
+        expect(hidden.redactions?.map((part) => [part.startUs, part.endUs, part.x, part.y])).toEqual([
+            [0, 9_000_000, 0.1, 0.35],
+        ]);
+    });
+
+    it("places a frame box in the proxy picture as the scale and pad of the video filter do", () => {
+        const sizes = [
+            { width: 2880, height: 1800 },
+            { width: 2560, height: 1440 },
+        ];
+        const canvas = proxyCanvas(sizes);
+        expect(canvas).toEqual({ width: 2880, height: 1800, letterboxed: true });
+        expect(proxyVideoFilter(sizes)).toContain("scale=2880:1800:force_original_aspect_ratio=decrease");
+        const box = { x: 0.5, y: 0, width: 0.5, height: 1 };
+        expect(boxInProxy(box, sizes[1], canvas)).toEqual({ x: 0.5, y: 0.05, width: 0.5, height: 0.9 });
+        const single = proxyCanvas([sizes[0], sizes[0]]);
+        expect(single.letterboxed).toBe(false);
+        expect(boxInProxy(box, sizes[0], single)).toEqual(box);
     });
 });
 

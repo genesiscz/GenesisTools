@@ -758,8 +758,8 @@ const movieMethods = [
         name: "findOnScreen",
         params: z.object({ text: z.string().min(1), limit: z.number().int().positive().optional() }).strict(),
         result: z.unknown(),
-        resultName: "{ sec, displayId, file, lines, shown }[]",
-        doc: "Where a text was on the screen of a frames recording (a meeting, or a library recording with OCR): each frame whose OCR holds it (case and accents ignored), at source seconds, with the matching lines; shown: the proxy movie shows that display then. Jump there with show({ at: sec }).",
+        resultName: "{ sec, untilSec, displayId, file, lines, shown, boxes: { text, x, y, width, height }[] }[]",
+        doc: "Where a text was on the screen of a frames recording (a meeting, or a library recording with OCR): each frame whose OCR holds it (case and accents ignored), at source seconds until untilSec (its next frame), with the matching lines; shown: the proxy movie shows that display then; boxes: those lines over the proxy movie as fractions of its picture, so redact({ from: sec, to: untilSec, rect: { x, y, width, height } }) with a box's numbers hides it (the editor's Find tab does). Jump there with show({ at: sec }).",
         effect: "read",
     }),
     defineMethod({

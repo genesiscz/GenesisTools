@@ -37,8 +37,10 @@ tools recorder proxy <recording> [--display most-change|ID] [--window S] [--swit
                                                  # with the speakers' names
 tools recorder proxy <recording> --plan <file>   # the proxy with exactly that display plan (a copy of an earlier
                                                  # proxy.json); the editor's ⌘Z of a display switch runs it
-tools recorder find-screen <recording> <text>    # where a text was on the screen (OCR), at source seconds; the
-                                                 # editor's Find tab (⌘F) runs it and a click goes to the moment
+tools recorder find-screen <recording> <text>    # where a text was on the screen (OCR), at source seconds until
+                                                 # its frame's next one, with the lines' boxes over the proxy movie;
+                                                 # the editor's Find tab (⌘F) lists them, a click goes there, and
+                                                 # Hide This Text (or a box's eye on the preview) blurs them
 tools recorder words <recording> [--at T]       # each transcript line's words as cut-words splits and times them
 tools recorder cut-words <recording> --at T --words "you know" [--occurrence N] [--dry-run]  # cut words out of the
                                                  # line at T: every place, or with --occurrence only the Nth
