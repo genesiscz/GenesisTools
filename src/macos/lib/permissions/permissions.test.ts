@@ -973,4 +973,37 @@ describe("app parts", () => {
         expect(partForFace("--review")).toBe("hub");
         expect(partForFace("--rpc")).toBeUndefined();
     });
+
+    it("names the part of every face flag, and none for a host face", () => {
+        const parts = Object.fromEntries(
+            [
+                "--hub",
+                "--review",
+                "--widget",
+                "--features",
+                "--clicky",
+                "--markdown",
+                "--recorder",
+                "--meetings",
+                "--window",
+                "",
+                "--link-relay",
+                "--rpc",
+            ].map((flag) => [flag, partForFace(flag)])
+        );
+        expect(parts).toEqual({
+            "--hub": "hub",
+            "--review": "hub",
+            "--widget": "widget",
+            "--features": "features",
+            "--clicky": "features",
+            "--markdown": "markdown",
+            "--recorder": "recorder",
+            "--meetings": "meetings",
+            "--window": undefined,
+            "": undefined,
+            "--link-relay": undefined,
+            "--rpc": undefined,
+        });
+    });
 });

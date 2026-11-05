@@ -65,6 +65,10 @@ describe("windowFaceKind", () => {
     it("skips short-lived faces, link routers and scripted runs", () => {
         expect(windowFaceKind(["--rpc", "{}"])).toBeNull();
         expect(windowFaceKind(["--notify"])).toBeNull();
+        // The markdown viewer records its argv and keeps a link relay, but a rebuild leaves it closed.
+        expect(windowFaceKind(["--markdown", "/x/notes.md"])).toBeNull();
+        expect(windowFaceKind(["--mic"])).toBeNull();
+        expect(windowFaceKind(["--capsule"])).toBeNull();
         expect(windowFaceKind(["https://example.org/"])).toBeNull();
         expect(windowFaceKind(["--review", "--repo", "/x", "--snapshot", "/tmp/a.png"])).toBeNull();
         expect(windowFaceKind(["--hub", "--bench", "/tmp/b.json"])).toBeNull();
