@@ -117,29 +117,27 @@ function partRegistration(drop: "recorder" | "meetings"): DerivedFile[] {
 }
 
 /**
- * The layering (lead, 2026-11-05 07:48): every branch 50 to 90 files where the import graph allows.
+ * The layering (lead, 2026-11-05; retuned for #716's restacked base): 50 to 90 files where the import graph allows.
  *
- *   base ─ capture-core ─ meetings-recorder ─┬─ recorder-service-and-editor ─ recorder-editor-swift ─ unified-leftovers
- *                                             └─ meetings-v3-and-window
+ *   base ─ capture-core ─ screen-recorder ─┬─ recorder-service-and-editor ─ recorder-editor-swift ─ unified-leftovers
+ *                                           └─ meetings-v3-and-window
  *
- * capture-core and meetings-recorder split the shared capture layer by the import graph, measured on unified
- * 7bac3b8298: the capture core typechecks on its own once screen-recorder/start.ts (and its test) waits for the next
- * branch, because the base form of meetings/lib/recorder.ts calls startRecording with the old options and nothing else
- * in the core imports start.ts.
+ * capture-core holds what nothing in the base breaks against (ax-tool, rpc, api-descriptor, process, video, json2md).
+ * screen-recorder holds the capture session with everything its unified form forces in, measured on base dae7cfb3f2
+ * and unified 79d01f2ea4: unified's control.ts drops the "stopped" state that the restacked base's start.ts and
+ * node-repl toolsets.test.ts use (review fix e10e5b1d44, not on unified yet), and unified's start.ts changes the
+ * startRecording options that the base's meetings recorder calls. Both chains land in this layer (137 files) until
+ * unified carries #716's review round; then the toolsets.test.ts chain (about 40 files) stays in the next layer.
  */
 const CUT: readonly CutBranch[] = [
     {
         name: "feat/2026-11-05-capture-core",
         parent: null,
         subject:
-            "feat(screen-recorder, ax-tool, control): the shared capture session and its run loop, the RPC socket and the frames recorders",
+            "feat(ax-tool, control, screen-recorder): the RPC socket, the api-descriptor table, the ax-tool capture and the shared pid claim under the screen recorder",
         scopes: [...CAPTURE_SCOPES, "json2md", "transcribe"],
         globs: [
-            "src/utils/screen-recorder/**",
-            "!src/utils/screen-recorder/start.ts",
-            "!src/utils/screen-recorder/screen-recorder.test.ts",
             "native/ax-tool/**",
-            "src/control/**",
             "src/daemon/**",
             "src/utils/process/**",
             "src/utils/video/**",
@@ -154,14 +152,14 @@ const CUT: readonly CutBranch[] = [
         ],
     },
     {
-        name: "feat/2026-11-05-meetings-recorder",
+        name: "feat/2026-11-05-screen-recorder",
         parent: "feat/2026-11-05-capture-core",
         subject:
-            "feat(meetings, screen-recorder): the meetings recorder on the shared capture session, its start path and meetings config v3",
+            "feat(screen-recorder, control, meetings): the shared capture session and its run loop, the start path, tools control's recordings and the meetings recorder on them",
         scopes: [...CAPTURE_SCOPES, ...MEETINGS_SCOPES, "GenesisKit", "GenesisHub"],
         globs: [
-            "src/utils/screen-recorder/start.ts",
-            "src/utils/screen-recorder/screen-recorder.test.ts",
+            "src/utils/screen-recorder/**",
+            "src/control/**",
             "src/utils/meetings/**",
             "src/meetings/lib/recorder*",
             "src/meetings/lib/meeting-run.ts",
@@ -173,7 +171,7 @@ const CUT: readonly CutBranch[] = [
     },
     {
         name: "feat/2026-11-05-recorder-service-and-editor",
-        parent: "feat/2026-11-05-meetings-recorder",
+        parent: "feat/2026-11-05-screen-recorder",
         subject:
             "feat(recorder, recording-editor, node-repl): tools recorder serve and its edit session, the recording editor library and the movies REPL toolset",
         scopes: [...RECORDER_SCOPES, "node-repl", "repl", "GenesisKit", "GenesisHub"],
@@ -192,6 +190,8 @@ const CUT: readonly CutBranch[] = [
             "scripts/benchmarks/recorder-denoise/**",
             "scripts/recorder/**",
         ],
+        // GLOSSARY.md's new entries are the recorder's words.
+        stays: ["GLOSSARY.md"],
     },
     {
         name: "feat/2026-11-05-recorder-editor-swift",
@@ -208,14 +208,14 @@ const CUT: readonly CutBranch[] = [
             `${KIT}/Sources/GenesisKitPosture/Camera/**`,
             `${KIT}/Sources/GenesisKit/Controls/GenSegmentedTabs.swift`,
         ],
-        // service.test.ts reads the Swift editor's tab list; GLOSSARY.md's new entries are the recorder's words.
-        stays: ["src/recorder/lib/service.test.ts", "GLOSSARY.md"],
+        // service.test.ts reads the Swift editor's tab list.
+        stays: ["src/recorder/lib/service.test.ts"],
         derived: partRegistration("meetings"),
         swift: true,
     },
     {
         name: "feat/2026-11-05-meetings-v3-and-window",
-        parent: "feat/2026-11-05-meetings-recorder",
+        parent: "feat/2026-11-05-screen-recorder",
         subject:
             "feat(meetings, GenesisHub): meetings v3 (dictionary, json2md markdown, OCR boxes, a meeting as an editor project) and the Meetings window with Settings → Meetings",
         scopes: [...MEETINGS_SCOPES, "GenesisKit", "GenesisHub"],
@@ -282,6 +282,8 @@ const MAX_FILES = 90;
 const MAX_TYPECHECK_ROUNDS = 10;
 const TEST_FILE = /\.test\.tsx?$/;
 const STAYS = new Set(CUT.flatMap((branch) => branch.stays ?? []));
+/** Files a layer builds in its own form (part registration); the tracer never moves them. */
+const DERIVED = new Set(CUT.flatMap((branch) => (branch.derived ?? []).map((derived) => derived.file)));
 /** How many re-export hops the error tracer follows from a failing file's imports. */
 const IMPORT_DEPTH = 3;
 const CUT_REF_PREFIX = "refs/heads/cut/";
@@ -786,6 +788,28 @@ function resolveImport(from: string, spec: string, exists: (path: string) => boo
 const importCache = new Map<string, string[]>();
 
 /** The repo files that unified's copy of `file` imports. */
+const RE_EXPORT_RE = /(?:^|[\s;}])export\s+(?:type\s+)?(?:\*(?:\s+as\s+\w+)?|\{[^}]*\})\s+from\s+["']([^"']+)["']/g;
+
+/** The repo files that unified's copy of `file` re-exports (`export … from`): the hops of a barrel such as index.ts. */
+function reExportsOf(file: string, unified: string, exists: (path: string) => boolean): string[] {
+    let text = "";
+    try {
+        text = git(["show", `${unified}:${file}`]);
+    } catch {
+        return [];
+    }
+
+    const targets = new Set<string>();
+    for (const match of text.matchAll(RE_EXPORT_RE)) {
+        const target = resolveImport(file, match[1], exists);
+        if (target) {
+            targets.add(target);
+        }
+    }
+
+    return [...targets];
+}
+
 function importsOf(file: string, unified: string, exists: (path: string) => boolean): string[] {
     const cached = importCache.get(file);
     if (cached) {
@@ -1229,7 +1253,9 @@ async function main(): Promise<number> {
                 };
                 /** A precise target may also come from no branch, as long as it differs and is not kept at base. */
                 const preciseMovable = (file: string): boolean =>
-                    !pinned.has(file) && (inLaterBranch(file) || (!owner.has(file) && statuses.has(file)));
+                    !pinned.has(file) &&
+                    !DERIVED.has(file) &&
+                    (inLaterBranch(file) || (!owner.has(file) && statuses.has(file)));
                 /** Puts a file the cut placed back to its base form, because its new form needs another PR's change. */
                 const keepAtBase = (file: string, why: string): void => {
                     const current = owner.get(file);
@@ -1259,7 +1285,7 @@ async function main(): Promise<number> {
                     });
                 };
                 const moveDown = (file: string, why: string): void => {
-                    if (movedNow.has(file) || pinned.has(file) || STAYS.has(file)) {
+                    if (movedNow.has(file) || pinned.has(file) || STAYS.has(file) || DERIVED.has(file)) {
                         return;
                     }
 
@@ -1380,9 +1406,9 @@ async function main(): Promise<number> {
                             seen.add(file);
                         }
 
-                        frontier = [...new Set(frontier.flatMap((file) => importsOf(file, unifiedSha, exists)))].filter(
-                            (file) => !seen.has(file)
-                        );
+                        frontier = [
+                            ...new Set(frontier.flatMap((file) => reExportsOf(file, unifiedSha, exists))),
+                        ].filter((file) => !seen.has(file));
                     }
                 }
 
