@@ -139,7 +139,9 @@ extension EditorModel {
         applyOps(#"{"id":"\#(id)","op":"unmarker"}"#) { [weak self] result in
             guard let self else { return }
             switch result {
-            case .success: self.show("Deleted the marker. ⌘Z brings it back.", error: false)
+            case .success:
+                if case let .marker(selectedID, _) = self.selection, selectedID == id { self.selection = .none }
+                self.show("Deleted the marker. ⌘Z brings it back.", error: false)
             case let .failure(failure): self.show("The marker was not deleted: \(failure.reason)", error: true)
             }
         }

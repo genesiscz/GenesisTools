@@ -32,6 +32,8 @@ enum EditorSelection: Equatable {
     case redaction(String)
     case text(String)
     case shape(String)
+    /// A nil id identifies a recording marker, which the edit cannot remove.
+    case marker(id: String?, atUs: Int64)
     /// A part where the camera bubble is hidden (Editor/EditorCamera.swift).
     case cameraHide(String)
 }
@@ -316,7 +318,7 @@ final class EditorModel {
         let id: String
         switch selection {
         case let .zoom(item), let .redaction(item), let .text(item), let .shape(item), let .cameraHide(item): id = item
-        case .clip, .none:
+        case .clip, .marker, .none:
             show("Select a zoom, hidden part, text or shape to move it in time.", error: false)
             return
         }
@@ -372,7 +374,7 @@ final class EditorModel {
         case .redaction: tab = .hide
         case .text, .shape: tab = .text
         case .cameraHide: tab = .style
-        case .clip, .none: break
+        case .clip, .marker, .none: break
         }
         player.pause()
         seek(item.startUs)
@@ -569,8 +571,13 @@ final class EditorModel {
         case let .text(id): return project.texts?.first { $0.id == id }.map { (id, ($0.startUs, $0.endUs)) }
         case let .shape(id): return project.shapes?.first { $0.id == id }.map { (id, ($0.startUs, $0.endUs)) }
         case let .cameraHide(id): return project.camera?.hidden.first { $0.id == id }.map { (id, ($0.startUs, $0.endUs)) }
-        case .clip, .none: return nil
+        case .clip, .marker, .none: return nil
         }
+    }
+
+    func selectMarker(id: String?, atUs: Int64) {
+        selection = .marker(id: id, atUs: atUs)
+        if let out = TimelineMap.outputTime(ofSource: atUs, in: project) { seek(out) }
     }
 
     func deleteSelection() {
@@ -582,6 +589,13 @@ final class EditorModel {
         case let .text(id): op = .untext(EditOp.Untext(id: id))
         case let .shape(id): op = .unshape(EditOp.Unshape(id: id))
         case let .cameraHide(id): op = .cameraShow(EditOp.CameraShow(id: id))
+        case let .marker(id, _):
+            guard let id else {
+                show("This marker belongs to the recording and cannot be deleted here.", error: false)
+                return
+            }
+            deleteMarker(id)
+            return
         case .none: return
         }
         let deleted = selection
@@ -615,7 +629,7 @@ final class EditorModel {
         let id: String
         switch selection {
         case let .zoom(item), let .redaction(item), let .text(item), let .shape(item), let .cameraHide(item): id = item
-        case .clip, .none:
+        case .clip, .marker, .none:
             show("Select a zoom, a hidden part or a text to duplicate it.", error: false)
             return
         }
@@ -628,7 +642,7 @@ final class EditorModel {
             case .text: Self.addedID(before, after, { ($0.texts ?? []).map(\.id) }).map { self.selection = .text($0) }
             case .shape: Self.addedID(before, after, { ($0.shapes ?? []).map(\.id) }).map { self.selection = .shape($0) }
             case .cameraHide: Self.addedID(before, after, { ($0.camera?.hidden ?? []).map(\.id) }).map { self.selection = .cameraHide($0) }
-            case .clip, .none: break
+            case .clip, .marker, .none: break
             }
         }
     }
@@ -752,9 +766,10 @@ final class EditorModel {
 
     /// Every marker, the recording's and the edit's own (`markers` in edit.json), in source order: the marks lane, the
     /// step titles and the chapters read both, as `markersOf` does.
-    var markers: [(us: Int64, label: String)] {
-        let edited = (project.markers ?? []).map { (us: $0.atUs, label: $0.label) }
-        return edited.isEmpty ? recordingMarkers : (recordingMarkers + edited).sorted { $0.us < $1.us }
+    var markers: [(us: Int64, label: String, id: String?)] {
+        let recorded = recordingMarkers.map { (us: $0.us, label: $0.label, id: Optional<String>.none) }
+        let edited = (project.markers ?? []).map { (us: $0.atUs, label: $0.label, id: Optional($0.id)) }
+        return edited.isEmpty ? recorded : (recorded + edited).sorted { $0.us < $1.us }
     }
 
     /// Reads the markers the recorder wrote into the recording's manifest; a plain movie has none.

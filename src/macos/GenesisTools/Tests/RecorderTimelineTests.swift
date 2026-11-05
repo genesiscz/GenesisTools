@@ -24,12 +24,13 @@ final class RecorderTimelineTests: XCTestCase {
     /// The service the last `model()` edits on.
     private var service: FakeServiceLink!
 
-    private func model(clips: [EditProject.Clip]? = nil, zooms: [EditProject.Zoom] = [],
+    private func model(clips: [EditProject.Clip]? = nil, zooms: [EditProject.Zoom] = [], markers: [EditProject.Marker]? = nil,
                        rules: @escaping FakeServiceLink.Rules = FakeRules.basic) -> EditorModel {
         var project = EditProject.whole(video: folder.appendingPathComponent("none.mp4").path, durationUs: 10_000_000,
                                         width: 1920, height: 1080, cursor: nil, recording: nil)
         if let clips { project.clips = clips }
         project.zooms = zooms
+        project.markers = markers
         // Its own edit.json: every store watches its file, so a shared one let an earlier model's save land here.
         let own = folder.appendingPathComponent(UUID().uuidString)
         try? FileManager.default.createDirectory(at: own, withIntermediateDirectories: true)
@@ -106,6 +107,33 @@ final class RecorderTimelineTests: XCTestCase {
         if model.pointsPerSecond > 0 { return TimelineScale(pointsPerSecond: model.pointsPerSecond) }
         let fit = Double(max(200, width - 2 * TimelineScale().inset)) / (Double(model.durationUs) / 1_000_000)
         return TimelineScale(pointsPerSecond: fit)
+    }
+
+    func testMarkerSelectionDeletesOnlyEditMarkersAndUndoRestoresThem() {
+        let model = model(markers: [.init(id: "m1", atUs: 2_000_000, label: "Login")], rules: { project, op in
+            var next = project
+            if op["op"] as? String == "unmarker" {
+                next.markers?.removeAll { $0.id == op["id"] as? String }
+            }
+            return next
+        })
+        model.selectMarker(id: "m1", atUs: 2_000_000)
+        XCTAssertEqual(model.selection, .marker(id: "m1", atUs: 2_000_000))
+        XCTAssertEqual(model.clock.outUs, 2_000_000)
+        model.deleteSelection()
+        XCTAssertEqual(service.sentOps.last as NSDictionary?, ["op": "unmarker", "id": "m1"] as NSDictionary)
+        XCTAssertEqual(model.project.markers, [])
+        XCTAssertEqual(model.selection, .none)
+        model.undo()
+        XCTAssertEqual(model.project.markers?.map(\.id), ["m1"])
+
+        let count = service.sentOps.count
+        model.selectMarker(id: nil, atUs: 3_000_000)
+        model.deleteSelection()
+        XCTAssertEqual(model.selection, .marker(id: nil, atUs: 3_000_000))
+        XCTAssertEqual(service.sentOps.count, count, "a recording marker sends no delete op")
+        XCTAssertTrue(model.notice?.contains("belongs to the recording") == true)
+        XCTAssertFalse(model.noticeIsError)
     }
 
     func testAClickOnTheZoomLaneStartsTheZoomUnderThePointer() {

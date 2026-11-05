@@ -464,7 +464,10 @@ private struct MarksLaneView: View {
                     path.addLine(to: CGPoint(x: x, y: 7))
                     path.closeSubpath()
                 }
-                let marked = Color(red: 0.75, green: 0.55, blue: 1)
+                let id = marker.id
+                let selected = model.selection == .marker(id: id, atUs: marker.us)
+                let marked = selected ? Color.white : Color(red: 0.75, green: 0.55, blue: 1)
+                if selected { context.stroke(flag, with: .color(marked), lineWidth: 3) }
                 context.fill(flag, with: .color(marked))
                 context.fill(Path(CGRect(x: x - 0.75, y: 0, width: 1.5, height: size.height)), with: .color(marked))
                 context.draw(Text(marker.label).font(.system(size: 9, weight: .semibold)).foregroundStyle(marked),
@@ -504,7 +507,8 @@ private struct MarksLaneView: View {
         let project = model.project
         for marker in model.markers {
             if let outUs = TimelineMap.outputTime(ofSource: marker.us, in: project), abs(scale.x(outUs) - x) <= 6 {
-                model.seek(outUs)
+                let id = marker.id
+                model.selectMarker(id: id, atUs: marker.us)
                 return
             }
         }
@@ -606,7 +610,7 @@ private struct EditMarkerFlag: View {
             Color.clear
                 .frame(width: 14, height: TimelineView.marksLaneHeight)
                 .contentShape(Rectangle())
-                .onTapGesture { model.seek(out) }
+                .onTapGesture { model.selectMarker(id: marker.id, atUs: marker.atUs) }
                 .contextMenu {
                     Button("Go to “\(marker.label)”") { model.seek(out) }
                     Button("Delete Marker", role: .destructive) { model.deleteMarker(marker.id) }
@@ -614,7 +618,7 @@ private struct EditMarkerFlag: View {
                 .accessibilityElement()
                 .accessibilityLabel("Marker \(marker.label) at \(formatClock(out, tenths: true))")
                 .accessibilityAddTraits(.isButton)
-                .accessibilityAction { model.seek(out) }
+                .accessibilityAction { model.selectMarker(id: marker.id, atUs: marker.atUs) }
                 .accessibilityAction(named: "Delete Marker") { model.deleteMarker(marker.id) }
                 .liveRow()
                 .offset(x: scale.x(out) - 2)
