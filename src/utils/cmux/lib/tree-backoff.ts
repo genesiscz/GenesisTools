@@ -78,7 +78,7 @@ export function nextTreeBackoff({
         return null;
     }
 
-    const failures = (previous?.failures ?? 0) + 1;
+    const failures = (previous?.appPid === unresponsive.appPid ? (previous?.failures ?? 0) : 0) + 1;
 
     return {
         failures,
