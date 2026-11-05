@@ -15,7 +15,7 @@ func cpuMs() -> Double {
     return user + system
 }
 
-func read(_ url: URL, languages: [String], correction: Bool) -> (text: String, cpu: Double, wall: Double) {
+func read(_ url: URL, languages: [String], correction: Bool) throws -> (text: String, cpu: Double, wall: Double) {
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     request.usesLanguageCorrection = correction
@@ -23,7 +23,7 @@ func read(_ url: URL, languages: [String], correction: Bool) -> (text: String, c
     let cpuBefore = cpuMs()
     let wallBefore = Date()
     let handler = VNImageRequestHandler(url: url, options: [:])
-    try? handler.perform([request])
+    try handler.perform([request])
     let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
     return (lines.joined(separator: "\n"), cpuMs() - cpuBefore, Date().timeIntervalSince(wallBefore) * 1000)
 }
@@ -42,7 +42,7 @@ for (index, path) in args.dropFirst().enumerated() {
     let order = index % 2 == 0 ? [true, false] : [false, true]
 
     for correction in order {
-        let result = read(url, languages: languages, correction: correction)
+        let result = try read(url, languages: languages, correction: correction)
         let row: [String: String] = [
             "path": path,
             "arm": correction ? "on" : "off",
