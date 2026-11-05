@@ -163,6 +163,7 @@ final class HubUsageModel: ObservableObject {
     /// Each door's newest request. A completion of an older one (the range or the session changed while it ran) is
     /// dropped, so the old answer never lands under the new parameters or marks them fresh.
     private var generations: [HubUsageDoorKey: Int] = [:]
+    private var rebuildGeneration = 0
     private(set) var active = false
     /// The preferences the doors were last read or rebuilt for; `activate` compares them with the current ones.
     private var seenSettings: UsageSettings?
@@ -240,6 +241,7 @@ final class HubUsageModel: ObservableObject {
 
     /// Forgets what the doors hold and any read in flight for them, so the next `loadIfStale` asks again.
     private func invalidate(_ keys: [HubUsageDoorKey]) {
+        if keys.contains(where: [.limits, .series, .health, .spikes, .drift].contains) { rebuildGeneration += 1 }
         for key in keys {
             generations[key, default: 0] += 1
             loaded[key] = nil
@@ -430,6 +432,8 @@ final class HubUsageModel: ObservableObject {
 
     /// The table and the lanes from the loaded doors, built off the main thread.
     private func rebuild() async {
+        rebuildGeneration += 1
+        let generation = rebuildGeneration
         let settings = settings
         let limits = limits?.data
         let series = series?.data
@@ -442,6 +446,7 @@ final class HubUsageModel: ObservableObject {
             let lanes = series.map { UsageLaneBuilder.build(series: $0, spikes: spikes, settings: settings) } ?? []
             return (table?.columns ?? [], table?.rows ?? [], lanes)
         }.value
+        guard rebuildGeneration == generation else { return }
         table = (built.0, built.1)
         lanes = built.2
         builtAt = now
@@ -515,6 +520,7 @@ final class HubUsageModel: ObservableObject {
 
     /// A lane setting changed (scoped windows, a hidden absent window): the lanes rebuild from what is loaded.
     func settingsChanged() {
+        rebuildGeneration += 1
         Task { await rebuild() }
     }
 }
