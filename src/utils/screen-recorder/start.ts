@@ -207,13 +207,17 @@ export class LibraryRecording extends FrameRecording<number> {
                         },
                     },
                 ],
-                answer: (frames, job) => ({
-                    state: "stopped",
-                    outcome: this.discarded ? "discarded" : "done",
-                    job,
-                    frames,
-                    notes: [...this.warnings],
-                }),
+                answer: (frames, job) => {
+                    // The finished recording reports and publishes stopped before its socket closes.
+                    this.update({ state: "stopped" });
+                    return {
+                        state: "stopped",
+                        outcome: this.discarded ? "discarded" : "done",
+                        job,
+                        frames,
+                        notes: [...this.warnings],
+                    };
+                },
                 closeReason: () => "stopped",
             },
         });

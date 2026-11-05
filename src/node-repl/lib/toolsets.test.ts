@@ -856,6 +856,38 @@ describe("recorder and editor toolsets", () => {
         }
     });
 
+    test("a finalized recording reports and publishes stopped", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-stopped-rec-"));
+        const liveDir = join(root, "live");
+        const recording = await startRecording({
+            recorder: new ControlledRecorder(),
+            folder: join(root, "rec"),
+            liveDir,
+        });
+        const client = await RecorderClient.connect(recording.id, { dir: liveDir });
+        const stopped = Promise.withResolvers<void>();
+        try {
+            await client.subscribe((event) => {
+                if (
+                    event.event === "state" &&
+                    event.params !== null &&
+                    typeof event.params === "object" &&
+                    "state" in event.params &&
+                    event.params.state === "stopped"
+                ) {
+                    stopped.resolve();
+                }
+            });
+            expect((await recording.stop()).state).toBe("stopped");
+            expect((await recording.status()).state).toBe("stopped");
+            await withTimeout(stopped.promise, 2000, new Error("final state event missing"));
+            expect((await recording.stop()).state).toBe("stopped");
+        } finally {
+            client.close();
+            await recording.stop();
+        }
+    });
+
     test("docs come from the descriptors, handles included", () => {
         const recorder = renderDocs(recorderApi);
         expect(recorder).toContain('recording.audio.mute(source: "mic" | "system") → AudioState [reversible]');
