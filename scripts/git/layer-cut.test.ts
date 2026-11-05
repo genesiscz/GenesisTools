@@ -92,7 +92,10 @@ test("cut preserves foreign refs and checks recorded tests without resolving a m
     git("config", "user.email", "alice@example.com");
     writeFileSync(join(root, ".gitignore"), "node_modules/\n");
     mkdirSync(join(root, "fixtures/canary"), { recursive: true });
-    writeFileSync(join(root, "fixtures/canary/package.json"), SafeJSON.stringify({ name: "fixture-dep", version: "1.0.0" }));
+    writeFileSync(
+        join(root, "fixtures/canary/package.json"),
+        SafeJSON.stringify({ name: "fixture-dep", version: "1.0.0" })
+    );
     writeFileSync(
         join(root, "package.json"),
         SafeJSON.stringify({
@@ -103,17 +106,24 @@ test("cut preserves foreign refs and checks recorded tests without resolving a m
     );
     invoke(["bun", "install", "--ignore-scripts"]);
     mkdirSync(join(root, "apps/eve"), { recursive: true });
-    writeFileSync(join(root, "apps/eve/package.json"), SafeJSON.stringify({
-        name: "fixture-subproject", dependencies: { "fixture-dep": "file:../../fixtures/canary" },
-        scripts: { prepare: "git config layercut.subprepare ran" },
-    }));
+    writeFileSync(
+        join(root, "apps/eve/package.json"),
+        SafeJSON.stringify({
+            name: "fixture-subproject",
+            dependencies: { "fixture-dep": "file:../../fixtures/canary" },
+            scripts: { prepare: "git config layercut.subprepare ran" },
+        })
+    );
     invoke(["bun", "install", "--ignore-scripts"], join(root, "apps/eve"));
     mkdirSync(join(root, "scripts"));
     for (const file of ["test.ts", "test-args.ts", "test-deps.ts", "test-reap.ts"]) {
         writeFileSync(join(root, "scripts", file), readFileSync(join(import.meta.dir, "..", file)));
     }
     mkdirSync(join(root, "src/utils/process"), { recursive: true });
-    writeFileSync(join(root, "src/utils/process/process-basics.ts"), readFileSync(join(import.meta.dir, "../../src/utils/process/process-basics.ts")));
+    writeFileSync(
+        join(root, "src/utils/process/process-basics.ts"),
+        readFileSync(join(import.meta.dir, "../../src/utils/process/process-basics.ts"))
+    );
     git("add", "package.json", ".gitignore", "fixtures", "apps", "scripts", "src/utils/process");
     // Bun can omit a lock for a package with no dependencies.
     if (existsSync(join(root, "bun.lock"))) {
@@ -124,8 +134,10 @@ test("cut preserves foreign refs and checks recorded tests without resolving a m
     mkdirSync(join(root, "src/widget"), { recursive: true });
     writeFileSync(join(root, "src/widget/index.ts"), "export const widget = 1;\n");
     const proof = join(root, "tests-ran");
-    writeFileSync(join(root, "src/widget/index.test.ts"),
-        `import { test } from "bun:test"; test("fixture", async () => { await Bun.write(${SafeJSON.stringify(proof)}, "src/widget"); });`);
+    writeFileSync(
+        join(root, "src/widget/index.test.ts"),
+        `import { test } from "bun:test"; test("fixture", async () => { await Bun.write(${SafeJSON.stringify(proof)}, "src/widget"); });`
+    );
     git("add", "src/widget/index.ts", "src/widget/index.test.ts", "scripts/test.ts");
     git("-c", "core.hooksPath=/dev/null", "commit", "-m", "fixture source");
     const source = git("rev-parse", "HEAD");
@@ -171,6 +183,10 @@ test("cut preserves foreign refs and checks recorded tests without resolving a m
     const checked = join(scratch, "tree");
     expect(readFileSync(join(checked, "node_modules", STAMP_FILE), "utf8")).toBe(lockStamp(checked));
     // Force root repair as well as the subproject repair exercised above.
+    writeFileSync(join(checked, "node_modules", STAMP_FILE), "stale");
+    invoke(["env", "GENESIS_TOOLS_TEST_INSTALL_POLICY=isolated", "bun", "scripts/test.ts", "src/widget"], checked);
+    expect(git("config", "--local", "--list")).toBe(configBefore);
+    expect(readFileSync(join(checked, "node_modules", STAMP_FILE), "utf8")).toBe(lockStamp(checked));
     writeFileSync(join(checked, "node_modules", STAMP_FILE), "stale");
     invoke(["bun", "scripts/test.ts", "src/widget"], checked);
     expect(git("config", "--local", "--list")).not.toBe(configBefore);
