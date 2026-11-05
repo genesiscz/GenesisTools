@@ -40,6 +40,13 @@ final class NativeSettingsDisabledTests: XCTestCase {
         XCTAssertLessThan(disabled, enabled * 0.7, "enabled \(enabled), disabled \(disabled)")
     }
 
+    func testANumberIsDrawnByWhatItMeansNotByTheSizeOfItsRange() {
+        // A count of hours with 49 choices drew as a clock menu ("03", no stepper) before the style was explicit.
+        XCTAssertTrue(NativeSettingsNumberPicker("Look-behind", range: 0..<49, identifier: "fixture.hours", value: .constant(3)).drawsField)
+        XCTAssertTrue(NativeSettingsNumberPicker("Seconds", range: 0..<16, identifier: "fixture.seconds", value: .constant(5)).drawsField)
+        XCTAssertFalse(NativeSettingsNumberPicker("Hour", range: 0..<24, identifier: "fixture.hour", style: .clock, value: .constant(9)).drawsField)
+    }
+
     func testADisabledNumberFieldAndStepperAreDrawnDimmer() throws {
         let picker = NativeSettingsNumberPicker("Idle days", range: 0..<91, identifier: "fixture.days", value: .constant(30))
         let row = NativeSettingsRow("Idle for at least") { picker }

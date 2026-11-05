@@ -115,23 +115,36 @@ private struct NativeSettingsDisabledLook: ViewModifier {
     func body(content: Content) -> some View { content.opacity(isEnabled ? 1 : 0.4) }
 }
 
+/// How a number picker draws: `count` is a field with a stepper (hours of look-back, seconds, days), `clock` a
+/// two-digit menu for one part of a time of day ("09", "30"). The look follows what the number means, never the size
+/// of its range: a count of hours drawn as a clock read "03" with no stepper (2026-11-05).
+public enum NativeSettingsNumberStyle: Sendable {
+    case count, clock
+}
+
 public struct NativeSettingsNumberPicker: View {
     private let title: String
     private let range: Range<Int>
     private let identifier: String
+    private let style: NativeSettingsNumberStyle
     @Binding private var value: Int
     @State private var entry = ""
     @FocusState private var editing: Bool
 
-    public init(_ title: String, range: Range<Int>, identifier: String, value: Binding<Int>) {
+    public init(_ title: String, range: Range<Int>, identifier: String, style: NativeSettingsNumberStyle = .count,
+                value: Binding<Int>) {
         self.title = title
         self.range = range
         self.identifier = identifier
+        self.style = style
         _value = value
     }
 
+    /// A field with a stepper; false draws the two-digit clock menu.
+    var drawsField: Bool { style == .count }
+
     public var body: some View {
-        if range.count > 60 {
+        if drawsField {
             HStack(spacing: 6) {
                 TextField(title, text: $entry)
                     .textFieldStyle(.roundedBorder)
@@ -209,10 +222,10 @@ public struct NativeSettingsTimePicker: View {
                 Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                 HStack(spacing: 2) {
                     NativeSettingsNumberPicker("\(title) hour", range: 0..<24,
-                        identifier: identifier + ".hour", value: hour)
+                        identifier: identifier + ".hour", style: .clock, value: hour)
                     Text(":").foregroundStyle(.secondary)
                     NativeSettingsNumberPicker("\(title) minute", range: 0..<60,
-                        identifier: identifier + ".minute", value: minute)
+                        identifier: identifier + ".minute", style: .clock, value: minute)
                 }
                 .labelsHidden()
                 .font(.system(size: 19, weight: .medium, design: .rounded)).monospacedDigit()
