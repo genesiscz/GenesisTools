@@ -1094,7 +1094,7 @@ describe("questions (R2.3)", () => {
         const record = withItems([
             { ...range, confidence: 0.4 },
             {
-                id: "q1",
+                id: "i2",
                 kind: "question",
                 status: "confirmed",
                 about: "speaker",
@@ -1109,7 +1109,7 @@ describe("questions (R2.3)", () => {
                 evidence: { labels: ["Speaker 5"] },
             },
             {
-                id: "q2",
+                id: "i3",
                 kind: "question",
                 status: "suggested",
                 about: "speaker",
@@ -1128,7 +1128,7 @@ describe("questions (R2.3)", () => {
         if (answered.kind !== "question") {
             throw new Error("missing question");
         }
-        expect(propagateAnswer(record, answered, { answer: "Carol Example", listenBelow: 0.6, now })).toEqual(["q2"]);
+        expect(propagateAnswer(record, answered, { answer: "Carol Example", listenBelow: 0.6, now })).toEqual(["i3"]);
         expect(record.items[0]).toMatchObject({ status: "confirmed", speaker: "Carol Example", decidedAt: now });
     });
 
