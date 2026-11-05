@@ -112,8 +112,9 @@ package enum PartQuit {
         return up.isEmpty ? nil : list(up.map(\.name))
     }
 
-    static func name(of face: String, in snapshot: RunningPartsSnapshot) -> String? {
-        name(of: face, livePresences: snapshot.livePresences)
+    static func name(of face: String, pid: Int32, in snapshot: RunningPartsSnapshot) -> String? {
+        if face == "--window", snapshot.permissionsPid != pid { return nil }
+        return name(of: face, livePresences: snapshot.livePresences)
     }
 
     /// The name of the face ⌘Q was pressed in. It always has one: with nothing up, its own name.
@@ -130,7 +131,7 @@ package enum PartQuit {
     /// Every named face but this process, in the question's order.
     static func otherFaces(of snapshot: RunningPartsSnapshot) -> [RunningFace] {
         snapshot.faces
-            .filter { $0.pid != snapshot.ownPid && name(of: $0.face, in: snapshot) != nil }
+            .filter { $0.pid != snapshot.ownPid && name(of: $0.face, pid: $0.pid, in: snapshot) != nil }
             .sorted {
                 let left = faceOrder.firstIndex(of: $0.face) ?? faceOrder.count
                 let right = faceOrder.firstIndex(of: $1.face) ?? faceOrder.count
@@ -150,7 +151,7 @@ package enum PartQuit {
         case .ask:
             var names: [String] = []
             for other in others {
-                if let name = name(of: other.face, in: snapshot), !names.contains(name) { names.append(name) }
+                if let name = name(of: other.face, pid: other.pid, in: snapshot), !names.contains(name) { names.append(name) }
             }
             return .ask(
                 QuitQuestion(thisName: ownName(of: face, livePresences: snapshot.livePresences), otherNames: names))

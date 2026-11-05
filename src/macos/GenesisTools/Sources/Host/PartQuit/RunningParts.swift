@@ -15,6 +15,7 @@ struct RunningPartsSnapshot: Equatable, Sendable {
     var ownPid: Int32
     var faces: [RunningFace]
     var livePresences: Set<String>
+    var permissionsPid: Int32? = nil
 }
 
 /// Reads the snapshot. The live probe asks the kernel; tests pass a fake, so they start no process.
@@ -40,7 +41,8 @@ struct LiveRunningPartsProbe: RunningPartsProbing {
             guard let arguments, let face = PartQuit.face(ofArguments: Array(arguments.dropFirst())) else { return nil }
             return RunningFace(pid: pid, face: face)
         }
-        return RunningPartsSnapshot(ownPid: own, faces: faces, livePresences: PartPresence.live())
+        return RunningPartsSnapshot(ownPid: own, faces: faces, livePresences: PartPresence.live(),
+                                    permissionsPid: PartPresence.owner(PartPresence.permissionsWindow))
     }
 }
 
@@ -81,6 +83,12 @@ package enum PartPresence {
             close(descriptor)
             return
         }
+        let owner = Array("\(getpid())\n".utf8)
+        guard ftruncate(descriptor, 0) == 0,
+              owner.withUnsafeBytes({ write(descriptor, $0.baseAddress, $0.count) }) == owner.count else {
+            close(descriptor)
+            return
+        }
         descriptors[part] = descriptor
     }
 
@@ -94,6 +102,12 @@ package enum PartPresence {
     /// Every part of the quit question's table (PartQuit.presences) that is up in some process.
     static func live(in directory: URL = NativePreview.root) -> Set<String> {
         Set(PartQuit.presences.map(\.id).filter { isUp($0, in: directory) })
+    }
+
+    static func owner(_ part: String, in directory: URL = NativePreview.root) -> Int32? {
+        guard isUp(part, in: directory),
+              let text = try? String(contentsOf: lockFile(part, in: directory), encoding: .utf8) else { return nil }
+        return Int32(text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// Holds the part's lock while `up`, else drops it. Cheap to call on every state change.
