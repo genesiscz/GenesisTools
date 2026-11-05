@@ -157,7 +157,9 @@ export async function checkPings(deps: PingDeps = livePingDeps()): Promise<PingO
         outcomes.push({ key: watch.key, state, pushed, detail: title });
     }
 
-    const finished = new Set(outcomes.filter((outcome) => outcome.state !== "running").map((outcome) => outcome.key));
+    const finished = new Set(
+        outcomes.filter((outcome) => outcome.state !== "running" && outcome.pushed).map((outcome) => outcome.key)
+    );
 
     if (finished.size > 0) {
         await deps.document.mutate((doc) => {

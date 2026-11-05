@@ -29,6 +29,17 @@ function row(sessionId: string, label: Row["label"], lastText: string | null = n
 }
 
 describe("ping me when done", () => {
+    it("keeps a completed watch until push succeeds", async () => {
+        const { value } = deps([row("s-done", "idle")]);
+        await addPing({ key: "claude:s-done" }, value);
+        value.push = async () => false;
+        expect((await checkPings(value))[0].pushed).toBe(false);
+        expect(listPings(value).watches).toHaveLength(1);
+        value.push = async () => true;
+        expect((await checkPings(value))[0].pushed).toBe(true);
+        expect(listPings(value).watches).toHaveLength(0);
+    });
+
     it("pushes once when a watched turn ends, keeps a running or stalled one, and reports a gone session", async () => {
         const fleet = [row("s-run", "tool"), row("s-stall", "stalled"), row("s-done", "idle", "a\nb\nc\nd")];
         const { value, pushes, scheduled } = deps(fleet);
