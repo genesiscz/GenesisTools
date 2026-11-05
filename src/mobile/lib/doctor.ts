@@ -25,8 +25,18 @@ export interface DoctorReport {
 /** Reads the Xcode, simulator and Appium state. It changes nothing: every problem comes with the command that fixes it. */
 export async function mobileDoctor(appiumPort: number): Promise<DoctorReport> {
     const checks: DoctorCheck[] = [];
-    const devDir = await developerDir();
-    checks.push({ name: "xcode", ok: true, detail: devDir });
+    let devDir = "";
+    try {
+        devDir = await developerDir();
+        checks.push({ name: "xcode", ok: true, detail: devDir });
+    } catch (error) {
+        checks.push({
+            name: "xcode",
+            ok: false,
+            detail: String(error),
+            fix: "Install Xcode and select its developer directory",
+        });
+    }
 
     const client = simulatorUiClient(devDir);
     const uiRunning = await simulatorUiRunning();
@@ -65,7 +75,11 @@ export async function mobileDoctor(appiumPort: number): Promise<DoctorReport> {
             : `no adb under ${androidSdkRoot()} or on PATH (only Android needs it)`,
     });
 
-    const booted = (await listSimulators())
+    const simulators = await listSimulators().catch((error: unknown) => {
+        checks.push({ name: "simctl", ok: false, detail: String(error), fix: "Install and select Xcode" });
+        return [];
+    });
+    const booted = simulators
         .filter((device) => device.state === "Booted")
         .map((device) => ({
             udid: device.udid,
