@@ -2099,12 +2099,12 @@ final class WidgetStagingTests: XCTestCase {
         model.receive([try snapshot(draftOption: nil)])
         model.select(key)
         let card = try XCTUnwrap(model.cards.first)
-        let old = model.markPending(card.sourceId, "a", item: card, note: "first")
+        let old = model.markPending(card.sourceId, "a", item: WidgetModel.inboxItem(card), note: "first")
         model.sendingDecisionIDs.insert(card.sourceId)
         model.sendingStageVersions[card.sourceId] = old
         model.keptStaged.insert(card.sourceId)
         XCTAssertTrue(model.stagedForLeave.isEmpty)
-        model.markPending(card.sourceId, "a", item: card, note: "newer")
+        model.markPending(card.sourceId, "a", item: WidgetModel.inboxItem(card), note: "newer")
         XCTAssertEqual(model.stagedForLeave.first?.draft, "newer")
         model.expanded = .right
         model.requestCollapse()
