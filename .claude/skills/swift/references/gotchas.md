@@ -45,6 +45,10 @@
 
 ## SwiftUI / AppKit
 
+- Keep focus until a notification's opened app takes it. Giving focus back first left the opened window behind the terminal (323e9f75d0). Return focus only for run-only actions, and open the hub through Launch Services (5feab34c60). Test both actions with a terminal in front.
+- An asynchronous Undo owns its history step and redo before the service call starts. A late callback once lost a newer edit or popped an empty redo stack (ea1e4fdc37). On failure restore the owned step at its recorded position, and restore redo only if no edit intervened. Test delayed success and failure after a new edit.
+- Set `isReleasedWhenClosed = false` on windows and panels made in code. Closing a default `NSWindow(contentRect:...)` caused an ARC double release and crash (cbbc1c9522). Open and close the hosted window twice and scan constructors for the setting.
+
 - **A `repeatForever` animation can repeatedly invalidate layout.** Measure the affected view and
   animated properties; use a layer animation for a measured hot path (see performance.md).
 - **`withAnimation` around a first load** animates every row; skip it when nothing was on screen.
@@ -121,6 +125,8 @@
 
 ## Process and repo
 
+- Bound socket writes to a peer that stops reading. A blocked write also held the queue that read replies and fired deadlines, so the client now uses `SO_SNDTIMEO` (b3bdab19be). Bound the server outbox to 8 MB (36da213781), renew call deadlines on progress (933eeaf347), and test a peer that accepts but never reads.
+
 - **Another session's worktree is not yours.** A worktree another session works in (in 2026-10 a Codex
   session had the widget and Clicky one) is edited only when Martin says so; commit only your paths.
 - **placeholder-check blocks a push** on internal repo names in fixtures; replace them in a new
@@ -153,6 +159,7 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   preserve near-miss prefixes. A real atomic-file-write test exposed dropped events in the
   Tasks/Shelf watcher even though an unfiltered probe saw them. Use string normalization for
   those known aliases rather than doing filesystem work for every delivered event.
+- A git watcher must not trigger itself. Use `git --no-optional-locks`, and classify each path and FSEvents flags before reloading. Index refreshes caused 15 to 50 loads per minute at 190 to 270 ms each (72c2969e66). Ignore clones, xattrs, Finder-info changes, `index.lock`, other worktrees and a nested repository's own `.git`, but include submodule HEAD and perform a full load for `MustScanSubDirs` (4f6888f882, 5436992782). Test the classification table.
 - Synthesized memberwise Swift initializers remain internal even when a struct's fields and
   type are public. A port into GenesisKit must expose explicit initializers used by its host.
   Build the host as well as the package before claiming the extraction is usable.
@@ -357,6 +364,8 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   teardown block (9a11d77bd).
 
 ## Dialogs: modal loops, title bar insets, cut text — 2026-10-15 00:50
+
+- A long error must not set a split view's height. A 222-character error made an 848 pt window's split view 3,193 pt tall (485d28d73a). Give each column `.frame(minHeight: 0, maxHeight: .infinity, alignment: .top)`, retain rows on a failed read, and test a long error at the smallest window size.
 
 - **`NSAlert.runModal()` inside a `DispatchQueue.main` block stops every timer queued on the main queue.** The
   queue is serial and busy with the block that runs the modal loop, so `DispatchQueue.main.asyncAfter` never

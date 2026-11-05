@@ -82,10 +82,7 @@ proposals named. The proposals and their evidence: `.claude/plans/2026-10-29-Swi
 
 ## 2. Work that runs too often
 
-- **Coalesce file events and task restarts, and skip the work when nobody consumes the result.** Every
-  `FSEventStreamCreate`, `DirectoryWatcher(` and `.task(id:)` gets three questions: does it ignore paths nobody
-  reads (build output, caches), does it debounce, and does anyone consume the result right now (a hidden window, a
-  file no reader watches)? Find: `rg -n 'FSEventStreamCreate|DirectoryWatcher\(|\.task\(id:' <files>`.
+- **Coalesce file events and task restarts, and skip work nobody consumes.** Ignore irrelevant paths. Reload on the first event after quiet, then merge changed roots and reload at most once per gap. One busy watcher caused 394 reloads and 2,173 git runs in an hour (9d1b56152d). Test continuous writes and a first edit after quiet. Check event flags and whether watcher reads create new events (72c2969e66). Find: `rg -n 'FSEventStreamCreate|DirectoryWatcher\(|\.task\(id:' <files>`.
 - **A loop that probes or polls** (`Task.sleep(for: .seconds(` inside a `.task`) runs for every window that exists,
   also behind other windows. Probe on appear and on the action that needs it ([performance.md](performance.md),
   "Polling watchers").
@@ -111,6 +108,7 @@ proposals named. The proposals and their evidence: `.claude/plans/2026-10-29-Swi
   with the parent).
 - **Keep fast-changing values and closures out of environment keys**: every reader checks the whole
   `EnvironmentValues`.
+- Pass a rarely changing list-wide setting or mode through the environment and read it in the leaf, rather than storing it in every row. One shared flag change ran 212 card bodies (5df16d2a22). Keep per-frame, per-keystroke and live-clock values out of environment keys, as the rule above requires; check row body counts.
 
 ## 4. Work inside a body
 
@@ -169,6 +167,7 @@ proposals named. The proposals and their evidence: `.claude/plans/2026-10-29-Swi
   fires in `willSet`, so the property still holds the old value. Find: `rg -n '\$\w+\s*\.sink|\.sink \{'`, then check whether the closure reads the owner's property.
 - **Cancellation is a normal end**: never show `CancellationError` as a failure; check `Task.isCancelled` in long
   loops. Store the running `Task` so an expensive load is single-flight, and re-check state after every `await`.
+- Give each independently loaded field its own generation counter. Increment it on a new load or input change and guard both value and error writes. Five models needed late-result fixes in three days (a34488c721, e565fa9c69, 33e4bfde9a, ef46c47eb9, cf8bdf547b). Test two loads with the older one finishing last.
 - **No unowned `Task {}` in a loop**, and no thrown error that vanishes inside `Task { try … }`.
 - **State why each `Task.detached` detaches**. A plain `Task {}` inherits actor isolation, priority and task-local
   values, but is still unstructured: cancelling its creator does not cancel it. When work must end with its caller,
