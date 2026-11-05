@@ -173,7 +173,9 @@ export const wisprflowSource: TranscriptSource = {
     // Checked 2026-11-04 on Wispr Flow's own surfaces: its MCP server lists 16 tools and all of them read
     // (list_folders, list_folder_meetings, ... none adds a meeting to a folder); its wispr-flow:// scheme routes only
     // open/<page>, start-hands-free, stop-hands-free, switch-mic and the auth, billing and LinkedIn callbacks. The
-    // database belongs to the running app and is never written from here.
+    // database belongs to the running app and is never written from here. Checked again 2026-11-05 on 1.6.1376: the
+    // same 16 read tools; open/notetaker/shared/<share slug> opens one meeting's page, but no route files it in a
+    // folder. Its public API only turns speech into text.
     folderWrite: {
         supported: false,
         reason: "Wispr Flow offers no folder write: its MCP tools only read, and its URL scheme only opens pages",

@@ -300,6 +300,20 @@ describe("ask each time", () => {
         expect(store.read(meeting.id)?.assign?.folder?.state).toBe("paired");
     });
 
+    test("a meeting in no folder: the question names the folder of each proposed project to move it into", async () => {
+        const { store, config, deps, create } = setup();
+        await config.addProject("offers");
+        await config.addSourceFolder("wisprflow", "offers", "Offers 2.0");
+        await create("Offers sync", "2026-11-03T14:00:00.000Z", { project: "offers" });
+        const meeting = await create("Offers review", "2026-11-04T14:00:00.000Z");
+        const question = buildQuestion(await viewProposals(store, meeting, deps), await config.read());
+        const prompt = question.items[0]?.promptMarkdown ?? "";
+
+        expect(prompt).toContain("the meeting is in no folder. No write, so move it yourself: move it by hand.");
+        expect(prompt).toContain('Folders of the proposed projects: offers → "Offers 2.0".');
+        expect(prompt).toContain("The next sync sees the meeting in a folder and asks to pair that folder");
+    });
+
     test("a meeting in a folder no project has offers to pair it; a new project name joins the known ones", async () => {
         const { store, config, inbox, deps, create } = setup({ folders: ["Side"] });
         const meeting = await create("Lunch", "2026-11-04T14:00:00.000Z");
