@@ -173,21 +173,17 @@ process.on("message", (message: unknown) => {
 function startHostedRecording(options: unknown): Promise<string> {
     return new Promise((resolve, reject) => {
         const id = ++recordingRequestId;
-        const timer = setTimeout(() => {
+        // The parent owns the startup deadline and replies with either the recording or the timeout error.
+        recordingRequests.set(id, { resolve, reject });
+        try {
+            if (!process.send) {
+                throw new Error("Recording startup requires a parent IPC connection");
+            }
+            process.send({ id, recordingStart: options });
+        } catch (error) {
             recordingRequests.delete(id);
-            reject(new Error("Recording start exceeded 120 seconds"));
-        }, 120_000);
-        recordingRequests.set(id, {
-            resolve: (value) => {
-                clearTimeout(timer);
-                resolve(value);
-            },
-            reject: (error) => {
-                clearTimeout(timer);
-                reject(error);
-            },
-        });
-        process.send?.({ id, recordingStart: options });
+            reject(error);
+        }
     });
 }
 
