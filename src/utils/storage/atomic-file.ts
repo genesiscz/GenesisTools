@@ -23,15 +23,16 @@ import { logger } from "@genesiscz/utils/logger";
 import { assertTestSafePath } from "./real-home-guard";
 
 /**
- * The two calls a full disk fails in. Production never replaces them; tests spy on this object to make a
- * write fail halfway with ENOSPC, which no real test host can produce on demand.
+ * Filesystem operations exposed for deterministic failure and race tests.
  */
 export const atomicWriteIo: {
     writeSync: (fd: number, bytes: Uint8Array, offset: number, length: number) => number;
     fsyncSync: (fd: number) => void;
+    linkSync: (existingPath: string, newPath: string) => void;
 } = {
     writeSync: (fd, bytes, offset, length) => writeSync(fd, bytes, offset, length),
     fsyncSync,
+    linkSync,
 };
 
 export interface AtomicWriteOptions {
@@ -224,22 +225,20 @@ export class AtomicTargetExistsError extends Error {
 
 /**
  * Gives the finished temp file the target's name without replacing a file another writer published there. A
- * filesystem without hard links (FAT, exFAT, some network shares) falls back to a checked rename, which can still
- * lose to a writer that publishes between the check and the rename.
+ * filesystem without hard links fails instead of replacing a concurrently published file.
  */
 function publishExclusive(tmp: string, path: string): void {
     try {
-        linkSync(tmp, path);
+        atomicWriteIo.linkSync(tmp, path);
     } catch (err) {
         const taken = err instanceof Error && "code" in err && err.code === "EEXIST";
 
-        if (!taken && !existsSync(path)) {
-            renameTempOver(tmp, path);
-            return;
+        removeTempFile(tmp);
+        if (taken) {
+            throw new AtomicTargetExistsError(path, { cause: err });
         }
 
-        removeTempFile(tmp);
-        throw new AtomicTargetExistsError(path, { cause: err });
+        throw new Error(`Exclusive publication failed: ${tmp} → ${path}`, { cause: err });
     }
 
     removeTempFile(tmp);

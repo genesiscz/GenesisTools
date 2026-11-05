@@ -19,7 +19,13 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { atomicWriteIo, preserveUnreadableFile, readFileIfExistsSync, readJsonFileForUpdateSync } from "./atomic-file";
+import {
+    atomicWriteFileStreamed,
+    atomicWriteIo,
+    preserveUnreadableFile,
+    readFileIfExistsSync,
+    readJsonFileForUpdateSync,
+} from "./atomic-file";
 import { genesisToolsDir, toolDataDir } from "./root";
 import { atomicWriteFileSync, Storage } from "./storage";
 
@@ -335,6 +341,27 @@ describe("a failed write never costs the user the stored file", () => {
     afterEach(() => {
         env.testing.restore(saved);
         rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("fails closed when exclusive publication is unsupported, preserving a concurrent writer", async () => {
+        const target = join(dir, "exclusive.json");
+        const link = spyOn(atomicWriteIo, "linkSync").mockImplementation(() => {
+            writeFileSync(target, USER_CONFIG);
+            throw Object.assign(new Error("hard links unsupported"), { code: "EPERM" });
+        });
+
+        try {
+            await expect(
+                atomicWriteFileStreamed(target, (write) => write(Buffer.from("replacement")), {
+                    exclusive: true,
+                })
+            ).rejects.toThrow("Exclusive publication failed");
+        } finally {
+            link.mockRestore();
+        }
+
+        expect(readFileSync(target, "utf8")).toBe(USER_CONFIG);
+        expect(readdirSync(dir)).toEqual(["exclusive.json"]);
     });
 
     it("keeps the target byte-identical when the disk fills halfway through the write", () => {
