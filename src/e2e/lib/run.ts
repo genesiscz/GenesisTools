@@ -21,6 +21,7 @@ async function runSpec(options: {
     cwd: string;
     environment: Record<string, string | undefined>;
     logPath: string;
+    timeoutMs: number;
     onLine?: (line: string) => void;
 }): Promise<number | null> {
     const fd = openSync(options.logPath, "a");
@@ -61,6 +62,7 @@ export async function runE2e(options: {
     flags: Record<string, unknown>;
     /** `KEY=VALUE` variables for every spec process, after the tool's own. */
     extraEnv: Record<string, string>;
+    timeoutMs?: number;
     onSpecStart?: (spec: SpecFile, index: number, total: number) => void;
     onSpecDone?: (run: SpecRun) => void;
     onLine?: (line: string) => void;
@@ -97,6 +99,7 @@ export async function runE2e(options: {
             log.info({ spec: spec.path, dir, command: command.join(" ") }, "spec start");
             const exitCode = await runSpec({
                 command,
+                timeoutMs: options.timeoutMs ?? 30 * 60 * 1000,
                 cwd: project.cwd,
                 environment: {
                     ...env.getProcessEnv(),
