@@ -142,10 +142,12 @@ export const MOCK_PROMPTS = [
 ];
 
 /** One mock prompt prepared for a session: `branch` comes from the session, `pr` stays missing. */
-export function mockPreparedPrompt(name: string, session: string | null): PreparedPromptDto {
+export function mockPreparedPrompt(name: string, session: string | null, supplied: Record<string, string> = {}): PreparedPromptDto {
     const prompt = MOCK_PROMPTS.find((entry) => entry.name === name) ?? MOCK_PROMPTS[1];
     const variables = prompt.variables.map<PromptVariableDto>((variable) =>
-        variable === "branch" && session
+        typeof supplied[variable] === "string"
+            ? { name: variable, value: supplied[variable], source: "given" }
+            : variable === "branch" && session
             ? { name: variable, value: "feat/cart", source: "session" }
             : { name: variable, value: null, source: "missing" }
     );

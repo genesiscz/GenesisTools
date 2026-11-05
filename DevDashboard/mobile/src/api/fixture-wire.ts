@@ -374,7 +374,7 @@ const ROUTES: FixtureRoute[] = [
     {
         method: ENDPOINTS.gatewayPromptPrepare.method,
         path: ENDPOINTS.gatewayPromptPrepare.path,
-        handle: ({ query }) => mockPreparedPrompt(query.get("name") ?? "", query.get("session")),
+        handle: ({ query }) => mockPreparedPrompt(query.get("name") ?? "", query.get("session"), SafeJSON.parse(query.get("vars") ?? "{}", { strict: true })),
     },
 
     // PR triage (F20): the list, one PR's checks; a fix and a merge are refused, since a fixture has no Mac.
