@@ -135,22 +135,6 @@ export function methodSignature(owner: string, method: MethodDescriptor, depth =
     return `${owner}.${method.name}(${paramsText(method, depth)}) → ${resultText(method, depth)}`;
 }
 
-function paramKeys(method: MethodDescriptor): string {
-    if (method.positional) {
-        return method.positional.join(", ");
-    }
-
-    const schema = jsonSchemaOf(method.params);
-    const keys = Object.keys(schema.properties ?? {});
-    return keys.length === 0 ? "" : `{${keys.slice(0, 6).join(", ")}${keys.length > 6 ? ", …" : ""}}`;
-}
-
-/** One line for a tool description: the global, its summary, and each method with its parameter names. */
-export function renderOneLine(api: ApiDescriptor): string {
-    const methods = api.methods.map((method) => `${api.global}.${method.name}(${paramKeys(method)})`).join(", ");
-    return `${api.global}: ${api.summary} ${methods}`;
-}
-
 function renderMethods(owner: string, methods: readonly MethodDescriptor[]): string[] {
     return methods.map((method) => `- ${methodSignature(owner, method)} [${method.effect}]\n  ${method.doc}`);
 }

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import { z } from "zod";
 import { defineApi, defineMethod } from "./descriptor";
-import { jsonSchemaOf, methodSignature, renderDocs, renderOneLine, toMcpTools, typeText } from "./render";
+import { jsonSchemaOf, methodSignature, renderDocs, toMcpTools, typeText } from "./render";
 
 const api = defineApi({
     id: "demo",
@@ -65,7 +65,7 @@ describe("api descriptors", () => {
         expect(typeText(jsonSchemaOf(z.custom<() => void>()))).toBe("unknown");
     });
 
-    test("signatures, the one-line summary and the full docs come from the descriptor", () => {
+    test("signatures and the full docs come from the descriptor", () => {
         expect(methodSignature("demo", api.methods[0])).toBe(
             'demo.start(options: { fps?: number; displays: "all" | number[] }) → Recording'
         );
@@ -73,9 +73,6 @@ describe("api descriptors", () => {
             'demo.list() → Array<{ id: string; state: "recording" | "paused" }>'
         );
         expect(methodSignature("demo", api.methods[2])).toBe("demo.wipe(id: string) → unknown");
-        expect(renderOneLine(api)).toBe(
-            "demo: A demonstration surface. demo.start({fps, displays}), demo.list(), demo.wipe(id)"
-        );
         const docs = renderDocs(api);
         expect(docs).toContain(
             '- demo.start(options: { fps?: number; displays: "all" | number[] }) → Recording [reversible]'
