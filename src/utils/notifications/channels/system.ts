@@ -1,6 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import { type PostedNotification, sendNotification } from "@genesiscz/utils/macos/notifications";
-import type { NotificationEvent, SystemChannelConfig } from "../types";
+import { removeNotifications } from "@genesiscz/utils/macos/notifications-app";
+import type { ChannelDefinition, NotificationEvent, SystemChannelConfig } from "../types";
 
 /** Whether a posted banner counts as delivered for this event; see {@link NotificationEvent.requireConfirmed}. */
 export function systemChannelDelivered(
@@ -38,3 +39,30 @@ export async function dispatchSystem(event: NotificationEvent, config: SystemCha
         return false;
     }
 }
+
+export const systemChannel: ChannelDefinition<"system"> = {
+    name: "system",
+    label: "System (macOS)",
+    defaults: { enabled: true, sound: "Ping", title: "GenesisTools", ignoreDnD: false },
+    fields: { enabled: "boolean", ignoreDnD: "boolean", sound: "string", title: "string" },
+    secretKeys: [],
+    unusable: () => (process.platform === "darwin" ? undefined : "macOS only"),
+    describe: (config) =>
+        [config.title, config.sound ? `sound ${config.sound}` : null, config.ignoreDnD ? "bypasses DnD" : null]
+            .filter(Boolean)
+            .join(" · "),
+    post: async (event, config) => ({ ok: await dispatchSystem(event, config) }),
+    async retract(noticeId) {
+        if (process.platform !== "darwin") {
+            return false;
+        }
+
+        try {
+            await removeNotifications({ ids: [noticeId] });
+            return true;
+        } catch (err) {
+            logger.debug({ err, noticeId }, "could not take a banner out of Notification Center");
+            return false;
+        }
+    },
+};

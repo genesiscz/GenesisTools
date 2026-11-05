@@ -13,7 +13,14 @@ import {
 import { WATCHER_PRESETS } from "@app/monitor/lib/presets";
 import { listSayVoices } from "@app/monitor/lib/say-voices";
 import { Scheduler } from "@app/monitor/lib/scheduler";
-import { isNotifyChannel, MONITOR_VERSION, type MonitorEvent, maskTarget, maskWatcher } from "@app/monitor/lib/types";
+import {
+    isNotifyChannel,
+    MONITOR_VERSION,
+    type MonitorEvent,
+    maskTarget,
+    maskWatcher,
+    NOTIFY_CHANNELS,
+} from "@app/monitor/lib/types";
 import {
     normalizeTarget,
     parseNotifyTargetInput,
@@ -387,7 +394,7 @@ export async function handleApiRequest(req: Request, url: URL, monitor: Monitor,
         const only = channel !== null && isNotifyChannel(channel) ? channel : undefined;
 
         if (channel !== null && !only) {
-            return error("channel must be system, say, telegram or webhook", 400);
+            return error(`channel must be one of ${NOTIFY_CHANNELS.join(", ")}`, 400);
         }
 
         return json(await sendTestNotification(only));

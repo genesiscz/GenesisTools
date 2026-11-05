@@ -6,7 +6,13 @@ import * as jxa from "@genesiscz/utils/macos/jxa";
 import * as macosNotifications from "@genesiscz/utils/macos/notifications";
 import * as macosNotificationsApp from "@genesiscz/utils/macos/notifications-app";
 import { settings as macosSettings } from "@genesiscz/utils/macos/system-settings";
-import type { NotificationEvent, WebhookChannelConfig } from "@genesiscz/utils/notifications";
+import type {
+    ChannelDefinition,
+    ChannelName,
+    ChannelTable,
+    NotificationEvent,
+    WebhookChannelConfig,
+} from "@genesiscz/utils/notifications";
 import * as notifications from "@genesiscz/utils/notifications";
 import * as trashStaging from "@genesiscz/utils/prompts/clack/trash-staging";
 
@@ -231,8 +237,45 @@ function installHostEffectGuards(): void {
     // `@genesiscz/utils/notifications` and a mock has to sit on the specifier
     // that is actually resolved. The channels are blocked beside the dispatcher
     // that calls them, so importing one directly is guarded too.
+    const guardedWebhook = (event: NotificationEvent, config: WebhookChannelConfig): Promise<boolean> => {
+        // A disabled channel or a missing URL is the real dispatcher's own
+        // no-op, so refusing it would invent a failure where there is no
+        // request at all.
+        const inert = !config?.enabled || !config?.url;
+
+        if (inert || isLoopbackUrl(config.url)) {
+            return realNotifications.dispatchWebhook(event, config);
+        }
+
+        return Promise.reject(
+            refusal(
+                "dispatchWebhook",
+                "Point it at a loopback server the test starts, or assert the event instead of posting it."
+            )
+        );
+    };
+
+    // The channel table reaches the same sinks through each entry's post and retract, so every entry is blocked
+    // the same way as its dispatch function (the webhook keeps its loopback exception through dispatchWebhook).
+    const blockedChannel = <K extends ChannelName>(name: K, why: string): ChannelDefinition<K> => ({
+        ...realNotifications.CHANNELS[name],
+        post: blockedAsync(`CHANNELS.${name}.post`, why),
+        retract: blockedAsync(`CHANNELS.${name}.retract`, why),
+    });
+    const guardedChannels: ChannelTable = {
+        system: blockedChannel("system", "Assert the event instead of raising a real notification."),
+        telegram: blockedChannel("telegram", "Assert the event instead of posting it to a real chat."),
+        say: blockedChannel("say", "Assert the message instead of speaking it out loud."),
+        phone: blockedChannel("phone", "Build a phone channel over fakes (createPhoneChannel) instead of pushing."),
+        webhook: {
+            ...realNotifications.CHANNELS.webhook,
+            post: async (event, config) => ({ ok: await guardedWebhook(event, config) }),
+        },
+    };
+
     mock.module("@genesiscz/utils/notifications", () => ({
         ...realNotifications,
+        CHANNELS: guardedChannels,
         dispatchNotification: blockedAsync(
             "dispatchNotification",
             "Assert the event instead of delivering it to Telegram, a webhook or the system."
@@ -247,22 +290,6 @@ function installHostEffectGuards(): void {
         // its own `Bun.serve` on 127.0.0.1 and asserts a real redelivery
         // against it. A loopback POST reaches nobody, so blocking it would
         // trade a genuine test for no safety at all.
-        dispatchWebhook: (event: NotificationEvent, config: WebhookChannelConfig) => {
-            // A disabled channel or a missing URL is the real dispatcher's own
-            // no-op, so refusing it would invent a failure where there is no
-            // request at all.
-            const inert = !config?.enabled || !config?.url;
-
-            if (inert || isLoopbackUrl(config.url)) {
-                return realNotifications.dispatchWebhook(event, config);
-            }
-
-            return Promise.reject(
-                refusal(
-                    "dispatchWebhook",
-                    "Point it at a loopback server the test starts, or assert the event instead of posting it."
-                )
-            );
-        },
+        dispatchWebhook: guardedWebhook,
     }));
 }

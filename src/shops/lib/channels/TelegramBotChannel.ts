@@ -1,38 +1,29 @@
 import type { DispatchResult, NotificationChannel, NotificationPayload } from "@app/shops/lib/channels/types";
-import { TelegramBotClient } from "@app/shops/lib/telegram-bot-client";
 import { env as appEnv } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { CHANNELS, type ChannelReceipt, type NotificationEvent } from "@genesiscz/utils/notifications";
 import { loadTelegramBotConfigSync, resolveTelegramTarget } from "@genesiscz/utils/telegram-bot/lib/config";
 import type { TelegramBotConfig } from "@genesiscz/utils/telegram-bot/lib/types";
 
 const log = logger.child({ component: "TelegramBotChannel" });
 
-interface SendableClient {
-    sendMessage(args: {
-        chatId: string | number;
-        text: string;
-        parseMode?: "Markdown" | "MarkdownV2" | "HTML";
-        disableWebPagePreview?: boolean;
-    }): Promise<{ ok: true; message_id: number }>;
-}
-
 export interface TelegramBotChannelConfig {
     chatId: string | number;
-    client: SendableClient;
-}
-
-function escapeMd(s: string): string {
-    return s.replace(/[*_`[\]]/g, "\\$&");
+    botToken: string;
+    /** Sends through the shared Telegram channel of the notification table by default. Tests pass a spy. */
+    post?: (event: NotificationEvent, target: { botToken: string; chatId: string }) => Promise<ChannelReceipt>;
 }
 
 export class TelegramBotChannel implements NotificationChannel {
     readonly name = "telegram" as const;
-    private readonly chatId: string | number;
-    private readonly client: SendableClient;
+    private readonly chatId: string;
+    private readonly botToken: string;
+    private readonly post: NonNullable<TelegramBotChannelConfig["post"]>;
 
     constructor(config: TelegramBotChannelConfig) {
-        this.chatId = config.chatId;
-        this.client = config.client;
+        this.chatId = String(config.chatId);
+        this.botToken = config.botToken;
+        this.post = config.post ?? ((event, target) => CHANNELS.telegram.post(event, { enabled: true, ...target }));
     }
 
     /**
@@ -54,7 +45,7 @@ export class TelegramBotChannel implements NotificationChannel {
 
         return new TelegramBotChannel({
             chatId: target.chatId,
-            client: new TelegramBotClient({ token: target.botToken }),
+            botToken: target.botToken,
         });
     }
 
@@ -64,22 +55,20 @@ export class TelegramBotChannel implements NotificationChannel {
 
     async dispatch(payload: NotificationPayload): Promise<DispatchResult> {
         const url = payload.buyUrl ?? `http://localhost:3073${payload.detailUrl}`;
-        const text = [`*${escapeMd(payload.title)}*`, "", payload.body, "", url].join("\n");
-        try {
-            await this.client.sendMessage({
-                chatId: this.chatId,
-                text,
-                parseMode: "Markdown",
-                disableWebPagePreview: false,
-            });
-            log.debug({ id: payload.notification.id, chatId: this.chatId }, "telegram notification delivered");
-            return { channel: "telegram", delivered: true };
-        } catch (err) {
+        const receipt = await this.post(
+            { app: "shops", title: payload.title, message: `${payload.body}\n\n${url}` },
+            { botToken: this.botToken, chatId: this.chatId }
+        );
+
+        if (!receipt.ok) {
             return {
                 channel: "telegram",
                 delivered: false,
-                error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+                error: receipt.detail ?? "the Telegram channel did not accept the message",
             };
         }
+
+        log.debug({ id: payload.notification.id, chatId: this.chatId }, "telegram notification delivered");
+        return { channel: "telegram", delivered: true };
     }
 }
