@@ -303,6 +303,7 @@ extension WidgetModel {
     func markPending(_ id: String, _ option: String, item: WidgetInboxItem? = nil, note: String? = nil) -> UUID {
         let version = UUID()
         pendingStageVersions[id] = version
+        keptStaged.remove(id)
         pendingStage[id] = option
         if let note { pendingStageNotes[id] = note }
         pendingStageAt[id] = Date().timeIntervalSince1970 * 1000
