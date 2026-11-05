@@ -840,6 +840,10 @@ describe("characterization: what a library recording asks its recorder for", () 
         readonly requests: CaptureRequest[] = [];
         readonly commands: string[] = [];
         started = Promise.withResolvers<void>();
+        /** The live mute command throws. */
+        muteFails = false;
+        /** The device list throws. */
+        devicesFail = false;
         private readonly waiters: Array<{ count: number; resolve: () => void }> = [];
 
         constructor(
@@ -868,6 +872,10 @@ describe("characterization: what a library recording asks its recorder for", () 
         }
 
         override async audioDevices() {
+            if (this.devicesFail) {
+                throw new Error("ax-tool audio-devices exited 1");
+            }
+
             return {
                 inputs: [
                     { id: "built-in-mic", name: "Built-in Microphone", channels: 1, default: true },
@@ -925,6 +933,10 @@ describe("characterization: what a library recording asks its recorder for", () 
                     ...(this.script.liveAudio
                         ? {
                               mute: async (source: string, muted: boolean) => {
+                                  if (this.muteFails) {
+                                      throw new Error("the capture did not take the mute");
+                                  }
+
                                   this.commands.push(`${muted ? "mute" : "unmute"} ${displayId} ${source}`);
                               },
                               setMic: async (deviceId: string) => {
@@ -1142,6 +1154,23 @@ describe("characterization: what a library recording asks its recorder for", () 
         await plain.waitFor(2);
         await restarted.stop();
         expect(plain.requests.map((request) => request.audio?.micDeviceId)).toEqual([undefined, "desk-mic"]);
+    });
+
+    test("sound: an unknown microphone is refused, a failed device list is unsupported, an unmute of a source that is not muted restarts nothing, and a failed live mute changes nothing", async () => {
+        const recorder = new ScriptRecorder({ audio: true, liveAudio: true });
+        const recording = await start(recorder, { displays: "all", audio: { mic: true } });
+        await recorder.waitFor(2);
+
+        await expect(recording.setAudioInput("nope")).rejects.toMatchObject({ code: RPC_ERRORS.unknownDevice });
+        expect(await recording.muteAudio("mic", false)).toMatchObject({ muted: { mic: false, system: false } });
+        recorder.muteFails = true;
+        await expect(recording.muteAudio("mic", true)).rejects.toMatchObject({ code: RPC_ERRORS.internal });
+        expect((await recording.getSettings()).audio.muted.mic).toBe(false);
+        recorder.devicesFail = true;
+        await expect(recording.listAudioDevices()).rejects.toMatchObject({ code: RPC_ERRORS.unsupported });
+        await Bun.sleep(50);
+        expect(recorder.requests).toHaveLength(2);
+        await recording.stop();
     });
 
     test("stage 7 (pause): a pause without a live channel ends the piece, no capture starts while paused, and resume starts the next", async () => {

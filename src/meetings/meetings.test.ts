@@ -2173,6 +2173,8 @@ describe("the meetings recorder loop", () => {
         lateSwitch?: boolean;
         delayedFrame?: boolean;
         audio?: boolean;
+        /** The recorded sources (`audio: true` records the microphone). */
+        audioSources?: Array<"mic" | "system">;
         /** False: the recorder records one display at a time. */
         parallel?: boolean;
         /** The wait after a failed piece (0 by default). */
@@ -2221,7 +2223,7 @@ describe("the meetings recorder loop", () => {
                 liveSettings: options.liveSettings,
                 lateSwitch: options.lateSwitch,
                 delayedFrame: options.delayedFrame,
-                audio: options.audio,
+                audio: options.audio || options.audioSources !== undefined,
                 parallel: options.parallel,
                 onFail: options.onFail ? () => options.onFail?.(call) : undefined,
             },
@@ -2246,7 +2248,11 @@ describe("the meetings recorder loop", () => {
             meetingId: created.id,
             capture,
             ...(options.lateSwitch ? { display: 1 } : {}),
-            ...(options.audio ? { audio: ["mic" as const] } : {}),
+            ...(options.audioSources
+                ? { audio: options.audioSources }
+                : options.audio
+                  ? { audio: ["mic" as const] }
+                  : {}),
             deps: {
                 recorder,
                 toJpeg: async (_png, jpg) => {
@@ -2987,6 +2993,47 @@ describe("the meetings recorder loop", () => {
         expect(readFileSync(join(run.folder, "audio.jsonl"), "utf8")).toContain('"source":"mic"');
         expect(run.saved?.recording).toMatchObject({ audio: { sources: ["mic"], files: 1 } });
         expect(progress).toEqual(expect.arrayContaining(["summary 1/1", "collect 3/3"]));
+    });
+
+    test("sound: a mute or an unmute to the state the source is in sends nothing, and an unmute restarts the captures even when the running one cannot mute live", async () => {
+        const repeated = await recordWith({
+            displays: [[builtIn]],
+            steps: ["hang", "hang"],
+            liveControl: true,
+            liveSettings: true,
+            audio: true,
+            actions: [
+                async (call) => [
+                    await call("audio.mute", { source: "mic", muted: false }),
+                    await call("audio.mute", { source: "mic", muted: true }),
+                    await call("audio.mute", { source: "mic", muted: true }),
+                    await call("stop"),
+                ],
+            ],
+        });
+
+        expect(repeated.recorder.commands).toEqual(["mute mic"]);
+
+        const both = await recordWith({
+            displays: [[builtIn]],
+            steps: ["hang", "hang", "hang"],
+            audioSources: ["mic", "system"],
+            actions: [
+                async (call) => [
+                    await call("pause"),
+                    await call("audio.mute", { source: "mic", muted: true }),
+                    await call("resume"),
+                ],
+                async (call) => call("audio.mute", { source: "mic", muted: false }),
+            ],
+        });
+
+        expect(both.answers[1]).toMatchObject({ muted: { mic: false, system: false } });
+        expect(both.recorder.requests.map((request) => request.audio?.sources)).toEqual([
+            ["mic", "system"],
+            ["system"],
+            ["mic", "system"],
+        ]);
     });
 
     test("characterization (loop): a failed piece waits failurePauseMs before the next, and a stop cuts that wait short", async () => {

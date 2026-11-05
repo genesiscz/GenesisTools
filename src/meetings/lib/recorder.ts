@@ -517,14 +517,12 @@ export async function runRecorder(options: {
                             throw new RpcError(RPC_ERRORS.invalidParams, `this recording records no ${source} sound`);
                         }
 
-                        const capture = [...running.values()].find((one) => one.audio);
-
-                        if (capture && !capture.live?.mute) {
-                            throw new RpcError(RPC_ERRORS.unsupported, "this recorder cannot mute while it records");
+                        if (audio.muted[source] === muted) {
+                            return { ...audio, muted: { ...audio.muted } };
                         }
 
-                        // The running capture was started without the muted source: only a new capture can add it.
-                        if (!muted && audio.muted[source]) {
+                        // The running captures were started without the muted source: only new captures can add it.
+                        if (!muted) {
                             restart(() => {
                                 audio.muted[source] = false;
                             });
@@ -532,10 +530,18 @@ export async function runRecorder(options: {
                             return { ...audio, muted: { ...audio.muted } };
                         }
 
-                        await capture?.live?.mute?.(source, muted).catch((error: unknown) => {
-                            throw new RpcError(RPC_ERRORS.internal, errorText(error));
-                        });
-                        audio.muted[source] = muted;
+                        const owners = [...running.values()].filter((one) => one.audio);
+
+                        if (owners.some((one) => !one.live?.mute)) {
+                            throw new RpcError(RPC_ERRORS.unsupported, `the running capture cannot mute ${source}`);
+                        }
+
+                        await Promise.all(owners.map((one) => one.live?.mute?.(source, true))).catch(
+                            (error: unknown) => {
+                                throw new RpcError(RPC_ERRORS.internal, errorText(error));
+                            }
+                        );
+                        audio.muted[source] = true;
                         log.info({ source, muted }, "audio muted over the socket");
                         return { ...audio, muted: { ...audio.muted } };
                     },

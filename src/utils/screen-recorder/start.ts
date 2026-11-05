@@ -696,7 +696,11 @@ export class LibraryRecording extends RecorderControl {
     }
 
     override async listAudioDevices(): Promise<AudioDevices> {
-        return this.options.recorder.audioDevices();
+        try {
+            return await this.options.recorder.audioDevices();
+        } catch (error) {
+            throw new RpcError(RPC_ERRORS.unsupported, error instanceof Error ? error.message : String(error));
+        }
     }
 
     override async muteAudio(source: AudioSource, muted: boolean): Promise<AudioState> {
@@ -704,22 +708,27 @@ export class LibraryRecording extends RecorderControl {
             throw new RpcError(RPC_ERRORS.unsupported, `this recording records no ${source} sound`);
         }
 
-        const captures = [...this.running.values()];
-        if (muted && captures.some((one) => !one.live?.mute)) {
+        if (this.audio.muted[source] === muted) {
+            return this.audio;
+        }
+
+        // The running captures were started without the muted source: only new captures can add it.
+        if (!muted) {
+            this.audio = { ...this.audio, muted: { ...this.audio.muted, [source]: false } };
+            this.restartCaptures();
+            return this.audio;
+        }
+
+        const owners = [...this.running.values()].filter((one) => one.audio);
+
+        if (owners.some((one) => !one.live?.mute)) {
             throw new RpcError(RPC_ERRORS.unsupported, `the running capture cannot mute ${source}`);
         }
 
-        this.audio = { ...this.audio, muted: { ...this.audio.muted, [source]: muted } };
-        if (!muted) {
-            this.restartCaptures();
-        } else {
-            try {
-                await Promise.all(captures.map((one) => one.live!.mute!(source, true)));
-            } catch (error) {
-                this.restartCaptures();
-                throw error;
-            }
-        }
+        await Promise.all(owners.map((one) => one.live?.mute?.(source, true))).catch((error: unknown) => {
+            throw new RpcError(RPC_ERRORS.internal, error instanceof Error ? error.message : String(error));
+        });
+        this.audio = { ...this.audio, muted: { ...this.audio.muted, [source]: true } };
         return this.audio;
     }
 
@@ -728,11 +737,19 @@ export class LibraryRecording extends RecorderControl {
             throw new RpcError(RPC_ERRORS.unsupported, "this recording records no microphone");
         }
 
-        this.audio = { ...this.audio, micDevice: deviceId };
-        const captures = [...this.running.values()];
+        const devices = await this.listAudioDevices();
 
-        if (captures.every((one) => one.live?.setMic)) {
-            await Promise.all(captures.map((one) => one.live?.setMic?.(deviceId)));
+        if (!devices.inputs.some((device) => device.id === deviceId)) {
+            throw new RpcError(RPC_ERRORS.unknownDevice, `no input device ${deviceId}; see audio.list`);
+        }
+
+        this.audio = { ...this.audio, micDevice: deviceId };
+        const owners = [...this.running.values()].filter((one) => one.audio);
+
+        if (owners.length > 0 && owners.every((one) => one.live?.setMic)) {
+            await Promise.all(owners.map((one) => one.live?.setMic?.(deviceId))).catch((error: unknown) => {
+                throw new RpcError(RPC_ERRORS.internal, error instanceof Error ? error.message : String(error));
+            });
         } else {
             this.restartCaptures();
         }
