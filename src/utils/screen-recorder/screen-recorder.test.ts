@@ -6,6 +6,7 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as bounded from "@genesiscz/utils/process/bounded-command";
 import { z } from "zod";
 import {
     type DisplayEntry,
@@ -17,7 +18,7 @@ import {
     type StopAnswer,
 } from "./control";
 import { outputScaleFor, parseDisplayList } from "./displays";
-import { FrameOutput, ocrSinkFor, SidecarOcrSink } from "./frame-output";
+import { FrameOutput, ocrSinkFor, SidecarOcrSink, sipsJpegWithin } from "./frame-output";
 import { readRecordingManifest, renameRecording } from "./library";
 import {
     type LiveNotification,
@@ -733,6 +734,29 @@ describe("library recording frames", () => {
 });
 
 describe("frame output", () => {
+    test("a JPEG conversion that hangs ends at its deadline with the reason, instead of holding the recording", async () => {
+        const run = bounded.boundedCommand;
+        const commands: string[][] = [];
+        // A sleep stands in for a sips that never returns; the runner's deadline and group kill stay real.
+        const hung = spyOn(bounded, "boundedCommand").mockImplementation((options) => {
+            commands.push(options.command);
+            return run({ ...options, command: ["sleep", "5"] });
+        });
+        const startedAt = Date.now();
+
+        try {
+            await expect(sipsJpegWithin(300)("frame.png", "frame.jpg", 0.75)).rejects.toThrow(
+                "sips did not end within 0.3 s for frame.png"
+            );
+            expect(Date.now() - startedAt).toBeLessThan(3_000);
+            expect(commands).toEqual([
+                ["sips", "-s", "format", "jpeg", "-s", "formatOptions", "75", "frame.png", "--out", "frame.jpg"],
+            ]);
+        } finally {
+            hung.mockRestore();
+        }
+    });
+
     const frameIn = (dir: string) => {
         const path = join(dir, "keep.png");
         writeFileSync(path, "png");

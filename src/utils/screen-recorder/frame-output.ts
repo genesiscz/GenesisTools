@@ -3,6 +3,7 @@ import { extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { recognizeText } from "@genesiscz/utils/macos/ocr";
 import type { OcrBlock, OcrResult } from "@genesiscz/utils/macos/types";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import type { RecorderSettings } from "./control";
 import type { CapturedFrame, MotionBox } from "./types";
@@ -53,31 +54,44 @@ export type FrameFormat = { kind: "original" } | { kind: "jpeg"; quality: number
 export type JpegConverter = (source: string, target: string, quality: number) => Promise<void>;
 export type OcrRecognizer = (image: string, languages: string[]) => Promise<OcrResult>;
 
-async function run(argv: string[]): Promise<{ exitCode: number; stderr: string }> {
-    const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "pipe" });
-    const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-    return { exitCode, stderr };
+/** One frame's JPEG conversion ends within this; a hung `sips` must not hold a piece or the finish forever. */
+const SIPS_TIMEOUT_MS = 30_000;
+
+/** An image to a reduced JPEG with the system's own `sips`, which is stopped past `timeoutMs`. */
+export function sipsJpegWithin(timeoutMs: number): JpegConverter {
+    return async (source, target, quality) => {
+        const result = await boundedCommand({
+            command: [
+                "sips",
+                "-s",
+                "format",
+                "jpeg",
+                "-s",
+                "formatOptions",
+                String(Math.round(quality * 100)),
+                source,
+                "--out",
+                target,
+            ],
+            timeoutMs,
+        });
+
+        if (result.error?.code === "ETIMEDOUT") {
+            throw new Error(`sips did not end within ${timeoutMs / 1000} s for ${source}`, { cause: result.error });
+        }
+
+        if (result.error) {
+            throw result.error;
+        }
+
+        if (result.status !== 0) {
+            throw new Error(`sips failed for ${source}: ${result.stderr.trim()}`);
+        }
+    };
 }
 
 /** An image to a reduced JPEG with the system's own `sips`. */
-export const sipsJpeg: JpegConverter = async (source, target, quality) => {
-    const result = await run([
-        "sips",
-        "-s",
-        "format",
-        "jpeg",
-        "-s",
-        "formatOptions",
-        String(Math.round(quality * 100)),
-        source,
-        "--out",
-        target,
-    ]);
-
-    if (result.exitCode !== 0) {
-        throw new Error(`sips failed for ${source}: ${result.stderr.trim()}`);
-    }
-};
+export const sipsJpeg: JpegConverter = sipsJpegWithin(SIPS_TIMEOUT_MS);
 
 export const visionOcr: OcrRecognizer = (image, languages) => recognizeText(image, { languages });
 
