@@ -37,6 +37,8 @@ export type E2eTestState = "passed" | "failed" | "skipped";
 
 /** One test's outcome, one JSON line in the results file. */
 export interface E2eTestResult {
+    /** Playwright project; absent in older results and WebdriverIO. */
+    project?: string;
     suite: string;
     title: string;
     state: E2eTestState;
