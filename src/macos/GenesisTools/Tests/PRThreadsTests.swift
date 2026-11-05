@@ -648,6 +648,16 @@ final class PRThreadsTests: XCTestCase {
         XCTAssertEqual(renamed.status(repo: "/r", head: "head", shown: "older", paths: ["a"]), ["a": .renamed(to: "older-name")])
     }
 
+    @MainActor
+    func testANewFileKeepsTheOtherFilesHeadAnswerWhileItLoads() async {
+        let files = PRHeadFiles(readGit: { _, args in args.first == "ls-tree" ? "a\n" : "" })
+        await files.load(repo: "/r", head: "head", shown: "old", paths: ["a", "gone"])?.value
+        XCTAssertEqual(files.status(repo: "/r", head: "head", shown: "old", paths: ["a", "gone", "new"]), ["a": .present, "gone": .removed],
+                       "a thread on a new file must not blank every other card's badge until its load answers")
+        XCTAssertNil(files.status(repo: "/r", head: "head", shown: "older", paths: ["a"]), "another shown commit may see other renames")
+        XCTAssertNil(files.status(repo: "/r", head: "other", shown: "old", paths: ["a"]))
+    }
+
     func testOnlyAPlainSingleClickOnACardJumps() {
         XCTAssertTrue(PRThreadCardClick.jumps(clickCount: 1, laterClick: false, selectedText: false))
         XCTAssertFalse(PRThreadCardClick.jumps(clickCount: 2, laterClick: false, selectedText: false), "a double-click selects a word")

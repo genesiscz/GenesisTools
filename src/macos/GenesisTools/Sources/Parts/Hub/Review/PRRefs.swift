@@ -156,6 +156,11 @@ final class PRHeadFiles: ObservableObject {
     static let shared = PRHeadFiles()
 
     @Published private(set) var results: [String: [String: PathAtHead]] = [:]
+    /// The last answer for each repository, head and shown commit, whatever its files: `status` answers it while a
+    /// new set of files loads. Without it a thread on a new file blanked the head badge of every card until the load
+    /// published, and each card failed its `==` twice (2026-11-05 03:17, PR #507). A file's presence at one head, seen
+    /// from one shown commit, never changes, so the answer is not stale; the new file is unknown until its load.
+    private var latest: [String: [String: PathAtHead]] = [:]
     private var started: Set<String> = []
     private let readGit: @Sendable (String, [String]) -> String?
 
@@ -168,19 +173,20 @@ final class PRHeadFiles: ObservableObject {
     }
 
     func status(repo: String, head: String, shown: String? = nil, paths: [String]) -> [String: PathAtHead]? {
-        results[Self.key(repo: repo, head: head, shown: shown, paths: paths)]
+        results[Self.key(repo: repo, head: head, shown: shown, paths: paths)] ?? latest[Self.key(repo: repo, head: head, shown: shown, paths: [])]
     }
 
     @discardableResult
     func load(repo: String, head: String, shown: String?, paths: [String]) -> Task<Void, Never>? {
         let key = Self.key(repo: repo, head: head, shown: shown, paths: paths)
+        let base = Self.key(repo: repo, head: head, shown: shown, paths: [])
         guard !paths.isEmpty, results[key] == nil, !started.contains(key) else { return nil }
         started.insert(key)
         return Task.detached(priority: .utility) { [readGit] in
             let span = HubPerf.begin("review.headFiles", "\(paths.count) paths at \(head.prefix(8))")
             guard let listed = readGit(repo, ["ls-tree", "-r", "--name-only", head, "--"] + paths) else {
                 span.end("head not local")
-                await self.complete(key: key, result: nil)
+                await self.complete(key: key, base: base, result: nil)
                 return
             }
             let present = Set(listed.split(separator: "\n").map(String.init))
@@ -191,13 +197,16 @@ final class PRHeadFiles: ObservableObject {
             }
             let decided = PRHeadPresence.decide(paths: paths, present: present, renames: renames)
             span.end("\(missing.count) not at head")
-            await self.complete(key: key, result: decided)
+            await self.complete(key: key, base: base, result: decided)
         }
     }
 
-    private func complete(key: String, result: [String: PathAtHead]?) {
+    private func complete(key: String, base: String, result: [String: PathAtHead]?) {
         started.remove(key)
-        if let result { results[key] = result }
+        if let result {
+            latest[base] = result
+            results[key] = result
+        }
     }
 
     /// Blocking: only from the detached task above.

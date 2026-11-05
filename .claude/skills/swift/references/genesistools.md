@@ -30,7 +30,11 @@ GenesisTools checkout.
   ~/Applications/GenesisTools.app/Contents/MacOS/GenesisTools --hub --bench <out.json> --panes transcript,changes`.
 - Resizes: `GENESIS_HUB_BENCH_ONLY=sidebar,overview,files,window,split` per mode (`--mode prs --pr <ref>`), summarised
   by `scripts/resize/bench-summary.ts`; `GENESIS_HUB_BENCH_ONLY=modes` switches through every mode twice for a
-  `sample` of the switches. The real thing: `scripts/resize/hub-drags.ts` (every edge, verified by the hub's
+  `sample` of the switches. A large PR's threads list: `GENESIS_HUB_BENCH_ONLY=threads GENESIS_HUB_BENCH_AX=1
+  GENESIS_RENDER_PROBE=1 GENESIS_HUB_SERVER=0 … --hub --mode prs --pr genesiscz/GenesisTools#507 --commit <sha>
+  --set review.prThreads.open=true --bench <out.json>` lands the PR's threads from the cache, then the host's answer,
+  and logs each step's bodies (`hub.bench threads.<step> bodies:`); a worktree's bench takes the main checkout's CLI
+  (`GENESIS_TOOLS_BIN=<main>/tools`) when the worktree has no `node_modules`. The real thing: `scripts/resize/hub-drags.ts` (every edge, verified by the hub's
   `hub.resize` line), `drag-frames.ts` (the far edge frame by frame), `release-sample.ts` + `sample-who.ts` (what a
   release spends). Resize engine: GenesisKit `Controls/GenResize.swift`; hosts `Hub/HubPanels.swift`
   (`ResizableSidePanel`, `PaneHold`, `HubLiveResize`) and `Review/PRThreadsPanel.swift` (2026-10-29).
