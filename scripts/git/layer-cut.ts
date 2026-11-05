@@ -731,7 +731,7 @@ export class ScratchTree {
         }
 
         const install = await run({
-            cmd: ["bun", "install"],
+            cmd: ["bun", "install", "--ignore-scripts", "--frozen-lockfile"],
             cwd: this.dir,
             log: join(this.logDir, `bun-install-${commit.slice(0, 10)}.log`),
         });
