@@ -148,7 +148,7 @@ export async function loadPins(opts: LoadPinsOptions = {}): Promise<Map<string, 
         const existing = pins.get(pin.sessionId);
 
         if (!existing || pin.at >= existing.at) {
-            pins.set(pin.sessionId, pin);
+            pins.set(pin.sessionId, { ...pin, ...(pin.host ? { host: { ...pin.host } } : {}) });
         }
     }
 
