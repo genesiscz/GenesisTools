@@ -12,6 +12,7 @@ import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { writePidFile } from "@genesiscz/utils/process/pidfile";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
+import { findReadAloud } from "@genesiscz/utils/transcribe/doc-match";
 import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { suggestDictionary } from "./lib/dictionary-suggest";
@@ -1723,6 +1724,14 @@ test("identical single-word names match without accepting partial single-word na
     expect(sameName("Alice", "Alice Example")).toBe(false);
     expect(sameName("", "")).toBe(false);
     expect(sameName("Alice Example", "Example Alice (guest)")).toBe(true);
+});
+
+test("automatic quotes keep only spoken words and preserve intervening speech", () => {
+    const [match] = findReadAloud({
+        entries: [line("Alice", 0, "alpha bravo aside charlie delta echo")],
+        lines: [{ doc: "fixture.md", line: 1, text: "prefix alpha bravo `skippedCode` charlie delta echo suffix" }],
+    });
+    expect(match?.text).toBe("alpha bravo aside charlie delta echo");
 });
 
 describe("evidence --raw", () => {

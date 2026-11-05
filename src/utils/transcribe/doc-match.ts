@@ -279,7 +279,13 @@ export function findReadAloud(options: {
                     end,
                     doc: line.doc,
                     line: line.line,
-                    text: line.text,
+                    text: pairs
+                        .map(([spokenAt, writtenAt], index) => {
+                            const previous = pairs[index - 1];
+                            const gap = previous ? text.slice(spoken[previous[0]]!.end, spoken[spokenAt]!.start) : "";
+                            return gap + line.text.slice(written[writtenAt]!.start, written[writtenAt]!.end);
+                        })
+                        .join(""),
                     score: Math.round(((spokenDensity + writtenDensity) / 2) * 100) / 100,
                     shared: pairs.length,
                 },
