@@ -488,10 +488,12 @@ async function speakersRename(ref: string, label: string, name: string): Promise
     }
 
     try {
-        await store.update(record.id, { command: "speakers rename", change: `${label} → ${name}` }, (current) => {
-            current.speakers.labels[label] = name;
-        });
-        ui.ok(`${record.id}: ${label} → ${name} (transcripts of this meeting use it now)`);
+        await store.renameSpeaker(record.id, label, name);
+        ui.ok(
+            name.trim() === label
+                ? `${record.id}: ${label} is ${label} again (the rename is gone)`
+                : `${record.id}: ${label} → ${name.trim()} (transcripts of this meeting use it now)`
+        );
     } catch (err) {
         fail(errorText(err));
     }

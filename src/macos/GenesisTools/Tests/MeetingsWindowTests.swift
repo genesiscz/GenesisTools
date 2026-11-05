@@ -259,4 +259,11 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(MeetingsWords.typedAnswer("  Northwind \n"), "Northwind")
         XCTAssertNil(MeetingsWords.typedAnswer("   "))
     }
+
+    func testASpeakerRenameCanGoBackToItsLabel() {
+        XCTAssertEqual(MeetingDetailModel.renameTarget(label: "S1", saved: "Alice", typed: " S1 "), "S1", "the label's name takes the rename away")
+        XCTAssertNil(MeetingDetailModel.renameTarget(label: "S1", saved: "Alice", typed: "Alice"))
+        XCTAssertNil(MeetingDetailModel.renameTarget(label: "S1", saved: nil, typed: "S1"))
+        XCTAssertEqual(MeetingDetailModel.renameTarget(label: "S1", saved: nil, typed: "Bob"), "Bob")
+    }
 }

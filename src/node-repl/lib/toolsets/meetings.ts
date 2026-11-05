@@ -719,14 +719,7 @@ export class MeetingsToolset extends ReplToolset {
                 },
                 rename: async (label: string, name: string) => {
                     const parsed = rename.params.parse({ label, name });
-                    const record = await store.update(
-                        id,
-                        { command: "speakers rename", change: `${parsed.label} → ${parsed.name}` },
-                        (current) => {
-                            current.speakers.labels[parsed.label] = parsed.name;
-                        }
-                    );
-                    return describe(record);
+                    return describe(await store.renameSpeaker(id, parsed.label, parsed.name));
                 },
             },
             assign: {

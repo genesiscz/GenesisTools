@@ -395,6 +395,19 @@ describe("a GENESIS_TOOLS_HOME one level too deep", () => {
 });
 
 describe("meeting records", () => {
+    test("a speaker renamed back to its own label loses the rename", async () => {
+        const meetings = new MeetingStore(new Storage(`meetings-rename-${process.pid}`));
+        const created = await meetings.create(
+            { title: "Harbor sync", start: "2026-11-05T11:00:00.000Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+
+        await meetings.renameSpeaker(created.id, "S1", "Alice Example");
+        expect(meetings.read(created.id)?.speakers.labels).toEqual({ S1: "Alice Example" });
+        const reset = await meetings.renameSpeaker(created.id, "S1", " S1 ");
+        expect(reset.speakers.labels).toEqual({});
+    });
+
     function records(): MeetingStore {
         stores += 1;
         return new MeetingStore(new Storage(`meetings-test-${stores}`));

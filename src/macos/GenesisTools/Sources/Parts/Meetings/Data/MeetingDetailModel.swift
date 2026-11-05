@@ -262,10 +262,18 @@ final class MeetingDetailModel {
         change("answer.\(item.id)", ["listen", id, "--item", item.id, "--answer", choice], done: "Answered: \(choice)", reloadTranscript: true)
     }
 
+    /// The name a rename field commits, or nil when it changes nothing. It compares with the saved rename, so the
+    /// label's own name is a real change: it takes the rename away.
+    static func renameTarget(label: String, saved: String?, typed: String) -> String? {
+        let trimmed = typed.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed != (saved ?? label) else { return nil }
+        return trimmed
+    }
+
     func rename(label: String, to name: String) {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, trimmed != label else { return }
-        change("rename.\(label)", ["speakers", "rename", id, label, trimmed], done: "\(label) is \(trimmed) in this meeting",
+        guard let trimmed = Self.renameTarget(label: label, saved: record.value?.speakers.labels[label], typed: name) else { return }
+        change("rename.\(label)", ["speakers", "rename", id, label, trimmed],
+               done: trimmed == label ? "\(label) has its own name again" : "\(label) is \(trimmed) in this meeting",
                reloadTranscript: true)
         speakers = .idle
         if tab == .speakers { loadSpeakers() }

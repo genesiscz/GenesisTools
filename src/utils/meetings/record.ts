@@ -575,6 +575,26 @@ export class MeetingStore {
         });
     }
 
+    /**
+     * Names a diarization label for this meeting. The label's own name removes the rename, so the transcript shows
+     * the source label again.
+     */
+    async renameSpeaker(id: string, label: string, name: string): Promise<MeetingRecord> {
+        const trimmed = name.trim();
+
+        if (!trimmed) {
+            throw new Error(`a rename of ${label} needs a name`);
+        }
+
+        return this.update(id, { command: "speakers rename", change: `${label} → ${trimmed}` }, (current) => {
+            if (trimmed === label) {
+                delete current.speakers.labels[label];
+            } else {
+                current.speakers.labels[label] = trimmed;
+            }
+        });
+    }
+
     private write(record: MeetingRecord): void {
         atomicWriteFileSync(this.path(record.id), `${SafeJSON.stringify(record, null, 4)}\n`);
     }
