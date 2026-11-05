@@ -46,6 +46,8 @@ export interface AudioTrack {
     peakDbfs?: number;
     /** `[fromMs, toMs]` on the audio file's timeline while the source was muted. */
     mutedSpans: Array<[number, number]>;
+    /** What went wrong with this track (its sidecar did not start or finish); a track without `path` lost its sound. */
+    warnings?: string[];
 }
 
 /** A running capture that takes commands while it records, without a restart. */

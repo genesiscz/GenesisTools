@@ -237,6 +237,19 @@ describe("native capture over --control-stdin (a fake ax-tool)", () => {
         expect(existsSync(result.frames[0].path)).toBe(true);
     });
 
+    test("a sound track whose sidecar failed keeps its warnings and has no file", async () => {
+        const failing = new NativeFrameRecorder({
+            axTool: async () => [process.execPath, fake, "--fixture-failed-audio"],
+            launch: (argv) => argv,
+        });
+        const outDir = mkdtempSync(join(tmpdir(), "failed-audio-"));
+        const result = await failing.capture(request({ outDir, durationSec: 1 }));
+
+        expect(result.tracks).toEqual([
+            { source: "mic", durationMs: 0, mutedSpans: [], warnings: ["the mic sidecar could not start: disk full"] },
+        ]);
+    });
+
     test("replacing a pending display switch clears its deadline and completes the replacement", async () => {
         const clear = spyOn(globalThis, "clearTimeout");
         try {

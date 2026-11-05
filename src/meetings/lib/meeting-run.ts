@@ -162,6 +162,11 @@ export class MeetingRun {
         const audioDir = join(this.folder, "audio");
 
         for (const track of result.tracks ?? []) {
+            for (const warning of track.warnings ?? []) {
+                log.warn({ display: target.label, source: track.source, warning }, "a sound track had a problem");
+                this.note(`${target.label} ${track.source} sound: ${warning}`);
+            }
+
             if (!track.path || !existsSync(track.path)) {
                 continue;
             }

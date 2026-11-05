@@ -65,6 +65,8 @@ const nativeTrack = z.object({
     durationMs: z.number().default(0),
     peakDbfs: z.number().nullable().optional(),
     mutedSpans: z.array(z.tuple([z.number(), z.number()])).default([]),
+    /** Why the track's sidecar failed or lost sound (a full disk, a failed writer); it then has no `path`. */
+    warnings: z.array(z.string()).default([]),
 });
 const nativeResult = z.object({
     data: z.object({
@@ -658,6 +660,7 @@ export class NativeFrameRecorder extends FrameRecorder {
                               durationMs: track.durationMs,
                               ...(typeof track.peakDbfs === "number" ? { peakDbfs: track.peakDbfs } : {}),
                               mutedSpans: track.mutedSpans,
+                              ...(track.warnings.length > 0 ? { warnings: track.warnings } : {}),
                           })),
                       }
                     : {}),

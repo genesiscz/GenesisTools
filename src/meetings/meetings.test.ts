@@ -2112,6 +2112,8 @@ describe("the meetings recorder loop", () => {
                 /** The live rate change fails. */
                 ratesFail?: boolean;
                 rejectMic?: boolean;
+                /** The sound track comes back without a file and with this warning, as a failed sidecar does. */
+                trackWarning?: string;
                 /** The first capture ends while its live switch is still in flight. */
                 lateSwitch?: boolean;
                 /** A live switch's first frame reaches the hook 100 ms after it was captured. */
@@ -2257,7 +2259,8 @@ describe("the meetings recorder loop", () => {
                     await Bun.sleep(100);
                 }
 
-                const track = request.audio ? join(request.outDir, "audio-mic.m4a") : undefined;
+                const warning = this.script.trackWarning;
+                const track = request.audio && !warning ? join(request.outDir, "audio-mic.m4a") : undefined;
 
                 if (track) {
                     await Bun.write(track, "m4a");
@@ -2266,6 +2269,9 @@ describe("the meetings recorder loop", () => {
                 return {
                     ...(track
                         ? { tracks: [{ source: "mic" as const, path: track, durationMs: 900, mutedSpans: [] }] }
+                        : {}),
+                    ...(request.audio && warning
+                        ? { tracks: [{ source: "mic" as const, durationMs: 0, mutedSpans: [], warnings: [warning] }] }
                         : {}),
                     startedAtMs: this.script.delayedFrame ? startedAtMs : Date.now(),
                     frames: streamed
@@ -2335,6 +2341,7 @@ describe("the meetings recorder loop", () => {
         liveRates?: boolean;
         ratesFail?: boolean;
         rejectMic?: boolean;
+        trackWarning?: string;
         lateSwitch?: boolean;
         delayedFrame?: boolean;
         audio?: boolean;
@@ -2391,6 +2398,7 @@ describe("the meetings recorder loop", () => {
                 liveRates: options.liveRates,
                 ratesFail: options.ratesFail,
                 rejectMic: options.rejectMic,
+                trackWarning: options.trackWarning,
                 lateSwitch: options.lateSwitch,
                 delayedFrame: options.delayedFrame,
                 audio: options.audio || options.audioSources !== undefined,
@@ -3116,6 +3124,18 @@ describe("the meetings recorder loop", () => {
             target: { kind: "display", displayId: 4 },
             audio: { sources: ["mic"] },
         });
+    });
+
+    test("a sound track that failed shows its warning on the recording instead of vanishing", async () => {
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["hang", "hang"],
+            audio: true,
+            trackWarning: "the mic sidecar could not start: disk full",
+            actions: [async (call) => call("displays.mode", { mode: "all" }), async (call) => call("stop")],
+        });
+
+        expect(run.saved?.recording?.warning).toContain("mic sound: the mic sidecar could not start: disk full");
     });
 
     test("when the display whose capture records the sound is unplugged, the next piece records it on another", async () => {

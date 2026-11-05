@@ -110,7 +110,23 @@ const finish = (cancelled: boolean) => {
         process.exit(1);
     }
 
-    print({ ok: true, success: true, data: { frames, cancelled, stats: { keptFrames: frames.length } } });
+    // As ax-tool does when the mic sidecar fails: the track has no file, only its warnings.
+    const tracks =
+        fixtureMode === "--fixture-failed-audio"
+            ? [
+                  {
+                      source: "mic",
+                      durationMs: 0,
+                      mutedSpans: [],
+                      warnings: ["the mic sidecar could not start: disk full"],
+                  },
+              ]
+            : undefined;
+    print({
+        ok: true,
+        success: true,
+        data: { frames, cancelled, stats: { keptFrames: frames.length }, ...(tracks ? { tracks } : {}) },
+    });
     process.exit(0);
 };
 
