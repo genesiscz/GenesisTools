@@ -28,6 +28,7 @@ import {
 } from "@/features/agents/queries";
 import { idempotencyKey } from "@/features/answer-queue/units";
 import { useLiveRefetchInterval } from "@/live/provider";
+import { useConnectionStore } from "@/state/connection-store";
 
 /**
  * Component-facing agents hooks (D32). The board is written by the live `agents` channel while the stream is up
@@ -77,6 +78,7 @@ export type SteerResult =
  * returns (`onlineManager`) or the composer mounts. Drafts of every session flush together, oldest first.
  */
 export function useSteerComposer(sessionKey: string, store: DraftStore = kvDraftStore) {
+    const connectionId = useConnectionStore((state) => state.activeId) ?? "fixture";
     const client = useDashboardClient();
     const queryClient = useQueryClient();
     const [drafts, setDrafts] = useState<SteerDraft[]>([]);
@@ -85,8 +87,8 @@ export function useSteerComposer(sessionKey: string, store: DraftStore = kvDraft
     const flushing = useRef(false);
 
     const reload = useCallback(async () => {
-        setDrafts((await store.read()).filter((draft) => draft.key === sessionKey));
-    }, [store, sessionKey]);
+        setDrafts((await store.read()).filter((draft) => draft.connectionId === connectionId && draft.key === sessionKey));
+    }, [store, sessionKey, connectionId]);
 
     const send = useCallback(
         (draft: SteerDraft) =>
@@ -102,7 +104,7 @@ export function useSteerComposer(sessionKey: string, store: DraftStore = kvDraft
         flushing.current = true;
 
         try {
-            const flushed = await flushDrafts({ store, send });
+            const flushed = await flushDrafts({ store, send, connectionId });
             const mine = flushed.sent.find((entry) => entry.draft.key === sessionKey);
 
             if (mine) {
@@ -113,7 +115,7 @@ export function useSteerComposer(sessionKey: string, store: DraftStore = kvDraft
             flushing.current = false;
             await reload();
         }
-    }, [store, send, sessionKey, queryClient, reload]);
+    }, [store, send, sessionKey, queryClient, reload, connectionId]);
 
     useEffect(() => {
         void reload().then(flush);
@@ -136,6 +138,7 @@ export function useSteerComposer(sessionKey: string, store: DraftStore = kvDraft
     const submit = useCallback(
         async (text: string, timing: AgentSendTiming) => {
             const draft: SteerDraft = {
+                connectionId,
                 id: idempotencyKey(),
                 key: sessionKey,
                 text,
@@ -171,7 +174,7 @@ export function useSteerComposer(sessionKey: string, store: DraftStore = kvDraft
                 await reload();
             }
         },
-        [sessionKey, store, send, queryClient, reload]
+        [sessionKey, store, send, queryClient, reload, connectionId]
     );
 
     const discard = useCallback(

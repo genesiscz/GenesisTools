@@ -9,7 +9,7 @@ const { addDraft, flushDrafts, isOfflineError, memoryDraftStore } = await import
 type SteerDraft = Parameters<typeof addDraft>[1];
 
 function draft(id: string, createdAt: number): SteerDraft {
-    return { id, key: "claude:s-1", text: `message ${id}`, timing: "now", createdAt, attempts: 0, lastError: null };
+    return { id, connectionId: "mac-a", key: "claude:s-1", text: `message ${id}`, timing: "now", createdAt, attempts: 0, lastError: null };
 }
 
 const receipt = (key: string) =>
@@ -31,6 +31,7 @@ describe("steer outbox (F10)", () => {
 
         const result = await flushDrafts({
             store,
+            connectionId: "mac-a",
             send: async (entry) => {
                 keys.push(entry.id);
 
@@ -52,10 +53,31 @@ describe("steer outbox (F10)", () => {
         expect((await store.read()).map((entry) => [entry.id, entry.attempts])).toEqual([["b", 1]]);
     });
 
+    it("never sends another Mac's prompt or legacy unscoped prompts, and keeps them stored", async () => {
+        const store = memoryDraftStore([
+            draft("a", 1), { ...draft("b", 2), connectionId: "mac-b" },
+            { ...draft("legacy", 3), connectionId: undefined },
+        ]);
+        const sent: string[] = [];
+        await flushDrafts({ store, connectionId: "mac-b", send: async (entry) => {
+            sent.push(entry.id);
+            return receipt(entry.key);
+        } });
+        expect(sent).toEqual(["b"]);
+        expect((await store.read()).map((entry) => entry.id)).toEqual(["a", "legacy"]);
+        await flushDrafts({ store, connectionId: "mac-a", send: async (entry) => {
+            sent.push(entry.id);
+            return receipt(entry.key);
+        } });
+        expect(sent).toEqual(["b", "a"]);
+        expect((await store.read()).map((entry) => entry.id)).toEqual(["legacy"]);
+    });
+
     it("keeps a draft added while a flush runs", async () => {
         const store = memoryDraftStore([draft("a", 1)]);
         await flushDrafts({
             store,
+            connectionId: "mac-a",
             send: async (entry) => {
                 await addDraft(store, draft("late", 9));
                 return receipt(entry.key);

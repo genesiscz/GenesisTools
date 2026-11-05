@@ -7,6 +7,9 @@ mock.module("react-native", () => ({
 mock.module("expo-router", () => ({ useIsFocused: () => true }));
 mock.module("expo-sqlite/kv-store", () => ({ default: { getItem: async () => null, setItem: async () => {} } }));
 mock.module("@/live/provider", () => ({ useLiveRefetchInterval: () => false }));
+mock.module("@/state/connection-store", () => ({
+    useConnectionStore: (select: (state: { activeId: string }) => unknown) => select({ activeId: "mac-a" }),
+}));
 let outcome = "delivered";
 let unavailable = false;
 const keys: string[] = [];
