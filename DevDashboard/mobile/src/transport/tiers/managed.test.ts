@@ -1,4 +1,13 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterAll, describe, expect, it, mock } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
+
+// Set before importing the Agent route, which captures its peers path at module initialization.
+const pairingHome = mkdtempSync(join(tmpdir(), "mobile-managed-pair-"));
+env.testing.set("GENESIS_TOOLS_HOME", pairingHome);
+afterAll(() => env.testing.unset("GENESIS_TOOLS_HOME"));
 
 // The decorator's module graph pulls native packages (`expo/fetch`, `partysocket`,
 // `react-native`, `expo-secure-store`). Stub them so the pure crypto path loads under bun;
