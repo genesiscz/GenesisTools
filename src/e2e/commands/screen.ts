@@ -34,7 +34,10 @@ export function registerScreen(program: Command): void {
         .option("--mobile <file>", "the app's mobile.config.ts (default: the nearest one at or above the e2e config)")
         .option("--udid <udid>", "the simulator; default: the only booted one")
         .option("--appium-port <port>", "the Appium server (default: the simulator's own, started when missing)")
-        .option("--expect <ids...>", "testIDs that must be on the screen")
+        .option("--expect <id>", "repeat for each expected testID", (value: string, previous: string[] = []) => [
+            ...previous,
+            value,
+        ])
         .option("--out <dir>", "the folder (default ~/.genesis-tools/e2e/runs/<project>/<time>)")
         .option("--json", "print the result as JSON")
         .action(async (target: string, options: ScreenOptions) => {
