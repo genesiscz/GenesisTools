@@ -427,6 +427,9 @@ final class PRsModel: ObservableObject {
     /// PRs shown from `openDirect` (a link to a PR the list does not hold, another author's under
     /// "Mine"): the open one stays in the rows when a list answers without it.
     private var directIDs: Set<String> = []
+    /// The PR `openDirect` asks the host for while no row of it is on screen: the PR view shows a cover
+    /// over the last view until the row lands (Martin, 2026-11-05: #507 took 7 to 10 s to switch, with no sign).
+    @Published private(set) var opening: HubPRRef?
 
     var selected: HubPR? { prs.first { $0.id == selectedID } }
 
@@ -677,6 +680,17 @@ final class PRsModel: ObservableObject {
         clearDirectFailure()
         Task {
             let span = HubPerf.begin("prs.show.direct", arg, awaits: true)
+            // The last answer on disk shows now, and the row's `select` asks the host again.
+            let cached = await Task.detached(priority: .userInitiated) { Self.cachedShow(ref) }.value
+            if let cached, adoptCached(cached, for: ref) {
+                span.end("\(cached.row.label) from disk")
+                return
+            }
+            // None on disk: the view switches to the cover now, and the host's answer lifts it. Set after the
+            // disk read (a few ms), so a PR found there never flashes the cover.
+            if let request = directOpen, request.ref == ref, wanted == ref || selectedID == request.selectionAtStart {
+                opening = ref
+            }
             let answer = await Task.detached(priority: .userInitiated) { () -> Result<(HubPR, HubPRDetail, Data), Error> in
                 Result {
                     let capture = try ToolsCLIRunner.capture(["hub", "pr", "show", arg])
@@ -688,6 +702,9 @@ final class PRsModel: ObservableObject {
             let request = directOpen
             if request?.ref == ref {
                 directOpen = nil
+            }
+            if opening == ref {
+                opening = nil
             }
             directAnswered = ref
             let fresh: (HubPR, HubPRDetail, Data)
@@ -713,7 +730,8 @@ final class PRsModel: ObservableObject {
                 return
             }
             span.end(row.label)
-            Task.detached(priority: .utility) { PRListCache.writeDetail(data, id: row.id) }
+            let (project, number) = (row.project, row.number)
+            Task.detached(priority: .utility) { PRListCache.writeDetail(data, id: row.id, project: project, number: number) }
             details[row.id] = detail
             detailFetched[row.id] = Date()
             // Still wanted: the list has not answered, or it answered and nobody picked another row since.
@@ -737,6 +755,39 @@ final class PRsModel: ObservableObject {
             }
             pickPendingCommit()
         }
+    }
+
+    /// The PR's last `tools hub pr show` answer on disk, as its row and detail; nil when none is kept.
+    private nonisolated static func cachedShow(_ ref: HubPRRef) -> (row: HubPR, detail: HubPRDetail)? {
+        guard let data = PRListCache.readDetail(for: ref) else { return nil }
+        do {
+            return (try JSONDecoder().decode(HubPR.self, from: data), try JSONDecoder().decode(HubPRDetail.self, from: data))
+        } catch {
+            HubPerf.log("prs.show.direct cached answer unreadable, ignored: \(error)")
+            return nil
+        }
+    }
+
+    /// Shows the cached answer of the PR `openDirect` is opening and selects it. The selection asks the host
+    /// again (`loadDetail`, forced), and that answer replaces the row and the detail. False when another PR
+    /// was picked meanwhile, or the row's checkout is gone (`loadDetail` needs it): then `openDirect` asks.
+    private func adoptCached(_ cached: (row: HubPR, detail: HubPRDetail), for ref: HubPRRef) -> Bool {
+        let row = cached.row
+        guard ref.matches(row), let request = directOpen, request.ref == ref,
+              wanted == ref || selectedID == request.selectionAtStart,
+              let root = row.repoRoot, FileManager.default.fileExists(atPath: root) else { return false }
+        directOpen = nil
+        directAnswered = ref
+        if details[row.id] == nil {
+            details[row.id] = cached.detail
+        }
+        if !prs.contains(where: { $0.id == row.id }) {
+            directIDs.insert(row.id)
+            prs.append(row)
+        }
+        HubPerf.log("prs.show.direct \(ref.label) shown from disk; asking the host again")
+        select(prs.first { $0.id == row.id } ?? row, opened: true)
+        return true
     }
 
     /// The pending reveal, once the review on screen is its PR's.
@@ -1406,6 +1457,8 @@ final class PRsModel: ObservableObject {
     /// sessions follow the fresh detail. `opened`: a click, a link or the extension asked for it, so the
     /// detail is asked again even within the 15 s a list refresh re-selecting it waits.
     func select(_ pr: HubPR, opened: Bool = false) {
+        // A row on screen now: the cover of a PR that was still opening goes.
+        opening = nil
         if let notice, !notice.ref.matches(pr) {
             self.notice = nil
         }
@@ -1536,7 +1589,8 @@ final class PRsModel: ObservableObject {
                 return
             }
             detailFetched[key] = Date()
-            Task.detached(priority: .utility) { PRListCache.writeDetail(data, id: key) }
+            let (project, number) = (pr.project, pr.number)
+            Task.detached(priority: .utility) { PRListCache.writeDetail(data, id: key, project: project, number: number) }
             let previous = details[key]
             if previous != detail {
                 details[key] = detail
@@ -1555,6 +1609,11 @@ final class PRsModel: ObservableObject {
                 }
             } else if reviewPRID == key, detail.baseSha != nil, previous?.baseSha != detail.baseSha {
                 review?.setScope(Self.scope(current, detail: detail, fetch: fetchedHead(current)))
+            }
+            // A row only `openDirect` keeps (the list does not hold it, and it may have come from disk): this
+            // answer is its one fresh source, so its title, state and checks follow it too.
+            if let row, row.id == key, directIDs.contains(key), let index = prs.firstIndex(where: { $0.id == key }), prs[index] != row {
+                prs[index] = row
             }
             sessions.load(prs.first { $0.id == key } ?? current, detail: detail)
             pickPendingCommit()
@@ -2191,18 +2250,58 @@ struct PRsMain: View {
 
     var body: some View {
         let _ = RenderProbe.hit("prs.main.body")
+        content
+            // A PR the list does not hold yet (a link, a resume): the view switches at once, the last view
+            // blurred under a cover until the PR's row lands. The PR list beside it stays usable.
+            .overlay {
+                ZStack {
+                    if let opening = prs.opening {
+                        PROpeningCover(label: opening.label)
+                            .transition(.opacity)
+                    }
+                }
+                .animation(GenMotion.systemReduceMotion ? nil : .easeOut(duration: 0.18), value: prs.opening)
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if let pr = prs.selected {
             PRDetailView(model: model, prs: prs, pr: pr)
                 .id(pr.id)
+        } else if let opening = prs.opening {
+            PaneSkeleton("Opening \(opening.label)")
+        } else if prs.loading {
+            PaneSkeleton("Loading PRs and MRs")
         } else {
-            if prs.loading {
-                PaneSkeleton("Loading PRs and MRs")
-            } else {
-                Text("Pick a PR or MR")
-                    .foregroundColor(ReviewPalette.dim)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            Text("Pick a PR or MR")
+                .foregroundColor(ReviewPalette.dim)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+/// The PR view's cover while `PRsModel.opening` waits for the host: the view under it blurred, a spinner and
+/// the PR's name. A material, not `.blur`: the diff is a web view, which a SwiftUI blur does not reach.
+struct PROpeningCover: View {
+    let label: String
+
+    var body: some View {
+        ZStack {
+            Rectangle().fill(.regularMaterial)
+            VStack(spacing: 10) {
+                ProgressView().controlSize(.regular)
+                Text(verbatim: "Opening \(label)…")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("Asking the forge for its title, branches and commits")
+                    .font(.system(size: 11))
+                    .foregroundColor(ReviewPalette.dim)
+            }
+            .padding(24)
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(verbatim: "Opening \(label)"))
     }
 }
 

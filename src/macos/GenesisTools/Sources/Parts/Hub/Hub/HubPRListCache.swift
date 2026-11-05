@@ -5,7 +5,8 @@ import Foundation
 /// the CLI itself always answers fresh.
 enum PRListCache {
     private static let lists = DiskCache(folder: "hub", namespace: "prs")
-    private static let details = DiskCache(folder: "hub", namespace: "pr")
+    /// A test points it at a scratch folder.
+    static var details = DiskCache(folder: "hub", namespace: "pr")
 
     /// A list: its projects, state, mine and search.
     static func key(paths: [String], state: String, mine: Bool, query: String) -> String {
@@ -38,7 +39,26 @@ enum PRListCache {
     /// One PR's `tools hub pr show` answer, by the PR's id (its URL).
     static func readDetail(_ id: String) -> Data? { details.readData(key: id) }
 
-    static func writeDetail(_ data: Data, id: String) { details.writeData(data, key: id) }
+    /// Writes the answer under the PR's id, and its project and number name that id: a link that gives only
+    /// `<project>#<n>` finds the answer too (`readDetail(for:)`).
+    static func writeDetail(_ data: Data, id: String, project: String, number: Int) {
+        details.writeData(data, key: id)
+        details.writeData(Data(id.utf8), key: refKey(project: project, number: number))
+    }
+
+    /// The last answer for the PR `ref` names: by its page, else by its project and number.
+    static func readDetail(for ref: HubPRRef) -> Data? {
+        if let page = ref.pageURL, let data = readDetail(page) {
+            return data
+        }
+        guard let project = ref.project, let named = details.readData(key: refKey(project: project, number: ref.number)),
+              let id = String(data: named, encoding: .utf8) else { return nil }
+        return readDetail(id)
+    }
+
+    private static func refKey(project: String, number: Int) -> String {
+        "ref|\(project.lowercased())|\(number)"
+    }
 }
 
 /// The sidebar filter read as a PR search: `author:<name>` (or `@<name>`), `#123` / `!123` ids, and

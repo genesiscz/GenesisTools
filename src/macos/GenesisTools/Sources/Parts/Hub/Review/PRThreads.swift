@@ -566,7 +566,9 @@ final class PRThreadsStore: ObservableObject {
 
     /// The app became active again: load only when the last answer is older than the CLI's cache.
     func reloadIfStale() {
-        guard let lastLoad, Date().timeIntervalSince(lastLoad) >= Self.staleAfter else { return }
+        // A load in flight already brings the current threads. Another call here queued a second full fetch
+        // (17 to 21 s for #507's 303 threads) to start the moment the first one ended.
+        guard !loading, let lastLoad, Date().timeIntervalSince(lastLoad) >= Self.staleAfter else { return }
         load()
     }
 
