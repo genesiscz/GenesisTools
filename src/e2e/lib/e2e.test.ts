@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import * as childProcess from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { E2eProject } from "@genesiscz/utils/e2e/project";
@@ -9,11 +9,20 @@ import * as mobileAppium from "@genesiscz/utils/mobile/appium";
 import * as mobileProject from "@genesiscz/utils/mobile/project";
 import * as mobileSession from "@genesiscz/utils/mobile/session";
 import * as mobileSimulator from "@genesiscz/utils/mobile/simulator";
+import { runDirOf } from "../commands/report";
 import { listRunDirs, runsRoot, stamp } from "./paths";
-import { runE2e } from "./run";
+import { runE2e, runSpec } from "./run";
 import { RUNNERS, runnerFlags } from "./runners";
 import { listSpecs, resolveSpecs, specName, suiteSpecs } from "./specs";
-import { compareRuns, countResults, formatSummary, type RunSummary, readResults, specFailed } from "./summary";
+import {
+    compareRuns,
+    countResults,
+    formatSummary,
+    type RunSummary,
+    readResults,
+    readSummary,
+    specFailed,
+} from "./summary";
 
 const root = mkdtempSync(join(tmpdir(), "gt-e2e-run-"));
 
@@ -216,31 +225,6 @@ describe("run loop", () => {
         expect(prepared).toBe(false);
     });
 
-    it("times out a hung runner and still finishes the target", async () => {
-        const project = fixtureProject("deadline");
-        let finished = false;
-        const summary = await runE2e({
-            project,
-            specs: listSpecs(project).slice(0, 1),
-            runDir: join(root, "deadline-run"),
-            timeoutMs: 100,
-            flags: {},
-            extraEnv: {},
-            prepare: async () => ({
-                facts: {},
-                environment: {},
-                command: () => [process.execPath, "-e", "await Bun.sleep(60000)"],
-                finish: async () => {
-                    finished = true;
-                    return [];
-                },
-            }),
-        });
-        expect(summary.ok).toBe(false);
-        expect(summary.specs[0].exitCode).toBe(1);
-        expect(finished).toBe(true);
-    });
-
     it("gives each spec process its folder, results file and the target's variables, and writes the summary", async () => {
         const project = fixtureProject("loop");
         const runDir = join(root, "loop-run");
@@ -294,6 +278,24 @@ describe("run loop", () => {
             })
         ).rejects.toThrow();
         expect(prepared).toBe(false);
+    });
+});
+
+describe("a runner that does not start", () => {
+    it("fails its spec and writes why into the spec log (a missing program is the shell's 127 and its own stderr line)", async () => {
+        const logPath = join(root, "no-runner.log");
+        const lines: string[] = [];
+        const status = await runSpec({
+            command: ["true"],
+            cwd: join(root, "no-such-folder"),
+            environment: {},
+            logPath,
+            onLine: (line) => lines.push(line),
+        });
+
+        expect(status).toBe(1);
+        expect(readFileSync(logPath, "utf8")).toContain("true did not start");
+        expect(lines.some((line) => line.includes("did not start"))).toBe(true);
     });
 });
 
@@ -485,6 +487,14 @@ it("starts device logging only after preparation succeeds and stops it at finish
             mock.mockRestore();
         }
     }
+});
+
+it("discovers only summary-bearing suite runs, excluding later screen captures", () => {
+    const folder = runsRoot("fixture-report-discovery");
+    mkdirSync(join(folder, "2026-11-05T10-00-00"), { recursive: true });
+    mkdirSync(join(folder, "2026-11-05T11-00-00"), { recursive: true });
+    writeFileSync(join(folder, "2026-11-05T10-00-00", "summary.json"), "{}");
+    expect(listRunDirs("fixture-report-discovery")).toEqual([join(folder, "2026-11-05T10-00-00")]);
 });
 
 it("recognizes an existing single-component relative run directory", async () => {

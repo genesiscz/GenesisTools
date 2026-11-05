@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { appendFileSync, closeSync, existsSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { pipeline } from "node:stream/promises";
 import { E2E_ENV } from "@genesiscz/utils/e2e/spec-env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";

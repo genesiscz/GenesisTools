@@ -16,12 +16,12 @@ const log = logger.child({ component: "e2e.run" });
 
 export const RESULTS_FILE = "results.jsonl";
 
-async function runSpec(options: {
+/** One spec's runner process; its output goes to `logPath`, and a runner that does not start says why there. */
+export async function runSpec(options: {
     command: string[];
     cwd: string;
     environment: Record<string, string | undefined>;
     logPath: string;
-    timeoutMs: number;
     onLine?: (line: string) => void;
 }): Promise<number | null> {
     const fd = openSync(options.logPath, "a");
@@ -44,6 +44,14 @@ async function runSpec(options: {
             onStdout: pump,
             onStderr: pump,
         });
+
+        if (result.error) {
+            const line = `${options.command[0]} did not start: ${result.error.message}`;
+            appendFileSync(fd, `${line}\n`);
+            options.onLine?.(line);
+            log.warn({ command: options.command[0], error: result.error }, "e2e runner did not start");
+        }
+
         return result.status ?? 1;
     } finally {
         closeSync(fd);
@@ -62,7 +70,6 @@ export async function runE2e(options: {
     flags: Record<string, unknown>;
     /** `KEY=VALUE` variables for every spec process, after the tool's own. */
     extraEnv: Record<string, string>;
-    timeoutMs?: number;
     onSpecStart?: (spec: SpecFile, index: number, total: number) => void;
     onSpecDone?: (run: SpecRun) => void;
     onLine?: (line: string) => void;
@@ -71,6 +78,10 @@ export async function runE2e(options: {
 }): Promise<RunSummary> {
     const { project } = options;
     const runDir = resolve(options.runDir);
+    // Artifacts are named by the spec's basename: two specs of one name would overwrite each other's results.
+    if (new Set(options.specs.map((spec) => spec.name)).size !== options.specs.length) {
+        throw new Error("Spec basenames must be unique; rename ambiguous nested specs before running.");
+    }
     const startedAt = new Date().toISOString();
     mkdirSync(dirname(runDir), { recursive: true });
     // Exclusive creation prevents stale appended results and concurrent runs sharing artifacts.
@@ -81,47 +92,19 @@ export async function runE2e(options: {
     const hookContext: E2eHookContext = { runDir, specs: options.specs.map((spec) => spec.file), environment };
     const specs: SpecRun[] = [];
     let notes: RunNote[] = [];
-
-    try {
-        await project.config.hooks?.beforeRun?.(hookContext);
-
-        for (const [index, spec] of options.specs.entries()) {
-            options.onSpecStart?.(spec, index, options.specs.length);
-            const dir = join(
-                runDir,
-                `${spec.name}-${createHash("sha256").update(spec.path).digest("hex").slice(0, 16)}`
-            );
-            mkdirSync(dir, { recursive: true });
-            const logPath = join(dir, "runner.log");
-            const resultsFile = join(dir, RESULTS_FILE);
-            const started = performance.now();
-            const command = target.command(spec, dir);
-            log.info({ spec: spec.path, dir, command: command.join(" ") }, "spec start");
-            const exitCode = await runSpec({
-                command,
-                timeoutMs: options.timeoutMs ?? 30 * 60 * 1000,
-                cwd: project.cwd,
-                environment: {
-                    ...env.getProcessEnv(),
-                    ...environment,
-                    [E2E_ENV.runDir]: dir,
-                    [E2E_ENV.resultsFile]: resultsFile,
-                    [E2E_ENV.spec]: spec.file,
-                },
-                logPath,
-                onLine: options.onLine,
-            });
-            const run: SpecRun = {
-                spec,
-                dir,
-                exitCode,
-                seconds: Math.round((performance.now() - started) / 1000),
-                log: logPath,
-                tests: readResults(resultsFile),
-            };
-            specs.push(run);
-            log.info({ spec: spec.path, exitCode, tests: run.tests.length }, "spec done");
-            options.onSpecDone?.(run);
+    let succeeded = false;
+    let summary: RunSummary | undefined;
+    let failed = false;
+    const cleanup = async (run: () => Promise<void>) => {
+        try {
+            await run();
+        } catch (error) {
+            if (failed) {
+                log.warn({ error }, "cleanup failed after the run failed");
+            } else {
+                failed = true;
+                throw error;
+            }
         }
     };
     try {
@@ -130,7 +113,10 @@ export async function runE2e(options: {
 
             for (const [index, spec] of options.specs.entries()) {
                 options.onSpecStart?.(spec, index, options.specs.length);
-                const dir = join(runDir, spec.name);
+                const dir = join(
+                    runDir,
+                    `${spec.name}-${createHash("sha256").update(spec.path).digest("hex").slice(0, 16)}`
+                );
                 mkdirSync(dir, { recursive: true });
                 const logPath = join(dir, "runner.log");
                 const resultsFile = join(dir, RESULTS_FILE);
@@ -139,7 +125,6 @@ export async function runE2e(options: {
                 log.info({ spec: spec.path, dir, command: command.join(" ") }, "spec start");
                 const exitCode = await runSpec({
                     command,
-                    timeoutMs: options.timeoutMs ?? 30 * 60 * 1000,
                     cwd: project.cwd,
                     environment: {
                         ...env.getProcessEnv(),
