@@ -325,7 +325,7 @@ describe("program worker (node)", () => {
         writeFileSync(
             join(dir, "tsconfig.json"),
             SafeJSON.stringify({
-                compilerOptions: { strict: true, noEmit: true, lib: ["ES2022"] },
+                compilerOptions: { strict: true, noEmit: true, lib: ["ES5"] },
                 include: ["src/**/*"],
             })
         );
@@ -372,7 +372,7 @@ describe("program worker (node)", () => {
         writeFileSync(
             join(project, "tsconfig.json"),
             SafeJSON.stringify({
-                compilerOptions: { strict: true, noEmit: true, lib: ["ES2022"] },
+                compilerOptions: { strict: true, noEmit: true, lib: ["ES5"] },
                 include: ["src/**/*"],
             })
         );
@@ -428,6 +428,7 @@ describe("program worker (node)", () => {
                     strict: true,
                     noEmit: true,
                     types: [],
+                    lib: ["ES5"],
                 },
                 include: ["src/**/*"],
             })
@@ -483,6 +484,7 @@ describe("program worker (node)", () => {
                     moduleResolution: "bundler",
                     noEmit: true,
                     types: [],
+                    lib: ["ES5"],
                 },
                 include: ["src/**/*"],
             })
@@ -514,7 +516,7 @@ describe("program worker (node)", () => {
         writeFileSync(join(project, "src", "a", "index.ts"), "export const a = FIXTURE_GLOBAL;\n");
         writeFileSync(join(project, "src", "b", "index.ts"), "export const b = 1;\n");
         const tsconfig = join(project, "tsconfig.json");
-        const compilerOptions = { noEmit: true, lib: ["ES2022"], types: ["*"], typeRoots: ["./node_modules/@types"] };
+        const compilerOptions = { noEmit: true, lib: ["ES5"], types: ["*"], typeRoots: ["./node_modules/@types"] };
         writeFileSync(tsconfig, SafeJSON.stringify({ compilerOptions, include: ["src/**/*"] }));
         const graph = await runProgramWorker("graph", { tsconfig });
         expect(
