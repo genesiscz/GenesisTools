@@ -1977,7 +1977,7 @@ describe("postReviewComment (the review window's GitHub writes)", () => {
         expect(calls.some((call) => call.startsWith("add"))).toBe(false);
     });
 
-    test("a failed reply is reported and the rest are submitted; when none lands the empty review is deleted", async () => {
+    test("a failed reply is reported and the rest are submitted; when none lands the review stays pending", async () => {
         const partial = fakeClient({ replyFailsFor: ["PRRT_2"] });
         const some = await postRepliesAsOneReview(
             {
@@ -2000,7 +2000,15 @@ describe("postReviewComment (the review window's GitHub writes)", () => {
             none.client
         );
         expect(nothing.reviewUrl).toBeUndefined();
-        expect(none.calls.at(-1)).toBe("deletePullRequestReview@REV_new");
+        expect(nothing.submitFailed?.reviewId).toBe("REV_new");
+        expect(none.calls.some((call) => call.startsWith("deletePullRequestReview"))).toBe(false);
+        const foreign = fakeClient({ replyFailsFor: ["PRRT_2"], foreignDrafts: 1 });
+        const protectedReview = await postRepliesAsOneReview(
+            { owner: "acme", repo: "web", number: 7, replies: [{ threadId: "PRRT_2", body: "b" }] },
+            foreign.client
+        );
+        expect(protectedReview.submitFailed?.reviewId).toBe("REV_new");
+        expect(foreign.calls.some((call) => call.startsWith("deletePullRequestReview"))).toBe(false);
     });
 
     test("a batch where no reply landed prints no success line and fails the run", () => {

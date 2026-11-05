@@ -314,11 +314,6 @@ mutation($reviewId: ID!) {
   }
 }`;
 
-const DELETE_REVIEW = `
-mutation($reviewId: ID!) {
-  deletePullRequestReview(input: {pullRequestReviewId: $reviewId}) { pullRequestReview { id } }
-}`;
-
 const REVIEW_COMMENTS = `
 query reviewComments($reviewId: ID!) {
   node(id: $reviewId) {
@@ -485,11 +480,11 @@ export async function postRepliesAsOneReview(
     }
 
     if (result.posted.length === 0) {
-        await client.graphql(DELETE_REVIEW, { reviewId });
-        logger.info(
-            { pr: input.number, failed: result.failed.length },
-            "github: no batched reply landed; deleted the empty review"
-        );
+        // A concurrent writer may have added a draft, even after an ownership check.
+        result.submitFailed = {
+            reviewId,
+            error: "no replies landed; the review was left pending to protect other drafts",
+        };
         return result;
     }
 
