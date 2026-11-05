@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AdoRequest, AdoResponse, AdoTransport } from "@app/azure-devops/api.types";
+import { show } from "@app/azure-devops/commands/test-plan";
 import { parseIdList, parsePlanRef, parseSuiteRef } from "@app/azure-devops/lib/test-plans/refs";
 import { renderSuiteTree } from "@app/azure-devops/lib/test-plans/render";
 import { TestPlans } from "@app/azure-devops/lib/test-plans/service";
@@ -97,6 +98,19 @@ function planRoutes(counts: Handler): [string, Handler][] {
 }
 
 describe("refs", () => {
+    test("show writes snapshots only when requested, including JSON output", async () => {
+        const writes: string[] = [];
+        const save = async (name: string, markdown: string) => {
+            writes.push(`${name}:${markdown}`);
+            return "snapshot";
+        };
+        await show({ format: "md" }, [], { id: 1 }, () => "rendered", "plan-1", save);
+        await show({ format: "json" }, [], { id: 1 }, () => "rendered", "plan-1", save);
+        expect(writes).toEqual([]);
+        await show({ format: "md", save: true }, [], { id: 1 }, () => "rendered", "plan-1", save);
+        await show({ format: "json", save: true }, [], { id: 1 }, () => "rendered", "plan-1", save);
+        expect(writes).toEqual(["plan-1:rendered", "plan-1:rendered"]);
+    });
     test("reads a plan and suite from a pasted URL, and refuses another organization", () => {
         const url = "https://dev.azure.com/acme/Shop/_testPlans/execute?planId=10&suiteId=13";
         expect(parsePlanRef(url, CONFIG.org)).toEqual({ planId: 10, suiteId: 13 });
