@@ -537,6 +537,13 @@ export interface NativeIndexSyncResult extends NativeIndexStatus {
     removed: number;
 }
 
+/**
+ * What a listing reads of a refresh: what it changed and the source issues on record. The index counts of
+ * `NativeIndexStatus` are left out, because counting them scans every row of the provider (7.5 ms for 24,638
+ * Claude transcripts) and no listing shows them.
+ */
+export type NativeIndexChanges = Pick<NativeIndexSyncResult, "parsed" | "unchanged" | "removed" | "issues">;
+
 /** The reader members a provider's history module implements itself; the provider's reader spreads them in. */
 export type HistoryOperations<Kind extends AgentKind> = Pick<NativeSessionReader<Kind>, "parserVersion"> &
     Required<

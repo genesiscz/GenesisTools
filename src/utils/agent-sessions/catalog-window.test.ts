@@ -834,3 +834,43 @@ test("a tolerant listing joins a refresh of its scope in flight, and a strict on
         rmSync(root, { recursive: true, force: true });
     }
 });
+
+test("a listing that reads the index as it is runs no count over the index, and still reports its issues", async () => {
+    const root = mkdtempSync(join(tmpdir(), "history-catalog-counts-"));
+    const id = "11111111-2222-4333-8444-000000000041";
+    session(root, id, HOUR);
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const repository = new HistorySyncRepository(database);
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        roots: [root],
+        repository,
+        reader: claudeHistoryReader,
+        now: () => new Date(NOW),
+    });
+    const status = spyOn(repository, "status");
+
+    try {
+        await service.catalog({ excludeAgents: true });
+        database.run("INSERT INTO history_source_issues (provider, path, code, message) VALUES (?, ?, 'source', ?)", [
+            "anthropic-sub",
+            join(root, "broken.jsonl"),
+            "fixture issue",
+        ]);
+        status.mockClear();
+        const read = await service.catalog({ excludeAgents: true }, { refresh: false });
+        expect(read.metadata.map((entry) => entry.nativeId)).toEqual([id]);
+        expect(read.report).toEqual({
+            issues: [{ path: join(root, "broken.jsonl"), message: "fixture issue" }],
+            parsed: 0,
+            unchanged: 0,
+            removed: 0,
+        });
+        expect(status).not.toHaveBeenCalled();
+    } finally {
+        status.mockRestore();
+        database.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});

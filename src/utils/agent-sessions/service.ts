@@ -35,6 +35,7 @@ import type {
     AgentSession,
     HistorySourceRecord,
     NativeHistoryEntry,
+    NativeIndexChanges,
     NativeIndexSyncResult,
     NativeSessionReader,
     NativeSessionSource,
@@ -444,7 +445,7 @@ export class HistoryService {
         const age = options.maxDiscoveryAgeMs === undefined ? null : (freshness?.age(freshnessKey) ?? null);
         const recent =
             age !== null && age >= 0 && options.maxDiscoveryAgeMs !== undefined && age < options.maxDiscoveryAgeMs;
-        let synchronized: { report: NativeIndexSyncResult; reindexed: boolean };
+        let synchronized: { report: NativeIndexChanges; reindexed: boolean };
         const running =
             freshness && options.maxDiscoveryAgeMs !== undefined && options.maxDiscoveryAgeMs > 0
                 ? refreshesInFlight.get(freshnessKey)
@@ -457,7 +458,7 @@ export class HistoryService {
             );
             synchronized = {
                 report: {
-                    ...this.options.repository.status(this.options.providerId),
+                    issues: this.options.repository.issues(this.options.providerId),
                     parsed: 0,
                     unchanged: 0,
                     removed: 0,
