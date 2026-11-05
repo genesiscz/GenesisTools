@@ -109,12 +109,12 @@ final class WorkingTreeRefreshTests: XCTestCase {
         XCTAssertEqual(commands, [])
     }
 
-    func testAnIgnoredPathIsRememberedButRevalidatedTheSecondTime() throws {
+    func testAnIgnoredPathIsRevalidatedEveryTime() throws {
         let first = try load()
         try write("dist/out.js", "built\n")
         let (answer, _) = try refresh(first, batch("dist/out.js"))
         guard case .same(let marks) = answer else { return XCTFail("\(answer)") }
-        XCTAssertTrue(marks.ignores("dist/out.js"), "\(marks.ignored)")
+        XCTAssertEqual(marks, first.marks)
 
         var known = first
         known.marks = marks
