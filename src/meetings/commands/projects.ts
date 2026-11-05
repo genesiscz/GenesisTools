@@ -172,11 +172,15 @@ async function people(name: string | undefined, opts: { json?: boolean }): Promi
 async function preview(opts: { draft?: string; limit?: string; json?: boolean }): Promise<void> {
     try {
         const draft = opts.draft ? matchDraftSchema.parse(SafeJSON.parse(opts.draft, { strict: true })) : undefined;
+        const limit = Number(opts.limit ?? "20");
+        if (!Number.isSafeInteger(limit) || limit < 1) {
+            throw new Error("--limit must be a positive integer");
+        }
         const rows = matchPreview({
-            records: new MeetingStore().list(),
+            records: new MeetingStore().listBounded({ limit }).records,
             config: await new MeetingsConfigStore().read(),
             ...(draft ? { draft } : {}),
-            limit: Number(opts.limit ?? "20"),
+            limit,
         });
 
         if (opts.json) {
