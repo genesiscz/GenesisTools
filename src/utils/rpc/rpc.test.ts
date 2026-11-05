@@ -3,7 +3,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RPC_CANCELLED, RpcError } from "./errors";
-import type { RpcProgress } from "./peer";
+import { LineBuffer, RpcPeer, type RpcProgress } from "./peer";
+import { logger } from "@genesiscz/utils/logger";
 import { RpcSocketClient, type RpcSocketClientOptions } from "./socket-client";
 import { type RpcConnection, RpcSocketServer } from "./socket-server";
 
@@ -152,4 +153,33 @@ describe("the JSON-RPC socket server, both directions", () => {
 
         await expect(waiting).rejects.toThrow();
     });
+});
+
+test("disconnect settles an abort-ignoring handler and skips queued mutations", async () => {
+    const started = Promise.withResolvers<void>();
+    const calls: string[] = [];
+    const peer = new RpcPeer({
+        write: (bytes) => bytes.length,
+        invalid: "answer",
+        log: logger.scoped("rpc-test").log,
+        label: "test",
+        handle: async ({ method }) => {
+            calls.push(method);
+            started.resolve();
+            return new Promise(() => undefined);
+        },
+    });
+    peer.receive(Buffer.from('{"jsonrpc":"2.0","id":1,"method":"hang"}\n{"jsonrpc":"2.0","id":2,"method":"mutate"}\n'));
+    await started.promise;
+    peer.close("disconnected");
+    await peer.queue;
+    expect(calls).toEqual(["hang"]);
+});
+
+test("RPC frames are bounded across fragments and normal lines still decode", () => {
+    const lines = new LineBuffer();
+    expect(lines.push(Buffer.from("ok\npart"))).toEqual(["ok"]);
+    expect(lines.push(Buffer.from("ial\n"))).toEqual(["partial"]);
+    lines.push(Buffer.alloc(8 * 1024 * 1024, 97));
+    expect(() => lines.push(Buffer.from("a"))).toThrow("exceeds");
 });
