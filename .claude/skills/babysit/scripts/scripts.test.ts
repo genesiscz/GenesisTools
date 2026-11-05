@@ -103,7 +103,7 @@ describe("safe restack helpers", () => {
                     "user.email=test@example.com",
                     ...args,
                 ],
-                { cwd, stdout: "pipe", stderr: "pipe" }
+                { cwd, env: process.env, stdout: "pipe", stderr: "pipe" }
             );
             expect(p.exitCode, p.stderr.toString()).toBe(0);
             return p.stdout.toString().trim();
@@ -129,7 +129,7 @@ describe("safe restack helpers", () => {
                     "--reference",
                     "HEAD",
                 ],
-                { cwd, stdout: "pipe", stderr: "pipe" }
+                { cwd, env: process.env, stdout: "pipe", stderr: "pipe" }
             );
         const same = run("HEAD^");
         expect(same.exitCode, same.stderr.toString()).toBe(0);
@@ -153,7 +153,7 @@ describe("safe restack helpers", () => {
                     "user.email=test@example.com",
                     ...args,
                 ],
-                { cwd, stdout: "pipe", stderr: "pipe" }
+                { cwd, env: process.env, stdout: "pipe", stderr: "pipe" }
             );
         const must = (...args: string[]) => {
             const result = git(...args);
