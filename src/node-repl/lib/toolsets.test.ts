@@ -883,6 +883,19 @@ describe("recorder and editor toolsets", () => {
         } finally {
             await recording.stop();
         }
+
+        // A list of ids leaves it too. A fresh recording: a third empty piece in a row would end the first one.
+        const second = await startRecording({ recorder, liveDir, folder: join(root, "removed") });
+        try {
+            const focused = recorder.next();
+            await second.setDisplayMode("follow-focus");
+            expect((await focused).target).toEqual({ kind: "follow-focus" });
+            const removed = recorder.next();
+            await second.removeDisplay(4);
+            expect((await removed).target).toEqual({ kind: "display", displayId: 1 });
+        } finally {
+            await second.stop();
+        }
     });
 
     test("a finalized recording reports and publishes stopped", async () => {

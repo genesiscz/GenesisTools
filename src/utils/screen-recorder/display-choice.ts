@@ -281,7 +281,8 @@ export class ChosenDisplays implements DisplayChoice {
             throw new RpcError(RPC_ERRORS.lastDisplay, "the recording keeps at least one display");
         }
 
-        return this.choose(recording, next);
+        // A list of ids, so a follow-focus recording records fixed displays from now.
+        return this.choose(recording, this.pick(next, recording.recorder));
     }
 
     async switchTo(recording: DisplayHost, displayId: number): Promise<DisplaySelection> {
