@@ -9,6 +9,55 @@ final class EdgePanelGeometryTests: XCTestCase {
     private let screen = CGRect(x: -1600, y: 100, width: 1600, height: 1000)
     private let visible = CGRect(x: -1600, y: 150, width: 1600, height: 920)
 
+    func testTopPlacementWithoutNotchAndAtBothEdges() {
+        for position in [0.0, 0.5, 1.0] {
+            let bar = WidgetTopPlacement.place(position: position, screen: screen, notch: 0, width: 300, splitWidth: 500)
+            XCTAssertEqual(bar.minX, screen.minX + 1300 * position, accuracy: 0.001)
+            XCTAssertEqual(bar.cutout, 0)
+            let notched = WidgetTopPlacement.place(position: position, screen: screen, notch: 200, width: 300, splitWidth: 500)
+            if position == 0 { XCTAssertEqual(notched.minX, screen.minX) }
+            if position == 1 { XCTAssertEqual(notched.maxX, screen.maxX) }
+        }
+    }
+
+    func testTopPlacementSnapsInsideTheNotchAndPushesOutsideIt() {
+        for position in [0.44, 0.5, 0.56] {
+            let bar = WidgetTopPlacement.place(position: position, screen: screen, notch: 200, width: 300, splitWidth: 500)
+            XCTAssertEqual(bar.centerX, screen.midX)
+            XCTAssertEqual(bar.width, 500)
+            XCTAssertEqual(bar.cutout, 200)
+        }
+        let left = WidgetTopPlacement.place(position: 0.4, screen: screen, notch: 200, width: 300, splitWidth: 500)
+        XCTAssertEqual(left.maxX, screen.midX - 100)
+        XCTAssertEqual(left.cutout, 0)
+        let right = WidgetTopPlacement.place(position: 0.6, screen: screen, notch: 200, width: 300, splitWidth: 500)
+        XCTAssertEqual(right.minX, screen.midX + 100)
+        XCTAssertEqual(right.cutout, 0)
+        let narrow = WidgetTopPlacement.place(position: 0.9,
+            screen: CGRect(x: 100, y: 0, width: 600, height: 900), notch: 200, width: 300, splitWidth: 500)
+        XCTAssertEqual(narrow.centerX, 400)
+        XCTAssertEqual(narrow.cutout, 200)
+    }
+
+    func testTopDragUsesAvailableTravelAndClampsAtTheEdges() {
+        XCTAssertEqual(WidgetTopPlacement.position(starting: 0.5, translationRight: 130, width: 300, screenWidth: 1600), 0.6, accuracy: 0.001)
+        XCTAssertEqual(WidgetTopPlacement.position(starting: 0.5, translationRight: -130, width: 300, screenWidth: 1600), 0.4, accuracy: 0.001)
+        XCTAssertEqual(WidgetTopPlacement.position(starting: 0.5, translationRight: -3000, width: 300, screenWidth: 1600), 0)
+        XCTAssertEqual(WidgetTopPlacement.position(starting: 0.5, translationRight: 3000, width: 300, screenWidth: 1600), 1)
+        XCTAssertEqual(WidgetTopPlacement.position(starting: 0.5, translationRight: 20, width: 300, screenWidth: 200), 0.5)
+    }
+
+    func testTopStripStaysAtItsScreenPositionWhenPanelWidens() {
+        for position in [0.0, 0.15, 0.5, 0.85, 1.0] {
+            let bar = WidgetTopPlacement.place(position: position, screen: screen, notch: 0, width: 300, splitWidth: 500)
+            for width in [300.0, 600, 900] {
+                let minX = EdgePanelGeometry.topMinX(centerX: bar.centerX, width: width, screen: screen)
+                let offset = WidgetTopPlacement.stripOffset(barCenterX: bar.centerX, panelWidth: width, screen: screen)
+                XCTAssertEqual(minX + width / 2 + offset, bar.centerX, accuracy: 0.001)
+            }
+        }
+    }
+
     @MainActor
     func testAnIgnoredExitKeepsWatchingUntilPointerMovementLeavesTheWindow() async throws {
         let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 200, height: 200),
@@ -2488,7 +2537,7 @@ final class WidgetRosterTests: XCTestCase {
         _ = NSApplication.shared
         var intrinsic = CGSize.zero
         let host = NSHostingView(rootView: Color.clear.overlay(alignment: .top) {
-            WidgetTopBarLayout(cutout: 0, intrinsicSizeChanged: { intrinsic = $0 }) {
+            WidgetTopBarLayout(cutout: 0, intrinsicSizeChanged: { intrinsic = $0 }).callAsFunction {
                 ScreenVerticalDragArea { _, _ in }.frame(width: 70, height: 20)
                 Color.blue.frame(width: 140, height: 20)
             }.fixedSize(horizontal: false, vertical: true)

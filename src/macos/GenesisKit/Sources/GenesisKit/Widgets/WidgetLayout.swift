@@ -5,21 +5,38 @@ import SwiftUI
 /// Measures both wings before placing them, keeping a hardware cutout at the screen's center.
 struct WidgetTopBarLayout: Layout {
     var cutout: CGFloat
+    var notch: CGFloat = 0
     var intrinsicSizeChanged: (CGSize) -> Void = { _ in }
-    func makeCache(subviews: Subviews) -> CGSize { .zero }
+    var placementsMeasured: (CGSize, CGSize) -> Void = { _, _ in }
+    struct Cache {
+        var intrinsic: CGSize = .zero
+        var plain: CGSize = .zero
+        var split: CGSize = .zero
+    }
+    func makeCache(subviews: Subviews) -> Cache { Cache() }
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout CGSize) -> CGSize {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
         guard sizes.count == 2 else { return .zero }
         let width = cutout > 0
             ? max(sizes[0].width, sizes[1].width) * 2 + cutout + 16
             : sizes[0].width + sizes[1].width + 16
         let intrinsic = CGSize(width: width, height: max(sizes[0].height, sizes[1].height))
-        if cache != intrinsic { cache = intrinsic; intrinsicSizeChanged(intrinsic) }
+        let plain = CGSize(width: sizes[0].width + sizes[1].width + 16, height: intrinsic.height)
+        let split = CGSize(width: max(sizes[0].width, sizes[1].width) * 2 + notch + 16, height: intrinsic.height)
+        if cache.intrinsic != intrinsic {
+            cache.intrinsic = intrinsic
+            intrinsicSizeChanged(intrinsic)
+        }
+        if cache.plain != plain || cache.split != split {
+            cache.plain = plain
+            cache.split = split
+            placementsMeasured(plain, split)
+        }
         return CGSize(width: min(proposal.width ?? width, width), height: intrinsic.height)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout CGSize) {
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
         guard subviews.count == 2 else { return }
         let left = subviews[0].sizeThatFits(.unspecified)
         let right = subviews[1].sizeThatFits(.unspecified)
@@ -282,7 +299,10 @@ public struct WidgetTopPlacement: Equatable, Sendable {
     public static func position(
         starting: Double, translationRight: CGFloat, width: CGFloat, screenWidth: CGFloat
     ) -> Double {
-        WidgetClusterGeometry.position(
+        // A bar as wide as its screen has no room to travel: the drag keeps the stored position, so a wider display
+        // later still shows the bar where it was.
+        guard screenWidth > width else { return starting }
+        return WidgetClusterGeometry.position(
             starting: starting, translationDown: translationRight, clusterHeight: width, visibleHeight: screenWidth)
     }
 

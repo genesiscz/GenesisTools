@@ -70,6 +70,13 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     public var panelsShownChanged: ((Bool) -> Void)?
     private var topHeaderHeight: CGFloat = 36
     private var topCompactWidth: CGFloat = 360
+    private var topPlainWidth: CGFloat = 360
+    private var topNotch: CGFloat = 0
+
+    private func topPlacement(on screen: NSScreen) -> WidgetTopPlacement {
+        WidgetTopPlacement.place(position: model.topPosition, screen: screen.frame,
+            notch: topNotch, width: topPlainWidth, splitWidth: topCompactWidth)
+    }
     private var screenID: String {
         model.snapshot?.state.preferences.display
             ?? UserDefaults.standard.string(forKey: "widget.display") ?? ""
@@ -611,6 +618,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         } else {
             cutout = 0
         }
+        topNotch = cutout
         if !sameDisplay {
             topHeaderHeight = max(36, screen.safeAreaInsets.top + 6)
             topCompactWidth = WidgetClusterGeometry.topWidth(
@@ -619,6 +627,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         lastSide = model.side
         var layout = model.layout
         layout.sidePosition = 0.5
+        layout.topPosition = 0.5
         lastLayout = layout
         let sideGroups = layout.groups(available: Set(modules.modules.map(\.id)))
         let surfaces =
@@ -645,9 +654,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                         return WidgetClusterGeometry.detailSize(visible: visible).width
                     },
                     expandedWindowHeight: { [weak self] in self?.expandedWindowHeights[surface] },
-                    topSizeChanged: { [weak self] size in
-                        DispatchQueue.main.async { self?.updateTopSize(size) }
-                    })
+                    topSizeChanged: { [weak self] plain, split in
+                        DispatchQueue.main.async { self?.updateTopSize(plain, split: split) }
+                    }, topPlacement: { [weak self] in self?.topPlacement(on: screen) }, topScreen: screen.frame,
+                    topPlainWidth: topPlainWidth)
             }
             if sameDisplay, let controller = previous[surface] {
                 controller.updateContent(content)
@@ -677,12 +687,13 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         sync()
     }
 
-    private func updateTopSize(_ size: CGSize) {
+    private func updateTopSize(_ size: CGSize, split: CGSize) {
         guard size.width > 0, size.height > 0,
-              size.width != topCompactWidth || size.height != topHeaderHeight else { return }
-        topCompactWidth = size.width
+              size.width != topPlainWidth || split.width != topCompactWidth || size.height != topHeaderHeight else { return }
+        topPlainWidth = size.width
+        topCompactWidth = split.width
         topHeaderHeight = size.height
-        sync()
+        rebuildPanels()
     }
 
     private func sync() {
@@ -702,6 +713,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         }
         var layout = model.layout
         layout.sidePosition = 0.5
+        layout.topPosition = 0.5
         if lastSide != model.side || lastLayout != layout || lastDisplayID != screenID {
             rebuildPanels()
             return
@@ -757,15 +769,17 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             let previewSize = CGSize(width: module?.id == "agents" ? model.agentsPreviewWidth : (module?.previewSize.width ?? 324),
                 height: module?.id == "agents" ? model.previewHeight : (module?.previewSize.height ?? 310))
             if top {
+                let placement = topPlacement(on: screen)
+                controller.setTopCenterX(placement.centerX)
                 expandedWindowHeights[surface] = min(screen.visibleFrame.height - 20, contentHeight + topHeaderHeight)
-                controller.setCompactSize(CGSize(width: topCompactWidth, height: topHeaderHeight))
+                controller.setCompactSize(CGSize(width: placement.width, height: topHeaderHeight))
                 controller.setExpandedSize(
                     CGSize(
-                        width: max(topCompactWidth, width),
+                        width: max(placement.width, width),
                         height: min(screen.visibleFrame.height - 20, contentHeight + topHeaderHeight)))
                 controller.setPreviewSize(
                     CGSize(
-                        width: max(topCompactWidth, previewSize.width),
+                        width: max(placement.width, previewSize.width),
                         height: min(screen.visibleFrame.height - 20, previewSize.height + topHeaderHeight)))
             } else if let index = sideSurfaces.firstIndex(of: surface) {
                 controller.setSideCenterY(centers[index])
@@ -773,7 +787,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                 controller.setPreviewSize(CGSize(width: previewSize.width + 44, height: sideHeights[index]))
                 controller.setExpandedSize(CGSize(width: width + 44, height: sideHeights[index]))
             }
-            controller.setPresentation(presentation, reduceMotion: model.effectiveReduceMotion || model.draggingSide)
+            controller.setPresentation(presentation, reduceMotion: model.effectiveReduceMotion || model.draggingSide || model.draggingTop)
             orderFront(controller)
             modules.update(surface: surface, moduleID: module?.id, presentation: presentation)
         }

@@ -17,7 +17,12 @@ struct WidgetHostView: View {
     var expandedContentWidth: (String) -> CGFloat? = { _ in nil }
     /// The window height this surface will have when expanded, so a pane built ahead of time needs no new layout.
     var expandedWindowHeight: () -> CGFloat? = { nil }
-    var topSizeChanged: (CGSize) -> Void = { _ in }
+    var topSizeChanged: (CGSize, CGSize) -> Void = { _, _ in }
+    var topPlacement: () -> WidgetTopPlacement? = { nil }
+    var topScreen: CGRect = .zero
+    var topPlainWidth: CGFloat = 360
+    @State private var topDragOrigin: Double?
+    @State private var topDragPoint: CGFloat?
     @State private var measuredHeaderHeight: CGFloat = 0
     @State private var dragOrigin: Double?
     @State private var dragClusterHeight: CGFloat?
@@ -121,20 +126,25 @@ struct WidgetHostView: View {
                 }
             }
             .overlay(alignment: .top) {
-                if surface.edge == .top { topStrip }
+                if surface.edge == .top {
+                    WidgetTopStripPlacement(barCenterX: topPlacement()?.centerX, screen: topScreen) {
+                        topStrip
+                    }
+                }
             }
             .frame(width: frame?.width, height: frame?.height)
             .offset(x: frame?.minX ?? 0, y: frame?.minY ?? 0)
     }
 
     private var topStrip: some View {
-        WidgetTopBarLayout(cutout: cutout, intrinsicSizeChanged: { size in
-            let measured = CGSize(width: ceil(size.width + 36), height: max(headerMinimumHeight, ceil(size.height + 24)))
+        WidgetTopBarLayout(cutout: topPlacement()?.cutout ?? cutout, notch: cutout, placementsMeasured: { plain, split in
+            let measured = CGSize(width: ceil(plain.width + 36), height: max(headerMinimumHeight, ceil(plain.height + 24)))
+            let splitMeasured = CGSize(width: ceil(split.width + 36), height: measured.height)
             DispatchQueue.main.async {
                 measuredHeaderHeight = measured.height
-                topSizeChanged(measured)
+                topSizeChanged(measured, splitMeasured)
             }
-        }) {
+        }).callAsFunction {
             Button {
                 if selected?.id == "agents" { model.toggleInboxOverview(on: surface) }
                 else { expand() }
@@ -147,7 +157,7 @@ struct WidgetHostView: View {
                         Image(systemName: selected?.symbol ?? "square.grid.2x2.fill")
                             .foregroundStyle(selected?.tint ?? .blue)
                     }
-                    if cutout == 0 {
+                    if (topPlacement()?.cutout ?? cutout) == 0 {
                         Text(selected?.id == "agents" ? "Agents" : selected?.title ?? "Widgets")
                             .font(.system(size: 12, weight: .semibold))
                     }
@@ -199,6 +209,25 @@ struct WidgetHostView: View {
         }
         .padding(.horizontal, 18).padding(.vertical, 12)
         .frame(minHeight: headerMinimumHeight).fixedSize(horizontal: false, vertical: true)
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 10)
+                .onChanged { value in moveTop(value, finished: false) }
+                .onEnded { value in moveTop(value, finished: true) }
+        )
+    }
+
+    private func moveTop(_ value: DragGesture.Value, finished: Bool) {
+        // Event coordinates stay stable when the panel itself follows this gesture.
+        let screenX = NSApp.currentEvent.flatMap { $0.cgEvent?.location.x } ?? NSEvent.mouseLocation.x
+        if topDragOrigin == nil {
+            topDragOrigin = model.topPosition
+            topDragPoint = screenX - value.translation.width
+        }
+        model.moveTop(position: WidgetTopPlacement.position(
+            starting: topDragOrigin ?? 0.5, translationRight: screenX - (topDragPoint ?? screenX),
+            width: topPlainWidth, screenWidth: topScreen.width), finished: finished)
+        if finished { topDragOrigin = nil; topDragPoint = nil }
     }
 
     private var dragHandle: some View {

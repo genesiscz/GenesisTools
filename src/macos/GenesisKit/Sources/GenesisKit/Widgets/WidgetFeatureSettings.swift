@@ -164,6 +164,15 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().frame(width: 220, alignment: .trailing)
                 }
             }
+            NativeSettingsCard("Top widgets") {
+                NativeSettingsRow("Horizontal position", detail: "Drag the top bar, or center it here.") {
+                    Slider(value: Binding(get: { prefs?.topPosition ?? 0.5 },
+                        set: { patch(["topPosition": .number($0)]) }), in: 0...1)
+                        .frame(width: 200).accessibilityLabel("Top widget horizontal position")
+                    Button("Center") { patch(["topPosition": .number(0.5)]) }
+                        .buttonStyle(.genHoverPlain())
+                }
+            }
             NativeSettingsCard("Side widgets") {
                 NativeSettingsRow("Arrangement", detail: "Three groups can have different tools.") {
                     Picker("Side arrangement", selection: string("sideLayout", prefs?.sideLayout ?? "joined")) {
