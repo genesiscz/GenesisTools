@@ -36,6 +36,7 @@ import {
 } from "@genesiscz/utils/screen-recorder/types";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
+import { findReadAloud } from "@genesiscz/utils/transcribe/doc-match";
 import { groupTurns } from "@genesiscz/utils/transcribe/render";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { createCanvas } from "@napi-rs/canvas";
@@ -1976,6 +1977,14 @@ test("raw evidence uses explicit attendance for both presence and stays", () => 
     });
     expect(raw.lines[0]?.present).toEqual(["New Example"]);
     expect(raw.people.find((person) => person.name === "New Example")?.stays).toEqual([{ fromSec: 0, toSec: 100 }]);
+});
+
+test("automatic quotes keep only spoken words and preserve intervening speech", () => {
+    const [match] = findReadAloud({
+        entries: [line("Alice", 0, "alpha bravo aside charlie delta echo")],
+        lines: [{ doc: "fixture.md", line: 1, text: "prefix alpha bravo `skippedCode` charlie delta echo suffix" }],
+    });
+    expect(match?.text).toBe("alpha bravo aside charlie delta echo");
 });
 
 describe("evidence --raw", () => {
