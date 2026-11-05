@@ -66,6 +66,15 @@ describe("session report", () => {
         expect(items[0]?.usd).toBeGreaterThan(0);
     });
 
+    test("a one-hour cache rebuild pays the one-hour write premium", () => {
+        const items = sessionWaste(
+            [call(0), call(70, { cacheRead: 0, cacheWrite: 101_000, cacheWrite1h: 101_000 })],
+            []
+        );
+        expect(items[0]?.tokens).toBe(100_000);
+        expect(items[0]?.usd).toBeCloseTo(0.57);
+    });
+
     test("a compaction to a short summary costs the summary it wrote, not the reads it dropped", () => {
         const compacted = [
             { t: new Date(Date.UTC(2026, 10, 1, 10, 0, 30)).toISOString(), trigger: "auto", preTokens: 100_000 },
