@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { MethodDescriptor } from "@genesiscz/utils/api-descriptor";
 import { logger } from "@genesiscz/utils/logger";
 import type { EditOp } from "@genesiscz/utils/recording-editor/project";
@@ -15,6 +16,7 @@ const { log } = logger.scoped("recorder-service-client");
 /** A `movie.*` call through the service may run a long step (removeIdle over a meeting, a transcription). */
 const MOVIE_CALL_TIMEOUT_MS = 60 * 60_000;
 const EDIT_CALL_TIMEOUT_MS = 10 * 60_000;
+const callerPath = (value: string): string => value === "last" || value === "open" ? value : resolve(value);
 
 interface ServiceEditAnswer {
     project: OpenedProject["project"];
@@ -53,7 +55,7 @@ export async function applyEdit(
 
     log.debug({ value, ops: ops.map((op) => op.op), socket: entry.socket }, "edit through the recorder service");
     const answer = await withServiceClient(entry, (client) =>
-        client.call<ServiceEditAnswer>("edit.apply", { path: value, ops }, { timeoutMs: EDIT_CALL_TIMEOUT_MS })
+        client.call<ServiceEditAnswer>("edit.apply", { path: callerPath(value), ops }, { timeoutMs: EDIT_CALL_TIMEOUT_MS })
     );
     return openedOf(value, answer);
 }
@@ -67,7 +69,7 @@ export async function undoLastEdit(value: string, options: { dir?: string } = {}
     }
 
     const answer = await withServiceClient(entry, (client) =>
-        client.call<ServiceEditAnswer>("edit.undo", { path: value })
+        client.call<ServiceEditAnswer>("edit.undo", { path: callerPath(value) })
     );
     return openedOf(value, answer);
 }
@@ -140,7 +142,7 @@ export function serviceRoutedMovie<T extends { recording: string }>(
                 return withServiceClient(entry, (client) =>
                     client.call(
                         `movie.${method.name}`,
-                        { recording: target.recording, ...params },
+                        { recording: callerPath(target.recording), ...params },
                         { timeoutMs: MOVIE_CALL_TIMEOUT_MS, ...(signal ? { signal } : {}) }
                     )
                 );
