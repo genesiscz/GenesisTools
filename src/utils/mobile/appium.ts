@@ -126,7 +126,9 @@ export async function appiumStatus(port: number): Promise<AppiumStatus> {
 
     try {
         const response = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2_000) });
-        const body = SafeJSON.parse(await response.text()) as { value?: { build?: { version?: string } } };
+        const body = SafeJSON.parse(await response.text(), { strict: true }) as {
+            value?: { build?: { version?: string } };
+        };
         answers = response.ok;
         version = body.value?.build?.version ?? null;
     } catch (error) {
