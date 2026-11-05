@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
@@ -34,12 +36,18 @@ export function registerRelease(program: Command): void {
         .option("--dry-run", "print the steps and what is missing; build nothing")
         .option("--json", "print the plan as JSON (with --dry-run)")
         .action(async (options: ReleaseOptions) => {
+            const keyPath = options.apiKey ? resolve(options.apiKey) : undefined;
+
+            if (keyPath && !existsSync(keyPath)) {
+                throw new Error(`API key file does not exist: ${keyPath}`);
+            }
+
             const project = await loadProject(options);
             const outDir = toolDataDir("mobile", "releases", project.config.id, stamp());
             const plan = releasePlan({
                 project,
                 team: options.team,
-                apiKey: { path: options.apiKey, id: options.apiKeyId, issuer: options.apiIssuer },
+                apiKey: { path: keyPath, id: options.apiKeyId, issuer: options.apiIssuer },
                 buildNumber: options.buildNumber ?? clockBuildNumber(),
                 outDir,
                 exportOnly: Boolean(options.exportOnly),
