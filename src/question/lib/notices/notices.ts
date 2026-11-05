@@ -96,7 +96,13 @@ export async function recordNotice(
     const now = deps.now();
     await deps.store.update((notices) => {
         pruned(notices, now);
-        notices[notice.id] = { ...notice, postedAt: now };
+        const previous = notices[notice.id];
+        notices[notice.id] = {
+            ...notice,
+            channels: [...new Set([...(previous?.channels ?? []), ...notice.channels])],
+            items: [...new Set([...(previous?.items ?? []), ...notice.items])],
+            postedAt: now,
+        };
     });
 }
 
