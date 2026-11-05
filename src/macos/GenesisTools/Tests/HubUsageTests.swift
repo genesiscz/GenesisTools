@@ -268,10 +268,13 @@ final class HubUsageTests: XCTestCase {
         })
         model.activate()
         try await wait { model.table.rows.count == 2 }
-        XCTAssertNil(model.table.rows.first { $0.account.accountId == "acc_work" }?.verdict)
+
+        // Limits reads the drift door itself, so its table carries the verdict without a visit to Efficiency.
+        try await wait { model.table.rows.first { $0.account.accountId == "acc_work" }?.verdict != nil }
+        XCTAssertEqual(model.table.rows.first { $0.account.accountId == "acc_work" }?.verdict, "limit cut?")
 
         model.section = .efficiency
-        try await wait { model.table.rows.first { $0.account.accountId == "acc_work" }?.verdict != nil }
+        try await wait { model.section == .efficiency }
         XCTAssertEqual(model.table.rows.first { $0.account.accountId == "acc_work" }?.verdict, "limit cut?")
     }
 
