@@ -1,3 +1,4 @@
+import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import type { NotificationAction } from "@genesiscz/utils/macos/notifications";
 import { CHANNEL_NAMES, notificationsConfig } from "@genesiscz/utils/notifications";
@@ -191,8 +192,13 @@ export async function postDecisionNotices(rows: DecisionRecord[], deps: Decision
     }
 
     try {
-        const banner = await postGroupedBanner(waiting, deps);
-        const pushed = (await phoneOn(deps)) ? await postPhonePushes(waiting, deps) : 0;
+        const [banner, pushed] = await Promise.all([
+            withTimeout(postGroupedBanner(waiting, deps), 10_000).catch((err: unknown) => {
+                log.warn({ err }, "decision banner delivery failed or exceeded its deadline");
+                return false;
+            }),
+            phoneOn(deps).then((enabled) => (enabled ? postPhonePushes(waiting, deps) : 0)),
+        ]);
         log.info({ ids: waiting.map((row) => row.id), banner, pushed }, "decision notices sent");
         return banner || pushed > 0;
     } catch (err) {
