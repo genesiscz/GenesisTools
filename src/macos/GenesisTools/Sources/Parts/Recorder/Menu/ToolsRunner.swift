@@ -46,47 +46,15 @@ enum ToolsRunner {
 extension ToolsRunner {
     /// Runs a short `tools` command with its output captured, and calls `done` on the main thread with the exit
     /// status, stdout and stderr. For a step the window waits on (an edit op that needs ffmpeg), not a recording.
-    static func run(_ argv: [String], done: @escaping @MainActor (Int32, String, String) -> Void) {
-        let plan = ToolsBridge.launchPlan(binaryPath: ToolsBridge.defaultBinaryPath(), argv: argv)
-        let process = Process()
-        process.executableURL = plan.executable
-        process.arguments = plan.arguments
-        process.currentDirectoryURL = plan.workingDirectory
-        process.environment = ToolsBridge.scrubbedEnvironment()
-        process.standardInput = FileHandle.nullDevice
-        let out = Pipe()
-        let err = Pipe()
-        process.standardOutput = out
-        process.standardError = err
-        HubPerf.log("recorder: run tools \(argv.joined(separator: " "))")
-        DispatchQueue.global(qos: .userInitiated).async {
+    static func run(_ argv: [String], timeout: TimeInterval = 600, done: @escaping @MainActor (Int32, String, String) -> Void) {
+        Task {
             do {
-                try process.run()
+                let result = try await ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath()).run(subcommand: argv.first ?? "", args: Array(argv.dropFirst()),
+                                                       timeoutSeconds: max(1, Int(timeout)))
+                await done(result.exitCode, result.stdout, result.stderr)
             } catch {
-                DispatchQueue.main.async { MainActor.assumeIsolated { done(-1, "", error.localizedDescription) } }
-                return
+                await done(-1, "", error.localizedDescription)
             }
-            // Both pipes are read at once and before the wait, so neither fills and blocks the child.
-            var stderrData = Data()
-            let reading = DispatchGroup()
-            reading.enter()
-            DispatchQueue.global(qos: .userInitiated).async {
-                stderrData = err.fileHandleForReading.readDataToEndOfFile()
-                reading.leave()
-            }
-            let stdout = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            // stdout ended, so the child is done; only a grandchild that kept stderr open could hold it longer.
-            let stderr: String
-            if reading.wait(timeout: .now() + 10) == .timedOut {
-                HubPerf.log("recorder: tools \(argv.first ?? "") stdout ended but stderr stayed open 10 s; its stderr is dropped")
-                stderr = ""
-            } else {
-                stderr = String(decoding: stderrData, as: UTF8.self)
-            }
-            process.waitUntilExit()
-            let status = process.terminationStatus
-            if status != 0 { HubPerf.log("recorder: tools \(argv.first ?? "") exited \(status): \(stderr.suffix(300))") }
-            DispatchQueue.main.async { MainActor.assumeIsolated { done(status, stdout, stderr) } }
         }
     }
 }
