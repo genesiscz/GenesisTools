@@ -72,13 +72,12 @@ export default function AgentNewScreen() {
     const [prompt, setPrompt] = useState("");
     const [receipt, setReceipt] = useState<AgentNewReceiptDto | null>(null);
     const [key, setKey] = useState(idempotencyKey);
-    // A refused start gets a new key, so the next tap is a new request and not the replay of the refusal.
+    // Every answer is a known outcome, so the next tap is a new request: a refusal is not replayed, and a second
+    // agent started from this sheet is not answered with the first one's receipt. A failed request gives no answer and
+    // keeps the key, so its retry stays one request.
     const start = useStartAgent((answer) => {
         setReceipt(answer);
-
-        if (!answer.started) {
-            setKey(idempotencyKey());
-        }
+        setKey(idempotencyKey());
     });
 
     const agents = options.data?.agents ?? [];
