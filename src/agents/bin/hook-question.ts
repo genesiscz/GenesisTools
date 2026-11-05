@@ -29,33 +29,33 @@ setMaxLogBytes(megabytes(config.maxLogMB));
 const event = normalizeEvent(payload.event);
 const asks = event === "pretooluse" || event === "notification";
 
-if (!asks && !hasOpenDialogRecords(payload.harness, payload.sessionId)) {
-    if (openMarkersIndexed()) {
-        process.exit(0);
-    }
-
-    // Once per machine: record files from before the open markers get theirs, so their open records still close.
-    // A failed pass must not block the tool call; the next call tries again, because the indexed flag is not set.
-    try {
-        const { indexOpenDialogMarkers } = await import("@genesiscz/utils/agents/dialogs/store");
-        indexOpenDialogMarkers();
-    } catch (err) {
-        hookDiag("The one-time open-marker pass failed; older open records stay unmarked", { err });
-        process.exit(0);
-    }
-
-    if (!hasOpenDialogRecords(payload.harness, payload.sessionId)) {
-        process.exit(0);
-    }
-}
-
 try {
-    const [{ applyQuestionHookAction, questionHookAction }, { hookCaller }] = await Promise.all([
-        import("../lib/hooks/questions"),
-        import("../lib/hooks/caller"),
-    ]);
-    const now = new Date().toISOString();
+    const { hookCaller } = await import("../lib/hooks/caller");
     const caller = hookCaller(payload, env.getProcessEnv());
+    const sessionId = caller.sessionId ?? undefined;
+
+    if (!asks && !hasOpenDialogRecords(payload.harness, sessionId)) {
+        if (openMarkersIndexed()) {
+            process.exit(0);
+        }
+
+        // Once per machine: record files from before the open markers get theirs, so their open records still close.
+        // A failed pass must not block the tool call; the next call tries again, because the indexed flag is not set.
+        try {
+            const { indexOpenDialogMarkers } = await import("@genesiscz/utils/agents/dialogs/store");
+            indexOpenDialogMarkers();
+        } catch (err) {
+            hookDiag("The one-time open-marker pass failed; older open records stay unmarked", { err });
+            process.exit(0);
+        }
+
+        if (!hasOpenDialogRecords(payload.harness, sessionId)) {
+            process.exit(0);
+        }
+    }
+
+    const { applyQuestionHookAction, questionHookAction } = await import("../lib/hooks/questions");
+    const now = new Date().toISOString();
     const action = questionHookAction(payload, now, caller);
 
     if (action) {
