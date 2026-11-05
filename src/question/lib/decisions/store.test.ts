@@ -1619,6 +1619,34 @@ test("a gateway caller's decision never carries the gateway's own cmux surface; 
     expect(own.cmuxSurface).toBe("gateway-surface");
 });
 
+test("an agent whose session cannot be named is refused, so its decision never lands in the shared unknown session", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-unnamed-agent-"));
+    const file = join(dir, "decisions.jsonl");
+
+    await expect(
+        runAsCaller({ agent: "claude-code", sessionId: null, cwd: "/fixture/front" }, () =>
+            postDecisions(
+                file,
+                join(dir, "events.jsonl"),
+                { decisions: [{ prompt: "Bump?", options: [] }] },
+                { env: {} }
+            )
+        )
+    ).rejects.toThrow("its session could not be identified");
+    expect(existsSync(file) ? readFileSync(file, "utf8") : "").toBe("");
+
+    // The same agent with its session id posts as usual.
+    const [row] = await runAsCaller({ agent: "claude-code", sessionId: null, cwd: "/fixture/front" }, () =>
+        postDecisions(
+            file,
+            join(dir, "events.jsonl"),
+            { sessionId: "front-session", decisions: [{ prompt: "Bump?", options: [] }] },
+            { env: {} }
+        )
+    );
+    expect(row?.sessionId).toBe("front-session");
+});
+
 test("an empty cwd from an unnamed gateway caller is no cwd: neither it nor the gateway's checkout is stamped", async () => {
     const dir = mkdtempSync(join(tmpdir(), "decision-gateway-blank-"));
     const [row] = await runAsCaller({ agent: "unknown", sessionId: null, cwd: null }, () =>

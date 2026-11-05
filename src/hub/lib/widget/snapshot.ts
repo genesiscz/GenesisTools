@@ -1068,6 +1068,10 @@ export async function widgetSnapshot({
         if (existing) {
             return existing;
         }
+        // The item stores of `tools question` file a poster without a session under "unknown". That is no session,
+        // and its items come from many folders, so the first item's project (Rewind for five projects, 2026-11-05)
+        // must not name it.
+        const unnamed = target.sessionId === "unknown";
         const hiddenByFilter =
             (state.preferences.projects.length > 0 && !state.preferences.projects.includes(target.cwd)) ||
             (state.preferences.sessions.length > 0 && !state.preferences.sessions.includes(key)) ||
@@ -1076,8 +1080,8 @@ export async function widgetSnapshot({
         const entry: WidgetSession = {
             key,
             target,
-            title,
-            project,
+            title: unnamed ? "No session" : title,
+            project: unnamed ? "" : project,
             activityAt,
             status: "recent",
             pinned,

@@ -6776,3 +6776,31 @@ test("the inbox publish delay leaves out an item that waited behind an older one
     expect(inboxPublishDelay({ at: 500, startedAt, now: 5_000 })).toBeUndefined();
     expect(inboxPublishDelay({ at: 6_000, startedAt, now: 5_000 })).toBeUndefined();
 });
+
+test("the widget names the bucket of posts without a session No session, and no item lends it a project", async () => {
+    const directory = await root();
+    const at = new Date().toISOString();
+    const unnamed = (number: number, project: string): DecisionRecord => ({
+        id: `d_${number}_unknown`,
+        sessionId: "unknown",
+        provider: "claude",
+        number,
+        title: `Question ${number}`,
+        prompt: `Question ${number}?`,
+        options: ["a", "b"],
+        cwd: `/fixture/${project}`,
+        project,
+        state: "open",
+        createdTs: at,
+        updatedTs: at,
+    });
+    const snapshot = await widgetSnapshot({
+        root: directory,
+        sources: { ...emptySources, decisions: () => [unnamed(1, "Rewind"), unnamed(2, "Front")] },
+    });
+
+    expect(snapshot.sessions.find((session) => session.target.sessionId === "unknown")).toMatchObject({
+        title: "No session",
+        project: "",
+    });
+});

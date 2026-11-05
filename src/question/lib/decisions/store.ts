@@ -530,6 +530,17 @@ export async function postDecisions(
     const requested = input.sessionId?.trim() ?? "";
     // A live harness owns the session. A typed id is only for a human CLI or a test.
     const sessionId = !isTestProcess() && harnessSession ? harnessSession : requested || harnessSession || "unknown";
+
+    // An agent whose session could not be named would file this under the one shared "unknown" session: its number
+    // collides with other agents' ("DECISION 1 is already in session unknown"), the widget groups them as one session,
+    // and no answer can reach it. Five CVE triage sessions did that on 2026-11-05 16:00 UTC. A person at a terminal
+    // (no agent) still posts there.
+    if (sessionId === "unknown" && poster.agent !== "unknown") {
+        throw new Error(
+            `${poster.agent} posted a decision, but its session could not be identified, so no answer could reach it. ` +
+                'Post again with "sessionId" set to your session id (the session start prints it).'
+        );
+    }
     const provider = providerName(input.provider ?? (poster.agent === "unknown" ? undefined : poster.agent));
     const cwd = input.cwd ?? poster.cwd;
     const sessionTitle = input.title ?? poster.sessionTitle ?? undefined;
