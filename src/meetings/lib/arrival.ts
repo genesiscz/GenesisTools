@@ -30,7 +30,7 @@ export function arrivalItems(options: {
     );
 
     for (const stay of options.presence ?? []) {
-        if (stay.self || stay.fromSec < FROM_START_SEC) {
+        if (stay.self || stay.joinedAtExact === false || stay.fromSec < FROM_START_SEC) {
             continue;
         }
 

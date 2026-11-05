@@ -27,6 +27,8 @@ const attendanceSchema = z.array(
                 self: z.boolean().optional(),
                 joinedAt: z.string().nullish(),
                 leftAt: z.string().nullish(),
+                joinedAtExact: z.boolean().optional(),
+                leftAtExact: z.boolean().optional(),
             })
         ),
     })
@@ -86,6 +88,8 @@ export function teamsAttendanceFromJson(
             {
                 name: person.name,
                 ...(person.self ? { self: true } : {}),
+                ...(person.joinedAtExact !== undefined ? { joinedAtExact: person.joinedAtExact } : {}),
+                ...(person.leftAtExact !== undefined ? { leftAtExact: person.leftAtExact } : {}),
                 fromSec: (joined - startMs) / 1000,
                 toSec: Number.isFinite(left) ? (left - startMs) / 1000 : Number.POSITIVE_INFINITY,
             },
