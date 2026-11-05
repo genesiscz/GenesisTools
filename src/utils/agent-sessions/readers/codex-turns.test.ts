@@ -677,3 +677,11 @@ test("approval details retain every statement of ambiguous code mode scripts", (
         expect(pending?.detail).toEqual({ kind: "tool", input });
     }
 });
+
+test("approval details preserve valid JavaScript escapes that are not JSON escapes", () => {
+    const input = String.raw`await tools.exec_command({cmd:"echo \x41"})`;
+    const pending = codexPendingCall([
+        { type: "response_item", payload: { type: "custom_tool_call", name: "exec", call_id: "c1", input } },
+    ]);
+    expect(pending?.detail).toEqual({ kind: "tool", input });
+});
