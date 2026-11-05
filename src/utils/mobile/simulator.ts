@@ -292,7 +292,7 @@ export type SimctlPrivacyService = (typeof SIMCTL_PRIVACY_SERVICES)[number];
 
 /**
  * Grants, revokes or resets one privacy service for an app. Bounded at 8 s: on some iOS 26.5 simulators one grant
- * wedges installd, and an unbounded call would hang the command with it. Returns false on a timeout or a failure.
+ * wedges installd, and an unbounded call would hang the command with it. Distinguishes a timeout from other failures.
  */
 export async function setPrivacy(options: {
     udid: string;
@@ -308,12 +308,12 @@ export async function setPrivacy(options: {
 
     const result = await simctl(args, 8_000);
 
-    if (result.status !== 0) {
+    if (result.error || result.status !== 0) {
         log.warn({ ...options, stderr: result.stderr.trim(), error: result.error?.message }, "simctl privacy failed");
         return result.error?.code === "ETIMEDOUT" ? "timeout" : false;
     }
 
-    return true;
+    return "granted";
 }
 
 /** Writes one user default in an app's domain on the simulator (`defaults write <bundle> <key> <args...>`). */

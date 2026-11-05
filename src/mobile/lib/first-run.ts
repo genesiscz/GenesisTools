@@ -43,6 +43,7 @@ export async function preseedFirstRun(options: {
     firstRun: IosApp["firstRun"];
     udid: string;
     bundleId: string;
+    privacy?: typeof setPrivacy;
 }): Promise<PreseedReport> {
     const { firstRun, udid, bundleId } = options;
     const report: PreseedReport = { granted: [], approved: [], defaults: [], skipped: [] };
