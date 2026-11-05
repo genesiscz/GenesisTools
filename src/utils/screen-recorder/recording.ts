@@ -774,7 +774,10 @@ export class FrameRecording<S = unknown> extends RecorderControl {
      * captures end. `none`: no capture can; `ended`: the capture ended while the switch was in flight.
      */
     async switchLive(target: PieceTarget): Promise<"live" | "ended" | "none"> {
-        const [only, ...others] = [...this.captures.running.values()];
+        // The capture that records the sound moves: stopping it would leave the piece silent.
+        const captures = [...this.captures.running.values()];
+        const only = captures.find((one) => one.audio) ?? captures[0];
+        const others = captures.filter((one) => one !== only);
 
         if (!only?.live || only.target.target.kind !== "display") {
             return "none";

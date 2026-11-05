@@ -2090,6 +2090,8 @@ describe("the meetings recorder loop", () => {
         readonly requestedAt: number[] = [];
         /** What the live channel of a running capture was told (`liveControl` scripts only). */
         readonly commands: string[] = [];
+        /** The display each live switch was sent to the capture of (`liveControl` scripts only). */
+        readonly switchedFrom: number[] = [];
         private piece = 0;
         private notified = -1;
         private finishCapture?: () => void;
@@ -2186,6 +2188,7 @@ describe("the meetings recorder loop", () => {
                         }
 
                         this.commands.push(`switch ${id}`);
+                        this.switchedFrom.push(displayId);
                         current = id;
 
                         if (this.script.delayedFrame) {
@@ -3109,6 +3112,31 @@ describe("the meetings recorder loop", () => {
             target: { kind: "display", displayId: 4 },
             audio: { sources: ["mic"] },
         });
+    });
+
+    test("a live switch moves the capture that records the sound, even when it started last", async () => {
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["frames", "hang", "hang"],
+            liveControl: true,
+            audio: true,
+            // The second action runs once the capture displays.add started is up.
+            actions: [
+                async (call) => call("displays.add", { displayId: 1 }),
+                async (call) => [await call("displays.switch", { displayId: 4 }), await call("stop")],
+            ],
+        });
+        const [added, [switched]] = run.answers as [unknown, unknown[]];
+
+        expect(added).toMatchObject({ applied: "started" });
+        expect(switched).toMatchObject({ applied: "live", chosen: [4] });
+        // Display 1's first capture ended, so the one display 1 got back took the sound and sits after display 4's.
+        expect(run.recorder.requests.map((request) => [request.target, request.audio !== undefined])).toEqual([
+            [{ kind: "display", displayId: 1 }, true],
+            [{ kind: "display", displayId: 4 }, false],
+            [{ kind: "display", displayId: 1 }, true],
+        ]);
+        expect(run.recorder.switchedFrom).toEqual([1]);
     });
 
     test("disabling heartbeat passes zero to the restarted capture", async () => {
