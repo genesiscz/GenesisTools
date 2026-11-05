@@ -1,3 +1,4 @@
+import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
@@ -22,7 +23,17 @@ interface ScreenOptions extends ProjectOptions {
 function driverOptions(command: Command, settle: string): Command {
     return withConfig(command)
         .option("--udid <udid>", "the simulator; default: the only booted one")
-        .option("--driver <driver>", `${SCREEN_DRIVERS.join(" or ")} (simctl raises an "Open in" alert)`, "appium")
+        .option(
+            "--driver [driver]",
+            `${SCREEN_DRIVERS.join(" or ")}`,
+            (value: string) => {
+                if (!SCREEN_DRIVERS.some((kind) => kind === value)) {
+                    throw new Error(suggestEnumFlag("tools mobile", "--driver", SCREEN_DRIVERS));
+                }
+                return value;
+            },
+            "appium"
+        )
         .option(
             "--appium-port <port>",
             "the Appium server (default: the simulator's own, started when missing)",
