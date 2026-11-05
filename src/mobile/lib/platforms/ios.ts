@@ -43,8 +43,8 @@ export const iosPlatform: MobilePlatform = {
     async listDevices() {
         return (await listSimulators()).filter((device) => device.isAvailable).map(iosDevice);
     },
-    async boot(target) {
-        await bootSimulator(target);
+    async boot(target, options) {
+        await bootSimulator(target, options.timeoutMs);
         const device = (await listSimulators()).find((candidate) => candidate.udid === target);
 
         if (!device) {
