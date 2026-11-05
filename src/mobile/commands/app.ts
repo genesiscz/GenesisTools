@@ -199,7 +199,11 @@ export function registerAppCommands(program: Command): void {
                 const ios = iosApp(project);
                 const device = await pickSimulator(options.udid);
                 const bundleId = ios.bundleId;
-                const configuration = options.configuration === "Debug" ? "Debug" : "Release";
+                if (options.configuration !== "Debug" && options.configuration !== "Release") {
+                    throw new Error("--configuration must be Debug or Release");
+                }
+
+                const configuration = options.configuration;
                 const appPath =
                     options.appPath ??
                     builtAppPath(ios, options.derivedData ?? defaultDerivedData(project.appDir), configuration);
