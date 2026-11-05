@@ -187,6 +187,26 @@ function isolateAgentEnv(): void {
 }
 
 /**
+ * T3 Code's state database (`<T3CODE_HOME>/userdata/statev2.sqlite`) lives outside `~/.genesis-tools` too: every
+ * session listing reads which T3 thread runs each session (`t3SessionThreads`), so a test read this Mac's real
+ * threads. `T3CODE_HOME` points at an empty folder ("no T3 Code"), also when the run inherited one; a test that needs
+ * threads writes its own database and passes its folder.
+ */
+function isolateT3Home(): void {
+    if (env.test.allowsRealHome()) {
+        return;
+    }
+
+    const sandboxRoot = mkdtempSync(join(tmpdir(), "gt-test-t3-home-"));
+    env.testing.set("T3CODE_HOME", sandboxRoot);
+    afterEach(() => {
+        if (!env.test.allowsRealHome() && !env.getTrimmed("T3CODE_HOME")) {
+            env.testing.set("T3CODE_HOME", sandboxRoot);
+        }
+    });
+}
+
+/**
  * The native agent homes (`CLAUDE_CONFIG_DIR`, `GROK_HOME`) live outside `~/.genesis-tools` too. Decision delivery
  * reads the live Claude receivers from `<claude home>/sessions` and asks the Grok leader on `<grok home>/leader.sock`,
  * so a test that did not script them read this Mac's real peer registry, or connected to the real Grok leader. Each
@@ -224,3 +244,4 @@ isolateAgentEnv();
 isolateObsidian();
 isolateCodexModelsCache();
 isolateNativeHomes();
+isolateT3Home();
