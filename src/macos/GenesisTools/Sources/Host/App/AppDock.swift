@@ -44,7 +44,7 @@ package enum AppDock {
     /// The hub, wherever it runs: this window, the running hub, or a new one. False when none runs and
     /// no new one could be started, so a caller that would quit can show something else instead.
     @discardableResult
-    static func showHub(_ hubWindow: NSWindow?) -> Bool {
+    static func showHub(_ hubWindow: NSWindow?, onFailure: @escaping @MainActor () -> Void = {}) -> Bool {
         // A build without the hub part (Host/AppParts.swift): the caller shows its own window instead.
         guard AppParts.has(face: "--hub") else {
             HubPerf.log("dock: this build has no hub part")
@@ -68,9 +68,10 @@ package enum AppDock {
                 DispatchQueue.main.async {
                     if let error {
                         HubPerf.log("dock: the hub did not start: \(error.localizedDescription)")
+                        onFailure()
                         return
                     }
-                    guard let app else { return }
+                    guard let app else { onFailure(); return }
                     NSApp.yieldActivation(to: app)
                     app.activate()
                     HubPerf.log("dock: the hub started as pid \(app.processIdentifier), focus handed to it")
