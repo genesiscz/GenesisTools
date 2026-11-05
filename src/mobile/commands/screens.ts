@@ -109,6 +109,7 @@ export function registerScreens(program: Command): void {
         .option("--name <name>", "the file name stem (default: the route name, or screen)")
         .option("--json", "print the result as JSON")
         .action(async (target: string | undefined, options: ScreenOptions & { out?: string; name?: string }) => {
+            const route = target ? projectRoute(await loadProject(options), target) : undefined;
             const { project, driver } = await openDriver(options);
             const outDir = options.out ?? runDirFor("captures", project.config.id);
 
