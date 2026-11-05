@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { findById, flatten, formatTree, parseSource, readLogBox, summarize } from "./a11y";
 import { AlertWatcher, decideAlert } from "./alerts";
 import { emulatorCommand, freeEmulatorPort, parseAdbDevices } from "./android";
@@ -271,4 +272,19 @@ describe("android", () => {
         expect(androidApp(project).apk).toBe("build/app.apk");
         expect(() => iosApp(project)).toThrow("has no platforms.ios");
     });
+});
+
+it("streams verbose build output without the captured-output ceiling", async () => {
+    let bytes = 0;
+    const result = await boundedCommand({
+        command: [process.execPath, "-e", "process.stdout.write('x'.repeat(5 * 1024 * 1024))"],
+        timeoutMs: 10_000,
+        streamOnly: true,
+        onStdout: (chunk) => {
+            bytes += chunk.byteLength;
+        },
+    });
+    expect(result.status).toBe(0);
+    expect(bytes).toBe(5 * 1024 * 1024);
+    expect(result.stdout.length).toBeLessThanOrEqual(16_384);
 });

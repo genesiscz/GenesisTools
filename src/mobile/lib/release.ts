@@ -210,6 +210,7 @@ export async function runRelease(
                 cwd: step.cwd,
                 environment: { ...env.getProcessEnv(), ...step.env },
                 timeoutMs: 3_600_000,
+                streamOnly: true,
                 onStdout: pump,
                 onStderr: pump,
             });
