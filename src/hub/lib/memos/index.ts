@@ -238,7 +238,7 @@ async function liveAppendNote(text: string): Promise<string> {
 
 async function liveSend(key: string, text: string, idempotencyKey: string): Promise<{ ok: boolean; detail: string }> {
     const { sendToBoardSession } = await import("../send/index");
-    const receipt = await sendToBoardSession({ key, text, timing: "next-turn", idempotencyKey });
+    const receipt = await sendToBoardSession({ key, text, timing: "now", idempotencyKey });
     const ok =
         receipt.outcome === "delivered" || receipt.outcome === "queued-daemon" || receipt.outcome === "queued-session";
     return { ok, detail: `${receipt.outcome} via ${receipt.route}: ${receipt.detail}` };
