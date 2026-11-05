@@ -17,7 +17,7 @@
  *
  * Usage: bun scripts/benchmarks/meetings-ocr/region.ts [--runs 3] [--frames 16] [--meeting <folder>] [--scratch <dir>] [--detail] [--json]
  */
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync } from "node:fs";
 import { loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
@@ -25,14 +25,22 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { closeDarwinKit } from "@genesiscz/utils/macos/darwinkit";
 import { recognizeText } from "@genesiscz/utils/macos/ocr";
-import { foldText, textSimilarity } from "@genesiscz/utils/macos/ocr-boxes";
-import { captureSync, listPsTable, parseCpuTime } from "@genesiscz/utils/process/ps";
 import { OCR_READ_DEFAULTS, type RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
 import { FrameOutput, type OcrRow } from "@genesiscz/utils/screen-recorder/frame-output";
-import type { CapturedFrame } from "@genesiscz/utils/screen-recorder/types";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { median } from "../fs/shared";
-import { changePercent, motionBoxes, signatureOf } from "./motion";
+import {
+    type BenchFrame,
+    consecutiveFrames,
+    flagValue,
+    helperCpuMs,
+    helperPid,
+    keptShare,
+    lineSet,
+    ownCpuMs,
+    rowsByDisplay,
+} from "./frames";
+import { signatureOf } from "./motion";
 
 const DEFAULT_MEETING = genesisToolsDir("meetings", "2026-11-04_16-32-meeting");
 const DEFAULT_SCRATCH = join(tmpdir(), "meetings-ocr-bench", "region");
@@ -52,121 +60,10 @@ const ARMS: Record<string, ReadSettings> = {
     "changed+textless": { ...OCR_READ_DEFAULTS, region: "changed", skipTextless: true },
 };
 
-interface Row {
-    file: string;
-    displayId: number;
-    changePercent?: number;
-    reason?: string;
-}
-
-interface BenchFrame {
-    path: string;
-    displayId: number;
-    frame: Omit<CapturedFrame, "path" | "atMs">;
-}
-
-function flagValue(flag: string): string | undefined {
-    const at = process.argv.indexOf(flag);
-    return at > 0 ? process.argv[at + 1] : undefined;
-}
-
-function readRows(meeting: string): Row[] {
-    return readFileSync(join(meeting, "ocr.jsonl"), "utf8")
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .map((line) => {
-            const row = SafeJSON.parse(line, { strict: true }) as Row;
-            return { file: row.file, displayId: row.displayId, changePercent: row.changePercent, reason: row.reason };
-        });
-}
-
 /** `count` consecutive rows of each of the two busiest displays, from the middle, as frames with motion facts. */
 async function prepare(meeting: string, scratch: string, count: number): Promise<BenchFrame[][]> {
-    const byDisplay = new Map<number, Row[]>();
-
-    for (const row of readRows(meeting)) {
-        byDisplay.set(row.displayId, [...(byDisplay.get(row.displayId) ?? []), row]);
-    }
-
-    const busiest = [...byDisplay.values()].sort((a, b) => b.length - a.length).slice(0, 2);
-    mkdirSync(scratch, { recursive: true });
-    const sequences: BenchFrame[][] = [];
-
-    for (const rows of busiest) {
-        const ordered = [...rows].sort((a, b) => a.file.localeCompare(b.file));
-        const start = Math.max(0, Math.floor(ordered.length / 2) - Math.floor(count / 2));
-        const picked = ordered.slice(start, start + count);
-        const frames: BenchFrame[] = [];
-        let previous: Awaited<ReturnType<typeof signatureOf>> | undefined;
-
-        for (const [index, row] of picked.entries()) {
-            const path = join(scratch, row.file.replace(/^frames\//, ""));
-
-            if (!existsSync(path)) {
-                copyFileSync(join(meeting, row.file), path);
-            }
-
-            const signature = await signatureOf(path);
-            const reason = index === 0 ? "first" : (row.reason ?? "change");
-            const comparable = previous && (reason === "change" || reason === "heartbeat");
-            const computed = previous ? changePercent(signature, previous) : 100;
-            frames.push({
-                path,
-                displayId: row.displayId,
-                frame: {
-                    changePercent: row.changePercent && row.changePercent > 0 ? row.changePercent : computed,
-                    reason,
-                    ...(comparable && previous
-                        ? { motionBoxes: reason === "change" ? motionBoxes(signature, previous) : [] }
-                        : {}),
-                },
-            });
-            previous = signature;
-        }
-
-        sequences.push(frames);
-    }
-
-    return sequences;
-}
-
-async function helperPid(): Promise<number | null> {
-    const rows = await listPsTable();
-    return rows.find((row) => row.ppid === process.pid && /darwinkit/i.test(row.command))?.pid ?? null;
-}
-
-function helperCpuMs(pid: number | null): number {
-    return pid === null ? 0 : (parseCpuTime(captureSync("ps", ["-p", String(pid), "-o", "cputime="]).stdout) ?? 0);
-}
-
-function ownCpuMs(): number {
-    const usage = process.cpuUsage();
-    return (usage.user + usage.system) / 1000;
-}
-
-function lineSet(text: string): Set<string> {
-    return new Set(
-        text
-            .split("\n")
-            .map(foldText)
-            .filter((line) => line.length > 0)
-    );
-}
-
-/** A line the same up to Vision's small misreads ("Quick views", "OuIck VewS"): bigram similarity at least this. */
-const SAME_LINE = 0.8;
-
-/** The share of `want`'s lines that `got` holds, the same or nearly the same. */
-function keptShare(want: Set<string>, got: Set<string>): number {
-    if (want.size === 0) {
-        return 1;
-    }
-
-    const others = [...got];
-    const kept = [...want].filter(
-        (line) => got.has(line) || others.some((other) => textSimilarity(line, other) >= SAME_LINE)
-    );
-    return kept.length / want.size;
+    const busiest = [...rowsByDisplay(meeting).values()].sort((a, b) => b.length - a.length).slice(0, 2);
+    return consecutiveFrames({ meeting, scratch, count, displays: busiest });
 }
 
 interface ArmTotals {
