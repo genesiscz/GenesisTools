@@ -336,7 +336,7 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
         expect(plan({ psStdout: listing, stalePids: ["301", "302", "303"], frontPid: 999 })).toEqual([
             ["open", "-n", "-g", BUNDLE, "--args", "--link-relay"],
             ["open", "-n", "-g", BUNDLE, "--args", "--widget", "--ensure-running", "--no-activate"],
-            ["open", "-n", "-g", BUNDLE, "--args", "--hub", "--mode", "sessions", "--resume", "--no-activate"],
+            ["open", "-n", "-g", "--env", "HOME=/Users/alice", BUNDLE, "--args", "--hub", "--mode", "sessions", "--resume", "--no-activate"],
         ]);
     });
 
@@ -426,7 +426,7 @@ describe("a rebuild reopens each face on the environment it started with", () =>
                 "m1",
                 "--no-activate",
             ],
-            ["open", "-n", "-g", BUNDLE, "--args", "--hub", "--mode", "sessions", "--resume", "--no-activate"],
+            ["open", "-n", "-g", "--env", "HOME=/Users/alice", BUNDLE, "--args", "--hub", "--mode", "sessions", "--resume", "--no-activate"],
         ]);
     });
 
@@ -459,15 +459,14 @@ describe("a rebuild reopens each face on the environment it started with", () =>
 
     it("keeps only the restored variables that are set", () => {
         expect(restoredEnvironment(environments[401])).toEqual({ GENESIS_TOOLS_HOME: SANDBOX, HOME: "/Users/alice" });
-        // A face on the real home alone keeps nothing: its HOME is the build's own.
-        expect(restoredEnvironment({ HOME: "/Users/alice", PATH: "/usr/bin" })).toBeUndefined();
-        expect(restoredEnvironment(environments[402])).toBeUndefined();
+        expect(restoredEnvironment({ HOME: "/Users/alice", PATH: "/usr/bin" })).toEqual({ HOME: "/Users/alice" });
+        expect(restoredEnvironment(environments[402])).toEqual({ HOME: "/Users/alice" });
         expect(faceHome(environments[401])).toBe(SANDBOX);
         expect(faceHome(environments[402])).toBe("/Users/alice");
     });
 
     it("never hands the build's own sandbox to a face through open", () => {
-        const build = { PATH: "/usr/bin", GENESIS_TOOLS_HOME: "/tmp/build-sandbox", GENESIS_HUB_SERVER: "0" };
+        const build = { PATH: "/usr/bin", HOME: "/tmp/build-home", GENESIS_TOOLS_HOME: "/tmp/build-sandbox", GENESIS_HUB_SERVER: "0" };
         expect(openEnvironment(build)).toEqual({ PATH: "/usr/bin" });
     });
 

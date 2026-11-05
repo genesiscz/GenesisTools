@@ -29,7 +29,7 @@ export type { WindowFaceKind };
  * The variables that decide whose data a face reads and which `tools` it runs: a face started on a sandbox
  * (`GENESIS_TOOLS_HOME=/tmp/x`) or on a worktree's CLI comes back with the values it had, never with the build's.
  */
-export const RESTORED_ENVIRONMENT = ["GENESIS_TOOLS_HOME", "GENESIS_TOOLS_BIN", "GENESIS_HUB_SERVER"] as const;
+export const RESTORED_ENVIRONMENT = ["GENESIS_TOOLS_HOME", "GENESIS_TOOLS_BIN", "GENESIS_HUB_SERVER", "HOME"] as const;
 
 export interface WindowFace {
     pid: number;
@@ -462,16 +462,13 @@ export interface RelaunchCapture {
  * A face's values of {@link RESTORED_ENVIRONMENT}, or undefined when it had none of them. A face that ran on its own
  * `GENESIS_TOOLS_HOME` (a sandbox) also keeps its `HOME`: the sandbox's other app data (the Wispr Flow folder) is read
  * through `homedir()`, and a meetings window reopened on the sandbox but the real home mixed the two (2026-11-05).
- * `HOME` is not in the list itself, because `openEnvironment` removes the list from the build's own environment.
+ * `HOME` is restored independently: a HOME-only sandbox must not inherit the build process's home.
  */
 export function restoredEnvironment(environment: Record<string, string>): Record<string, string> | undefined {
     const kept: Record<string, string> = Object.fromEntries(
         RESTORED_ENVIRONMENT.flatMap((key) => (environment[key] ? [[key, environment[key]]] : []))
     );
 
-    if (kept.GENESIS_TOOLS_HOME && environment.HOME) {
-        kept.HOME = environment.HOME;
-    }
 
     return Object.keys(kept).length > 0 ? kept : undefined;
 }
