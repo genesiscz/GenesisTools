@@ -61,6 +61,12 @@ const program = new Command()
             recordRun?: string;
             json?: boolean;
         }) => {
+            if (options.baseline && options.compare) {
+                throw new InvalidArgumentError(
+                    "--baseline and --compare cannot be used together; compare before replacing a baseline"
+                );
+            }
+
             const loadBefore = uptime();
             for (let index = 0; index < 2; index++) {
                 await readWidgetRoster();

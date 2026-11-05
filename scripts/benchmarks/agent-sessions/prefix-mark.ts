@@ -78,6 +78,12 @@ const program = new Command()
             compare?: string | true;
             recordRun?: string;
         }) => {
+            if (options.baseline && options.compare) {
+                throw new InvalidArgumentError(
+                    "--baseline and --compare cannot be used together; compare before replacing a baseline"
+                );
+            }
+
             const files = largestTranscripts(options.files);
             const loadBefore = uptime();
             const cpuPerMb: number[] = [];
