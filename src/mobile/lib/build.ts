@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { type IosApp, type IosConfiguration, iosApp, type MobileProject } from "@genesiscz/utils/mobile/project";
 import { installApp } from "@genesiscz/utils/mobile/simulator";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { fingerprintBuild, saveFingerprint } from "./fingerprint";
 
 const log = logger.child({ component: "mobile.build" });
@@ -67,29 +68,32 @@ export async function buildAndInstall(options: {
     const started = performance.now();
     log.debug({ command: command.join(" "), logPath }, "xcodebuild start");
 
-    const proc = Bun.spawn(command, { cwd: appDir, stdout: "pipe", stderr: "pipe" });
     const sink = createWriteStream(logPath);
     const errors: string[] = [];
-    const pump = async (stream: ReadableStream<Uint8Array>) => {
-        const decoder = new TextDecoder();
-        for await (const chunk of stream) {
-            const text = decoder.decode(chunk, { stream: true });
-            sink.write(text);
-
-            for (const line of text.split("\n")) {
-                if (/\berror:/.test(line)) {
-                    errors.push(line.trim());
-                }
-            }
-        }
+    let sinkError: Error | undefined;
+    sink.on("error", (error) => {
+        sinkError = error;
+    });
+    const pump = (chunk: Uint8Array) => {
+        const text = new TextDecoder().decode(chunk);
+        sink.write(text);
+        errors.push(...text.split("\n").filter((line) => /\berror:/.test(line)));
     };
+    let proc: Awaited<ReturnType<typeof boundedCommand>>;
 
-    await Promise.all([pump(proc.stdout), pump(proc.stderr), proc.exited]);
-    sink.end();
+    try {
+        proc = await boundedCommand({ command, cwd: appDir, timeoutMs: 3_600_000, onStdout: pump, onStderr: pump });
+    } finally {
+        sink.end();
+    }
+
+    if (sinkError) {
+        throw sinkError;
+    }
     const seconds = Math.round((performance.now() - started) / 1000);
-    log.debug({ exitCode: proc.exitCode, seconds, errors: errors.length }, "xcodebuild done");
+    log.debug({ exitCode: proc.status, seconds, errors: errors.length }, "xcodebuild done");
 
-    if (proc.exitCode !== 0) {
+    if (proc.status !== 0) {
         const tail = errors.slice(-5).join("\n") || "no error: line, read the log";
         throw new Error(`xcodebuild failed after ${seconds} s (log ${logPath}):\n${tail}`);
     }
