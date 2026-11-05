@@ -152,6 +152,7 @@ extension GitWorkingTreeSource {
     /// side of a text file already listed is reused, since HEAD did not move.
     public func refresh(_ previous: Snapshot, batch: ReviewWatchBatch, layout: ReviewRepositoryLayout) -> WorkingTreeRefresh {
         if batch.rescan { return .full(reason: "FSEvents asked for a rescan") }
+        if batch.index { return .full(reason: "the index may have changed paths without changing its count") }
         guard var marks = previous.marks else { return .full(reason: "the last answer has no marks") }
         guard let now = readMarks(layout) else { return .full(reason: "HEAD could not be read") }
         if now.headFile != marks.headFile || now.head != marks.head { return .full(reason: "HEAD moved") }
