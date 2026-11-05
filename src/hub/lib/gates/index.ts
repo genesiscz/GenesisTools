@@ -2,6 +2,7 @@ import type { GateLedgerDto, GateRaiseReceiptDto } from "@app/dev-dashboard/cont
 import { type GateLedgerDeps, readGateLedger } from "@genesiscz/utils/audit/gate-ledger";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 
 /**
  * The Touch ID waiting card (F22). `gateLedger` is the read the phone's card and `tools hub gates` show; `raiseGate`
@@ -29,15 +30,15 @@ async function activateProcess(pid: number): Promise<string> {
         `var app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${pid});`,
         "app.isNil() ? 'gone' : (app.activateWithOptions($.NSApplicationActivateAllWindows) ? 'ok' : 'refused');",
     ].join(" ");
-    const proc = Bun.spawn(["/usr/bin/osascript", "-l", "JavaScript", "-e", script], {
-        stdout: "pipe",
-        stderr: "pipe",
+    const result = await boundedCommand({
+        command: ["/usr/bin/osascript", "-l", "JavaScript", "-e", script],
+        timeoutMs: 10_000,
     });
-    const [stdout, stderr, code] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
+    const { stdout, stderr, status: code } = result;
+    if (result.error) {
+        logger.warn({ pid, error: result.error }, "gates: activation failed or exceeded its deadline");
+        return "failed: activation did not complete";
+    }
     logger.debug({ pid, code, stdout: stdout.trim(), stderr: stderr.trim() }, "gates: activate a window process");
     return code === 0 ? stdout.trim() : `failed: ${stderr.trim() || `exit ${code}`}`;
 }
