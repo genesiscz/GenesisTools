@@ -396,6 +396,43 @@ describe("what the read-back may forgive", () => {
 });
 
 describe("Markdown tag-like text", () => {
+    test("uses Markdown block structure for code and HTML inside containers", () => {
+        const source = [
+            "text",
+            "    <br>",
+            "",
+            "- a",
+            "    - <b>bold</b>",
+            "",
+            "    List<B>",
+            "",
+            "> ```html",
+            "> <div>",
+            "> ```",
+            "",
+            "```x```",
+            "<b>still prose</b>",
+        ].join("\n");
+        expect(escapeMarkdownTagLikes(source)).toBe(
+            [
+                "text",
+                "    <br>",
+                "",
+                "- a",
+                "    - <b>bold</b>",
+                "",
+                "    List<B>",
+                "",
+                "> ```html",
+                "> &lt;div>",
+                "> ```",
+                "",
+                "```x```",
+                "<b>still prose</b>",
+            ].join("\n")
+        );
+        expect(escapeMarkdownTagLikes("before\n\n    List<B>")).toBe("before\n\n    List&lt;B>");
+    });
     test("the update pipeline escapes only Markdown fields and reports a lossy read-back", async () => {
         for (const switched of [true, false]) {
             const ado = client(
