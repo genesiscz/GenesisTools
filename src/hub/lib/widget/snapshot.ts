@@ -1181,7 +1181,9 @@ export async function widgetSnapshot({
                 parent.project ?? parent.cwd,
                 timeOf(parent.lastAt)
             );
-        session.transcriptPath ??= parent.filePath;
+        if (!session.transcriptPath) {
+            setTranscript(session, parent.filePath ?? undefined);
+        }
         session.role = "lead";
         session.model = parent.model ?? session.model;
         session.account = parent.account ?? session.account;

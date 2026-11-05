@@ -3598,6 +3598,32 @@ describe("widget inbox notifications", () => {
                 sources,
             })
         ).rejects.toThrow("different session");
+
+        sources.sessions = async () => [];
+        sources.agents = async () => ({
+            generatedAt: "parent fallback",
+            parents: [
+                {
+                    sessionId: "fixture-parent-thread",
+                    provider: "codex",
+                    title: "Parent",
+                    project: "Fixture",
+                    cwd: "/fixture",
+                    filePath: "/fixture/mapped-worker.jsonl",
+                    model: null,
+                    account: null,
+                    startedAt: null,
+                    lastAt: worker.lastAt,
+                    live: false,
+                    children: [],
+                },
+            ],
+            orphans: [worker],
+        });
+        const fromParent = await widgetSnapshot({ root: directory, now: FIXTURE_CLOCK, sources });
+        expect(fromParent.sessions).toHaveLength(1);
+        expect(fromParent.sessions[0].target.sessionId).toBe("fixture-parent-thread");
+        expect(fromParent.sessions[0].agentId).toBe(worker.id);
     });
 
     test("reading a pending question leaves its needs-answer state intact", async () => {
