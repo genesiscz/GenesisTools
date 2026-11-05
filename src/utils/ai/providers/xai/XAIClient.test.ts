@@ -48,3 +48,14 @@ test("a failed lookup is not kept: the next call asks again", async () => {
     await expect(client.requireKey()).rejects.toThrow("no account");
     expect(await client.requireKey()).toBe("key");
 });
+
+test("an injected transport receives transcription requests and the bound key", async () => {
+    const requests: Array<{ url: string; authorization: string | null }> = [];
+    const transport: typeof fetch = Object.assign(async (input: string | URL | Request, init?: RequestInit) => {
+        requests.push({ url: String(input), authorization: new Headers(init?.headers).get("Authorization") });
+        return new Response("ok");
+    }, { preconnect: fetch.preconnect });
+    const client = new XAIClient("fixture-key", { fetch: transport });
+    expect(await (await client.fetch("/stt", { method: "POST" })).text()).toBe("ok");
+    expect(requests).toEqual([{ url: "https://api.x.ai/v1/stt", authorization: "Bearer fixture-key" }]);
+});
