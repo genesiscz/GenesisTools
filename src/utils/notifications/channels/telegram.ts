@@ -11,7 +11,7 @@ export async function dispatchTelegram(event: NotificationEvent, config: Telegra
         const { createApi } = await import("@genesiscz/utils/telegram-bot/lib/api");
         const { formatTelegramNotification } = await import("@genesiscz/utils/telegram-bot/lib/formatting");
         const { postTelegramMessage } = await import("@genesiscz/utils/telegram-bot/lib/messages");
-        const api = createApi(config.botToken);
+        const api = createApi(config.botToken, config.apiRoot);
 
         const text = formatTelegramNotification({ title: event.title, message: event.message });
         const chatId = Number(config.chatId);
@@ -70,7 +70,7 @@ export const telegramChannel: ChannelDefinition<"telegram"> = {
             }
 
             return await retractTelegramNotice({
-                api: createApi(token, bot?.apiRoot),
+                api: createApi(token, config.apiRoot ?? bot?.apiRoot),
                 noticeId,
                 edit: (original) => `${original ?? noticeId}\n\n${TELEGRAM_CLOSED_ELSEWHERE}`,
             });

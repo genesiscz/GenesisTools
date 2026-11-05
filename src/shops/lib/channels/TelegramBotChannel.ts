@@ -10,19 +10,22 @@ const log = logger.child({ component: "TelegramBotChannel" });
 export interface TelegramBotChannelConfig {
     chatId: string | number;
     botToken: string;
+    apiRoot?: string;
     /** Sends through the shared Telegram channel of the notification table by default. Tests pass a spy. */
-    post?: (event: NotificationEvent, target: { botToken: string; chatId: string }) => Promise<ChannelReceipt>;
+    post?: (event: NotificationEvent, target: { botToken: string; chatId: string; apiRoot?: string }) => Promise<ChannelReceipt>;
 }
 
 export class TelegramBotChannel implements NotificationChannel {
     readonly name = "telegram" as const;
     private readonly chatId: string;
     private readonly botToken: string;
+    private readonly apiRoot?: string;
     private readonly post: NonNullable<TelegramBotChannelConfig["post"]>;
 
     constructor(config: TelegramBotChannelConfig) {
         this.chatId = String(config.chatId);
         this.botToken = config.botToken;
+        this.apiRoot = config.apiRoot;
         this.post = config.post ?? ((event, target) => CHANNELS.telegram.post(event, { enabled: true, ...target }));
     }
 
@@ -46,6 +49,7 @@ export class TelegramBotChannel implements NotificationChannel {
         return new TelegramBotChannel({
             chatId: target.chatId,
             botToken: target.botToken,
+            apiRoot: target.apiRoot,
         });
     }
 
@@ -57,7 +61,7 @@ export class TelegramBotChannel implements NotificationChannel {
         const url = payload.buyUrl ?? `http://localhost:3073${payload.detailUrl}`;
         const receipt = await this.post(
             { app: "shops", title: payload.title, message: `${payload.body}\n\n${url}` },
-            { botToken: this.botToken, chatId: this.chatId }
+            { botToken: this.botToken, chatId: this.chatId, ...(this.apiRoot ? { apiRoot: this.apiRoot } : {}) }
         );
 
         if (!receipt.ok) {

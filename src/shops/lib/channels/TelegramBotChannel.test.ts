@@ -1,7 +1,10 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import { telegramChannel } from "@genesiscz/utils/notifications/channels/telegram";
+import { createApi } from "@genesiscz/utils/telegram-bot/lib/api";
+import { postTelegramMessage } from "@genesiscz/utils/telegram-bot/lib/messages";
 import { TelegramBotChannel } from "@app/shops/lib/channels/TelegramBotChannel";
 import type { NotificationPayload } from "@app/shops/lib/channels/types";
-import type { NotificationEvent } from "@genesiscz/utils/notifications";
+import { CHANNELS, type NotificationEvent } from "@genesiscz/utils/notifications";
 
 const PAYLOAD: NotificationPayload = {
     notification: {
@@ -47,6 +50,31 @@ function makeChannel(args: { chatId?: string; ok?: boolean }) {
 }
 
 describe("TelegramBotChannel", () => {
+    it("uses the shared bot API root for shops and retractions", async () => {
+        const paths: string[] = [];
+        const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
+            paths.push(new URL(request.url).pathname);
+            return Response.json({ ok: true, result: { message_id: 1, date: 1, chat: { id: 42, type: "private" }, text: "notice" } });
+        } });
+        const apiRoot = `http://127.0.0.1:${server.port}`;
+        const post = spyOn(CHANNELS.telegram, "post").mockImplementation((event, config) => {
+            if (config.apiRoot !== apiRoot) { throw new Error("not the test server"); }
+            return Promise.resolve({ ok: true });
+        });
+        try {
+            const bot = { botToken: "123:abc", chats: { commands: 42 }, configuredAt: "2026-01-01", apiRoot };
+            const channel = TelegramBotChannel.fromEnv({}, bot);
+            expect((await channel!.dispatch(PAYLOAD)).delivered).toBe(true);
+            const config = { enabled: true, botToken: bot.botToken, chatId: "42", apiRoot };
+            await postTelegramMessage({ api: createApi(bot.botToken, apiRoot), chatId: 42, text: "hello", noticeId: "api-root-test" });
+            expect(await telegramChannel.retract("api-root-test", config)).toBe(true);
+            expect(post.mock.calls[0][1].apiRoot).toBe(apiRoot);
+            expect(paths.map((path) => path.split("/").at(-1))).toEqual(["sendMessage", "editMessageText"]);
+        } finally {
+            post.mockRestore();
+            server.stop(true);
+        }
+    });
     it("available is true when constructed with chatId+client", () => {
         const { channel } = makeChannel({});
         expect(channel.available()).toBe(true);
