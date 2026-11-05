@@ -1,7 +1,8 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { expect, test } from "bun:test";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkProjects, installStamp, ScratchTree, testFolders } from "./layer-cut";
-import { expect, test } from "bun:test";
 import { loadTable } from "./layer-cut-tables/load";
 import unified from "./layer-cut-tables/unified";
 
@@ -21,21 +22,36 @@ test("--table selects a complete alternate cut without changing the default", as
 
 test("test discovery uses the checked tree even when the source no longer has its tests", () => {
     const entry = { mode: "100644", sha: "fixture" };
-    const checked = new Map([["src/widget/index.ts", entry], ["src/widget/index.test.ts", entry]]);
+    const checked = new Map([
+        ["src/widget/index.ts", entry],
+        ["src/widget/index.test.ts", entry],
+    ]);
     expect(testFolders(["src/widget/index.ts"], checked)).toEqual(["src/widget"]);
     expect(testFolders(["src/widget/index.ts"], new Map())).toEqual([]);
 });
 
 test("project discovery includes mobile configs for selected mobile files", () => {
     const entry = { mode: "100644", sha: "fixture" };
-    const tree = new Map(["tsconfig.json", "DevDashboard/mobile/tsconfig.json", "DevDashboard/mobile/package.json"].map((file) => [file, entry]));
-    expect(checkProjects(["DevDashboard/mobile/src/screen.tsx"], tree)).toEqual(["DevDashboard/mobile/tsconfig.json", "tsconfig.json"]);
+    const tree = new Map(
+        ["tsconfig.json", "DevDashboard/mobile/tsconfig.json", "DevDashboard/mobile/package.json"].map((file) => [
+            file,
+            entry,
+        ])
+    );
+    expect(checkProjects(["DevDashboard/mobile/src/screen.tsx"], tree)).toEqual([
+        "DevDashboard/mobile/tsconfig.json",
+        "tsconfig.json",
+    ]);
     expect(checkProjects(["src/widget/index.ts"], tree)).toEqual(["tsconfig.json"]);
 });
 
 test("install invalidation covers workspace manifests and standalone project locks", () => {
     const entry = { mode: "100644", sha: "before" };
-    const tree = new Map(["bun.lock", "src/utils/package.json", "DevDashboard/mobile/package.json", "DevDashboard/mobile/bun.lock"].map((file) => [file, entry]));
+    const tree = new Map(
+        ["bun.lock", "src/utils/package.json", "DevDashboard/mobile/package.json", "DevDashboard/mobile/bun.lock"].map(
+            (file) => [file, entry]
+        )
+    );
     const initial = installStamp(tree);
     for (const file of [...tree.keys()].filter((file) => file !== "bun.lock")) {
         tree.set(file, { ...entry, sha: "after" });
@@ -46,11 +62,59 @@ test("install invalidation covers workspace manifests and standalone project loc
     expect(installStamp(tree)).toBe(initial);
 });
 
+test("cut preserves foreign refs and checks recorded tests without resolving a moving source", async () => {
+    const script = join(import.meta.dir, "layer-cut.ts");
+    const root = mkdtempSync("/tmp/cc/GenesisTools/a7346bf7-545b-49f3-9f68-bfea934db066/rl-739/cut-");
+    const invoke = (cmd: string[]) => {
+        const result = Bun.spawnSync(cmd, { cwd: root, stdout: "pipe", stderr: "pipe" });
+        expect(result.exitCode, result.stderr.toString()).toBe(0);
+        return result.stdout.toString().trim();
+    };
+    const git = (...args: string[]) => invoke(["git", ...args]);
+    git("init");
+    git("config", "user.name", "Fixture");
+    git("config", "user.email", "alice@example.com");
+    writeFileSync(join(root, "package.json"), SafeJSON.stringify({
+        name: "fixture", scripts: { prepare: "git config layercut.prepare ran" },
+    }));
+    invoke(["bun", "install", "--ignore-scripts"]);
+    git("add", "package.json");
+    // Bun can omit a lock for a package with no dependencies.
+    if (existsSync(join(root, "bun.lock"))) {
+        git("add", "bun.lock");
+    }
+    git("-c", "core.hooksPath=/dev/null", "commit", "-m", "fixture base");
+    const base = git("rev-parse", "HEAD");
+    mkdirSync(join(root, "src/widget"), { recursive: true });
+    mkdirSync(join(root, "scripts"));
+    writeFileSync(join(root, "src/widget/index.ts"), "export const widget = 1;\n");
+    writeFileSync(join(root, "src/widget/index.test.ts"), "// test fixture\n");
+    const proof = join(root, "tests-ran");
+    writeFileSync(join(root, "scripts/test.ts"), `await Bun.write(${SafeJSON.stringify(proof)}, process.argv.slice(2).join(","));`);
+    git("add", "src/widget/index.ts", "src/widget/index.test.ts", "scripts/test.ts");
+    git("-c", "core.hooksPath=/dev/null", "commit", "-m", "fixture source");
+    const source = git("rev-parse", "HEAD");
+    git("update-ref", "refs/heads/cut/feat/foreign-table", base);
+    const configBefore = git("config", "--local", "--list");
+    const tableFile = join(root, "table.ts");
+    writeFileSync(tableFile, `export default ${SafeJSON.stringify({
+        branches: [{ name: "feat/fixture", parent: null, subject: "feat(tools): fixture cut", scopes: [], globs: ["**"] }],
+        keepAtBase: {}, defaults: { unified: source, unifiedBranch: "fixture", base }, selection: "diff", refPrefix: "refs/heads/cut/",
+    })};`);
+    const scratch = join(root, "scratch");
+    invoke(["bun", script, "--table", tableFile, "--scratch", scratch, "--no-typecheck"]);
+    expect(git("rev-parse", "refs/heads/cut/feat/foreign-table")).toBe(base);
+    invoke(["bun", script, "--table", tableFile, "--scratch", scratch, "--checks-only", "--tests", "--unified", "missing-moving-source"]);
+    expect(readFileSync(proof, "utf8")).toBe("src/widget");
+    expect(git("config", "--local", "--list")).toBe(configBefore);
+    const checks = SafeJSON.parse(readFileSync(join(scratch, "checks.json"), "utf8"));
+    expect(checks.tests["feat/fixture"].folders).toEqual(["src/widget"]);
+});
+
 test("--table requires a module path", async () => {
     await expect(loadTable(["--table"])).rejects.toThrow("requires a path");
     await expect(loadTable(["--table", "--tests"])).rejects.toThrow("requires a path");
 });
-
 
 test("scratch reuse refuses developer checkouts and dirty owned trees", async () => {
     const original = process.cwd();
