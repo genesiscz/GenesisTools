@@ -207,6 +207,7 @@ public final class EdgePanelController<Content: View> {
     private var expandedSize: CGSize
     private var previewSize = CGSize(width: 300, height: 240)
     private var sideCenterY: CGFloat?
+    private var topCenterX: CGFloat?
     private var lastTarget: CGRect?
     private var lastPresentation: WidgetModulePresentation?
     /// A transition that is replaced stops its ticker, whoever replaces it.
@@ -289,6 +290,8 @@ public final class EdgePanelController<Content: View> {
     public func setExpandedSize(_ size: CGSize) { expandedSize = size }
     public func setPreviewSize(_ size: CGSize) { previewSize = size }
     public func setSideCenterY(_ value: CGFloat) { sideCenterY = value }
+    /// The horizontal center of a top panel, in screen coordinates; nil centers it on the screen.
+    public func setTopCenterX(_ value: CGFloat?) { topCenterX = value }
 
     /// The outline the user sees, in screen coordinates: the animated shape during a transition, else the window.
     public var visibleFrame: CGRect {
@@ -353,7 +356,7 @@ public final class EdgePanelController<Content: View> {
         let target = EdgePanelGeometry.frame(
             placement: placement, size: size,
             screen: screen.frame, visible: screen.visibleFrame,
-            sideCenterY: sideCenterY ?? screen.visibleFrame.midY + 55)
+            sideCenterY: sideCenterY ?? screen.visibleFrame.midY + 55, topCenterX: topCenterX)
         if lastTarget == target, lastPresentation == presentation, !reduceMotion { return }
         lastTarget = target
         lastPresentation = presentation

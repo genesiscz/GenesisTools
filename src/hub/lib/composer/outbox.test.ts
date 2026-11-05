@@ -1815,6 +1815,7 @@ test("a single preference edit preserves unrelated saved choices and rejects mal
         sideGroups: [["tasks"], ["agents"], ["capture"]],
         sideLayout: "separated",
         sidePosition: 0.2,
+        topPosition: 0.8,
         hoverPreviews: false,
         glassEffect: false,
         voiceProvider: "local",
@@ -1833,7 +1834,13 @@ test("a single preference edit preserves unrelated saved choices and rejects mal
     await expect(
         performWidgetAction({ root: directory, input: { action: "preferences", patch: { sidePosition: -1 } } })
     ).rejects.toThrow();
+    await expect(
+        performWidgetAction({ root: directory, input: { action: "preferences", patch: { topPosition: 2 } } })
+    ).rejects.toThrow();
     expect((await readWidgetState(directory)).preferences).toEqual(changed);
+    await performWidgetAction({ root: directory, input: { action: "preferences", patch: { topPosition: 0 } } });
+    expect((await readWidgetState(directory)).preferences).toEqual({ ...changed, topPosition: 0 });
+    await performWidgetAction({ root: directory, input: { action: "preferences", patch: { topPosition: 0.8 } } });
     await performWidgetAction({
         root: directory,
         input: {
@@ -1877,8 +1884,11 @@ test("legacy preferences gain independent module layouts without accepting off-s
     expect(preferences.topModules).toEqual(["agents"]);
     expect(preferences.sideGroups).toHaveLength(3);
     expect(preferences.sidePosition).toBe(0.5);
+    expect(preferences.topPosition).toBe(0.5);
     expect(preferences.hoverPreviews).toBe(true);
     expect(widgetPreferencesSchema.safeParse({ sidePosition: -1 }).success).toBe(false);
+    expect(widgetPreferencesSchema.safeParse({ topPosition: -1 }).success).toBe(false);
+    expect(widgetPreferencesSchema.safeParse({ topPosition: 1.5 }).success).toBe(false);
     expect(widgetPreferencesSchema.safeParse({ sideGroups: [["agents"]] }).success).toBe(false);
     expect(widgetPreferencesSchema.safeParse({ topModules: ["../../invalid"] }).success).toBe(false);
 });
