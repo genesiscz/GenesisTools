@@ -170,7 +170,7 @@ async function loadTranscript(resolved: ResolvedTranscript, { withNative = true 
 
 /** The verdict for one resolved transcript, from its tail only (cheap even for a huge file). */
 async function stuckOf(resolved: ResolvedTranscript, thresholds: StuckThresholds, now: number) {
-    const envelope = await transcriptEnvelope(resolved, { limit: STUCK_TURNS });
+    const envelope = await transcriptEnvelope(resolved, { limit: STUCK_TURNS }, { boundedTail: true });
     let inputKeys: Map<string, string> | undefined;
 
     try {
