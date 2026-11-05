@@ -1994,6 +1994,7 @@ test("Teams observation bounds never count as an arrival", () => {
             dictionary: { abbrExpansion: "every", entries: [] },
             sourceWords: [],
             presence: attendance?.presence,
+            evidence: { selfName: "Self", segments: [], speaking: [], files: [] },
             now: "2026-11-02T15:00:00.000Z",
         });
         expect(items.some((item) => item.kind === "speaker-range" && item.speaker === "Newcomer")).toBe(exact);
