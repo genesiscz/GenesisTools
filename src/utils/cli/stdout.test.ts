@@ -124,6 +124,38 @@ describe("writeStdout on a closed pipe", () => {
         }
     });
 
+    it.each([
+        ["callback-first", "EIO"],
+        ["event-first", "EIO"],
+        ["event-first", "EPIPE"],
+    ])("routes the stream error (%s, %s)", async (order, code) => {
+        const script = `
+            import { writeStdoutStrict } from ${JSON.stringify(join(import.meta.dir, "stdout.ts"))};
+            const failure = Object.assign(new Error("write failed"), { code: ${JSON.stringify(code)} });
+            process.stdout.write = (_text, callback) => {
+                if (${JSON.stringify(order)} === "callback-first") {
+                    callback(failure);
+                    process.nextTick(() => process.stdout.emit("error", failure));
+                } else {
+                    process.stdout.emit("error", failure);
+                    callback(failure);
+                }
+                return false;
+            };
+            try {
+                await writeStdoutStrict("event");
+                process.exitCode = 2;
+            } catch (error) {
+                if (error !== failure) process.exitCode = 3;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        `;
+        const proc = Bun.spawn(["bun", "-e", script], { env: process.env, stdout: "pipe", stderr: "pipe" });
+        const stderr = await new Response(proc.stderr).text();
+        expect(await proc.exited).toBe(0);
+        expect(stderr).toBe("");
+    });
+
     it("still rejects any other write error", async () => {
         const spy = failingWrite("EIO");
 

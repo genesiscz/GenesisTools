@@ -4,6 +4,8 @@ export function isBrokenPipe(error: unknown): boolean {
 }
 
 let listening = false;
+const pendingWrites = new Set<(error: Error) => void>();
+const callbackErrors = new WeakSet<Error>();
 
 /**
  * Write text to stdout and reject if delivery fails.
@@ -19,21 +21,45 @@ let listening = false;
 export async function writeStdoutStrict(text: string): Promise<void> {
     if (!listening) {
         listening = true;
-        // Bun can emit the error after invoking the write callback.
+        // Bun can emit the same error after invoking the write callback.
         process.stdout.on("error", (error) => {
-            if (!isBrokenPipe(error)) {
-                throw error;
+            if (callbackErrors.has(error)) {
+                return;
+            }
+            if (pendingWrites.size === 0) {
+                if (!isBrokenPipe(error)) {
+                    throw error;
+                }
+                return;
+            }
+            for (const fail of pendingWrites) {
+                fail(error);
             }
         });
     }
     await new Promise<void>((resolve, reject) => {
-        process.stdout.write(text, (error?: Error | null) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve();
+        const fail = (error: Error) => {
+            pendingWrites.delete(fail);
+            reject(error);
+        };
+        pendingWrites.add(fail);
+        try {
+            process.stdout.write(text, (error?: Error | null) => {
+                pendingWrites.delete(fail);
+                if (error) {
+                    callbackErrors.add(error);
+                    reject(error);
+                } else {
+                    resolve();
+                }
+            });
+        } catch (error) {
+            pendingWrites.delete(fail);
+            if (error instanceof Error) {
+                callbackErrors.add(error);
             }
-        });
+            reject(error);
+        }
     });
 }
 
