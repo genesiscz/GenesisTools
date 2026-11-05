@@ -132,8 +132,8 @@ final class PRReadinessStore: ObservableObject {
             let batches = stride(from: 0, to: inputs.count, by: PRReadinessQuery.batch).map {
                 Array(inputs[$0..<min($0 + PRReadinessQuery.batch, inputs.count)])
             }
-            for round in stride(from: 0, to: batches.count, by: PRReadinessQuery.parallel) {
-                let group = Array(batches[round..<min(round + PRReadinessQuery.parallel, batches.count)])
+            for round in stride(from: 0, to: batches.count, by: 1) {
+                let group = [batches[round]]
                 let spans = group.map { HubPerf.begin("prs.readiness", "\($0.count) prs", awaits: true) }
                 let results = await Self.fetch(group)
                 for (span, result) in zip(spans, results) {
