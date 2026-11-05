@@ -119,6 +119,7 @@ async function sendToDevice({
         if (result.ok) {
             await deps.devices.update((devices) => {
                 const current = devices[device.id];
+                // A newer registration (another seenAt) or another route came in meanwhile: this result is not its.
                 if (current && current.seenAt === device.seenAt && sameRoute(current.route, device.route)) {
                     devices[device.id] = { ...current, route: flipped.route };
                 }
@@ -246,5 +247,3 @@ export const phoneChannel = createPhoneChannel({
     transports: PUSH_TRANSPORTS,
     keys: () => loadPushKeys(),
 });
-
-import { SafeJSON } from "@genesiscz/utils/json";
