@@ -267,6 +267,17 @@ export interface RecorderConfig<S> {
     finish: RecorderFinishConfig<S>;
 }
 
+/**
+ * A kind's configuration written on its own, outside the recording: given the recording it configures, so its hooks
+ * reach the recording's jobs, events and display book. `new FrameRecording(definition)` runs it.
+ */
+export type RecorderDefinition<S> = (recording: FrameRecording<S>) => RecorderConfig<S>;
+
+/** Declares a recorder kind's configuration; the identity, so the config is typed where it is written. */
+export function defineRecorderConfig<S>(definition: RecorderDefinition<S>): RecorderDefinition<S> {
+    return definition;
+}
+
 export class FrameRecording<S = unknown> extends RecorderControl {
     readonly kind: string;
     readonly methods: readonly RecorderMethod[];
@@ -294,9 +305,13 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     private readonly completed = Promise.withResolvers<StopAnswer>();
     private current: RecorderSettings;
     private sound: AudioState;
+    protected readonly config: RecorderConfig<S>;
 
-    constructor(protected readonly config: RecorderConfig<S>) {
+    /** A definition is called once, here; its hooks run only after `open()`. */
+    constructor(source: RecorderConfig<S> | RecorderDefinition<S>) {
         super();
+        const config = typeof source === "function" ? source(this) : source;
+        this.config = config;
         this.kind = config.kind;
         this.methods = config.methods;
         this.jobs = new JobRegistry((event) => this.emit("progress", { ...event }));
