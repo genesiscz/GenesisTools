@@ -405,6 +405,9 @@ async function readArm(options: {
 
     if (arm.kind === "vision") {
         const answer = await context.vision.read(one.path, arm, context.languages);
+        if (answer.error != null) {
+            throw new Error(`Vision arm ${name}, frame ${one.path}: ${answer.error}`);
+        }
         return {
             cpuMs: answer.cpuMs,
             wallMs: answer.wallMs,
