@@ -7,6 +7,8 @@ import Storage from "expo-sqlite/kv-store";
  * and the Mac keys both its replay cache and the durable session queue on it, so a draft sent twice is one delivery.
  */
 export interface SteerDraft {
+    /** Missing on legacy drafts whose destination is unknown; never replay those automatically. */
+    connectionId?: string;
     /** The idempotency key of every attempt. */
     id: string;
     /** The board key of the session. */
@@ -93,11 +95,14 @@ export interface FlushResult {
 export async function flushDrafts({
     store,
     send,
+    connectionId,
 }: {
     store: DraftStore;
+    connectionId: string;
     send: (draft: SteerDraft) => Promise<AgentSendReceiptDto>;
 }): Promise<FlushResult> {
-    const drafts = [...(await store.read())].sort((a, b) => a.createdAt - b.createdAt);
+    const drafts = (await store.read()).filter((draft) => draft.connectionId === connectionId)
+        .sort((a, b) => a.createdAt - b.createdAt);
     const result: FlushResult = { sent: [], failed: [], waiting: [] };
 
     for (const draft of drafts) {
