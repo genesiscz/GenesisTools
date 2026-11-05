@@ -78,6 +78,10 @@ export async function runE2e(options: {
 }): Promise<RunSummary> {
     const { project } = options;
     const runDir = resolve(options.runDir);
+    // Artifacts are named by the spec's basename: two specs of one name would overwrite each other's results.
+    if (new Set(options.specs.map((spec) => spec.name)).size !== options.specs.length) {
+        throw new Error("Spec basenames must be unique; rename ambiguous nested specs before running.");
+    }
     const startedAt = new Date().toISOString();
     mkdirSync(dirname(runDir), { recursive: true });
     // Exclusive creation prevents stale appended results and concurrent runs sharing artifacts.
