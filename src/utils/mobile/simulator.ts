@@ -250,8 +250,8 @@ export async function createSimulator(options: { name: string; deviceType: strin
  * Boots a simulator and waits until it has finished booting (`bootstatus -b` boots a shut-down device itself). It
  * opens no simulator UI: an open DeviceHub flips `isHeadless` for every Appium session on this Mac.
  */
-export async function bootSimulator(udid: string): Promise<void> {
-    await simctlOrThrow(["bootstatus", udid, "-b"], 300_000);
+export async function bootSimulator(udid: string, timeoutMs = 300_000): Promise<void> {
+    await simctlOrThrow(["bootstatus", udid, "-b"], timeoutMs);
 }
 
 export async function shutdownSimulator(udid: string): Promise<void> {

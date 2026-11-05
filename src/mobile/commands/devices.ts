@@ -83,8 +83,14 @@ export function registerDevices(program: Command): void {
         .option("--timeout <s>", "how long to wait until the device is ready", "300")
         .option("--json", "print the device as JSON")
         .action(async (id: string, options: DeviceOptions & { timeout: string }) => {
+            const timeoutMs = Number(options.timeout) * 1000;
+
+            if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+                throw new Error("--timeout must be a positive number of seconds");
+            }
+
             const platform = choosePlatform(options.platform, await loadOptionalProject(options));
-            const device = await platform.boot(id, { timeoutMs: Number(options.timeout) * 1000 });
+            const device = await platform.boot(id, { timeoutMs });
             options.json ? out.result(device) : ui.ok(`booted ${describe(device)}`);
         });
 
