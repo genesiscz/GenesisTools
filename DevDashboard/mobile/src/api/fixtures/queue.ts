@@ -204,7 +204,11 @@ export function fixtureSendDrafts(input: {
     for (const entry of input.drafts ?? []) {
         const item = decisions.find((decision) => decision.number === entry.number);
 
-        if (item && entry.expectedRevision !== undefined && entry.expectedRevision !== item.revision) {
+        if (!item) {
+            throw new Error(`DECISION ${entry.number} is not waiting in session ${input.session}`);
+        }
+
+        if (entry.expectedRevision !== undefined && entry.expectedRevision !== item.revision) {
             throw new Error(`DECISION ${entry.number} changed: the agent posted a new text`);
         }
     }
