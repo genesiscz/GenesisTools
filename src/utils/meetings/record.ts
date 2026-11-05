@@ -160,6 +160,8 @@ const recordingSpanSchema = z.object({
     stopReason: z.enum(RECORDING_STOP_REASONS).optional(),
 });
 export type RecordingSpan = z.infer<typeof recordingSpanSchema>;
+export const recordingDisplaySpanSchema = recordingSpanSchema.extend({ displayId: z.number() });
+export type RecordingDisplaySpan = z.infer<typeof recordingDisplaySpanSchema>;
 
 /**
  * The screen recording of a meeting, owned by the recorder. Every key is optional and unknown keys stay, because records
@@ -183,6 +185,8 @@ export const recordingBlockSchema = z
         bytes: z.number().optional(),
         /** Each stretch the recorder ran, over all its starts. */
         spans: z.array(recordingSpanSchema).optional(),
+        /** Capture intervals for each display; absent in older recordings. */
+        displaySpans: z.array(recordingDisplaySpanSchema).optional(),
         warning: z.string().optional(),
         clock: z.object({ source: z.string(), startedAt: isoTime }).optional(),
         /** When the failure notice of the current failure episode was posted; cleared by a piece that recorded. */
