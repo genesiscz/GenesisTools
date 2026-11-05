@@ -1,13 +1,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { realpathSync } from "node:fs";
-import { basename, resolve } from "node:path";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
-import { resolveAgentHost } from "@genesiscz/utils/agent/host";
-import { readCachedHistoryTitle } from "@genesiscz/utils/agent-sessions/cached-title";
-import { harnessOfRuntimeAgent, harnessPluginId } from "@genesiscz/utils/ai/providers/harness-index";
+import {
+    type CallerInput,
+    gitCommonRoot as identityGitCommonRoot,
+    toRuntimeContext,
+    whoIsCalling,
+} from "@genesiscz/utils/agent/identity";
 import { env as appEnv } from "@genesiscz/utils/env";
-import { logger } from "@genesiscz/utils/logger";
-import { resolveAncestorCwd } from "@genesiscz/utils/process/cwd";
 import { profiler } from "@genesiscz/utils/profile";
 
 export type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
@@ -46,183 +45,27 @@ export function callerCwd(): string {
     return callerScope.getStore()?.cwd ?? process.cwd();
 }
 
-function gitSync(args: string[], cwd: string): string | null {
-    try {
-        const r = prof.measure(`runtime.git ${args.join(" ")}`, () =>
-            Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "ignore" })
-        );
-        if (r.exitCode !== 0) {
-            return null;
-        }
-        const out = r.stdout.toString().trim();
-        return out.length > 0 ? out : null;
-    } catch (error) {
-        logger.debug({ error, cwd, args }, "Agent context has no readable Git checkout");
-        return null;
-    }
-}
-
 /**
- * Absolute, CANONICAL path of the shared `.git`. Every worktree of one repo
- * returns the same value.
- *
- * realpath, not just resolve (PR #343 review t1 round 13). `resolveAncestorCwd`
- * canonicalises its paths on purpose, because the kernel reports
- * `/private/tmp/...` where `process.cwd()` keeps `/tmp/...`. Comparing a lexical
- * common-dir against a canonical one made the SAME repository reached through a
- * symlink produce two unequal strings, which rejected the live ancestor cwd and
- * reinstated the stale-cwd bug this resolution exists to fix.
+ * Absolute, CANONICAL path of the shared `.git`; every worktree of one repo returns the same value. The identity
+ * module owns it (and caches the layout per cwd); this name stays for its callers.
  */
 export function gitCommonRoot(cwd: string): string | null {
-    const common = gitSync(["rev-parse", "--git-common-dir"], cwd);
-
-    if (!common) {
-        return null;
-    }
-
-    const absolute = resolve(cwd, common);
-
-    try {
-        return realpathSync(absolute);
-    } catch {
-        // Not yet on disk (a pruned worktree, a race): the lexical form is still
-        // a usable comparison key, and both sides go through this same fallback.
-        return absolute;
-    }
+    return identityGitCommonRoot(cwd);
 }
 
 /**
- * The directory the SESSION is in, which is not always ours.
- *
- * `process.cwd()` is fixed at spawn. An MCP server starts with the session and
- * keeps that first directory forever, so after the session moves (EnterWorktree)
- * every git fact read here comes from the wrong checkout. On 2026-08-29 a Q→A
- * was filed against `ci/aws-secrets-injection` while the session sat in a
- * worktree on `feat/notification-templates-#202`.
- *
- * The host process does chdir, so the nearest ancestor with a different cwd is
- * the live answer. It is accepted only when it shares our `.git`, so a terminal
- * emulator sitting in `~` can never be mistaken for the session.
+ * Who this process works for, with its checkout: a thin adapter over `whoIsCalling` with the `cwd`, `git` and `title`
+ * facets. Inside a request scope (`runAsCaller`) the scoped caller replaces the process env and cwd completely.
  */
-function resolveSessionCwd(): string {
-    const own = process.cwd();
-    const candidate = resolveAncestorCwd({ ownCwd: own });
-    if (!candidate) {
-        return own;
-    }
-
-    const ownRepo = gitCommonRoot(own);
-    if (!ownRepo || ownRepo !== gitCommonRoot(candidate)) {
-        logger.debug({ own, candidate }, "agent-runtime: ancestor cwd is a different repo, keeping process.cwd()");
-        return own;
-    }
-
-    logger.debug({ own, candidate }, "agent-runtime: adopting the host process cwd");
-    return candidate;
-}
-
 export function getAgentRuntimeContext(
     overrides: Partial<AgentRuntimeContext> = {},
     processEnv: NodeJS.ProcessEnv = appEnv.getProcessEnv()
 ): AgentRuntimeContext {
-    return prof.measure("runtime.getAgentRuntimeContext", () => readAgentRuntimeContext(overrides, processEnv));
+    return prof.measure("runtime.getAgentRuntimeContext", () => {
+        const caller = callerScope.getStore();
+        const input: CallerInput = caller ? { origin: "remote", caller } : { origin: "local", env: processEnv };
+        return toRuntimeContext(whoIsCalling(input, { facets: RUNTIME_FACETS, overrides }));
+    });
 }
 
-function readAgentRuntimeContext(
-    overrides: Partial<AgentRuntimeContext>,
-    processEnv: NodeJS.ProcessEnv
-): AgentRuntimeContext {
-    const caller = callerScope.getStore();
-    const cwd = overrides.cwd ?? caller?.cwd ?? prof.measure("runtime.resolveSessionCwd", resolveSessionCwd);
-
-    const agentPartial: Partial<AgentRuntimeContext> = caller
-        ? {
-              agent: caller.agent,
-              sessionId: caller.sessionId,
-              sourceMessage: caller.sourceMessage,
-              isInAgent: caller.agent !== "unknown",
-              aiAgent: null,
-          }
-        : resolveAgentHost(processEnv);
-
-    // Canonical worktree test: in the main repo `--git-dir` and
-    // `--git-common-dir` resolve to the same path; in a linked worktree the
-    // git-dir is `.../.git/worktrees/<name>` while the common-dir is the main
-    // `.git`, so they differ. The old `endsWith(${repoRoot}/.git)` guard was
-    // always false inside a worktree because repoRoot already pointed at the
-    // main root — `isWorktree` could never be true (t23).
-    //
-    // A fact the overrides already carry is not read: the override wins in the merge below anyway,
-    // and every read is a synchronous `git` spawn (an answered question passes all of them).
-    const given = (field: keyof AgentRuntimeContext) => Object.hasOwn(overrides, field);
-    const layoutGiven = given("repoRoot") && given("project") && given("isWorktree") && given("worktreePath");
-    const readGit = (field: keyof AgentRuntimeContext, args: string[]) => (given(field) ? null : gitSync(args, cwd));
-    const gitDir = layoutGiven ? null : gitSync(["rev-parse", "--git-dir"], cwd);
-    const gitCommonDir = layoutGiven ? null : gitSync(["rev-parse", "--git-common-dir"], cwd);
-    const isWorktree = gitDir != null && gitCommonDir != null && resolve(cwd, gitDir) !== resolve(cwd, gitCommonDir);
-    const topLevel = layoutGiven ? null : gitSync(["rev-parse", "--show-toplevel"], cwd);
-    // A linked worktree's main repo is the parent of the shared `.git`; anywhere
-    // else it is the checkout root. Taking `cwd` verbatim named the project after
-    // whatever subdirectory the session happened to be in.
-    const repoRoot = isWorktree && gitCommonDir ? resolve(cwd, gitCommonDir, "..") : (topLevel ?? cwd);
-    const base: AgentRuntimeContext = {
-        agent: "unknown",
-        sessionId: null,
-        isInAgent: false,
-        aiAgent: processEnv.AI_AGENT ?? null,
-        sessionTitle: null,
-        project: basename(repoRoot),
-        repoRoot,
-        cwd,
-        isWorktree,
-        worktreePath: isWorktree ? topLevel : null,
-        branch: readGit("branch", ["rev-parse", "--abbrev-ref", "HEAD"]),
-        commitSha: readGit("commitSha", ["rev-parse", "--short", "HEAD"]),
-        commitMessage: readGit("commitMessage", ["log", "-1", "--format=%s"]),
-    };
-
-    const merged = { ...base, ...agentPartial, ...overrides };
-
-    if (
-        !Object.hasOwn(overrides, "sourceMessage") &&
-        (merged.agent !== agentPartial.agent || merged.sessionId !== agentPartial.sessionId)
-    ) {
-        merged.sourceMessage = undefined;
-    }
-
-    const harness = harnessOfRuntimeAgent(merged.agent);
-    const historyProvider = harness ? harnessPluginId(harness) : undefined;
-
-    if (!merged.sessionTitle && historyProvider && merged.sessionId) {
-        try {
-            const sessionId = merged.sessionId;
-            const meta = prof.measure("runtime.titleLookup", () =>
-                readCachedHistoryTitle({ providerId: historyProvider, sessionId })
-            );
-            merged.sessionTitle = meta?.customTitle ?? meta?.summary ?? null;
-        } catch (error) {
-            // History index is optional — log so a missing/corrupt index is diagnosable.
-            logger.debug(
-                { error, sessionId: merged.sessionId },
-                "agent-runtime: failed to backfill cached session title"
-            );
-        }
-    }
-
-    return merged;
-}
-
-/**
- * The one poster stamp for anything a harness posts: handoffs, questions, decisions.
- * Callers pass overrides and an env only in tests. Production reads the live process.
- */
-export function gatherHarnessPoster(
-    overrides: Partial<AgentRuntimeContext> = {},
-    processEnv?: NodeJS.ProcessEnv
-): AgentRuntimeContext {
-    if (processEnv === undefined) {
-        return getAgentRuntimeContext(overrides);
-    }
-
-    return getAgentRuntimeContext(overrides, processEnv);
-}
+const RUNTIME_FACETS = ["cwd", "git", "title"] as const;

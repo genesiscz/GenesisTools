@@ -3,6 +3,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import { resetTmuxBinCache, setTmuxBinForTests } from "@genesiscz/utils/tmux/bin";
+import { insideTmux } from "@genesiscz/utils/tmux/inside";
 import {
     argvWithChildDeadline,
     buildTmuxSpawnEnv,
@@ -903,4 +904,14 @@ describe("tmux spawn wedge guard", () => {
             }
         }
     );
+});
+
+describe("insideTmux", () => {
+    test("is true for a tmux server socket and false for none or a blank value", () => {
+        expect(insideTmux({ TMUX: "/private/tmp/tmux-501/default,1234,0" })).toBe(true);
+        expect(insideTmux({ TMUX: " /private/tmp/tmux-501/default,1234,0 " })).toBe(true);
+        expect(insideTmux({})).toBe(false);
+        expect(insideTmux({ TMUX: "" })).toBe(false);
+        expect(insideTmux({ TMUX: "  " })).toBe(false);
+    });
 });

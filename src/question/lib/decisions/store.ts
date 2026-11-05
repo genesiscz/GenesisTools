@@ -2,12 +2,9 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { canonicalAgent, runtimeAgentName } from "@app/handoff/targeting";
-import {
-    type AgentRuntimeContext,
-    callerCwd,
-    currentCaller,
-    gatherHarnessPoster,
-} from "@genesiscz/utils/agent/runtime";
+import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
+import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
+import { type AgentRuntimeContext, callerCwd } from "@genesiscz/utils/agent/runtime";
 import { createTranscriptAnchor, type TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { letterPastOptions } from "@genesiscz/utils/agents/dialogs/keys";
 import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
@@ -519,12 +516,18 @@ export async function postDecisions(
     const input = parseDecisionInput(postDecisionsInputSchema, payload, "decision post");
     const now = deps.now ?? (() => new Date().toISOString());
     const readFile = deps.readFile ?? ((path: string) => readFileSync(path, "utf8"));
-    const processEnv = deps.env ?? (isTestProcess() ? {} : env.getProcessEnv());
-    const fallback = currentCaller()?.sessionId === null && input.cwd ? { cwd: input.cwd } : {};
-    const poster = gatherHarnessPoster({ ...fallback, ...deps.ctx }, processEnv);
+    // `fallbackCwd` applies only to a request scope whose session is explicitly null (a gateway caller it could not name).
+    const identity = whoIsCallingHere({
+        facets: STAMP_FACETS,
+        fallbackCwd: input.cwd,
+        overrides: deps.ctx,
+        env: deps.env ?? (isTestProcess() ? {} : env.getProcessEnv()),
+    });
+    const poster = toRuntimeContext(identity);
     const harnessSession = poster.agent !== "unknown" && poster.sessionId ? poster.sessionId : null;
-    // The pane the agent runs in, when it runs in cmux: the hub opens it and `send` types there.
-    const cmuxSurface = input.cmuxSurface ?? processEnv.CMUX_SURFACE_ID;
+    // The pane the agent runs in, when it runs in cmux: the hub opens it and `send` types there. A remote caller
+    // has no terminal here, so the gateway's own pane is never stamped on its decisions.
+    const cmuxSurface = input.cmuxSurface ?? identity.terminal?.cmux?.surfaceId;
     const requested = input.sessionId?.trim() ?? "";
     // A live harness owns the session. A typed id is only for a human CLI or a test.
     const sessionId = !isTestProcess() && harnessSession ? harnessSession : requested || harnessSession || "unknown";
@@ -614,7 +617,7 @@ export async function postDecisions(
                     ...content,
                     ...context,
                     // The provider is half of the item's session identity, which a revision keeps. The delivery pane
-                    // and the session title stay too when the revising process does not know them (no CMUX_SURFACE_ID).
+                    // and the session title stay too when the revising process does not know them (no cmux surface).
                     ...(context.provider || !row.provider ? {} : { provider: row.provider }),
                     ...(context.cmuxSurface || !row.cmuxSurface ? {} : { cmuxSurface: row.cmuxSurface }),
                     ...(context.sessionTitle || !row.sessionTitle ? {} : { sessionTitle: row.sessionTitle }),

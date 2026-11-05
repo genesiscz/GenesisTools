@@ -46,6 +46,25 @@ export interface TranscriptLocator {
     rootsOfHome(home: string): Partial<HarnessRoots>;
     /** Every session the harness gave a title, read where it keeps titles (`findSessionsByTitle` ranks them). */
     titledSessions(search: TitleSearch): TitledSession[];
+    /**
+     * The transcript of one known session of a calling process, found from the CALLER's own environment (its home
+     * override) and cwd, with a bounded search: a direct path first, then the narrowest scan the harness allows. Null
+     * when this machine has no such file. The agent identity's transcript facet and the failure record read it.
+     */
+    callerTranscript(query: CallerTranscriptQuery): string | null;
+}
+
+/** What `TranscriptLocator.callerTranscript` is asked: one session of one caller. */
+export interface CallerTranscriptQuery {
+    readonly sessionId: string;
+    /** The caller's environment. A remote caller's is unknown, so it passes `{}` and gets the default homes. */
+    readonly env: NodeJS.ProcessEnv;
+    /** The folders the session may have started in, nearest first (its cwd, then its repo root). */
+    readonly cwds: readonly string[];
+    /** The user home the default agent homes sit under; tests pass a fixture. */
+    readonly home?: string;
+    /** The clock a date-bounded search counts back from. */
+    readonly now: Date;
 }
 
 /** D: transcript lines to the provider-neutral turns every renderer reads. */
@@ -160,6 +179,16 @@ export interface HostResolver {
      * another harness inherits it from its parent, so a reader trusts it only for this harness's own payload.
      */
     readonly pidEnvKey: string | null;
+    /**
+     * The environment variable the harness sets to the id of the tool call a shell command runs under (Codex's
+     * `CODEX_TOOL_CALL_ID`), or null when it sets none. It names the call of THIS process only; it is never inherited
+     * as a fact about another harness.
+     */
+    readonly toolUseEnvKey: string | null;
+    /** The variable whose value is the host's own agent label (`AI_AGENT`), or null when the harness's label is not read. */
+    readonly labelEnvKey: string | null;
+    /** The variable that names the reasoning effort the session runs at (Claude's `CLAUDE_EFFORT`), or null. */
+    readonly effortEnvKey: string | null;
     detects(env: NodeJS.ProcessEnv): boolean;
     resolve(env: NodeJS.ProcessEnv): Partial<AgentRuntimeContext>;
 }
@@ -238,6 +267,31 @@ export interface HookFacts {
      * otherwise).
      */
     readonly journalOmitsProvider: boolean;
+    /** How its hook payloads are spelled and which fields name what (`detectHarness`, `parseHookPayload`). */
+    readonly payload: HookPayloadDialect;
+}
+
+/**
+ * The dialect of one harness's hook payloads, as data: `src/agents/lib/hooks/payload.ts` reads every field and is the
+ * only file that does (lint-rules `no-hook-payload-read`), so a harness that spells a field another way is an entry
+ * here, never an `if` there.
+ */
+export interface HookPayloadDialect {
+    /** The spelling of its field names: `hook_event_name` or `hookEventName`. */
+    readonly spelling: "snake_case" | "camelCase";
+    /** A transcript path only this harness writes (a Codex `rollout-`, a Grok `updates.jsonl`), or null. */
+    readonly transcriptName: RegExp | null;
+    /** It may send `transcript_path: null`, which no other harness does, so the null names it. */
+    readonly nullTranscript: boolean;
+    /**
+     * The events on which a payload carries `model`: every event (Codex), or only these (Claude sends it on
+     * SessionStart). A model field on another event names a harness that sends it everywhere.
+     */
+    readonly modelEvents: "every" | readonly string[];
+    /** The field that names the turn (Codex `turn_id`, Grok `promptId`), or null when its payloads carry none. */
+    readonly turnIdField: string | null;
+    /** The field that names the subagent that made the call (Claude `agent_id`), or null. */
+    readonly subagentIdField: string | null;
 }
 
 /** Parts that wrap parsers and readers: a driver holds a loader, so reading the driver never loads them. */

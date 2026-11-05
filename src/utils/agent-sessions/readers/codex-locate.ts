@@ -12,15 +12,18 @@ import {
 import { idMatches, isDir, mtimeOf } from "@genesiscz/utils/ai/transcripts/resolve-core";
 import type { TitledSession } from "@genesiscz/utils/ai/transcripts/session-title";
 import { sessionsDir } from "@genesiscz/utils/codex/worker-paths";
-import type { TranscriptLocator } from "@genesiscz/utils/harness/parts";
+import type { CallerTranscriptQuery, TranscriptLocator } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import {
     codexHomesWithLegacy,
+    defaultNativeHome,
     isNativeTranscript,
+    nativeHomeOverrideVariable,
     nativeSessionRootsForHome,
     nativeTranscriptMaxDepth,
+    parseCodexHomeList,
     transcriptStem,
 } from "@genesiscz/utils/providers/session-paths";
 import { isMissingFileError } from "@genesiscz/utils/storage/atomic-file";
@@ -62,7 +65,46 @@ export function createCodexLocate(home = homedir()): TranscriptLocator {
                 ? { provider: best.provider, source: best.source, sessionId: best.sessionId, filePath: best.filePath }
                 : null;
         },
+        callerTranscript: (query) => codexCallerTranscript(query),
     };
+}
+
+/** How many local calendar days back, today included, a caller's rollout is looked for. */
+const CALLER_ROLLOUT_DAYS = 7;
+
+/**
+ * `TranscriptLocator.callerTranscript` for Codex: the caller's Codex writes its rollouts to the FIRST entry of its
+ * `CODEX_HOME` list (else the default home), under `sessions/YYYY/MM/DD`, so only that home and the last seven local
+ * days are read, newest first: at most seven folder listings. An older or archived rollout is not looked for (the
+ * full search is `findCodexRollout`).
+ */
+function codexCallerTranscript({ sessionId, env, home, now }: CallerTranscriptQuery): string | null {
+    const codexHome =
+        parseCodexHomeList(env[nativeHomeOverrideVariable("codex")])[0] ?? defaultNativeHome("codex", home);
+
+    for (let back = 0; back < CALLER_ROLLOUT_DAYS; back++) {
+        const day = new Date(now.getTime() - back * 86_400_000);
+        const dir = join(
+            codexHome,
+            "sessions",
+            String(day.getFullYear()),
+            String(day.getMonth() + 1).padStart(2, "0"),
+            String(day.getDate()).padStart(2, "0")
+        );
+        if (!existsSync(dir)) {
+            continue;
+        }
+
+        // Codex 0.164 compresses old rollouts to `.jsonl.zst`; the model read takes either form.
+        const name = readdirSync(dir).find(
+            (entry) => entry.endsWith(`-${sessionId}.jsonl`) || entry.endsWith(`-${sessionId}.jsonl.zst`)
+        );
+        if (name) {
+            return join(dir, name);
+        }
+    }
+
+    return null;
 }
 
 /** The Codex driver's `locate` part: rollouts under each Codex home, and `tools codex spawn` worker logs. */

@@ -25,4 +25,13 @@ export const grokHooks: HookFacts = {
     homeBindsAccount: true,
     launchAuthFromAncestor: false,
     journalOmitsProvider: false,
+    payload: {
+        spelling: "camelCase",
+        transcriptName: /[/\\]updates\.jsonl$/,
+        nullTranscript: false,
+        modelEvents: "every",
+        // Turn-scoped Grok events carry `promptId` (grok-cli hooks guide); a subagent id is not established.
+        turnIdField: "promptId",
+        subagentIdField: null,
+    },
 };

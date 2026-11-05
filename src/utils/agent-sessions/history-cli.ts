@@ -1,4 +1,4 @@
-import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
+import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { isInteractive } from "@genesiscz/utils/cli";
@@ -193,7 +193,7 @@ export function registerAgentHistoryCommand(
                 return;
             }
             if (options.excludeCurrent) {
-                const runtime = getAgentRuntimeContext();
+                const runtime = whoIsCallingHere();
                 const expected = isAccountProviderAlias(adapter.kind)
                     ? harnessDriver(adapter.kind).parts.host.agent
                     : adapter.kind;

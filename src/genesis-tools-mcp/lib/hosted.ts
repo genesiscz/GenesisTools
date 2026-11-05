@@ -1,6 +1,6 @@
 import type { HostedPeer } from "@app/mcp-manager/lib/gateway/hosted-protocol";
 import { logger } from "@genesiscz/utils/logger";
-import { serveGenesisToolsHttp } from "./http";
+import { serveGenesisToolsHttp, UNKNOWN_CALLER } from "./http";
 import { resolveCallerFromPeer } from "./http-caller";
 
 /**
@@ -8,12 +8,15 @@ import { resolveCallerFromPeer } from "./http-caller";
  * gateway's child process: the caller is the harness process that owns the request's connection.
  */
 export function serveHostedGenesisTools(request: Request, peer: HostedPeer | null): Promise<Response> {
-    const caller =
-        peer && request.method === "POST"
-            ? resolveCallerFromPeer(peer)
-            : { agent: "unknown" as const, sessionId: null, cwd: null, pid: null, processName: null };
+    const peerCaller = peer && request.method === "POST" ? resolveCallerFromPeer(peer) : null;
+    const caller = peerCaller ?? UNKNOWN_CALLER;
     logger.debug(
-        { server: "genesis-tools", callerPid: caller.pid, agent: caller.agent, sessionId: caller.sessionId },
+        {
+            server: "genesis-tools",
+            callerPid: peerCaller?.pid ?? null,
+            agent: caller.agent,
+            sessionId: caller.sessionId,
+        },
         "gateway hosted call"
     );
     return serveGenesisToolsHttp(request, caller);

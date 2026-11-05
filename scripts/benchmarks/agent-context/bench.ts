@@ -26,9 +26,9 @@ import {
     withSpawnCounter,
 } from "@app/benchmark/lib";
 import { resolveCallerFromPeer } from "@app/genesis-tools-mcp/lib/http-caller";
-import { captureAncestry, captureCallerContext } from "@app/say/lib/caller";
+import { captureCallerContext } from "@app/say/lib/caller";
 import { agentSessionIds, assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
-import { gatherHarnessPoster, getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
+import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { agentFailureCaller } from "@genesiscz/utils/cli/failures/agent-caller";
 import { failureCaller, transcriptOf } from "@genesiscz/utils/cli/failures/caller";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -75,12 +75,10 @@ function buildGatherers(): Gatherer[] {
         { name: "agentSessionIds", call: () => agentSessionIds(env) },
         { name: "assignedSessionId", call: () => assignedSessionId(env) },
         { name: "getAgentRuntimeContext", call: () => getAgentRuntimeContext() },
-        { name: "gatherHarnessPoster", call: () => gatherHarnessPoster() },
         { name: "agentFailureCaller", call: () => agentFailureCaller() },
         { name: "failureCaller", call: () => failureCaller({ context, processEnv: env }) },
         { name: "transcriptOf", call: () => transcriptOf({ context, processEnv: env }) },
         { name: "captureCallerContext (say)", call: () => captureCallerContext() },
-        { name: "captureAncestry (say)", call: () => captureAncestry(process.ppid) },
         {
             name: "resolveCallerFromPeer",
             call: () => resolveCallerFromPeer({ clientPort: UNUSED_PORT, serverPort: UNUSED_PORT }),

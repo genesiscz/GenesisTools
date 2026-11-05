@@ -105,8 +105,11 @@ export function psEnvValue(psLine: string, key: string): string | undefined {
 
 /** Read one provider's account out of a `ps` args-plus-environment line. */
 export function accountFromEnv(envArgs: string, alias: AccountProviderAlias): LiveAccount {
-    const value = psEnvValue(envArgs, accountEnvVar(alias));
+    return liveAccountOf(psEnvValue(envArgs, accountEnvVar(alias)));
+}
 
+/** A launcher's account stamp: an account name, or `proxy:<target>` when it pointed the process at the ai-proxy. */
+export function liveAccountOf(value: string | undefined): LiveAccount {
     if (value === undefined) {
         return NONE;
     }
@@ -116,4 +119,12 @@ export function accountFromEnv(envArgs: string, alias: AccountProviderAlias): Li
     }
 
     return { account: value, proxyTarget: null };
+}
+
+/**
+ * One provider's account out of an environment object (a caller's own env, not a `ps` line). Trimmed, and a blank
+ * value is no stamp, as an unset variable a shell command expanded is no account.
+ */
+export function accountOfEnv(env: NodeJS.ProcessEnv, alias: AccountProviderAlias): LiveAccount {
+    return liveAccountOf(env[accountEnvVar(alias)]?.trim() || undefined);
 }

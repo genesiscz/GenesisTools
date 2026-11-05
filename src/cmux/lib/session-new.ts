@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { CMUX_IDENTITY_ENV } from "@genesiscz/utils/cmux/caller-enricher";
 import { runCmux, runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 
 import { windowList } from "@genesiscz/utils/cmux/lib/socket";
@@ -325,14 +326,6 @@ export async function resolveSessionWindow(
 
     return chosen.id;
 }
-
-/**
- * The cmux identity a process inherits. A --via-tmux agent starts before its workspace exists, and the tmux
- * server may carry the CALLER's surface in its global environment; with it, the session hook would record the
- * agent in the caller's surface, and close or adoption could act on the caller's terminal. Without it, the hook
- * records the tmux pane, which is how close finds the agent's turn (session-close.ts `recordedSessionIdOf`).
- */
-export const CMUX_IDENTITY_ENV = ["CMUX_SURFACE_ID", "CMUX_WORKSPACE_ID", "CMUX_PANEL_ID", "CMUX_TAB_ID"] as const;
 
 /** Start an agent in a new terminal or tmux-backed tab and record the created session through the supplied IO. */
 export async function startDevSession(input: SessionNewRequest, io: SessionNewIO): Promise<SessionNewResult> {

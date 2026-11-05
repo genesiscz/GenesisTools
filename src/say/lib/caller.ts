@@ -1,19 +1,20 @@
 import { basename } from "node:path";
-import { resolveAgentHost } from "@genesiscz/utils/agent/host";
+import {
+    type AgentIdentity,
+    type CallerAgent,
+    type CallerProcess,
+    whoIsCalling,
+} from "@genesiscz/utils/agent/identity";
 import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 import { env } from "@genesiscz/utils/env";
-import { logger } from "@genesiscz/utils/logger";
-import { ancestry, readExecutablePath } from "@genesiscz/utils/process/processes";
+import { classifyCommand } from "@genesiscz/utils/process/classify";
+import { readParentPid } from "@genesiscz/utils/process/cwd";
 import { profiler } from "@genesiscz/utils/profile";
 
-const { log } = logger.scoped("say:caller");
 const prof = profiler.scope("agent-context");
 
 /** One process on the way from the `tools say` invocation up to launchd. */
-export interface AncestryFrame {
-    pid: number;
-    command: string;
-}
+export type AncestryFrame = CallerProcess["ancestry"][number];
 
 /**
  * Who ran `tools say`, captured in the foreground process BEFORE it exits.
@@ -27,7 +28,7 @@ export interface CallerContext {
     sessionId: string | null;
     /** The host's own agent label, e.g. `claude-code_2-1-263_agent` from `AI_AGENT`. */
     aiAgent: string | null;
-    /** `TOOLS_CLAUDE_ACCOUNT`, set by `tools claude run` / teammate wrappers. */
+    /** The account the caller's harness was launched as (`tools claude run`, teammate wrappers); a proxy target is not an account. */
     account: string | null;
     surfaceId: string | null;
     workspaceId: string | null;
@@ -37,113 +38,40 @@ export interface CallerContext {
     cwd: string;
     /** The parent of the `tools say` process: normally the shell the agent ran the command in. */
     callerPid: number;
-    /** Parent chain from `callerPid` upward, nearest first. Empty when `ps` failed. */
+    /** Parent chain from `callerPid` upward, nearest first. Empty when the process table could not be read. */
     ancestry: AncestryFrame[];
 }
 
-const MAX_ANCESTRY_DEPTH = 20;
-const MAX_COMMAND_CHARS = 240;
-
-/**
- * An agent binary's basename → the runtime agent name it reports. Each harness's binary and runtime name come from
- * its driver (Claude's binary is `claude`, its runtime name `claude-code`); Copilot is no harness and keeps its name.
- */
-const AGENT_BASENAMES: ReadonlyMap<string, string> = new Map([
-    ...harnessDrivers().map((driver): [string, string] => [
-        driver.identity.binary,
-        harnessDriver(driver.id).parts.host.agent,
-    ]),
-    ["copilot", "copilot"],
-]);
-
 const SHELL_BASENAMES = new Set(["zsh", "bash", "sh", "fish", "dash"]);
 const RUNTIME_BASENAMES = new Set(["bun", "node"]);
-
-/** Parse `ps -axo pid=,ppid=` into pid → ppid. */
-export function parsePidParents(stdout: string): Map<number, number> {
-    const parents = new Map<number, number>();
-
-    for (const line of stdout.split("\n")) {
-        const match = line.trim().match(/^(\d+)\s+(\d+)$/);
-
-        if (!match) {
-            continue;
-        }
-
-        parents.set(Number.parseInt(match[1], 10), Number.parseInt(match[2], 10));
-    }
-
-    return parents;
-}
-
-/** Follow ppid links from `start` upward, stopping before launchd (pid 1) or at a cycle. */
-export function walkParents(parents: Map<number, number>, start: number, maxDepth = MAX_ANCESTRY_DEPTH): number[] {
-    const chain: number[] = [];
-    let pid = start;
-
-    while (pid > 1 && chain.length < maxDepth && !chain.includes(pid)) {
-        chain.push(pid);
-        const parent = parents.get(pid);
-
-        if (parent === undefined) {
-            break;
-        }
-
-        pid = parent;
-    }
-
-    return chain;
-}
-
-/** Parse `ps -p … -o pid=,command=` into pid → command. */
-export function parsePidCommands(stdout: string): Map<number, string> {
-    const commands = new Map<number, string>();
-
-    for (const line of stdout.split("\n")) {
-        const match = line.match(/^\s*(\d+)\s+(.*)$/);
-
-        if (!match) {
-            continue;
-        }
-
-        commands.set(Number.parseInt(match[1], 10), match[2].trim().slice(0, MAX_COMMAND_CHARS));
-    }
-
-    return commands;
-}
-
-/**
- * The caller's parent chain, stopping before pid 1. For withheld command lines the executable
- * path is enough: caller classification reads its basename. Failure never blocks speech.
- */
-export async function captureAncestry(startPid: number): Promise<AncestryFrame[]> {
-    try {
-        return prof.measure("say.captureAncestry", () =>
-            ancestry(startPid, MAX_ANCESTRY_DEPTH)
-                .filter((entry) => entry.pid > 1)
-                .map((entry) => ({
-                    pid: entry.pid,
-                    command: (entry.command ?? readExecutablePath(entry.pid) ?? "").slice(0, MAX_COMMAND_CHARS),
-                }))
-        );
-    } catch (err) {
-        log.debug({ err, startPid }, "could not capture the caller's process ancestry");
-        return [];
-    }
-}
 
 function argv0Basename(command: string): string {
     const argv0 = command.trim().split(/\s+/)[0] ?? "";
     return basename(argv0);
 }
 
-/** The agent binary nearest to the caller in the chain, when the environment did not say. */
-export function agentFromAncestry(frames: AncestryFrame[]): string {
-    for (const frame of frames) {
-        const agent = AGENT_BASENAMES.get(argv0Basename(frame.command));
+/** Is this frame an agent CLI running a session (not its own MCP door or a helper binary)? */
+function isAgentFrame(command: string): boolean {
+    const proc = classifyCommand(command);
+    return proc.kind === "agent" && !proc.service;
+}
 
-        if (agent) {
-            return agent;
+/**
+ * The agent running the frame nearest to the caller, by the shared process classification, when the environment did
+ * not say. Only a harness answers: the classification also knows cursor-agent, which has no runtime agent name.
+ */
+function agentOfAncestry(frames: AncestryFrame[]): CallerAgent {
+    for (const frame of frames) {
+        const proc = classifyCommand(frame.command);
+
+        if (proc.kind !== "agent" || proc.service) {
+            continue;
+        }
+
+        const driver = harnessDrivers().find((candidate) => candidate.id === proc.provider);
+
+        if (driver) {
+            return harnessDriver(driver.id).parts.host.agent;
         }
     }
 
@@ -193,7 +121,7 @@ export function describeAncestry(frames: AncestryFrame[]): string {
             continue;
         }
 
-        if (AGENT_BASENAMES.has(base)) {
+        if (isAgentFrame(frame.command)) {
             labels.push(`${base}[${frame.pid}]`);
             continue;
         }
@@ -214,6 +142,34 @@ export function describeAncestry(frames: AncestryFrame[]): string {
     return labels.join(" ← ");
 }
 
+/**
+ * The call log's caller row from an identity (the process facet filled). The agent is the identity's, or, when the
+ * environment named none, the one the process chain names. The terminal and account come from the identity's own
+ * facets: a blank value is no value, and an account is the one the caller's harness was launched as.
+ * `termProgram` is the one terminal fact the identity does not carry, so the caller reads it.
+ */
+export function callerContextOf(
+    identity: AgentIdentity,
+    extra: { termProgram: string | null; callerPid: number }
+): CallerContext {
+    const ancestry = identity.process?.ancestry ?? [];
+
+    return {
+        agent: identity.agent !== "unknown" ? identity.agent : agentOfAncestry(ancestry),
+        sessionId: identity.sessionId,
+        aiAgent: identity.aiAgent,
+        account: identity.account?.account ?? null,
+        surfaceId: identity.terminal?.cmux?.surfaceId ?? null,
+        workspaceId: identity.terminal?.cmux?.workspaceId ?? null,
+        tabId: identity.terminal?.cmux?.tabId ?? null,
+        tmuxPane: identity.terminal?.tmux?.pane ?? null,
+        termProgram: extra.termProgram,
+        cwd: identity.cwd ?? process.cwd(),
+        callerPid: extra.callerPid,
+        ancestry,
+    };
+}
+
 /** Everything about the process that ran `tools say`. Kernel reads, `ps` only for other users' frames; never throws. */
 export async function captureCallerContext(): Promise<CallerContext> {
     return prof.measureAsync("say.captureCallerContext", readCallerContext);
@@ -221,22 +177,10 @@ export async function captureCallerContext(): Promise<CallerContext> {
 
 async function readCallerContext(): Promise<CallerContext> {
     const processEnv = env.getProcessEnv();
-    const host = resolveAgentHost(processEnv);
-    const ancestry = await captureAncestry(process.ppid);
-    const agent = host.agent && host.agent !== "unknown" ? host.agent : agentFromAncestry(ancestry);
+    const identity = whoIsCalling({ origin: "local", env: processEnv }, { facets: ["process"] });
 
-    return {
-        agent,
-        sessionId: host.sessionId ?? null,
-        aiAgent: host.aiAgent ?? processEnv.AI_AGENT ?? null,
-        account: processEnv.TOOLS_CLAUDE_ACCOUNT ?? null,
-        surfaceId: processEnv.CMUX_SURFACE_ID ?? null,
-        workspaceId: processEnv.CMUX_WORKSPACE_ID ?? null,
-        tabId: processEnv.CMUX_TAB_ID ?? null,
-        tmuxPane: processEnv.TMUX_PANE ?? null,
+    return callerContextOf(identity, {
         termProgram: processEnv.TERM_PROGRAM ?? null,
-        cwd: process.cwd(),
-        callerPid: process.ppid,
-        ancestry,
-    };
+        callerPid: readParentPid(process.pid) ?? 0,
+    });
 }

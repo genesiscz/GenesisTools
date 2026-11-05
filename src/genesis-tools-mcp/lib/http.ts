@@ -20,7 +20,8 @@ export function parseCapabilities(raw: string | null | undefined): string[] | un
     return capabilities.length > 0 ? capabilities : undefined;
 }
 
-const UNKNOWN_CALLER: AgentCaller = { agent: "unknown", sessionId: null, cwd: null };
+/** A request whose caller the gateway could not name. It is a remote caller, so nothing of this process answers for it. */
+export const UNKNOWN_CALLER: AgentCaller = { agent: "unknown", sessionId: null, cwd: null };
 
 let handler: McpHttpHandler | undefined;
 

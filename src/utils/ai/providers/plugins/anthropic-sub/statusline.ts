@@ -13,7 +13,7 @@ import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { readProcess, readProcessEnvironment } from "@genesiscz/utils/process/processes";
+import { ancestry, readProcessEnvironment } from "@genesiscz/utils/process/processes";
 import { claudeJsonPath, nativeHomePath } from "@genesiscz/utils/providers/session-paths";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
 
@@ -238,9 +238,9 @@ async function resolveSessionName(payload: StatuslinePayload, cache: StatuslineC
 }
 
 /**
- * The account this session launched as. `tools claude start` exports `TOOLS_CLAUDE_ACCOUNT` into
- * claude's environment, and the statusline is claude's child, so the variable is usually right
- * here. Failing that, the SessionStart hook's pin journal, then claude's own environment through
+ * The account this session launched as. `tools claude start` exports the Claude account variable
+ * (`accountEnvVar("claude")`) into claude's environment, and the statusline is claude's child, so the variable is
+ * usually right here. Failing that, the SessionStart hook's pin journal, then claude's own environment through
  * `ps eww`, cached per session because the answer cannot change while the session lives.
  */
 export function resolveAccountName(payload: StatuslinePayload, cache: StatuslineCache, now: number): string | null {
@@ -315,15 +315,22 @@ export function accountNameFromPsDump(dump: string): string | null {
 
 /** Walk up to six ancestors reading their environment, once per session. */
 export function accountFromAncestors(): string | null {
-    let pid = process.ppid;
-    for (let hop = 0; hop < 6 && pid > 1; hop++) {
-        const value = readProcessEnvironment(pid)?.TOOLS_CLAUDE_ACCOUNT;
-        const live = value === undefined ? null : accountNameFromPsDump(`TOOLS_CLAUDE_ACCOUNT=${value}`);
+    const key = accountEnvVar("claude");
+
+    // The chain starts at this process, so the first entry is skipped: the walk begins at the statusline's parent.
+    for (const ancestor of ancestry(process.pid, 7).slice(1)) {
+        if (ancestor.pid <= 1) {
+            break;
+        }
+
+        const value = readProcessEnvironment(ancestor.pid)?.[key];
+        const live = value === undefined ? null : accountNameFromPsDump(`${key}=${value}`);
+
         if (live) {
             return live;
         }
-        pid = readProcess(pid)?.ppid ?? 0;
     }
+
     return null;
 }
 

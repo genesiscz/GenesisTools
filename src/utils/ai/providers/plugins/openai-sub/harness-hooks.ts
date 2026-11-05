@@ -20,4 +20,13 @@ export const codexHooks: HookFacts = {
     homeBindsAccount: true,
     launchAuthFromAncestor: false,
     journalOmitsProvider: false,
+    payload: {
+        spelling: "snake_case",
+        transcriptName: /[/\\]rollout-[0-9][^/\\]*\.jsonl(?:\.zst)?$/,
+        // Codex documents `transcript_path` as nullable; no other harness sends a null there.
+        nullTranscript: true,
+        modelEvents: "every",
+        turnIdField: "turn_id",
+        subagentIdField: null,
+    },
 };

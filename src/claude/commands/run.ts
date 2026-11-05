@@ -7,6 +7,7 @@ import { runClaudeBinaryDirect, steerModeFromEnv } from "@app/claude/lib/direct-
 import { ensureOnboardingSkippedForOAuthToken } from "@app/claude/lib/launch-env";
 import { resolveClaudeBinaryForTeammates } from "@app/claude/lib/teammate-wrapper";
 import * as p from "@clack/prompts";
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
@@ -336,7 +337,7 @@ export async function runProxySession(
         ANTHROPIC_CUSTOM_MODEL_OPTION: model.proxyId,
         ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: model.upstreamId,
         ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION: `${model.providerSlug} via ai-proxy (${model.accountName})`,
-        TOOLS_CLAUDE_ACCOUNT: `proxy:${model.accountName}/${model.providerSlug}`,
+        [accountEnvVar("claude")]: `proxy:${model.accountName}/${model.providerSlug}`,
         // Claude Code cannot learn a proxied model's window, so it falls back to a
         // default and shows e.g. 155k for a 500k model — which then drives
         // auto-compact to fire far too early. Its own guidance is "set

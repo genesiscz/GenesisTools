@@ -3,10 +3,12 @@ import { mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentCaller } from "@genesiscz/utils/agent/runtime";
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { env } from "@genesiscz/utils/env";
 import { encodeRgbaToPng } from "@genesiscz/utils/image/raster";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { serveHostedGenesisTools } from "./hosted";
 import { CAPABILITIES_HEADER, serveGenesisToolsHttp } from "./http";
 
 /**
@@ -109,4 +111,52 @@ describe("genesis-tools MCP over HTTP (resident, per-request caller)", () => {
             await client.close();
         }
     });
+
+    it("a hosted request with no known peer is recorded as an unknown caller, never as the gateway's own session", async () => {
+        const gatewayEnv: Record<string, string> = {
+            CLAUDE_CODE_SESSION_ID: "gateway-own-session",
+            CMUX_SURFACE_ID: "gateway-surface",
+            [accountEnvVar("claude")]: "gateway-account",
+        };
+        const saved = { ...process.env };
+        const hosted = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: (request) => serveHostedGenesisTools(request, null),
+        });
+        Object.assign(process.env, gatewayEnv);
+        const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${hosted.port}/mcp`), {
+            requestInit: { headers: { [CAPABILITIES_HEADER]: "question_answer" } },
+        });
+        const client = new Client({ name: "test-hosted", version: "1" });
+
+        try {
+            await client.connect(transport);
+            const response = await client.callTool({
+                name: "question_answer",
+                arguments: { question: "qa from an unnamed peer", answer: "z", tag: "action" },
+            });
+            expect(response.isError).not.toBe(true);
+        } finally {
+            await client.close();
+            hosted.stop(true);
+
+            for (const key of Object.keys(gatewayEnv)) {
+                if (key in saved) {
+                    process.env[key] = saved[key];
+                } else {
+                    delete process.env[key];
+                }
+            }
+        }
+
+        const rows = readdirSync(logBase).flatMap((file) =>
+            readFileSync(join(logBase, file), "utf8")
+                .trim()
+                .split("\n")
+                .map((line) => SafeJSON.parse(line) as { question: string; sessionId: string; agent: string })
+        );
+        const row = rows.find((candidate) => candidate.question === "qa from an unnamed peer");
+        expect(row).toMatchObject({ sessionId: "unknown", agent: "unknown" });
+    }, 20000);
 });

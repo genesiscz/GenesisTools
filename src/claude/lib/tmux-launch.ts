@@ -1,8 +1,8 @@
 import { tmuxSessionNameFromTopic } from "@app/dev-dashboard/lib/tmux/claude-pane-title";
 import { listTtyd, renameTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
-import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
+import { insideTmux } from "@genesiscz/utils/tmux/inside";
 import {
     attachTmuxSession,
     createTmuxSessionRunning,
@@ -72,13 +72,12 @@ export async function launchCommandInTmux(opts: {
     await createTmuxSessionRunning(name, opts.cwd, opts.argv, opts.env);
 
     const tmuxBin = resolveTmuxBin();
-    const insideTmux = Boolean(env.get("TMUX"));
     if (!opts.attach) {
         logger.info({ name }, "[tmux-launch] created detached session");
         return { name, exitCode: 0 };
     }
 
-    if (insideTmux) {
+    if (insideTmux()) {
         const result = Bun.spawnSync([tmuxBin, "switch-client", "-t", name], {
             stdio: ["inherit", "inherit", "inherit"],
         });

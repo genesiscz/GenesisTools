@@ -46,6 +46,10 @@ export const grokHarness: HarnessDriver<"grok"> = {
             agent: "grok",
             sessionEnvKey: "GROK_SESSION_ID",
             pidEnvKey: null,
+            // Not established for a Grok shell command (research note 2026-11-04); its hooks carry `toolUseId`.
+            toolUseEnvKey: null,
+            labelEnvKey: "AI_AGENT",
+            effortEnvKey: null,
             detects: isGrok,
             resolve: resolveGrokContext,
         },

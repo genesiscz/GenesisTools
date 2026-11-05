@@ -1,9 +1,11 @@
+import { readCmuxTerminal } from "@genesiscz/utils/cmux/caller-enricher";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
+import { readTmuxTerminal } from "@genesiscz/utils/tmux/caller-enricher";
 import type { Command } from "commander";
 
 export type SelfTarget = { kind: "tmux"; pane: string } | { kind: "cmux"; workspaceId?: string; surfaceId: string };
@@ -12,9 +14,9 @@ export function resolveSelfTarget(
     environment: NodeJS.ProcessEnv,
     prefer: "auto" | "tmux" | "cmux" = "auto"
 ): SelfTarget | null {
-    const pane = environment.TMUX_PANE;
-    const surfaceId = environment.CMUX_SURFACE_ID;
-    const workspaceId = environment.CMUX_WORKSPACE_ID;
+    // A blank pane or surface (an unset variable a shell expanded) names nothing, so it cannot beat a real one.
+    const pane = readTmuxTerminal(environment)?.pane;
+    const cmux = readCmuxTerminal(environment);
 
     if (prefer !== "cmux" && pane) {
         return { kind: "tmux", pane };
@@ -22,8 +24,8 @@ export function resolveSelfTarget(
 
     // The surface alone is enough: a UUID names one surface across the whole
     // tree, and CMUX_WORKSPACE_ID goes stale the moment the surface is moved.
-    if (prefer !== "tmux" && surfaceId) {
-        return { kind: "cmux", workspaceId, surfaceId };
+    if (prefer !== "tmux" && cmux) {
+        return { kind: "cmux", workspaceId: cmux.workspaceId ?? undefined, surfaceId: cmux.surfaceId };
     }
 
     return null;
@@ -105,7 +107,7 @@ export function registerSendSelfCommand(program: Command): void {
                 const target = resolveSelfTarget(env.getProcessEnv(), prefer);
 
                 if (!target) {
-                    throw new Error("not running inside tmux or cmux (no TMUX_PANE, no CMUX_SURFACE_ID)");
+                    throw new Error("not running inside tmux or cmux (no tmux pane, no cmux surface)");
                 }
 
                 const enterDelayMs = Number(opts.enterDelay);

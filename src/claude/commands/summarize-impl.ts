@@ -13,7 +13,7 @@ import type { SummarizeOptions, SummarizeResult } from "@app/claude/lib/history/
 import { listTemplates, SummarizeEngine } from "@app/claude/lib/history/summarize/engine.ts";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import * as p from "@clack/prompts";
-import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
+import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { encodedProjectDir } from "@genesiscz/utils/claude";
 import { ClaudeSession } from "@genesiscz/utils/claude/session";
 import { formatCost } from "@genesiscz/utils/format";
@@ -98,7 +98,7 @@ async function resolveSessionIds(
         // Deliberately Claude-only: the id is looked up in ~/.claude/projects, so a
         // grok or codex session id would resolve to nothing and report it as a
         // missing transcript instead of the wrong host.
-        const ctx = getAgentRuntimeContext();
+        const ctx = whoIsCallingHere();
         const envId = ctx.agent === "claude-code" ? ctx.sessionId : null;
         if (!envId) {
             const detected = ctx.agent === "unknown" ? "no agent session" : ctx.agent;

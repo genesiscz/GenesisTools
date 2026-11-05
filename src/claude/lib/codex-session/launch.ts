@@ -2,6 +2,7 @@
  * The pure parts of `tools claude codex` (P3, P6, P7, P12, P13, P15): the model and effort from the Codex catalog, the
  * account for each agent, Claude Code's environment and arguments. The command (`commands/codex.ts`) does the I/O.
  */
+
 import {
     isMetered,
     type Resolved,
@@ -12,6 +13,7 @@ import type { SessionAgent } from "@app/ai-proxy/lib/sessions/records";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { CLAUDE_MODELS } from "@app/claude/lib/models";
 import { passthroughSets } from "@app/claude/lib/passthrough";
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { type CodexModelInfo, describeCodexEfforts, resolveCodexEffort } from "@genesiscz/utils/ai/openai/codex-models";
 import { resolveOpenAiSubModel } from "@genesiscz/utils/ai/openai/sub-models";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
@@ -178,7 +180,7 @@ export function sessionEnv(
         CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(Math.floor(input.maxContextTokens)),
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(Math.floor(input.maxContextTokens)),
         CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(input.compactPercent),
-        TOOLS_CLAUDE_ACCOUNT: `proxy:${input.accountLabel}`,
+        [accountEnvVar("claude")]: `proxy:${input.accountLabel}`,
         // `/model` lists the proxy's Codex models (`sessionPickerModels`), so a session switches without a relaunch.
         CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
     };

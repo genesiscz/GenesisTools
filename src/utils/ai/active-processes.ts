@@ -8,7 +8,7 @@ import {
     readProcessEnvironment,
     readProcessUsages,
 } from "@genesiscz/utils/process/processes";
-import { accountFromEnv } from "./account-env";
+import { accountEnvVar, accountFromEnv } from "./account-env";
 
 /**
  * Live processes of one coding agent, and the account each one bills.
@@ -192,7 +192,7 @@ function scanFromKernel(scan: AgentProcessScan): ActiveAgentProcess[] {
             continue;
         }
         const environment = readProcessEnvironment(row.pid);
-        const key = `TOOLS_${scan.alias.toUpperCase()}_ACCOUNT`;
+        const key = accountEnvVar(scan.alias);
         const value = environment?.[key];
         const { account, proxyTarget } = accountFromEnv(value === undefined ? "" : `${key}=${value}`, scan.alias);
         found.push({

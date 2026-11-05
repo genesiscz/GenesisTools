@@ -7,7 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { runsAgent } from "@genesiscz/utils/process/classify";
 import { commandOfRow, listProcessTable } from "@genesiscz/utils/process/libproc-table";
-import { listPsTable, type PsRow, processBasename } from "@genesiscz/utils/process/ps";
+import { listPsTable, processBasename } from "@genesiscz/utils/process/ps";
 import { shellWord } from "@genesiscz/utils/shell/quote";
 import {
     listTmuxClients,
@@ -21,7 +21,12 @@ import {
 
 const { log } = logger.scoped("cmux-tmux-host");
 
-export type HostProcess = Pick<PsRow, "pid" | "ppid" | "command">;
+/** One row of the process table this module walks: the process, its parent and its command line. */
+export interface HostProcess {
+    pid: number;
+    ppid: number;
+    command: string;
+}
 
 /**
  * The tmux pane a session's process runs in, and the terminals looking at it.

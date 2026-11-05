@@ -1,9 +1,11 @@
+import { copilotHost } from "@genesiscz/utils/agent/hosts/copilot";
+import type { HookCallerFacts } from "@genesiscz/utils/agent/identity/types";
 import { byHarness, isAccountProviderAlias, type PerHarness } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import type { HookFacts } from "@genesiscz/utils/harness/parts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { profiler } from "@genesiscz/utils/profile";
-import type { HarnessName } from "./config";
+import { HARNESS_NAMES, type HarnessName } from "./config";
 
 const prof = profiler.scope("agent-context");
 
@@ -15,7 +17,15 @@ export interface HookPayload {
     toolUseId?: string;
     command: string;
     model: string;
+    /**
+     * The hook dialect: which harness's spelling and rules the payload follows. A Copilot payload keeps the dialect
+     * of its spelling (Copilot has no hooks config of its own); who sent it is `caller`.
+     */
     harness: HarnessName;
+    /** Who ran the hook: the harness, or `copilot`, the host that is no harness of ours. */
+    caller: HarnessName | "copilot";
+    /** The turn the call belongs to, in the field the harness names it (Codex `turn_id`, Grok `promptId`). */
+    turnId?: string;
     /** Files the harness's own renderer already drew, so we do not double-print them. */
     nativeDiffFiles: string[];
     /**
@@ -83,22 +93,92 @@ export function isTerminalTool(toolName: unknown): boolean {
     return normalized === "bash" || normalized === "shell" || normalized === "runterminalcommand";
 }
 
+/** The harness of each spelling, first in driver order: snake_case is Claude's, camelCase Grok's. */
+function harnessSpelling(spelling: "snake_case" | "camelCase"): HarnessName {
+    return HARNESS_NAMES.find((name) => HARNESS_HOOK_FACTS[name].payload.spelling === spelling) ?? HARNESS_NAMES[0];
+}
+
+function eventName(raw: Record<string, unknown>): string {
+    return str(raw.hookEventName) ?? str(raw.hook_event_name) ?? "";
+}
+
 /**
- * Read from the PAYLOAD, never from the environment: a Codex worker spawned from a Claude
- * session inherits every CLAUDE_CODE_* variable. Grok's envelope carries a camelCase
- * `hookEventName` beside Claude's snake_case one; Codex names its `model` and its
- * transcript is a `rollout-<ts>-<uuid>.jsonl`.
+ * Copilot by its own marks (its `HostPayloadMarkers`): a parent agent id, an event named in lower camelCase, or an
+ * epoch-millisecond timestamp. Its camelCase payloads used to read as Grok and its snake_case ones as Claude.
+ */
+function isCopilotPayload(raw: Record<string, unknown>): boolean {
+    const marks = copilotHost.payload;
+
+    return (
+        marks.markerFields.some((field) => raw[field] !== undefined) ||
+        (marks.lowerCamelEvents && /^[a-z]/.test(eventName(raw))) ||
+        (marks.numericTimestamp && typeof raw.timestamp === "number")
+    );
+}
+
+/**
+ * The harness a payload's dialect names, from the drivers' `HookPayloadDialect` facts, in this order: a transcript
+ * path only one harness writes; a null transcript (Codex documents it nullable); the camelCase spelling; a `model` on
+ * an event where only a harness that sends it on every event would (Claude names it on SessionStart, so a Claude
+ * SessionStart with a model is Claude, not Codex); else the snake_case harness.
+ */
+function dialectOf(raw: Record<string, unknown>): HarnessName {
+    const transcript = raw.transcriptPath ?? raw.transcript_path;
+    const byTranscript = HARNESS_NAMES.find((name) => {
+        const pattern = HARNESS_HOOK_FACTS[name].payload.transcriptName;
+        return typeof transcript === "string" && pattern?.test(transcript);
+    });
+
+    if (byTranscript) {
+        return byTranscript;
+    }
+
+    const nullable = HARNESS_NAMES.find((name) => HARNESS_HOOK_FACTS[name].payload.nullTranscript);
+
+    if (
+        nullable &&
+        (Object.hasOwn(raw, "transcript_path") || Object.hasOwn(raw, "transcriptPath")) &&
+        transcript === null
+    ) {
+        return nullable;
+    }
+
+    if (typeof raw.hookEventName === "string") {
+        return harnessSpelling("camelCase");
+    }
+
+    if (typeof raw.model === "string") {
+        const event = eventName(raw);
+        const named = HARNESS_NAMES.find((name) => {
+            const events = HARNESS_HOOK_FACTS[name].payload.modelEvents;
+            return events !== "every" && events.includes(event);
+        });
+        const everywhere = HARNESS_NAMES.find(
+            (name) =>
+                HARNESS_HOOK_FACTS[name].payload.modelEvents === "every" &&
+                HARNESS_HOOK_FACTS[name].payload.spelling === "snake_case"
+        );
+
+        return named ?? everywhere ?? harnessSpelling("snake_case");
+    }
+
+    return harnessSpelling("snake_case");
+}
+
+/**
+ * Read from the PAYLOAD, never from the environment: a Codex worker spawned from a Claude session inherits every
+ * CLAUDE_CODE_* variable. The answer is the hook dialect (`HookPayload.harness`); a Copilot payload keeps the dialect
+ * of its spelling, and `detectHookCaller` names Copilot itself.
  */
 export function detectHarness(raw: Record<string, unknown>): HarnessName {
-    if (typeof raw.hookEventName === "string") {
-        return "grok";
-    }
+    return isCopilotPayload(raw)
+        ? harnessSpelling(typeof raw.hookEventName === "string" ? "camelCase" : "snake_case")
+        : dialectOf(raw);
+}
 
-    if (typeof raw.model === "string" || /\/rollout-[0-9]/.test(String(raw.transcript_path ?? ""))) {
-        return "codex";
-    }
-
-    return "claude";
+/** Who ran the hook: the harness of its dialect, or Copilot by its own marks. */
+export function detectHookCaller(raw: Record<string, unknown>): HarnessName | "copilot" {
+    return isCopilotPayload(raw) ? "copilot" : dialectOf(raw);
 }
 
 /** Lower-cased and underscore-stripped, so `hook_event_name` and `hookEventName` agree. */
@@ -139,6 +219,12 @@ function readHookPayload(text: string): HookPayload | null {
     }
 
     const harness = detectHarness(raw);
+    const caller = detectHookCaller(raw);
+    const turnField = caller === "copilot" ? null : HARNESS_HOOK_FACTS[caller].payload.turnIdField;
+    const subagentFields =
+        caller === "copilot"
+            ? copilotHost.payload.subagentIdFields
+            : ["agentId", "agent_id", HARNESS_HOOK_FACTS[caller].payload.subagentIdField ?? ""].filter(Boolean);
     const event = str(raw.hookEventName) ?? str(raw.hook_event_name) ?? "";
     const tool = str(raw.toolName) ?? str(raw.tool_name) ?? "";
     const input = record(raw.toolInput ?? raw.tool_input);
@@ -167,6 +253,8 @@ function readHookPayload(text: string): HookPayload | null {
         command: str(input?.command) ?? "",
         model: str(raw.model) ?? "",
         harness,
+        caller,
+        ...(turnField && str(raw[turnField]) ? { turnId: str(raw[turnField]) } : {}),
         nativeDiffFiles,
         transcriptPath: str(raw.transcriptPath) ?? str(raw.transcript_path),
         lastAssistantMessage: str(raw.lastAssistantMessage) ?? str(raw.last_assistant_message),
@@ -177,7 +265,24 @@ function readHookPayload(text: string): HookPayload | null {
         notificationMessage: str(raw.message),
         prompt: str(raw.prompt),
         // An empty id is the main agent's, as no id is.
-        agentId: (str(raw.agentId) ?? str(raw.agent_id)) || undefined,
+        agentId: subagentFields.map((field) => str(raw[field])).find(Boolean) || undefined,
         raw,
+    };
+}
+
+/**
+ * What the payload says about its caller, for the agent identity module (`whoIsCalling({ origin: "local", env, hook
+ * })`). The cwd is the payload's own, never the `process.cwd()` fallback of `HookPayload.cwd`.
+ */
+export function hookCallerFacts(payload: HookPayload): HookCallerFacts {
+    return {
+        caller: payload.caller,
+        sessionId: payload.sessionId || undefined,
+        toolUseId: payload.toolUseId || undefined,
+        subagentId: payload.agentId,
+        turnId: payload.turnId,
+        model: payload.model || undefined,
+        transcriptPath: payload.transcriptPath || undefined,
+        cwd: str(payload.raw.cwd) || undefined,
     };
 }

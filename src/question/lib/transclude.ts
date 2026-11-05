@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { transclusionHints } from "@genesiscz/utils/genesis-tools/tools/hints";
 import {
     type ImageAttachmentInput,
@@ -71,7 +71,8 @@ export async function transcludeItems({
         return { items, tokens: [] };
     }
 
-    const base = cwd ?? gatherHarnessPoster({}, isTestProcess() ? {} : undefined).cwd ?? process.cwd();
+    const base =
+        cwd ?? whoIsCallingHere({ facets: ["cwd"], env: isTestProcess() ? {} : undefined }).cwd ?? process.cwd();
     const tokens: TranscludedItems["tokens"] = [];
     const out: QuestionItemInput[] = [];
 

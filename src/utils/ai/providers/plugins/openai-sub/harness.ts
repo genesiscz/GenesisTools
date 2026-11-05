@@ -46,6 +46,11 @@ export const codexHarness: HarnessDriver<"codex"> = {
             agent: "codex",
             sessionEnvKey: "CODEX_THREAD_ID",
             pidEnvKey: null,
+            // Set on every tool command Codex runs (codex-rs protocol shell_environment.rs), one id per call.
+            toolUseEnvKey: "CODEX_TOOL_CALL_ID",
+            // Codex sets no label of its own; an AI_AGENT in its env is inherited from an outer host.
+            labelEnvKey: null,
+            effortEnvKey: null,
             detects: isCodex,
             resolve: resolveCodexContext,
         },

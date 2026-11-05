@@ -73,10 +73,8 @@ export function filterReplayByAgents(profile: Profile, agents: AgentKind[]): Pro
     return mapTerminalSurfaces(profile, (surface) => {
         // Filter the prepared command that will actually run; the tab
         // title can still name an agent that ran here previously.
-        const command = cleanLaunchCommand(surface.command ?? "").replace(
-            /^\S*\/(?=(?:codex|claude|grok|tools)(?:\s|$))/,
-            ""
-        );
+        // The launcher's absolute path is dropped, so `/usr/local/bin/codex resume <id>` reads as `codex resume <id>`.
+        const command = cleanLaunchCommand(surface.command ?? "").replace(/^[^\s=]*\/(?=\S)/, "");
         const kind = agentKindFromLauncher(command);
         const restoresItself = /^tools\s+cmux\s+(?:restore-after-restart|profiles\s+restore)(?:\s|$)/.test(command);
         if (restoresItself || (kind && !allowed.has(kind))) {

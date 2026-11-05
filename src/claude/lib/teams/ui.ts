@@ -1,3 +1,4 @@
+import { accountEnvVar, liveAccountOf } from "@genesiscz/utils/ai/account-env";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { collapsePath } from "@genesiscz/utils/paths";
@@ -383,6 +384,12 @@ function buildTeammateDetail(team: TeamView, t: TeamMemberView): string[] {
     return lines.map((l) => ellipsize(l, 100));
 }
 
+/** The account a live Claude process was launched as, or undefined when it names none (a proxy stamp names a target). */
+function liveClaudeAccount(pid: number): string | undefined {
+    const key = accountEnvVar("claude");
+    return liveAccountOf(readProcessEnvKeys(pid, [key])[key]).account ?? undefined;
+}
+
 async function resolveAccountForUi(team: TeamView, accountFlag?: string): Promise<string> {
     if (accountFlag) {
         return accountFlag;
@@ -391,17 +398,17 @@ async function resolveAccountForUi(team: TeamView, accountFlag?: string): Promis
     // Lazy ps eww only for the chosen team's live pids (not during list).
     for (const m of team.teammates) {
         if (m.live?.pid) {
-            const env = readProcessEnvKeys(m.live.pid, ["TOOLS_CLAUDE_ACCOUNT"]);
-            if (env.TOOLS_CLAUDE_ACCOUNT) {
-                return env.TOOLS_CLAUDE_ACCOUNT;
+            const account = liveClaudeAccount(m.live.pid);
+            if (account) {
+                return account;
             }
         }
     }
 
     if (team.lead?.live?.pid) {
-        const env = readProcessEnvKeys(team.lead.live.pid, ["TOOLS_CLAUDE_ACCOUNT"]);
-        if (env.TOOLS_CLAUDE_ACCOUNT) {
-            return env.TOOLS_CLAUDE_ACCOUNT;
+        const account = liveClaudeAccount(team.lead.live.pid);
+        if (account) {
+            return account;
         }
     }
 

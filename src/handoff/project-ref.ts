@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
+import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
 import { expandTilde } from "@genesiscz/utils/paths";
 
 export interface ResolvedHandoffProject {
@@ -17,7 +18,7 @@ function looksLikePath(value: string): boolean {
 /**
  * The project a caller names for a handoff: a bare name is kept as given, a path is resolved by the
  * same poster stamp that names the project of a handoff, a decision or a question posted from that
- * folder (`gatherHarnessPoster`), so a subfolder names its repository and a linked worktree names
+ * folder (`whoIsCalling` with the git facet), so a subfolder names its repository and a linked worktree names
  * its main checkout. A path that is not a folder is refused, so a typo never files a handoff under
  * a project nobody has.
  */
@@ -42,9 +43,19 @@ export function resolveHandoffProject(raw: unknown, field = "project"): Resolved
         );
     }
 
-    const ctx = gatherHarnessPoster(
-        { cwd: abs, sessionId: null, sessionTitle: null, branch: null, commitSha: null, commitMessage: null },
-        {}
+    const ctx = toRuntimeContext(
+        whoIsCallingHere({
+            facets: ["cwd", "git"],
+            overrides: {
+                cwd: abs,
+                sessionId: null,
+                sessionTitle: null,
+                branch: null,
+                commitSha: null,
+                commitMessage: null,
+            },
+            env: {},
+        })
     );
 
     return { project: ctx.project, launchCwd: ctx.isWorktree ? (ctx.worktreePath ?? abs) : ctx.repoRoot };

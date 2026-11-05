@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
@@ -138,7 +139,7 @@ export function resolveClaudeBinaryForTeammates(candidatesFor: () => string[] = 
 export function buildTeammateWrapperScript(input: { claudeBin: string; env: TeammateAuthEnv }): string {
     const { claudeBin, env: auth } = input;
     const exports: Array<[string, string]> = [
-        ["TOOLS_CLAUDE_ACCOUNT", auth.accountName],
+        [accountEnvVar("claude"), auth.accountName],
         ["TOOLS_CLAUDE_AUTH", "token"],
         ["CLAUDE_CODE_OAUTH_TOKEN", auth.oauthToken],
         ["CLAUDE_CODE_SUBSCRIPTION_TYPE", auth.subscriptionType],

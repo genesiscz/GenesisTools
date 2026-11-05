@@ -52,6 +52,10 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             agent: "claude-code",
             sessionEnvKey: "CLAUDE_CODE_SESSION_ID",
             pidEnvKey: "CLAUDE_PID",
+            // Claude Code exports no tool call id to a shell command; its hooks carry `tool_use_id`.
+            toolUseEnvKey: null,
+            labelEnvKey: "AI_AGENT",
+            effortEnvKey: "CLAUDE_EFFORT",
             detects: isClaude,
             resolve: resolveClaudeContext,
         },

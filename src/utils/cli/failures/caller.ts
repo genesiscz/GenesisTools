@@ -1,133 +1,69 @@
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
-import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
-import { harnessOfRuntimeAgent } from "@genesiscz/utils/ai/providers/harness-index";
+import {
+    type AgentIdentity,
+    type IdentityFacet,
+    toRuntimeContext,
+    whoIsCalling,
+} from "@genesiscz/utils/agent/identity";
 import { profiler } from "@genesiscz/utils/profile";
-import { defaultNativeHome, parseCodexHomeList } from "@genesiscz/utils/providers/session-paths";
 import type { FailureCaller } from "./record";
 
-const CODEX_DAYS_BACK = 7;
+export { claudeProjectFolder } from "@genesiscz/utils/agent-sessions/readers/claude-locate";
 
 const prof = profiler.scope("agent-context");
 
-/** Claude names a project folder after the session's cwd with every non-alphanumeric character as `-`. */
-export function claudeProjectFolder(cwd: string): string {
-    return cwd.replace(/[^A-Za-z0-9]/g, "-");
-}
-
-function claudeTranscript(sessionId: string, cwds: string[], configDir: string): string | null {
-    const projects = join(configDir, "projects");
-    const file = `${sessionId}.jsonl`;
-
-    for (const cwd of cwds) {
-        const direct = join(projects, claudeProjectFolder(cwd), file);
-        if (existsSync(direct)) {
-            return direct;
-        }
-    }
-
-    if (!existsSync(projects)) {
-        return null;
-    }
-
-    for (const folder of readdirSync(projects)) {
-        const candidate = join(projects, folder, file);
-        if (existsSync(candidate)) {
-            return candidate;
-        }
-    }
-
-    return null;
-}
-
-function codexRollout(threadId: string, codexHome: string, now: Date): string | null {
-    for (let back = 0; back < CODEX_DAYS_BACK; back++) {
-        const day = new Date(now.getTime() - back * 86_400_000);
-        const dir = join(
-            codexHome,
-            "sessions",
-            String(day.getFullYear()),
-            String(day.getMonth() + 1).padStart(2, "0"),
-            String(day.getDate()).padStart(2, "0")
-        );
-        if (!existsSync(dir)) {
-            continue;
-        }
-
-        // Codex 0.164 compresses old rollouts to `.jsonl.zst`; the model read takes either form.
-        const name = readdirSync(dir).find(
-            (entry) => entry.endsWith(`-${threadId}.jsonl`) || entry.endsWith(`-${threadId}.jsonl.zst`)
-        );
-        if (name) {
-            return join(dir, name);
-        }
-    }
-
-    return null;
-}
+/** The facts a failure record keeps: the live folder, its git facts, the title, and the model from the transcript. */
+const FAILURE_FACETS = ["cwd", "git", "title", "model"] as const satisfies readonly IdentityFacet[];
 
 export interface CallerInputs {
-    context: AgentRuntimeContext;
+    /** The caller's environment: the agent identity module reads the host, the session and the effort from it. */
     processEnv: NodeJS.ProcessEnv;
+    /** Facts the caller already knows. The identity module takes them as given and never reads them again. */
+    context?: Partial<AgentRuntimeContext>;
     now?: Date;
     home?: string;
 }
 
-/** The transcript of the calling session, when this machine has it. */
-export function transcriptOf({ context, processEnv, now = new Date(), home }: CallerInputs): string | null {
-    if (!context.sessionId) {
-        return null;
-    }
-
-    const sessionId = context.sessionId;
-    return prof.measure("failures.transcriptOf", () =>
-        CALLER_TRANSCRIPTS[context.agent]({ context, processEnv, now, home }, sessionId)
-    );
-}
-
 /**
- * Where each calling harness keeps the transcript of a session; Grok and Copilot sessions are not looked up.
- * Harness-guard: keyed by the caller's runtime agent (with copilot and unknown), and built from the caller's own env
- * and cwd, so a failed run pays one path join instead of the locate part's walk over every session folder.
+ * The transcript of the calling session, when this machine has it: the identity module's `transcript` facet, which
+ * each harness's locator answers from the caller's own env and cwd (Claude by its project folder, Codex in the
+ * first `CODEX_HOME` entry and the last seven days, Grok by its cwd folder; Copilot and an unknown caller have none).
  */
-const CALLER_TRANSCRIPTS: Record<
-    AgentRuntimeContext["agent"],
-    (inputs: CallerInputs & { now: Date }, sessionId: string) => string | null
-> = {
-    "claude-code": ({ context, processEnv, home }, sessionId) => {
-        const configDir = processEnv.CLAUDE_CONFIG_DIR?.trim() || defaultNativeHome("claude", home);
-        return claudeTranscript(sessionId, [context.cwd, context.repoRoot], configDir);
-    },
-    codex: ({ processEnv, now, home }, sessionId) => {
-        // The caller's CODEX_HOME is a comma list; its Codex writes rollouts to the first entry.
-        const codexHome = parseCodexHomeList(processEnv.CODEX_HOME)[0] ?? defaultNativeHome("codex", home);
-        return codexRollout(sessionId, codexHome, now);
-    },
-    grok: () => null,
-    copilot: () => null,
-    unknown: () => null,
-};
-
-export function failureCaller(inputs: CallerInputs): FailureCaller {
-    return prof.measure("failures.failureCaller", () => readFailureCaller(inputs));
+export function transcriptOf({ processEnv, context, now = new Date(), home }: CallerInputs): string | null {
+    const identity = whoIsCalling(
+        { origin: "local", env: processEnv },
+        { overrides: context, facets: ["transcript"], now, home }
+    );
+    return identity.transcriptPath ?? null;
 }
 
-function readFailureCaller(inputs: CallerInputs): FailureCaller {
-    const { context, processEnv } = inputs;
-    const transcript = transcriptOf(inputs);
-    const harness = harnessOfRuntimeAgent(context.agent);
-    const model = transcript && harness ? harnessHooks(harness).currentModel(transcript) : null;
+/** Who ran the tool, as a failure record keeps it: the agent identity, with the model and effort the identity gives. */
+export function failureCaller(inputs: CallerInputs): FailureCaller {
+    return prof.measure("failures.failureCaller", () => {
+        const { processEnv, context, now = new Date(), home } = inputs;
+        return failureCallerOf(
+            whoIsCalling(
+                { origin: "local", env: processEnv },
+                { overrides: context, facets: FAILURE_FACETS, now, home }
+            )
+        );
+    });
+}
+
+/** A pick of the identity: the record keeps its shape, and a fact the identity lacks is null, never guessed. */
+export function failureCallerOf(identity: AgentIdentity): FailureCaller {
+    const context = toRuntimeContext(identity);
 
     return {
         agent: context.agent,
         sessionId: context.sessionId,
         sessionTitle: context.sessionTitle,
-        model,
-        effort: processEnv.CLAUDE_EFFORT?.trim() || null,
-        aiAgent: context.aiAgent ?? (processEnv.AI_AGENT?.trim() || null),
+        model: identity.model ?? null,
+        effort: identity.effort ?? null,
+        aiAgent: context.aiAgent,
         project: context.project,
         repoRoot: context.repoRoot,
+        cwd: context.cwd,
         branch: context.branch,
         commitSha: context.commitSha,
         worktreePath: context.worktreePath,

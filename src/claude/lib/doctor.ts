@@ -2,7 +2,7 @@ import type { AccountUsage } from "@app/claude/lib/usage/api";
 import { effectiveLeftPct, extractCompactLimits } from "@app/claude/lib/usage/compact-limits";
 import { fableStatusForAccount, weeklyStatusForAccount } from "@app/claude/lib/usage/fable-guard";
 import type { Cached } from "@app/claude/lib/usage/shared-cache";
-import { psEnvValue } from "@genesiscz/utils/ai/account-env";
+import { accountEnvVar, psEnvValue } from "@genesiscz/utils/ai/account-env";
 import type { TokenVerdict } from "@genesiscz/utils/claude/token-verify";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 
@@ -104,7 +104,7 @@ export function parsePinnedProcesses(psOutput: string): PinnedProcess[] {
 
         // One shared reader for every `ps` env line, so an account name holding a space reads
         // back whole instead of truncating at its first word.
-        const account = psEnvValue(match[3], "TOOLS_CLAUDE_ACCOUNT");
+        const account = psEnvValue(match[3], accountEnvVar("claude"));
         const token = psEnvValue(match[3], "CLAUDE_CODE_OAUTH_TOKEN");
 
         if (!account || !token) {

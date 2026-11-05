@@ -2,6 +2,8 @@ import { afterAll, describe, expect, it, mock } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { whoIsCalling } from "@genesiscz/utils/agent/identity";
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { ResolvedCaller } from "./http-caller";
 
@@ -238,7 +240,7 @@ describe("characterization: who the gateway says the caller is", () => {
         }
     });
 
-    it("with several harness owners the first socket owner wins, even if it cannot name a session", () => {
+    it("with several harness owners the one that names its session wins, whatever order the kernel lists them", () => {
         const id = "01a0f4fc-171d-7c30-9679-ee00633dee2d";
         fakeProcesses = [
             { pid: 4802, name: "grok", startSec: START_SEC, openFiles: [], cwd: "/fixture/outer" },
@@ -251,9 +253,21 @@ describe("characterization: who the gateway says the caller is", () => {
             },
         ];
         loopbackOwners = [4802, 4803];
-        expect(resolveCallerFromPeer(PEER)).toMatchObject({ agent: "grok", sessionId: null, pid: 4802 });
+        expect(resolveCallerFromPeer(PEER)).toMatchObject({ agent: "codex", sessionId: id, pid: 4803 });
         loopbackOwners = [4803, 4802];
         expect(resolveCallerFromPeer(PEER)).toMatchObject({ agent: "codex", sessionId: id, pid: 4803 });
+    });
+
+    it("with several harness owners and no session named, the outer host of the host chain wins, then the lower pid", () => {
+        fakeProcesses = [
+            { pid: 4905, name: "grok", startSec: START_SEC, openFiles: [], cwd: "/fixture/inner" },
+            { pid: 4904, name: "codex", startSec: START_SEC, openFiles: [], cwd: "/fixture/outer" },
+            { pid: 4903, name: "grok", startSec: START_SEC, openFiles: [], cwd: "/fixture/other" },
+        ];
+        loopbackOwners = [4905, 4904, 4903];
+        expect(resolveCallerFromPeer(PEER)).toMatchObject({ agent: "codex", sessionId: null, pid: 4904 });
+        loopbackOwners = [4905, 4903];
+        expect(resolveCallerFromPeer(PEER)).toMatchObject({ agent: "grok", pid: 4903 });
     });
 
     it("the gateway can name the session of a Claude or Codex caller only", () => {
@@ -274,9 +288,10 @@ describe("characterization: rollout path edge cases at the gateway", () => {
         expect(codexThreadIdFromOpenFiles([file, file, file.toUpperCase()])).toBe(id);
     });
 
-    it("compressed rollouts do not name a peer session today", () => {
-        expect(codexThreadIdFromOpenFiles([`${file}.zst`])).toBeNull();
+    it("a compressed rollout names its thread like a plain one, and both forms of one thread are one candidate", () => {
+        expect(codexThreadIdFromOpenFiles([`${file}.zst`])).toBe(id);
         expect(codexThreadIdFromOpenFiles([`${file}.zst`, file])).toBe(id);
+        expect(codexThreadIdFromOpenFiles([`${file}.gz`])).toBeNull();
     });
 
     it("Windows separators and non-UUID session strings are not matched today", () => {
@@ -286,5 +301,86 @@ describe("characterization: rollout path edge cases at the gateway", () => {
         ).toBeNull();
     });
 
-    it.todo("a peer with only a compressed Codex rollout can still identify its thread", () => {});
+    it("a peer with only a compressed Codex rollout can still identify its thread", () => {
+        fakeProcesses = [
+            { pid: 4950, name: "codex", startSec: 1_800_000_000, openFiles: [`${file}.zst`], cwd: "/fixture/project" },
+        ];
+        loopbackOwners = [4950];
+        expect(resolveCallerFromPeer({ clientPort: 50_001, serverPort: 50_002 })).toMatchObject({
+            agent: "codex",
+            sessionId: id,
+            pid: 4950,
+        });
+    });
+});
+
+describe("a remote caller never takes the gateway's own env, terminal or account", () => {
+    const PEER = { clientPort: 50_001, serverPort: 50_002 };
+    const gatewayEnv: Record<string, string> = {
+        CLAUDE_CODE_SESSION_ID: "gateway-own-session",
+        CMUX_SURFACE_ID: "gateway-surface",
+        TMUX_PANE: "%9",
+        T3CODE_THREAD_ID: "gateway-thread",
+        [accountEnvVar("claude")]: "gateway-account",
+    };
+
+    function withGatewayEnv<T>(fn: () => T): T {
+        const saved = { ...process.env };
+        Object.assign(process.env, gatewayEnv);
+
+        try {
+            return fn();
+        } finally {
+            for (const key of Object.keys(gatewayEnv)) {
+                if (key in saved) {
+                    process.env[key] = saved[key];
+                } else {
+                    delete process.env[key];
+                }
+            }
+        }
+    }
+
+    it("positive control: the same env names the gateway itself as a Claude caller when the request is local", () => {
+        withGatewayEnv(() => {
+            const local = whoIsCalling({ origin: "local", env: process.env });
+            expect(local).toMatchObject({ agent: "claude-code", sessionId: "gateway-own-session" });
+            expect(local.terminal).toBeDefined();
+            expect(local.account).toBeDefined();
+        });
+    });
+
+    it("a Grok peer on a gateway that runs inside Claude is a Grok caller with no session, terminal or account", () => {
+        fakeProcesses = [{ pid: 5001, name: "grok", startSec: 1_800_000_000, openFiles: [], cwd: "/fixture/project" }];
+        loopbackOwners = [5001];
+
+        withGatewayEnv(() => {
+            const identity = whoIsCalling(
+                { origin: "remote", peer: PEER },
+                { facets: ["cwd", "git", "title", "transcript", "model", "host", "process"] }
+            );
+
+            expect(identity).toMatchObject({ agent: "grok", sessionId: null, cwd: "/fixture/project" });
+            expect(identity.aiAgent).toBeNull();
+            expect(identity.terminal).toBeUndefined();
+            expect(identity.account).toBeUndefined();
+            expect(identity.host).toBeUndefined();
+            expect(identity.process?.pid).toBe(5001);
+        });
+    });
+
+    it("a connection nobody owns is an unknown caller, and the gateway's env fills in nothing", () => {
+        fakeProcesses = [];
+        loopbackOwners = [];
+
+        withGatewayEnv(() => {
+            const identity = whoIsCalling({ origin: "remote", peer: PEER }, { facets: ["host", "transcript"] });
+
+            expect(identity).toMatchObject({ agent: "unknown", sessionId: null, isInAgent: false });
+            expect(identity.terminal).toBeUndefined();
+            expect(identity.account).toBeUndefined();
+            expect(identity.host).toBeUndefined();
+            expect(resolveCallerFromPeer(PEER)).toMatchObject({ agent: "unknown", sessionId: null });
+        });
+    });
 });

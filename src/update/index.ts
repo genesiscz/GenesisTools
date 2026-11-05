@@ -5,7 +5,7 @@ import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
 import { createBuildProgressDisplay } from "@app/macos/lib/permissions/swift-progress";
 import { discoverTools } from "@app/tools/lib/discovery";
 import * as p from "@clack/prompts";
-import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
+import { whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { findClaudeExecutable } from "@genesiscz/utils/claude";
 import { execTool, execToolInteractive, isInteractive, isVerbose, runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -194,7 +194,7 @@ async function updateAfterPull(genesisPath: string, opts: UpdateOptions): Promis
 
     // 4. Claude Code plugin management. Without a claude binary there is nothing to run: asking first and then
     // failing every step with a stack trace is what a Mac without Claude Code on PATH used to get.
-    const inClaudeCode = getAgentRuntimeContext().isInAgent;
+    const inClaudeCode = whoIsCallingHere().isInAgent;
     const resolvedClaude = await findClaudeExecutable();
     logger.debug({ claude: resolvedClaude }, "update: claude CLI for the plugin steps");
 

@@ -1,5 +1,7 @@
+import { readCmuxTerminal } from "@genesiscz/utils/cmux/caller-enricher";
 import { identifyCmux } from "@genesiscz/utils/cmux/lib/place";
 import { env } from "@genesiscz/utils/env";
+import { readTmuxTerminal } from "@genesiscz/utils/tmux/caller-enricher";
 
 /** What `cmux identify` says about the process asking, plus what its own environment claims. */
 export interface SelfSendFacts {
@@ -55,8 +57,8 @@ export function classifySelfSend(facts: SelfSendFacts): SelfSendVerdict {
 export async function probeSelfSend(): Promise<SelfSendVerdict> {
     const environment = env.getProcessEnv();
     const facts: SelfSendFacts = {
-        tmuxPane: environment.TMUX_PANE,
-        envSurfaceId: environment.CMUX_SURFACE_ID,
+        tmuxPane: readTmuxTerminal(environment)?.pane,
+        envSurfaceId: readCmuxTerminal(environment)?.surfaceId,
     };
 
     if (facts.tmuxPane) {

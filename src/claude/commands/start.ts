@@ -28,6 +28,7 @@ import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
 import { TIER_BADGE } from "@app/claude/lib/usage/usage-table";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { accountFromPinJournal } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/statusline";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { keychainOwnerUuidOffline } from "@genesiscz/utils/claude/keychain";
@@ -1121,7 +1122,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         // which account this session was launched as.
         launchEnv = {
             ...process.env,
-            TOOLS_CLAUDE_ACCOUNT: account.name,
+            [accountEnvVar("claude")]: account.name,
             TOOLS_CLAUDE_AUTH: "keychain",
         };
         delete launchEnv.CLAUDE_CODE_OAUTH_TOKEN;

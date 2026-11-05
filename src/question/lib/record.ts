@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { type AgentRuntimeContext, gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
+import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
+import type { AgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { createTranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { logger } from "@genesiscz/utils/logger";
 import { loadConfig, type QuestionConfig } from "./config";
@@ -33,14 +35,17 @@ export async function recordAnswer(input: RecordInput, deps: RecordDeps = {}): P
         throw new Error("recordAnswer: answer is empty");
     }
 
-    const ctx = gatherHarnessPoster(
-        {
-            ...deps.ctx,
-            ...(input.projectPath ? { cwd: input.projectPath } : {}),
-            ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-            ...(input.project ? { project: input.project } : {}),
-        },
-        deps.env ?? env.getProcessEnv()
+    const ctx = toRuntimeContext(
+        whoIsCallingHere({
+            facets: STAMP_FACETS,
+            overrides: {
+                ...deps.ctx,
+                ...(input.projectPath ? { cwd: input.projectPath } : {}),
+                ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+                ...(input.project ? { project: input.project } : {}),
+            },
+            env: deps.env ?? env.getProcessEnv(),
+        })
     );
 
     const ts = Date.now();

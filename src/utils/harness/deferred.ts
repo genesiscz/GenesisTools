@@ -20,7 +20,9 @@ function isTranscriptLocator(value: unknown): value is TranscriptLocator {
         "titledSessions" in value &&
         typeof value.titledSessions === "function" &&
         "rootsOfHome" in value &&
-        typeof value.rootsOfHome === "function"
+        typeof value.rootsOfHome === "function" &&
+        "callerTranscript" in value &&
+        typeof value.callerTranscript === "function"
     );
 }
 
@@ -111,5 +113,6 @@ export function deferredLocator(module: string, exportName: string): TranscriptL
         workerNative: (worker, fs) => impl().workerNative(worker, fs),
         titledSessions: (search) => impl().titledSessions(search),
         rootsOfHome: (home) => impl().rootsOfHome(home),
+        callerTranscript: (query) => impl().callerTranscript(query),
     };
 }

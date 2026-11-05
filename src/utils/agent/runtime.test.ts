@@ -8,15 +8,10 @@ import { failureCaller } from "@genesiscz/utils/cli/failures/caller";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
+import { STAMP_FACETS, whoIsCallingHere } from "./caller-identity";
 import { resolveAgentHost } from "./host";
-import {
-    callerCwd,
-    currentCaller,
-    gatherHarnessPoster,
-    getAgentRuntimeContext,
-    gitCommonRoot,
-    runAsCaller,
-} from "./runtime";
+import { toRuntimeContext } from "./identity";
+import { callerCwd, currentCaller, getAgentRuntimeContext, gitCommonRoot, runAsCaller } from "./runtime";
 
 describe("characterization: host, runtime, poster and failure caller agree on identity", () => {
     const layout = {
@@ -63,7 +58,9 @@ describe("characterization: host, runtime, poster and failure caller agree on id
     for (const row of cases) {
         it(`${row.name}: compares the same environment across gatherers`, () => {
             const runtime = getAgentRuntimeContext(layout, row.vars);
-            const poster = gatherHarnessPoster(layout, row.vars);
+            const poster = toRuntimeContext(
+                whoIsCallingHere({ facets: STAMP_FACETS, overrides: layout, env: row.vars })
+            );
             const failure = failureCaller({ context: runtime, processEnv: row.vars, home: "/fixture/missing" });
             expect(resolveAgentHost(row.vars)).toMatchObject({ agent: row.agent, sessionId: row.sessionId });
             expect(runtime).toMatchObject({
@@ -73,14 +70,15 @@ describe("characterization: host, runtime, poster and failure caller agree on id
                 ...layout,
             });
             expect(poster).toEqual(runtime);
+            // The failure record keeps the session's cwd, and takes no AI_AGENT for Codex, which sets none of its own.
             expect(failure).toMatchObject({
                 agent: row.agent,
                 sessionId: row.sessionId,
-                aiAgent: "label",
+                aiAgent: row.label,
                 project: "repo",
                 repoRoot: "/fixture/repo",
+                cwd: "/fixture/repo/sub",
             });
-            expect(failure).not.toHaveProperty("cwd");
         });
     }
 });

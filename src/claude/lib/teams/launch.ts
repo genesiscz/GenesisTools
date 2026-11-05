@@ -9,6 +9,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { capture } from "@genesiscz/utils/process/ps";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
+import { insideTmux } from "@genesiscz/utils/tmux/inside";
 import type { TeamMemberView, TeamView } from "./types";
 
 export type LaunchMode = "focus" | "attach" | "split";
@@ -328,7 +329,7 @@ export async function launchTeammate(opts: LaunchTeammateOptions): Promise<Launc
                 );
             }
 
-            if (!env.get("TMUX")) {
+            if (!insideTmux()) {
                 Bun.spawnSync([tmux, "attach-session", "-t", leadLive.tmuxSession], {
                     stdout: "inherit",
                     stderr: "inherit",
@@ -378,7 +379,7 @@ export async function launchTeammate(opts: LaunchTeammateOptions): Promise<Launc
             }
 
             // If we are inside tmux, also select the window; attach is for outside
-            if (!env.get("TMUX")) {
+            if (!insideTmux()) {
                 Bun.spawnSync([tmux, "attach-session", "-t", live.tmuxSession], {
                     stdout: "inherit",
                     stderr: "inherit",
@@ -429,7 +430,7 @@ export async function launchTeammate(opts: LaunchTeammateOptions): Promise<Launc
     }
 
     // attach / launch in current context
-    if (env.get("TMUX")) {
+    if (insideTmux()) {
         // Launch in a new window of the current session so we don't clobber the caller
         const tmux = resolveTmuxBin();
         const name = opts.teammate.member.name.slice(0, 20);

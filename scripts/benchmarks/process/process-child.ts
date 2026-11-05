@@ -17,7 +17,6 @@ import {
     runShell,
 } from "@app/dev-dashboard/lib/system/collector";
 import { parseSwapUsage } from "@app/macos/lib/swap/scanner";
-import { captureAncestry, parsePidCommands, parsePidParents, walkParents } from "@app/say/lib/caller";
 import { listActiveAgentProcesses, listActiveAgentProcessesViaPs } from "@genesiscz/utils/ai/active-processes";
 import { listHostProcesses } from "@genesiscz/utils/cmux/tmux-host";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -28,6 +27,7 @@ import {
     readVmPageCounts,
     sampleCpuBusyPercent,
 } from "@genesiscz/utils/macos/host-stats";
+import { ancestry } from "@genesiscz/utils/process/processes";
 import { batchCwd, batchCwdViaLsof, listPsTable } from "@genesiscz/utils/process/ps";
 import { listListeningTcpAsLsof } from "@genesiscz/utils/process/socket-owner";
 import { processStartMs, readProcessCommand } from "@genesiscz/utils/process-identity";
@@ -95,14 +95,42 @@ async function pulseViaHost(): Promise<number> {
     ]);
 }
 
-/** What `captureAncestry` ran before the kernel walk: the pid→ppid table, then the chain's commands. */
-async function ancestryViaPs(startPid: number): Promise<number> {
-    const parents = parsePidParents(Bun.spawnSync(["ps", "-axo", "pid=,ppid="]).stdout.toString());
-    const chain = walkParents(parents, startPid);
-    const commands = parsePidCommands(
-        Bun.spawnSync(["ps", "-p", chain.join(","), "-o", "pid=,command="]).stdout.toString()
+/** The depth the say caller chain (now the identity's `process` facet) walks. */
+const MAX_ANCESTRY_DEPTH = 20;
+
+/**
+ * What `tools say` ran before the kernel walk, kept here as the benchmark's baseline arm: the pid→ppid table from
+ * `ps -axo pid=,ppid=`, a walk up it, then the chain's commands from one `ps -p`.
+ */
+function ancestryViaPs(startPid: number): number {
+    const parents = new Map<number, number>();
+
+    for (const line of Bun.spawnSync(["ps", "-axo", "pid=,ppid="]).stdout.toString().split("\n")) {
+        const match = line.trim().match(/^(\d+)\s+(\d+)$/);
+
+        if (match) {
+            parents.set(Number(match[1]), Number(match[2]));
+        }
+    }
+
+    const chain: number[] = [];
+
+    for (let pid: number | undefined = startPid; pid !== undefined && pid > 1; pid = parents.get(pid)) {
+        if (chain.length >= MAX_ANCESTRY_DEPTH || chain.includes(pid)) {
+            break;
+        }
+
+        chain.push(pid);
+    }
+
+    const listed = Bun.spawnSync(["ps", "-p", chain.join(","), "-o", "pid=,command="]).stdout.toString();
+    const named = new Set(
+        listed
+            .split("\n")
+            .flatMap((line) => line.match(/^\s*(\d+)\s/)?.[1] ?? [])
+            .map(Number)
     );
-    return chain.filter((pid) => commands.has(pid)).length;
+    return chain.filter((pid) => named.has(pid)).length;
 }
 
 /** What `readProcessCommand` and `processStartMs` ran per pid before the kernel read: `ps -p` twice. */
@@ -135,7 +163,9 @@ async function runOnce(): Promise<number> {
     }
 
     if (job === "ancestry") {
-        return arm === "ps" ? ancestryViaPs(process.pid) : (await captureAncestry(process.pid)).length;
+        return arm === "ps"
+            ? ancestryViaPs(process.pid)
+            : ancestry(process.pid, MAX_ANCESTRY_DEPTH).filter((entry) => entry.pid > 1).length;
     }
 
     if (job === "identity") {

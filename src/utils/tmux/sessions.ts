@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { argvWithChildDeadline as wrapArgvWithChildDeadline } from "@genesiscz/utils/process/child-deadline";
@@ -83,7 +84,7 @@ export const TERMINAL_FOREIGN_ENV = [
     "CODEX_COMPANION_SESSION_ID",
     "CODEX_COMPANION_TRANSCRIPT_PATH",
     "AI_AGENT",
-    "TOOLS_CLAUDE_ACCOUNT",
+    accountEnvVar("claude"),
     "TOOLS_CLAUDE_AUTH",
     "CMUX_SURFACE_ID",
     "CMUX_WORKSPACE_ID",

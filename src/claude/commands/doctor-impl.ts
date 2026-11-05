@@ -12,6 +12,7 @@ import {
 } from "@app/claude/lib/doctor";
 import { peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import {
     type FingerprintResult,
     findDuplicateAccounts,
@@ -34,7 +35,8 @@ export function readPinnedCandidates(): ReturnType<typeof parsePinnedProcesses> 
     return findProcesses({ command: "claude" }).flatMap((candidate) => {
         const entry = readProcess(candidate.pid);
         const environment = readProcessEnvironment(candidate.pid);
-        if (!entry?.command || !environment?.TOOLS_CLAUDE_ACCOUNT || !environment.CLAUDE_CODE_OAUTH_TOKEN) {
+        const accountKey = accountEnvVar("claude");
+        if (!entry?.command || !environment?.[accountKey] || !environment.CLAUDE_CODE_OAUTH_TOKEN) {
             return [];
         }
         // Only the two fields the parser needs are carried across; never log this credential-bearing value.
@@ -44,8 +46,8 @@ export function readPinnedCandidates(): ReturnType<typeof parsePinnedProcesses> 
             (entry.tty ?? "??") +
             " " +
             entry.command +
-            " TOOLS_CLAUDE_ACCOUNT=" +
-            environment.TOOLS_CLAUDE_ACCOUNT +
+            ` ${accountKey}=` +
+            environment[accountKey] +
             " CLAUDE_CODE_OAUTH_TOKEN=" +
             environment.CLAUDE_CODE_OAUTH_TOKEN;
         return parsePinnedProcesses(text);

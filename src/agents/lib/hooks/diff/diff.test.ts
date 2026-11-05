@@ -107,6 +107,7 @@ function payload(overrides: Partial<HookPayload> = {}): HookPayload {
         command: "true",
         model: "",
         harness: "claude",
+        caller: "claude",
         nativeDiffFiles: [],
         raw: {},
         ...overrides,

@@ -1,8 +1,9 @@
 import { appendFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
-import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
 import { readLastLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -83,7 +84,7 @@ export function openArgv(request: OpenRequest, targets: OpenTarget[]): string[] 
 
 /** Opens the targets the way `open` does and appends one record with the caller's agent context to the open log. */
 export async function openAndLog(request: OpenRequest): Promise<OpenRecord> {
-    const caller = gatherHarnessPoster();
+    const caller = toRuntimeContext(whoIsCallingHere({ facets: STAMP_FACETS }));
     const targets = request.targets.map((given) => classifyTarget(given, process.cwd()));
     const argv = openArgv(request, targets);
     const proc = Bun.spawn(argv, { stdout: "ignore", stderr: "pipe" });
