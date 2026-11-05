@@ -194,7 +194,10 @@ export function joinLiveSessions(input: {
         const tty = surface.tmux?.paneTty ?? ttyName(surface.surface.tty);
         const sessionId = surface.sessionId.toLowerCase();
         const candidates = input.processes.filter((proc) => proc.provider === surface.agent && !claimed.has(proc.pid));
-        const onTty = candidates.filter((proc) => tty !== null && proc.tty === tty);
+        const onTty = candidates.filter(
+            (proc) =>
+                tty !== null && proc.tty === tty && (proc.argvSessionId === null || proc.argvSessionId === sessionId)
+        );
         // Several agents of one kind on one tty: the one its command line names, else none (no guess).
         const process =
             candidates.find((proc) => proc.argvSessionId === sessionId) ?? (onTty.length === 1 ? onTty[0] : null);
