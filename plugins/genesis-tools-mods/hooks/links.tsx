@@ -258,7 +258,7 @@ export const PR_REFERENCE_SECTION: PromptComposeSection = {
     text: [
         "# PR and MR references",
         "The genesis-tools-mods links mod turns a bare #123 in your reply into a link, and for that it must guess the repository. Do not make it guess.",
-        "Write every PR as a full markdown link with its title: [#123 (title)](https://github.com/owner/repo/pull/123). When you cannot write the link, write owner/repo#123. A bare #123 is acceptable only when the session works in one repository and no other repository appears in the reply.",
+        "Write every PR as a full markdown link with its title: [#123 (title)](https://github.com/owner/repo/pull/123). When you cannot write the link, write owner/repo#123 only in a single-host session. Across GitHub.com and Enterprise hosts, require a verified full URL or leave the reference unlinked. A bare #123 is acceptable only when the session works in one repository and no other repository appears in the reply.",
     ].join("\n"),
 };
 
