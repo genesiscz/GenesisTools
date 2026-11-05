@@ -397,9 +397,13 @@ async function stop(): Promise<void> {
 
     const record = current.state ? store.read(current.state.meetingId) : undefined;
     const recording = record?.recording;
+    const failed = recording?.stopReason === "failed" || recording?.stopReason === "error";
 
-    if (recording?.stopReason === "failed" || recording?.stopReason === "error") {
-        fail(`Recording failed: ${recording.warning ?? recording.stopReason}`);
+    // The answer says `error` also when the recorder could not save its failed finish to the record.
+    if (failed || answer.result.outcome === "error") {
+        fail(
+            `Recording failed: ${recording?.warning ?? (failed ? recording?.stopReason : "the recording could not be finished")}`
+        );
         return;
     }
 

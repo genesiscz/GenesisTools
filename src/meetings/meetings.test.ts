@@ -2757,13 +2757,15 @@ describe("the meetings recorder loop", () => {
         });
 
         expect(seen).toEqual(["summary running", "summary done", "manifest running"]);
+        // The failed finish is an error in the answer and in the record, so `record stop` reports it.
         expect(run.answers[0]).toEqual({
             state: "stopped",
-            outcome: "requested",
+            outcome: "error",
             job: expect.stringMatching(/^finish-/),
             frames: 1,
         });
-        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "requested", frames: 1 });
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "error", frames: 1 });
+        expect(run.saved?.recording?.warning).toContain("recording.json");
         expect(listLiveRecordings(run.liveDir)).toEqual([]);
         expect(existsSync(join(run.folder, "recorder-last.json"))).toBe(true);
     });

@@ -233,8 +233,8 @@ export interface RecorderFinishConfig<S> {
     capturesStep?: string;
     steps: JobStep<S>[];
     answer: (state: S, job: string) => StopAnswer;
-    /** The stop answer when a step threw; without it a waiting stop fails with the step's error. */
-    failed?: (error: unknown, job: string) => StopAnswer;
+    /** The stop answer when a step threw (it may first save the failure); without it a waiting stop fails. */
+    failed?: (error: unknown, job: string) => StopAnswer | Promise<StopAnswer>;
     /** Why the recording ended, for the socket's `ended` event. */
     closeReason: () => string | undefined;
     /**

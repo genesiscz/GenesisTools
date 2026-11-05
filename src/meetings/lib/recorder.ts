@@ -204,9 +204,13 @@ function meetingRecorderConfig(run: MeetingRun) {
                     frames: state.frames,
                     notes: finishNotes,
                 }),
-                failed: (err, job) => {
-                    log.error({ err, meetingId }, "the recording summary could not be written");
-                    return { state: "stopped", outcome: state.stopReason, job, frames: state.frames };
+                failed: async (err, job) => {
+                    log.error({ err, meetingId }, "the recording could not be finished");
+                    // The record and the answer say the finish failed, so `record stop` reports it.
+                    state.stopReason = "error";
+                    state.warning = errorText(err);
+                    await saveFailedRun(store, meetingId, err);
+                    return { state: "stopped", outcome: "error", job, frames: state.frames };
                 },
                 closeReason: () => state.stopReason,
                 // A waiting `stop` call gets its answer before the socket closes.

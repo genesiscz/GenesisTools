@@ -17,8 +17,8 @@ export interface RecordingFinishOptions<S> {
     steps: JobStep<S>[];
     /** The stop answer when every step ran. */
     answer: (state: S, job: string) => StopAnswer;
-    /** The stop answer when a step threw; without it a waiting stop fails with the step's error. */
-    failed?: (error: unknown, job: string) => StopAnswer;
+    /** The stop answer when a step threw (it may first save the failure); without it a waiting stop fails. */
+    failed?: (error: unknown, job: string) => StopAnswer | Promise<StopAnswer>;
     /** Closes the recording's socket; it runs after the answer is settled, whatever the steps did. */
     close: () => void;
     /** The time between the answer and the close, so a stop waiting over the socket is answered before it closes. */
