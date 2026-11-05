@@ -680,8 +680,14 @@ async function advanceFolder(
         return "closed";
     }
 
-    if (step === "folder-ask") {
+    if (step === "folder-ask" || folder.state === "asked") {
+        setOpen(store, record.id, "folder-ask");
         const form = folder.formId ? await deps.inbox.read(folder.formId) : null;
+
+        if (!form && folder.formId && folder.folder) {
+            await postFolderQuestion(store, record, deps);
+            return "pending";
+        }
 
         if (form?.status === "pending") {
             return "pending";
@@ -736,6 +742,22 @@ async function advanceFolder(
 
     const found = folders[0]!;
     const formId = `meetings-folder-${record.id}-${deps.now().toString(36)}`;
+    await store.update(record.id, { command: "assign sweep", change: `asked to pair folder "${found}"` }, (current) => {
+        if (current.assign?.folder) {
+            current.assign.folder.state = "asked";
+            current.assign.folder.folder = found;
+            current.assign.folder.formId = formId;
+        }
+    });
+    setOpen(store, record.id, "folder-ask");
+    await postFolderQuestion(store, store.read(record.id)!, deps);
+    return "folder asked";
+}
+
+async function postFolderQuestion(store: MeetingStore, record: MeetingRecord, deps: AssignDeps): Promise<void> {
+    const folder = record.assign!.folder!;
+    const found = folder.folder!;
+    const formId = folder.formId!;
     await deps.inbox.post({
         id: formId,
         source: "meetings",
@@ -753,15 +775,6 @@ async function advanceFolder(
             },
         ],
     });
-    await store.update(record.id, { command: "assign sweep", change: `asked to pair folder "${found}"` }, (current) => {
-        if (current.assign?.folder) {
-            current.assign.folder.state = "asked";
-            current.assign.folder.folder = found;
-            current.assign.folder.formId = formId;
-        }
-    });
-    setOpen(store, record.id, "folder-ask");
-    return "folder asked";
 }
 
 /** Whether a question or a folder step still waits on some meeting: the watcher must run to read it back. */

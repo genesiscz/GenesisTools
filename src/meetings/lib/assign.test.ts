@@ -1,5 +1,8 @@
 import { describe, expect, setSystemTime, test } from "bun:test";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { answerAskForm, cancelAskForm, getAskForm } from "@app/question/lib/pending/ask";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { CalendarEntry, CalendarLookup } from "@genesiscz/utils/meetings/calendar-entry";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import {
@@ -622,4 +625,73 @@ describe("ask each time on the real question store", () => {
         expect(record.assign?.ask?.outcome).toBe("timeout");
         expect(hasOpenAssignSteps(store)).toBe(false);
     });
+});
+
+test("folder questions persist before posting and recover the same choices and id", async () => {
+    const storage = new Storage(`assign-claim-${process.pid}`);
+    const store = new MeetingStore(storage);
+    const since = "2026-11-05T10:00:00.000Z";
+    const record = await store.create(
+        {
+            title: "Fixture",
+            start: since,
+            createdBy: "new",
+            assign: { folder: { source: "wisprflow", project: "work", state: "waiting", since } },
+        },
+        { command: "new", change: "fixture" }
+    );
+    const index = join(store.root, "assign-open.json");
+    writeFileSync(index, SafeJSON.stringify({ open: { [record.id]: "folder-wait" } }));
+    const config = new MeetingsConfigStore(new Storage(`assign-config-${process.pid}`));
+    const forms: CreateAskFormInput[] = [];
+    let answer: InboxAnswer | null = null;
+    let now = Date.parse(since);
+    const deps: AssignDeps = {
+        config,
+        now: () => now,
+        calendars: async () => [],
+        source: async () => ({
+            sourceMeetingId: "fixture",
+            source: {
+                id: "wisprflow",
+                label: "Fixture",
+                load: async () => {
+                    throw new Error("unused");
+                },
+                describe: () => ({}),
+                dictionary: async () => [],
+                recordingClock: async () => null,
+                evidence: async () => null,
+                liveRecording: async () => null,
+                calendarEntries: async () => ({ ok: true, from: "fixture", entries: [] }),
+                folders: async () => [],
+                meetingFolders: async () => ["Notes"],
+                folderWrite: { supported: false, reason: "fixture", manualStep: "fixture" },
+            },
+        }),
+        inbox: {
+            read: async () => answer,
+            cancel: async () => {},
+            post: async (input) => {
+                forms.push(input);
+                const saved = new MeetingStore(storage).read(record.id)!;
+                expect(saved.assign?.folder).toMatchObject({ state: "asked", folder: "Notes", formId: input.id });
+                expect(SafeJSON.parse(readFileSync(index, "utf8")).open[record.id]).toBe("folder-ask");
+                if (forms.length === 1) {
+                    throw new Error("interrupted post");
+                }
+                answer = { status: "pending", answers: {} };
+                return { id: input.id! };
+            },
+        },
+    };
+
+    await assignSweep(store, deps);
+    now += 1000;
+    await assignSweep(new MeetingStore(storage), deps);
+    expect(forms).toHaveLength(2);
+    expect(forms[1]).toEqual(forms[0]);
+    answer = { status: "answered", answers: { folder: { itemId: "folder", selectedChoices: ["folder:no"] } } };
+    await assignSweep(new MeetingStore(storage), deps);
+    expect(new MeetingStore(storage).read(record.id)?.assign?.folder?.state).toBe("declined");
 });
