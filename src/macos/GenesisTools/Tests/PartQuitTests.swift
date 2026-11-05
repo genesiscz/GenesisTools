@@ -16,7 +16,8 @@ final class PartQuitTests: XCTestCase {
     /// By default the widget's panels show and Clicky is on, with the settings window closed.
     private func snapshot(_ faces: [(Int32, String)], up: Set<String>? = nil) -> RunningPartsSnapshot {
         RunningPartsSnapshot(
-            ownPid: own, faces: faces.map { RunningFace(pid: $0.0, face: $0.1) }, livePresences: up ?? [widget, clicky])
+            ownPid: own, faces: faces.map { RunningFace(pid: $0.0, face: $0.1) }, livePresences: up ?? [widget, clicky],
+            permissionsPid: up?.contains(permissions) == true ? faces.first(where: { $0.1 == "--window" })?.0 : nil)
     }
 
     // MARK: Which processes are faces
@@ -71,6 +72,13 @@ final class PartQuitTests: XCTestCase {
         XCTAssertEqual(question.title, "Quit only Widget, or all GenesisTools parts?")
         XCTAssertEqual(question.quitThisTitle, "Quit Widget")
         XCTAssertEqual(question.message, "Clicky, Hub and Permissions are also running. Quit All stops them too.")
+    }
+
+    func testQuitAllLeavesTheOtherBareDeliveryProcessRunning() {
+        var running = snapshot([(own, "--widget"), (400, "--window"), (500, "--window")], up: [widget, permissions])
+        running.permissionsPid = 400
+        XCTAssertEqual(PartQuit.plan(face: "--widget", snapshot: running, behavior: .allParts),
+                       .quitAll(otherPids: [400]))
     }
 
     func testOneOtherPartReadsInTheSingular() {
