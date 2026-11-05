@@ -48,6 +48,7 @@ import {
 import { RECORDING_MANIFEST } from "@genesiscz/utils/screen-recorder/library";
 import { skip } from "@genesiscz/utils/test/skip";
 import { prepareVideoEvidence } from "@genesiscz/utils/video/evidence";
+import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { createCanvas } from "@napi-rs/canvas";
 import { ZodError } from "zod";
@@ -387,6 +388,21 @@ describe.skipIf(skip.integration)("the editor on a video, and the frame review o
             expect(sha(repaired.frames[0].path)).toBe(expected);
             expect(repaired.steps.find((step) => step.name === "frames-0")?.skipped).toBe(false);
         }
+
+        const rangedSpeed = await new RecordingEditor().run({
+            source: { file: source },
+            output: join(root, "ranged-speed"),
+            steps: [
+                { kind: "range", from: 1, to: 2 },
+                { kind: "speed", factor: 2 },
+                { kind: "frames", fps: 4 },
+                { kind: "export", format: "mp4" },
+            ],
+        }).done;
+        expect(rangedSpeed.frames.map((frame) => frame.requestedUs)).toEqual([500000, 750000]);
+        const exportedRange = await probeVideo({ input: rangedSpeed.exports[0].path });
+        expect(exportedRange.durationUs).toBeGreaterThanOrEqual(400000);
+        expect(exportedRange.durationUs).toBeLessThan(700000);
 
         const trimmed = await new RecordingEditor().run({
             source: { file: source },

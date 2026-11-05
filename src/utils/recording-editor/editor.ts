@@ -473,6 +473,13 @@ async function exportStep(
     return { path: output, format: step.format };
 }
 
+function scaledWindow(window: EditState["window"], factor: number): EditState["window"] {
+    return {
+        fromUs: window.fromUs === undefined ? undefined : Math.round(window.fromUs / factor),
+        toUs: window.toUs === undefined ? undefined : Math.round(window.toUs / factor),
+    };
+}
+
 /** The job steps of a plan: a source step, then one per plan step (a frames step with changeOnly is two). */
 function compile(options: {
     plan: EditPlan;
@@ -576,7 +583,12 @@ function compile(options: {
                                 ...frame,
                                 atUs: Math.round(frame.atUs / step.factor),
                             }));
-                            return { ...ctx.state, stills, window: {}, frames: undefined };
+                            return {
+                                ...ctx.state,
+                                stills,
+                                window: scaledWindow(ctx.state.window, step.factor),
+                                frames: undefined,
+                            };
                         }
 
                         mkdirSync(dir, { recursive: true });
@@ -587,7 +599,12 @@ function compile(options: {
                             speedArgv({ input: ctx.state.video.path, output, factor: step.factor, audio }),
                             output
                         );
-                        return { ...ctx.state, video, window: {}, frames: undefined };
+                        return {
+                            ...ctx.state,
+                            video,
+                            window: scaledWindow(ctx.state.window, step.factor),
+                            frames: undefined,
+                        };
                     },
                 });
                 break;
