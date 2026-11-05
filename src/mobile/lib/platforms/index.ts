@@ -13,7 +13,7 @@ export const PLATFORMS: Record<MobilePlatformId, MobilePlatform> = {
 export const PLATFORM_IDS = Object.keys(PLATFORMS) as MobilePlatformId[];
 
 export function isPlatformId(value: string): value is MobilePlatformId {
-    return value in PLATFORMS;
+    return Object.hasOwn(PLATFORMS, value);
 }
 
 /**
