@@ -206,9 +206,11 @@ public final class FileTreeModel: ObservableObject {
         }
         guard folder.path == rootPath else { return }
         let path = file.standardizedFileURL.path.nativeUTF8
+        var scheduledParents = Set<String>()
         for item in chain + [path] where (item as NSString).lastPathComponent.hasPrefix(".") {
             if shownHidden.insert(item).inserted {
                 let parent = (item as NSString).deletingLastPathComponent
+                scheduledParents.insert(parent)
                 if loading.contains(parent) {
                     stale.insert(parent)
                 } else {
@@ -232,9 +234,10 @@ public final class FileTreeModel: ObservableObject {
         // did nothing (2026-10-15: notes saved at 05:30:49, "Show in Sidebar" on one at 05:33:14). Such a folder is
         // read again; the row arrives with the new listing.
         for (parent, child) in zip([rootPath] + chain.reversed(), chain.reversed() + [path]) {
-            // A newly revealed hidden child already scheduled its parent's relist above.
-            if let listed = children[parent], !listed.contains(where: { $0.path == child }), !shownHidden.contains(child),
-               FileManager.default.fileExists(atPath: child) {
+            guard let listed = children[parent], !listed.contains(where: { $0.path == child }),
+                  !scheduledParents.contains(parent) else { continue }
+            // Hidden entries are checked by the detached listing, not on the main actor.
+            if shownHidden.contains(child) || FileManager.default.fileExists(atPath: child) {
                 relist(parent)
             }
         }
