@@ -196,6 +196,26 @@ describe("suggestItems", () => {
 });
 
 describe("suggestDictionary", () => {
+    test("reconfirming one item is not independent dictionary evidence", () => {
+        const correction = {
+            at: "t",
+            meeting: "m",
+            kind: "term" as const,
+            heard: "Zushtent",
+            fixed: "Zustand",
+            item: "i1",
+        };
+        expect(
+            suggestDictionary({
+                dictionary: { abbrExpansion: "every", entries: [] },
+                sourceId: "wisprflow",
+                sourceWords: [],
+                ignore: [],
+                corrections: [correction, { ...correction, at: "t2" }],
+            })
+        ).toEqual([]);
+    });
+
     test("source rows become fix or term, twice-confirmed corrections become fix, known and ignored values are left out", () => {
         const correction = {
             at: "t",
@@ -216,7 +236,11 @@ describe("suggestDictionary", () => {
                 { value: "transcript" },
             ],
             ignore: ["ignored"],
-            corrections: [correction, { ...correction, at: "t2" }, { ...correction, heard: "redakt", fixed: "Redux" }],
+            corrections: [
+                correction,
+                { ...correction, meeting: "m2", at: "t2" },
+                { ...correction, heard: "redakt", fixed: "Redux" },
+            ],
         });
 
         expect(suggestions).toEqual([
@@ -796,6 +820,33 @@ describe("watchOnce", () => {
 
         expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("disabled");
         expect(h.runs).toEqual([]);
+    });
+
+    test("disabling autostart stops only its owned recording and retries a failed stop", async () => {
+        const h = harness();
+        await watchOnce(h.store, { deps: h.deps, now });
+        h.deps.settings = async () => ({ ...settings, enabled: false });
+        h.deps.liveRecording = async () => {
+            throw new Error("disabled mode must not query the source");
+        };
+        const successfulRun = h.deps.run!;
+        h.deps.run = async () => ({ success: false, exitCode: 1, stderr: "timeout" });
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("failed");
+        h.deps.run = successfulRun;
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("disabled");
+        expect(h.runs.at(-1)).toEqual(["meetings", "record", "stop"]);
+        expect(await watchOnce(h.store, { deps: h.deps, now })).toBe("disabled");
+        expect(h.runs).toHaveLength(2);
+
+        const manual = harness({
+            settings: async () => ({ ...settings, enabled: false }),
+            recorder: () => ({
+                running: true,
+                state: { meetingId: "manual", pid: 1, startedAt: "", display: 1, frames: 0, bytes: 0 },
+            }),
+        });
+        expect(await watchOnce(manual.store, { deps: manual.deps, now })).toBe("disabled");
+        expect(manual.runs).toEqual([]);
     });
 
     test("a fresh Wispr recording starts one screen recording and a notification, then keeps it", async () => {

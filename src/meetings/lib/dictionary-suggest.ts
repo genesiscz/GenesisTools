@@ -45,6 +45,8 @@ export function suggestDictionary(options: {
     };
 
     const repeats = new Map<string, { correction: Correction; count: number }>();
+    /** One confirmation per meeting item: confirming the same item again is not a second, independent sighting. */
+    const evidence = new Set<string>();
 
     for (const correction of options.corrections) {
         if (correction.kind !== "term" || (options.project && correction.project !== options.project)) {
@@ -52,6 +54,15 @@ export function suggestDictionary(options: {
         }
 
         const key = `${correction.heard}\n${correction.fixed}`;
+        const identity = [correction.meeting, correction.item, correction.heard, correction.fixed]
+            .map((part) => `${part.length}:${part}`)
+            .join("");
+
+        if (evidence.has(identity)) {
+            continue;
+        }
+
+        evidence.add(identity);
         const seen = repeats.get(key);
         repeats.set(key, { correction, count: (seen?.count ?? 0) + 1 });
     }
