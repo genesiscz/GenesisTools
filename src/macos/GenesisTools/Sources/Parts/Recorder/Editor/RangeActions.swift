@@ -82,13 +82,13 @@ extension EditorModel {
         timelineRange = nil
         switch action {
         case .cut:
-            guard let next = TimelineMap.cut(project, fromOut: range.fromUs, toOut: range.toUs) else {
-                show("That would cut the whole movie.", error: false)
-                return
-            }
-            selection = .none
-            clock.outUs = range.fromUs
-            apply(next, rebuildMovie: true)
+            let op = EditOp.RangeAction(from: EditOpDiff.seconds(range.fromUs), to: EditOpDiff.seconds(range.toUs), action: "cut")
+            edit([.range(op)], then: { [weak self] _, _ in
+                self?.selection = .none
+                self?.seek(range.fromUs)
+            }, failed: { [weak self] reason in
+                self?.show("Nothing was cut: \(reason)", error: false)
+            })
         case .speed:
             speedRange(fromOut: range.fromUs, toOut: range.toUs, speed: speed)
         case .zoom:

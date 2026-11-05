@@ -59,15 +59,16 @@ extension EditorModel {
         guard hasTranscript, !isReadingLineWords else { return }
         isReadingLineWords = true
         let target = FileManager.default.fileExists(atPath: store.url.path) ? store.url.path : project.source.video
-        ToolsRunner.run(["recorder", "words", target]) { [weak self] status, stdout, stderr in
+        ask("lineWords", recording: target, argv: ["recorder", "words", target]) { [weak self] result in
             guard let self else { return }
             self.isReadingLineWords = false
-            guard status == 0, let lines = try? JSONDecoder().decode([TranscriptLineWords].self, from: Data(stdout.utf8)) else {
-                let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
-                self.show("The transcript's words did not load: \(reason)", error: true)
-                return
+            let decoded = result.flatMap { data in
+                Result { try JSONDecoder().decode([TranscriptLineWords].self, from: data) }.mapError { ApplyFailure(reason: $0.localizedDescription) }
             }
-            self.lineWords = lines
+            switch decoded {
+            case let .success(lines): self.lineWords = lines
+            case let .failure(failure): self.show("The transcript's words did not load: \(failure.reason)", error: true)
+            }
         }
     }
 

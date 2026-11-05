@@ -52,17 +52,24 @@ extension EditorModel {
             return
         }
         isSearchingScreen = true
-        ToolsRunner.run(["recorder", "find-screen", recordingFolder.path, text, "--json"]) { [weak self] status, stdout, stderr in
+        ask("findOnScreen", ["text": text], recording: recordingFolder.path,
+            argv: ["recorder", "find-screen", recordingFolder.path, text, "--json"]) { [weak self] result in
             guard let self, revision == self.screenSearchRevision else { return }
             self.isSearchingScreen = false
             self.selectedScreenHit = nil
-            guard status == 0, let hits = try? JSONDecoder().decode([ScreenHit].self, from: Data(stdout.utf8)) else {
+            switch result {
+            case let .success(data):
+                guard let hits = try? JSONDecoder().decode([ScreenHit].self, from: data) else {
+                    self.screenHits = nil
+                    self.screenSearchFailure = "The search answered something this window does not read."
+                    return
+                }
+                self.screenSearchFailure = nil
+                self.screenHits = hits
+            case let .failure(failure):
                 self.screenHits = nil
-                self.screenSearchFailure = Self.screenSearchProblem(stderr: stderr, status: status)
-                return
+                self.screenSearchFailure = Self.screenSearchProblem(stderr: failure.reason, status: 1)
             }
-            self.screenSearchFailure = nil
-            self.screenHits = hits
         }
     }
 

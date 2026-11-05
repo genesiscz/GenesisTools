@@ -90,36 +90,34 @@ extension EditorModel {
         }
     }
 
-    /// What plays from `fromOut` to `toOut` at `speed` (the `speed` op).
+    /// What plays from `fromOut` to `toOut` at `speed` (the range op's speed, over output times).
     func speedRange(fromOut: Int64, toOut: Int64, speed: Double) {
-        guard let next = TimelineMap.speed(project, fromOut: fromOut, toOut: toOut, speed: speed) else {
-            show("Nothing plays there to speed up.", error: false)
-            return
-        }
-        apply(next, rebuildMovie: true)
+        let op = EditOp.RangeAction(from: EditOpDiff.seconds(fromOut), to: EditOpDiff.seconds(toOut), action: "speed", factor: speed)
+        edit([.range(op)], failed: { [weak self] reason in self?.show("Nothing plays there to speed up: \(reason)", error: false) })
     }
 
     func moveEffect(_ item: EffectItem, toLane lane: String) {
-        guard let next = EffectLanes.moveToLane(project, item: item.id, lane: lane) else { return }
-        apply(next, rebuildMovie: false)
+        edit([.moveToLane(EditOp.MoveToLane(id: item.id, lane: lane))])
     }
 
     /// A new lane at the bottom of the effects area; nil kinds holds every kind.
     func addLane(kinds: [EffectKind]?) {
-        let (next, _) = EffectLanes.addLane(project, kinds: kinds)
-        apply(next, rebuildMovie: false)
+        edit([.addLane(EditOp.AddLane(kinds: kinds))])
     }
 
     func removeLane(_ id: String) {
-        apply(EffectLanes.removeLane(project, id: id), rebuildMovie: false)
+        edit([.removeLane(EditOp.RemoveLane(id: id))])
     }
 
+    /// Moves a lane `offset` places among the lanes as they show (negative is up).
     func moveLane(_ id: String, by offset: Int) {
-        apply(EffectLanes.moveLane(project, id: id, by: offset), rebuildMovie: false)
+        let lanes = EffectLanes.resolve(project).map(\.lane.id)
+        guard let index = lanes.firstIndex(of: id) else { return }
+        edit([.moveLane(EditOp.MoveLane(id: id, to: min(max(0, index + offset), lanes.count - 1)))])
     }
 
     func renameLane(_ id: String, name: String?) {
-        apply(EffectLanes.renameLane(project, id: id, name: name), rebuildMovie: false)
+        edit([.renameLane(EditOp.RenameLane(id: id, name: name ?? ""))])
     }
 
     /// Asks for the lane's name in a sheet-like alert; an empty name goes back to what it holds.

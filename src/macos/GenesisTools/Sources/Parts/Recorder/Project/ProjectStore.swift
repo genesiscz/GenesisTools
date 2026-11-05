@@ -87,6 +87,11 @@ final class ProjectStore {
         return saved
     }
 
+    /// A revision this window's own change wrote through `tools` (offline): its file event is not an outside edit.
+    func noteWritten(_ revision: Int) {
+        lastWritten = max(lastWritten, revision)
+    }
+
     /// Watches the edit file; an atomic replace ends the watch, so each event starts a new one.
     func watch() {
         source?.cancel()

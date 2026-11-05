@@ -197,6 +197,17 @@ export function moveLane(project: EditProject, id: string, to: number): EditProj
     return setLanes(base, lanes);
 }
 
+/** Names a lane (trimmed, at most 40 characters); an empty name gives it its default title back. */
+export function renameLane(project: EditProject, id: string, name: string): EditProject {
+    const base = pinned(project);
+    const lanes = [...(base.lanes ?? [])];
+    const index = laneIndex(lanes, id);
+    const trimmed = name.trim().slice(0, 40);
+    const { name: _name, ...rest } = lanes[index];
+    lanes[index] = trimmed ? { ...rest, name: trimmed } : rest;
+    return setLanes(base, lanes);
+}
+
 /** Puts an item on a lane that holds its kind. A speed item lives on its clip and has no lane of its own. */
 export function moveToLane(project: EditProject, itemId: string, laneId: string): EditProject {
     const base = pinned(project);

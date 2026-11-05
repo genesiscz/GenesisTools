@@ -1001,6 +1001,23 @@ describe("live recordings in the service", () => {
     });
 });
 
+describe("the window's REPL methods on the service", () => {
+    test("a movie method that reads the edit file sees the window's change the debounced save has not written yet", async () => {
+        const { service } = await serviceFixture({ saveDelayMs: 10_000 });
+        const path = editFixture("rs-flush-");
+        const window = await connect(service.entry);
+        await window.call<unknown>("hello", hello("host"));
+        await window.call<unknown>("session.open", { path });
+        await window.call<unknown>("edit.apply", { path, ops: [{ op: "volume", volume: 0.3 }] });
+        expect(readProject(path).audio.volume).not.toBe(0.3);
+
+        const info = await window.call<{ audio: { volume: number } }>("movie.info", { recording: path });
+
+        expect(info.audio.volume).toBe(0.3);
+        expect(readProject(path).audio.volume).toBe(0.3);
+    });
+});
+
 describe("the protocol fixture the Swift host tests read", () => {
     /** The notifications whose params have a schema of their own, by method and direction; the service adds the id. */
     const NOTIFICATION_SCHEMAS: Record<string, z.ZodType | undefined> = {

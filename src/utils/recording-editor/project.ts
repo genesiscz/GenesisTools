@@ -9,6 +9,21 @@ import { z } from "zod";
 import { CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
 import {
+    clipSpeed,
+    cursorPointAt,
+    deleteClip,
+    denoiseTrack,
+    duplicateItem,
+    placedShape,
+    removeCameraHidden,
+    removeClickCircles,
+    setRedaction,
+    setShape,
+    setText,
+    setZoom,
+    trimClip,
+} from "./item-ops";
+import {
     addedItemIds,
     addLane,
     EFFECT_KINDS,
@@ -17,6 +32,7 @@ import {
     moveLane,
     moveToLane,
     removeLane,
+    renameLane,
     resolveLanes,
     setLanes,
     withLane,
@@ -881,6 +897,8 @@ export function annotateClicks(
 }
 
 const focusSchema = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) });
+/** A point a drag sends: any numbers, which the op holds inside the picture. */
+const loosePoint = z.object({ x: z.number(), y: z.number() }).strict();
 const rangeFields = { from: timeSchema, to: timeSchema };
 
 /** Places or changes the camera bubble (camera.ts); the Movie handle's camera() takes the same fields. */
@@ -905,7 +923,7 @@ export const cameraOpSchema = z
 
 /** One edit an agent or the CLI asks for; times are SOURCE times, seconds or "mm:ss". */
 /** The range popover's actions that edit (its "Export This Part" is export({ from, to })). */
-export const RANGE_ACTIONS = ["cut", "speed", "zoom", "hide", "spotlight", "text", "marker"] as const;
+export const RANGE_ACTIONS = ["cut", "keep", "speed", "zoom", "hide", "spotlight", "text", "marker"] as const;
 
 /** The middle of the picture a range's hidden part or spotlight starts with (the window's defaults). */
 const RANGE_RECTS = {
@@ -1010,9 +1028,23 @@ export const editOpSchema = z.discriminatedUnion("op", [
             to: timeSchema,
             kind: z.enum(SHAPE_KINDS),
             /** An arrow's tail, or a box's or circle's corner, 0...1 of the source picture from its top left. */
-            start: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict(),
+            start: z
+                .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+                .strict()
+                .optional(),
             /** An arrow's head (where it points), or the opposite corner. */
-            end: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict(),
+            end: z
+                .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+                .strict()
+                .optional(),
+            /**
+             * Without start and end: the point it marks (an arrow points at it, a box or circle goes round it); absent
+             * is where the pointer is at `from` (the cursor track), else the middle of the picture.
+             */
+            at: z
+                .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+                .strict()
+                .optional(),
             color: z
                 .string()
                 .regex(/^#[0-9a-fA-F]{6}$/)
@@ -1158,7 +1190,15 @@ export const editOpSchema = z.discriminatedUnion("op", [
             lane: z.string().optional(),
         })
         .strict(),
-    z.object({ op: z.literal("cameraShow"), ...rangeFields }).strict(),
+    /** Shows the camera again over a source range, or deletes one camera-hidden part by its `id`. */
+    z
+        .object({
+            op: z.literal("cameraShow"),
+            from: timeSchema.optional(),
+            to: timeSchema.optional(),
+            id: z.string().optional(),
+        })
+        .strict(),
     z
         .object({
             op: z.literal("removeIdle"),
@@ -1205,6 +1245,15 @@ export const editOpSchema = z.discriminatedUnion("op", [
             tracks: z.array(z.number().int().nonnegative()).optional(),
             /** A strength per track ("1": 20), merged into the ones set before. */
             trackReductionDb: z.record(z.string().regex(/^\d+$/), z.number().min(1).max(40)).optional(),
+            /**
+             * One track, as the editor's Audio tab changes it: with `on` it goes in or out of the cleaned tracks (no
+             * track left takes the noise reduction away); with `reductionDb` it gets its own strength. Both need
+             * `trackCount`, the movie's sound tracks: every track is written as no list, and a strength equal to the
+             * base is not written.
+             */
+            track: z.number().int().nonnegative().optional(),
+            on: z.boolean().optional(),
+            trackCount: z.number().int().positive().optional(),
         })
         .strict(),
     z
@@ -1230,6 +1279,71 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("moveLane"), id: z.string(), to: z.number().int().min(0) }).strict(),
     /** Puts a zoom, hidden part, spotlight, text or shape (by id) on a lane that holds its kind. */
     z.object({ op: z.literal("moveToLane"), id: z.string(), lane: z.string() }).strict(),
+    /** Changes a zoom that exists; a focus placed by hand makes a following zoom manual (unless `mode` says). */
+    z
+        .object({
+            op: z.literal("setZoom"),
+            id: z.string(),
+            scale: z.number().optional(),
+            mode: z.enum(["manual", "follow"]).optional(),
+            focus: loosePoint.optional(),
+            easeInMs: z.number().optional(),
+            easeOutMs: z.number().optional(),
+        })
+        .strict(),
+    /** Changes a hidden part or spotlight that exists; the rectangle stays inside the picture, at least 1 % wide. */
+    z
+        .object({
+            op: z.literal("setRedaction"),
+            id: z.string(),
+            rect: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }).strict().optional(),
+            style: z.enum(REDACTION_STYLES).optional(),
+            /** "" takes the label away. */
+            label: z.string().max(60).optional(),
+            follow: z.boolean().optional(),
+            dim: z.number().optional(),
+            cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
+        })
+        .strict(),
+    /** Changes a text that exists: its words, its centre (0...1 of the canvas), its size and its style. */
+    z
+        .object({
+            op: z.literal("setText"),
+            id: z.string(),
+            text: z.string().max(200).optional(),
+            x: z.number().optional(),
+            y: z.number().optional(),
+            size: z.number().optional(),
+            style: z.enum(TEXT_STYLES).optional(),
+        })
+        .strict(),
+    /** Changes a shape that exists: its kind, its two points (held inside the picture), colour, width, appearance. */
+    z
+        .object({
+            op: z.literal("setShape"),
+            id: z.string(),
+            kind: z.enum(SHAPE_KINDS).optional(),
+            start: loosePoint.optional(),
+            end: loosePoint.optional(),
+            color: hexColor.optional(),
+            width: z.number().optional(),
+            appear: z.enum(SHAPE_APPEARS).optional(),
+        })
+        .strict(),
+    /** Moves a clip's start or end (SOURCE seconds), held inside the movie and at least a frame long. */
+    z
+        .object({ op: z.literal("trim"), clip: z.string(), from: z.number().optional(), to: z.number().optional() })
+        .strict(),
+    /** Deletes a clip by its id (its part of the source); the last clip stays. */
+    z.object({ op: z.literal("deleteClip"), clip: z.string() }).strict(),
+    /** Plays one clip at `factor` (0.25 to 16). */
+    z.object({ op: z.literal("clipSpeed"), clip: z.string(), factor: z.number() }).strict(),
+    /** A copy of a zoom, hidden part, text, shape or camera part right after it. */
+    z.object({ op: z.literal("duplicate"), id: z.string() }).strict(),
+    /** Deletes the circles that start at a recorded click (what annotateClicks made); other shapes stay. */
+    z.object({ op: z.literal("removeClickCircles") }).strict(),
+    /** Names a lane; "" gives it its default title back. */
+    z.object({ op: z.literal("renameLane"), id: z.string(), name: z.string().max(200) }).strict(),
     /**
      * What the editor's range popover does to a range dragged on the frames lane, over OUTPUT times (what plays, as
      * the ruler shows them): cut it, play it at `factor` (2), zoom over it (`scale`), hide or spotlight the middle of
@@ -1482,6 +1596,30 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             return moveToLane(project, op.id, op.lane);
         case "range":
             return applyRange(project, op);
+        case "setZoom":
+            return setZoom(project, op);
+        case "setRedaction":
+            return setRedaction(project, op);
+        case "setText":
+            return setText(project, op);
+        case "setShape":
+            return setShape(project, op);
+        case "trim":
+            return trimClip(project, {
+                clip: op.clip,
+                fromUs: op.from === undefined ? undefined : Math.round(op.from * 1e6),
+                toUs: op.to === undefined ? undefined : Math.round(op.to * 1e6),
+            });
+        case "deleteClip":
+            return deleteClip(project, op.clip);
+        case "clipSpeed":
+            return clipSpeed(project, op);
+        case "duplicate":
+            return duplicateItem(project, op.id);
+        case "removeClickCircles":
+            return removeClickCircles(project, readCursorTrack(project.source.cursor));
+        case "renameLane":
+            return renameLane(project, op.id, op.name);
         case "removeIdle": {
             if (!facts.idleUs) {
                 throw new Error("removeIdle needs the movie's idle stretches; run it through editProject or the CLI");
@@ -1579,7 +1717,22 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             const toUs = timeToUs(op.to);
             checkRange(project, fromUs, toUs);
 
-            if (Math.hypot(op.end.x - op.start.x, op.end.y - op.start.y) < 0.01) {
+            if ((op.start === undefined) !== (op.end === undefined)) {
+                throw new RangeError(
+                    "a shape takes both start and end, or neither (then at, or the pointer, places it)"
+                );
+            }
+
+            const points =
+                op.start && op.end
+                    ? { start: op.start, end: op.end }
+                    : placedShape(
+                          op.kind,
+                          op.at ??
+                              cursorPointAt(readCursorTrack(project.source.cursor), fromUs / 1000) ?? { x: 0.5, y: 0.5 }
+                      );
+
+            if (Math.hypot(points.end.x - points.start.x, points.end.y - points.start.y) < 0.01) {
                 throw new RangeError("the shape's start and end are the same point; move end away from start");
             }
 
@@ -1588,10 +1741,10 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 startUs: fromUs,
                 endUs: Math.min(project.source.durationUs, toUs),
                 kind: op.kind,
-                x1: op.start.x,
-                y1: op.start.y,
-                x2: op.end.x,
-                y2: op.end.y,
+                x1: points.start.x,
+                y1: points.start.y,
+                x2: points.end.x,
+                y2: points.end.y,
                 ...(op.color === undefined ? {} : { color: op.color.toUpperCase() }),
                 ...(op.width === undefined ? {} : { width: op.width }),
                 ...(op.appear === undefined || op.appear === "draw" ? {} : { appear: op.appear }),
@@ -1708,6 +1861,10 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 return { ...project, audio };
             }
 
+            if (op.track !== undefined) {
+                return denoiseTrack(project, op);
+            }
+
             const denoise = denoiseSchema.parse({
                 ...project.audio.denoise,
                 ...(op.method === undefined ? {} : { method: op.method }),
@@ -1807,6 +1964,18 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         case "cameraShow": {
             if (!project.camera) {
                 throw new Error(`${op.op} needs a camera bubble; this edit has none`);
+            }
+
+            if (op.op === "cameraShow" && op.id !== undefined) {
+                if (op.from !== undefined || op.to !== undefined) {
+                    throw new RangeError("cameraShow takes an id or a from and to range, not both");
+                }
+
+                return removeCameraHidden(project, op.id);
+            }
+
+            if (op.from === undefined || op.to === undefined) {
+                throw new RangeError(`${op.op} needs from and to (source seconds)`);
             }
 
             const fromUs = timeToUs(op.from);
@@ -1972,6 +2141,8 @@ function applyRange(project: EditProject, op: Extract<EditOp, { op: "range" }>):
     switch (op.action) {
         case "cut":
             return cutRange(project, fromUs, toUs);
+        case "keep":
+            return partOf(project, fromOut, toOut);
         case "speed":
             return speedRange(project, fromUs, toUs, op.factor ?? 2);
         case "zoom":

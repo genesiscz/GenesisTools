@@ -1,20 +1,47 @@
 import AppKit
 
 /// The review comments' actions in the editor: add one at the playhead or over a range, resolve, delete, and go to one.
-/// The comments live in comments.jsonl beside the recording (ReviewComments.swift), not in the edit, so they have no
-/// undo step; a deleted one stays in the file as the line that removed it.
+/// The comments live in comments.jsonl beside the recording, not in the edit, so they have no undo step; the TypeScript
+/// side writes them (src/utils/recording-editor/comments.ts) and the window reads the file (ReviewComments.swift).
 extension EditorModel {
-    /// Adds a comment over what plays from `fromOut` (to `toOut`), stored at the source times there.
+    /// Adds a comment over what plays from `fromOut` (to `toOut`), stored at the source times there: the REPL's
+    /// comment() on the recorder service, else `tools recorder comment --source`.
     func addComment(fromOut: Int64, toOut: Int64?, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let atUs = TimelineMap.sourceTime(atOutput: fromOut, in: project)
-        let toUs = toOut.map { TimelineMap.sourceTime(atOutput: $0, in: project) }
-        do {
-            try commentsStore.add(atUs: atUs, toUs: toUs, text: trimmed)
-            show("Added a comment at \(formatClock(fromOut, tenths: true)).", error: false)
-        } catch {
-            show("The comment was not saved: \(error.localizedDescription)", error: true)
+        let at = EditOpDiff.seconds(TimelineMap.sourceTime(atOutput: fromOut, in: project))
+        let to = toOut.map { EditOpDiff.seconds(TimelineMap.sourceTime(atOutput: $0, in: project)) }
+        var params: [String: Any] = ["at": at, "text": trimmed, "source": true]
+        var argv = ["recorder", "comment", recordingTarget, String(format: "%.6f", at), trimmed, "--source"]
+        if let to {
+            params["to"] = to
+            argv += ["--to", String(format: "%.6f", to)]
+        }
+        if !NSFullUserName().isEmpty {
+            params["author"] = NSFullUserName()
+            argv += ["--author", NSFullUserName()]
+        }
+        commentCall("comment", params, argv: argv, failed: "The comment was not saved") { [weak self] in
+            self?.show("Added a comment at \(formatClock(fromOut, tenths: true)).", error: false)
+        }
+    }
+
+    /// The recording the comment commands name: its folder for a library recording, else the edit file.
+    private var recordingTarget: String {
+        let folder = URL(fileURLWithPath: project.source.video).deletingLastPathComponent()
+        return FileManager.default.fileExists(atPath: folder.appendingPathComponent("recording.json").path) ? folder.path : store.url.path
+    }
+
+    /// A comment method of the recorder: comments.jsonl changes, and the store's watcher shows it.
+    private func commentCall(_ name: String, _ params: [String: Any], argv: [String], failed: String, done: @escaping @MainActor () -> Void) {
+        ask(name, params, recording: recordingTarget, argv: argv) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.commentsStore.reload()
+                done()
+            case let .failure(failure): self.show("\(failed): \(failure.reason)", error: true)
+            }
         }
     }
 
@@ -37,19 +64,14 @@ extension EditorModel {
     }
 
     func resolveComment(_ id: String, _ resolved: Bool) {
-        do {
-            try commentsStore.update(id) { $0.resolved = resolved }
-        } catch {
-            show("The comment was not changed: \(error.localizedDescription)", error: true)
-        }
+        var argv = ["recorder", "resolve", recordingTarget, id]
+        if !resolved { argv.append("--reopen") }
+        commentCall("resolveComment", ["id": id, "resolved": resolved], argv: argv, failed: "The comment was not changed") {}
     }
 
     func deleteComment(_ id: String) {
-        do {
-            try commentsStore.remove(id)
-            if openComment == id { openComment = nil }
-        } catch {
-            show("The comment was not removed: \(error.localizedDescription)", error: true)
+        commentCall("uncomment", ["id": id], argv: ["recorder", "uncomment", recordingTarget, id], failed: "The comment was not removed") { [weak self] in
+            if self?.openComment == id { self?.openComment = nil }
         }
     }
 

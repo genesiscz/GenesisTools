@@ -53,6 +53,16 @@ enum EditOp: Equatable {
     case moveLane(MoveLane)
     case moveToLane(MoveToLane)
     case range(RangeAction)
+    case setZoom(SetZoom)
+    case setRedaction(SetRedaction)
+    case setText(SetText)
+    case setShape(SetShape)
+    case trim(Trim)
+    case deleteClip(DeleteClip)
+    case clipSpeed(ClipSpeed)
+    case duplicate(Duplicate)
+    case removeClickCircles(RemoveClickCircles)
+    case renameLane(RenameLane)
 
     /// Every payload type, so the decoder finds one by its tag and the tag test lists them.
     static let payloads: [any EditOpPayload.Type] = [
@@ -62,6 +72,8 @@ enum EditOp: Equatable {
         ExportSettings.self, Reset.self, Clicks.self, Keys.self, Captions.self, Motion.self, Cursor.self, Frame.self,
         Camera.self, CameraHide.self, CameraShow.self, RemoveIdle.self, CutWords.self, CutFillers.self, Denoise.self,
         Normalize.self, Lanes.self, AddLane.self, RemoveLane.self, MoveLane.self, MoveToLane.self, RangeAction.self,
+        SetZoom.self, SetRedaction.self, SetText.self, SetShape.self, Trim.self, DeleteClip.self, ClipSpeed.self,
+        Duplicate.self, RemoveClickCircles.self, RenameLane.self,
     ]
 
     static var tags: [String] { payloads.map { $0.tag } }
@@ -114,6 +126,16 @@ enum EditOp: Equatable {
         case let .moveLane(op): op
         case let .moveToLane(op): op
         case let .range(op): op
+        case let .setZoom(op): op
+        case let .setRedaction(op): op
+        case let .setText(op): op
+        case let .setShape(op): op
+        case let .trim(op): op
+        case let .deleteClip(op): op
+        case let .clipSpeed(op): op
+        case let .duplicate(op): op
+        case let .removeClickCircles(op): op
+        case let .renameLane(op): op
         }
     }
 
@@ -312,8 +334,10 @@ extension EditOp {
         var from: Double
         var to: Double
         var kind: EditProject.ShapeKind
-        var start: Point
-        var end: Point
+        /// Without start and end the service places it: round `at`, else round the pointer at `from`.
+        var start: Point?
+        var end: Point?
+        var at: Point?
         var color: String?
         var width: Double?
         var appear: EditProject.ShapeAppear?
@@ -489,10 +513,12 @@ extension EditOp {
         var op: EditOp { .cameraHide(self) }
     }
 
+    /// Shows the camera over a range again, or deletes one hidden part by `id`.
     struct CameraShow: EditOpPayload {
         static let tag = "cameraShow"
-        var from: Double
-        var to: Double
+        var from: Double?
+        var to: Double?
+        var id: String?
         var op: EditOp { .cameraShow(self) }
     }
 
@@ -523,6 +549,8 @@ extension EditOp {
         var op: EditOp { .cutFillers(self) }
     }
 
+    /// `track` with `on` puts one track in or out; `track` with `reductionDb` is that track's strength. Both need
+    /// `trackCount`, the movie's sound tracks, for the service's rules.
     struct Denoise: EditOpPayload {
         static let tag = "denoise"
         var enabled: Bool?
@@ -530,6 +558,9 @@ extension EditOp {
         var reductionDb: Double?
         var tracks: [Int]?
         var trackReductionDb: [String: Double]?
+        var track: Int?
+        var on: Bool?
+        var trackCount: Int?
         var op: EditOp { .denoise(self) }
     }
 
@@ -584,5 +615,92 @@ extension EditOp {
         var text: String?
         var lane: String?
         var op: EditOp { .range(self) }
+    }
+
+    struct SetZoom: EditOpPayload {
+        static let tag = "setZoom"
+        var id: String
+        var scale: Double?
+        var mode: EditProject.ZoomMode?
+        var focus: Point?
+        var easeInMs: Int?
+        var easeOutMs: Int?
+        var op: EditOp { .setZoom(self) }
+    }
+
+    struct SetRedaction: EditOpPayload {
+        static let tag = "setRedaction"
+        var id: String
+        var rect: Rect?
+        var style: EditProject.RedactionStyle?
+        /// "" takes the label away.
+        var label: String?
+        var follow: Bool?
+        var dim: Double?
+        var cutout: EditProject.SpotlightCutout?
+        var op: EditOp { .setRedaction(self) }
+    }
+
+    struct SetText: EditOpPayload {
+        static let tag = "setText"
+        var id: String
+        var text: String?
+        var x: Double?
+        var y: Double?
+        var size: Double?
+        var style: EditProject.TextStyle?
+        var op: EditOp { .setText(self) }
+    }
+
+    struct SetShape: EditOpPayload {
+        static let tag = "setShape"
+        var id: String
+        var kind: EditProject.ShapeKind?
+        var start: Point?
+        var end: Point?
+        var color: String?
+        var width: Double?
+        var appear: EditProject.ShapeAppear?
+        var op: EditOp { .setShape(self) }
+    }
+
+    /// A clip's edges in SOURCE seconds.
+    struct Trim: EditOpPayload {
+        static let tag = "trim"
+        var clip: String
+        var from: Double?
+        var to: Double?
+        var op: EditOp { .trim(self) }
+    }
+
+    struct DeleteClip: EditOpPayload {
+        static let tag = "deleteClip"
+        var clip: String
+        var op: EditOp { .deleteClip(self) }
+    }
+
+    struct ClipSpeed: EditOpPayload {
+        static let tag = "clipSpeed"
+        var clip: String
+        var factor: Double
+        var op: EditOp { .clipSpeed(self) }
+    }
+
+    struct Duplicate: EditOpPayload {
+        static let tag = "duplicate"
+        var id: String
+        var op: EditOp { .duplicate(self) }
+    }
+
+    struct RemoveClickCircles: EditOpPayload {
+        static let tag = "removeClickCircles"
+        var op: EditOp { .removeClickCircles(self) }
+    }
+
+    struct RenameLane: EditOpPayload {
+        static let tag = "renameLane"
+        var id: String
+        var name: String
+        var op: EditOp { .renameLane(self) }
     }
 }

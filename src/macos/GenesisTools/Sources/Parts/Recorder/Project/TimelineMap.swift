@@ -71,6 +71,13 @@ enum TimelineMap {
     /// The shortest clip a split or trim leaves: one frame at 60 fps.
     static let minimumClipUs: Int64 = 16_667
 
+    /// Whether a split at `outUs` would leave a frame on each side (the scissors button and S): the service splits.
+    static func canSplit(_ project: EditProject, atOutput outUs: Int64) -> Bool {
+        guard let placed = clip(atOutput: outUs, in: project) else { return false }
+        let sourceUs = sourceTime(atOutput: outUs, in: project)
+        return sourceUs - placed.clip.fromUs >= minimumClipUs && placed.clip.toUs - sourceUs >= minimumClipUs
+    }
+
     /// Splits the clip under `outUs` in two; nil when the point is at a clip's edge (nothing to split).
     static func split(_ project: EditProject, atOutput outUs: Int64) -> EditProject? {
         guard let placed = clip(atOutput: outUs, in: project) else { return nil }

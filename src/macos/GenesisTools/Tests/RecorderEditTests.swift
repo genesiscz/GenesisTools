@@ -550,27 +550,9 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertTrue(last.contains("\"deleted\":true") && last.contains("\"toUs\":2000000"), String(last))
     }
 
-    func testNoiseReductionTurnsOnPerTrackAndKeepsAStrengthPerTrackAsTheDenoiseOpDoes() throws {
-        var audio = EditProject.AudioSettings()
-        audio.include = false
-        let on = EditorModel.denoised(audio, enabled: true)
-        XCTAssertEqual(on.denoise, EditProject.Denoise(), "on: 12 dB on every track, as the op with no fields")
-        XCTAssertTrue(on.include, "the op turns the sound on")
-        XCTAssertNil(EditorModel.denoised(on, enabled: false).denoise)
-
-        // Two tracks: the first off leaves only the second; both off is no noise reduction at all.
-        let secondOnly = EditorModel.denoised(on, track: 0, on: false, trackCount: 2)
-        XCTAssertEqual(secondOnly.denoise?.tracks, [1])
-        XCTAssertNil(EditorModel.denoised(secondOnly, track: 0, on: true, trackCount: 2).denoise?.tracks, "every track again is nil")
-        XCTAssertNil(EditorModel.denoised(secondOnly, track: 1, on: false, trackCount: 2).denoise)
-
-        let stronger = EditorModel.denoised(on, track: 1, reductionDb: 20.4, trackCount: 2)
-        XCTAssertEqual(stronger.denoise?.trackReductionDb, ["1": 20])
-        XCTAssertEqual(stronger.denoise?.strength(ofTrack: 0), 12)
-        XCTAssertEqual(stronger.denoise?.strength(ofTrack: 1), 20)
-        XCTAssertEqual(EditorModel.denoised(on, track: 0, reductionDb: 8, trackCount: 1).denoise?.reductionDb, 8,
-                       "one track: its strength is the setting's own")
-
+    /// The rules of the Audio tab's noise reduction are the `denoise` op's (recording-editor.test.ts); the window keeps
+    /// the CLI's per-track map as it reads it.
+    func testTheDenoiseSettingsTheCLIWritesReadAndWriteBackUnchanged() throws {
         // The CLI's per-track map reads and writes back unchanged.
         let json = #"{"include":true,"volume":1,"mutedTracks":[],"denoise":{"method":"afftdn","reductionDb":10,"trackReductionDb":{"1":20}}}"#
         let decoded = try JSONDecoder().decode(EditProject.AudioSettings.self, from: Data(json.utf8))
@@ -1018,22 +1000,6 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(EditorModel.adjacent(in: items, current: .zoom("z1"), playheadUs: 0, forward: false))
     }
 
-    func testTrimmingASelectionToThePlayheadNeedsThePlayheadInsideIt() {
-        XCTAssertEqual(EditorModel.trimmed(start: 1_000_000, end: 4_000_000, at: 2_000_000, side: .start)?.start, 2_000_000)
-        XCTAssertEqual(EditorModel.trimmed(start: 1_000_000, end: 4_000_000, at: 2_000_000, side: .end)?.end, 2_000_000)
-        XCTAssertNil(EditorModel.trimmed(start: 1_000_000, end: 4_000_000, at: 5_000_000, side: .end))
-        XCTAssertNil(EditorModel.trimmed(start: 1_000_000, end: 4_000_000, at: 3_950_000, side: .start))
-    }
-
-    func testMovingASelectionInTimeKeepsItsLengthInsideTheRecording() {
-        XCTAssertEqual(EditorModel.shifted(start: 1_000_000, end: 3_000_000, by: 500_000, durationUs: 10_000_000).start, 1_500_000)
-        let atStart = EditorModel.shifted(start: 200_000, end: 1_200_000, by: -1_000_000, durationUs: 10_000_000)
-        XCTAssertEqual(atStart.start, 0)
-        XCTAssertEqual(atStart.end, 1_000_000)
-        let atEnd = EditorModel.shifted(start: 8_000_000, end: 9_500_000, by: 1_000_000, durationUs: 10_000_000)
-        XCTAssertEqual(atEnd.start, 8_500_000)
-        XCTAssertEqual(atEnd.end, 10_000_000)
-    }
 
     func testClickTicksPlayAtTheirOutputTimesOneTickApart() {
         var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 100, height: 100, cursor: nil, recording: nil)

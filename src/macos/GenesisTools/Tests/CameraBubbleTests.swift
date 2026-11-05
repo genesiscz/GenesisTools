@@ -165,17 +165,42 @@ final class CameraBubbleTests: XCTestCase {
         var project = EditProject.whole(video: folder.appendingPathComponent("none.mp4").path, durationUs: 10_000_000,
                                         width: 1920, height: 1080, cursor: nil, recording: nil)
         project.camera = EditProject.Camera(file: "camera.mov")
-        let model = EditorModel(project: project, store: ProjectStore(url: folder.appendingPathComponent("edit.json")))
+        let service = FakeServiceLink(project: project, rules: FakeRules.basic)
+        let model = EditorModel.on(service, store: ProjectStore(url: folder.appendingPathComponent("edit.json")))
         for step in 1...5 { model.changeCamera(.init(x: 0.5 - Double(step) * 0.05, y: 0.5)) }
         XCTAssertEqual(model.project.camera?.corner, .custom)
         XCTAssertEqual(model.project.camera?.x ?? 0, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(service.count("gesture.begin"), 1, "the drag is one gesture on the service")
+        XCTAssertEqual(service.count("gesture.preview"), 5, "with a preview per step")
+        XCTAssertEqual(service.count("edit.apply"), 0, "and nothing saved while it moves")
         model.undo()
+        XCTAssertEqual(service.count("gesture.commit"), 1)
+        XCTAssertEqual(service.sentOps.map { $0["x"] as? Double }, [0.25], "the commit is the last step's op from the drag's start")
         XCTAssertEqual(model.project.camera, project.camera, "one undo takes back the whole drag")
         model.redo()
         model.changeCamera(.init(enabled: false))
         XCTAssertNil(model.project.camera)
         model.undo()
         XCTAssertEqual(model.project.camera?.x ?? 0, 0.25, accuracy: 0.0001, "removing the bubble is its own step")
+    }
+
+    /// A ⌘Z right after a drag, before the service has answered its commit, takes back that drag (the service takes
+    /// the commit, then the undo), and the Edit menu names it.
+    @MainActor
+    func testAnUndoRightAfterADragTakesBackTheDragBeforeItsCommitIsAnswered() throws {
+        var project = EditProject.whole(video: "/tmp/none.mp4", durationUs: 10_000_000, width: 1920, height: 1080, cursor: nil, recording: nil)
+        project.camera = EditProject.Camera(file: "camera.mov")
+        let service = FakeServiceLink(project: project, rules: FakeRules.basic)
+        let model = EditorModel.on(service, store: ProjectStore(url: FileManager.default.temporaryDirectory.appendingPathComponent("camera-\(UUID().uuidString).json")))
+        model.changeCamera(.init(x: 0.3, y: 0.5))
+        XCTAssertEqual(model.project.camera?.x ?? 0, 0.3, accuracy: 0.0001)
+        service.holdAnswers = true
+        model.undo()
+        XCTAssertEqual(service.calls.suffix(2).map(\.method), ["gesture.commit", "edit.undo"], "the commit goes before the undo")
+        service.deliver()
+        XCTAssertEqual(model.project.camera, project.camera)
+        XCTAssertTrue(model.canRedo)
+        XCTAssertFalse(model.canUndo, "the drag was the only step")
     }
 }
 
@@ -237,7 +262,7 @@ final class CameraBubbleHandleTests: XCTestCase {
         var project = EditProject.whole(video: folder.appendingPathComponent("none.mp4").path, durationUs: 10_000_000,
                                         width: 1920, height: 1080, cursor: nil, recording: nil)
         project.camera = EditProject.Camera(file: "camera.mov")
-        let model = EditorModel(project: project, store: ProjectStore(url: folder.appendingPathComponent("edit.json")))
+        let model = EditorModel.on(FakeServiceLink(project: project, rules: FakeRules.basic), store: ProjectStore(url: folder.appendingPathComponent("edit.json")))
         let window = host(model)
         let start = try XCTUnwrap(project.camera).rect(canvas: CGSize(width: 800, height: 450))
 

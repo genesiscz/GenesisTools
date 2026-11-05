@@ -555,6 +555,8 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
 
         if (movies.has(method)) {
             const { recording, ...rest } = recordingParams.parse(params ?? {});
+            // A REPL method reads the edit file: an open session's changes not saved yet reach it first.
+            openSessionOf(recording)?.flush();
             return movies.call(method, rest, { recording });
         }
 

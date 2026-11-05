@@ -12,11 +12,13 @@ extension EditorModel {
         isSwitchingDisplay = true
         show("Making the movie with \(plan.name(of: displayId)) from \(formatClock(fromUs, tenths: true))…", error: false)
         HubPerf.log("recorder.editor.display: \(folder.path) \(fromUs)-\(toUs)=\(displayId)")
-        runTools(DisplayPlan.switchArguments(folder: folder, fromUs: fromUs, toUs: toUs, displayId: displayId)) { [weak self] status, _, stderr in
+        let params: [String: Any] = ["from": EditOpDiff.seconds(fromUs), "to": EditOpDiff.seconds(toUs), "display": displayId]
+        movie("switchDisplay", params, recording: folder.path,
+              argv: DisplayPlan.switchArguments(folder: folder, fromUs: fromUs, toUs: toUs, displayId: displayId), timeout: 30 * 60) { [weak self] result, _ in
             guard let self else { return }
             self.isSwitchingDisplay = false
-            guard status == 0 else {
-                self.show("The display did not change: \(stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")", error: true)
+            if case let .failure(failure) = result {
+                self.show("The display did not change: \(failure.reason)", error: true)
                 return
             }
             self.displayPlan = DisplayPlan.read(video: self.project.source.video)

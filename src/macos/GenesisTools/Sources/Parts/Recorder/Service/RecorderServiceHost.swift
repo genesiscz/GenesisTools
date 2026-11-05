@@ -63,6 +63,8 @@ final class RecorderServiceHost {
     var onStateChange: ((State) -> Void)?
 
     private var client: LiveRecordingRPCClient?
+    /// Who hears the service's notifications and each new connection: the editor windows' edit sessions.
+    private var listeners: [ObjectIdentifier: Listener] = [:]
     /// Counts the attempts, so a timer of an earlier one does nothing.
     private var generation = 0
     private var failures = 0
@@ -109,6 +111,54 @@ final class RecorderServiceHost {
     func notify(_ method: String, params: [String: Any]) {
         guard case .connected = state else { return }
         client?.notify(method, params: params)
+    }
+
+    var isConnected: Bool {
+        if case .connected = state { return client != nil }
+        return false
+    }
+
+    /// The methods the service listed in its hello; empty while not connected.
+    var serviceMethods: [String] {
+        if case let .connected(methods) = state { return methods }
+        return []
+    }
+
+    /// Calls a service method on the host's connection; `.notConnected` at once while there is none. Returns the
+    /// request id, which `cancel(_:)` takes.
+    @discardableResult
+    func call(_ method: String, params: [String: Any], timeout: TimeInterval = 30,
+              onProgress: ((LiveRecordingRPCClient.CallProgress) -> Void)? = nil,
+              completion: @escaping (Result<Any?, Error>) -> Void) -> Int? {
+        guard isConnected, let client else {
+            completion(.failure(LiveRecordingRPCClient.Failure.notConnected))
+            return nil
+        }
+        return client.request(method, params: params, timeout: timeout, onProgress: onProgress, completion: completion)
+    }
+
+    func cancel(_ id: Int) { client?.cancel(id) }
+
+    struct Listener {
+        weak var owner: AnyObject?
+        /// A notification the service sent (`project.changed`).
+        let notification: (String, Any?) -> Void
+        /// After each successful hello: the sessions of the last connection are gone, so a listener opens its own again.
+        let connected: () -> Void
+    }
+
+    /// `owner` hears the notifications and each new connection until it calls `unlisten` or goes away.
+    func listen(_ owner: AnyObject, notification: @escaping (String, Any?) -> Void, connected: @escaping () -> Void) {
+        listeners = listeners.filter { $0.value.owner != nil }
+        listeners[ObjectIdentifier(owner)] = Listener(owner: owner, notification: notification, connected: connected)
+    }
+
+    func unlisten(_ owner: AnyObject) {
+        listeners[ObjectIdentifier(owner)] = nil
+    }
+
+    private func deliver(_ method: String, _ params: Any?) {
+        for listener in listeners.values where listener.owner != nil { listener.notification(method, params) }
     }
 
     // MARK: Connecting
@@ -223,9 +273,17 @@ final class RecorderServiceHost {
                     self.failures = 0
                     self.failedStarts = 0
                     let methods = reply?["methods"] as? [String] ?? []
+                    connected.onNotification = { [weak self] method, params in
+                        MainActor.assumeIsolated { self?.deliver(method, params) }
+                    }
+                    // The editors' sessions hear each other writer's change; the transport filters by these names.
+                    connected.call("subscribe", params: ["events": ["project.changed"]], timeout: self.timing.helloTimeout) { result in
+                        if case let .failure(error) = result { HubPerf.log("recorder.host: subscribe failed: \(error.localizedDescription)") }
+                    }
                     self.state = .connected(methods: methods)
                     HubPerf.log("recorder.host: connected (service \(reply?["version"] ?? "?"), \(methods.count) methods; answering \(connected.answers.count))")
                     self.onConnected?(self)
+                    for listener in self.listeners.values where listener.owner != nil { listener.connected() }
                 case let .failure(error):
                     let code: Int? = if case let LiveRecordingRPCClient.Failure.remote(code, _) = error { code } else { nil }
                     HubPerf.log("recorder.host: hello refused: \(error.localizedDescription)")

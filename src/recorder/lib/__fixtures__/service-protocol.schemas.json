@@ -265,7 +265,7 @@
             "minItems": 1,
             "type": "array",
             "items": {
-              "$ref": "#/$defs/__schema9"
+              "$ref": "#/$defs/__schema10"
             }
           },
           "out": {
@@ -295,52 +295,52 @@
         "type": "object",
         "properties": {
           "out": {
-            "$ref": "#/$defs/__schema10"
-          },
-          "path": {
             "$ref": "#/$defs/__schema11"
           },
-          "edit": {
+          "path": {
             "$ref": "#/$defs/__schema12"
           },
-          "library": {
+          "edit": {
             "$ref": "#/$defs/__schema13"
           },
-          "picker": {
+          "library": {
             "$ref": "#/$defs/__schema14"
           },
-          "shortcuts": {
+          "picker": {
             "$ref": "#/$defs/__schema15"
           },
-          "filter": {
+          "shortcuts": {
             "$ref": "#/$defs/__schema16"
           },
-          "width": {
+          "filter": {
             "$ref": "#/$defs/__schema17"
           },
-          "height": {
+          "width": {
             "$ref": "#/$defs/__schema18"
           },
-          "atSeconds": {
+          "height": {
             "$ref": "#/$defs/__schema19"
           },
-          "tab": {
+          "atSeconds": {
             "$ref": "#/$defs/__schema20"
           },
-          "selectZoom": {
+          "tab": {
             "$ref": "#/$defs/__schema21"
           },
-          "selectClip": {
+          "selectZoom": {
             "$ref": "#/$defs/__schema22"
           },
-          "part": {
+          "selectClip": {
             "$ref": "#/$defs/__schema23"
           },
+          "part": {
+            "$ref": "#/$defs/__schema24"
+          },
           "range": {
-            "$ref": "#/$defs/__schema25"
+            "$ref": "#/$defs/__schema26"
           },
           "comment": {
-            "$ref": "#/$defs/__schema26"
+            "$ref": "#/$defs/__schema27"
           }
         },
         "required": [
@@ -880,6 +880,26 @@
                 ],
                 "additionalProperties": false
               },
+              "at": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false
+              },
               "color": {
                 "type": "string",
                 "pattern": "^#[0-9a-fA-F]{6}$"
@@ -905,9 +925,7 @@
               "op",
               "from",
               "to",
-              "kind",
-              "start",
-              "end"
+              "kind"
             ],
             "additionalProperties": false
           },
@@ -1509,12 +1527,13 @@
               },
               "to": {
                 "$ref": "#/$defs/__schema3"
+              },
+              "id": {
+                "type": "string"
               }
             },
             "required": [
-              "op",
-              "from",
-              "to"
+              "op"
             ],
             "additionalProperties": false
           },
@@ -1657,6 +1676,19 @@
                   "minimum": 1,
                   "maximum": 40
                 }
+              },
+              "track": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "on": {
+                "type": "boolean"
+              },
+              "trackCount": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
               }
             },
             "required": [
@@ -1799,6 +1831,305 @@
             "properties": {
               "op": {
                 "type": "string",
+                "const": "setZoom"
+              },
+              "id": {
+                "type": "string"
+              },
+              "scale": {
+                "type": "number"
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "manual",
+                  "follow"
+                ]
+              },
+              "focus": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "easeInMs": {
+                "type": "number"
+              },
+              "easeOutMs": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "op",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "setRedaction"
+              },
+              "id": {
+                "type": "string"
+              },
+              "rect": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number"
+                  },
+                  "height": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height"
+                ],
+                "additionalProperties": false
+              },
+              "style": {
+                "type": "string",
+                "enum": [
+                  "blur",
+                  "pixelate",
+                  "black",
+                  "spotlight"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 60
+              },
+              "follow": {
+                "type": "boolean"
+              },
+              "dim": {
+                "type": "number"
+              },
+              "cutout": {
+                "type": "string",
+                "enum": [
+                  "rounded",
+                  "rect",
+                  "circle"
+                ]
+              }
+            },
+            "required": [
+              "op",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "setText"
+              },
+              "id": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "size": {
+                "type": "number"
+              },
+              "style": {
+                "type": "string",
+                "enum": [
+                  "plate",
+                  "plain"
+                ]
+              }
+            },
+            "required": [
+              "op",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "setShape"
+              },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "arrow",
+                  "box",
+                  "circle"
+                ]
+              },
+              "start": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "end": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "color": {
+                "$ref": "#/$defs/__schema5"
+              },
+              "width": {
+                "type": "number"
+              },
+              "appear": {
+                "type": "string",
+                "enum": [
+                  "draw",
+                  "fade",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "op",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "trim"
+              },
+              "clip": {
+                "type": "string"
+              },
+              "from": {
+                "type": "number"
+              },
+              "to": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "op",
+              "clip"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "deleteClip"
+              },
+              "clip": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "clip"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "clipSpeed"
+              },
+              "clip": {
+                "type": "string"
+              },
+              "factor": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "op",
+              "clip",
+              "factor"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "duplicate"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "removeClickCircles"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "renameLane"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 200
+              }
+            },
+            "required": [
+              "op",
+              "id",
+              "name"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
                 "const": "range"
               },
               "from": {
@@ -1811,6 +2142,7 @@
                 "type": "string",
                 "enum": [
                   "cut",
+                  "keep",
                   "speed",
                   "zoom",
                   "hide",
@@ -1945,21 +2277,34 @@
         ]
       },
       "__schema9": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "additionalProperties": false
+      },
+      "__schema10": {
         "type": "number",
         "minimum": 0
       },
-      "__schema10": {
+      "__schema11": {
         "type": "string",
         "minLength": 1
-      },
-      "__schema11": {
-        "type": "string"
       },
       "__schema12": {
         "type": "string"
       },
       "__schema13": {
-        "type": "boolean"
+        "type": "string"
       },
       "__schema14": {
         "type": "boolean"
@@ -1968,11 +2313,10 @@
         "type": "boolean"
       },
       "__schema16": {
-        "type": "string"
+        "type": "boolean"
       },
       "__schema17": {
-        "type": "number",
-        "exclusiveMinimum": 0
+        "type": "string"
       },
       "__schema18": {
         "type": "number",
@@ -1980,9 +2324,13 @@
       },
       "__schema19": {
         "type": "number",
-        "minimum": 0
+        "exclusiveMinimum": 0
       },
       "__schema20": {
+        "type": "number",
+        "minimum": 0
+      },
+      "__schema21": {
         "type": "string",
         "enum": [
           "zoom",
@@ -1996,20 +2344,20 @@
           "export"
         ]
       },
-      "__schema21": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 9007199254740991
-      },
       "__schema22": {
         "type": "integer",
         "minimum": 0,
         "maximum": 9007199254740991
       },
       "__schema23": {
-        "$ref": "#/$defs/__schema24"
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
       },
       "__schema24": {
+        "$ref": "#/$defs/__schema25"
+      },
+      "__schema25": {
         "anyOf": [
           {
             "type": "object",
@@ -2046,10 +2394,10 @@
           }
         ]
       },
-      "__schema25": {
-        "$ref": "#/$defs/__schema24"
-      },
       "__schema26": {
+        "$ref": "#/$defs/__schema25"
+      },
+      "__schema27": {
         "type": "integer",
         "minimum": 0,
         "maximum": 9007199254740991

@@ -21,7 +21,11 @@ final class RecorderTimelineTests: XCTestCase {
         try? FileManager.default.removeItem(at: folder)
     }
 
-    private func model(clips: [EditProject.Clip]? = nil, zooms: [EditProject.Zoom] = []) -> EditorModel {
+    /// The service the last `model()` edits on.
+    private var service: FakeServiceLink!
+
+    private func model(clips: [EditProject.Clip]? = nil, zooms: [EditProject.Zoom] = [],
+                       rules: @escaping FakeServiceLink.Rules = FakeRules.basic) -> EditorModel {
         var project = EditProject.whole(video: folder.appendingPathComponent("none.mp4").path, durationUs: 10_000_000,
                                         width: 1920, height: 1080, cursor: nil, recording: nil)
         if let clips { project.clips = clips }
@@ -29,7 +33,8 @@ final class RecorderTimelineTests: XCTestCase {
         // Its own edit.json: every store watches its file, so a shared one let an earlier model's save land here.
         let own = folder.appendingPathComponent(UUID().uuidString)
         try? FileManager.default.createDirectory(at: own, withIntermediateDirectories: true)
-        return EditorModel(project: project, store: ProjectStore(url: own.appendingPathComponent("edit.json")))
+        service = FakeServiceLink(project: project, rules: rules)
+        return EditorModel.on(service, store: ProjectStore(url: own.appendingPathComponent("edit.json")))
     }
 
     /// The timeline alone in a borderless window, never shown and never key.
@@ -111,7 +116,10 @@ final class RecorderTimelineTests: XCTestCase {
             let scale = scale(model, width: width)
             let x = scale.x(3_000_000)
             click(window, x: x, y: zoomLaneY)
+            XCTAssertEqual(service.sentTags, ["zoom"], "width \(width): the click sends one zoom op")
+            XCTAssertEqual(service.sentOps.first?["to"] as? Double, (service.sentOps.first?["from"] as? Double ?? 0) + 2, "two seconds long")
             XCTAssertEqual(model.project.zooms.count, 1, "width \(width): the click adds one zoom, got \(model.project.zooms.map { ($0.startUs, $0.endUs) })")
+            XCTAssertEqual(model.selection, .zoom(model.project.zooms.first?.id ?? ""), "and selects the zoom the service added")
             guard let zoom = model.project.zooms.first else { continue }
             let drawnAt = scale.x(zoom.startUs)
             XCTAssertEqual(drawnAt, x, accuracy: 1, "width \(width), \(pointsPerSecond) pt/s: the zoom starts at the pointer, not \(drawnAt - x) pt right of it")
@@ -131,8 +139,11 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(model.project.zooms.count, 1, "a click on a zoom never adds another")
 
         model.deleteSelection()
+        XCTAssertEqual(service.sentOps.last as NSDictionary?, ["op": "unzoom", "id": "z1"] as NSDictionary)
         XCTAssertTrue(model.project.zooms.isEmpty, "Delete removes the selected zoom")
+        XCTAssertEqual(model.selection, .none)
         model.undo()
+        XCTAssertEqual(service.count("edit.undo"), 1, "the service undoes it")
         XCTAssertEqual(model.project.zooms.map(\.id), ["z1"], "undo brings it back")
     }
 
@@ -148,6 +159,26 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(model.project.zooms.count, 2)
     }
 
+    /// [ and ] with an item selected send `retime` to the playhead, and only while the playhead is inside the item;
+    /// arrow-key moves of one item are one gesture whose op is the whole move so far.
+    func testTrimAndMoveOfASelectedItemSendRetimeOps() {
+        let model = model(zooms: [EditProject.Zoom(id: "z1", startUs: 1_000_000, endUs: 4_000_000)], rules: { project, _ in project })
+        model.selection = .zoom("z1")
+        model.seek(2_000_000)
+        model.trimToPlayhead(.start)
+        XCTAssertEqual(service.sentOps.last as NSDictionary?, ["op": "retime", "id": "z1", "from": 2] as NSDictionary)
+        model.seek(6_000_000)
+        model.trimToPlayhead(.end)
+        XCTAssertEqual(service.count("edit.apply"), 1, "a playhead outside the selection sends nothing")
+        XCTAssertEqual(model.notice, "Put the playhead inside the selection to trim it there.")
+
+        model.moveSelectionInTime(byUs: 100_000)
+        model.moveSelectionInTime(byUs: 100_000)
+        XCTAssertEqual(service.count("gesture.begin"), 1, "two key presses are one move")
+        model.finishGesture()
+        XCTAssertEqual(service.sentOps.last as NSDictionary?, ["op": "retime", "id": "z1", "by": 0.2] as NSDictionary)
+    }
+
     func testAClickOnTheSecondClipSelectsThatClip() {
         let model = model(clips: [EditProject.Clip(id: "a", fromUs: 0, toUs: 4_000_000), EditProject.Clip(id: "b", fromUs: 4_000_000, toUs: 10_000_000)])
         let width: CGFloat = 1000
@@ -159,10 +190,11 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(model.selection, .clip("b"))
     }
 
-    func testAClickOnAnAddedLaneAddsItsKindThereAndOnThatLane() {
+    func testAClickOnAnAddedLaneAddsItsKindThereAndOnThatLane() throws {
         let model = model()
         model.addLane(kinds: [.hide, .spotlight])
-        let lane = model.effectLanes[1].lane
+        XCTAssertEqual(service.sentOps.last as NSDictionary?, ["op": "addLane", "kinds": ["hide", "spotlight"]] as NSDictionary)
+        let lane = try XCTUnwrap(model.effectLanes.dropFirst().first).lane
         XCTAssertEqual(lane.kinds, [.hide, .spotlight])
         let width: CGFloat = 1000
         let window = host(model, width: width)
@@ -185,7 +217,15 @@ final class RecorderTimelineTests: XCTestCase {
     }
 
     func testADragOnTheFramesLaneSelectsTheRangeUnderThePointerAndItsActionsEditThere() {
-        let model = model()
+        // The service's answer to the speed op: 2 s to 5 s of the source plays twice as fast (range.ts has the rule).
+        let sped = [EditProject.Clip(id: "a", fromUs: 0, toUs: 2_000_000), EditProject.Clip(id: "b", fromUs: 2_000_000, toUs: 5_000_000, speed: 2),
+                    EditProject.Clip(id: "c", fromUs: 5_000_000, toUs: 10_000_000)]
+        let model = model(rules: { project, op in
+            guard op["op"] as? String == "range" else { return try FakeRules.basic(project, op) }
+            var next = project
+            next.clips = sped
+            return next
+        })
         let width: CGFloat = 1000
         let window = host(model, width: width)
         let scale = scale(model, width: width)
@@ -198,14 +238,16 @@ final class RecorderTimelineTests: XCTestCase {
         let exact = TimelineRange(fromUs: 2_000_000, toUs: 5_000_000)
         model.applyRange(.speed, exact, speed: 2)
         XCTAssertNil(model.timelineRange, "an action clears the range")
+        XCTAssertEqual(service.sentOps.last as NSDictionary?, ["op": "range", "action": "speed", "from": 2, "to": 5, "factor": 2] as NSDictionary)
         XCTAssertEqual(model.project.outputDurationUs, 8_500_000)
         // The zoom over what now plays from 2 s to 3.5 s covers the whole sped-up source part, 2 s to 5 s.
         model.applyRange(.zoom, TimelineRange(fromUs: 2_000_000, toUs: 3_500_000))
+        XCTAssertEqual(service.sentOps.last?["from"] as? Double, 2)
+        XCTAssertEqual(service.sentOps.last?["to"] as? Double, 5)
         XCTAssertEqual(model.project.zooms.map { [$0.startUs, $0.endUs] }, [[2_000_000, 5_000_000]])
+        // A cut goes as the range op in output times, as the CLI's `range` takes them.
         model.applyRange(.cut, TimelineRange(fromUs: 0, toUs: 1_000_000))
-        XCTAssertEqual(model.project.outputDurationUs, 7_500_000)
-        model.applyRange(.text, TimelineRange(fromUs: 0, toUs: 500_000))
-        XCTAssertEqual(model.project.texts?.first.map { [$0.startUs, $0.endUs] }, [1_000_000, 1_500_000])
+        XCTAssertEqual(service.sentOps.last as NSDictionary?, ["op": "range", "action": "cut", "from": 0, "to": 1] as NSDictionary)
     }
 
     func testTheRangePopoverListsEveryActionWithTheRangesTimes() throws {
@@ -227,9 +269,9 @@ final class RecorderTimelineTests: XCTestCase {
         }
     }
 
-    /// Add Marker sends the `range` op's marker action through `tools recorder apply`, the marker the CLI writes shows
-    /// in the marks lane, and one ⌘Z takes it back. The edit.json TypeScript writes with markers decodes here and a
-    /// save from the window keeps them.
+    /// Add Marker sends the `range` op's marker action to the recorder service, the marker it adds shows in the marks
+    /// lane, and one ⌘Z takes it back; without the service the same op goes through `tools recorder apply`. The
+    /// edit.json TypeScript writes with markers decodes here and a save from the window keeps them.
     func testAddMarkerSendsTheRangeOpAndItsMarkerIsOneUndoStepInTheMarksLane() throws {
         let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: SharedEditorFixture.url("edit-markers.json"))) as? [String: Any])
         let written = try JSONSerialization.data(withJSONObject: try XCTUnwrap(fixture["edit"]))
@@ -238,22 +280,15 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(fromTypeScript.markers?.map(\.atUs), [1_500_000, 2_000_000])
         XCTAssertEqual(try EditProject.decode(fromTypeScript.encoded(), at: folder.appendingPathComponent("edit.json")).markers, fromTypeScript.markers)
 
-        let model = model()
-        var sent: [String] = []
-        model.runTools = { argv, done in
-            sent = argv
-            // What tools recorder apply writes for that op: the edit with the marker, one revision on.
-            var next = model.project
+        // What the service answers for that op: the edit with the marker.
+        let model = model(rules: { project, _ in
+            var next = project
             next.markers = [EditProject.Marker(id: "m0000aaaa", atUs: 1_500_000, label: "Login")]
-            next.revision += 5
-            try? next.encoded().write(to: model.store.url, options: .atomic)
-            done(0, "{}", "")
-        }
+            return next
+        })
         XCTAssertEqual(model.nextMarkerName, "Marker 1")
         model.addMarker(TimelineRange(fromUs: 1_500_000, toUs: 4_000_000), label: "  Login ")
-        XCTAssertEqual(Array(sent.prefix(3)), ["recorder", "apply", model.store.url.path])
-        let op = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(sent[3].utf8)) as? NSDictionary)
-        XCTAssertEqual(op, ["op": "range", "from": 1.5, "to": 4, "action": "marker", "text": "Login"] as NSDictionary)
+        XCTAssertEqual(service.sentOps.last as NSDictionary?, ["op": "range", "from": 1.5, "to": 4, "action": "marker", "text": "Login"] as NSDictionary)
         XCTAssertEqual(model.markers.map(\.label), ["Login"])
         XCTAssertEqual(model.nextMarkerName, "Marker 2")
         XCTAssertEqual(model.undoName, "Add Marker")
@@ -270,6 +305,35 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertNil(model.project.markers, "one undo takes the marker back")
     }
 
+    /// Without the service the window sends the same op through `tools recorder apply` and reads the file it wrote.
+    func testWithoutTheServiceAnOpGoesThroughToolsRecorderApply() throws {
+        var project = EditProject.whole(video: folder.appendingPathComponent("none.mp4").path, durationUs: 10_000_000,
+                                        width: 1920, height: 1080, cursor: nil, recording: nil)
+        project.revision = 3
+        let model = EditorModel(project: project, store: ProjectStore(url: folder.appendingPathComponent("edit.json")), link: { nil })
+        var sent: [[String]] = []
+        model.runTools = { argv, done in
+            sent.append(argv)
+            // What tools recorder apply and undo write: the edit with the marker, or without it, one revision on.
+            var next = model.project
+            next.markers = argv[1] == "apply" ? [EditProject.Marker(id: "m0000aaaa", atUs: 1_500_000, label: "Login")] : nil
+            next.revision += 1
+            try? next.encoded().write(to: model.store.url, options: .atomic)
+            done(0, "{}", "")
+        }
+        model.addMarker(TimelineRange(fromUs: 1_500_000, toUs: 4_000_000), label: "Login")
+        let apply = try XCTUnwrap(sent.first)
+        XCTAssertEqual(Array(apply.prefix(3)), ["recorder", "apply", model.store.url.path])
+        let op = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(apply[3].utf8)) as? NSDictionary)
+        XCTAssertEqual(op, ["op": "range", "from": 1.5, "to": 4, "action": "marker", "text": "Login"] as NSDictionary)
+        XCTAssertEqual(model.markers.map(\.label), ["Login"])
+        XCTAssertEqual(model.undoName, "Add Marker")
+        model.undo()
+        XCTAssertEqual(sent.last, ["recorder", "undo", model.store.url.path])
+        XCTAssertNil(model.project.markers, "the CLI's undo file takes it back")
+        XCTAssertFalse(model.canRedo, "redo needs the service")
+    }
+
     /// A display switch is one undo step: ⌘Z makes the proxy again with exactly the plan from before, through
     /// `tools recorder proxy --plan <file>`, ⇧⌘Z with the plan after it, and the edit's own steps keep their order.
     func testADisplaySwitchIsOneUndoStepThatMakesTheMovieAgainWithThePlanBeforeIt() throws {
@@ -283,7 +347,13 @@ final class RecorderTimelineTests: XCTestCase {
             .write(to: recording.appendingPathComponent("recording.json"))
         let project = EditProject.whole(video: recording.appendingPathComponent("proxy.mp4").path, durationUs: 10_000_000,
                                         width: 1920, height: 1080, cursor: nil, recording: nil)
-        let model = EditorModel(project: project, store: ProjectStore(url: recording.appendingPathComponent("edit.json")))
+        // The cut the service makes after the switch: 8 s to 9 s of the source goes.
+        let service = FakeServiceLink(project: project, rules: { project, _ in
+            var next = project
+            next.clips = [EditProject.Clip(id: "a", fromUs: 0, toUs: 8_000_000), EditProject.Clip(id: "b", fromUs: 9_000_000, toUs: 10_000_000)]
+            return next
+        })
+        let model = EditorModel.on(service, store: ProjectStore(url: recording.appendingPathComponent("edit.json")))
         let first = try XCTUnwrap(model.displayPlan)
         // The CLI, as the editor calls it: a switch writes the new plan, --plan writes the file's plan as it is.
         var calls: [[String]] = []

@@ -782,7 +782,7 @@ private struct PlayheadView: View {
 
     var body: some View {
         let x = scale.x(clock.outUs)
-        let canSplit = TimelineMap.split(model.project, atOutput: clock.outUs) != nil
+        let canSplit = TimelineMap.canSplit(model.project, atOutput: clock.outUs)
         ZStack(alignment: .topLeading) {
             Rectangle()
                 .fill(RecorderPalette.playhead)

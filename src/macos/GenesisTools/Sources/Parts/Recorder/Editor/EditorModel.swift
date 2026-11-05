@@ -82,8 +82,15 @@ enum InspectorTab: String, CaseIterable, Identifiable {
 @MainActor
 @Observable
 final class EditorModel {
-    private(set) var project: EditProject
+    /// Set only by the edit path (EditorEdits.swift): what the recorder service answered, or the CLI saved.
+    var project: EditProject
     let store: ProjectStore
+    /// The edit session on the recorder service (EditorSession.swift); offline, edits run in `tools`.
+    @ObservationIgnored let session: EditorSession
+    /// The continuous change in progress (a slider, a drag), one undo step once it rests.
+    @ObservationIgnored var gesture: EditGesture?
+    /// Another writer changed the edit during a drag: it is fetched once the drag ends.
+    @ObservationIgnored var refetchPending = false
     let clock = PlayheadClock()
     let filmstrip = Filmstrip()
     let waveform = Waveform()
@@ -91,11 +98,12 @@ final class EditorModel {
     @ObservationIgnored let zoom: ZoomState
     @ObservationIgnored private var asset: AVURLAsset
     @ObservationIgnored private var timeObserver: Any?
-    @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var renderTask: Task<Void, Never>?
-    @ObservationIgnored private var rebuildSoon: DispatchWorkItem?
-    @ObservationIgnored private var undoStack: [UndoStep] = []
-    @ObservationIgnored private var redoStack: [UndoStep] = []
+    @ObservationIgnored var rebuildSoon: DispatchWorkItem?
+    /// What ⌘Z and ⇧⌘Z would take back or make again, for their names in the Edit menu: the service keeps the
+    /// edit's real undo stack, and each step here mirrors one change this window made or took from outside.
+    @ObservationIgnored var undoStack: [UndoStep] = []
+    @ObservationIgnored var redoStack: [UndoStep] = []
     /// Starts a `tools` command for the window and answers on the main thread (`ToolsRunner.run`); a test answers
     /// for the CLI instead.
     @ObservationIgnored var runTools: (_ argv: [String], _ done: @escaping @MainActor (Int32, String, String) -> Void) -> Void = {
@@ -121,10 +129,10 @@ final class EditorModel {
     var previewFlash = 0
     var tab: InspectorTab = .zoom
     private(set) var isPlaying = false
-    private(set) var canUndo = false
-    private(set) var canRedo = false
-    /// True after a change this window has not saved yet.
-    private(set) var edited = false
+    var canUndo = false
+    var canRedo = false
+    /// True while a continuous change is open (not one undo step yet).
+    var edited = false
     var exportProgress: Double?
     var notice: String?
     var noticeIsError = false
@@ -135,7 +143,7 @@ final class EditorModel {
     /// `tools transcribe` runs for the captions.
     private(set) var isTranscribing = false
     /// The movie has a cached transcript, so captions can be drawn.
-    private(set) var hasTranscript = false
+    var hasTranscript = false
     /// Each transcript line's words as `tools recorder words` splits them, for the Captions tab's word pick; nil until
     /// read (EditorTranscriptCuts.swift).
     var lineWords: [TranscriptLineWords]?
@@ -154,13 +162,15 @@ final class EditorModel {
     @ObservationIgnored var screenSearchRevision = 0
     /// Edit ops this window runs through `tools recorder apply`: their saved edit is this window's own change, so it is
     /// adopted without the banner of an outside edit.
-    @ObservationIgnored private var ownOpsRunning = 0
+    @ObservationIgnored var ownOpsRunning = 0
     /// Pixels of the timeline per second; the transport's slider sets it.
     var pointsPerSecond: Double = 0
 
-    init(project: EditProject, store: ProjectStore) {
+    /// `link` is the connection to the recorder service: the recorder host's, or a test's.
+    init(project: EditProject, store: ProjectStore, link: @escaping @MainActor () -> RecorderServiceLink? = { RecorderServiceHost.shared }) {
         self.project = project
         self.store = store
+        session = EditorSession(path: store.url.path, host: link)
         cursor = CursorTrack.load(project.source.cursor)
         zoom = ZoomState(project: project, cursor: cursor)
         hasTranscript = zoom.hasCaptions
@@ -178,8 +188,11 @@ final class EditorModel {
                 self.isPlaying = self.player.rate != 0
             }
         }
-        store.onExternalChange = { [weak self] next in self?.adoptExternal(next) }
+        store.onExternalChange = { [weak self] next in self?.fileChanged(next) }
         store.watch()
+        session.onOpened = { [weak self] next in self?.sessionOpened(next) }
+        session.onOutsideChange = { [weak self] _ in self?.outsideChanged() }
+        session.start()
         commentsStore.onChange = { [weak self] comments in self?.reviewComments = comments }
         commentsStore.watch()
         let video = URL(fileURLWithPath: project.source.video)
@@ -291,34 +304,21 @@ final class EditorModel {
         if dx != 0 { step(frames: dx * (shift ? 60 : 1)) }
     }
 
-    /// ⌥← and ⌥→: the selected zoom, hidden part, text or shape starts `byUs` earlier or later (its length kept, held
-    /// inside the recording). A zoom keeps clear of the other zooms. A clip or no selection says what to select.
+    /// ⌥← and ⌥→: the selected zoom, hidden part, text, shape or camera part starts `byUs` earlier or later, its
+    /// length kept (the `retime` op's `by`, which holds it inside the recording; a zoom stays clear of the others).
+    /// Key repeats are one move and one undo step. A clip or no selection says what to select.
     func moveSelectionInTime(byUs delta: Int64) {
-        let duration = project.source.durationUs
+        let id: String
         switch selection {
-        case let .zoom(id):
-            guard let zoom = project.zooms.first(where: { $0.id == id }) else { return }
-            let moved = Self.shifted(start: zoom.startUs, end: zoom.endUs, by: delta, durationUs: duration)
-            moveZoom(id, startUs: moved.start, endUs: moved.end)
-        case let .redaction(id):
-            guard let part = project.redactions?.first(where: { $0.id == id }) else { return }
-            let moved = Self.shifted(start: part.startUs, end: part.endUs, by: delta, durationUs: duration)
-            updateRedaction(id) { $0.startUs = moved.start; $0.endUs = moved.end }
-        case let .text(id):
-            guard let note = project.texts?.first(where: { $0.id == id }) else { return }
-            let moved = Self.shifted(start: note.startUs, end: note.endUs, by: delta, durationUs: duration)
-            updateText(id) { $0.startUs = moved.start; $0.endUs = moved.end }
-        case let .shape(id):
-            guard let shape = project.shapes?.first(where: { $0.id == id }) else { return }
-            let moved = Self.shifted(start: shape.startUs, end: shape.endUs, by: delta, durationUs: duration)
-            updateShape(id) { $0.startUs = moved.start; $0.endUs = moved.end }
-        case let .cameraHide(id):
-            guard let part = project.camera?.hidden.first(where: { $0.id == id }) else { return }
-            let moved = Self.shifted(start: part.startUs, end: part.endUs, by: delta, durationUs: duration)
-            updateCameraHidden(id) { $0.startUs = moved.start; $0.endUs = moved.end }
+        case let .zoom(item), let .redaction(item), let .text(item), let .shape(item), let .cameraHide(item): id = item
         case .clip, .none:
             show("Select a zoom, hidden part, text or shape to move it in time.", error: false)
+            return
         }
+        let key = "move:\(id)"
+        let offset = (gesture?.key == key ? gesture?.offsetUs ?? 0 : 0) + delta
+        continuous(key, [.retime(EditOp.Retime(id: id, by: EditOpDiff.seconds(offset)))])
+        gesture?.offsetUs = offset
     }
 
     /// One zoom, hidden part, text or shape on the timeline, for walking them in time order.
@@ -373,13 +373,6 @@ final class EditorModel {
         seek(item.startUs)
     }
 
-    /// A span moved by `delta` with its length kept, held inside `0…durationUs`.
-    nonisolated static func shifted(start: Int64, end: Int64, by delta: Int64, durationUs: Int64) -> (start: Int64, end: Int64) {
-        let length = end - start
-        let moved = min(max(0, start + delta), max(0, durationUs - length))
-        return (moved, moved + length)
-    }
-
     /// Moves a whole shape, or only its start (`point: 1`) or end (`point: 2`), held inside the picture.
     func nudgeShape(_ id: String, dx: Double, dy: Double, point: Int? = nil) {
         guard let shape = project.shapes?.first(where: { $0.id == id }) else { return }
@@ -393,28 +386,7 @@ final class EditorModel {
         }
     }
 
-    // MARK: - Edits
-
-    /// Every change goes through here: one undo step, the zoom filter told, the movie rebuilt when clips or
-    /// audio changed (zooms need no rebuild), and a save a moment later.
-    func apply(_ next: EditProject, rebuildMovie: Bool) {
-        guard next != project else { return }
-        // A slider or a drag sends a change per step: steps that change the same parts of the edit less than 0.6 s
-        // apart are one undo step, so ⌘Z takes back the whole drag.
-        let parts = Self.changedParts(project, next)
-        let now = Date()
-        let continues = !parts.contains("count") && parts == lastChange.parts
-            && now.timeIntervalSince(lastChange.at) < 0.6 && !undoStack.isEmpty
-        lastChange = (parts, now)
-        if !continues {
-            undoStack.append(.edit(project))
-            if undoStack.count > 200 { undoStack.removeFirst() }
-        }
-        redoStack.removeAll()
-        commit(next, rebuildMovie: rebuildMovie)
-    }
-
-    @ObservationIgnored private var lastChange: (parts: [String], at: Date) = ([], .distantPast)
+    // MARK: - Edits (EditorEdits.swift sends them)
 
     /// Which parts of the edit differ, for telling one continuous change from the next.
     nonisolated static func changedParts(_ a: EditProject, _ b: EditProject) -> [String] {
@@ -443,33 +415,11 @@ final class EditorModel {
         return parts
     }
 
-    private func commit(_ next: EditProject, rebuildMovie: Bool) {
-        project = next
-        zoom.update(next)
-        canUndo = !undoStack.isEmpty
-        canRedo = !redoStack.isEmpty
-        edited = true
-        if rebuildMovie {
-            // A sound slider sends a change per step; the movie is built again once it rests for 0.2 s.
-            if lastChange.parts == ["audio"] {
-                rebuildSoon?.cancel()
-                let work = DispatchWorkItem { [weak self] in self?.rebuild() }
-                rebuildSoon = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
-            } else {
-                rebuild()
-            }
-        } else {
-            refreshFrame()
-        }
-        scheduleSave()
-    }
-
     /// What ⌘Z would take back ("Move Text", "Delete Zoom"), for the Edit menu and the notice; nil when nothing.
     var undoName: String? { undoStack.last.map { name(of: $0, undoing: true).name } }
     var redoName: String? { redoStack.last.map { name(of: $0, undoing: false).name } }
 
-    private func name(of step: UndoStep, undoing: Bool) -> (name: String, tab: InspectorTab?) {
+    func name(of step: UndoStep, undoing: Bool) -> (name: String, tab: InspectorTab?) {
         switch step {
         case let .edit(other): undoing ? Self.changeName(from: other, to: project) : Self.changeName(from: project, to: other)
         case .display: ("Display Switch", nil)
@@ -511,58 +461,38 @@ final class EditorModel {
 
     /// An undo or a redo names what it changed and opens the tab that shows it, so a change on a tab that is not
     /// open is never silent.
-    private func announce(_ verb: String, _ change: (name: String, tab: InspectorTab?)) {
+    func announce(_ verb: String, _ change: (name: String, tab: InspectorTab?)) {
         if let tab = change.tab, tab != self.tab { self.tab = tab }
         show("\(verb): \(change.name)", error: false)
     }
 
-    func undo() {
-        guard let step = undoStack.last else { return }
-        let change = name(of: step, undoing: true)
-        lastChange = ([], .distantPast)
-        switch step {
-        case let .edit(previous):
-            undoStack.removeLast()
-            redoStack.append(.edit(project))
-            commit(previous, rebuildMovie: previous.clips != project.clips || previous.audio != project.audio)
-            announce("Undid", change)
-        case let .display(switchStep):
-            // The movie is made again first; the step moves to the redo list only once it was.
-            guard !isSwitchingDisplay else {
-                show("The movie is still being made; undo again once it is ready.", error: false)
-                return
-            }
-            remakeProxy(plan: switchStep.before, doing: "Undoing the display switch") { [weak self] made in
-                guard let self, made else { return }
-                self.undoStack.removeLast()
-                self.redoStack.append(step)
-                self.refreshUndoState()
-                self.announce("Undid", change)
-            }
+    /// ⌘Z on a display switch: the movie is made again with the plan from before; the step moves to the redo list
+    /// only once it was.
+    func undoDisplaySwitch(_ step: UndoStep, plan: DisplayPlan, change: (name: String, tab: InspectorTab?)) {
+        guard !isSwitchingDisplay else {
+            show("The movie is still being made; undo again once it is ready.", error: false)
+            return
+        }
+        remakeProxy(plan: plan, doing: "Undoing the display switch") { [weak self] made in
+            guard let self, made else { return }
+            self.undoStack.removeLast()
+            self.redoStack.append(step)
+            self.refreshUndoState()
+            self.announce("Undid", change)
         }
     }
 
-    func redo() {
-        guard let step = redoStack.last else { return }
-        let change = name(of: step, undoing: false)
-        switch step {
-        case let .edit(next):
-            redoStack.removeLast()
-            undoStack.append(.edit(project))
-            commit(next, rebuildMovie: next.clips != project.clips || next.audio != project.audio)
-            announce("Redid", change)
-        case let .display(switchStep):
-            guard !isSwitchingDisplay else {
-                show("The movie is still being made; redo again once it is ready.", error: false)
-                return
-            }
-            remakeProxy(plan: switchStep.after, doing: "Redoing the display switch") { [weak self] made in
-                guard let self, made else { return }
-                self.redoStack.removeLast()
-                self.undoStack.append(step)
-                self.refreshUndoState()
-                self.announce("Redid", change)
-            }
+    func redoDisplaySwitch(_ step: UndoStep, plan: DisplayPlan, change: (name: String, tab: InspectorTab?)) {
+        guard !isSwitchingDisplay else {
+            show("The movie is still being made; redo again once it is ready.", error: false)
+            return
+        }
+        remakeProxy(plan: plan, doing: "Redoing the display switch") { [weak self] made in
+            guard let self, made else { return }
+            self.redoStack.removeLast()
+            self.undoStack.append(step)
+            self.refreshUndoState()
+            self.announce("Redid", change)
         }
     }
 
@@ -573,11 +503,10 @@ final class EditorModel {
         undoStack.append(.display(DisplaySwitchStep(before: before, after: after)))
         if undoStack.count > 200 { undoStack.removeFirst() }
         redoStack.removeAll()
-        lastChange = ([], .distantPast)
         refreshUndoState()
     }
 
-    private func refreshUndoState() {
+    func refreshUndoState() {
         canUndo = !undoStack.isEmpty
         canRedo = !redoStack.isEmpty
     }
@@ -593,168 +522,113 @@ final class EditorModel {
         pointsPerSecond = factor < 1 && next <= fitted ? 0 : next
     }
 
+    /// Source seconds of the playhead, as the ops take them.
+    var playheadSourceSeconds: Double { EditOpDiff.seconds(TimelineMap.sourceTime(atOutput: clock.outUs, in: project)) }
+
     func splitAtPlayhead() {
-        guard let next = TimelineMap.split(project, atOutput: clock.outUs) else {
+        guard TimelineMap.canSplit(project, atOutput: clock.outUs) else {
             show("Nothing to split here: the playhead is at the edge of a clip.", error: false)
             return
         }
-        apply(next, rebuildMovie: true)
+        edit([.split(EditOp.Split(at: playheadSourceSeconds))])
     }
 
     /// `[` / `]`: cuts the clip under the playhead from its start to here, or from here to its end.
     /// [ and ]: with a zoom, hidden part, text or shape selected, its start or end moves to the playhead; otherwise the
     /// clip under the playhead is trimmed there.
     func trimToPlayhead(_ side: TimelineMap.TrimSide) {
-        if let span = selectedSpan {
-            let at = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
-            guard let trimmed = Self.trimmed(start: span.start, end: span.end, at: at, side: side) else {
+        let at = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
+        if let (id, span) = selectedSpan {
+            // The playhead must be inside the selection, so [ and ] only ever shorten it.
+            guard at > span.start, at < span.end else {
                 show("Put the playhead inside the selection to trim it there.", error: false)
                 return
             }
-            switch selection {
-            case let .zoom(id): moveZoom(id, startUs: trimmed.start, endUs: trimmed.end)
-            case let .redaction(id): updateRedaction(id) { $0.startUs = trimmed.start; $0.endUs = trimmed.end }
-            case let .text(id): updateText(id) { $0.startUs = trimmed.start; $0.endUs = trimmed.end }
-            case let .shape(id): updateShape(id) { $0.startUs = trimmed.start; $0.endUs = trimmed.end }
-            case let .cameraHide(id): updateCameraHidden(id) { $0.startUs = trimmed.start; $0.endUs = trimmed.end }
-            case .clip, .none: break
-            }
+            let seconds = EditOpDiff.seconds(at)
+            edit([.retime(side == .start ? EditOp.Retime(id: id, from: seconds) : EditOp.Retime(id: id, to: seconds))])
             return
         }
-        guard let (next, playhead) = TimelineMap.trimToPlayhead(project, atOutput: clock.outUs, side: side) else {
+        guard TimelineMap.canSplit(project, atOutput: clock.outUs), let placed = TimelineMap.clip(atOutput: clock.outUs, in: project) else {
             show("Nothing to trim here: the playhead is at the edge of a clip.", error: false)
             return
         }
-        clock.outUs = playhead
-        apply(next, rebuildMovie: true)
+        let range = side == .start ? (placed.clip.fromUs, at) : (at, placed.clip.toUs)
+        let playhead = side == .start ? placed.outStartUs : clock.outUs
+        edit([.cut(EditOp.Cut(from: EditOpDiff.seconds(range.0), to: EditOpDiff.seconds(range.1)))]) { [weak self] _, _ in
+            self?.seek(playhead)
+        }
     }
 
-    /// The start and end of the selected zoom, hidden part, text or shape; nil for a clip or nothing.
-    private var selectedSpan: (start: Int64, end: Int64)? {
+    /// The id, start and end of the selected zoom, hidden part, text, shape or camera part; nil for a clip or nothing.
+    private var selectedSpan: (String, (start: Int64, end: Int64))? {
         switch selection {
-        case let .zoom(id): return project.zooms.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
-        case let .redaction(id): return project.redactions?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
-        case let .text(id): return project.texts?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
-        case let .shape(id): return project.shapes?.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
-        case let .cameraHide(id): return project.camera?.hidden.first { $0.id == id }.map { ($0.startUs, $0.endUs) }
+        case let .zoom(id): return project.zooms.first { $0.id == id }.map { (id, ($0.startUs, $0.endUs)) }
+        case let .redaction(id): return project.redactions?.first { $0.id == id }.map { (id, ($0.startUs, $0.endUs)) }
+        case let .text(id): return project.texts?.first { $0.id == id }.map { (id, ($0.startUs, $0.endUs)) }
+        case let .shape(id): return project.shapes?.first { $0.id == id }.map { (id, ($0.startUs, $0.endUs)) }
+        case let .cameraHide(id): return project.camera?.hidden.first { $0.id == id }.map { (id, ($0.startUs, $0.endUs)) }
         case .clip, .none: return nil
         }
     }
 
-    /// A span with its start (or end) moved to `at`; nil unless `at` leaves at least 0.1 s of it.
-    nonisolated static func trimmed(start: Int64, end: Int64, at: Int64, side: TimelineMap.TrimSide) -> (start: Int64, end: Int64)? {
-        switch side {
-        case .start: return at > start && at <= end - 100_000 ? (at, end) : nil
-        case .end: return at < end && at >= start + 100_000 ? (start, at) : nil
-        }
-    }
-
     func deleteSelection() {
+        let op: EditOp
         switch selection {
-        case let .clip(id):
-            guard let next = TimelineMap.delete(project, clip: id) else {
-                show("The last clip cannot be deleted.", error: false)
-                return
-            }
-            selection = .none
-            apply(next, rebuildMovie: true)
-        case let .zoom(id):
-            var next = project
-            next.zooms.removeAll { $0.id == id }
-            selection = .none
-            apply(next, rebuildMovie: false)
-        case let .redaction(id):
-            deleteRedaction(id)
-        case let .text(id):
-            deleteText(id)
-        case let .shape(id):
-            deleteShape(id)
-        case let .cameraHide(id):
-            deleteCameraHidden(id)
-        case .none:
-            break
+        case let .clip(id): op = .deleteClip(EditOp.DeleteClip(clip: id))
+        case let .zoom(id): op = .unzoom(EditOp.Unzoom(id: id))
+        case let .redaction(id): op = .unredact(EditOp.Unredact(id: id))
+        case let .text(id): op = .untext(EditOp.Untext(id: id))
+        case let .shape(id): op = .unshape(EditOp.Unshape(id: id))
+        case let .cameraHide(id): op = .cameraShow(EditOp.CameraShow(id: id))
+        case .none: return
+        }
+        let deleted = selection
+        edit([op]) { [weak self] _, _ in
+            if self?.selection == deleted { self?.selection = .none }
         }
     }
 
-    /// A zoom from the playhead, two seconds long by default, at the last zoom's scale.
+    /// A zoom from the playhead, two seconds long by default; the service places it after any zoom it would meet.
     func addZoom(atOutput outUs: Int64? = nil, durationUs: Int64 = 2_000_000, lane: String? = nil) {
         let start = TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project)
-        let scale = project.zooms.last?.scale ?? 1.5
-        guard let (added, id) = TimelineMap.addZoom(project, startUs: start, endUs: start + durationUs, scale: scale) else {
-            show("No room for a zoom here; zooms cannot overlap.", error: false)
-            return
+        edit([.zoom(EditOp.Zoom(from: EditOpDiff.seconds(start), to: EditOpDiff.seconds(start + durationUs), lane: lane))]) { [weak self] before, after in
+            guard let self, let id = Self.addedID(before, after, { $0.zooms.map(\.id) }) else { return }
+            self.selection = .zoom(id)
+            self.tab = .zoom
         }
-        let next = lane.map { EffectLanes.withLane(EffectLanes.pinned(added), ids: [id], lane: $0) } ?? added
-        selection = .zoom(id)
-        tab = .zoom
-        apply(next, rebuildMovie: false)
     }
 
-    /// Corrects a caption line's words (nil drops the fix, "" hides the line), as the `fixLine` op does.
+    /// Corrects a caption line's words (nil drops the fix, "" hides the line): the `fixLine` op.
     func fixCaption(_ line: CaptionTrack.Line, text: String?) {
-        var next = project
-        var settings = next.transcript ?? EditProject.TranscriptSettings()
-        let key = EditProject.TranscriptSettings.key(line)
+        let from = EditOpDiff.seconds(line.fromUs)
         if let text {
-            settings.fixes[key] = String(text.prefix(300)).trimmingCharacters(in: .whitespacesAndNewlines)
+            edit([.fixLine(EditOp.FixLine(from: from, text: String(text.prefix(300)).trimmingCharacters(in: .whitespacesAndNewlines)))])
         } else {
-            settings.fixes[key] = nil
+            edit([.unfixLine(EditOp.UnfixLine(from: from))])
         }
-        next.transcript = settings.fixes.isEmpty ? nil : settings
-        apply(next, rebuildMovie: false)
     }
 
-    /// A copy of the selected zoom, hidden part or text right after the original, selected (⌘D).
+    /// A copy of the selected zoom, hidden part, text, shape or camera part right after the original, selected (⌘D).
     func duplicateSelection() {
-        var next = project
+        let id: String
         switch selection {
-        case let .zoom(id):
-            guard let zoom = project.zooms.first(where: { $0.id == id }),
-                  let (added, newID) = TimelineMap.addZoom(project, startUs: zoom.endUs, endUs: zoom.endUs + (zoom.endUs - zoom.startUs), scale: zoom.scale) else {
-                show("No room after this zoom for a copy; zooms cannot overlap.", error: false)
-                return
-            }
-            next = added
-            if let index = next.zooms.firstIndex(where: { $0.id == newID }) {
-                next.zooms[index].mode = zoom.mode
-                next.zooms[index].focusX = zoom.focusX
-                next.zooms[index].focusY = zoom.focusY
-                next.zooms[index].easeInMs = zoom.easeInMs
-                next.zooms[index].easeOutMs = zoom.easeOutMs
-            }
-            selection = .zoom(newID)
-        case let .redaction(id):
-            guard var copy = project.redactions?.first(where: { $0.id == id }) else { return }
-            let length = copy.endUs - copy.startUs
-            copy.id = "r" + UUID().uuidString.prefix(8).lowercased()
-            copy.startUs = min(copy.endUs, project.source.durationUs - 100_000)
-            copy.endUs = min(project.source.durationUs, copy.startUs + length)
-            next.redactions = (next.redactions ?? []) + [copy]
-            selection = .redaction(copy.id)
-        case let .text(id):
-            guard var copy = project.texts?.first(where: { $0.id == id }) else { return }
-            let length = copy.endUs - copy.startUs
-            copy.id = "t" + UUID().uuidString.prefix(8).lowercased()
-            copy.startUs = min(copy.endUs, project.source.durationUs - 100_000)
-            copy.endUs = min(project.source.durationUs, copy.startUs + length)
-            next.texts = (next.texts ?? []) + [copy]
-            selection = .text(copy.id)
-        case let .shape(id):
-            guard var copy = project.shapes?.first(where: { $0.id == id }) else { return }
-            let length = copy.endUs - copy.startUs
-            copy.id = "s" + UUID().uuidString.prefix(8).lowercased()
-            copy.startUs = min(copy.endUs, project.source.durationUs - 100_000)
-            copy.endUs = min(project.source.durationUs, copy.startUs + length)
-            next.shapes = (next.shapes ?? []) + [copy]
-            selection = .shape(copy.id)
-        case let .cameraHide(id):
-            duplicateCameraHidden(id)
-            return
+        case let .zoom(item), let .redaction(item), let .text(item), let .shape(item), let .cameraHide(item): id = item
         case .clip, .none:
             show("Select a zoom, a hidden part or a text to duplicate it.", error: false)
             return
         }
-        apply(next, rebuildMovie: false)
+        let kind = selection
+        edit([.duplicate(EditOp.Duplicate(id: id))]) { [weak self] before, after in
+            guard let self else { return }
+            switch kind {
+            case .zoom: Self.addedID(before, after, { $0.zooms.map(\.id) }).map { self.selection = .zoom($0) }
+            case .redaction: Self.addedID(before, after, { ($0.redactions ?? []).map(\.id) }).map { self.selection = .redaction($0) }
+            case .text: Self.addedID(before, after, { ($0.texts ?? []).map(\.id) }).map { self.selection = .text($0) }
+            case .shape: Self.addedID(before, after, { ($0.shapes ?? []).map(\.id) }).map { self.selection = .shape($0) }
+            case .cameraHide: Self.addedID(before, after, { ($0.camera?.hidden ?? []).map(\.id) }).map { self.selection = .cameraHide($0) }
+            case .clip, .none: break
+            }
+        }
     }
 
     /// The redaction the Hide tab edits: the `.redaction` case of the one selection.
@@ -784,45 +658,26 @@ final class EditorModel {
     /// A text at the top middle for 3 s from the playhead; the Text tab then writes and places it.
     func addText(_ text: String = "Title", atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil) {
         let start = TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project)
-        let end = min(project.source.durationUs, start + durationUs)
-        guard end - start >= 100_000 else {
-            show("The playhead is at the end of the recording; move it back to add a text.", error: false)
-            return
+        let op = EditOp.Text(from: EditOpDiff.seconds(start), to: EditOpDiff.seconds(start + durationUs), text: text, lane: lane)
+        edit([.text(op)]) { [weak self] before, after in
+            guard let self, let id = Self.addedID(before, after, { ($0.texts ?? []).map(\.id) }) else { return }
+            self.selectedText = id
+            self.tab = .text
         }
-        let id = "t" + UUID().uuidString.prefix(8).lowercased()
-        var next = project
-        next.texts = (next.texts ?? []) + [EditProject.TextNote(id: id, startUs: start, endUs: end, text: text)]
-        if let lane { next = EffectLanes.withLane(EffectLanes.pinned(next), ids: [id], lane: lane) }
-        selectedText = id
-        tab = .text
-        apply(next, rebuildMovie: false)
     }
 
-    /// Each recording marker in the kept movie as a 2.5 s step title, "1. Open the settings", in one undo step, as the
-    /// REPL's titleMarkers() does; a marker that has a text starting within 0.1 s keeps it.
+    /// Each recording marker in the kept movie as a 2.5 s step title, "1. Open the settings", in one undo step: the
+    /// REPL's titleMarkers() on the service.
     func titleMarkers() {
-        let kept = markers.filter { TimelineMap.outputTime(ofSource: $0.us, in: project) != nil }
-        guard !kept.isEmpty else {
-            show("No marker is in the kept movie; mark moments while recording (the menu bar item's Add Marker).", error: false)
-            return
+        movie("titleMarkers", argv: []) { [weak self] result, _ in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.tab = .text
+                self.show("Added the step titles; ⌘Z takes them back.", error: false)
+            case let .failure(failure): self.show(failure.reason, error: false)
+            }
         }
-        let taken = (project.texts ?? []).map(\.startUs)
-        var next = project
-        var added = 0
-        for (index, marker) in kept.enumerated() where !taken.contains(where: { abs($0 - marker.us) <= 100_000 }) {
-            let id = "t" + UUID().uuidString.prefix(8).lowercased()
-            let end = min(project.source.durationUs, marker.us + 2_500_000)
-            next.texts = (next.texts ?? []) + [EditProject.TextNote(id: id, startUs: marker.us, endUs: end,
-                                                                     text: String("\(index + 1). \(marker.label)".prefix(200)))]
-            added += 1
-        }
-        guard added > 0 else {
-            show("Every marker has its title already.", error: false)
-            return
-        }
-        tab = .text
-        apply(next, rebuildMovie: false)
-        show("Added \(Plural.count(added, "step title")); ⌘Z takes them back.", error: false)
     }
 
     var selectedShape: String? {
@@ -836,79 +691,47 @@ final class EditorModel {
         }
     }
 
-    /// A 3 s arrow, box or circle from the playhead in the middle of the picture; the preview's handles place it.
+    /// A 3 s arrow, box or circle from the playhead; the service places it where the pointer is then (an arrow
+    /// points at it, a box or circle goes round it), else in the middle.
     func addShape(_ kind: EditProject.ShapeKind, atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil) {
         let start = TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project)
-        let end = min(project.source.durationUs, start + durationUs)
-        guard end - start >= 100_000 else {
-            show("The playhead is at the end of the recording; move it back to add a shape.", error: false)
-            return
+        let op = EditOp.Shape(from: EditOpDiff.seconds(start), to: EditOpDiff.seconds(start + durationUs), kind: kind, lane: lane)
+        edit([.shape(op)]) { [weak self] before, after in
+            guard let self, let id = Self.addedID(before, after, { ($0.shapes ?? []).map(\.id) }) else { return }
+            self.selectedShape = id
+            self.tab = .text
         }
-        let id = "s" + UUID().uuidString.prefix(8).lowercased()
-        // Where the pointer is at the playhead (the cursor track has it): an arrow points at it from towards the
-        // middle, a box or circle goes round it. Without a track, the middle of the picture.
-        let at = cursor?.point(atMs: Double(start) / 1000) ?? (x: 0.5, y: 0.5)
-        let toward = (x: at.x > 0.5 ? -1.0 : 1.0, y: at.y > 0.5 ? -1.0 : 1.0)
-        let clamp = { (value: Double) in min(max(0, value), 1) }
-        let corners = kind == .arrow
-            ? (clamp(at.x + toward.x * 0.09), clamp(at.y + toward.y * 0.09), at.x, at.y)
-            : (clamp(at.x - 0.08), clamp(at.y - 0.06), clamp(at.x + 0.08), clamp(at.y + 0.06))
-        var next = project
-        next.shapes = (next.shapes ?? []) + [EditProject.Shape(id: id, startUs: start, endUs: end, kind: kind,
-                                                                x1: corners.0, y1: corners.1, x2: corners.2, y2: corners.3)]
-        if let lane { next = EffectLanes.withLane(EffectLanes.pinned(next), ids: [id], lane: lane) }
-        selectedShape = id
-        tab = .text
-        apply(next, rebuildMovie: false)
     }
 
     func updateShape(_ id: String, _ change: (inout EditProject.Shape) -> Void) {
-        guard var list = project.shapes, let index = list.firstIndex(where: { $0.id == id }) else { return }
-        change(&list[index])
-        for key in [\EditProject.Shape.x1, \.y1, \.x2, \.y2] { list[index][keyPath: key] = min(max(0, list[index][keyPath: key]), 1) }
-        list[index].width = min(max(0.002, list[index].width), 0.03)
-        list[index].endUs = max(list[index].startUs + 100_000, min(project.source.durationUs, list[index].endUs))
-        var next = project
-        next.shapes = list
-        apply(next, rebuildMovie: false)
-    }
-
-    /// The shape starts at the playhead and keeps its length (cut short at the end of the recording).
-    func moveShapeStart(_ id: String) {
-        let start = TimelineMap.sourceTime(atOutput: clock.outUs, in: project)
-        updateShape(id) { shape in
-            let length = shape.endUs - shape.startUs
-            shape.startUs = min(start, project.source.durationUs - 100_000)
-            shape.endUs = min(project.source.durationUs, shape.startUs + length)
+        self.change { project in
+            guard var list = project.shapes, let index = list.firstIndex(where: { $0.id == id }) else { return }
+            change(&list[index])
+            project.shapes = list
         }
     }
 
+    /// The shape starts at the playhead and keeps its length.
+    func moveShapeStart(_ id: String) {
+        edit([.retime(EditOp.Retime(id: id, at: playheadSourceSeconds))])
+    }
+
     func deleteShape(_ id: String) {
-        var next = project
-        next.shapes = (next.shapes ?? []).filter { $0.id != id }
-        if next.shapes?.isEmpty == true { next.shapes = nil }
         if selectedShape == id { selectedShape = nil }
-        apply(next, rebuildMovie: false)
+        edit([.unshape(EditOp.Unshape(id: id))])
     }
 
     func updateText(_ id: String, _ change: (inout EditProject.TextNote) -> Void) {
-        guard var list = project.texts, let index = list.firstIndex(where: { $0.id == id }) else { return }
-        change(&list[index])
-        list[index].x = min(max(0, list[index].x), 1)
-        list[index].y = min(max(0, list[index].y), 1)
-        list[index].size = min(max(0.02, list[index].size), 0.15)
-        list[index].endUs = max(list[index].startUs + 100_000, min(project.source.durationUs, list[index].endUs))
-        var next = project
-        next.texts = list
-        apply(next, rebuildMovie: false)
+        self.change { project in
+            guard var list = project.texts, let index = list.firstIndex(where: { $0.id == id }) else { return }
+            change(&list[index])
+            project.texts = list
+        }
     }
 
     func deleteText(_ id: String) {
-        var next = project
-        next.texts = (next.texts ?? []).filter { $0.id != id }
-        if next.texts?.isEmpty == true { next.texts = nil }
         if selectedText == id { selectedText = nil }
-        apply(next, rebuildMovie: false)
+        edit([.untext(EditOp.Untext(id: id))])
     }
 
     /// How the source picture maps onto the canvas at the playhead: the zoom there and the frame (for the preview's
@@ -980,97 +803,81 @@ final class EditorModel {
             show("Set a part with I and O first; ⇧⌫ cuts what plays between them.", error: false)
             return
         }
-        guard let next = TimelineMap.cut(project, fromOut: part.fromUs, toOut: part.toUs) else {
-            show("The part is the whole edit; at least one frame has to stay.", error: false)
-            return
-        }
-        clearPart()
-        clock.outUs = part.fromUs
-        apply(next, rebuildMovie: true)
-        show("Cut \(formatClock(part.toUs - part.fromUs, tenths: true)); ⌘Z puts it back.", error: false)
+        let op = EditOp.RangeAction(from: EditOpDiff.seconds(part.fromUs), to: EditOpDiff.seconds(part.toUs), action: "cut")
+        edit([.range(op)], then: { [weak self] _, _ in
+            guard let self else { return }
+            self.clearPart()
+            self.seek(part.fromUs)
+            self.show("Cut \(formatClock(part.toUs - part.fromUs, tenths: true)); ⌘Z puts it back.", error: false)
+        }, failed: { [weak self] reason in
+            self?.show("Nothing was cut: \(reason)", error: false)
+        })
     }
 
     /// Keeps only what plays between I and O.
     func keepPart() {
-        guard let part = exportPart, let next = TimelineMap.part(project, fromOut: part.fromUs, toOut: part.toUs) else {
+        guard let part = exportPart else {
             show("Set a part with I and O first.", error: false)
             return
         }
-        clearPart()
-        clock.outUs = 0
-        apply(next, rebuildMovie: true)
+        let op = EditOp.RangeAction(from: EditOpDiff.seconds(part.fromUs), to: EditOpDiff.seconds(part.toUs), action: "keep")
+        edit([.range(op)]) { [weak self] _, _ in
+            self?.clearPart()
+            self?.seek(0)
+        }
     }
 
-    /// Hides a part of the picture (the middle, or a rectangle drawn on the preview, 0...1 of the source) for 3 s from
-    /// the playhead; the Hide tab then moves and sizes it.
     /// A 3 s spotlight from the playhead: on the pointer when the recording has a cursor track, else in the middle.
     func addSpotlight(atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil) {
         addRedaction(rect: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2), style: .spotlight, follow: cursor != nil,
                      atOutput: outUs, durationUs: durationUs, lane: lane)
     }
 
+    /// Hides a part of the picture (the middle, or a rectangle drawn on the preview, 0...1 of the source) for 3 s from
+    /// the playhead; the Hide tab then moves and sizes it.
     func addRedaction(rect: CGRect = CGRect(x: 0.35, y: 0.42, width: 0.3, height: 0.16), style: EditProject.RedactionStyle = .blur,
                       follow: Bool = false, atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil) {
         let start = TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project)
-        let end = min(project.source.durationUs, start + durationUs)
-        guard end - start >= 100_000 else {
-            show("The playhead is at the end of the recording; move it back to hide a part.", error: false)
-            return
+        let from = EditOpDiff.seconds(start), to = EditOpDiff.seconds(start + durationUs)
+        let op: EditOp = style == .spotlight
+            ? .spotlight(EditOp.Spotlight(from: from, to: to, rect: EditOp.Rect(rect), follow: follow ? true : nil, lane: lane))
+            : .redact(EditOp.Redact(from: from, to: to, rect: EditOp.Rect(rect), style: style, follow: follow ? true : nil, lane: lane))
+        edit([op]) { [weak self] before, after in
+            guard let self, let id = Self.addedID(before, after, { ($0.redactions ?? []).map(\.id) }) else { return }
+            self.selectedRedaction = id
+            self.tab = .hide
         }
-        let id = "r" + UUID().uuidString.prefix(8).lowercased()
-        var next = project
-        let clamped = rect.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-        guard !clamped.isNull, clamped.width >= 0.01, clamped.height >= 0.01 else { return }
-        next.redactions = (next.redactions ?? []) + [EditProject.Redaction(id: id, startUs: start, endUs: end, x: clamped.minX, y: clamped.minY,
-                                                                           width: clamped.width, height: clamped.height, style: style,
-                                                                           follow: follow ? true : nil)]
-        if let lane { next = EffectLanes.withLane(EffectLanes.pinned(next), ids: [id], lane: lane) }
-        selectedRedaction = id
-        tab = .hide
-        apply(next, rebuildMovie: false)
     }
 
     func updateRedaction(_ id: String, _ change: (inout EditProject.Redaction) -> Void) {
-        guard var list = project.redactions, let index = list.firstIndex(where: { $0.id == id }) else { return }
-        change(&list[index])
-        let item = list[index]
-        list[index].width = min(max(0.01, item.width), 1)
-        list[index].height = min(max(0.01, item.height), 1)
-        list[index].x = min(max(0, item.x), 1 - list[index].width)
-        list[index].y = min(max(0, item.y), 1 - list[index].height)
-        list[index].endUs = max(list[index].startUs + 100_000, min(project.source.durationUs, list[index].endUs))
-        var next = project
-        next.redactions = list
-        apply(next, rebuildMovie: false)
+        self.change { project in
+            guard var list = project.redactions, let index = list.firstIndex(where: { $0.id == id }) else { return }
+            change(&list[index])
+            project.redactions = list
+        }
     }
 
     func deleteRedaction(_ id: String) {
-        var next = project
-        next.redactions = (next.redactions ?? []).filter { $0.id != id }
-        if next.redactions?.isEmpty == true { next.redactions = nil }
         if selectedRedaction == id { selectedRedaction = nil }
-        apply(next, rebuildMovie: false)
+        edit([.unredact(EditOp.Unredact(id: id))])
     }
 
     func updateZoom(_ id: String, _ change: (inout EditProject.Zoom) -> Void) {
-        guard let index = project.zooms.firstIndex(where: { $0.id == id }) else { return }
-        var next = project
-        change(&next.zooms[index])
-        next.zooms[index].scale = min(4, max(1, next.zooms[index].scale))
-        next.zooms[index].focusX = min(1, max(0, next.zooms[index].focusX))
-        next.zooms[index].focusY = min(1, max(0, next.zooms[index].focusY))
-        apply(next, rebuildMovie: false)
+        self.change { project in
+            guard let index = project.zooms.firstIndex(where: { $0.id == id }) else { return }
+            change(&project.zooms[index])
+        }
     }
 
     func applyScaleToAll(_ scale: Double) {
-        var next = project
-        for index in next.zooms.indices { next.zooms[index].scale = scale }
-        apply(next, rebuildMovie: false)
+        change { project in
+            for index in project.zooms.indices { project.zooms[index].scale = scale }
+        }
     }
 
+    /// A zoom moved or resized in time (a drag, ⌥← and ⌥→); the service keeps it clear of its neighbours.
     func moveZoom(_ id: String, startUs: Int64, endUs: Int64) {
-        guard let next = TimelineMap.moveZoom(project, zoom: id, startUs: startUs, endUs: endUs) else { return }
-        apply(next, rebuildMovie: false)
+        continuous("zoom-time:\(id)", [.retime(EditOp.Retime(id: id, from: EditOpDiff.seconds(startUs), to: EditOpDiff.seconds(endUs)))])
     }
 
     /// On by default: a dragged zoom, hidden part, text or clip edge snaps to the playhead, the clip edges, the
@@ -1125,14 +932,13 @@ final class EditorModel {
         snapGuideUs = nil
     }
 
+    /// A clip edge dragged (source microseconds); the service holds it inside the movie and a frame long.
     func trimClip(_ id: String, fromUs: Int64? = nil, toUs: Int64? = nil) {
-        guard let next = TimelineMap.trim(project, clip: id, fromUs: fromUs, toUs: toUs) else { return }
-        apply(next, rebuildMovie: true)
+        continuous("clip-edge:\(id)", [.trim(EditOp.Trim(clip: id, from: fromUs.map(EditOpDiff.seconds), to: toUs.map(EditOpDiff.seconds)))])
     }
 
     func setSpeed(_ id: String, _ speed: Double) {
-        guard let next = TimelineMap.setSpeed(project, clip: id, speed: speed) else { return }
-        apply(next, rebuildMovie: true)
+        edit([.clipSpeed(EditOp.ClipSpeed(clip: id, factor: speed))])
     }
 
     /// The movie's sound tracks (a recording with the system sound and the microphone has two).
@@ -1147,17 +953,12 @@ final class EditorModel {
     }
 
     func setAudio(_ change: (inout EditProject.AudioSettings) -> Void) {
-        var next = project
-        change(&next.audio)
-        next.audio.volume = min(2, max(0, next.audio.volume))
-        apply(next, rebuildMovie: true)
+        self.change { change(&$0.audio) }
     }
 
     /// The looks (frame and click highlight): drawn per frame from the project, so no movie rebuild.
     func setLooks(_ change: (inout EditProject) -> Void) {
-        var next = project
-        change(&next)
-        apply(next, rebuildMovie: false)
+        self.change(change)
     }
 
     /// The frame on a picture: the file must decode as an image, or the frame keeps its background.
@@ -1278,52 +1079,24 @@ final class EditorModel {
     }
 
     func setExport(_ change: (inout EditProject.ExportSettings) -> Void) {
-        var next = project
-        change(&next.export)
-        apply(next, rebuildMovie: false)
+        self.change { change(&$0.export) }
     }
 
-    /// One zoom on every click of the cursor track: clicks closer than 3 s share a zoom, which starts 0.6 s before
-    /// its first click and holds 1.6 s after its last. Replaces earlier auto zooms and keeps the manual ones.
+    /// One zoom on every click of the cursor track (the `autoZoom` op): clicks closer than 3 s share a zoom, which
+    /// starts 0.6 s before its first click and holds 1.6 s after its last; the manual zooms stay.
     func autoZoom() {
-        guard let cursor, !cursor.clicks.isEmpty else {
-            show("This recording has no clicks to zoom on (no cursor track).", error: false)
-            return
-        }
-        var groups: [[CursorTrack.Sample]] = []
-        for click in cursor.clicks {
-            if let last = groups.last?.last, click.ms - last.ms < 3000 {
-                groups[groups.count - 1].append(click)
-            } else {
-                groups.append([click])
-            }
-        }
-        // Auto zoom replaces the zooms an earlier auto zoom made and keeps the manual ones; a group that would overlap a
-        // manual zoom is left out (the same rule as src/utils/recording-editor/project.ts).
-        let manual = project.zooms.filter { $0.mode == .manual }
-        var next = project
-        let added = groups.map { group in
-            let first = group.first!.ms, last = group.last!.ms
-            return EditProject.Zoom(
-                id: EditProject.newID("z"),
-                startUs: Int64(max(0, first - 600) * 1000),
-                endUs: min(project.source.durationUs, Int64((last + 1600) * 1000)),
-                scale: project.zooms.first?.scale ?? 1.6, mode: .follow,
-                focusX: group.map(\.x).reduce(0, +) / Double(group.count),
-                focusY: group.map(\.y).reduce(0, +) / Double(group.count)
-            )
-        }
-        let free = added.filter { zoom in !manual.contains { zoom.startUs < $0.endUs && zoom.endUs > $0.startUs } }
-        next.zooms = (manual + free).sorted { $0.startUs < $1.startUs }
-        apply(next, rebuildMovie: false)
-        let skipped = added.count - free.count
-        show("Added \(Plural.count(free.count, "zoom")) from \(Plural.count(cursor.clicks.count, "click"))"
-            + (skipped > 0 ? "; \(skipped) overlapped a manual zoom and were left out." : "."), error: false)
+        let clicks = cursor?.clicks.count ?? 0
+        edit([.autoZoom(EditOp.AutoZoom())], then: { [weak self] _, after in
+            let added = after.zooms.filter { $0.mode == .follow }.count
+            self?.show("Added \(Plural.count(added, "zoom")) from \(Plural.count(clicks, "click")).", error: false)
+        }, failed: { [weak self] reason in
+            self?.show(reason, error: false)
+        })
     }
 
     // MARK: - Movie
 
-    private func rebuild() {
+    func rebuild() {
         renderTask?.cancel()
         let project = project
         let asset = asset
@@ -1358,77 +1131,13 @@ final class EditorModel {
     }
 
     /// A paused player draws a changed zoom only when asked for the frame again.
-    private func refreshFrame() {
+    func refreshFrame() {
         guard player.rate == 0 else { return }
         player.seek(to: EditRenderer.us(clock.outUs), toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
-    // MARK: - Saving
-
-    private func scheduleSave() {
-        saveTask?.cancel()
-        saveTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(400))
-            guard !Task.isCancelled else { return }
-            self?.saveNow()
-        }
-    }
-
-    func saveNow() {
-        do {
-            project = try store.save(project)
-            edited = false
-        } catch {
-            show("The edit was not saved: \(error.localizedDescription)", error: true)
-        }
-    }
-
-    /// Runs edit ops in `tools recorder apply`, the TypeScript op itself, so the window keeps no copy of its rule. The
-    /// saved edit becomes one undo step; `done` gets how much shorter the edit got, or the failure's last line.
-    func applyOps(_ ops: String, done: @escaping @MainActor (Result<Int64, ApplyFailure>) -> Void) {
-        saveTask?.cancel()
-        saveNow()
-        let before = durationUs
-        ownOpsRunning += 1
-        runTools(["recorder", "apply", store.url.path, ops]) { [weak self] status, _, stderr in
-            guard let self else { return }
-            defer { self.ownOpsRunning -= 1 }
-            guard status == 0 else {
-                done(.failure(ApplyFailure(reason: stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")))
-                return
-            }
-            // The watcher may not have delivered the file yet; read it now so the notice has the new length.
-            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data, at: self.store.url) {
-                self.adoptExternal(next)
-            }
-            done(.success(before - self.durationUs))
-        }
-    }
-
     struct ApplyFailure: Error {
         let reason: String
-    }
-
-    /// An agent changed the edit file: its version replaces this one, and this one stays one undo away.
-    private func adoptExternal(_ next: EditProject) {
-        guard next != project else { return }
-        undoStack.append(.edit(project))
-        redoStack.removeAll()
-        let rebuildMovie = next.clips != project.clips || next.audio != project.audio
-        project = next
-        zoom.update(next)
-        // An agent that transcribed the movie and turned captions on: read the transcript it cached.
-        if next.captions != nil, !hasTranscript { hasTranscript = zoom.reloadCaptions() }
-        canUndo = true
-        canRedo = false
-        if rebuildMovie { rebuild() } else { refreshFrame() }
-        let previous: EditProject
-        if case let .edit(before)? = undoStack.last { previous = before } else { previous = next }
-        // The window's own op (applyOps) names itself in its notice.
-        guard ownOpsRunning == 0 else { return }
-        if !announceExternal(old: previous, new: next) {
-            show("The edit changed on disk (\(next.updatedBy ?? "another process")); ⌘Z brings this version back.", error: false)
-        }
     }
 
     /// Cuts every still and silent stretch with `tools recorder apply … removeIdle` (ffmpeg's freeze and silence
@@ -1440,12 +1149,15 @@ final class EditorModel {
         isTranscribing = true
         show("Transcribing the movie…", error: false)
         let cache = CaptionTrack.cacheURL(video: project.source.video).path
-        ToolsRunner.run(["transcribe", project.source.video, "--format", "json", "-o", cache]) { [weak self] status, _, stderr in
+        movie("transcript", argv: ["transcribe", project.source.video, "--format", "json", "-o", cache], timeout: 60 * 60) { [weak self] result, _ in
             guard let self else { return }
             self.isTranscribing = false
-            guard status == 0, self.zoom.reloadCaptions() else {
-                let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
-                self.show("The transcription failed: \(reason)", error: true)
+            if case let .failure(failure) = result {
+                self.show("The transcription failed: \(failure.reason)", error: true)
+                return
+            }
+            guard self.zoom.reloadCaptions() else {
+                self.show("The transcription failed: no transcript was written", error: true)
                 return
             }
             self.hasTranscript = true
@@ -1457,7 +1169,8 @@ final class EditorModel {
 
     private(set) var isMarkingClicks = false
 
-    /// The circles Circle Every Click made: a circle that starts within 0.1 s of a recorded click.
+    /// The circles Circle Every Click made: a circle that starts within 0.1 s of a recorded click (whether the Remove
+    /// button shows; the `removeClickCircles` op decides what goes).
     var clickCircles: [EditProject.Shape] {
         let clicks = (cursor?.clicks ?? []).map { Int64(($0.ms * 1000).rounded()) }
         return (project.shapes ?? []).filter { shape in
@@ -1467,83 +1180,64 @@ final class EditorModel {
 
     /// Takes every click circle out in one undo step; other shapes stay.
     func removeClickCircles() {
-        let ids = Set(clickCircles.map(\.id))
-        guard !ids.isEmpty else { return }
-        var next = project
-        let rest = (next.shapes ?? []).filter { !ids.contains($0.id) }
-        next.shapes = rest.isEmpty ? nil : rest
-        if let selected = selectedShape, ids.contains(selected) { selection = .none }
-        apply(next, rebuildMovie: false)
-        show("Removed \(Plural.count(ids.count, "click circle")); ⌘Z puts them back.", error: false)
+        edit([.removeClickCircles(EditOp.RemoveClickCircles())]) { [weak self] before, after in
+            guard let self else { return }
+            let removed = (before.shapes?.count ?? 0) - (after.shapes?.count ?? 0)
+            if let selected = self.selectedShape, !(after.shapes ?? []).contains(where: { $0.id == selected }) { self.selection = .none }
+            self.show("Removed \(Plural.count(removed, "click circle")); ⌘Z puts them back.", error: false)
+        }
     }
 
-    /// A circle at every recorded click with `tools recorder apply … annotateClicks` (the REPL's annotateClicks); the
-    /// file watcher brings the shapes in, one ⌘Z away.
+    /// A circle at every recorded click (the `annotateClicks` op, the REPL's annotateClicks), one ⌘Z away.
     func markClicks() {
         guard !isMarkingClicks else { return }
         isMarkingClicks = true
-        let before = project.shapes?.count ?? 0
-        ToolsRunner.run(["recorder", "apply", store.url.path, #"{"op":"annotateClicks"}"#]) { [weak self] status, _, stderr in
+        edit([.annotateClicks(EditOp.AnnotateClicks())], then: { [weak self] before, after in
             guard let self else { return }
             self.isMarkingClicks = false
-            guard status == 0 else {
-                self.show(stderr.split(separator: "\n").last.map(String.init) ?? "No click was marked (exit \(status))", error: true)
-                return
-            }
-            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data, at: self.store.url) {
-                self.adoptExternal(next)
-            }
-            let added = (self.project.shapes?.count ?? 0) - before
+            let added = (after.shapes?.count ?? 0) - (before.shapes?.count ?? 0)
             self.tab = .text
-            let both = self.project.clicks?.highlight == true
+            let both = after.clicks?.highlight == true
                 ? " Click rings are on too (Cursor and Clicks), so each click shows two rings." : ""
             self.show(added > 0 ? "Circled \(Plural.count(added, "click")); ⌘Z takes them back.\(both)" : "Every click has its circle already.",
                       error: false)
-        }
+        }, failed: { [weak self] reason in
+            self?.isMarkingClicks = false
+            self?.show(reason, error: true)
+        })
     }
 
-    /// Replaces a word or phrase in every caption line with `tools recorder replace-words` (the REPL's replaceWords);
-    /// the file watcher brings the result in, one ⌘Z away.
+    /// Replaces a word or phrase in every caption line (the REPL's replaceWords on the service, else
+    /// `tools recorder replace-words`), one ⌘Z away.
     func replaceWords(find: String, replace: String) {
         let find = find.trimmingCharacters(in: .whitespaces)
         guard !find.isEmpty else { return }
-        ToolsRunner.run(["recorder", "replace-words", store.url.path, "--find", find, "--replace", replace]) { [weak self] status, stdout, stderr in
+        movie("replaceWords", ["find": find, "replace": replace],
+              argv: ["recorder", "replace-words", store.url.path, "--find", find, "--replace", replace]) { [weak self] result, _ in
             guard let self else { return }
-            guard status == 0 else {
-                self.show(stderr.split(separator: "\n").last.map(String.init) ?? "The replace failed (exit \(status))", error: true)
-                return
+            switch result {
+            case let .success(value):
+                let count = ((value as? [String: Any])?["replaced"] as? [Any])?.count
+                self.show("“\(find)” → “\(replace)”: \(count.map { Plural.count($0, "line") + " changed" } ?? "replaced").", error: false)
+            case let .failure(failure): self.show(failure.reason, error: true)
             }
-            let summary = stderr.split(separator: "\n").last.map(String.init) ?? "replaced"
-            HubPerf.log("recorder.replaceWords: \(summary) \(stdout.count) bytes")
-            self.show("“\(find)” → “\(replace)”: \(summary).", error: false)
         }
     }
 
-    /// Sets the volume so the export reaches -16 LUFS, measured by `tools recorder apply {"op":"normalize"}`.
     /// The loudness `normalize` measured at volume 1, in LUFS; nil until it ran in this window.
-    private(set) var measuredLufs: Double?
+    var measuredLufs: Double?
 
+    /// Sets the volume so the export reaches -16 LUFS (the `normalize` op measures the movie).
     func normalizeLoudness() {
         guard !isNormalizing else { return }
-        saveTask?.cancel()
-        saveNow()
         isNormalizing = true
         show("Measuring the loudness…", error: false)
-        ToolsRunner.run(["recorder", "apply", store.url.path, #"{"op":"normalize"}"#]) { [weak self] status, stdout, stderr in
+        applyOps(EditOp.json([.normalize(EditOp.Normalize())])) { [weak self] result in
             guard let self else { return }
             self.isNormalizing = false
-            let answer = (stdout.split(separator: "\n").last.flatMap { $0.data(using: .utf8) })
-                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-            if let measured = (answer?["loudness"] as? [String: Any])?["measuredLufs"] as? NSNumber {
-                self.measuredLufs = measured.doubleValue
-            }
-            guard status == 0 else {
-                let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
-                self.show("The volume is unchanged: \(reason)", error: true)
+            if case let .failure(failure) = result {
+                self.show("The volume is unchanged: \(failure.reason)", error: true)
                 return
-            }
-            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data, at: self.store.url) {
-                self.adoptExternal(next)
             }
             let volume = Int((self.project.audio.volume * 100).rounded())
             self.show(volume >= 200 ? "The volume is at its 200 % limit; the movie is still quieter than -16 LUFS."
@@ -1559,30 +1253,20 @@ final class EditorModel {
 
     func removeIdle(speed: Int? = nil) {
         guard !isRemovingIdle else { return }
-        saveTask?.cancel()
-        saveNow()
         isRemovingIdle = true
         show("Looking for parts where nothing moves and nothing is heard…", error: false)
-        let before = durationUs
         let minSeconds = UserDefaults.standard.object(forKey: Self.idleMinKey) as? Double ?? 2
-        let op = speed.map { #"{"op":"removeIdle","minSeconds":\#(minSeconds),"speed":\#($0)}"# }
-            ?? #"{"op":"removeIdle","minSeconds":\#(minSeconds)}"#
-        ToolsRunner.run(["recorder", "apply", store.url.path, op]) { [weak self] status, _, stderr in
+        let op = EditOp.RemoveIdle(minSeconds: minSeconds, speed: speed.map(Double.init))
+        applyOps(EditOp.json([.removeIdle(op)])) { [weak self] result in
             guard let self else { return }
             self.isRemovingIdle = false
-            guard status == 0 else {
-                let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
-                self.show("Nothing was cut: \(reason)", error: true)
-                return
+            switch result {
+            case let .success(saved):
+                let verb = speed.map { "Sped up the still, silent parts \($0)×, saving" } ?? "Removed"
+                self.show(saved > 0 ? "\(verb) \(formatClock(saved, tenths: true)) of still, silent parts; ⌘Z brings them back."
+                                    : "No still, silent part of \(Int(minSeconds)) s or more was found.", error: false)
+            case let .failure(failure): self.show("Nothing was cut: \(failure.reason)", error: true)
             }
-            // The watcher may not have delivered the file yet; read it now so the message has the new length.
-            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data, at: self.store.url) {
-                self.adoptExternal(next)
-            }
-            let saved = before - self.durationUs
-            let verb = speed.map { "Sped up the still, silent parts \($0)×, saving" } ?? "Removed"
-            self.show(saved > 0 ? "\(verb) \(formatClock(saved, tenths: true)) of still, silent parts; ⌘Z brings them back."
-                                : "No still, silent part of \(Int(minSeconds)) s or more was found.", error: false)
         }
     }
 
@@ -1709,22 +1393,18 @@ final class EditorModel {
     /// Removes the item an issue names (one undo step), as its fix does in the REPL.
     /// Runs every fix the check offers in one save and one undo step (`tools recorder fix`, the REPL's movie.fix()).
     func fixAll() {
-        saveTask?.cancel()
-        saveNow()
-        ToolsRunner.run(["recorder", "fix", store.url.path]) { [weak self] status, stdout, stderr in
+        movie("fix", argv: ["recorder", "fix", store.url.path]) { [weak self] result, stdout in
             guard let self else { return }
-            guard status == 0 else {
-                let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
-                self.show("Fix All did not work: \(reason)", error: true)
-                return
+            switch result {
+            case let .success(value):
+                // The answer counts what it fixed, a fix that made a new issue and its fix included.
+                let fixed = ((value as? [String: Any])?["fixed"] as? [Any])?.count
+                    ?? stdout.split(separator: "\n").last.flatMap { line in
+                        (try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])?["fixed"] as? [Any]
+                    }?.count
+                self.show(fixed.map { "Fixed \(Plural.count($0, "thing")). ⌘Z undoes them all." } ?? "Fixed. ⌘Z undoes it.", error: false)
+            case let .failure(failure): self.show("Fix All did not work: \(failure.reason)", error: true)
             }
-            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data, at: self.store.url) {
-                self.adoptExternal(next)
-            }
-            // The answer counts what it fixed, a fix that made a new issue and its fix included.
-            struct Answer: Decodable { let fixed: [String] }
-            let count = stdout.split(separator: "\n").last.flatMap { try? JSONDecoder().decode(Answer.self, from: Data($0.utf8)) }?.fixed.count
-            self.show(count.map { "Fixed \(Plural.count($0, "thing")). ⌘Z undoes them all." } ?? "Fixed. ⌘Z undoes it.", error: false)
         }
     }
 
@@ -1732,17 +1412,11 @@ final class EditorModel {
     /// so ⌘Z undoes it as one step.
     func runAction(_ issue: EditIssue) {
         guard let ops = issue.actionOps, let label = issue.action?.label else { return }
-        saveTask?.cancel()
-        saveNow()
-        ToolsRunner.run(["recorder", "apply", store.url.path, ops]) { [weak self] status, _, stderr in
+        applyOps(ops) { [weak self] result in
             guard let self else { return }
-            guard status == 0 else {
-                let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
-                self.show("\(label) did not work: \(reason)", error: true)
+            if case let .failure(failure) = result {
+                self.show("\(label) did not work: \(failure.reason)", error: true)
                 return
-            }
-            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data, at: self.store.url) {
-                self.adoptExternal(next)
             }
             if let selection = issue.selection { self.selection = selection }
             self.show("\(label): done. ⌘Z undoes it.", error: false)
@@ -1771,11 +1445,15 @@ final class EditorModel {
         let revision = project.revision
         guard checkedRevision != revision else { return }
         checkedRevision = revision
-        ToolsRunner.run(["recorder", "check", store.url.path]) { [weak self] status, stdout, stderr in
+        movie("check", argv: ["recorder", "check", store.url.path], timeout: 60) { [weak self] result, stdout in
             guard let self, self.project.revision == revision else { return }
-            guard status == 0, let line = stdout.split(separator: "\n").last, let data = line.data(using: .utf8),
-                  let issues = Self.issues(fromCheck: data) else {
-                HubPerf.log("recorder.check failed: exit \(status) \(stderr.split(separator: "\n").last.map(String.init) ?? "")")
+            let data: Data? = switch result {
+            case let .success(value?) where JSONSerialization.isValidJSONObject(value): try? JSONSerialization.data(withJSONObject: value)
+            case .success: stdout.split(separator: "\n").last.flatMap { $0.data(using: .utf8) }
+            case .failure: nil
+            }
+            guard let data, let issues = Self.issues(fromCheck: data) else {
+                if case let .failure(failure) = result { HubPerf.log("recorder.check failed: \(failure.reason)") }
                 self.checkedRevision = nil
                 return
             }
@@ -1821,16 +1499,22 @@ final class EditorModel {
         exportProgress = 0
         show(format == .mp4 ? "Exporting an MP4 with the cleaned sound…" : "Exporting a \(format.rawValue.uppercased())…", error: false)
         var argv = ["recorder", "export", store.url.path, "--format", format.rawValue, "--json"]
+        var params: [String: Any] = ["format": format.rawValue]
         if let part = exportPart {
             argv += ["--from", String(format: "%.3f", Double(part.fromUs) / 1_000_000), "--to", String(format: "%.3f", Double(part.toUs) / 1_000_000)]
+            params["from"] = EditOpDiff.seconds(part.fromUs)
+            params["to"] = EditOpDiff.seconds(part.toUs)
         }
-        ToolsRunner.run(argv) { [weak self] status, stdout, stderr in
+        movie("export", params, argv: argv, timeout: 60 * 60) { [weak self] result, stdout in
             guard let self else { return }
             self.exportProgress = nil
-            let answer = (stdout.split(separator: "\n").last.flatMap { $0.data(using: .utf8) })
+            let answer: [String: Any]? = switch result {
+            case let .success(value?): value as? [String: Any]
+            default: (stdout.split(separator: "\n").last.flatMap { $0.data(using: .utf8) })
                 .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-            guard status == 0, let path = answer?["path"] as? String else {
-                let reason = (answer?["error"] as? String) ?? stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
+            }
+            guard let path = answer?["path"] as? String else {
+                let reason: String = if case let .failure(failure) = result { failure.reason } else { (answer?["error"] as? String) ?? "no movie was written" }
                 self.show("The \(format.rawValue.uppercased()) export failed: \(reason)", error: true)
                 return
             }
@@ -1847,8 +1531,8 @@ final class EditorModel {
     }
 
     func close() {
-        saveTask?.cancel()
-        if edited { saveNow() }
+        finishGesture()
+        session.stop()
         store.stopWatching()
         commentsStore.stopWatching()
         player.pause()

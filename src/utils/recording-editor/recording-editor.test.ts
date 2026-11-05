@@ -1037,6 +1037,183 @@ describe("edit project (edit.json)", () => {
     });
 });
 
+describe("the editor window's item ops", () => {
+    const source = { video: "/movies/screen.mp4", durationUs: 10_000_000, width: 1920, height: 1080 };
+    const rect = { x: 0.1, y: 0.1, width: 0.2, height: 0.2 };
+
+    /** A cursor track with clicks at 2 s (0.7, 0.3) and 6 s (0.2, 0.8). */
+    function withCursor(): ReturnType<typeof wholeProject> {
+        const path = join(workspace(), "cursor.jsonl");
+        const rows = [
+            { t: 0, x: 0.5, y: 0.5 },
+            { t: 2000, x: 0.7, y: 0.3, click: "left" },
+            { t: 6000, x: 0.2, y: 0.8, click: "left" },
+        ];
+        writeFileSync(path, rows.map((row) => SafeJSON.stringify(row)).join("\n"));
+        return wholeProject({ ...source, cursor: path });
+    }
+
+    test("setZoom changes the fields it names, holds them in range, and a placed focus makes the zoom manual", () => {
+        let project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 3, follow: true });
+        const id = project.zooms[0].id;
+        project = applyOp(project, { op: "setZoom", id, scale: 9, easeInMs: 300 });
+        expect(project.zooms[0]).toMatchObject({ scale: 4, easeInMs: 300, mode: "follow" });
+        project = applyOp(project, { op: "setZoom", id, focus: { x: 1.4, y: -0.2 } });
+        expect(project.zooms[0]).toMatchObject({ focusX: 1, focusY: 0, mode: "manual" });
+        expect(() => applyOp(project, { op: "setZoom", id: "nope", scale: 2 })).toThrow("no zoom nope");
+    });
+
+    test("setRedaction keeps the rectangle inside the picture, and the default dim and an empty label are not written", () => {
+        let project = applyOp(wholeProject(source), { op: "spotlight", from: 1, to: 3, rect });
+        const id = project.redactions?.[0]?.id ?? "";
+        project = applyOp(project, { op: "setRedaction", id, rect: { x: 0.95, y: -1, width: 0.3, height: 0.001 } });
+        expect(project.redactions?.[0]).toMatchObject({ x: 0.7, y: 0, width: 0.3, height: 0.01 });
+        project = applyOp(project, {
+            op: "setRedaction",
+            id,
+            label: "token",
+            dim: 0.5,
+            cutout: "circle",
+            follow: true,
+        });
+        expect(project.redactions?.[0]).toMatchObject({ label: "token", dim: 0.5, cutout: "circle", follow: true });
+        project = applyOp(project, { op: "setRedaction", id, label: " ", dim: 0.702, follow: false });
+        expect(project.redactions?.[0]).not.toHaveProperty("label");
+        expect(project.redactions?.[0]).not.toHaveProperty("dim");
+        expect(project.redactions?.[0]).not.toHaveProperty("follow");
+    });
+
+    test("setText and setShape change words, place, size and points, held inside their ranges", () => {
+        let project = applyOp(wholeProject(source), { op: "text", from: 1, to: 3, text: "Title" });
+        const text = project.texts?.[0]?.id ?? "";
+        project = applyOp(project, { op: "setText", id: text, text: "  Step two ", x: 2, size: 0.5, style: "plain" });
+        expect(project.texts?.[0]).toMatchObject({ text: "Step two", x: 1, size: 0.15, style: "plain" });
+        expect(() => applyOp(project, { op: "setText", id: text, text: "  " })).toThrow("needs words");
+        project = applyOp(project, {
+            op: "shape",
+            from: 1,
+            to: 3,
+            kind: "box",
+            start: { x: 0.1, y: 0.1 },
+            end: { x: 0.3, y: 0.3 },
+        });
+        const shape = project.shapes?.[0]?.id ?? "";
+        project = applyOp(project, {
+            op: "setShape",
+            id: shape,
+            end: { x: 1.2, y: 0.5 },
+            width: 1,
+            color: "#00ff00",
+            appear: "fade",
+        });
+        expect(project.shapes?.[0]).toMatchObject({ x2: 1, y2: 0.5, width: 0.03, color: "#00FF00", appear: "fade" });
+        project = applyOp(project, { op: "setShape", id: shape, appear: "draw" });
+        expect(project.shapes?.[0]).not.toHaveProperty("appear");
+    });
+
+    test("a shape without points goes round the pointer at its start, or the point it is given, as the window places it", () => {
+        const points = (shape: { x1: number; y1: number; x2: number; y2: number } | undefined) =>
+            [shape?.x1, shape?.y1, shape?.x2, shape?.y2].map((value) => Math.round((value ?? -1) * 1000) / 1000);
+        let project = applyOp(withCursor(), { op: "shape", from: 2, to: 4, kind: "circle" });
+        expect(points(project.shapes?.[0])).toEqual([0.62, 0.24, 0.78, 0.36]);
+        project = applyOp(project, { op: "shape", from: 2, to: 4, kind: "arrow", at: { x: 0.2, y: 0.8 } });
+        expect(points(project.shapes?.[1])).toEqual([0.29, 0.71, 0.2, 0.8]);
+        const middle = applyOp(wholeProject(source), { op: "shape", from: 2, to: 4, kind: "box" });
+        expect(points(middle.shapes?.[0])).toEqual([0.42, 0.44, 0.58, 0.56]);
+        expect(() =>
+            applyOp(wholeProject(source), { op: "shape", from: 2, to: 4, kind: "box", start: { x: 0.1, y: 0.1 } })
+        ).toThrow("both start and end");
+    });
+
+    test("trim moves a clip's edges inside the movie, deleteClip keeps the last clip, clipSpeed holds 0.25 to 16", () => {
+        let project = applyOp(wholeProject(source), { op: "split", at: 5 });
+        const [left, right] = project.clips;
+        project = applyOp(project, { op: "trim", clip: left.id, from: -2, to: 4 });
+        expect(project.clips[0]).toMatchObject({ fromUs: 0, toUs: 4_000_000 });
+        project = applyOp(project, { op: "trim", clip: right.id, from: 9.999_999 });
+        expect(project.clips[1].toUs - project.clips[1].fromUs).toBe(16_667);
+        project = applyOp(project, { op: "clipSpeed", clip: right.id, factor: 40 });
+        expect(project.clips[1].speed).toBe(16);
+        project = applyOp(project, { op: "deleteClip", clip: left.id });
+        expect(project.clips.map((clip) => clip.id)).toEqual([right.id]);
+        expect(() => applyOp(project, { op: "deleteClip", clip: right.id })).toThrow("last clip");
+    });
+
+    test("duplicate copies a zoom after any zoom it meets and other items right after themselves", () => {
+        let project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 2, scale: 2.5 });
+        project = applyOp(project, { op: "zoom", from: 2.2, to: 3 });
+        const first = project.zooms[0];
+        project = applyOp(project, { op: "setZoom", id: first.id, easeInMs: 150 });
+        project = applyOp(project, { op: "duplicate", id: first.id });
+        const copy = project.zooms.find((zoom) => zoom.id !== first.id && zoom.startUs >= 3_000_000);
+        expect(copy).toMatchObject({ startUs: 3_000_000, scale: 2.5, easeInMs: 150 });
+        project = applyOp(project, { op: "text", from: 9, to: 9.5, text: "End" });
+        const text = project.texts?.[0]?.id ?? "";
+        project = applyOp(project, { op: "duplicate", id: text });
+        expect(project.texts?.[1]).toMatchObject({ text: "End", startUs: 9_500_000, endUs: 10_000_000 });
+        expect(project.texts?.[1]?.id).not.toBe(text);
+    });
+
+    test("removeClickCircles takes out the circles at recorded clicks and keeps the rest", () => {
+        let project = applyOp(withCursor(), { op: "annotateClicks" });
+        project = applyOp(project, { op: "shape", from: 4, to: 5, kind: "circle" });
+        expect(project.shapes).toHaveLength(3);
+        project = applyOp(project, { op: "removeClickCircles" });
+        expect(project.shapes?.map((shape) => shape.startUs)).toEqual([4_000_000]);
+        expect(() => applyOp(project, { op: "removeClickCircles" })).toThrow("no click circle");
+    });
+
+    test("renameLane names a lane and an empty name gives the default back; cameraShow deletes a part by id", () => {
+        let project = applyOp(wholeProject(source), { op: "addLane", kinds: ["text"] });
+        const lane = project.lanes?.at(-1)?.id ?? "";
+        project = applyOp(project, { op: "renameLane", id: lane, name: `  ${"x".repeat(50)}  ` });
+        expect(project.lanes?.at(-1)?.name).toBe("x".repeat(40));
+        project = applyOp(project, { op: "renameLane", id: lane, name: "" });
+        expect(project.lanes?.at(-1)).not.toHaveProperty("name");
+        project = applyOp(project, { op: "camera", file: "camera.mov" });
+        project = applyOp(project, { op: "cameraHide", from: 1, to: 2 });
+        project = applyOp(project, { op: "cameraHide", from: 5, to: 6 });
+        const [part] = project.camera?.hidden ?? [];
+        project = applyOp(project, { op: "cameraShow", id: part.id });
+        expect(project.camera?.hidden.map((item) => item.startUs)).toEqual([5_000_000]);
+        expect(() => applyOp(project, { op: "cameraShow", id: part.id, from: 1, to: 2 })).toThrow("not both");
+    });
+
+    // The Audio tab's rules, which the window kept in EditorDenoise.swift before the service owned them.
+    test("denoise per track: a track in or out, no track left is off, every track is no list, a base strength is not written", () => {
+        let project = wholeProject(source);
+        project = { ...project, audio: { ...project.audio, include: false } };
+        const on = applyOp(project, { op: "denoise" });
+        expect(on.audio.denoise).toEqual({ method: "afftdn", reductionDb: 12 });
+        expect(on.audio.include).toBe(true);
+        expect(applyOp(on, { op: "denoise", enabled: false }).audio.denoise).toBeUndefined();
+
+        const secondOnly = applyOp(on, { op: "denoise", track: 0, on: false, trackCount: 2 });
+        expect(secondOnly.audio.denoise?.tracks).toEqual([1]);
+        expect(
+            applyOp(secondOnly, { op: "denoise", track: 0, on: true, trackCount: 2 }).audio.denoise
+        ).not.toHaveProperty("tracks");
+        expect(
+            applyOp(secondOnly, { op: "denoise", track: 1, on: false, trackCount: 2 }).audio.denoise
+        ).toBeUndefined();
+
+        const stronger = applyOp(on, { op: "denoise", track: 1, reductionDb: 20.4, trackCount: 2 });
+        expect(stronger.audio.denoise?.trackReductionDb).toEqual({ "1": 20 });
+        const back = applyOp(stronger, { op: "denoise", track: 1, reductionDb: 12, trackCount: 2 });
+        expect(back.audio.denoise).not.toHaveProperty("trackReductionDb");
+        expect(applyOp(on, { op: "denoise", track: 0, reductionDb: 8, trackCount: 1 }).audio.denoise?.reductionDb).toBe(
+            8
+        );
+        expect(() => applyOp(on, { op: "denoise", track: 0, trackCount: 2 })).toThrow("needs on or reductionDb");
+    });
+
+    test("the range popover keeps only what plays between the times", () => {
+        let project = applyOp(wholeProject(source), { op: "cut", from: 1, to: 2 });
+        project = applyOp(project, { op: "range", from: 2, to: 4, action: "keep" });
+        expect(project.clips.map((clip) => [clip.fromUs, clip.toUs])).toEqual([[3_000_000, 5_000_000]]);
+    });
+});
+
 describe("noise reduction on export", () => {
     const source = { video: "/rec/screen.mp4", durationUs: 10_000_000, width: 100, height: 100 };
 
