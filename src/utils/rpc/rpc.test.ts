@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { logger } from "@genesiscz/utils/logger";
 import { RPC_CANCELLED, RpcError } from "./errors";
 import { LineBuffer, RpcPeer, type RpcProgress } from "./peer";
-import { logger } from "@genesiscz/utils/logger";
 import { RpcSocketClient, type RpcSocketClientOptions } from "./socket-client";
 import { type RpcConnection, RpcSocketServer } from "./socket-server";
 
