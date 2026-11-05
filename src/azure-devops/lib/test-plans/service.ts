@@ -33,6 +33,7 @@ import type {
 } from "@app/azure-devops/lib/test-plans/types";
 import type { AzureConfig, JsonPatchOperation } from "@app/azure-devops/types";
 import { concurrentMap } from "@genesiscz/utils/async";
+import { suggestCommand } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { htmlToMarkdown } from "@genesiscz/utils/markdown/html-to-md";
 
@@ -626,7 +627,7 @@ export class TestPlans {
             } catch (error) {
                 throw new Error(
                     `Test Case ${created.id} was created but could not be added to suite ${input.suite.suiteId}. ` +
-                        `Retry with: tools azure-devops testplan suite add ${input.suite.planId} ${input.suite.suiteId} --cases ${created.id} --confirm`,
+                        `Retry with: ${suggestCommand("tools azure-devops", { replaceCommand: ["testplan", "suite", "add", String(input.suite.planId), String(input.suite.suiteId), "--cases", String(created.id), "--confirm"] })}`,
                     { cause: error }
                 );
             }
