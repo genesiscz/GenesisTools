@@ -82,6 +82,29 @@ export function readComments(path: string): ReviewComment[] {
         .sort((a, b) => a.atUs - b.atUs || a.at.localeCompare(b.at));
 }
 
+/** Every link a comment of the file ever had, removed comments included: an import's record of what it took in. */
+export function commentLinks(path: string): Set<string> {
+    const links = new Set<string>();
+
+    if (!existsSync(path)) {
+        return links;
+    }
+
+    for (const raw of readFileSync(path, "utf8").split("\n")) {
+        if (!raw.trim()) {
+            continue;
+        }
+
+        const parsed = commentLineSchema.safeParse(parseLine(raw));
+
+        if (parsed.success && parsed.data.link) {
+            links.add(parsed.data.link);
+        }
+    }
+
+    return links;
+}
+
 function append(path: string, line: CommentLine): void {
     appendFileSync(path, `${SafeJSON.stringify(commentLineSchema.parse(line), { jsonl: true })}\n`);
 }

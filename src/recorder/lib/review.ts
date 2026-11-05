@@ -1,5 +1,6 @@
 import {
     addComment,
+    commentLinks,
     commentsPathFor,
     type ReviewComment,
     readComments,
@@ -8,6 +9,7 @@ import {
 } from "@genesiscz/utils/recording-editor/comments";
 import { type TimeValue, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import { type EditProject, outputTimeOf, sourceTimeOf } from "@genesiscz/utils/recording-editor/project";
+import { type BoardDigestReader, parseBoardRef, planBoardImport, readBoardDigest } from "./board-comments";
 import { openProject } from "./edit";
 
 /**
@@ -69,4 +71,43 @@ export async function uncomment(value: string, id: string) {
     const { path } = await opened(value);
     removeComment(path, id);
     return { path, removed: id };
+}
+
+/**
+ * The annotations of a vitrinka board (or of one card of it) as review comments, at the OUTPUT times their prompts
+ * start with (0:00 with a note when there is none). Idempotent: an annotation a comment already came from, removed
+ * comments included, is never added again. `dryRun` reads the board and writes nothing.
+ */
+export async function importBoardComments(
+    value: string,
+    options: { board: string; card?: number; dryRun?: boolean; read?: BoardDigestReader }
+) {
+    const { project, path } = await opened(value);
+    const ref = parseBoardRef(options.board, options.card);
+    const digest = await (options.read ?? readBoardDigest)(ref);
+    const plan = planBoardImport({ digest, ref, known: commentLinks(path) });
+    const summary = {
+        path,
+        board: ref.board,
+        ...(ref.card === undefined ? {} : { card: ref.card }),
+        untimed: plan.comments.filter((comment) => comment.untimed).length,
+        alreadyImported: plan.already,
+        notOnScreens: plan.notScreens,
+    };
+
+    if (options.dryRun) {
+        return { ...summary, dryRun: true, wouldAdd: plan.comments, added: [] };
+    }
+
+    const added = plan.comments.map((planned) => {
+        const comment = addComment(path, {
+            atUs: sourceTimeOf(project, Math.round(planned.atSec * 1e6)),
+            ...(planned.toSec === undefined ? {} : { toUs: sourceTimeOf(project, Math.round(planned.toSec * 1e6)) }),
+            text: planned.text,
+            author: planned.author,
+            link: planned.link,
+        });
+        return shown(planned.resolved ? updateComment(path, comment.id, { resolved: true }) : comment, project);
+    });
+    return { ...summary, dryRun: false, wouldAdd: [], added };
 }

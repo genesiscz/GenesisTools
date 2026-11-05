@@ -77,7 +77,7 @@ import {
 } from "./library";
 import { chaptersOf, markersOf, recordingFolderOf, searchLibrary, spreadTimes } from "./moments";
 import { copyRecording, revealRecording, trashRecording } from "./quick-actions";
-import { commentOn, commentsOf, resolveComment, uncomment } from "./review";
+import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./review";
 import { findOnScreen, type ScreenHit } from "./screen-search";
 
 const { log } = logger.scoped("recorder-toolset");
@@ -792,6 +792,24 @@ const movieMethods = [
         result: z.unknown(),
         resultName: "{ path, removed }",
         doc: "Removes a review comment (the file keeps the line that says so).",
+        effect: "reversible",
+    }),
+    defineMethod({
+        name: "importComments",
+        params: z
+            .object({
+                board: z.string().min(1),
+                card: z.number().int().positive().optional(),
+                dryRun: z.boolean().optional(),
+            })
+            .strict(),
+        result: z.unknown(),
+        resultName:
+            "{ path, board, card?, dryRun, added: comment[], wouldAdd: planned[], untimed, alreadyImported, notOnScreens }",
+        doc:
+            "Imports a vitrinka board's annotations as review comments (" +
+            toolCommand("recorder comment import") +
+            " does the same): board is its link (a ?card= link picks that card), <workspace>/<slug> or its slug; card: only that card. Each annotation on a shot, movie or step card lands at the OUTPUT time its text starts with (0:42, 1:02:03, 42s), else at 0:00 with a note that says so; a resolved one is resolved. A second import adds nothing (each comment keeps the annotation's link). dryRun: true reads the board and writes nothing.",
         effect: "reversible",
     }),
     defineMethod({
@@ -1773,6 +1791,10 @@ export class Movie {
 
     async uncomment(id: string) {
         return uncomment(this.recording, id);
+    }
+
+    async importComments(options: { board: string; card?: number; dryRun?: boolean }) {
+        return importBoardComments(this.recording, options);
     }
 
     async copy(options: { gif?: boolean } = {}) {

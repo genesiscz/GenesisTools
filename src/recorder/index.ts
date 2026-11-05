@@ -47,7 +47,7 @@ import {
 import { chaptersOf, markersOf, searchLibrary } from "./lib/moments";
 import { type DisplayRange, PROXY_DISPLAY_POLICIES, type ProxyDisplay } from "./lib/proxy";
 import { copyRecording, revealRecording, trashRecording } from "./lib/quick-actions";
-import { commentOn, commentsOf, resolveComment, uncomment } from "./lib/review";
+import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./lib/review";
 import { findOnScreen } from "./lib/screen-search";
 import { Movie, movieDemoDriver } from "./lib/toolset";
 import { recordVideo, VIDEO_RECORDING_MAX_SECONDS } from "./lib/video-recording";
@@ -474,7 +474,7 @@ const reviewFail = (error: unknown) => {
     process.exitCode = 1;
 };
 
-program
+const commentCommand = program
     .command("comment")
     .description(
         "Add a review comment at a time of the edit (OUTPUT seconds or m:ss, what plays); the editor shows it as a marker on the timeline"
@@ -509,6 +509,33 @@ program
             }
         }
     );
+
+commentCommand
+    .command("import")
+    .description(
+        "Import a vitrinka board's annotations as review comments: each annotation on a shot, movie or step card (or on one --card) at the OUTPUT time its text starts with (0:42, 1:02:03, 42s), else at 0:00 with a note; a second import adds nothing"
+    )
+    .argument("<recording>", "a library id, `last`, `open` or a recording folder")
+    .argument("<board>", "the board's link (a ?card= link picks that card), <workspace>/<slug> or its slug")
+    .option("--card <id>", "only this card's annotations")
+    .option("--dry-run", "read the board and show what would be added, write nothing")
+    .action(async (value: string, board: string, flags: { card?: string; dryRun?: boolean }) => {
+        try {
+            if (flags.card !== undefined && !/^\d+$/.test(flags.card)) {
+                throw new Error(`--card takes a card id (a number), not "${flags.card}"`);
+            }
+
+            out.result(
+                await importBoardComments(value, {
+                    board,
+                    card: flags.card === undefined ? undefined : Number(flags.card),
+                    dryRun: flags.dryRun,
+                })
+            );
+        } catch (error) {
+            reviewFail(error);
+        }
+    });
 
 program
     .command("comments")
