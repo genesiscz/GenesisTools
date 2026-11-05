@@ -16,3 +16,13 @@ export {
     toMcpTools,
     typeText,
 } from "./render";
+export {
+    callArguments,
+    handleHandlers,
+    type MethodName,
+    type MethodTable,
+    type RpcHandler,
+    type RpcHandlers,
+    type RpcTable,
+    toRpcTable,
+} from "./rpc";

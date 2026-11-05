@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
+import { JSON_RPC_ERRORS } from "@genesiscz/utils/rpc/errors";
 import { z } from "zod";
 import { defineApi, defineMethod } from "./descriptor";
 import { jsonSchemaOf, methodSignature, renderDocs, renderOneLine, toMcpTools, typeText } from "./render";
+import { callArguments, handleHandlers, toRpcTable } from "./rpc";
 
 const api = defineApi({
     id: "demo",
@@ -140,4 +142,54 @@ test("REPL validation preserves an AbortSignal without changing the descriptor s
     expect(loaded.fixture.call({ word: "hello", signal: controller.signal })).toBe(true);
     expect(() => Reflect.apply(loaded.fixture.call, null, [{ word: 1, signal: controller.signal }])).toThrow();
     expect(jsonSchemaOf(toolset.api.methods[0]!.params).properties).not.toHaveProperty("signal");
+});
+
+describe("toRpcTable", () => {
+    const calls: unknown[] = [];
+    const table = toRpcTable(
+        api,
+        {
+            start: (params) => ({ started: params.displays }),
+            list: () => [],
+            wipe: (params, context: { who: string }) => {
+                calls.push([params.id, context.who]);
+                return null;
+            },
+        },
+        { prefix: "demo." }
+    );
+
+    test("a call is validated by its method's schema and reaches its handler with the context", async () => {
+        expect(table.methods).toEqual(["demo.start", "demo.list", "demo.wipe"]);
+        expect(await table.call("demo.start", { displays: "all" }, { who: "test" })).toEqual({ started: "all" });
+        await table.call("demo.wipe", { id: "r1" }, { who: "cli" });
+        expect(calls).toEqual([["r1", "cli"]]);
+    });
+
+    test("bad params answer invalidParams with the schema's words, an unknown name methodNotFound", async () => {
+        await expect(table.call("demo.start", { displays: 3 }, { who: "test" })).rejects.toMatchObject({
+            code: JSON_RPC_ERRORS.invalidParams,
+            message: expect.stringContaining("demo.start: displays:"),
+        });
+        await expect(table.call("demo.stop", {}, { who: "test" })).rejects.toMatchObject({
+            code: JSON_RPC_ERRORS.methodNotFound,
+        });
+    });
+
+    test("handlers are one per method name, and a handle's methods are called the REPL's way", async () => {
+        // @ts-expect-error `wipe` has no handler: the descriptor's literal names make the record exhaustive.
+        toRpcTable(api, { start: () => null, list: () => null });
+
+        const recording = {
+            stop: (options: { wait: boolean }) => ({ recordingId: options.wait ? "waited" : "now" }),
+        };
+        const handle = { methods: api.handles[0].methods };
+        const handles = toRpcTable(
+            handle,
+            handleHandlers(handle, () => recording),
+            { prefix: "recording." }
+        );
+        expect(await handles.call("recording.stop", {}, undefined)).toEqual({ recordingId: "waited" });
+        expect(callArguments(api.methods[2], { id: "r2" })).toEqual(["r2"]);
+    });
 });
