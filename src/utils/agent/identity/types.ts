@@ -186,6 +186,8 @@ export interface WhoIsCallingOptions {
     now?: Date;
     /** The user home the default agent homes sit under; tests pass a fixture. */
     home?: string;
+    /** The parent chain of the `process` facet, nearest first (`ancestry` by default); tests pass a fixed chain. */
+    processChain?: (pid: number) => CallerProcess["ancestry"];
 }
 
 /**

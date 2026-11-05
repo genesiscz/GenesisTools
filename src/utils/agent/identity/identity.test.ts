@@ -262,6 +262,49 @@ describe("enrichers: terminals, host and account, each in its own slot", () => {
     });
 });
 
+describe("the process facet: the agent the parent chain names", () => {
+    const chain = [
+        { pid: 30, command: "/bin/zsh -c tools say hi" },
+        { pid: 20, command: "/opt/homebrew/bin/codex exec" },
+        { pid: 10, command: "/Users/x/.bun/bin/claude --resume" },
+    ];
+    const processChain = () => chain;
+
+    it("names a local caller no source names, below the env: the nearest agent, its account, no session", () => {
+        const identity = whoIsCalling(local({ [accountEnvVar("codex")]: "side" }), {
+            facets: ["process"],
+            processChain,
+        });
+
+        expect(identity).toMatchObject({ agent: "codex", sessionId: null, isInAgent: true });
+        expect(identity.account).toEqual({ harness: "codex", account: "side", proxyTarget: null });
+        expect(identity.process).toEqual({ pid: process.pid, ancestry: chain });
+        expect(identity.sources).toMatchObject({ agent: "process", isInAgent: "process", account: "account" });
+    });
+
+    it("never replaces an agent a source named, needs the process facet, and a chain of shells names nobody", () => {
+        expect(whoIsCalling(local({ GROK_SESSION_ID: "g1" }), { facets: ["process"], processChain }).agent).toBe(
+            "grok"
+        );
+        expect(whoIsCalling(local({}), { processChain }).agent).toBe("unknown");
+        const shells = () => [{ pid: 30, command: "/bin/zsh" }];
+        expect(whoIsCalling(local({}), { facets: ["process"], processChain: shells })).toMatchObject({
+            agent: "unknown",
+            isInAgent: false,
+        });
+    });
+
+    it("a remote caller the gateway could not name stays unnamed: its chain is no evidence of who called", () => {
+        const identity = whoIsCalling(
+            { origin: "remote", caller: { agent: "unknown", sessionId: null, cwd: null, pid: 4242 } },
+            { facets: ["process"], processChain }
+        );
+
+        expect(identity.agent).toBe("unknown");
+        expect(identity.process?.pid).toBe(4242);
+    });
+});
+
 describe("the T3 Code enricher", () => {
     function t3Store(rows: { threadId: string; instance: string; model: string; parent: string | null }[]): string {
         const home = scratch("t3-home-");
