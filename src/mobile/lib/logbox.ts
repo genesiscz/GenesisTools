@@ -59,7 +59,13 @@ export async function readLogBoxEntries(
     };
 
     for (let guard = 0; guard < GUARD && (current.index ?? 1) > 1; guard++) {
+        const previous = current.index;
         await arrow("back");
+
+        if (current.index === previous) {
+            log.warn("LogBox back arrow made no progress");
+            break;
+        }
     }
 
     const entries: LogBoxEntry[] = [];
@@ -75,7 +81,13 @@ export async function readLogBoxEntries(
             break;
         }
 
+        const previous = current.index;
         await arrow("forward");
+
+        if (current.index === previous) {
+            log.warn("LogBox forward arrow made no progress");
+            break;
+        }
     }
 
     if (options.clear === "dismiss") {
