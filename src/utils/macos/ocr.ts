@@ -17,6 +17,12 @@ export interface OcrOptions {
     fastFallback?: boolean;
 }
 
+/**
+ * A `sips` read or crop that has not finished by then is killed. Vision requests carry darwinkit's own request deadline
+ * (30 s), so with this every await of an OCR run ends, and a stalled frame cannot hold up a recording's finish.
+ */
+const SIPS_TIMEOUT_MS = 15_000;
+
 /** Vision accurate OCR returns empty results above ~6k px on one side (macOS 15). */
 const MAX_ACCURATE_DIMENSION = 6000;
 const TILE_HEIGHT = 5000;
@@ -52,11 +58,13 @@ async function getImageDimensions(imagePath: string): Promise<ImageDimensions | 
     const proc = Bun.spawn(["sips", "-g", "pixelWidth", "-g", "pixelHeight", imagePath], {
         stdout: "pipe",
         stderr: "pipe",
+        timeout: SIPS_TIMEOUT_MS,
     });
 
     const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
 
     if (exitCode !== 0) {
+        logger.debug({ imagePath, exitCode, signal: proc.signalCode }, "darwin-ocr: sips could not read the size");
         return null;
     }
 
@@ -91,10 +99,14 @@ async function cropImageTile(
             "--out",
             destPath,
         ],
-        { stdout: "pipe", stderr: "pipe" }
+        { stdout: "pipe", stderr: "pipe", timeout: SIPS_TIMEOUT_MS }
     );
 
     const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+        logger.debug({ sourcePath, exitCode, signal: proc.signalCode }, "darwin-ocr: sips could not crop a tile");
+    }
 
     return exitCode === 0;
 }
