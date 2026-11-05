@@ -217,3 +217,20 @@ test("an oversized socket frame ends both adapters and removes the server connec
     expect(closes).toBe(1);
     expect(notifications).toBe(1);
 });
+
+test("an oversized server frame closes the client and rejects its pending call once", async () => {
+    const { socket, connections } = serve(async () => new Promise(() => undefined));
+    const client = await connect(socket);
+    const closed = Promise.withResolvers<void>();
+    let notifications = 0;
+    client.onClose(() => {
+        notifications++;
+        closed.resolve();
+    });
+    const pending = client.call("hang").catch((error: unknown) => error);
+    connections[0].notify("oversized", { text: "a".repeat(8 * 1024 * 1024) });
+    await closed.promise;
+    expect(client.closed).toBe(true);
+    expect(await pending).toBeInstanceOf(Error);
+    expect(notifications).toBe(1);
+});
