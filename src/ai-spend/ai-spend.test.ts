@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { proxyAccountDays, proxyClientMonths } from "@app/ai-spend/lib/proxy";
+import { proxyAccountDays, proxyClientMonths, proxySinceDay } from "@app/ai-spend/lib/proxy";
 import { workerTurnLogPath } from "@app/claude/lib/worker/paths";
 import { ClaudeWorkerStore } from "@app/claude/lib/worker/store";
 import { turnLogPath } from "@app/grok/lib/paths";
@@ -1506,6 +1506,13 @@ describe("worker stats", () => {
 });
 
 describe("ai-spend proxy", () => {
+    it("uses local calendar dates for proxy cutoffs across DST", () => {
+        withTimeZone("America/New_York", () => {
+            expect(proxySinceDay(new Date("2026-03-09T03:30:00Z"), 1)).toBe("2026-03-08");
+            expect(proxySinceDay(new Date("2026-03-09T04:30:00Z"), 2)).toBe("2026-03-08");
+        });
+    });
+
     it("prints the ledger's booked cost per client and month as stored, and per-account days summed over models", () => {
         const clients = proxyClientMonths({
             version: 1,

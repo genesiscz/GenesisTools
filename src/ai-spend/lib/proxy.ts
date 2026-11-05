@@ -1,6 +1,12 @@
 import { type ClientLedgerStore, readClientLedger } from "@app/ai-proxy/lib/usage/client-ledger";
 import { readDailyStore } from "@app/ai-proxy/lib/usage/store";
 import type { DailyUsageStore } from "@app/ai-proxy/lib/usage/types";
+import { daysBefore, localDayString } from "@genesiscz/utils/ai/usage/spend/monitor";
+
+export function proxySinceDay(now: Date, days: number): string {
+    return localDayString(daysBefore(now, days - 1));
+}
+
 
 /**
  * `tools ai-spend proxy` (design 2026-11-01, step U11, proposal 19): what the ai-proxy served, per client and month

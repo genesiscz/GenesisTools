@@ -44,7 +44,7 @@ import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/uti
 import type { Command } from "commander";
 import pc from "picocolors";
 import { harnessSources } from "./harness-flag";
-import { buildProxyReport, type ProxyReport } from "./proxy";
+import { buildProxyReport, type ProxyReport, proxySinceDay } from "./proxy";
 
 /**
  * The spend verbs of design 2026-11-01 step U11 (proposals 10, 17, 19), in the `tools ai-spend` tree, so
@@ -422,7 +422,7 @@ function registerProxy(program: Command): void {
                 }
 
                 // `--days 14` is today and the 13 days before it.
-                const since = new Date(now.getTime() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+                const since = proxySinceDay(now, days);
                 const months = opts.month && opts.month.length > 0 ? new Set(splitList(opts.month)) : undefined;
                 const report = buildProxyReport({ ...(months ? { months } : {}), sinceDay: since });
 
