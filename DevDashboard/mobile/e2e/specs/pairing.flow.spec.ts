@@ -50,9 +50,11 @@ describe("Pairing flow", () => {
             return;
         }
 
-        const host = new URL(TEST_AGENT_BASE_URL).host;
-        const text = await connectionsPage.rowText(active);
-        // The row's own words may be collapsed into its testID on iOS; the id then carries no host, so check either.
-        expect(text.includes(host) || (await connectionsPage.rowMarkedActive(active))).toBe(true);
+        await connectionsPage.openEditForm(active);
+        try {
+            expect(await $("~connection-host").getValue()).toBe(new URL(TEST_AGENT_BASE_URL).host);
+        } finally {
+            await connectionsPage.cancelForm();
+        }
     });
 });
