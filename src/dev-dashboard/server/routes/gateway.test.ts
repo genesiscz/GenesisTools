@@ -10,7 +10,9 @@ import { decideApiAuth, isActScopedRequest } from "@app/dev-dashboard/server/aut
 import { Router } from "@app/dev-dashboard/server/router";
 import type { RouteContext, RouteDef, RouteResult, RouteServices } from "@app/dev-dashboard/server/types";
 import { CapabilityRefusedError, HUB_CAPABILITIES } from "@app/hub/lib/capabilities/index";
-import { issueActTokens, memoryActTokenStore } from "@app/question/lib/act/tokens";
+import { realProcsSources } from "@app/hub/lib/procs/sources";
+import { realSignalOps } from "@app/hub/lib/procs/stop";
+import { issueActTokens, issueReplyToken, memoryActTokenStore } from "@app/question/lib/act/tokens";
 import type { DecisionRecord } from "@app/question/lib/decisions/store";
 import { GATEWAY_ROWS, gatewayRoutes } from "./gateway";
 
@@ -147,6 +149,47 @@ describe("the Mac gateway", () => {
         expect(answers).toBe(1);
     });
 
+    it("passes a reply token's text to the answer, and refuses a reply without text", async () => {
+        const store = memoryActTokenStore();
+        const row: DecisionRecord = {
+            id: "d_4_s-gw",
+            sessionId: "s-gw",
+            number: 4,
+            prompt: "Which?",
+            options: ["one", "two"],
+            state: "open",
+            updatedTs: "2026-11-03T09:00:00Z",
+        };
+        const token = await issueReplyToken({ row, surface: "phone", store });
+        const texts: (string | undefined)[] = [];
+        const routes = gatewayRoutes({
+            act: async () => ({
+                store,
+                rows: () => [row],
+                answer: async (input) => {
+                    texts.push(input.text);
+                    return { session: "s-gw", text: input.text ?? "", channel: "queued", delivered: false };
+                },
+            }),
+        });
+        const actRoute = route(routes, "POST", "/api/act");
+        const call = (key: string, body: unknown) =>
+            json(
+                actRoute.handler(
+                    ctx({
+                        method: "POST",
+                        pathname: "/api/act",
+                        headers: { "x-gt-act-token": token, "idempotency-key": key },
+                        body,
+                    })
+                )
+            );
+
+        expect((await call("r-empty", {})).body).toMatchObject({ outcome: { kind: "refused", code: "invalid" } });
+        expect((await call("r-text", { text: "keep the cache" })).body).toMatchObject({ outcome: { kind: "queued" } });
+        expect(texts).toEqual(["keep the cache"]);
+    });
+
     it("stores an upload by content under the upload folder, and refuses an unknown type", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-gateway-upload-"));
         const upload = route(gatewayRoutes({ uploadDir: () => dir }), "POST", ENDPOINTS.gatewayUpload.path);
@@ -213,6 +256,207 @@ describe("the upload row through the generic client", () => {
 describe("the act scope", () => {
     const { auth } = createBasicAuthCredentials({ username: "u", password: "p" });
     const provision = { auth, generatedPassword: null };
+
+    it("stops a session behind the full login only, once per Idempotency-Key", async () => {
+        let reads = 0;
+        const routes = gatewayRoutes({
+            stop: {
+                fleet: async () => {
+                    reads++;
+                    return [];
+                },
+                // Never reached: a session that is not live is refused before any process is read or signalled.
+                sources: realProcsSources,
+                ops: realSignalOps,
+                graceMs: 0,
+            },
+        });
+        const stop = route(routes, "POST", "/api/agents/stop");
+        const call = (body: unknown, headers: Record<string, string> = { "idempotency-key": "s1" }) =>
+            json(stop.handler(ctx({ method: "POST", pathname: "/api/agents/stop", headers, body })));
+
+        expect((await call({ key: "claude:s" })).status).toBe(400);
+        const first = await call({ key: "claude:s", pid: 4100 });
+        const retry = await call({ key: "claude:s", pid: 4100 });
+
+        expect(first).toEqual({
+            status: 200,
+            body: {
+                key: "claude:s",
+                pid: 4100,
+                stopped: false,
+                signal: null,
+                survivors: [],
+                reason: "the session is no longer live",
+            },
+        });
+        expect(retry).toEqual(first);
+        expect(reads).toBe(1);
+        expect(
+            decideApiAuth({
+                method: "POST",
+                pathname: "/api/agents/stop",
+                headers: { "x-gt-act-token": TOKEN },
+                provision,
+            }).decision
+        ).toBe("deny");
+    });
+
+    it("sends into a session and presses Esc behind the full login, once per Idempotency-Key", async () => {
+        const calls: string[] = [];
+        const routes = gatewayRoutes({
+            send: {
+                fleet: async () => [],
+                // Never reached: a session that is not live is refused before any transport runs.
+                edges: {
+                    deliverNow: async () => {
+                        throw new Error("no transport may run");
+                    },
+                    codexQueue: async () => {
+                        throw new Error("no transport may run");
+                    },
+                    enqueue: async () => {
+                        throw new Error("no transport may run");
+                    },
+                    pressKey: async () => {
+                        throw new Error("no transport may run");
+                    },
+                },
+            },
+        });
+        const send = route(routes, "POST", "/api/agents/send");
+        const call = (body: unknown) =>
+            json(
+                send.handler(
+                    ctx({ method: "POST", pathname: "/api/agents/send", headers: { "idempotency-key": "m1" }, body })
+                )
+            );
+
+        expect((await call({ key: "claude:s", text: "hi", timing: "soon" })).status).toBe(400);
+        const first = await call({ key: "claude:s", text: "hi", timing: "now" });
+        expect(first).toEqual({
+            status: 200,
+            body: {
+                key: "claude:s",
+                outcome: "refused",
+                timing: "now",
+                route: "none",
+                detail: "the session is no longer live",
+            },
+        });
+        expect(await call({ key: "claude:s", text: "hi", timing: "now" })).toEqual(first);
+
+        const esc = route(routes, "POST", "/api/agents/interrupt");
+        const escaped = await json(
+            esc.handler(
+                ctx({
+                    method: "POST",
+                    pathname: "/api/agents/interrupt",
+                    headers: { "idempotency-key": "e1" },
+                    body: { key: "claude:s" },
+                })
+            )
+        );
+        expect(escaped.body).toMatchObject({ outcome: "refused", detail: "the session is no longer live" });
+        expect(calls).toEqual([]);
+
+        for (const pathname of ["/api/agents/send", "/api/agents/interrupt"]) {
+            expect(
+                decideApiAuth({ method: "POST", pathname, headers: { "x-gt-act-token": TOKEN }, provision }).decision
+            ).toBe("deny");
+        }
+    });
+
+    it("keeps a walkie-talkie clip by content, transcribes it once per key, and refuses a non-audio body", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-voice-"));
+        const heard: string[] = [];
+        const routes = gatewayRoutes({
+            voice: {
+                dir: () => dir,
+                transcribe: async (path) => {
+                    heard.push(path);
+                    return { text: "run the tests", provider: "fake", model: "fake-1" };
+                },
+            },
+        });
+        const voice = route(routes, "POST", "/api/agents/voice");
+        const clip = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]);
+        const call = (contentType: string, key: string) =>
+            json(
+                voice.handler(
+                    ctx({
+                        method: "POST",
+                        pathname: "/api/agents/voice",
+                        headers: { "content-type": contentType, "idempotency-key": key },
+                        raw: clip,
+                    })
+                )
+            );
+
+        const first = await call("audio/m4a", "v1");
+        expect(first.status).toBe(200);
+        expect(first.body).toMatchObject({ text: "run the tests", bytes: clip.byteLength, provider: "fake" });
+        expect(await call("audio/m4a", "v1")).toEqual(first);
+        expect(heard).toHaveLength(1);
+        expect(existsSync(heard[0] ?? "")).toBe(true);
+        expect((await call("image/png", "v2")).status).toBe(415);
+    });
+
+    it("raises a waiting gate behind the full login, once per Idempotency-Key, and never answers it", async () => {
+        const opened: string[] = [];
+        const activated: number[] = [];
+        const wait = { title: "t", who: null, askedAt: "2026-11-04T11:00:00.000Z" };
+        const routes = gatewayRoutes({
+            gates: {
+                ledger: () => ({
+                    recent: [],
+                    pending: [
+                        {
+                            ...wait,
+                            id: "rm:abc",
+                            gate: "rm",
+                            window: null,
+                            request: { id: "abc", reason: null, paths: [], expiresAt: "2026-11-05T11:00:00.000Z" },
+                        },
+                        {
+                            ...wait,
+                            id: "vault:77",
+                            gate: "vault",
+                            window: { pid: 77, openedAt: wait.askedAt, deadline: "2026-11-04T11:02:50.000Z" },
+                            request: null,
+                        },
+                    ],
+                }),
+                openRmWindow: (id) => opened.push(id),
+                activate: async (pid) => {
+                    activated.push(pid);
+                    return "refused";
+                },
+            },
+        });
+        const raise = route(routes, "POST", "/api/gates/raise");
+        const call = (body: unknown, key: string) =>
+            json(
+                raise.handler(
+                    ctx({ method: "POST", pathname: "/api/gates/raise", headers: { "idempotency-key": key }, body })
+                )
+            );
+
+        expect((await call({ id: "rm:abc" }, "r1")).body).toMatchObject({ outcome: "opened" });
+        expect((await call({ id: "rm:abc" }, "r1")).body).toMatchObject({ outcome: "opened" });
+        expect((await call({ id: "vault:77" }, "r2")).body).toMatchObject({ outcome: "asked" });
+        expect((await call({ id: "vault:1" }, "r3")).body).toMatchObject({ outcome: "gone" });
+        expect(opened).toEqual(["abc"]);
+        expect(activated).toEqual([77]);
+        expect(
+            decideApiAuth({
+                method: "POST",
+                pathname: "/api/gates/raise",
+                headers: { "x-gt-act-token": TOKEN },
+                provision,
+            }).decision
+        ).toBe("deny");
+    });
 
     it("lets an act token reach the act row only, without the dashboard login", () => {
         expect(isActScopedRequest("POST", "/api/act", TOKEN)).toBe(true);

@@ -19,6 +19,21 @@ const FILES = [
     "e2e-request.ts",
     "box-types.ts",
     "session-resume.ts",
+    "live.ts",
+    "agents.ts",
+    "gates.ts",
+    "brief.ts",
+    "wake.ts",
+    "timesheet.ts",
+    "vault.ts",
+    "memos.ts",
+    "snap.ts",
+    "approvals.ts",
+    "glance.ts",
+    "ping.ts",
+    "push.ts",
+    "launch.ts",
+    "watching.ts",
 ];
 
 describe("contract purity", () => {
@@ -57,7 +72,9 @@ describe("contract purity", () => {
         for (const file of FILES) {
             const src = readFileSync(join(import.meta.dir, file), "utf8");
 
-            for (const match of src.matchAll(/^import\s+(?!type\b)[^;]*from\s+["'](@genesiscz\/utils[^"']*)["']/gm)) {
+            for (const match of src.matchAll(
+                /^(?:import|export)\s+(?!type\b)[^;]*from\s+["'](@genesiscz\/utils[^"']*)["']/gm
+            )) {
                 const specifier = match[1];
 
                 if (!metroConfig.includes(`match: "${specifier}"`)) {

@@ -1,41 +1,79 @@
-import { type BoardEvent, subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
-import { createRunLogTail } from "@app/dev-dashboard/lib/daemon-run-tail";
-import { classifyLogLine } from "@app/dev-dashboard/lib/daemon-view/classify";
+import type { AgentBoardPhaseRow } from "@app/dev-dashboard/contract/agents";
+import { createHandoffStream } from "@app/dev-dashboard/lib/handoff-sse";
 import { createAiUsageProducer } from "@app/dev-dashboard/lib/live/ai-usage-producer";
 import type { LiveHub } from "@app/dev-dashboard/lib/live/hub";
-import type { LiveChannel } from "@app/dev-dashboard/lib/live/types";
+import type { LiveChannel, LiveDataFrame } from "@app/dev-dashboard/lib/live/types";
 import { classifyListeningPorts, listListeningPorts } from "@app/dev-dashboard/lib/ports/scanner";
+import type { PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import { clipQaEntry } from "@app/dev-dashboard/lib/qa-clip";
+import { createPendingStream } from "@app/dev-dashboard/lib/qa-pending-sse";
 import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
 import { createQaStream } from "@app/dev-dashboard/lib/qa-sse";
 import { getCachedPulse, markPulseClientSeen } from "@app/dev-dashboard/lib/system/poller";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { diffPhases } from "@app/hub/lib/board/phases";
+import { decisionFiles } from "@app/question/lib/decisions/paths";
+import { listPendingForms } from "@app/question/lib/pending/ask";
+import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { logger } from "@genesiscz/utils/logger";
 
 const PORTS_INTERVAL_MS = 10_000;
 const PULSE_INTERVAL_MS = 5_000;
 const CLASSIFY_CHUNK = 8;
+/**
+ * The fleet view with the stuck verdict is safe every 15 s or slower (`readFleetView`): it reads `ps`, the cmux tree,
+ * the journal and each live transcript's tail.
+ */
+const AGENTS_INTERVAL_MS = 15_000;
+/**
+ * How many waiting forms one snapshot carries (here, `/api/qa/stream` and `/api/qa/pending`). The store default is 50,
+ * which silently hid the OLDEST pending forms once more than that were waiting: the newest 50 win the ORDER BY.
+ */
+export const PENDING_SNAPSHOT_LIMIT = 500;
 
 /**
- * Refcounted producers for the live hub. Starts work on 0→1 demand and stops on last unsub.
+ * The work behind one live channel. The runner starts it when the channel's first subscriber arrives and stops it when
+ * the last one leaves, so nothing scans or tails while nobody watches.
+ *
+ * - `start()` may publish the first value to every subscriber (there is exactly one at that moment).
+ * - `snapshot()` answers a connection that joins a producer already running: the channel's current value, sent to that
+ *   connection only. A notice channel (qa, decisions, handoffs) has none; its client refetches what it covers on open.
  */
-export function startLiveProducers(hub: LiveHub): { stop: () => void } {
-    let portsTimer: ReturnType<typeof setInterval> | null = null;
-    let portsBusy = false;
-    let pulseTimer: ReturnType<typeof setInterval> | null = null;
-    let qaStream: ReturnType<typeof createQaStream> | null = null;
-    const aiUsage = createAiUsageProducer(hub);
-    const boardUnsubs = new Map<string, () => void>();
-    const daemonTails = new Map<string, { close: () => void }>();
+export interface LiveProducer {
+    start(): void;
+    stop(): void;
+    snapshot?(): Promise<LiveDataFrame[]>;
+}
 
-    async function tickPorts(): Promise<void> {
-        if (portsBusy || hub.subscriberCount("ports") === 0) {
+export type LiveProducerFactory = (hub: LiveHub) => LiveProducer;
+
+function portKey(p: PortInfo): string {
+    return `${p.pid}:${p.port}:${p.proto}`;
+}
+
+/** `lsof` every 10 s, then HTTP classify probes in chunks of 8. The snapshot is the last scan with its classify merged. */
+export function createPortsProducer(hub: LiveHub): LiveProducer {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let busy = false;
+    let current: PortsResult | null = null;
+
+    function merge(updates: PortInfo[]): void {
+        if (!current) {
             return;
         }
 
-        portsBusy = true;
+        const byKey = new Map(updates.map((p) => [portKey(p), p]));
+        current = { ...current, ports: current.ports.map((p) => byKey.get(portKey(p)) ?? p) };
+    }
+
+    async function tick(): Promise<void> {
+        if (busy || hub.subscriberCount("ports") === 0) {
+            return;
+        }
+
+        busy = true;
         try {
             const result = await listListeningPorts();
+            current = result;
             hub.publish({ v: 1, channel: "ports", type: "snapshot", payload: result });
 
             const pending = result.ports.filter((p) => p.probeStatus === "pending");
@@ -44,226 +82,379 @@ export function startLiveProducers(hub: LiveHub): { stop: () => void } {
                     break;
                 }
 
-                const chunk = pending.slice(i, i + CLASSIFY_CHUNK);
-                const updated = await classifyListeningPorts(chunk);
+                const updated = await classifyListeningPorts(pending.slice(i, i + CLASSIFY_CHUNK));
                 if (updated.length > 0) {
+                    merge(updated);
                     hub.publish({ v: 1, channel: "ports", type: "classify", payload: { ports: updated } });
                 }
             }
         } catch (err) {
             logger.debug({ err }, "live/producers: ports tick failed");
         } finally {
-            portsBusy = false;
+            busy = false;
         }
     }
 
-    function tickPulse(): void {
+    return {
+        start() {
+            if (timer) {
+                return;
+            }
+
+            void tick();
+            timer = setInterval(() => void tick(), PORTS_INTERVAL_MS);
+        },
+        stop() {
+            if (timer) {
+                clearInterval(timer);
+                timer = null;
+            }
+
+            current = null;
+        },
+        async snapshot() {
+            return current ? [{ v: 1, channel: "ports", type: "snapshot", payload: current }] : [];
+        },
+    };
+}
+
+/** The pulse sampler's cached sample every 5 s; reading it also keeps the sampler awake. */
+export function createPulseProducer(hub: LiveHub): LiveProducer {
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    function frames(): LiveDataFrame[] {
+        markPulseClientSeen();
+        const snap = getCachedPulse();
+        return snap ? [{ v: 1, channel: "pulse", type: "snapshot", payload: snap }] : [];
+    }
+
+    function tick(): void {
         if (hub.subscriberCount("pulse") === 0) {
             return;
         }
 
-        markPulseClientSeen();
-        const snap = getCachedPulse();
-        if (snap) {
-            hub.publish({ v: 1, channel: "pulse", type: "snapshot", payload: snap });
+        for (const frame of frames()) {
+            hub.publish(frame);
         }
     }
 
-    function startPorts(): void {
-        if (portsTimer) {
-            return;
-        }
+    return {
+        start() {
+            if (timer) {
+                return;
+            }
 
-        void tickPorts();
-        portsTimer = setInterval(() => void tickPorts(), PORTS_INTERVAL_MS);
-    }
+            tick();
+            timer = setInterval(tick, PULSE_INTERVAL_MS);
+        },
+        stop() {
+            if (timer) {
+                clearInterval(timer);
+                timer = null;
+            }
+        },
+        async snapshot() {
+            return frames();
+        },
+    };
+}
 
-    function stopPorts(): void {
-        if (portsTimer) {
-            clearInterval(portsTimer);
-            portsTimer = null;
-        }
-    }
+/** Each new Q→A log line, enriched like `/api/qa/log` rows. A notice: the client keeps the persisted log. */
+export function createQaProducer(hub: LiveHub): LiveProducer {
+    let stream: ReturnType<typeof createQaStream> | null = null;
 
-    function startPulse(): void {
-        if (pulseTimer) {
-            return;
-        }
+    return {
+        start() {
+            if (stream) {
+                return;
+            }
 
-        tickPulse();
-        pulseTimer = setInterval(tickPulse, PULSE_INTERVAL_MS);
-    }
-
-    function stopPulse(): void {
-        if (pulseTimer) {
-            clearInterval(pulseTimer);
-            pulseTimer = null;
-        }
-    }
-
-    function startQa(): void {
-        if (qaStream) {
-            return;
-        }
-
-        try {
-            qaStream = createQaStream((entry) => {
-                hub.publish({
-                    v: 1,
-                    channel: "qa",
-                    type: "entry",
-                    payload: enrichQaEntry(clipQaEntry(entry)),
-                });
-            });
-        } catch (err) {
-            logger.debug({ err }, "live/producers: qa stream failed to start");
-        }
-    }
-
-    function stopQa(): void {
-        qaStream?.close();
-        qaStream = null;
-    }
-
-    function startBoard(slug: string): void {
-        if (boardUnsubs.has(slug)) {
-            return;
-        }
-
-        const unsub = subscribeBoard(slug, (frameJson: string) => {
             try {
-                const event = SafeJSON.parse(frameJson, { strict: true }) as BoardEvent;
-                hub.publish({
-                    v: 1,
-                    channel: `boards:${slug}`,
-                    type: "event",
-                    payload: event,
+                stream = createQaStream((entry) => {
+                    hub.publish({ v: 1, channel: "qa", type: "entry", payload: enrichQaEntry(clipQaEntry(entry)) });
                 });
             } catch (err) {
-                logger.debug({ err, slug }, "live/producers: board frame parse failed");
+                logger.debug({ err }, "live/producers: qa stream failed to start");
             }
-        });
-        boardUnsubs.set(slug, unsub);
+        },
+        stop() {
+            stream?.close();
+            stream = null;
+        },
+    };
+}
+
+interface DecisionEventLine {
+    ev?: unknown;
+    id?: unknown;
+    ids?: unknown;
+    ts?: unknown;
+    state?: unknown;
+}
+
+/** Each line of the decision event log. A notice: the client refetches the waiting set it covers. */
+export function createDecisionsProducer(hub: LiveHub, events = () => decisionFiles().events): LiveProducer {
+    let tailer: FileTailer<DecisionEventLine> | null = null;
+
+    return {
+        start() {
+            if (tailer) {
+                return;
+            }
+
+            const path = events();
+            // `create: false`: watching must not make the log; the tailer waits for the first decision to write it.
+            tailer = new FileTailer<DecisionEventLine>(
+                path,
+                {
+                    onLine: (line) => {
+                        if (typeof line.ev !== "string") {
+                            return;
+                        }
+
+                        hub.publish({
+                            v: 1,
+                            channel: "decisions",
+                            type: "event",
+                            payload: {
+                                ev: line.ev,
+                                ...(typeof line.id === "string" ? { id: line.id } : {}),
+                                ...(Array.isArray(line.ids)
+                                    ? { ids: line.ids.filter((id): id is string => typeof id === "string") }
+                                    : {}),
+                                ts: typeof line.ts === "string" ? line.ts : new Date().toISOString(),
+                                ...(typeof line.state === "string" ? { state: line.state } : {}),
+                            },
+                        });
+                    },
+                },
+                { create: false }
+            );
+            tailer.start();
+            logger.debug({ path }, "live/producers: tailing the decision events");
+        },
+        stop() {
+            tailer?.stop();
+            tailer = null;
+        },
+    };
+}
+
+/**
+ * The pending ask forms: the open set as a snapshot, then every lifecycle event. The tailer attaches before the set is
+ * read, for the reason `/api/qa/stream` gives: an event between the two would otherwise be in neither.
+ */
+export function createPendingProducer(
+    hub: LiveHub,
+    listForms: () => ReturnType<typeof listPendingForms> = () => listPendingForms(undefined, PENDING_SNAPSHOT_LIMIT)
+): LiveProducer {
+    let stream: ReturnType<typeof createPendingStream> | null = null;
+
+    function frames(): LiveDataFrame[] {
+        return [{ v: 1, channel: "pending", type: "snapshot", payload: { forms: listForms() } }];
     }
 
-    function stopBoard(slug: string): void {
-        boardUnsubs.get(slug)?.();
-        boardUnsubs.delete(slug);
-    }
+    return {
+        start() {
+            if (stream) {
+                return;
+            }
 
-    function startDaemon(logFile: string): void {
-        if (daemonTails.has(logFile)) {
-            return;
-        }
+            try {
+                stream = createPendingStream((event) => {
+                    hub.publish({
+                        v: 1,
+                        channel: "pending",
+                        type: "event",
+                        payload: { id: event.id, ev: event.ev, ts: event.ts, form: event.form },
+                    });
+                });
 
-        try {
-            const tail = createRunLogTail(logFile, (entry) => {
+                for (const frame of frames()) {
+                    hub.publish(frame);
+                }
+            } catch (err) {
+                logger.debug({ err }, "live/producers: pending stream failed to start");
+            }
+        },
+        stop() {
+            stream?.close();
+            stream = null;
+        },
+        async snapshot() {
+            return frames();
+        },
+    };
+}
+
+/** Each handoff event, by id. A notice: the client fetches the handoff it names. */
+export function createHandoffsProducer(hub: LiveHub): LiveProducer {
+    let stream: { close(): void } | null = null;
+
+    return {
+        start() {
+            if (stream) {
+                return;
+            }
+
+            stream = createHandoffStream((event) => {
                 hub.publish({
                     v: 1,
-                    channel: `daemon:${logFile}`,
-                    type: "log",
-                    payload: { ...entry, cls: classifyLogLine(entry) },
+                    channel: "handoffs",
+                    type: "event",
+                    payload: { id: event.id, ev: event.ev, ts: event.ts },
                 });
             });
-            daemonTails.set(logFile, tail);
+        },
+        stop() {
+            stream?.close();
+            stream = null;
+        },
+    };
+}
+
+async function readAgentPhasesNow(): Promise<AgentBoardPhaseRow[]> {
+    const { readAgentPhases } = await import("@app/hub/lib/board/index");
+    return readAgentPhases();
+}
+
+/**
+ * The live agent sessions every 15 s: the whole set as a snapshot on the first read and whenever a session starts or
+ * ends, else one `phase` frame per session whose phase, stalled flag, pid or stuck verdict changed. A joining
+ * connection gets the last read; before the first read lands it gets nothing and its client refetches the board.
+ */
+export function createAgentsProducer(
+    hub: LiveHub,
+    read: () => Promise<AgentBoardPhaseRow[]> = readAgentPhasesNow
+): LiveProducer & { refresh(): Promise<void> } {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let busy = false;
+    let current: AgentBoardPhaseRow[] | null = null;
+
+    async function tick(): Promise<void> {
+        if (busy || hub.subscriberCount("agents") === 0) {
+            return;
+        }
+
+        busy = true;
+        try {
+            const next = await read();
+            const before = current;
+            current = next;
+            const diff = before ? diffPhases(before, next) : null;
+
+            if (!diff || diff.membershipChanged) {
+                hub.publish({ v: 1, channel: "agents", type: "snapshot", payload: { sessions: next } });
+                return;
+            }
+
+            for (const row of diff.changed) {
+                hub.publish({ v: 1, channel: "agents", type: "phase", payload: row });
+            }
         } catch (err) {
-            logger.debug({ err, logFile }, "live/producers: daemon tail failed to start");
+            logger.debug({ err }, "live/producers: agents tick failed");
+        } finally {
+            busy = false;
         }
     }
 
-    function stopDaemon(logFile: string): void {
-        daemonTails.get(logFile)?.close();
-        daemonTails.delete(logFile);
+    return {
+        start() {
+            if (timer) {
+                return;
+            }
+
+            void tick();
+            timer = setInterval(() => void tick(), AGENTS_INTERVAL_MS);
+        },
+        stop() {
+            if (timer) {
+                clearInterval(timer);
+                timer = null;
+            }
+
+            current = null;
+        },
+        async snapshot() {
+            return current ? [{ v: 1, channel: "agents", type: "snapshot", payload: { sessions: current } }] : [];
+        },
+        /** One read now, as the timer would run it (tests drive the producer with it). */
+        refresh: tick,
+    };
+}
+
+/**
+ * One row per channel. `satisfies Record<LiveChannel, …>` makes a new channel in the contract's `LiveChannelFrames`
+ * fail to compile until its row exists here.
+ */
+export const LIVE_PRODUCERS = {
+    ports: createPortsProducer,
+    pulse: createPulseProducer,
+    "ai-usage": createAiUsageProducer,
+    qa: createQaProducer,
+    decisions: (hub) => createDecisionsProducer(hub),
+    pending: (hub) => createPendingProducer(hub),
+    handoffs: createHandoffsProducer,
+    agents: (hub) => createAgentsProducer(hub),
+} satisfies Record<LiveChannel, LiveProducerFactory>;
+
+export type LiveProducerTable = Record<LiveChannel, LiveProducerFactory>;
+
+export function isLiveChannel(s: string): s is LiveChannel {
+    return Object.hasOwn(LIVE_PRODUCERS, s);
+}
+
+/**
+ * Runs the table against the hub's demand: a producer starts on its channel's first subscriber, answers each later
+ * subscriber with its snapshot, and stops on the last unsubscribe. A producer is built once and reused across runs.
+ */
+export function startLiveProducers(hub: LiveHub, table: LiveProducerTable = LIVE_PRODUCERS): { stop: () => void } {
+    const producers = new Map<LiveChannel, LiveProducer>();
+
+    function producerOf(channel: LiveChannel): LiveProducer {
+        let producer = producers.get(channel);
+        if (!producer) {
+            producer = table[channel](hub);
+            producers.set(channel, producer);
+        }
+
+        return producer;
     }
 
-    function onDemand(channel: LiveChannel, delta: 1 | -1): void {
-        if (channel === "ports") {
-            if (delta === 1 && hub.subscriberCount("ports") === 1) {
-                startPorts();
+    async function sendSnapshot(producer: LiveProducer, channel: LiveChannel, connId: string): Promise<void> {
+        try {
+            for (const frame of (await producer.snapshot?.()) ?? []) {
+                hub.publishTo(connId, frame);
             }
-
-            if (delta === -1 && hub.subscriberCount("ports") === 0) {
-                stopPorts();
-            }
-
-            return;
-        }
-
-        if (channel === "pulse") {
-            if (delta === 1 && hub.subscriberCount("pulse") === 1) {
-                startPulse();
-            }
-
-            if (delta === -1 && hub.subscriberCount("pulse") === 0) {
-                stopPulse();
-            }
-
-            return;
-        }
-
-        if (channel === "qa") {
-            if (delta === 1 && hub.subscriberCount("qa") === 1) {
-                startQa();
-            }
-
-            if (delta === -1 && hub.subscriberCount("qa") === 0) {
-                stopQa();
-            }
-
-            return;
-        }
-
-        if (channel === "ai-usage") {
-            if (delta === 1 && hub.subscriberCount("ai-usage") === 1) {
-                aiUsage.start();
-            }
-
-            if (delta === -1 && hub.subscriberCount("ai-usage") === 0) {
-                aiUsage.stop();
-            }
-
-            return;
-        }
-
-        if (channel.startsWith("boards:")) {
-            const slug = channel.slice("boards:".length);
-            if (delta === 1) {
-                startBoard(slug);
-            } else {
-                // only stop when last subscriber for this exact channel is gone
-                if (hub.subscriberCount(channel) === 0) {
-                    stopBoard(slug);
-                }
-            }
-
-            return;
-        }
-
-        if (channel.startsWith("daemon:")) {
-            const logFile = channel.slice("daemon:".length);
-            if (delta === 1) {
-                startDaemon(logFile);
-            } else if (hub.subscriberCount(channel) === 0) {
-                stopDaemon(logFile);
-            }
+        } catch (err) {
+            logger.debug({ err, channel }, "live/producers: snapshot failed");
         }
     }
 
-    const unsubDemand = hub.onDemandChange(onDemand);
+    const unsubDemand = hub.onDemandChange((channel, delta, connId) => {
+        const producer = producerOf(channel);
+        const count = hub.subscriberCount(channel);
+
+        if (delta === 1) {
+            if (count === 1) {
+                producer.start();
+                return;
+            }
+
+            void sendSnapshot(producer, channel, connId);
+            return;
+        }
+
+        if (count === 0) {
+            producer.stop();
+        }
+    });
 
     return {
         stop: () => {
             unsubDemand();
-            stopPorts();
-            stopPulse();
-            stopQa();
-            aiUsage.stop();
-            for (const slug of [...boardUnsubs.keys()]) {
-                stopBoard(slug);
-            }
-
-            for (const path of [...daemonTails.keys()]) {
-                stopDaemon(path);
+            for (const producer of producers.values()) {
+                producer.stop();
             }
         },
     };

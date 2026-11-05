@@ -44,6 +44,11 @@ const aliasResolvers = [
         match: "@genesiscz/utils/cli/tool-command",
         target: path.resolve(workspaceRoot, "src/utils/cli/tool-command.ts"),
     },
+    // the push wire (`@dd/contract/push`): pure, no imports
+    {
+        match: "@genesiscz/utils/notifications/phone-wire",
+        target: path.resolve(workspaceRoot, "src/utils/notifications/phone-wire.ts"),
+    },
     { prefix: "@dd/", target: path.resolve(workspaceRoot, "src/dev-dashboard") },
     { prefix: "@/", target: path.resolve(projectRoot, "src") },
     { prefix: "@app/", target: path.resolve(workspaceRoot, "src") },

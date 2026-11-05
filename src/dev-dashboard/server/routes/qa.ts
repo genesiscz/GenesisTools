@@ -1,5 +1,6 @@
 import { getConfig } from "@app/dev-dashboard/config";
 import { createHandoffStream } from "@app/dev-dashboard/lib/handoff-sse";
+import { PENDING_SNAPSHOT_LIMIT } from "@app/dev-dashboard/lib/live/producers";
 import { saveToObsidianUnique } from "@app/dev-dashboard/lib/obsidian-save";
 import { clipQaEntry } from "@app/dev-dashboard/lib/qa-clip";
 import { formatQaAsMarkdown } from "@app/dev-dashboard/lib/qa-clipboard";
@@ -65,12 +66,6 @@ async function readJsonObject<T extends object>(ctx: RouteContext): Promise<{ bo
 
     return { body: raw as T };
 }
-
-/**
- * How many waiting forms one snapshot carries. The store default is 50, which silently hid
- * the OLDEST pending forms once more than that were waiting: the newest 50 win the ORDER BY.
- */
-const PENDING_SNAPSHOT_LIMIT = 500;
 
 export function qaRoutes(): RouteDef[] {
     return [

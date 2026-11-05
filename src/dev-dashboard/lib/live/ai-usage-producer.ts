@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import type { AiUsageResult } from "@app/dev-dashboard/contract/ai-accounts";
 import { flattenSnapshotsCache } from "@app/dev-dashboard/lib/ai-accounts/snapshots";
 import type { LiveHub } from "@app/dev-dashboard/lib/live/hub";
+import type { LiveDataFrame } from "@app/dev-dashboard/lib/live/types";
 import { readSnapshotsCache, snapshotsCachePath } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -28,6 +29,8 @@ export interface AiUsageProducer {
     stop(): void;
     /** One read-and-publish pass, ignoring the mtime stamp. Exposed for tests. */
     tick(): Promise<void>;
+    /** The cache as it is now, for a connection that joins a running producer. */
+    snapshot(): Promise<LiveDataFrame[]>;
 }
 
 /** Publish a usage payload to every `ai-usage` subscriber. */
@@ -103,5 +106,15 @@ export function createAiUsageProducer(hub: LiveHub, deps: AiUsageProducerDeps = 
         },
 
         tick,
+
+        async snapshot() {
+            try {
+                const payload = await readCache();
+                return payload ? [{ v: 1, channel: "ai-usage", type: "snapshot", payload }] : [];
+            } catch (err) {
+                logger.debug({ err }, "live/ai-usage: snapshot read failed");
+                return [];
+            }
+        },
     };
 }
