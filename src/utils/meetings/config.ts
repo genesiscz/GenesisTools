@@ -647,6 +647,25 @@ export class MeetingsConfigStore {
         });
     }
 
+    /**
+     * Replaces the entry for `previous` with `entry` (a renamed entry is a new value) in one write, in its place. The
+     * whole config must still validate, so a refused entry leaves `previous` as it was.
+     */
+    async replaceDictionaryEntry(
+        scope: DictionaryScope,
+        previous: string,
+        entry: DictionaryEntry
+    ): Promise<MeetingsConfig> {
+        return this.update((raw) => {
+            const level = dictionaryAt(raw, scope);
+            const entries = Array.isArray(level.entries) ? (level.entries as Array<{ value?: unknown }>) : [];
+            const at = entries.findIndex((existing) => existing.value === previous);
+            const kept = entries.filter((existing) => existing.value !== previous && existing.value !== entry.value);
+            kept.splice(at === -1 ? kept.length : Math.min(at, kept.length), 0, entry);
+            level.entries = kept;
+        });
+    }
+
     /** Sets how abbreviations expand on one level. */
     async setAbbrExpansion(scope: DictionaryScope, mode: AbbrExpansion): Promise<MeetingsConfig> {
         return this.update((raw) => {

@@ -237,14 +237,25 @@ final class MeetingsSettingsModel {
 
     // MARK: Dictionary
 
-    func addEntry(type: String, value: String, substitution: String?, spoken: [String] = [], meaning: String? = nil) {
+    /// `dictionary add`'s arguments. `replacing` is the value of the entry a rename replaces: the CLI swaps both in one
+    /// write, so a refused entry keeps the old one.
+    static func addEntryArgs(type: String, value: String, substitution: String?, spoken: [String] = [], meaning: String? = nil,
+                             scope: String?, replacing: String? = nil) -> [String] {
         var args = ["dictionary", "add", value]
         if let substitution, !substitution.isEmpty { args.append(substitution) }
         args += ["--type", type]
-        if let scope = dictionaryScope { args += ["--project", scope] }
+        if let scope { args += ["--project", scope] }
         for form in spoken { args += ["--spoken", form] }
         if let meaning, !meaning.isEmpty { args += ["--meaning", meaning] }
-        run(key: "dictionary.\(value)", args, done: "Saved \(value)") {
+        if let replacing, replacing != value { args += ["--replace", replacing] }
+        return args
+    }
+
+    func addEntry(type: String, value: String, substitution: String?, spoken: [String] = [], meaning: String? = nil,
+                  replacing: String? = nil) {
+        let args = Self.addEntryArgs(type: type, value: value, substitution: substitution, spoken: spoken, meaning: meaning,
+                                     scope: dictionaryScope, replacing: replacing)
+        run(key: "dictionary.\(replacing ?? value)", args, done: "Saved \(value)") {
             $0.loadDictionary()
             $0.testPhrase($0.phrase)
         }

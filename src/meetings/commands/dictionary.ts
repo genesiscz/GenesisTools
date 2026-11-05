@@ -76,7 +76,14 @@ function scopeOf(project: string | undefined): DictionaryScope {
 async function add(
     value: string,
     substitution: string | undefined,
-    opts: { type?: string | boolean; project?: string; spoken?: string[]; meaning?: string; caseSensitive?: boolean }
+    opts: {
+        type?: string | boolean;
+        project?: string;
+        spoken?: string[];
+        meaning?: string;
+        caseSensitive?: boolean;
+        replace?: string;
+    }
 ): Promise<void> {
     const type = await resolveEnum({
         value: opts.type,
@@ -117,9 +124,14 @@ async function add(
             ui.ok(`Added project ${opts.project} to the known projects.`);
         }
 
-        await store.putDictionaryEntry(scopeOf(opts.project), entry);
+        if (opts.replace && opts.replace !== entry.value) {
+            await store.replaceDictionaryEntry(scopeOf(opts.project), opts.replace, entry);
+        } else {
+            await store.putDictionaryEntry(scopeOf(opts.project), entry);
+        }
+
         ui.ok(
-            `${entry.type} ${entry.value} saved to the ${opts.project ? `project ${opts.project}` : "global"} dictionary.`
+            `${entry.type} ${entry.value} saved to the ${opts.project ? `project ${opts.project}` : "global"} dictionary${opts.replace && opts.replace !== entry.value ? ` in place of ${opts.replace}` : ""}.`
         );
     } catch (err) {
         fail(errorText(err));
@@ -306,6 +318,10 @@ export function registerDictionaryCommand(program: Command): void {
         .option("--spoken <form>", "term: how people say it (repeatable)", collect)
         .option("--meaning <text>", "term: what it means, shown after its first mention in Markdown")
         .option("--case-sensitive", "fix: match only the exact letter case (default: any case)")
+        .option(
+            "--replace <value>",
+            "rename: this entry replaces the one with that value in one write (a refused entry keeps the old one)"
+        )
         .action(add);
 
     dictionary

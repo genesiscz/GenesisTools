@@ -292,6 +292,34 @@ describe("meetings config", () => {
         ]);
     });
 
+    test("a renamed dictionary entry replaces the old one in one write, and a refused one keeps the old", async () => {
+        const config = store();
+        const scope = { kind: "project", project: "work" } as const;
+        await config.addProject("work");
+        await config.putDictionaryEntries(scope, [
+            { type: "fix", value: "Viky", substitution: "wiki" },
+            { type: "abbr", value: "NWD", substitution: "NWD (Northwind)" },
+        ]);
+
+        await expect(
+            config.replaceDictionaryEntry(scope, "NWD", { type: "abbr", value: "MOP", substitution: "MOPsuffix" })
+        ).rejects.toThrow('the substitution must contain "MOP" itself');
+        expect((await config.read()).projects.work?.dictionary?.entries.map((entry) => entry.value)).toEqual([
+            "Viky",
+            "NWD",
+        ]);
+
+        const read = await config.replaceDictionaryEntry(scope, "NWD", {
+            type: "abbr",
+            value: "HBR",
+            substitution: "HBR (Harbor)",
+        });
+        expect(read.projects.work?.dictionary?.entries).toEqual([
+            { type: "fix", value: "Viky", substitution: "wiki" },
+            { type: "abbr", value: "HBR", substitution: "HBR (Harbor)" },
+        ]);
+    });
+
     test("a project gets its dictionary and its expansion; the merged dictionary takes the project's", async () => {
         const config = store();
         expect(await config.addProject("work")).toBe(true);

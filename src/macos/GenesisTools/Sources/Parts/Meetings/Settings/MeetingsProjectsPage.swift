@@ -357,10 +357,10 @@ struct MeetingsDictionaryPage: View {
                     Spacer()
                     Button(editing == nil ? "Add" : "Save") {
                         let trimmed = value.trimmingCharacters(in: .whitespaces)
-                        // An entry is keyed by its value: a renamed one is a new entry, so the old one goes.
-                        if let editing, editing.value != trimmed { model.removeEntry(editing) }
+                        // An entry is keyed by its value: a renamed one replaces the old one in the same write.
                         model.addEntry(type: type, value: trimmed,
-                                       substitution: substitution.trimmingCharacters(in: .whitespaces), meaning: meaning)
+                                       substitution: substitution.trimmingCharacters(in: .whitespaces), meaning: meaning,
+                                       replacing: editing?.value)
                         clear()
                     }
                     .buttonStyle(.borderedProminent).nativeSettingsPointer()
@@ -408,7 +408,7 @@ struct MeetingsDictionaryPage: View {
         let trimmed = value.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return false }
         if type == "fix" { return !substitution.trimmingCharacters(in: .whitespaces).isEmpty }
-        if type == "abbr" { return substitution.contains(trimmed) }
+        if type == "abbr" { return MeetingsDictionaryRules.expansionHolds(trimmed, substitution) }
         return true
     }
 
@@ -425,5 +425,16 @@ struct MeetingsDictionaryPage: View {
         value = ""
         substitution = ""
         meaning = ""
+    }
+}
+
+/// The dictionary's own checks the page makes before a save, the same as the schema's
+/// (src/utils/transcribe/dictionary.ts `wholeWord`), so Save is never enabled for an entry the CLI refuses.
+enum MeetingsDictionaryRules {
+    /// An abbreviation's expansion holds the abbreviation as a whole word: "MOP (…)" holds MOP, "MOPsuffix" does not.
+    static func expansionHolds(_ abbreviation: String, _ expansion: String) -> Bool {
+        guard !abbreviation.isEmpty else { return false }
+        let pattern = "(?<![\\p{L}\\p{N}])\(NSRegularExpression.escapedPattern(for: abbreviation))(?![\\p{L}\\p{N}])"
+        return expansion.range(of: pattern, options: .regularExpression) != nil
     }
 }

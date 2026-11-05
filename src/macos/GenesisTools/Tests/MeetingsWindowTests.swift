@@ -147,4 +147,15 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(MeetingsWords.confidence(item.confidence), "83 %")
         XCTAssertEqual(item.reason, "the call channel held it")
     }
+
+    func testARenamedDictionaryEntryReplacesTheOldOneInOneCommand() {
+        XCTAssertEqual(MeetingsSettingsModel.addEntryArgs(type: "abbr", value: "HBR", substitution: "HBR (Harbor)",
+                                                          scope: "work", replacing: "NWD"),
+                       ["dictionary", "add", "HBR", "HBR (Harbor)", "--type", "abbr", "--project", "work", "--replace", "NWD"])
+        XCTAssertFalse(MeetingsSettingsModel.addEntryArgs(type: "fix", value: "Viky", substitution: "wiki", scope: nil,
+                                                          replacing: "Viky").contains("--replace"),
+                       "an edit that keeps the value is a plain add")
+        XCTAssertFalse(MeetingsDictionaryRules.expansionHolds("MOP", "MOPsuffix"), "the schema wants the abbreviation as a word")
+        XCTAssertTrue(MeetingsDictionaryRules.expansionHolds("MOP", "MOP (Obchodní partner)"))
+    }
 }
