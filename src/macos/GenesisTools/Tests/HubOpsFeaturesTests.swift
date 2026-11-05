@@ -193,6 +193,50 @@ final class HubOpsFeaturesTests: XCTestCase {
         ])
     }
 
+    func testSubmoduleDirtyAndCleanEventsRequireAFullRefresh() throws {
+        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent("hub-submodule-\(UUID())")
+        let root = fixture.appendingPathComponent("root")
+        let module = fixture.appendingPathComponent("module")
+        for directory in [root, module] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let provider = GenesisKitGTCLIProvider()
+        func git(_ arguments: [String], in directory: URL) throws {
+            let result = try provider.git(["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+                                           "-c", "protocol.file.allow=always"] + arguments, in: directory, input: nil,
+                                          gitDirectory: nil, environment: [
+                "GIT_AUTHOR_NAME": "Alice", "GIT_AUTHOR_EMAIL": "alice@example.com",
+                "GIT_COMMITTER_NAME": "Alice", "GIT_COMMITTER_EMAIL": "alice@example.com",
+            ])
+            XCTAssertEqual(result.status, 0, String(decoding: result.stderr, as: UTF8.self))
+        }
+        try git(["init", "-q", "-b", "main"], in: module)
+        try "clean\n".write(to: module.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        try git(["add", "."], in: module)
+        try git(["commit", "-q", "-m", "module"], in: module)
+        try git(["init", "-q", "-b", "main"], in: root)
+        try git(["submodule", "add", "-q", module.path, "child"], in: root)
+        try git(["commit", "-q", "-m", "superproject"], in: root)
+        let source = GitWorkingTreeSource(repo: root)
+        let layout = try source.repositoryLayout()
+        let clean = try source.load(scope: .uncommitted)
+        let file = root.appendingPathComponent("child/a.txt")
+        var batch = ReviewWatchBatch()
+        batch.add(.path("child/a.txt"))
+        try "dirty\n".write(to: file, atomically: true, encoding: .utf8)
+        guard case .full = source.refresh(clean, batch: batch, layout: layout) else {
+            return XCTFail("a file event below the gitlink must reload its dirty state")
+        }
+        let dirty = try source.load(scope: .uncommitted)
+        XCTAssertTrue(dirty.files.contains { $0.path == "child" })
+        try "clean\n".write(to: file, atomically: true, encoding: .utf8)
+        guard case .full = source.refresh(dirty, batch: batch, layout: layout) else {
+            return XCTFail("reverting the last dirty file must clear the submodule entry")
+        }
+        XCTAssertEqual(try source.load(scope: .uncommitted).files, clean.files)
+    }
+
     // MARK: Worktree move-aside
 
     func testCleanupRowsCarryTheDirtyCountAndTheCommitAge() throws {

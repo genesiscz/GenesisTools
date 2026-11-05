@@ -169,6 +169,17 @@ extension GitWorkingTreeSource {
         if paths.contains(where: Self.changesRules) { return .full(reason: "a .gitignore or .gitattributes changed") }
 
         let region = paths.sorted()
+        var checkedFolders: Set<String> = []
+        for path in region {
+            var folder = layout.root.appendingPathComponent(path).deletingLastPathComponent()
+            while folder.path.hasPrefix(layout.root.path + "/"), checkedFolders.insert(folder.path).inserted {
+                // A pathspec below a gitlink cannot report its submodule's dirty/clean transition.
+                if FileManager.default.fileExists(atPath: folder.appendingPathComponent(".git").path) {
+                    return .full(reason: "content inside a nested repository changed")
+                }
+                folder.deleteLastPathComponent()
+            }
+        }
         func inRegion(_ path: String) -> Bool {
             region.contains { path == $0 || path.hasPrefix($0 + "/") }
         }
