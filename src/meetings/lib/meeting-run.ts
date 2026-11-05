@@ -85,6 +85,7 @@ export class MeetingRun {
                 minChars: 0,
                 threshold: capture.ocr.threshold * 100,
                 skipTextless: capture.ocr.skipTextless,
+                region: capture.ocr.region,
             },
         };
         this.audio = {

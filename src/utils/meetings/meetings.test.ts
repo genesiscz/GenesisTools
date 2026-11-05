@@ -58,6 +58,18 @@ describe("meetings config", () => {
         expect(recorderSettings(config.global.capture)).toEqual({ audio: { sources: [] } });
     });
 
+    test("capture.ocr: an old file without the block reads every kept frame whole; a set block is kept", () => {
+        const old = meetingsConfigSchema.parse({ version: 3, global: { capture: { threshold: 0.05 } } });
+        expect(old.global.capture.threshold).toBe(0.05);
+        expect(old.global.capture.ocr).toEqual({ threshold: 0, skipTextless: false, region: "frame" });
+
+        const set = meetingsConfigSchema.parse({
+            global: { capture: { ocr: { threshold: 0.1, skipTextless: true, region: "changed" } } },
+        });
+        expect(set.global.capture.ocr).toEqual({ threshold: 0.1, skipTextless: true, region: "changed" });
+        expect(() => meetingsConfigSchema.parse({ global: { capture: { ocr: { region: "crop" } } } })).toThrow();
+    });
+
     const shipped = (code: string) => ({
         sounds: [...FILLER_WORDS[code].sounds],
         words: [...FILLER_WORDS[code].words],

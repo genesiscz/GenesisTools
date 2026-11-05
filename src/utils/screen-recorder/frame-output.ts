@@ -9,7 +9,7 @@ import type { OcrBlock, OcrLevel, OcrResult } from "@genesiscz/utils/macos/types
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import type { RecorderSettings } from "./control";
-import { type OcrSkipReason, planRead } from "./ocr-region";
+import { mergeAreaRead, type OcrSkipReason, planRead } from "./ocr-region";
 import type { CapturedFrame, MotionBox } from "./types";
 
 const { log } = logger.scoped("frame-output");
@@ -150,6 +150,11 @@ export interface OcrRow {
     blocks: OcrBlock[];
     /** Set when no read ran: the row holds the previous frame's text of its display, and why it was not read. */
     skipped?: OcrSkipReason;
+    /**
+     * Set when only these areas were read (`[x, y, width, height]`, frame pixels, top-left origin): the row's other
+     * lines are the previous frame's. `blocks` are in the whole frame's coordinates either way.
+     */
+    regions?: MotionBox[];
 }
 
 /** Where a kept frame's OCR goes. `row.text` is empty when the read held fewer than `minChars` characters. */
@@ -303,6 +308,7 @@ export class FrameOutput {
                     bounds: block.bounds,
                 })),
                 ...(outcome?.skipped ? { skipped: outcome.skipped } : {}),
+                ...(outcome?.regions ? { regions: outcome.regions } : {}),
             },
             path
         );
@@ -318,31 +324,75 @@ export class FrameOutput {
         path: string,
         displayId: number,
         settings: RecorderSettings["ocr"]
-    ): Promise<{ read: OcrResult; skipped?: OcrSkipReason }> {
+    ): Promise<{ read: OcrResult; skipped?: OcrSkipReason; regions?: MotionBox[] }> {
         const ocr = this.options.ocr;
         const recognize = ocr?.recognize ?? visionOcr;
         const previous = this.lastRead.get(displayId);
-        const plan = planRead({ frame, settings, previous: previous?.blocks, size: () => imageSize(path) });
+        let size: { width: number; height: number } | undefined;
+        const plan = planRead({
+            frame,
+            settings,
+            previous: previous?.blocks,
+            size: () => {
+                size ??= imageSize(path);
+                return size;
+            },
+        });
 
         if (plan.kind === "skip" && previous) {
             return { read: previous, skipped: plan.reason };
         }
 
-        if (plan.kind === "check-textless" && previous) {
-            const crop = join(tmpdir(), `gt-ocr-crop-${process.pid}-${++this.crops}.png`);
+        if (plan.kind === "area" && previous && size) {
+            const frameSize = size;
+            const crops = plan.areas.map((box) => ({
+                box,
+                path: join(tmpdir(), `gt-ocr-crop-${process.pid}-${++this.crops}.png`),
+            }));
 
             try {
-                await (this.options.crop ?? sipsCrop)(path, crop, plan.area);
-                const found = await recognize(crop, settings.languages, { level: "fast", fastFallback: false });
+                for (const crop of crops) {
+                    await (this.options.crop ?? sipsCrop)(path, crop.path, crop.box);
+                }
 
-                if (found.text.trim().length === 0 && found.blocks.length === 0) {
-                    return { read: previous, skipped: "no-text" };
+                if (plan.checkTextless) {
+                    let textless = true;
+
+                    for (const crop of crops) {
+                        const found = await recognize(crop.path, settings.languages, {
+                            level: "fast",
+                            fastFallback: false,
+                        });
+
+                        if (found.text.trim().length > 0 || found.blocks.length > 0) {
+                            textless = false;
+                            break;
+                        }
+                    }
+
+                    if (textless) {
+                        return { read: previous, skipped: "no-text" };
+                    }
+                }
+
+                if (plan.readArea) {
+                    let read = previous;
+
+                    for (const crop of crops) {
+                        const part = await recognize(crop.path, settings.languages, { fastFallback: false });
+                        read = mergeAreaRead({ previous: read, area: crop.box, read: part, size: frameSize });
+                    }
+
+                    this.lastRead.set(displayId, read);
+                    return { read, regions: plan.areas.map(({ x, y, width, height }) => [x, y, width, height]) };
                 }
             } catch (error) {
-                log.debug({ error, path }, "the changed-area check failed; the frame is read whole");
+                log.debug({ error, path }, "the changed-area read failed; the frame is read whole");
             } finally {
-                if (existsSync(crop)) {
-                    unlinkSync(crop);
+                for (const crop of crops) {
+                    if (existsSync(crop.path)) {
+                        unlinkSync(crop.path);
+                    }
                 }
             }
         }

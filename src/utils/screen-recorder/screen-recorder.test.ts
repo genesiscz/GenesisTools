@@ -6,6 +6,7 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { pixelBox } from "@genesiscz/utils/macos/ocr-boxes";
 import * as bounded from "@genesiscz/utils/process/bounded-command";
 import * as rm from "@genesiscz/utils/rm";
 import { z } from "zod";
@@ -33,7 +34,7 @@ import {
     readLiveRecording,
 } from "./live";
 import { audioArgv, captureErrorKind, flagsInHelp, NativeFrameRecorder, NativeLiveCapture, nativeArgv } from "./native";
-import { planRead } from "./ocr-region";
+import { blockInFrame, changedAreas, mergeAreaRead, planRead } from "./ocr-region";
 import { peekabooCaptureError } from "./peekaboo";
 import { startRecording } from "./start";
 import {
@@ -871,7 +872,7 @@ function blockAt(text: string, x: number, y: number, width: number, height: numb
 describe("OCR read savings: which kept frames are read", () => {
     const size = () => ({ width: 1000, height: 500 });
     const previous = [blockAt("Agenda", 100, 50, 200, 20)];
-    const on = { threshold: 1, skipTextless: true };
+    const on = { threshold: 1, skipTextless: true, region: "frame" } as const;
 
     test("a frame without a previous read, without motion facts, or not a change is read whole", () => {
         const change = { changePercent: 0.2, reason: "change", motionBoxes: [[600, 300, 40, 40]] as MotionBox[] };
@@ -906,12 +907,16 @@ describe("OCR read savings: which kept frames are read", () => {
         const at = (motionBoxes: MotionBox[]) => ({ changePercent: 3, reason: "change", motionBoxes });
 
         expect(planRead({ frame: at([[600, 300, 40, 40]]), settings: on, previous, size })).toEqual({
-            kind: "check-textless",
-            area: { x: 576, y: 276, width: 88, height: 88 },
+            kind: "area",
+            areas: [{ x: 576, y: 276, width: 88, height: 88 }],
+            checkTextless: true,
+            readArea: false,
         });
         expect(planRead({ frame: at([[980, 490, 16, 16]]), settings: on, previous, size })).toEqual({
-            kind: "check-textless",
-            area: { x: 956, y: 466, width: 44, height: 34 },
+            kind: "area",
+            areas: [{ x: 956, y: 466, width: 44, height: 34 }],
+            checkTextless: true,
+            readArea: false,
         });
         expect(planRead({ frame: at([[250, 60, 16, 16]]), settings: on, previous, size }), "text was there").toEqual({
             kind: "frame",
@@ -987,6 +992,190 @@ describe("OCR read savings: which kept frames are read", () => {
         expect(rows[1]?.blocks).toEqual(rows[0]?.blocks ?? []);
         expect(small.read?.text).toBe("Agenda 1");
         expect(readdirSync(tmpdir()).filter((name) => name.startsWith(`gt-ocr-crop-${process.pid}-`))).toEqual([]);
+    });
+
+    test("scattered changes stay apart areas, overlapping ones join, and at most four are read", () => {
+        // Two corners of the frame: their joined box would be the whole frame, the two areas are under 1% of it.
+        const corners = changedAreas({
+            boxes: [
+                [0, 0, 16, 16],
+                [976, 476, 16, 16],
+            ],
+            previous: [],
+            size: size(),
+        });
+
+        expect(corners).toEqual([
+            { x: 0, y: 0, width: 40, height: 40 },
+            { x: 952, y: 452, width: 48, height: 48 },
+        ]);
+        expect(
+            planRead({
+                frame: {
+                    changePercent: 3,
+                    reason: "change",
+                    motionBoxes: [
+                        [0, 0, 16, 16],
+                        [976, 476, 16, 16],
+                    ],
+                },
+                settings: { threshold: 0, skipTextless: false, region: "changed" },
+                previous,
+                size,
+            })
+        ).toEqual({ kind: "area", areas: corners, checkTextless: false, readArea: true });
+        expect(
+            changedAreas({
+                boxes: [
+                    [100, 100, 16, 16],
+                    [130, 100, 16, 16],
+                ],
+                previous: [],
+                size: size(),
+            })
+        ).toEqual([{ x: 76, y: 76, width: 94, height: 64 }]);
+
+        const six = changedAreas({
+            boxes: [0, 1, 2, 3, 4, 5].map((index): MotionBox => [index * 160, 200, 16, 16]),
+            previous: [],
+            size: size(),
+        });
+
+        expect(six).toHaveLength(4);
+        expect(six.reduce((sum, box) => sum + box.width * box.height, 0)).toBeLessThan(0.5 * 1000 * 500);
+    });
+
+    test("a read of a crop moves its blocks into the whole frame's coordinates", () => {
+        const moved = blockInFrame(
+            { text: "New", confidence: 1, bounds: { x: 0.25, y: 0.5, width: 0.5, height: 0.2 } },
+            { x: 500, y: 200, width: 200, height: 100 },
+            { width: 1000, height: 500 }
+        );
+
+        expect(pixelBox(moved.bounds, { width: 1000, height: 500 })).toEqual({
+            x: 550,
+            y: 230,
+            width: 100,
+            height: 20,
+        });
+    });
+
+    test("an area read replaces the lines inside the area, keeps the rest, and drops cut-off copies at its edge", () => {
+        const previous = {
+            text: "Agenda\nOld\nEdge",
+            blocks: [
+                blockAt("Agenda", 100, 50, 200, 20),
+                blockAt("Old", 550, 230, 100, 20),
+                blockAt("Edge", 640, 270, 200, 20),
+            ],
+        };
+        // The crop at (500, 200), 200×100: "New" where "Old" was, and "Edg", the cut-off left part of "Edge".
+        const read = {
+            text: "New\nEdg",
+            blocks: [
+                { text: "New", confidence: 1, bounds: { x: 0.25, y: 0.5, width: 0.5, height: 0.2 } },
+                { text: "Edg", confidence: 1, bounds: { x: 0.7, y: 0.1, width: 0.3, height: 0.2 } },
+            ],
+        };
+        const merged = mergeAreaRead({
+            previous,
+            area: { x: 500, y: 200, width: 200, height: 100 },
+            read,
+            size: { width: 1000, height: 500 },
+        });
+
+        expect(merged.text).toBe("Agenda\nNew\nEdge");
+        expect(merged.blocks.map((block) => pixelBox(block.bounds, { width: 1000, height: 500 }))).toEqual([
+            { x: 100, y: 50, width: 200, height: 20 },
+            { x: 550, y: 230, width: 100, height: 20 },
+            { x: 640, y: 270, width: 200, height: 20 },
+        ]);
+        expect(
+            mergeAreaRead({ previous, area: { x: 0, y: 400, width: 100, height: 100 }, read, size: size() }).text
+        ).toBe("Agenda\nOld\nEdge\nNew\nEdg");
+    });
+
+    test("with region changed, an area that touches a line grows to hold the whole line and is read alone", async () => {
+        const changed = { threshold: 0, skipTextless: false, region: "changed" } as const;
+
+        expect(
+            planRead({
+                frame: { changePercent: 3, reason: "change", motionBoxes: [[250, 60, 16, 16]] },
+                settings: changed,
+                previous,
+                size,
+            })
+        ).toEqual({
+            kind: "area",
+            areas: [{ x: 100, y: 36, width: 200, height: 64 }],
+            checkTextless: false,
+            readArea: true,
+        });
+
+        const dir = mkdtempSync(join(tmpdir(), "gt-frame-area-"));
+        const rows: OcrRow[] = [];
+        const calls: string[] = [];
+        const output = new FrameOutput({
+            folder: dir,
+            naming: "elapsed",
+            format: { kind: "original" },
+            crop: async (_source, target, box) => {
+                calls.push(`crop ${box.x},${box.y},${box.width}x${box.height}`);
+                writeFileSync(target, pngHeader(box.width, box.height));
+            },
+            ocr: {
+                settings: () => ({ enabled: true, languages: ["en-US"], minChars: 0, ...changed }),
+                sink: { write: (row) => rows.push(row) },
+                recognize: async (image, _languages, options) => {
+                    const crop = image.includes("gt-ocr-crop-");
+                    calls.push(`${crop ? "crop" : "frame"} read fallback ${options?.fastFallback ?? true}`);
+                    // The crop's own coordinates: "Agenda 2" fills its middle, as the whole line did in the frame.
+                    return crop
+                        ? {
+                              text: "Agenda 2",
+                              blocks: [
+                                  {
+                                      text: "Agenda 2",
+                                      confidence: 1,
+                                      bounds: { x: 0, y: 30 / 64, width: 1, height: 20 / 64 },
+                                  },
+                              ],
+                          }
+                        : {
+                              text: "Agenda\nClock",
+                              blocks: [blockAt("Agenda", 100, 50, 200, 20), blockAt("Clock", 900, 10, 80, 20)],
+                          };
+                },
+            },
+        });
+        let n = 0;
+        const keep = (frame: Omit<CapturedFrame, "path" | "atMs">) => {
+            const path = join(dir, `in-${++n}.png`);
+            writeFileSync(path, pngHeader(1000, 500));
+            return output.keep({ path, atMs: 0, ...frame }, { atMs: 1_000 * n, originMs: 0, displayId: 2 });
+        };
+
+        await keep({ changePercent: 100, reason: "first", motionBoxes: [] });
+        await keep({ changePercent: 3, reason: "change", motionBoxes: [[250, 60, 16, 16]] });
+        await keep({ changePercent: 60, reason: "change", motionBoxes: [[0, 0, 1000, 500]] });
+
+        expect(calls).toEqual([
+            "frame read fallback true",
+            "crop 100,36,200x64",
+            "crop read fallback false",
+            "frame read fallback true",
+        ]);
+        expect(rows.map((row) => [row.text, row.regions])).toEqual([
+            ["Agenda\nClock", undefined],
+            ["Agenda 2\nClock", [[100, 36, 200, 64]]],
+            ["Agenda\nClock", undefined],
+        ]);
+        expect(pixelBox(rows[1]?.blocks[0]?.bounds ?? { x: 0, y: 0, width: 0, height: 0 }, size())).toEqual({
+            x: 100,
+            y: 50,
+            width: 200,
+            height: 20,
+        });
     });
 
     test("with the default settings every kept frame is read whole and no row says skipped", async () => {
@@ -1567,6 +1756,7 @@ describe("characterization: what a library recording asks its recorder for", () 
                     minChars: "number",
                     threshold: "number",
                     skipTextless: "boolean",
+                    region: "string",
                 },
                 audio: { sources: [], muted: { mic: "boolean", system: "boolean" } },
                 tracks: [],

@@ -132,7 +132,12 @@ hung one is stopped and counts as a failed capture.
 beside `capture.threshold`: a kept frame that changed less keeps the previous frame's text for its display.
 `skipTextless` (default off) reads the changed area at Vision's fast level first, and a frame whose changed area holds
 no text, before or now, keeps the previous text too. A skipped frame's `ocr.jsonl` row carries the copied text and
-`skipped` (`below-threshold` or `no-text`). The first frame of each capture and each display switch is always read.
+`skipped` (`below-threshold` or `no-text`). `region` (`frame` by default, or `changed`) reads only the changed areas
+of a frame (at most four, each grown to hold every line it touches) and keeps the previous frame's other lines; the
+row's `blocks` stay in whole-frame coordinates and `regions` lists the areas read. It is off by default because a crop
+costs about as much as a whole read (each Vision call costs about 110 ms of CPU or more) and reads more small text than
+a whole read of a wide frame does, so the text would change (`docs/benchmarks-cpu.md`, 2026-11-05). The first frame of
+each capture and each display switch is always read whole.
 
 `capture.displays` picks what is recorded: `all` (default) records every connected display at once, one capture per
 display per piece; `main`; `follow-focus` (the display of the focused window, when the recorder supports it, else the

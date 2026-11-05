@@ -1,6 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { FILLER_WORDS, type FillerLists } from "@genesiscz/utils/recording-editor/transcript-cuts";
-import { AUDIO_SOURCES } from "@genesiscz/utils/screen-recorder/control";
+import { AUDIO_SOURCES, OCR_REGIONS } from "@genesiscz/utils/screen-recorder/control";
 import { FRAME_RECORDER_IDS, type FrameRecorderId } from "@genesiscz/utils/screen-recorder/types";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
@@ -109,6 +109,8 @@ const captureSchema = z.object({
             threshold: z.number().min(0).max(1).default(0),
             /** A kept frame whose changed area holds no text, now or before, keeps the previous frame's text. */
             skipTextless: z.boolean().default(false),
+            /** `frame` reads each kept frame whole; `changed` reads only its changed area and keeps the rest. */
+            region: z.enum(OCR_REGIONS).default("frame"),
         })
         .prefault({}),
     jpegQuality: z.number().min(0.1).max(1).default(0.75),

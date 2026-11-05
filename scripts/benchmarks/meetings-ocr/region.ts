@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 /**
- * The OCR read savings of the shared frame output (`FrameOutput` with `ocr.threshold` and `ocr.skipTextless`),
+ * The OCR read savings of the shared frame output (`FrameOutput` with `ocr.threshold`, `ocr.skipTextless` and
+ * `ocr.region`),
  * measured on consecutive real frames of a meeting, against reading every kept frame whole.
  *
  * Input: two runs of consecutive frames (the two displays with the most rows in `ocr.jsonl`, `--frames` each, from
@@ -11,9 +12,10 @@
  * Arms (one `FrameOutput` each, interleaved per frame, the order turned each run): `full` (the defaults), and one arm
  * per saving in `ARMS`. Per arm: the darwinkit helper's CPU over the whole sequence (`ps cputime`, 10 ms resolution),
  * this process's CPU, spawned children, skipped frames, and how much of the `full` arm's text each frame keeps
- * (folded line sets: the share of the full read's lines found in the arm's row).
+ * (folded lines: the share of the full read's lines that the arm's row holds, the same or with a bigram similarity of
+ * at least 0.8). `full-again` reads every frame whole a second time: its share is the floor two whole reads reach.
  *
- * Usage: bun scripts/benchmarks/meetings-ocr/region.ts [--runs 3] [--frames 16] [--meeting <folder>] [--scratch <dir>] [--json]
+ * Usage: bun scripts/benchmarks/meetings-ocr/region.ts [--runs 3] [--frames 16] [--meeting <folder>] [--scratch <dir>] [--detail] [--json]
  */
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { loadavg, tmpdir } from "node:os";
@@ -23,7 +25,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { closeDarwinKit } from "@genesiscz/utils/macos/darwinkit";
 import { recognizeText } from "@genesiscz/utils/macos/ocr";
-import { foldText } from "@genesiscz/utils/macos/ocr-boxes";
+import { foldText, textSimilarity } from "@genesiscz/utils/macos/ocr-boxes";
 import { captureSync, listPsTable, parseCpuTime } from "@genesiscz/utils/process/ps";
 import { OCR_READ_DEFAULTS, type RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
 import { FrameOutput, type OcrRow } from "@genesiscz/utils/screen-recorder/frame-output";
@@ -36,14 +38,18 @@ const DEFAULT_MEETING = genesisToolsDir("meetings", "2026-11-04_16-32-meeting");
 const DEFAULT_SCRATCH = join(tmpdir(), "meetings-ocr-bench", "region");
 const LANGUAGES = ["en-US"];
 
-type ReadSettings = Pick<RecorderSettings["ocr"], "threshold" | "skipTextless">;
+type ReadSettings = Pick<RecorderSettings["ocr"], "threshold" | "skipTextless" | "region">;
 
 /** The arms beside `full`. A threshold above `capture.threshold` (2%) is needed to skip anything a capture kept. */
 const ARMS: Record<string, ReadSettings> = {
     full: OCR_READ_DEFAULTS,
+    // The same settings again: how much two whole reads of one frame differ (Vision's own variance, the noise floor).
+    "full-again": OCR_READ_DEFAULTS,
     "threshold-5": { ...OCR_READ_DEFAULTS, threshold: 5 },
     textless: { ...OCR_READ_DEFAULTS, skipTextless: true },
     "threshold-5+textless": { ...OCR_READ_DEFAULTS, threshold: 5, skipTextless: true },
+    changed: { ...OCR_READ_DEFAULTS, region: "changed" },
+    "changed+textless": { ...OCR_READ_DEFAULTS, region: "changed", skipTextless: true },
 };
 
 interface Row {
@@ -147,6 +153,22 @@ function lineSet(text: string): Set<string> {
     );
 }
 
+/** A line the same up to Vision's small misreads ("Quick views", "OuIck VewS"): bigram similarity at least this. */
+const SAME_LINE = 0.8;
+
+/** The share of `want`'s lines that `got` holds, the same or nearly the same. */
+function keptShare(want: Set<string>, got: Set<string>): number {
+    if (want.size === 0) {
+        return 1;
+    }
+
+    const others = [...got];
+    const kept = [...want].filter(
+        (line) => got.has(line) || others.some((other) => textSimilarity(line, other) >= SAME_LINE)
+    );
+    return kept.length / want.size;
+}
+
 interface ArmTotals {
     frames: number;
     helperCpuMs: number;
@@ -161,6 +183,7 @@ async function main(): Promise<void> {
     const count = Number(flagValue("--frames") ?? 16);
     const meeting = flagValue("--meeting") ?? DEFAULT_MEETING;
     const scratch = flagValue("--scratch") ?? DEFAULT_SCRATCH;
+    const detail = process.argv.includes("--detail");
     const sequences = await prepare(meeting, join(scratch, "in"), count);
     const loadBefore = Math.round(loadavg()[0] * 10) / 10;
     const names = Object.keys(ARMS);
@@ -232,11 +255,24 @@ async function main(): Promise<void> {
                         total.skipped[row.skipped] = (total.skipped[row.skipped] ?? 0) + 1;
                     }
 
+                    if (row.regions) {
+                        total.skipped["area-read"] = (total.skipped["area-read"] ?? 0) + 1;
+                    }
+
                     const want = lineSet(full[index]?.text ?? "");
                     const got = lineSet(row.text);
-                    total.keptShares.push(
-                        want.size === 0 ? 1 : [...want].filter((line) => got.has(line)).length / want.size
-                    );
+                    const share = keptShare(want, got);
+                    total.keptShares.push(share);
+
+                    // Counts only: the meeting's text never leaves this process.
+                    if (detail && run === 0) {
+                        const frame = sequence[index];
+                        out.println(
+                            `${name} d${frame?.displayId} #${index} lines ${want.size}->${got.size} kept ${Math.round(share * 100)}% ` +
+                                `change ${frame?.frame.changePercent.toFixed(1)}% boxes ${frame?.frame.motionBoxes?.length ?? "-"} ` +
+                                `${row.skipped ?? ""}${row.regions ? `areas ${row.regions.length} (${row.regions.map(([, , w, h]) => w * h).reduce((a, b) => a + b, 0)} px)` : ""}`
+                        );
+                    }
                 }
             }
         }
@@ -260,7 +296,7 @@ async function main(): Promise<void> {
                     helperCpuMsPerFrame: round(median(list.map((one) => one.helperCpuMs / Math.max(1, one.frames)))),
                     ownCpuMsPerFrame: round(median(list.map((one) => one.ownCpuMs / Math.max(1, one.frames)))),
                     spawnsPerFrame: round(median(list.map((one) => one.spawns / Math.max(1, one.frames))), 2),
-                    skippedPerRun: list[0]?.skipped ?? {},
+                    notWholePerRun: list[0]?.skipped ?? {},
                     textKeptPctMean: round(
                         (shares.reduce((sum, value) => sum + value, 0) / Math.max(1, shares.length)) * 100
                     ),

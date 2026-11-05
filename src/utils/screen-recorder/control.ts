@@ -100,6 +100,10 @@ export interface AudioState {
     micDevice?: string;
 }
 
+/** What OCR reads of a kept frame: all of it, or the area that changed since the last kept frame of its display. */
+export const OCR_REGIONS = ["frame", "changed"] as const;
+export type OcrRegion = (typeof OCR_REGIONS)[number];
+
 /** The settings a running recording takes live; `settings.set` takes any part of them. */
 export const recorderSettingsSchema = z.object({
     /** Frames per second while the screen changes. */
@@ -125,13 +129,15 @@ export const recorderSettingsSchema = z.object({
         threshold: z.number().min(0).max(100),
         /** A kept frame whose changed area holds no text, now or before, keeps the previous text (a fast read decides). */
         skipTextless: z.boolean(),
+        /** What OCR reads: the whole frame, or only the changed area, its lines put into the previous frame's text. */
+        region: z.enum(OCR_REGIONS),
     }),
 });
 
 /** What the OCR settings are when a recorder names none of the read savings: every kept frame read whole. */
-export const OCR_READ_DEFAULTS = { threshold: 0, skipTextless: false } as const satisfies Pick<
+export const OCR_READ_DEFAULTS = { threshold: 0, skipTextless: false, region: "frame" } as const satisfies Pick<
     RecorderSettings["ocr"],
-    "threshold" | "skipTextless"
+    "threshold" | "skipTextless" | "region"
 >;
 export type RecorderSettings = z.infer<typeof recorderSettingsSchema>;
 export const recorderSettingsPatchSchema = recorderSettingsSchema
@@ -331,7 +337,7 @@ export const RECORDER_DISPATCH: Record<
             parse(
                 recorderSettingsPatchSchema,
                 params,
-                "any of { activeFps, idleFps, threshold, maxLongSide, heartbeatSec, ocr: { enabled, languages, minChars, threshold, skipTextless } }"
+                "any of { activeFps, idleFps, threshold, maxLongSide, heartbeatSec, ocr: { enabled, languages, minChars, threshold, skipTextless, region } }"
             )
         ),
 };
