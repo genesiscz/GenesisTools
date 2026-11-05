@@ -83,6 +83,7 @@ async function add(
         meaning?: string;
         caseSensitive?: boolean;
         replace?: string;
+        ifAbsent?: boolean;
     }
 ): Promise<void> {
     const type = await resolveEnum({
@@ -127,7 +128,7 @@ async function add(
         if (opts.replace && opts.replace !== entry.value) {
             await store.replaceDictionaryEntry(scopeOf(opts.project), opts.replace, entry);
         } else {
-            await store.putDictionaryEntry(scopeOf(opts.project), entry);
+            await store.putDictionaryEntry(scopeOf(opts.project), entry, { ifAbsent: opts.ifAbsent === true });
         }
 
         ui.ok(
@@ -321,6 +322,10 @@ export function registerDictionaryCommand(program: Command): void {
         .option(
             "--replace <value>",
             "rename: this entry replaces the one with that value in one write (a refused entry keeps the old one)"
+        )
+        .option(
+            "--if-absent",
+            "only add it: an entry with that value in the level is left as it is ([dictionary-exists]), as an Undo needs"
         )
         .action(add);
 

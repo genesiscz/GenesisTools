@@ -273,7 +273,8 @@ final class MeetingsSettingsModel {
     /// The CLI's add replaces the whole entry, so every field the entry keeps is passed: spoken forms, the meaning, and
     /// a fix's letter case.
     static func addEntryArgs(type: String, value: String, substitution: String?, spoken: [String] = [], meaning: String? = nil,
-                             caseSensitive: Bool = false, scope: String?, replacing: String? = nil) -> [String] {
+                             caseSensitive: Bool = false, scope: String?, replacing: String? = nil,
+                             ifAbsent: Bool = false) -> [String] {
         var args = ["dictionary", "add", value]
         if let substitution, !substitution.isEmpty { args.append(substitution) }
         args += ["--type", type]
@@ -284,13 +285,16 @@ final class MeetingsSettingsModel {
         }
         if type == "fix", caseSensitive { args.append("--case-sensitive") }
         if let replacing, replacing != value { args += ["--replace", replacing] }
+        if ifAbsent { args.append("--if-absent") }
         return args
     }
 
+    /// Saves an entry in `scope` (the page's scope unless named: an Undo names the scope its remove had).
     func addEntry(type: String, value: String, substitution: String?, spoken: [String] = [], meaning: String? = nil,
-                  caseSensitive: Bool = false, replacing: String? = nil) {
+                  caseSensitive: Bool = false, replacing: String? = nil, scope: String?? = nil, ifAbsent: Bool = false) {
         let args = Self.addEntryArgs(type: type, value: value, substitution: substitution, spoken: spoken, meaning: meaning,
-                                     caseSensitive: caseSensitive, scope: dictionaryScope, replacing: replacing)
+                                     caseSensitive: caseSensitive, scope: scope ?? dictionaryScope, replacing: replacing,
+                                     ifAbsent: ifAbsent)
         run(key: "dictionary.\(replacing ?? value)", args, done: "Saved \(value)") {
             $0.loadDictionary()
             $0.testPhrase($0.phrase)
@@ -302,9 +306,12 @@ final class MeetingsSettingsModel {
         let scope = entry.level?.hasPrefix("project ") == true ? dictionaryScope : nil
         if let scope { args += ["--project", scope] }
         let restore = entry
+        // The Undo restores into the level the entry left, whatever scope the page shows by then, and only while
+        // nobody made the entry again there.
         run(key: "dictionary.\(entry.value)", args, done: "Removed \(entry.value)", undo: { [weak model = self] in
             model?.addEntry(type: restore.type, value: restore.value, substitution: restore.substitution,
-                           spoken: restore.spoken ?? [], meaning: restore.meaning, caseSensitive: restore.caseSensitive == true)
+                           spoken: restore.spoken ?? [], meaning: restore.meaning, caseSensitive: restore.caseSensitive == true,
+                           scope: .some(scope), ifAbsent: true)
         }) {
             $0.loadDictionary()
             $0.testPhrase($0.phrase)
@@ -363,6 +370,9 @@ final class MeetingsSettingsModel {
             } catch let failure as MeetingsCLI.Failure where failure.code == "config-stale" {
                 notice = Self.staleNotice(failure)
                 loadSettings()
+            } catch let failure as MeetingsCLI.Failure where failure.code == "dictionary-exists" {
+                // An Undo found the entry made again: a retry would be refused the same way.
+                notice = MeetingsNotice(text: failure.sentence, more: failure.detail, tone: .error)
             } catch {
                 notice = .failure(error) { [weak model = self] in model?.run(key: key, args, done: done, undo: undo, saved: saved, then: then) }
             }

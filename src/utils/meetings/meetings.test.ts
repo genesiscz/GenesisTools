@@ -320,6 +320,24 @@ describe("meetings config", () => {
         ]);
     });
 
+    test("an Undo's restore puts the entry back only while nobody made it again in that level", async () => {
+        const config = store();
+        const scope = { kind: "project", project: "work" } as const;
+        await config.addProject("work");
+
+        await config.putDictionaryEntry(
+            scope,
+            { type: "fix", value: "Viky", substitution: "wiki" },
+            { ifAbsent: true }
+        );
+        await expect(
+            config.putDictionaryEntry(scope, { type: "fix", value: "Viky", substitution: "Wiki" }, { ifAbsent: true })
+        ).rejects.toMatchObject({ code: "dictionary-exists" });
+        const read = await config.read();
+        expect(read.projects.work?.dictionary?.entries).toEqual([{ type: "fix", value: "Viky", substitution: "wiki" }]);
+        expect(read.global.dictionary.entries).toEqual([]);
+    });
+
     test("a project gets its dictionary and its expansion; the merged dictionary takes the project's", async () => {
         const config = store();
         expect(await config.addProject("work")).toBe(true);

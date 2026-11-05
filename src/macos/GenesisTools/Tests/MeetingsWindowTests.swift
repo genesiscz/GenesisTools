@@ -218,4 +218,9 @@ final class MeetingsWindowTests: XCTestCase {
                        ["dictionary", "add", "ID", "identity", "--type", "fix", "--case-sensitive"])
         XCTAssertEqual(MeetingsDictionaryRules.spokenForms(" zus tent, ,zu stand "), ["zus tent", "zu stand"])
     }
+
+    func testADictionaryUndoNamesTheLevelItRestoresInto() {
+        XCTAssertEqual(MeetingsSettingsModel.addEntryArgs(type: "fix", value: "Viky", substitution: "wiki", scope: "work", ifAbsent: true),
+                       ["dictionary", "add", "Viky", "wiki", "--type", "fix", "--project", "work", "--if-absent"])
+    }
 }

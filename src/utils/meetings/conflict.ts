@@ -11,6 +11,8 @@ export const MEETINGS_CONFLICT_CODES = [
     "export-unsafe-path",
     /** An item was decided again since the decision an Undo names (`reopen --token`). */
     "item-changed",
+    /** A dictionary entry with that value exists already in the level (`dictionary add --if-absent`). */
+    "dictionary-exists",
 ] as const;
 export type MeetingsConflictCode = (typeof MEETINGS_CONFLICT_CODES)[number];
 

@@ -12,6 +12,7 @@ import {
     type ResolvedDictionary,
 } from "@genesiscz/utils/transcribe/dictionary";
 import { z } from "zod";
+import { MeetingsConflictError } from "./conflict";
 import {
     addPairings,
     type PairedBy,
@@ -628,18 +629,40 @@ export class MeetingsConfigStore {
         return added;
     }
 
-    /** Adds or replaces the entry for `entry.value` in one dictionary level. */
-    async putDictionaryEntry(scope: DictionaryScope, entry: DictionaryEntry): Promise<MeetingsConfig> {
-        return this.putDictionaryEntries(scope, [entry]);
+    /**
+     * Adds or replaces the entry for `entry.value` in one dictionary level. `ifAbsent`: only add it; an entry with that
+     * value in the level (made again since an Undo's remove) is refused with `dictionary-exists`.
+     */
+    async putDictionaryEntry(
+        scope: DictionaryScope,
+        entry: DictionaryEntry,
+        options: { ifAbsent?: boolean } = {}
+    ): Promise<MeetingsConfig> {
+        return this.putDictionaryEntries(scope, [entry], options);
     }
 
-    /** Adds or replaces several entries in one level, in one write. */
-    async putDictionaryEntries(scope: DictionaryScope, added: DictionaryEntry[]): Promise<MeetingsConfig> {
+    /** Adds or replaces several entries in one level, in one write. `ifAbsent`: see `putDictionaryEntry`. */
+    async putDictionaryEntries(
+        scope: DictionaryScope,
+        added: DictionaryEntry[],
+        options: { ifAbsent?: boolean } = {}
+    ): Promise<MeetingsConfig> {
         const values = new Set(added.map((entry) => entry.value));
 
         return this.update((raw) => {
             const level = dictionaryAt(raw, scope);
             const entries = Array.isArray(level.entries) ? (level.entries as Array<{ value?: unknown }>) : [];
+            const present = options.ifAbsent
+                ? entries.find((existing) => typeof existing.value === "string" && values.has(existing.value))
+                : undefined;
+
+            if (present) {
+                throw new MeetingsConflictError(
+                    "dictionary-exists",
+                    `${String(present.value)} is in the ${scope.kind === "project" ? `project ${scope.project}` : "global"} dictionary again; it was left as it is`
+                );
+            }
+
             level.entries = [
                 ...entries.filter((existing) => typeof existing.value !== "string" || !values.has(existing.value)),
                 ...added,
