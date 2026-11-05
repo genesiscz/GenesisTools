@@ -261,6 +261,9 @@ describe("phone wire", () => {
         expect(new Set(ids).size).toBe(ids.length);
         expect(ids).toContain("gt-answer-3-c");
         expect(answerCategoryId(2, "z")).toBe("gt-answer-2");
+        expect(answerCategoryId(2, "B")).toBe("gt-answer-2-b");
+        expect(answerCategoryId(2, " b ")).toBe("gt-answer-2-b");
+        expect(answerCategoryId(2, "bb")).toBe("gt-answer-2");
         expect(letterOfAction("answer:b")).toBe("b");
         expect(letterOfAction(REPLY_ACTION_ID)).toBeNull();
         expect(letterOfAction("com.apple.UNNotificationDefaultActionIdentifier")).toBeNull();
