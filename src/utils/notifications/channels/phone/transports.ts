@@ -93,8 +93,14 @@ export const apnsTransport: PushTransport<Extract<PhoneRoute, { kind: "apns" }>>
 
         return new Promise<PushResult>((resolve) => {
             const client = connect(host);
+            let settled = false;
             const done = (result: PushResult) => {
-                client.close();
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                clearTimeout(timer);
+                client.destroy();
                 resolve(result);
             };
             const timer = setTimeout(
