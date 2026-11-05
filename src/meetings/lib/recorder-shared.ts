@@ -93,6 +93,25 @@ export function readRecorderState(store: MeetingStore): { running: boolean; stat
     return { running, ...(parsed?.success ? { state: parsed.data } : {}) };
 }
 
+/** Sends the stop only while the running recorder is the owner's run (its meeting and start), else undefined. */
+export function requestRecorderStop<T>(
+    store: MeetingStore,
+    owner: { meeting?: string; startedAt?: string },
+    send: () => T
+): T | undefined {
+    const current = readRecorderState(store);
+
+    if (
+        !current.running ||
+        (owner.meeting !== undefined && current.state?.meetingId !== owner.meeting) ||
+        (owner.startedAt !== undefined && current.state?.startedAt !== owner.startedAt)
+    ) {
+        return undefined;
+    }
+
+    return send();
+}
+
 /** `15-23-41-502-d4.jpg`: the frame's local wall time, sortable within a day, and its display. */
 export function frameName(at: Date, displayId: number): string {
     return wallClockFrameName(at, displayId);

@@ -31,7 +31,13 @@ import { ensureScreenRecording } from "../lib/grants";
 import { linkSource } from "../lib/link";
 import { resolveProject } from "../lib/project";
 import { runRecorder, stateDisplays } from "../lib/recorder";
-import { framesOnDisk, meetingLiveId, readRecorderState, recorderAcknowledged } from "../lib/recorder-shared";
+import {
+    framesOnDisk,
+    meetingLiveId,
+    readRecorderState,
+    recorderAcknowledged,
+    requestRecorderStop,
+} from "../lib/recorder-shared";
 import { meetingScreen, type ScreenBoxFrame } from "../lib/screen-boxes";
 import { screenTimeline } from "../lib/screen-timeline";
 import { type SetSettingsFlags, settingsPatchFromFlags } from "../lib/settings-flags";
@@ -378,13 +384,16 @@ async function displayMode(raw: string): Promise<void> {
     }
 }
 
-async function stop(): Promise<void> {
+async function stop(opts: { meeting?: string; startedAt?: string }): Promise<void> {
     const store = new MeetingStore();
     const current = readRecorderState(store);
     ui.dim("Stopping; the recorder converts its last frames, writes the summary and collects first.");
-    const answer = await callRunning(store, (recorder) => recorder.stop());
+    const answer = await callRunning(store, async (recorder) =>
+        requestRecorderStop(store, opts, () => recorder.stop())
+    );
 
-    if (!answer) {
+    if (!answer?.result) {
+        ui.info("That recording has already ended.");
         return;
     }
 
@@ -723,7 +732,12 @@ export function registerRecordCommands(program: Command): void {
         .option("-y, --yes", "never prompt (project, permissions)")
         .action(start);
 
-    record.command("stop").description("Stop the recording and write its summary into the meeting").action(stop);
+    record
+        .command("stop")
+        .description("Stop the recording and write its summary into the meeting")
+        .option("--meeting <id>", "stop only this meeting")
+        .option("--started-at <iso>", "stop only this recorder run")
+        .action(stop);
     record
         .command("pause")
         .description("Pause the recording; the time paused is not recorded")

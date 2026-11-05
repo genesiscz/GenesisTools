@@ -4361,3 +4361,31 @@ test("Teams observation bounds never count as an arrival", () => {
         expect(items.some((item) => item.kind === "speaker-range" && item.speaker === "Newcomer")).toBe(exact);
     }
 });
+
+test("stale stop actions cannot stop a different meeting or recorder run", async () => {
+    const { requestRecorderStop, recorderFiles } = await import("./lib/recorder-shared");
+    const store = new MeetingStore(new Storage("stop-owner-fixture"));
+    const files = recorderFiles(store);
+    writePidFile(files.pid, { pid: process.pid });
+    writeFileSync(
+        files.state,
+        SafeJSON.stringify({
+            meetingId: "meeting-b",
+            pid: process.pid,
+            startedAt: meeting.start,
+            display: 1,
+            frames: 0,
+            bytes: 0,
+        })
+    );
+    let sent = 0;
+    const send = () => {
+        sent += 1;
+        return true;
+    };
+    expect(requestRecorderStop(store, { meeting: "meeting-a", startedAt: meeting.start }, send)).toBeUndefined();
+    expect(requestRecorderStop(store, { meeting: "meeting-b", startedAt: "old-run" }, send)).toBeUndefined();
+    expect(sent).toBe(0);
+    expect(requestRecorderStop(store, { meeting: "meeting-b", startedAt: meeting.start }, send)).toBe(true);
+    expect(sent).toBe(1);
+});
