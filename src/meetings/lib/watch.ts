@@ -136,7 +136,12 @@ async function retryFailed(options: {
 
     const result = await deps.run(["meetings", "record", "start", "--meeting", auto.meetingId, "--yes"]);
     log.info({ meeting: auto.meetingId, exitCode: result.exitCode }, "failed recording started again");
-    writeAuto(store, { ...auto, retriedAt: new Date(now).toISOString() });
+    const restarted = result.success ? deps.recorder().state : undefined;
+    writeAuto(store, {
+        ...auto,
+        retriedAt: new Date(now).toISOString(),
+        ...(restarted?.meetingId === auto.meetingId ? { recorderStartedAt: restarted.startedAt } : {}),
+    });
     return result.success ? "started" : "failed";
 }
 
