@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { silentCallSpans } from "@genesiscz/utils/meetings/energy";
 import { type MeetingItem, type MeetingRecord, meetingItemSchema, nextId } from "@genesiscz/utils/meetings/record";
 import { MeetingRule } from "@genesiscz/utils/meetings/rules";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
@@ -29,6 +30,7 @@ import {
 import { arrivalItems } from "./arrival";
 import { selectQuestions } from "./question-select";
 import { DEFAULT_LISTEN_BELOW, questionFor, questionKey } from "./questions";
+import { unlabeledStretches, unlabeledView } from "./unlabeled";
 
 const { log } = logger.scoped("meetings-suggest");
 
@@ -159,7 +161,12 @@ function speakerItems(options: {
                 joined: hint.join.joined,
                 confidence: CONFIDENCE.join,
                 rules: ["split-word", "lone-label"],
-                evidence: { label: hint.label, left: hint.join.left, right: hint.join.right },
+                evidence: {
+                    label: hint.label,
+                    left: hint.join.left,
+                    right: hint.join.right,
+                    ...(hint.join.line !== undefined ? { transcriptLine: hint.join.line } : {}),
+                },
             });
         }
     }
@@ -170,7 +177,7 @@ function speakerItems(options: {
 interface TermSources {
     meeting: SourceMeeting;
     record: MeetingRecord;
-    /** How a quote names its source (`global.render`): "(čte z WikiProposals, ř. 33)". */
+    /** How a quote names its source (`languages.<global.language>.render`): "(čte z WikiProposals, ř. 33)". */
     sourceLabels?: { readAloudLabel: string; lineLabel: string };
     dictionary: ResolvedDictionary;
     sourceWords: DictionaryCandidate[];
@@ -225,7 +232,12 @@ function documentItems(options: TermSources): NewItem[] {
                           },
                           confidence: Math.min(0.95, quote.score),
                           rules: [MeetingRule.ReadAloud],
-                          evidence: { doc: quote.doc, line: quote.line, shared: quote.shared },
+                          evidence: {
+                              doc: quote.doc,
+                              line: quote.line,
+                              shared: quote.shared,
+                              transcriptLine: quote.entry,
+                          },
                       },
                   ];
         }),
@@ -242,7 +254,7 @@ function documentItems(options: TermSources): NewItem[] {
                           meaning: match.identifier,
                           confidence: Math.min(0.9, 0.5 + 0.1 * match.matched),
                           rules: [MeetingRule.SpokenIdentifier],
-                          evidence: { matched: match.matched, of: match.score },
+                          evidence: { matched: match.matched, of: match.score, transcriptLine: match.entry },
                       },
                   ];
         }),
@@ -369,7 +381,7 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
     const applyAt = (dictionary.fuzzy ?? DEFAULT_FUZZY).apply;
     const fuzzy = new Map<
         string,
-        { heard: string; value: string; score: number; atSec?: number; occurrences: number }
+        { heard: string; value: string; score: number; atSec?: number; line?: number; occurrences: number }
     >();
 
     for (const match of fuzzyMatches(meeting.transcript, dictionary).filter(
@@ -382,6 +394,7 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
             value: match.value,
             score: match.score,
             atSec: seen?.atSec ?? meeting.transcript[match.line]?.startSec,
+            line: seen ? seen.line : match.line,
             occurrences: (seen?.occurrences ?? 0) + 1,
         });
     }
@@ -394,7 +407,10 @@ function termItems(options: TermSources & { wordCheck?: WordCheck }): NewItem[] 
         ...(match.atSec !== undefined ? { atSec: match.atSec } : {}),
         confidence: Math.round(match.score * 100) / 100,
         rules: [MeetingRule.DictionaryFuzzy],
-        evidence: { occurrences: match.occurrences },
+        evidence: {
+            occurrences: match.occurrences,
+            ...(match.atSec !== undefined && match.line !== undefined ? { transcriptLine: match.line } : {}),
+        },
     }));
 
     return [
@@ -716,6 +732,216 @@ function findingFor(options: {
     return undefined;
 }
 
+/** A silent call stretch counts when two labels each hold this share of its lines, or E3 shows others this often. */
+const SILENT_CALL_LABEL_SHARE = 0.15;
+const SILENT_CALL_SHOWN_SHARE = 0.2;
+/** A platform-named label with this share of the microphone's sure lines (and some call lines) is another person. */
+const LOCAL_VOICE_SHARE = 0.25;
+const LOCAL_VOICE_MIN_LINES = 30;
+const LOCAL_VOICE_CALL_SHARE = 0.1;
+const LOCAL_VOICE_CONFIDENCE = 0.4;
+/** With a second voice on the microphone, its larger voice is the user's, but not sure enough to skip a listen. */
+const OWNER_WITH_LOCAL_VOICE_MAX = 0.7;
+/** The label with the most microphone lines leads the next one by this factor before it may stand for the user. */
+const LABEL_VOICE_MARGIN = 1.25;
+const LABEL_VOICE_CONFIDENCE = 0.5;
+/**
+ * E3 showing one remote person for this long while this share of the lines is the microphone's is stuck: a live
+ * indicator lets go while the user talks. Measured: 6.7 and 30 min stuck on 2026-11-03 (62 % and 46 % microphone
+ * lines), and at most 5.4 min with 25 % on a meeting where it worked.
+ */
+const STUCK_MIN_SEC = 360;
+const STUCK_MIN_LINES = 20;
+const STUCK_MIC_SHARE = 0.35;
+const STUCK_CALL_LINES = 5;
+
+interface Span {
+    fromSec: number;
+    toSec: number;
+}
+
+interface MicrophoneVoices {
+    owner?: string;
+    ownerLeads: boolean;
+    others: Set<string>;
+}
+
+function micSure(line: LineEvidence): boolean {
+    return line.energyMic !== undefined
+        ? line.energyMic >= ENERGY_MIC_SURE
+        : line.winner === SELF && (line.micShare ?? 0) >= CHANNEL_SHARE;
+}
+
+function callSure(line: LineEvidence): boolean {
+    return line.energyMic !== undefined
+        ? line.energyMic <= ENERGY_CALL_SURE
+        : line.winner !== undefined && line.winner !== SELF && (line.micShare ?? 1) <= 1 - CHANNEL_SHARE;
+}
+
+function within(spans: Span[], sec: number): boolean {
+    return spans.some((span) => sec >= span.fromSec && sec < span.toSec);
+}
+
+/**
+ * The stretches where E1 says nothing: the call's channel stayed silent for 5 min or more while two labels talked,
+ * or while E3 showed other people speaking. The microphone then carried the call's voices as well (the call played
+ * through the room's speakers), so a microphone line there may be anyone.
+ */
+function unusableChannelSpans(
+    lines: LineEvidence[],
+    share: ((fromSec: number, toSec: number) => number | undefined) | undefined,
+    selfName: string
+): Span[] {
+    if (!share || lines.length === 0) {
+        return [];
+    }
+
+    const end = Math.max(...lines.map((line) => line.endSec));
+
+    return silentCallSpans(share, 0, end).filter((span) => {
+        const inside = lines.filter((line) => within([span], line.startSec));
+        const perLabel = new Map<string, number>();
+
+        for (const line of inside) {
+            perLabel.set(line.label, (perLabel.get(line.label) ?? 0) + 1);
+        }
+
+        const talking = [...perLabel.values()].filter((count) => count >= SILENT_CALL_LABEL_SHARE * inside.length);
+        const shownOthers = inside.filter((line) =>
+            Object.keys(line.speaking).some((name) => !sameName(name, selfName))
+        ).length;
+
+        return inside.length > 0 && (talking.length >= 2 || shownOthers >= SILENT_CALL_SHOWN_SHARE * inside.length);
+    });
+}
+
+/** The lines whose E3 reading is stuck: one remote person shown through a long stretch with many microphone lines. */
+function stuckIndicator(lines: LineEvidence[], selfName: string): Set<number> {
+    const stuck = new Set<number>();
+    const shownKey = (line: LineEvidence) =>
+        Object.keys(line.speaking)
+            .filter((name) => !sameName(name, selfName))
+            .sort()
+            .join("|");
+    let start = 0;
+
+    while (start < lines.length) {
+        const key = shownKey(lines[start]!);
+        let end = start;
+
+        while (end + 1 < lines.length && shownKey(lines[end + 1]!) === key) {
+            end += 1;
+        }
+
+        const run = lines.slice(start, end + 1);
+        const long = run.length >= STUCK_MIN_LINES && run.at(-1)!.endSec - run[0]!.startSec >= STUCK_MIN_SEC;
+
+        if (key && !key.includes("|") && long) {
+            const mic = run.filter(micSure).length;
+            const call = run.filter(callSure).length;
+
+            if (mic >= STUCK_MIC_SHARE * run.length && call >= STUCK_CALL_LINES) {
+                for (const line of run) {
+                    stuck.add(line.index);
+                }
+            }
+        }
+
+        start = end + 1;
+    }
+
+    return stuck;
+}
+
+/**
+ * Who the microphone's labels are where the channels work. `owner`: the label with the most sure microphone lines
+ * (the user's voice), and whether it leads clearly enough to stand for the user where the channels fail. `others`:
+ * the platform-named labels that also hold a large share of the sure microphone lines next to call lines of their
+ * own, so a second person in the room talks into the microphone under them (R18).
+ */
+function microphoneVoices(lines: LineEvidence[], selfName: string, platformLabels: Set<string>): MicrophoneVoices {
+    const mic = new Map<string, number>();
+    const call = new Map<string, number>();
+    const all = new Map<string, number>();
+
+    for (const line of lines) {
+        all.set(line.label, (all.get(line.label) ?? 0) + 1);
+        mic.set(line.label, (mic.get(line.label) ?? 0) + (micSure(line) ? 1 : 0));
+        call.set(line.label, (call.get(line.label) ?? 0) + (callSure(line) ? 1 : 0));
+    }
+
+    const ranked = [...mic.entries()].filter(([, count]) => count > 0).sort((a, b) => b[1] - a[1]);
+    const total = ranked.reduce((sum, [, count]) => sum + count, 0);
+    const top = ranked[0];
+    const ownerLeads = top !== undefined && (ranked[1]?.[1] ?? 0) * LABEL_VOICE_MARGIN <= top[1];
+    const others = new Set(
+        ranked
+            .filter(
+                ([label, count]) =>
+                    label !== top?.[0] &&
+                    !sameName(label, selfName) &&
+                    platformLabels.has(label) &&
+                    count >= Math.max(LOCAL_VOICE_MIN_LINES, LOCAL_VOICE_SHARE * total) &&
+                    (call.get(label) ?? 0) >= LOCAL_VOICE_CALL_SHARE * (all.get(label) ?? 1)
+            )
+            .map(([label]) => label)
+    );
+
+    return { ...(top ? { owner: top[0] } : {}), ownerLeads, others };
+}
+
+/**
+ * R18 and R19 over the finding of one line. Where the channels fail, only the microphone's own label stands for the
+ * user (0.5, to listen). A second person's sure microphone line is not the user's: the people in the call are the
+ * candidates (0.4). With such a person in the room, the user's sure microphone lines are capped at 0.7 and asked,
+ * and a line the microphone does not clearly hold stays its label's.
+ */
+function localVoiceFinding(options: {
+    line: LineEvidence;
+    selfName: string;
+    isSelfLabel: boolean;
+    voices: MicrophoneVoices;
+    unusable: boolean;
+    found: EvidenceFinding | undefined;
+}): EvidenceFinding | undefined {
+    const { line, selfName, voices, found } = options;
+
+    if (options.unusable) {
+        return !options.isSelfLabel && voices.ownerLeads && line.label === voices.owner
+            ? { speaker: selfName, rules: [MeetingRule.LabelVoice], confidence: LABEL_VOICE_CONFIDENCE, listen: true }
+            : undefined;
+    }
+
+    if (voices.others.has(line.label) && micSure(line)) {
+        const present = line.present?.filter((name) => !sameName(name, selfName));
+        return {
+            candidates: shownFirst(
+                present,
+                speakingNames(line).filter((name) => !sameName(name, selfName))
+            ),
+            rules: [MeetingRule.Channel, MeetingRule.LocalVoice],
+            confidence: LOCAL_VOICE_CONFIDENCE,
+            listen: true,
+        };
+    }
+
+    if (voices.others.size > 0 && found?.speaker === selfName) {
+        // Two people in the room: a line the microphone does not clearly hold is either of them, or the call.
+        if (!micSure(line)) {
+            return undefined;
+        }
+
+        return {
+            ...found,
+            rules: [...found.rules, MeetingRule.LocalVoice],
+            confidence: Math.min(OWNER_WITH_LOCAL_VOICE_MAX, found.confidence),
+            listen: true,
+        };
+    }
+
+    return found;
+}
+
 function evidenceItems(options: {
     meeting: SourceMeeting;
     evidence: MeetingEvidence;
@@ -731,7 +957,23 @@ function evidenceItems(options: {
 
     // Teams attendance names the user by email; here the user is always `selfName`.
     const presence = options.presence?.map((stay) => (stay.self ? { ...stay, name: selfName } : stay));
-    const lines = lineEvidence(options.meeting.transcript, options.evidence, presence, options.energyMicShare);
+    const measured = lineEvidence(options.meeting.transcript, options.evidence, presence, options.energyMicShare);
+    const unusable = unusableChannelSpans(measured, options.energyMicShare, selfName);
+    const stuck = stuckIndicator(measured, selfName);
+    const lines = measured.map((line) => {
+        const shown = stuck.has(line.index) ? { ...line, speaking: {} } : line;
+
+        return within(unusable, line.startSec)
+            ? {
+                  ...shown,
+                  micShare: undefined,
+                  winner: undefined,
+                  winnerShare: undefined,
+                  energyMic: undefined,
+                  echo: undefined,
+              }
+            : shown;
+    });
     const items: NewItem[] = [];
     let open:
         | {
@@ -759,6 +1001,12 @@ function evidenceItems(options: {
     const platformLabels = new Set(
         options.meeting.speakers.filter((speaker) => speaker.origin === "platform").map((speaker) => speaker.name)
     );
+    const voices = microphoneVoices(
+        lines.filter((line) => !within(unusable, line.startSec)),
+        selfName,
+        platformLabels
+    );
+    log.debug({ unusable, stuckLines: stuck.size, ...voices, others: [...voices.others] }, "microphone voices");
     const byLabel = new Map<string, LineEvidence[]>();
 
     for (const line of lines) {
@@ -801,12 +1049,20 @@ function evidenceItems(options: {
         const isSelfLabel = sameName(label, selfName);
 
         for (const line of labelLines) {
-            const finding = findingFor({
+            const found = findingFor({
                 line,
                 selfName,
                 isSelfLabel,
                 platformLabel: platformLabels.has(label),
                 ownLabelNearby: nearbyLabels(line),
+            });
+            const finding = localVoiceFinding({
+                line,
+                selfName,
+                isSelfLabel,
+                voices,
+                unusable: within(unusable, line.startSec),
+                found,
             });
 
             // A range holds only consecutive lines with its finding: a line without one stays its label's.
@@ -872,6 +1128,10 @@ function itemKey(item: NewItem | MeetingItem): string {
         return questionKey(item);
     }
 
+    if (item.kind === "label") {
+        return `label|${item.label}|${Math.round(item.fromSec)}|${Math.round(item.toSec)}`;
+    }
+
     const scope = item.scope ?? (item.quote || item.meaning ? "line" : "everywhere");
     const place = `|${scope}${scope === "line" ? `|${item.meaning ?? ""}|${item.atSec ?? 0}` : ""}`;
     return `term|${item.heard.toLowerCase()}|${item.proposed ?? ""}${place}`;
@@ -914,17 +1174,20 @@ export function suggestItems(options: {
     listenBelow?: number;
     /** The summary's action items and decisions: a range that cites one matters more. */
     points?: SummaryPoint[];
-    /** At most this many questions, speakers and terms together (`playback.listen.budget`). */
+    /** At most this many questions, speakers and terms together (`global.suggest.questionCap`). */
     questionBudget?: number;
     /** No question under this priority (`playback.listen.minPriority`). */
     minPriority?: number;
     /** Tells ordinary words from unknown ones for the term rules; without it they skip every Czech word. */
     wordCheck?: WordCheck;
-    /** How a quote names its source (`global.render`). */
+    /** How a quote names its source (`languages.<global.language>.render`). */
     sourceLabels?: { readAloudLabel: string; lineLabel: string };
     now: string;
 }): MeetingItem[] {
-    const { record, meeting } = options;
+    const { record } = options;
+    // A label item says the label tracks no one person in its stretch: the speaker rules see those lines unlabeled.
+    const unlabeled = unlabeledView(options.meeting, unlabeledStretches(record.items));
+    const meeting = unlabeled.meeting;
     const found: NewItem[] = [];
 
     if (options.rules.includes("speakers")) {
@@ -964,6 +1227,8 @@ export function suggestItems(options: {
         );
     }
 
+    found.splice(0, found.length, ...found.map(unlabeled.restore));
+
     if (options.rules.includes("terms")) {
         found.push(...termItems(options));
     }
@@ -998,8 +1263,7 @@ export function suggestItems(options: {
     const context = {
         listenBelow: options.listenBelow ?? DEFAULT_LISTEN_BELOW,
         presence: options.presence,
-        selfName: record.participants.find((person) => person.self)?.name,
-        transcript: meeting.transcript,
+        transcript: options.meeting.transcript,
         points: options.points ?? [],
     };
     const askedItems = new Set(record.items.flatMap((item) => (item.kind === "question" ? item.decides : [])));
