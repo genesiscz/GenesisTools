@@ -132,11 +132,9 @@ final class PRReadinessStore: ObservableObject {
             let batches = stride(from: 0, to: inputs.count, by: PRReadinessQuery.batch).map {
                 Array(inputs[$0..<min($0 + PRReadinessQuery.batch, inputs.count)])
             }
-            for round in stride(from: 0, to: batches.count, by: 1) {
-                let group = [batches[round]]
-                let spans = group.map { HubPerf.begin("prs.readiness", "\($0.count) prs", awaits: true) }
-                let results = await Self.fetch(group)
-                for (span, result) in zip(spans, results) {
+            let spans = batches.map { HubPerf.begin("prs.readiness", "\($0.count) prs", awaits: true) }
+            await Self.fetch(batches) { [self] index, result in
+                let span = spans[index]
                     switch result {
                     case .success(let outcomes):
                         let found = outcomes.compactMap(\.readiness)
@@ -158,7 +156,6 @@ final class PRReadinessStore: ObservableObject {
                     case .failure(let error):
                         span.end("failed: \(error)")
                     }
-                }
             }
             loading = false
             if let next = pending {
@@ -168,23 +165,31 @@ final class PRReadinessStore: ObservableObject {
         }
     }
 
-    /// The batches' answers in batch order, the calls run side by side off the main thread.
-    nonisolated private static func fetch(_ batches: [[String]]) async -> [Result<[PRReadinessOutcome], Error>] {
+    /// At most three calls run at once; every answer is published before waiting for another call.
+    nonisolated static func fetch(
+        _ batches: [[String]],
+        run: @escaping @Sendable ([String]) async -> Result<[PRReadinessOutcome], Error> = { batch in
+            Result {
+                let capture = try ToolsCLIRunner.capture(["hub", "pr", "readiness"] + batch + ["--json", "--max-cache-age", "600"], timeout: 120)
+                return try JSONDecoder().decode([PRReadinessOutcome].self, from: capture.stdout)
+            }
+        },
+        receive: @escaping @MainActor (Int, Result<[PRReadinessOutcome], Error>) async -> Void
+    ) async {
         await withTaskGroup(of: (Int, Result<[PRReadinessOutcome], Error>).self) { group in
-            for (index, batch) in batches.enumerated() {
-                group.addTask(priority: .utility) {
-                    (index, Result {
-                        // Exit 1 means "some failed"; each outcome carries its own error.
-                        let capture = try ToolsCLIRunner.capture(["hub", "pr", "readiness"] + batch + ["--json", "--max-cache-age", "600"], timeout: 120)
-                        return try JSONDecoder().decode([PRReadinessOutcome].self, from: capture.stdout)
-                    })
+            let initial = min(PRReadinessQuery.parallel, batches.count)
+            for index in 0..<initial {
+                group.addTask(priority: .utility) { (index, await run(batches[index])) }
+            }
+            var next = initial
+            while let (index, result) = await group.next() {
+                await receive(index, result)
+                if next < batches.count {
+                    let added = next
+                    next += 1
+                    group.addTask(priority: .utility) { (added, await run(batches[added])) }
                 }
             }
-            var results = [Result<[PRReadinessOutcome], Error>](repeating: .failure(CancellationError()), count: batches.count)
-            for await (index, result) in group {
-                results[index] = result
-            }
-            return results
         }
     }
 }

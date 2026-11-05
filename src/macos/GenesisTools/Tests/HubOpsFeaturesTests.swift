@@ -155,6 +155,27 @@ final class HubOpsFeaturesTests: XCTestCase {
         XCTAssertEqual(PRMetaLineLayout.widths(ideal: [40, 0, 4, 30, 50], width: 400), [40, 0, 0, 30, 50])
     }
 
+    @MainActor
+    func testReadinessRunsThreeCallsAndPublishesBeforeSlowCallsFinish() async {
+        let probe = ReadinessConcurrencyProbe()
+        var received: [Int] = []
+        var activeAtFirst = 0
+        await PRReadinessStore.fetch((0..<6).map { [String($0)] }, run: { batch in
+            await probe.begin()
+            try? await Task.sleep(for: .milliseconds(batch[0] == "0" ? 100 : 300))
+            await probe.end()
+            return .success([])
+        }, receive: { index, _ in
+            if received.isEmpty { activeAtFirst = await probe.active }
+            received.append(index)
+        })
+        let maximum = await probe.maximum
+        XCTAssertEqual(maximum, 3)
+        XCTAssertEqual(Set(received), Set(0..<6))
+        XCTAssertEqual(received.first, 0)
+        XCTAssertGreaterThan(activeAtFirst, 0, "the fast priority answer is published while slower calls still run")
+    }
+
     func testReadinessAsksForOpenPRsOnlyWithTheirKnownHead() throws {
         let prs = [try decodePR(state: "OPEN", headSha: "aaaa"), try decodePR(state: "MERGED", headSha: "bbbb", number: 13),
                    try decodePR(state: "OPEN", headSha: nil, number: 14)]
@@ -191,4 +212,11 @@ final class HubOpsFeaturesTests: XCTestCase {
         XCTAssertEqual(WorktreeCleanup.listArgs(repos: ["/r"], olderThanDays: 0), ["hub", "worktrees", "list", "/r", "--json"])
         XCTAssertEqual(WorktreeCleanup.listArgs(repos: ["/r"], olderThanDays: 7), ["hub", "worktrees", "list", "/r", "--older-than", "7", "--json"])
     }
+}
+
+private actor ReadinessConcurrencyProbe {
+    private(set) var active = 0
+    private(set) var maximum = 0
+    func begin() { active += 1; maximum = max(maximum, active) }
+    func end() { active -= 1 }
 }
