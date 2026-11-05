@@ -2143,9 +2143,13 @@ final class WidgetStagingTests: XCTestCase {
         model.select(key)
         let card = try XCTUnwrap(model.cards.first)
         XCTAssertEqual(model.stagedForLeave.map(\.sourceId), ["d1"], "a staged pick before its send")
+        model.markPending(card.sourceId, "a", item: WidgetModel.inboxItem(card))
         model.sendStaged([card.sourceId])
         await fulfillment(of: [started], timeout: 1)
         XCTAssertTrue(model.stagedForLeave.isEmpty, "a decision on its way is not staged")
+        model.receive([try snapshot(draftOption: "a")])
+        XCTAssertNil(model.pendingStage[card.sourceId], "the snapshot confirmed the local stage")
+        XCTAssertTrue(model.stagedForLeave.isEmpty, "confirmation preserves the identity of the stage being sent")
         model.expanded = .right
         model.requestCollapse()
         XCTAssertFalse(model.stagedLeavePrompt, "leaving while the send runs asks nothing")

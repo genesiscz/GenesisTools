@@ -359,6 +359,7 @@ extension WidgetModel {
         pendingStageNotes = pendingStageNotes.filter { pendingStage[$0.key] != nil }
         pendingStageVersions = pendingStageVersions.filter {
             pendingStage[$0.key] != nil || pendingStagesInFlight.contains($0.value)
+                || (sendingDecisionIDs.contains($0.key) && sendingStageVersions[$0.key] == $0.value)
         }
     }
 
