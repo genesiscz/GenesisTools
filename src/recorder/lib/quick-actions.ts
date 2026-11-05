@@ -1,8 +1,8 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
-import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { type RecordingStoreId, recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { exportAs } from "./edit";
 import { movieOf, RECORDING_SOURCE_MOVIES } from "./library";
 
@@ -53,18 +53,6 @@ export function currentGif(folder: string): string | undefined {
     return changed ? undefined : gif.path;
 }
 
-/** Whether the folder is a meeting's (`~/.genesis-tools/meetings/<id>/`): it holds the whole meeting. */
-export function isMeetingFolder(folder: string, meetingsRoot = genesisToolsDir("meetings")): boolean {
-    const root = resolve(meetingsRoot) + sep;
-    return resolve(folder).startsWith(root);
-}
-
-/** The meeting record of a meeting's screen recording; undefined for a library recording. */
-export function meetingOf(folder: string, meetingsRoot = genesisToolsDir("meetings")): string | undefined {
-    const record = join(folder, "meeting.json");
-    return isMeetingFolder(folder, meetingsRoot) && existsSync(record) ? record : undefined;
-}
-
 async function run(argv: string[]): Promise<void> {
     const child = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
     const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
@@ -113,7 +101,7 @@ export async function copyRecording(folder: string, { gif = false }: { gif?: boo
 
 /** Shows the recording's folder in Finder (its meeting's record for a meeting with `meeting`). */
 export async function revealRecording(folder: string, { meeting = false }: { meeting?: boolean } = {}) {
-    const target = meeting ? meetingOf(folder) : folder;
+    const target = meeting ? recordingStoreOf(folder)?.recordOf?.(folder) : folder;
 
     if (!target) {
         throw new Error(`${folder} is not a meeting's recording, so it has no meeting to open`);
@@ -123,11 +111,19 @@ export async function revealRecording(folder: string, { meeting = false }: { mee
     return { revealed: target };
 }
 
-/** Moves a library recording to the Trash (Finder's Put Back undoes it). A meeting's folder is refused. */
-export async function trashRecording(folder: string, { meetingsRoot }: { meetingsRoot?: string } = {}) {
-    if (isMeetingFolder(folder, meetingsRoot)) {
+/**
+ * Moves a library recording to the Trash (Finder's Put Back undoes it). A folder its store keeps (a meeting's) is
+ * refused. `roots` replaces a store's root, for a test.
+ */
+export async function trashRecording(
+    folder: string,
+    { roots }: { roots?: Partial<Record<RecordingStoreId, string>> } = {}
+) {
+    const kept = recordingStoreOf(folder, roots)?.kept;
+
+    if (kept) {
         throw new Error(
-            `${folder} is a meeting's screen recording; its folder holds the whole meeting, so it stays. Remove the meeting with ${toolCommand("meetings")}.`
+            `${folder} is ${kept.what}; ${kept.reason}, so it stays. Remove it with ${toolCommand(kept.tool)}.`
         );
     }
 

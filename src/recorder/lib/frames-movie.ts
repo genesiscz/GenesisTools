@@ -1,7 +1,7 @@
-import { existsSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 import { meetingEditorSource } from "@app/meetings/lib/editor-project";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { type RecordingStoreId, recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
 import {
     type DisplayPlan,
     type DisplayRange,
@@ -11,18 +11,10 @@ import {
     readDisplayPlan,
 } from "./proxy";
 
-/**
- * proxy.mp4 for a frames folder; a meeting's folder also gets its recording.json and the transcript as captions with
- * the speakers' names (meetingEditorSource).
- */
-export async function prepareFramesMovie(
-    folder: string,
-    options: ProxyOptions
-): Promise<ProxyResult & { transcript?: string; captions?: number }> {
-    if (!existsSync(join(folder, "meeting.json"))) {
-        return makeProxy(folder, options);
-    }
+type FramesMovie = ProxyResult & { transcript?: string; captions?: number };
 
+/** A meeting's folder also gets its recording.json and the transcript as captions with the speakers' names. */
+async function meetingFramesMovie(folder: string, options: ProxyOptions): Promise<FramesMovie> {
     const store = new MeetingStore();
     const record = store.read(basename(folder));
 
@@ -36,6 +28,18 @@ export async function prepareFramesMovie(
         ...(prepared.transcript ? { transcript: prepared.transcript } : {}),
         captions: prepared.captions,
     };
+}
+
+/** How each recording store makes the movie of a frames folder. */
+const FRAMES_MOVIES: Record<RecordingStoreId, (folder: string, options: ProxyOptions) => Promise<FramesMovie>> = {
+    recordings: makeProxy,
+    meetings: meetingFramesMovie,
+};
+
+/** proxy.mp4 for a frames folder, made the way its store makes one; a folder in no store gets the plain proxy. */
+export async function prepareFramesMovie(folder: string, options: ProxyOptions): Promise<FramesMovie> {
+    const store = recordingStoreOf(folder);
+    return store ? FRAMES_MOVIES[store.id](folder, options) : makeProxy(folder, options);
 }
 
 /**

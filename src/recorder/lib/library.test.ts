@@ -6,6 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
 import { applyOp, wholeProject } from "@genesiscz/utils/recording-editor/project";
+import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { keptPlan } from "./frames-movie";
 import { editorOpenStatePath, movieOf, readEditorOpenState, resolveRecording } from "./library";
 import {
@@ -18,7 +19,7 @@ import {
     proxyCanvas,
     proxyVideoFilter,
 } from "./proxy";
-import { currentGif, isMeetingFolder, meetingOf, shareableMovie, trashRecording } from "./quick-actions";
+import { currentGif, shareableMovie, trashRecording } from "./quick-actions";
 import { findOnScreen } from "./screen-search";
 
 function writeState(state: Record<string, unknown>): void {
@@ -311,12 +312,15 @@ describe("a recording's quick actions", () => {
         mkdirSync(meeting);
         writeFileSync(join(meeting, "meeting.json"), "{}");
 
-        expect(isMeetingFolder(meeting, meetings)).toBe(true);
-        expect(isMeetingFolder(`${meetings}-other/x`, meetings)).toBe(false);
-        expect(meetingOf(meeting, meetings)).toBe(join(meeting, "meeting.json"));
-        expect(meetingOf(folderWith([["screen.mp4", 0]]), meetings)).toBeUndefined();
+        const roots = { meetings };
+        const store = recordingStoreOf(meeting, roots);
+
+        expect(store?.id).toBe("meetings");
+        expect(recordingStoreOf(`${meetings}-other/x`, roots)).toBeUndefined();
+        expect(store?.recordOf?.(meeting)).toBe(join(meeting, "meeting.json"));
+        expect(store?.recordOf?.(folderWith([["screen.mp4", 0]]))).toBeUndefined();
         // The refusal comes before anything is moved: the folder is still there.
-        await expect(trashRecording(meeting, { meetingsRoot: meetings })).rejects.toThrow("holds the whole meeting");
+        await expect(trashRecording(meeting, { roots })).rejects.toThrow("holds the whole meeting");
         expect(existsSync(join(meeting, "meeting.json"))).toBe(true);
     });
 });

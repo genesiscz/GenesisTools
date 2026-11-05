@@ -1,10 +1,10 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { readRecordingManifest, recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
-import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { type RecordingStoreId, recordingStores } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import type { VideoInfo } from "@genesiscz/utils/video/types";
-import type { EditSource } from "./plan";
+import { type EditSource, STORES } from "./plan";
 
 /** A frame of a frames source (a recording or meeting folder): its file, time from the first frame, display. */
 export interface SourceFrame {
@@ -26,7 +26,7 @@ export interface LocatedSource {
         mtimeMs: number;
         frames?: Array<{ path: string; size: number; mtimeMs: number }>;
     };
-    store?: "recordings" | "meetings";
+    store?: RecordingStoreId;
     id?: string;
 }
 
@@ -57,24 +57,13 @@ function fileFingerprint(path: string): LocatedSource["fingerprint"] {
 }
 
 /** The folder whose frames a recording id names, in the recordings store first, then the meetings store. */
-function recordingFolder(
-    id: string,
-    store?: "recordings" | "meetings"
-): { path: string; store: "recordings" | "meetings" } {
-    const candidates: Array<{ path: string; store: "recordings" | "meetings" }> = [];
-
-    if (store !== "meetings") {
-        candidates.push({ path: recordingsLibraryDir(id), store: "recordings" });
-    }
-
-    if (store !== "recordings") {
-        candidates.push({ path: toolDataDir("meetings", id, "frames"), store: "meetings" });
-    }
-
-    const found = candidates.find((candidate) => existsSync(candidate.path));
+function recordingFolder(id: string, store?: RecordingStoreId): { path: string; store: RecordingStoreId } {
+    const found = recordingStores(store)
+        .map((candidate) => ({ path: candidate.framesOf(id), store: candidate.id }))
+        .find((candidate) => existsSync(candidate.path));
 
     if (!found) {
-        throw new Error(`No recording "${id}" in the ${store ?? "recordings or meetings"} store`);
+        throw new Error(`No recording "${id}" in the ${store ?? STORES.join(" or ")} store`);
     }
 
     return found;
