@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from "node:fs";
+import { type BigIntStats, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { FolderReads, RankedHit, ResolvedTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -31,18 +31,62 @@ export function mtimeOf(path: string): number {
 }
 
 /**
+ * Folder listings by path, each served again only while the folder's inode, mtime and ctime read the same: adding,
+ * removing or renaming an entry changes the folder's own mtime and ctime, so a served listing is never staler than a
+ * `readdir`. A widget roster read listed all 481 Claude project folders (13,110 entries) about four times, 74 ms of
+ * CPU per read; with a stat per folder a pass costs 2.3 to 3.2 ms instead of 16 to 19 (2026-11-05).
+ */
+const listings = new Map<string, { ino: bigint; mtimeNs: bigint; ctimeNs: bigint; entries: string[] }>();
+const LISTING_CACHE_LIMIT = 4000;
+const LISTING_SETTLED_NS = 2_000_000_000n;
+
+/**
  * Most project folders have no `subagents/` and most homes no `~/.config/claude`, so a missing path is the normal
  * answer. Logged with its stack it was 80% of the day log (159,223 of 200,000 lines on 2026-11-01, about 1 GB a day).
  */
 export function listDir(path: string): string[] {
+    let status: BigIntStats;
     try {
-        return readdirSync(path);
+        status = statSync(path, { bigint: true });
     } catch (err) {
+        if (!isMissingFileError(err)) {
+            logger.debug({ err, path }, "[transcripts] could not stat a directory");
+        }
+        return [];
+    }
+
+    const cached = listings.get(path);
+    if (cached && cached.ino === status.ino && cached.mtimeNs === status.mtimeNs && cached.ctimeNs === status.ctimeNs) {
+        listings.delete(path);
+        listings.set(path, cached);
+        return [...cached.entries];
+    }
+
+    let entries: string[];
+    try {
+        entries = readdirSync(path);
+    } catch (err) {
+        listings.delete(path);
         if (!isMissingFileError(err)) {
             logger.debug({ err, path }, "[transcripts] could not list a directory");
         }
         return [];
     }
+
+    // A folder changed this recently may change again within one tick of a coarse file system's clock; it is listed
+    // again next time instead.
+    if (BigInt(Date.now()) * 1_000_000n - status.mtimeNs >= LISTING_SETTLED_NS) {
+        listings.delete(path);
+        listings.set(path, { ino: status.ino, mtimeNs: status.mtimeNs, ctimeNs: status.ctimeNs, entries });
+        if (listings.size > LISTING_CACHE_LIMIT) {
+            const oldest = listings.keys().next().value;
+            if (oldest !== undefined) {
+                listings.delete(oldest);
+            }
+        }
+    }
+
+    return [...entries];
 }
 
 export function isDir(path: string): boolean {

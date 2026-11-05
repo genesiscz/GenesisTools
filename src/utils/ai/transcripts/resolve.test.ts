@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import * as fs from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createCodexLocate } from "@genesiscz/utils/agent-sessions/readers/codex-locate";
@@ -730,5 +731,53 @@ describe("listDir and mtimeOf", () => {
         } finally {
             debug.mockRestore();
         }
+    });
+});
+
+describe("listDir's cached listings", () => {
+    const minuteAgo = () => new Date(Date.now() - 60_000);
+
+    test("an unchanged folder is listed once, and an added, renamed or removed entry shows at the next list", () => {
+        const dir = fixtureRoot();
+        writeFileSync(join(dir, "a.jsonl"), "");
+        utimesSync(dir, minuteAgo(), minuteAgo());
+        const reader = spyOn(fs, "readdirSync");
+        try {
+            expect(listDir(dir)).toEqual(["a.jsonl"]);
+            expect(listDir(dir)).toEqual(["a.jsonl"]);
+            expect(reader).toHaveBeenCalledTimes(1);
+
+            writeFileSync(join(dir, "b.jsonl"), "");
+            expect(listDir(dir).sort()).toEqual(["a.jsonl", "b.jsonl"]);
+            utimesSync(dir, minuteAgo(), minuteAgo());
+            renameSync(join(dir, "b.jsonl"), join(dir, "c.jsonl"));
+            expect(listDir(dir).sort()).toEqual(["a.jsonl", "c.jsonl"]);
+            utimesSync(dir, minuteAgo(), minuteAgo());
+            fs.unlinkSync(join(dir, "a.jsonl"));
+            expect(listDir(dir)).toEqual(["c.jsonl"]);
+        } finally {
+            reader.mockRestore();
+        }
+    });
+
+    test("a folder changed in the last two seconds is read again on every list", () => {
+        const dir = fixtureRoot();
+        writeFileSync(join(dir, "a.jsonl"), "");
+        const reader = spyOn(fs, "readdirSync");
+        try {
+            listDir(dir);
+            listDir(dir);
+            expect(reader).toHaveBeenCalledTimes(2);
+        } finally {
+            reader.mockRestore();
+        }
+    });
+
+    test("a caller that changes its copy does not change the next answer", () => {
+        const dir = fixtureRoot();
+        writeFileSync(join(dir, "a.jsonl"), "");
+        utimesSync(dir, minuteAgo(), minuteAgo());
+        listDir(dir).push("not-there.jsonl");
+        expect(listDir(dir)).toEqual(["a.jsonl"]);
     });
 });
