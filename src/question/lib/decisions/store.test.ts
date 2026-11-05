@@ -2244,7 +2244,9 @@ describe("chat answers an agent records are never sent again (F2)", () => {
             { actor: "agent" }
         );
 
-        expect(typed).toMatchObject({ state: "acknowledged", answer: long, option: "c", answeredVia: "inbox" });
+        expect(typed).toMatchObject({ state: "acknowledged", answer: long, answeredVia: "inbox" });
+        expect(typed?.option).toBeUndefined();
+        expect(typed?.comments?.at(-1)).toContain("The agent named c");
         expect(typed?.comments?.at(-1)).toContain(
             "The agent's reading of the answer: c) ask each time, with proposals."
         );
