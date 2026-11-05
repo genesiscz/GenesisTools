@@ -504,6 +504,10 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
     func setPaused(_ value: Bool) {
         queue.async { [self] in
+            if paused && !value {
+                policy.restart(reason: "resume")
+                latestBuffer = nil
+            }
             paused = value
         }
     }

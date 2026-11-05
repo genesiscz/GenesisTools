@@ -371,6 +371,23 @@ final class CaptureFailureTests: XCTestCase {
         }
     }
 
+    func testResumeKeepsAnUnchangedScreenAndPreservesCaps() {
+        let still = signature(width: 16, height: 16) { _, _ in 0 }
+        var policy = KeepPolicy(thresholdPercent: 1, maxFrames: 2, maxBytes: 100)
+        XCTAssertTrue(policy.consider(still).keep)
+        policy.noteWritten(bytes: 20)
+        XCTAssertFalse(policy.consider(still).keep)
+        policy.restart(reason: "resume")
+        XCTAssertNil(policy.heartbeat(still), "no pre-pause heartbeat before a new frame")
+        let resumed = policy.consider(still)
+        XCTAssertTrue(resumed.keep)
+        XCTAssertEqual(resumed.reason, "resume")
+        XCTAssertEqual(policy.bytesWritten, 20)
+        XCTAssertEqual(policy.keptCount, 2)
+        policy.restart(reason: "resume")
+        XCTAssertFalse(policy.consider(still).keep, "resuming must not reset the cap")
+    }
+
     func testDisplayRestartCannotRepeatThePreviousDisplayHeartbeat() {
         let old = signature(width: 16, height: 16) { _, _ in 0 }
         var policy = KeepPolicy(thresholdPercent: 1)
