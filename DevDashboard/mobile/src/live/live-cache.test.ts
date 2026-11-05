@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
+import type { ReactNode } from "react";
 import {
     createDashboardClient,
     type EventSourceLike,
@@ -250,4 +251,24 @@ describe("createLiveCache", () => {
         expect(cache.status()).toBe("down");
         expect(cache.isLive("pulse")).toBe(false);
     });
+});
+
+it("keeps hooks usable before the provider is mounted and accepts the provider composition", async () => {
+    mock.module("react-native", () => ({ View: "View", Text: "Text", TextInput: "TextInput", Pressable: "View", StyleSheet: { flatten: (style: unknown) => style ?? {} }, AppState: { currentState: "active", addEventListener: () => ({ remove: () => {} }) } }));
+    const fake = fakeClient();
+    mock.module("@/api/client-provider", () => ({ useDashboardClient: () => fake.client }));
+    const { createElement } = await import("react");
+    const { QueryClientProvider } = await import("@tanstack/react-query");
+    const { renderHook } = await import("@testing-library/react-native/pure");
+    const { LiveCacheProvider, useLiveRefetchInterval, useLiveStatus } = await import("./provider");
+    const bare = await renderHook(() => ({ interval: useLiveRefetchInterval("pulse"), status: useLiveStatus() }));
+    expect(bare.result.current.status).toBe("off");
+    expect(bare.result.current.interval).toBe(LIVE_CACHE_TABLE.pulse.fallbackMs ?? false);
+    await bare.unmount();
+    const queryClient = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client: queryClient }, createElement(LiveCacheProvider, null, children));
+    const mounted = await renderHook(() => useLiveRefetchInterval("pulse"), { wrapper });
+    expect(mounted.result.current).toBe(LIVE_CACHE_TABLE.pulse.fallbackMs ?? false);
+    await mounted.unmount();
+    queryClient.clear();
 });

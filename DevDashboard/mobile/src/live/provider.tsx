@@ -35,22 +35,19 @@ export function LiveCacheProvider({ children }: { children: ReactNode }) {
     return <LiveCacheContext.Provider value={cache}>{children}</LiveCacheContext.Provider>;
 }
 
-function useLiveCache(): LiveCache {
-    const cache = useContext(LiveCacheContext);
-    if (!cache) {
-        throw new Error("live hooks must be used within a <LiveCacheProvider>");
-    }
+const noSubscription = () => () => {};
 
-    return cache;
+function useLiveCache(): LiveCache | null {
+    return useContext(LiveCacheContext);
 }
 
 /** Asks for a channel while the calling component is mounted. Returns true while the stream carries it. */
 export function useLiveChannel(channel: LiveChannel): boolean {
     const cache = useLiveCache();
 
-    useEffect(() => cache.demand(channel), [cache, channel]);
+    useEffect(() => cache?.demand(channel), [cache, channel]);
 
-    return useSyncExternalStore(cache.subscribe, () => cache.isLive(channel));
+    return useSyncExternalStore(cache?.subscribe ?? noSubscription, () => cache?.isLive(channel) ?? false);
 }
 
 /**
@@ -71,5 +68,5 @@ export function useLiveRefetchInterval(channel: LiveChannel): number | false {
 /** The stream's status, for a header dot. */
 export function useLiveStatus(): LiveStatus {
     const cache = useLiveCache();
-    return useSyncExternalStore(cache.subscribe, cache.status);
+    return useSyncExternalStore(cache?.subscribe ?? noSubscription, () => cache?.status() ?? "off");
 }
