@@ -581,11 +581,19 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         this.current = { ...before, ...patch, ocr: { ...before.ocr, ...patch.ocr } };
         // Each capture takes the change live or restarts (the scope says which); ax-tool has no live heartbeat
         // command, so a change of it restarts. No capture running: the next piece takes it.
-        const applied = await this.captures.applySettings({
-            change: this.config.controls.settings.change(before, this.current, patch),
-            settings: this.current,
-            scope: this.config.controls.settings.scope,
-        });
+        const applied = await this.captures
+            .applySettings({
+                change: this.config.controls.settings.change(before, this.current, patch),
+                settings: this.current,
+                scope: this.config.controls.settings.scope,
+            })
+            .catch((error: unknown) => {
+                // A capture refused it: the old settings stay, and every capture restarts with them, also one that
+                // took part of the change live already.
+                this.current = before;
+                this.captures.abortAll();
+                throw error;
+            });
         log.info({ id: this.config.live.id, settings: this.current, applied }, "recorder settings changed");
         return { settings: this.current, audio: this.audio, applied };
     }

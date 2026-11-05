@@ -1989,6 +1989,8 @@ describe("the meetings recorder loop", () => {
                 liveSettings?: boolean;
                 /** The live channel changes its rates and nothing else. */
                 liveRates?: boolean;
+                /** The live rate change fails. */
+                ratesFail?: boolean;
                 /** The first capture ends while its live switch is still in flight. */
                 lateSwitch?: boolean;
                 /** A live switch's first frame reaches the hook 100 ms after it was captured. */
@@ -2084,6 +2086,10 @@ describe("the meetings recorder loop", () => {
                     ...(this.script.liveRates
                         ? {
                               setRates: async (active: number, idle: number) => {
+                                  if (this.script.ratesFail) {
+                                      throw new Error("ax-tool did not take the rates");
+                                  }
+
                                   this.commands.push(`rates ${active} ${idle}`);
                               },
                           }
@@ -2198,6 +2204,7 @@ describe("the meetings recorder loop", () => {
         liveControl?: boolean;
         liveSettings?: boolean;
         liveRates?: boolean;
+        ratesFail?: boolean;
         lateSwitch?: boolean;
         delayedFrame?: boolean;
         audio?: boolean;
@@ -2250,6 +2257,7 @@ describe("the meetings recorder loop", () => {
                 liveControl: options.liveControl,
                 liveSettings: options.liveSettings,
                 liveRates: options.liveRates,
+                ratesFail: options.ratesFail,
                 lateSwitch: options.lateSwitch,
                 delayedFrame: options.delayedFrame,
                 audio: options.audio || options.audioSources !== undefined,
@@ -2971,6 +2979,28 @@ describe("the meetings recorder loop", () => {
 
         expect(restarted.answers[0]).toMatchObject({ applied: "restart" });
         expect(restarted.recorder.requests.map((request) => request.activeFps)).toEqual([1, 2]);
+    });
+
+    test("a settings change the running capture rejects is undone: the old settings stay and the captures restart with them", async () => {
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["hang", "hang", "hang"],
+            liveControl: true,
+            liveRates: true,
+            ratesFail: true,
+            actions: [
+                async (call) => [await call("settings.set", { activeFps: 2 }), await call("settings.get")],
+                async (call) => call("stop"),
+            ],
+        });
+        const [rejected, read] = run.answers[0] as unknown[];
+
+        expect(rejected).toMatchObject({ code: RPC_ERRORS.internal, message: "ax-tool did not take the rates" });
+        expect(read).toMatchObject({ settings: { activeFps: capture.activeFps } });
+        expect(run.recorder.requests.map((request) => request.activeFps)).toEqual([
+            capture.activeFps,
+            capture.activeFps,
+        ]);
     });
 
     test("a settings change a capture can take only in part restarts it without sending it half the change", async () => {
