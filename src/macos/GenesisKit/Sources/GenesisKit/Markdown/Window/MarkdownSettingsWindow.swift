@@ -42,7 +42,9 @@ struct MarkdownSettingsView: View {
     /// The card "Go to Location…"'s settings button opens the window at.
     static let goToAnchor = "markdown-goto"
     /// The cards a request can scroll to.
-    private static let anchors: Set<String> = ["markdown-file-sidebar", goToAnchor]
+    private static let anchors: Set<String> = ["markdown-file-sidebar", goToAnchor, picturesAnchor]
+    /// The card "Pictures", which a picture's "Allow its folder in Settings" button opens the window at.
+    static let picturesAnchor = "markdown-pictures"
 
     init(configuration: GenesisKitMarkdownConfiguration) {
         self.configuration = configuration
@@ -55,6 +57,9 @@ struct MarkdownSettingsView: View {
                 MarkdownTabSettingsCard(configuration: configuration)
                 MarkdownPreviewSettingsCard(configuration: configuration)
                 MarkdownTaskSettingsCard(configuration: configuration)
+                MarkdownPictureSettingsCard(configuration: configuration)
+                    .id(Self.picturesAnchor)
+                    .nativeSettingsAnchor(Self.picturesAnchor)
                 MarkdownShareSettingsCard(configuration: configuration)
                 NativeSettingsCard("Editor", subtitle: "The source view, in Edit and Split.") {
                     NativeSettingsToggle("Suggest links and tags while typing",
@@ -110,6 +115,22 @@ struct MarkdownSettingsView: View {
         .onChange(of: splitScrollSync) { _, enabled in
             NotificationCenter.default.post(name: .markdownSplitSyncChanged, object: enabled)
         }
+        }
+    }
+}
+
+/// Pictures: besides the vault and the note's own folder, the folders a picture may be shown from. A picture anywhere
+/// else is refused (a note could name any file on the Mac), and its pill says so with a button to this card.
+struct MarkdownPictureSettingsCard: View {
+    @ObservedObject var configuration: GenesisKitMarkdownConfiguration
+
+    var body: some View {
+        NativeSettingsCard("Pictures", subtitle: "Where a picture in a note may come from, besides the vault and the note's own folder.") {
+            NativeSettingsPathList(
+                "Allowed folders",
+                detail: "A picture under one of these folders (subfolders too) shows in every note. Any other picture outside the vault says where it is and why it is not shown.",
+                identifier: "markdown.settings.pictureFolders", paths: $configuration.pictureFolders,
+                emptyText: "None: only the vault and each note's folder.")
         }
     }
 }

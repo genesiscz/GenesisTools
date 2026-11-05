@@ -398,27 +398,35 @@ final class MarkdownWebSecurityTests: XCTestCase {
         XCTAssertEqual(widths?.prefix(2), ["30|by-name.png", "25|caption"])
     }
 
-    /// A picture that is there but outside the vault and the note's folder is still refused, and its pill says why;
-    /// a file that does not exist still says "not found". Meeting frames in `~/.genesis-tools` were the first case.
-    func testAPictureOutsideTheRootsSaysWhyAndAMissingOneSaysNotFound() async throws {
+    /// A picture that shows nothing says why, in its own sentence with the file's path: outside the folders it may come
+    /// from (with a button to the setting), missing, unreadable, a type the viewer does not show, too big.
+    func testAPictureThatShowsNothingSaysWhy() async throws {
         let v = try makeMediaVault()
+        let fm = FileManager.default
         let secret = v.outside.appendingPathComponent("secret.png").path
         let gone = v.outside.appendingPathComponent("gone.png").path
-        let markdown = "![shot](\(secret))\n\n![](\(gone))\n\n![[link.png]]\n"
-        let registry = MarkdownMediaRegistry()
-        let context = MarkdownMedia.Context(folder: v.note.deletingLastPathComponent(), vaultRoot: v.vault)
-        let map = registry.update(markdown: markdown, context: context)
-        XCTAssertEqual(map[secret]?["kind"], "outside")
-        XCTAssertNil(map[gone], "a file that does not exist gets no answer, so the page says not found")
-        XCTAssertEqual(map["link.png"]?["kind"], "outside", "a symlink to a file outside counts as outside")
-        XCTAssertNil(map[secret]?["token"], "the page gets the reason, never a token for the file")
-        XCTAssertTrue(registry.entries.isEmpty, "nothing outside is registered, so the page can never load it")
+        let heic = v.vault.appendingPathComponent("Notes/scan.heic")
+        try Data([1, 2, 3]).write(to: heic)
+        let huge = v.vault.appendingPathComponent("Notes/huge.png")
+        fm.createFile(atPath: huge.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: huge)
+        try handle.truncate(atOffset: UInt64(MarkdownMedia.maxImageBytes) + 1)
+        try handle.close()
+        let locked = v.vault.appendingPathComponent("Notes/locked.png")
+        try Self.png(width: 3, height: 3).write(to: locked)
+        try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+        defer { try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: locked.path) }
+        let notePath = v.vault.appendingPathComponent("Notes").path
+        let markdown = "![shot](\(secret))\n\n![](\(gone))\n\n![[link.png]]\n\n![](scan.heic)\n\n![](huge.png)\n\n![](locked.png)\n"
 
         let (page, _) = try await mediaPage(v, markdown)
         let expected = [
-            "⧉ Picture outside the vault and this note's folder: shot",
+            "⧉ Picture outside the vault and this note's folder: \(secret)Allow its folder in Settings",
             "⧉ Picture not found: \(gone)",
-            "⧉ Picture outside the vault and this note's folder: link.png",
+            "⧉ Picture outside the vault and this note's folder: \(notePath)/link.pngAllow its folder in Settings",
+            "⧉ Not a picture type the viewer shows (png, jpg, gif, webp, avif, svg): \(notePath)/scan.heic",
+            "⧉ Picture is too large (65 MB, the limit is 64 MB): \(notePath)/huge.png",
+            "⧉ Picture cannot be read (no permission, or not a file): \(notePath)/locked.png",
         ]
         var pills: [String] = []
         for _ in 0..<40 {
@@ -430,7 +438,9 @@ final class MarkdownWebSecurityTests: XCTestCase {
         }
         XCTAssertEqual(pills, expected)
         let images = try await page.evaluateJavaScript("document.querySelectorAll('#gn-article img').length") as? Int
-        XCTAssertEqual(images, 0, "no picture outside the roots loads")
+        XCTAssertEqual(images, 0, "no refused picture loads")
+        let buttons = try await page.evaluateJavaScript("document.querySelectorAll('#gn-article .gn-img-allow').length") as? Int
+        XCTAssertEqual(buttons, 2, "only the pictures outside the folders offer the setting")
     }
 
     /// `..` out of the vault, a symlink that points outside it, an absolute

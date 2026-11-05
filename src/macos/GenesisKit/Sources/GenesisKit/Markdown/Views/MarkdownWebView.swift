@@ -384,7 +384,9 @@ struct MarkdownWebView: NSViewRepresentable {
     var mediaContext: MarkdownMedia.Context? {
         guard let documentURL, documentURL.isFileURL else { return nil }
         let vault = vaultRoot.flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
-        return MarkdownMedia.Context(folder: documentURL.deletingLastPathComponent(), vaultRoot: vault)
+        let allowed = GenesisKitMarkdownConfiguration.shared.pictureFolders
+            .map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+        return MarkdownMedia.Context(folder: documentURL.deletingLastPathComponent(), vaultRoot: vault, extraRoots: allowed)
     }
 
     /// A picture the page loads from the web (`https:`), which the viewer never opens.
@@ -529,7 +531,11 @@ struct MarkdownWebView: NSViewRepresentable {
                 DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
                         guard let self else { return }
-                        if self.syncPageExtras(), let markdown = self.lastMarkdown {
+                        let extras = self.syncPageExtras()
+                        // A folder allowed or removed in Settings changes which pictures the page may show.
+                        let folders = self.lastMediaContext != self.parent.mediaContext
+                        if folders { self.lastMediaContext = self.parent.mediaContext }
+                        if extras || folders, let markdown = self.lastMarkdown {
                             self.render(markdown)
                         }
                     }
@@ -856,6 +862,12 @@ struct MarkdownWebView: NSViewRepresentable {
             case "image.refused":
                 let src = body["src"] as? String ?? ""
                 MainActor.assumeIsolated { show(MarkdownWebView.isRemoteSource(src) ? .remotePicture(src) : .pictureGone) }
+            case "pictureSettings":
+                // The pill of a picture outside the allowed folders: the setting that allows one, opened for the reader.
+                MainActor.assumeIsolated {
+                    MarkdownSettingsWindow.shared.show(nil)
+                    NativeSettingsHighlightCenter.shared.request(MarkdownSettingsView.picturesAnchor)
+                }
             case "propsRemoved":
                 let name = body["key"] as? String ?? ""
                 let notice: MarkdownPageNotice = (body["item"] as? String).map { .itemRemoved($0, from: name) }
@@ -1128,7 +1140,8 @@ img{max-width:100%;height:auto;border-radius:6px;}
 .dd-md-embed-stub{display:inline-flex;gap:8px;align-items:center;background:var(--dd-bg-panel);
   border:1px dashed var(--dd-border-strong);border-radius:6px;padding:2px 10px;color:var(--dd-text-dim);font-size:.9em;}
 .dd-md-embed-icon{color:var(--dd-accent);}
-.gn-img-missing{opacity:.85;border-style:dashed;}
+.gn-img-missing{opacity:.85;border-style:dashed;flex-wrap:wrap;}
+.gn-img-allow{font:inherit;color:var(--dd-accent);background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;}
 #gn-article.gn-is-empty::after{content:"This note is empty.";display:block;color:var(--dd-text-dim);font-style:italic;}
 .gn-img-pending{display:inline-block;min-width:120px;min-height:64px;border-radius:6px;background:var(--dd-bg-panel);vertical-align:middle;}
 #gn-article img[data-gn-img]{cursor:zoom-in;}
@@ -1430,7 +1443,7 @@ md.renderer.rules.wikilink=function(tokens,idx){
   }
   if(hit&&hit.kind==='json')return gnJSONChip(hit,meta.alias||meta.target);
   if(meta.embed&&hit&&hit.kind==='pending')return gnPendingHTML(meta.target);
-  if(meta.embed&&hit&&hit.kind==='outside')return gnMissingImage(meta.target,'',GN_IMG_OUTSIDE).outerHTML;
+  if(meta.embed&&hit&&hit.kind==='refused')return gnRefusedImage(hit,meta.target).outerHTML;
   if(meta.embed&&GN_IMG_EXT.test(meta.target))return gnMissingImage(meta.target).outerHTML;
   if(meta.embed){
     // `![[Other note]]`: drawn as a stub, and a click opens the note like its wikilink.
@@ -1633,13 +1646,27 @@ function gnJSONChip(hit,label){
     +'<span class="gn-json-icon">{ }</span> '+gnEsc(label||hit.name)+'</button>';
 }
 // A picture that is not there says so in its own words, not only in a tooltip, so VoiceOver reads it too.
-// One that is there but outside the vault and the note's folder says that instead: the viewer shows only those.
-var GN_IMG_OUTSIDE="Picture outside the vault and this note's folder";
-function gnMissingImage(ref,alt,why){
+// The reason the host gave for a picture it did not load (`MarkdownMedia.Refusal`), in a sentence that names the
+// file: missing, outside the folders a picture may come from (with a button to the setting that allows one),
+// unreadable, a type the viewer does not show, or too big.
+var GN_REFUSALS={
+  missing:function(){return 'Picture not found';},
+  outsideRoots:function(){return "Picture outside the vault and this note's folder";},
+  notReadable:function(){return 'Picture cannot be read (no permission, or not a file)';},
+  notAPicture:function(){return 'Not a picture type the viewer shows (png, jpg, gif, webp, avif, svg)';},
+  tooLarge:function(h){return 'Picture is too large ('+(h.size||'?')+', the limit is '+(h.limit||'64 MB')+')';}
+};
+function gnRefusedImage(hit,ref){
+  var why=(GN_REFUSALS[hit.reason]||GN_REFUSALS.missing)(hit);
+  return gnMissingImage(hit.path||ref,'',why,hit.reason==='outsideRoots'?'Allow its folder in Settings':'');
+}
+function gnMissingImage(ref,alt,why,action){
   var text=(why||'Picture not found')+': '+(alt||ref);
   var s=document.createElement('span');s.className='dd-md-embed-stub gn-img-missing';s.title=ref;
   s.setAttribute('role','img');s.setAttribute('aria-label',text);
-  s.innerHTML='<span class="dd-md-embed-icon" aria-hidden="true">⧉</span> ';s.appendChild(document.createTextNode(text));return s;
+  s.innerHTML='<span class="dd-md-embed-icon" aria-hidden="true">⧉</span> ';s.appendChild(document.createTextNode(text));
+  if(action){var b=document.createElement('button');b.type='button';b.className='gn-img-allow';b.textContent=action;s.appendChild(b);}
+  return s;
 }
 // The vault scan has not answered yet: a quiet box, no "not found", until Swift renders again.
 function gnPendingHTML(ref){
@@ -1657,7 +1684,7 @@ function gnApplyMedia(frag){
     var hit=gnMedia[gnMediaKey(ref)];
     if(hit&&hit.kind==='image'){img.setAttribute('src',hit.src);}
     else if(hit&&hit.kind==='pending'){var tp=document.createElement('template');tp.innerHTML=gnPendingHTML(ref);img.parentNode.replaceChild(tp.content.firstChild,img);continue;}
-    else if(hit&&hit.kind==='outside'){img.parentNode.replaceChild(gnMissingImage(ref,img.getAttribute('alt'),GN_IMG_OUTSIDE),img);continue;}
+    else if(hit&&hit.kind==='refused'){img.parentNode.replaceChild(gnRefusedImage(hit,ref),img);continue;}
     else if(!/^(https?:|data:image\/)/i.test(ref.trim())){img.parentNode.replaceChild(gnMissingImage(ref,img.getAttribute('alt')),img);continue;}
     // A file over the size limit, one deleted since the render, a web picture that does not load: the pill
     // with the cause, never the browser's broken-picture glyph.
@@ -1846,6 +1873,7 @@ function gnToast(near,text){
 function gnScrollToHeading(el){gnNav++;el.scrollIntoView({behavior:gnScrollBehavior(),block:'start'});}
 document.addEventListener('click',function(e){
   var t=e.target;if(!t||!t.closest)return;
+  if(t.closest('#gn-article .gn-img-allow')){e.preventDefault();gnPost({type:'pictureSettings'});return;}
   var copy=t.closest('#gn-article .gn-code-copy[data-gn-code]');
   if(copy){
     e.preventDefault();var src=gnCodeSrc[+copy.getAttribute('data-gn-code')];
