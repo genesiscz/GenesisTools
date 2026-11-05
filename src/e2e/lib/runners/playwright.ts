@@ -32,11 +32,12 @@ const reporters = original.reporter ?? [["list"]];
 const list = typeof reporters === "string" ? [[reporters]] : reporters;
 const builtins = new Set(["list", "line", "dot", "html", "json", "junit", "null", "github", "blob"]);
 const reporter = list.map(([name, ...options]) => [builtins.has(name) ? name : resolve(base, name), ...options]);
+const hook = (value) => Array.isArray(value) ? value.map((entry) => resolve(base, entry)) : resolve(base, value);
 const directories = (value) => ({ ...value, testDir: resolve(base, value.testDir ?? original.testDir ?? "."), ...(value.snapshotDir ? { snapshotDir: resolve(base, value.snapshotDir) } : {}) });
 export default { ...directories(original), ...(original.projects ? { projects: original.projects.map(directories) } : {}),
  reporter: [...reporter, [${SafeJSON.stringify(RESULTS_REPORTER)}]],
- ...(original.globalSetup ? { globalSetup: resolve(base, original.globalSetup) } : {}),
- ...(original.globalTeardown ? { globalTeardown: resolve(base, original.globalTeardown) } : {}) };
+ ...(original.globalSetup ? { globalSetup: hook(original.globalSetup) } : {}),
+ ...(original.globalTeardown ? { globalTeardown: hook(original.globalTeardown) } : {}) };
 `
         );
 
