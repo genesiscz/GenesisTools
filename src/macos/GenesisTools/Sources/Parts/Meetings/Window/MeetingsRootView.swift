@@ -31,7 +31,7 @@ struct MeetingsRootView: View {
         ZStack {
             Button("Needs you") { model.go(.needs) }.keyboardShortcut("1", modifiers: .command)
             Button("All meetings") { model.go(.all) }.keyboardShortcut("2", modifiers: .command)
-            Button("Reload") { model.load(); model.detail?.load() }.keyboardShortcut("r", modifiers: .command)
+            Button("Reload") { model.load(); model.detail?.refreshLoaded() }.keyboardShortcut("r", modifiers: .command)
         }
         .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
     }
