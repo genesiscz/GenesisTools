@@ -152,8 +152,27 @@ function entryLine(entry: CalendarEntry): string {
 }
 
 /** The question for one meeting: the project item, the calendar entry item, the labels item and the folder item. */
-export function buildQuestion(view: AssignView, config: MeetingsConfig): CreateAskFormInput {
-    const { record, proposals } = view;
+export function buildQuestion(
+    view: AssignView,
+    config: MeetingsConfig,
+    snapshot?: NonNullable<MeetingRecord["assign"]>["ask"]
+): CreateAskFormInput {
+    const { record } = view;
+    const proposals = snapshot
+        ? {
+              ...view.proposals,
+              calendars: snapshot.calendars.map(
+                  (entry) =>
+                      calendarCandidates({
+                          entries: [entry],
+                          start: record.start,
+                          end: record.end,
+                          slackMin: config.global.assign.calendarSlackMin,
+                      })[0] ?? { entry, overlapSec: 0, share: 0 }
+              ),
+              folder: snapshot.folder ? { kind: "pair" as const, ...snapshot.folder } : undefined,
+          }
+        : view.proposals;
     const known = Object.keys(config.projects);
     const proposed = proposals.projects.map((proposal) => proposal.project);
     const lines = [
@@ -619,7 +638,11 @@ async function advanceAsk(store: MeetingStore, record: MeetingRecord, deps: Assi
     if (!form) {
         const config = await deps.config.read();
         const view = await viewProposals(store, record, deps);
-        await deps.inbox.post({ ...buildQuestion(view, config), id: ask.formId, projectPath: store.folder(record.id) });
+        await deps.inbox.post({
+            ...buildQuestion(view, config, ask),
+            id: ask.formId,
+            projectPath: store.folder(record.id),
+        });
         return "pending";
     }
 
