@@ -1,9 +1,18 @@
 import { describe, expect, it } from "bun:test";
 import { fixtureDashboardClient } from "@/api/fixture-wire";
 import { MOCK_TIMESHEET } from "@/api/fixtures/timesheet";
-import { allAccepted, dayLine, fillWeek, hours, localDay, weekQuery } from "@/features/timesheet/queries";
+import { acceptedForRevision, allAccepted, dayLine, fillWeek, hours, localDay, weekQuery } from "@/features/timesheet/queries";
 
 describe("the Friday timesheet", () => {
+    it("requires a new review after a stale fill is refused and the same task codes refresh", () => {
+        const review = { revision: MOCK_TIMESHEET.revision, codes: new Set(MOCK_TIMESHEET.rows.map((row) => row.code)) };
+        expect(allAccepted(MOCK_TIMESHEET, acceptedForRevision(MOCK_TIMESHEET, review))).toBe(true);
+        const refreshed = { ...MOCK_TIMESHEET, revision: "new-revision" };
+        expect(allAccepted(refreshed, acceptedForRevision(refreshed, review))).toBe(false);
+        const next = { revision: refreshed.revision, codes: new Set([refreshed.rows[0]!.code]) };
+        expect(allAccepted(refreshed, acceptedForRevision(refreshed, next))).toBe(false);
+    });
+
     it("reads the week and sends the fill with the revision it showed", async () => {
         const week = await weekQuery(fixtureDashboardClient, "2026-09-30").queryFn?.({} as never);
         const receipt = await fillWeek(fixtureDashboardClient, {
