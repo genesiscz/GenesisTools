@@ -44,7 +44,19 @@ export function readResults(path: string): E2eTestResult[] {
     return readFileSync(path, "utf8")
         .split("\n")
         .filter(Boolean)
-        .map((line) => SafeJSON.parse(line, { strict: true }) as E2eTestResult);
+        .map((line, index): E2eTestResult => {
+            try {
+                return SafeJSON.parse(line, { strict: true }) as E2eTestResult;
+            } catch (error) {
+                return {
+                    suite: "runner",
+                    title: `Invalid result line ${index + 1}`,
+                    state: "failed",
+                    durationMs: 0,
+                    error: error instanceof Error ? error.message : String(error),
+                };
+            }
+        });
 }
 
 /** A spec failed when its runner exited non-zero, or any test failed, or it reported no test at all. */

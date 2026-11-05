@@ -209,3 +209,40 @@ describe("summary", () => {
         expect(stamp(new Date(2026, 10, 4, 21, 5, 33))).toBe("2026-11-04T21-05-33");
     });
 });
+
+it("finishes later specs and writes a summary after a truncated result line", async () => {
+    const project = fixtureProject("truncated-results");
+    const runDir = join(root, "truncated-run");
+    let finished = false;
+    const summary = await runE2e({
+        project,
+        specs: listSpecs(project).slice(0, 2),
+        runDir,
+        flags: {},
+        extraEnv: {},
+        prepare: async () => ({
+            facts: {},
+            environment: {},
+            command: () => [
+                process.execPath,
+                "-e",
+                `
+                const line = process.env.E2E_SPEC.includes("agents") ? '{"title":' : JSON.stringify({suite:"s", title:"later", state:"passed", durationMs:1});
+                require("node:fs").writeFileSync(process.env.E2E_RESULTS_FILE, line + "\\n");
+            `,
+            ],
+            finish: async () => {
+                finished = true;
+                return [];
+            },
+        }),
+    });
+    expect(finished).toBe(true);
+    expect(summary.specs).toHaveLength(2);
+    expect(summary.specs[0].tests[0]).toMatchObject({ state: "failed", title: "Invalid result line 1" });
+    expect(summary.specs[1].tests[0].state).toBe("passed");
+    expect(summary.counts.specsFailed).toBe(1);
+    expect(summary.ok).toBe(false);
+    expect(existsSync(join(runDir, "summary.json"))).toBe(true);
+    expect(existsSync(join(runDir, "summary.md"))).toBe(true);
+});
