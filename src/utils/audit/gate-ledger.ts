@@ -33,8 +33,11 @@ export interface GateRmRequest {
     id: string;
     reason: string | null;
     paths: Array<{ path: string; bytes?: number; reason: string }>;
-    /** When the request file expires unanswered. */
-    expiresAt: string;
+    /**
+     * When the request file expires unanswered; null for a request whose files already wait aside, which never
+     * expires (`loadRmRequest` keeps it until someone answers).
+     */
+    expiresAt: string | null;
 }
 
 export interface GateWait {
@@ -303,7 +306,9 @@ export function readGateLedger(deps: GateLedgerDeps = {}): GateLedger {
                     reason: target.reason,
                     ...(target.bytes !== undefined ? { bytes: target.bytes } : {}),
                 })),
-                expiresAt: new Date(Date.parse(request.createdAt) + RM_REQUEST_TTL_MS).toISOString(),
+                expiresAt: request.asideDir
+                    ? null
+                    : new Date(Date.parse(request.createdAt) + RM_REQUEST_TTL_MS).toISOString(),
             },
         }));
 
