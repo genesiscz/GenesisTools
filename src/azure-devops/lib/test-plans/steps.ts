@@ -350,12 +350,19 @@ export function parseStepsJson(text: string): TestStepInput[] {
     });
 }
 
+/** What {@link renderStepsMarkdown} prints for a case without steps; {@link parseStepsInput} reads it back as none. */
+export const NO_STEPS_MARKDOWN = "_No steps._";
+
 /** Steps input from a file's text: JSON when it starts with `[` or `{`, a markdown list otherwise. */
 export function parseStepsInput(text: string): TestStepInput[] {
     const trimmed = text.trim();
 
     if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
         return parseStepsJson(trimmed);
+    }
+
+    if (trimmed === NO_STEPS_MARKDOWN) {
+        return [];
     }
 
     const steps = parseStepsMarkdown(trimmed);
@@ -380,7 +387,7 @@ function indent(text: string, prefix: string): string {
  */
 export function renderStepsMarkdown(steps: readonly TestStep[]): string {
     if (steps.length === 0) {
-        return "_No steps._";
+        return NO_STEPS_MARKDOWN;
     }
 
     const lines: string[] = [];
