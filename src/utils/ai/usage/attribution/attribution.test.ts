@@ -116,6 +116,15 @@ describe("session to account", () => {
 });
 
 describe("spikes", () => {
+    test("a recorded reset stops a rise even when the next reading is higher", () => {
+        const entry = series([
+            ["2026-11-01T10:00:00Z", 2],
+            ["2026-11-01T10:04:00Z", 10],
+        ]);
+        entry.resets = ["2026-11-01T10:02:00Z"];
+        expect(findRises(entry, SPIKE_DEFAULTS)).toEqual([]);
+    });
+
     test("a rise of 5 points within 10 minutes is one spike from its low to its peak; a reset is not a base", () => {
         const entry = series([
             ["2026-11-01T10:00:00Z", 10],
