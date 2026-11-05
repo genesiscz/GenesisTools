@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -294,6 +294,68 @@ function screenFolder(ranges?: Array<{ fromUs: number; toUs: number; displayId: 
 
 // The editor's Find tab decodes these hits (RecorderEditTests.swift), so it reads what find-screen prints.
 describe("text on the screen", () => {
+    for (const ending of ["run", "moved", "display", "gap"] as const) {
+        it(`extends a line's hide and mark through consecutive frames: ${ending}`, () => {
+            const folder = screenFolder([{ fromUs: 0, toUs: 8_000_000, displayId: 1 }]);
+            const frames = [0, 1, 2, 3].map((atMs) => ({
+                file: `frames/run-${atMs}.png`,
+                atMs: atMs * 1000,
+                displayId: 1,
+            }));
+            const header = readFileSync(join(folder, screenSearch.recording.manifest.frames[0].file));
+            for (const frame of frames) {
+                writeFileSync(join(folder, frame.file), header);
+            }
+            if (ending === "display") {
+                frames[1].displayId = 4;
+                writeFileSync(
+                    join(folder, "proxy.json"),
+                    SafeJSON.stringify({
+                        ...screenSearch.recording.plan,
+                        ranges: [
+                            { fromUs: 0, toUs: 1_000_000, displayId: 1 },
+                            { fromUs: 1_000_000, toUs: 2_000_000, displayId: 4 },
+                            { fromUs: 2_000_000, toUs: 8_000_000, displayId: 1 },
+                        ],
+                    })
+                );
+            }
+            writeFileSync(
+                join(folder, "recording.json"),
+                SafeJSON.stringify({ ...screenSearch.recording.manifest, frames })
+            );
+            writeFileSync(
+                join(folder, "ocr.jsonl"),
+                frames
+                    .map((frame, index) =>
+                        SafeJSON.stringify({
+                            ...frame,
+                            text: index === 3 || (ending === "gap" && index === 1) ? "absent" : "secret",
+                            blocks: [
+                                {
+                                    text: index === 3 || (ending === "gap" && index === 1) ? "absent" : "secret",
+                                    bounds: {
+                                        x: ending === "moved" && index === 1 ? 0.5 : 0.1,
+                                        y: 0.2,
+                                        width: 0.2,
+                                        height: 0.03,
+                                    },
+                                },
+                            ],
+                        })
+                    )
+                    .join("\n")
+            );
+            const [hit] = screenHitsWithOps(findOnScreen(folder, "secret", { limit: 1 }), 5);
+            const end = ending === "run" ? 3 : 1;
+            expect(hit.ops.hide).toHaveLength(1);
+            expect(hit.ops.hide[0]).toMatchObject({ op: "redact", from: 0, to: end });
+            expect(hit.ops.mark[0]).toMatchObject({ op: "shape", from: 0, to: end });
+            expect(hit.ops.cut).toEqual([{ op: "cut", from: 0, to: 1 }]);
+            expect(screenHitsWithOps([hit], 0.5)[0].ops.hide[0]).toMatchObject({ to: 0.5 });
+        });
+    }
+
     it("finds the shared fixture's hits: accents ignored, each listed where the proxy movie shows it, boxes placed in the letterboxed picture", () => {
         const folder = screenFolder();
 

@@ -4,7 +4,8 @@ import type { ScreenBox, ScreenHit } from "./screen-search";
 /**
  * What a found screen box can become, as edit ops for `apply` (the REPL's `apply({ ops })`, `tools recorder apply`,
  * the editor's Find tab): `hide[i]` blurs `boxes[i]` and `mark[i]` draws a box round it while the frame shows, and
- * `cut` removes the frame's time. Empty when the movie does not show the frame (no boxes, nothing to cut) or the frame
+ * `cut` removes only the frame's time. Hide and mark continue through each line's visible run.
+ * Empty when the movie does not show the frame (no boxes, nothing to cut) or the frame
  * starts past the movie's end.
  */
 export interface ScreenHitOps {
@@ -40,6 +41,7 @@ export function screenHitOps(hit: ScreenHit, durationSec?: number): ScreenHitOps
         editOpSchema.parse({
             op: "redact",
             ...span,
+            to: Math.min(box.untilSec ?? hit.untilSec, durationSec ?? Infinity),
             rect: grown(box, HIDE_PAD),
             style: "blur",
             label: box.text.slice(0, 60),
@@ -51,6 +53,7 @@ export function screenHitOps(hit: ScreenHit, durationSec?: number): ScreenHitOps
             op: "shape",
             kind: "box",
             ...span,
+            to: Math.min(box.untilSec ?? hit.untilSec, durationSec ?? Infinity),
             start: { x: rect.x, y: rect.y },
             end: { x: rect.x + rect.width, y: rect.y + rect.height },
         });

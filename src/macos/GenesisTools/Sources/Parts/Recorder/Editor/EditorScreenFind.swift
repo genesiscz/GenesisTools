@@ -5,6 +5,8 @@ import SwiftUI
 /// space a hidden part uses (find-screen maps the frame through the proxy's letterbox).
 struct ScreenBox: Decodable, Equatable {
     let text: String
+    /// The line's consecutive visible run; TypeScript builds the extended hide and mark ops.
+    var untilSec: Double? = nil
     let x: Double
     let y: Double
     let width: Double

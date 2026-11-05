@@ -28,6 +28,8 @@ type FrameText = z.infer<typeof sidecarSchema>;
 /** A matching OCR line where the proxy movie shows it: fractions of the movie's picture, from its top left. */
 export interface ScreenBox {
     text: string;
+    /** End of this line's consecutive visible run, when later than the hit's own frame. */
+    untilSec?: number;
     x: number;
     y: number;
     width: number;
@@ -167,7 +169,7 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
         folder,
         frames.map((frame) => frame.file),
         wanted,
-        limit
+        Number.POSITIVE_INFINITY
     );
     const plan = readDisplayPlan(folder);
     const sizes = displaySizes(folder, frames);
@@ -242,14 +244,47 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
                 untilSec: (span.toUs ?? (next?.atMs ?? lastMs + 2000) * 1000) / 1_000_000,
                 ...common,
                 shown: true,
-                boxes,
+                boxes: boxes.map((box) => ({ ...box })),
             });
-        }
-
-        if (hits.length >= limit) {
-            break;
         }
     }
 
-    return hits;
+    // Compare every later box to the starting box: no cumulative drift. OCR may jitter by 0.2% of the proxy
+    // picture in x, y, width or height (inside the hide/mark padding); the full line text must be identical.
+    // A missing line, an intervening frame or a proxy display switch ends the run, even if it returns later.
+    const chronological = [...hits].sort((a, b) => a.sec - b.sec);
+    for (const hit of hits.slice(0, limit)) {
+        const index = chronological.indexOf(hit);
+        for (const box of hit.boxes) {
+            let end = hit.untilSec;
+            for (const later of chronological.slice(index + 1)) {
+                if (later.displayId !== hit.displayId) {
+                    continue;
+                }
+
+                if (
+                    !later.shown ||
+                    later.sec !== end ||
+                    !later.boxes.some(
+                        (candidate) =>
+                            candidate.text === box.text &&
+                            Math.abs(candidate.x - box.x) <= 0.002 &&
+                            Math.abs(candidate.y - box.y) <= 0.002 &&
+                            Math.abs(candidate.width - box.width) <= 0.002 &&
+                            Math.abs(candidate.height - box.height) <= 0.002
+                    )
+                ) {
+                    break;
+                }
+
+                end = later.untilSec;
+            }
+
+            if (end > hit.untilSec) {
+                box.untilSec = end;
+            }
+        }
+    }
+
+    return hits.slice(0, limit);
 }
