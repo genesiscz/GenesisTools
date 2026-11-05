@@ -16,6 +16,7 @@ import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
     type AssignDeps,
+    applyAnswer,
     askAtMeetingEnd,
     askMeeting,
     assignSweep,
@@ -694,4 +695,39 @@ test("folder questions persist before posting and recover the same choices and i
     answer = { status: "answered", answers: { folder: { itemId: "folder", selectedChoices: ["folder:no"] } } };
     await assignSweep(new MeetingStore(storage), deps);
     expect(new MeetingStore(storage).read(record.id)?.assign?.folder?.state).toBe("declined");
+});
+
+describe("assign apply", () => {
+    test("an explicit no project removes the project the meeting already has", async () => {
+        const { store, deps, create } = setup();
+        const record = await create("Standup", "2026-11-04T09:00:00.000Z", { project: "work" });
+        expect(store.read(record.id)?.project).toBe("work");
+
+        const applied = await applyAnswer({ store, record, deps, answer: { project: null, labels: [] } });
+
+        expect(applied.project).toBeUndefined();
+        expect(store.read(record.id)?.project).toBeUndefined();
+    });
+
+    test("a folder pairing without an asked question pairs the one source folder, and refuses otherwise", async () => {
+        const { store, deps, config, state, create } = setup({ folders: ["Clients"] });
+        const record = await create("Review", "2026-11-04T10:00:00.000Z");
+
+        const applied = await applyAnswer({
+            store,
+            record,
+            deps,
+            answer: { project: "work", labels: [], pairFolder: true },
+        });
+
+        expect(applied.folderPaired).toBe("Clients");
+        expect((await config.read()).sources.wisprflow?.match.work?.folders).toEqual(["Clients"]);
+
+        state.folders = [];
+        const other = await create("Planning", "2026-11-04T11:00:00.000Z");
+        await expect(
+            applyAnswer({ store, record: other, deps, answer: { project: "work", labels: [], pairFolder: true } })
+        ).rejects.toThrow("is in no Fake folder");
+        expect(store.read(other.id)?.project).toBeUndefined();
+    });
 });

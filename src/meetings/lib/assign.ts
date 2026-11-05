@@ -488,6 +488,37 @@ export interface AppliedAnswer {
  * Applies the owner's answer at once: the project (a new name joins the known ones), the labels (new ones join the
  * project's), the picked calendar entry (its attendees are paired with the project) and the folder pairing.
  */
+/**
+ * The folder an answer pairs with its project: the one its question offered, else (a direct `assign apply
+ * --pair-folder`, which asked nothing) the one source folder the meeting is in now. Refuses when there is none.
+ */
+async function folderToPair(
+    record: MeetingRecord,
+    deps: AssignDeps
+): Promise<{ source: MeetingSourceId; folder: string } | undefined> {
+    const offered = record.assign?.ask?.folder;
+
+    if (offered) {
+        return isMeetingSourceId(offered.source) ? { source: offered.source, folder: offered.folder } : undefined;
+    }
+
+    const linked = await deps.source(record).catch(() => undefined);
+
+    if (!linked) {
+        throw new Error(`${record.id} has no linked source, so it has no folder to pair`);
+    }
+
+    const folders = (await linked.source.meetingFolders(linked.sourceMeetingId).catch(() => null)) ?? [];
+
+    if (folders.length !== 1) {
+        throw new Error(
+            `${record.id} is in ${folders.length === 0 ? "no" : folders.length} ${linked.source.label} folder${folders.length === 1 ? "" : "s"}; a folder pairs only when the meeting is in exactly one`
+        );
+    }
+
+    return { source: linked.source.id, folder: folders[0] };
+}
+
 export async function applyAnswer(options: {
     store: MeetingStore;
     record: MeetingRecord;
@@ -505,6 +536,7 @@ export async function applyAnswer(options: {
     const entries = options.entries ?? ask?.calendars ?? [];
     const entry = answer.calendarIndex !== undefined ? entries[answer.calendarIndex] : undefined;
     const applied: AppliedAnswer = { labels: answer.labels, paired: [], waitsForFolder: false };
+    const pairing = project && answer.pairFolder ? await folderToPair(record, deps) : undefined;
 
     if (project) {
         projectNameSchema.parse(project);
@@ -533,9 +565,9 @@ export async function applyAnswer(options: {
             applied.paired = entry.people.filter((person) => !person.self).map((person) => person.name);
         }
 
-        if (answer.pairFolder && ask?.folder && isMeetingSourceId(ask.folder.source)) {
-            await deps.config.addSourceFolder(ask.folder.source, project, ask.folder.folder);
-            applied.folderPaired = ask.folder.folder;
+        if (pairing) {
+            await deps.config.addSourceFolder(pairing.source, project, pairing.folder);
+            applied.folderPaired = pairing.folder;
         }
     }
 
@@ -555,6 +587,9 @@ export async function applyAnswer(options: {
     await store.update(record.id, { command, change }, (current) => {
         if (project) {
             current.project = project;
+        } else if (answer.project === null) {
+            // An explicit "no project" (`assign apply --none`, the window's No project) removes the saved one.
+            delete current.project;
         }
 
         current.labels = mergeLabels(current.labels, answer.labels);
