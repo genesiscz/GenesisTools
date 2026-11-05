@@ -469,6 +469,37 @@ describe("the recorder service", () => {
         expect(committed.project.audio.volume).toBe(0.2);
     });
 
+    // Regression test: 2026-11-05 recorder service review, finding 7 — a client gone during session.open left a session
+    test("a client that goes while its session.open runs leaves no session open", async () => {
+        const { service } = await serviceFixture();
+        const path = editFixture("rs-open-gone-");
+        const client = await connect(service.entry);
+        const real = EditSession.open;
+        const entered = Promise.withResolvers<void>();
+        const resume = Promise.withResolvers<void>();
+        const opened = Promise.withResolvers<void>();
+        const spy = spyOn(EditSession, "open").mockImplementation(async (value, options) => {
+            entered.resolve();
+            await resume.promise;
+            const session = await real.call(EditSession, value, options);
+            opened.resolve();
+            return session;
+        });
+        closing.push(() => spy.mockRestore());
+
+        const opening = client.call<unknown>("session.open", { path }).catch((error: unknown) => error);
+        await entered.promise;
+        client.close();
+        // The service hears the close on its side of the socket; the open goes on after it.
+        await Bun.sleep(30);
+        resume.resolve();
+        await opened.promise;
+        await opening;
+        await Bun.sleep(1);
+
+        expect(service.sessions.size).toBe(0);
+    });
+
     test("a host method reaches the connected host and its answer, progress and cancel go both ways", async () => {
         const { service, faceRuns } = await serviceFixture({ saveDelayMs: 10_000 });
         const path = editFixture("rs-host-");

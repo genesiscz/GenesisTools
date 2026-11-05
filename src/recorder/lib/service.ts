@@ -336,7 +336,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             connection.state.pid = params.pid;
             return { protocol: SERVICE_PROTOCOL, methods: allMethods, version };
         },
-        "session.open": async (params, { connection }: HandlerContext) => {
+        "session.open": async (params, { connection, context }: HandlerContext) => {
             const path = editPathOf(params.path);
 
             if (connection.state.holds.has(path)) {
@@ -344,6 +344,13 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             }
 
             const session = await sessions.hold(params.path);
+
+            // The caller went or cancelled, or the service stopped, while the session opened: no one would release it.
+            if (context.signal.aborted || stopping) {
+                sessions.release(session.path);
+                throw new RpcError(RPC_ERRORS.cancelled, `the session of ${session.path} opened after its caller left`);
+            }
+
             connection.state.holds.add(session.path);
             return { path: session.path, ...session.current };
         },
