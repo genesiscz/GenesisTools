@@ -434,7 +434,10 @@ describe("recorder and editor toolsets", () => {
             }
             const engine = new ReplEngine({
                 toolsets: ["recorder"],
-                preloadTimeoutMs: 1_000,
+                // The startup budget is what this test expires; the preload gets room, since loading the toolset
+                // took over 1 s at load 99 (2026-11-05) and failed the test for the wrong reason.
+                preloadTimeoutMs: 30_000,
+                recordingStartupTimeoutMs: 1_000,
                 recorder: {
                     create: async () => {
                         if (stage === "create") {

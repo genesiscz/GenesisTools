@@ -85,6 +85,8 @@ export interface ReplEngineOptions {
     toolsets?: readonly string[];
     /** The budget of one preload, apart from every turn's timeout: a toolset may build a native binary first. */
     preloadTimeoutMs?: number;
+    /** The budget of a recording's startup in the parent; `preloadTimeoutMs` when absent. */
+    recordingStartupTimeoutMs?: number;
 }
 
 /** How long `shutdown` and `reset` give the toolsets to release what they started before the worker is killed. */
@@ -109,11 +111,13 @@ export class ReplEngine {
     private readonly recordingStarts = new Set<Promise<void>>();
     readonly defaultTimeoutMs: number;
     readonly preloadTimeoutMs: number;
+    readonly recordingStartupTimeoutMs: number;
     readonly toolsets: readonly string[];
 
     constructor(private readonly options: ReplEngineOptions = {}) {
         this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
         this.preloadTimeoutMs = options.preloadTimeoutMs ?? 120_000;
+        this.recordingStartupTimeoutMs = options.recordingStartupTimeoutMs ?? this.preloadTimeoutMs;
         this.toolsets = options.toolsets ?? [];
     }
 
@@ -166,8 +170,8 @@ export class ReplEngine {
                                 recorder,
                             });
                         })(),
-                        this.preloadTimeoutMs,
-                        new Error(`Recording startup exceeded ${this.preloadTimeoutMs} ms`)
+                        this.recordingStartupTimeoutMs,
+                        new Error(`Recording startup exceeded ${this.recordingStartupTimeoutMs} ms`)
                     );
                     this.recordings.add(recording);
                     // A recording the turn stopped itself leaves the set once its post-processing is done.
