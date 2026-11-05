@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test";
-import { createApi, TelegramApiRootError, validateTelegramApiRoot } from "./api";
+import { describe, expect, it, jest } from "bun:test";
+import { createApi, TELEGRAM_REQUEST_TIMEOUT_SECONDS, TelegramApiRootError, validateTelegramApiRoot } from "./api";
 import { migrateTelegramBotConfig, resolveTelegramTarget, telegramChatFor } from "./config";
 import type { TelegramBotConfig } from "./types";
 
@@ -99,5 +99,39 @@ describe("validateTelegramApiRoot", () => {
         expect(() => validateTelegramApiRoot("nonsense")).toThrow(TelegramApiRootError);
         // The decision posts build their client here: a cleartext root never gets the token.
         expect(() => createApi("100:fake-token-for-tests", "http://api.example.test")).toThrow(TelegramApiRootError);
+    });
+});
+
+describe("createApi", () => {
+    // A retraction Telegram never answered kept `tools hub widget call` alive past the widget's 120 s limit, because
+    // grammy waits 500 s by default (2026-11-05).
+    it("ends a call that Telegram never answers at the request bound", async () => {
+        const { promise: reached, resolve } = Promise.withResolvers<void>();
+        const server = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: () => {
+                resolve();
+                return new Promise<Response>(() => {});
+            },
+        });
+        jest.useFakeTimers();
+
+        try {
+            const api = createApi(TOKEN, `http://127.0.0.1:${server.port}`);
+            const call = api.editMessageText(22, 5, "closed").then(
+                () => "answered",
+                (error: unknown) => (error instanceof Error ? error.name : String(error))
+            );
+            await reached;
+            jest.advanceTimersByTime(TELEGRAM_REQUEST_TIMEOUT_SECONDS * 1000);
+            jest.useRealTimers();
+
+            expect(TELEGRAM_REQUEST_TIMEOUT_SECONDS).toBeLessThanOrEqual(30);
+            expect(await Promise.race([call, Bun.sleep(2_000).then(() => "still waiting")])).toBe("HttpError");
+        } finally {
+            jest.useRealTimers();
+            server.stop(true);
+        }
     });
 });
