@@ -84,7 +84,7 @@ const captureSchema = z.object({
     jpegQuality: z.number().min(0.1).max(1).default(0.75),
     /** The longest side of a frame in pixels. Smaller text than this keeps is lost to OCR on a large display. */
     resolutionCap: z.number().int().min(640).max(8192).default(2880),
-    /** The watcher deletes a meeting's frames and OCR this many days after its last frame; the meeting record stays. */
+    /** The watcher expires frames, OCR and recorded audio this many days after the newest capture-file timestamp; the meeting record stays. */
     retentionDays: z.number().int().positive().default(30),
     recorders: recordersSchema.prefault({}),
 });

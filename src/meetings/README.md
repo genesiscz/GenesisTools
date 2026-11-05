@@ -80,8 +80,8 @@ main one); or a screen index. Each piece reads the display list again by id, so 
 the next piece and one that is removed leaves without an error. When an asked index is not connected, the main
 display stands in and the warning says since when.
 
-Frames stay on this Mac and never go into an export. Once a day the watcher moves the `frames/` and `ocr.jsonl` of
-each meeting whose newest frame is older than `capture.retentionDays` (30) into the GenesisTools trash (`tools rm`
+Frames stay on this Mac and never go into an export. Once a day the watcher moves `frames/`, `ocr.jsonl`, `audio/` and `audio.jsonl` of
+each meeting whose newest capture-file timestamp is older than `capture.retentionDays` (30) into the GenesisTools trash (`tools rm`
 rules, restorable with `tools rm restore <batch>`); the meeting record, its items and the recording block stay. It
 never touches the meeting being recorded, and `retention-last.json` beside the meetings says when it last ran. When a source is linked, `record stop` stores its clock, so
 `screen --at` takes transcript times. A frame is taken only when the screen changes, so `screen --at` shows, per
