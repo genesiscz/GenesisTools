@@ -209,13 +209,13 @@ export function openQuestions(record: MeetingRecord): QuestionItem[] {
         .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.fromSec - b.fromSec);
 }
 
-/** An answer raises the items of every question with the same signature by this much, up to `PROPAGATED_MAX`. */
+/** An answer raises compatible questions for the same labelled passage by this much, up to `PROPAGATED_MAX`. */
 const PROPAGATED_BONUS = 0.3;
 const PROPAGATED_MAX = 0.9;
 
 /**
- * One answer settles its look-alikes: every open speaker question with the same signature (the same top choices and
- * the same people present) that offers the answer gets it on its items, +0.3 up to 0.9. A question that reaches
+ * One answer settles compatible open speaker questions for the same single label and exact range. They must share
+ * its signature and offer the answer, which raises their items by +0.3 up to 0.9. A question that reaches
  * `listenBelow` is closed as settled; the others stay, scored higher. Returns the questions it closed. Mutates `record`.
  */
 export function propagateAnswer(

@@ -282,7 +282,8 @@ Only what is unsure and matters (Martin, 2026-11-02: "just on those which are re
    (`src/utils/transcribe/importance.ts`). A term needs two occurrences, an identifier, a person's name from the
    summary, or a decision in its line; any other low term is only marked in the transcript.
 3. A goodbye or attendance range is dropped when finer audio-evidence items cover 80 % of it.
-4. Neighbours within 30 s offering the same people become one question; it plays the longest line.
+4. Speaker questions cluster only for the same single label, exact range and clip times, and choices.
+   Separate neighbouring passages stay separate.
 5. Priority = (1 − confidence) × impact × reach. Impact is log2(1 + words), +3 for a decision word, +3 when the
    range cites a summary action item or decision (`global.summary` headings), +2 when the answer moves an action's
    owner. Reach counts the questions with the same signature (top two choices and the people present). One
@@ -292,9 +293,9 @@ Only what is unsure and matters (Martin, 2026-11-02: "just on those which are re
 `suggest` makes at most `global.suggest.questionCap` (12) questions; `listen` asks by priority, at most
 `playback.listen.roundCap` (12) per round and none under `minPriority` (0.5). A split
 uses no budget: its parts come next and share their parent's unit, so the header shows `3/12 · part 2/4`. Each
-answer settles its look-alikes. A speaker answer gives the questions with the same signature the answer, +0.3 up to
-0.9, and closes those that reach the threshold. A word answer answers every other open word question on the same
-heard words the same way ("settled by the answer to i7"); the `answered` event lists them in `settled`, and an undo
+answer settles compatible look-alikes. A speaker answer requires the same single label, exact range and signature,
+and an offered answer; its items gain +0.3 up to 0.9, closing questions that reach the threshold. A word answer
+propagates only between questions with the same heard words and choices that decide exclusively global terms ("settled by the answer to i7"); the `answered` event lists them in `settled`, and an undo
 reopens them (`reopened` with `also`). "Enough for now" ends the round; the rest stay marked in the transcript.
 
 The round is one module, `ListenSession` in `lib/listen-session.ts`: which question comes next, the budget, each
