@@ -117,7 +117,11 @@ export async function recordNotice(
  * accepted it.
  */
 export async function postNotice(
-    { event, items }: { event: NotificationEvent & { id: string }; items: string[] },
+    {
+        event,
+        items,
+        send,
+    }: { event: NotificationEvent & { id: string }; items: string[]; send?: () => Promise<boolean> },
     deps: NoticeDeps | undefined = currentDeps()
 ): Promise<boolean> {
     if (!deps) {
@@ -127,7 +131,7 @@ export async function postNotice(
     try {
         const channels = event.only ?? [...CHANNEL_NAMES];
         await recordNotice({ id: event.id, channels, items }, deps);
-        const delivered = await deps.dispatch(event);
+        const delivered = await (send ? send() : deps.dispatch(event));
         const closed = await deps.store.update((notices) => !notices[event.id]);
         if (closed) {
             await Promise.all(channels.map((channel) => deps.retract(channel, event.id)));

@@ -43,6 +43,32 @@ function decision(over: Partial<DecisionRecord> = {}): DecisionRecord {
 }
 
 describe("notices", () => {
+    test("registers a custom delivery before sending and reconciles its late closure", async () => {
+        const { deps, store, retracted } = fakeDeps();
+        const items = [noticeItem("decision", "custom")];
+        deps.dispatch = async () => {
+            throw new Error("generic channel must not be used");
+        };
+        const sent = await postNotice(
+            {
+                event: { app: "question", id: "qa-decision-custom", message: "custom", only: ["telegram"] },
+                items,
+                send: async () => {
+                    expect(store.notices["qa-decision-custom"]).toBeDefined();
+                    await closeNoticeItems(items, deps);
+                    return true;
+                },
+            },
+            deps
+        );
+        expect(sent).toBe(true);
+        expect(store.notices).toEqual({});
+        expect(retracted).toEqual([
+            { channel: "telegram", id: "qa-decision-custom" },
+            { channel: "telegram", id: "qa-decision-custom" },
+        ]);
+    });
+
     test("retracts late delivery after closure during dispatch", async () => {
         const { deps, store, retracted } = fakeDeps();
         let finish!: (value: boolean) => void;
