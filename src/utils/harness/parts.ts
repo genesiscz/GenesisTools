@@ -321,7 +321,7 @@ export interface HookPayloadDialect {
      * SessionStart). A model field on another event names a harness that sends it everywhere.
      */
     readonly modelEvents: "every" | readonly string[];
-    /** The field that names the turn (Codex `turn_id`, Grok `promptId`), or null when its payloads carry none. */
+    /** The field that names the turn (Claude `prompt_id`, Codex `turn_id`, Grok `promptId`), or null when its payloads carry none. */
     readonly turnIdField: string | null;
     /** The field that names the subagent that made the call (Claude `agent_id`), or null. */
     readonly subagentIdField: string | null;

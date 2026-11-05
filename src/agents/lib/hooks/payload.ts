@@ -24,7 +24,7 @@ export interface HookPayload {
     harness: HarnessName;
     /** Who ran the hook: the harness, or `copilot`, the host that is no harness of ours. */
     caller: HarnessName | "copilot";
-    /** The turn the call belongs to, in the field the harness names it (Codex `turn_id`, Grok `promptId`). */
+    /** The turn the call belongs to, in the field the harness names it (Claude `prompt_id`, Codex `turn_id`, Grok `promptId`). */
     turnId?: string;
     /** Files the harness's own renderer already drew, so we do not double-print them. */
     nativeDiffFiles: string[];

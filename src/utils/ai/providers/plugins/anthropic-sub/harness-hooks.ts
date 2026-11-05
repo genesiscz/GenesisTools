@@ -30,7 +30,8 @@ export const claudeHooks: HookFacts = {
         nullTranscript: false,
         // Claude names its model on SessionStart only (code.claude.com/docs/en/hooks).
         modelEvents: ["SessionStart"],
-        turnIdField: null,
+        // The prompt that started the turn (`prompt_id`, the transcript's `promptId`): the key of its change rows.
+        turnIdField: "prompt_id",
         subagentIdField: "agent_id",
     },
 };
