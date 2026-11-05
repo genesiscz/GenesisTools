@@ -584,3 +584,20 @@ test("meeting allocation retries when another process reserves the selected dire
         spy.mockRestore();
     }
 });
+
+test("bounded meeting discovery skips old JSON and applies limits before read", () => {
+    const records = new MeetingStore(new Storage(`bounded-meetings-${++stores}`));
+    for (const id of ["2026-01-01_10-00-old", "2026-11-03_10-00-margin", "2026-11-05_10-00-new", "undated"]) {
+        mkdirSync(records.folder(id), { recursive: true });
+        writeFileSync(records.path(id), "{}");
+    }
+    const read = spyOn(records, "read").mockReturnValue(undefined);
+    try {
+        const result = records.listBounded({ since: new Date("2026-11-04T00:00:00Z") });
+        expect(result.olderMeetings).toBe(1);
+        expect(read.mock.calls.map(([id]) => id).sort()).toEqual(["2026-11-03_10-00-margin", "2026-11-05_10-00-new", "undated"]);
+        read.mockClear();
+        records.listBounded({ limit: 0 });
+        expect(read).not.toHaveBeenCalled();
+    } finally { read.mockRestore(); }
+});
