@@ -274,7 +274,14 @@ private final class LinkRelayDelegate: NSObject, NSApplicationDelegate {
             return false
         }
 
-        if (AppMainWindow.current == .hub || HubSingleInstance.isRunningElsewhere), AppDock.showHub(nil) {
+        let showSettings: @MainActor () -> Void = {
+            guard let executable = Bundle.main.executablePath else { return }
+            let child = Process()
+            child.executableURL = URL(fileURLWithPath: executable)
+            child.arguments = ["--window"]
+            do { try child.run() } catch { LinkRelay.note("settings launch failed: \(error)") }
+        }
+        if (AppMainWindow.current == .hub || HubSingleInstance.isRunningElsewhere), AppDock.showHub(nil, onFailure: showSettings) {
             LinkRelay.note("reopen, showing the hub")
         } else if let executable = Bundle.main.executablePath {
             LinkRelay.note("reopen, opening the settings window")
