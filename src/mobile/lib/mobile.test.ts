@@ -7,7 +7,7 @@ import { Command } from "commander";
 import { registerUp } from "../commands/up";
 import { builtAppPath } from "./build";
 import { compareFingerprints } from "./fingerprint";
-import { freshInstall } from "./first-run";
+import { freshInstall, preseedFirstRun } from "./first-run";
 import { stamp } from "./paths";
 import { chooseDevice, choosePlatform, PLATFORMS } from "./platforms";
 import { mergeAndroidDevices } from "./platforms/android";
@@ -345,4 +345,29 @@ test("fresh install validates before destructive effects and a valid replacement
         },
     });
     expect(calls).toEqual(["validate", "uninstall", "reset", "install"]);
+});
+
+test("ordinary privacy failures do not suppress later grants, but timeouts persist the hang marker", async () => {
+    const firstRun = { privacy: ["microphone", "photos"], idbApprove: [], defaults: [] } as const;
+    let failures = 0;
+    const options = {
+        firstRun: { ...firstRun, privacy: [...firstRun.privacy], idbApprove: [], defaults: [] },
+        udid: "SIM-ORDINARY-FAILURE",
+        bundleId: "com.example.shop",
+    };
+    const privacy = async () => {
+        failures++;
+        return "failed" as const;
+    };
+    await preseedFirstRun({ ...options, privacy });
+    await preseedFirstRun({ ...options, privacy });
+    expect(failures).toBe(4);
+    let timeouts = 0;
+    const timeout = async () => {
+        timeouts++;
+        return "timed-out" as const;
+    };
+    await preseedFirstRun({ ...options, udid: "SIM-PRIVACY-TIMEOUT", privacy: timeout });
+    await preseedFirstRun({ ...options, udid: "SIM-PRIVACY-TIMEOUT", privacy: timeout });
+    expect(timeouts).toBe(1);
 });

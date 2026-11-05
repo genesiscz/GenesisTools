@@ -43,6 +43,7 @@ export async function preseedFirstRun(options: {
     firstRun: IosApp["firstRun"];
     udid: string;
     bundleId: string;
+    privacy?: typeof setPrivacy;
 }): Promise<PreseedReport> {
     const { firstRun, udid, bundleId } = options;
     const report: PreseedReport = { granted: [], approved: [], defaults: [], skipped: [] };
@@ -54,12 +55,11 @@ export async function preseedFirstRun(options: {
             continue;
         }
 
-        const outcome = await setPrivacy({ udid, action: "grant", service, bundleId });
-
-        if (outcome === true) {
+        const result = await (options.privacy ?? setPrivacy)({ udid, action: "grant", service, bundleId });
+        if (result === "granted") {
             report.granted.push(service);
         } else {
-            if (outcome === "timeout") {
+            if (result === "timed-out") {
                 mkdirSync(dirname(marker), { recursive: true });
                 writeFileSync(marker, new Date().toISOString());
             }
