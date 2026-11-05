@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { findById, flatten, formatTree, parseSource, readLogBox, summarize } from "./a11y";
-import { decideAlert } from "./alerts";
+import { AlertWatcher, decideAlert } from "./alerts";
 import { emulatorCommand, freeEmulatorPort, parseAdbDevices } from "./android";
 import { appiumPortFor, compareVersions, xcuitestXcodeProblem } from "./appium";
 import { readMetroLog } from "./metro";
@@ -112,6 +112,27 @@ describe("mobile project config", () => {
     });
 });
 describe("system alert rules", () => {
+    it("leaves unknown alerts untouched and taps a recognized own-app link", async () => {
+        const backend = {
+            kind: "wda" as const,
+            read: async () => ({ text: "Delete this item?", buttons: ["Delete"] }),
+            tap: async () => {
+                throw new Error("must not tap an unknown alert");
+            },
+        };
+        expect((await new AlertWatcher({ backend, appName: "Shop" }).check())?.tapped).toBeNull();
+        let taps = 0;
+        const own = {
+            kind: "wda" as const,
+            read: async () => ({ text: "Open in “Shop”?", buttons: ["Open"] }),
+            tap: async () => {
+                taps++;
+                return "Open";
+            },
+        };
+        expect((await new AlertWatcher({ backend: own, appName: "Shop" }).check())?.tapped).toBe("Open");
+        expect(taps).toBe(1);
+    });
     it("opens our app's link, cancels another build's, and leaves unknown alerts alone", () => {
         expect(decideAlert("Open in “Shop”?", "Shop")).toEqual({
             rule: "open-in",
