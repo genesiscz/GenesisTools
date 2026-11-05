@@ -396,6 +396,10 @@ describe("what the read-back may forgive", () => {
 });
 
 describe("Markdown tag-like text", () => {
+    test("code line maps stay aligned across CR, CRLF and LF without changing line endings", () => {
+        const source = "intro\rmore\rtext\n```\r\nList<B>\r```\r\nafter";
+        expect(escapeMarkdownTagLikes(source)).toBe("intro\rmore\rtext\n```\r\nList&lt;B>\r```\r\nafter");
+    });
     test("uses Markdown block structure for code and HTML inside containers", () => {
         const source = [
             "text",
