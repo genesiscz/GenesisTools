@@ -14,6 +14,7 @@ import {
 } from "@genesiscz/utils/ui/components/select";
 import { Switch } from "@genesiscz/utils/ui/components/switch";
 import { MonitorSmartphone, Send, Smartphone, Volume2, Webhook } from "lucide-react";
+import { useEffect } from "react";
 
 export type ChannelDraft = Record<string, string | boolean>;
 
@@ -183,6 +184,13 @@ export function ChannelFields({
     enabled?: boolean;
 }) {
     const spec = CHANNEL_SPECS[channel];
+    useEffect(() => {
+        for (const field of spec.booleans) {
+            if (typeof draft[field.key] !== "boolean") {
+                onChange(field.key, false);
+            }
+        }
+    }, [spec, draft, onChange]);
 
     return (
         <div className="grid gap-4 sm:grid-cols-2">
