@@ -14,7 +14,7 @@ final class CameraMovieWriter: @unchecked Sendable {
     /// The uptime of the first frame, and the paused time since.
     private var firstUptime: TimeInterval?
     private var pausedAt: TimeInterval?
-    private var pausedTotal: TimeInterval = 0
+    private(set) var pausedTotal: TimeInterval = 0
     private var lastPts: CMTime = .negativeInfinity
     private var finishing = false
     private(set) var startedAt: Date?
@@ -61,7 +61,9 @@ final class CameraMovieWriter: @unchecked Sendable {
     func resume() {
         lock.withLock {
             guard let pausedAt else { return }
-            pausedTotal += ProcessInfo.processInfo.systemUptime - pausedAt
+            if firstUptime != nil {
+                pausedTotal += ProcessInfo.processInfo.systemUptime - pausedAt
+            }
             self.pausedAt = nil
         }
     }
