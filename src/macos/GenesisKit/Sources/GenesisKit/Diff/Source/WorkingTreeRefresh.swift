@@ -93,6 +93,7 @@ extension ReviewRepositoryLayout {
         let path = URL(fileURLWithPath: event).standardizedFileURL.path
         for directory in [gitDirectory.path, commonDirectory.path] where path == directory || path.hasPrefix(directory + "/") {
             // The other Git files (objects, locks, logs, other worktrees' indexes) change no diff of this checkout.
+            if path == commonDirectory.path + "/info/exclude" { return .rescan }
             return path == gitDirectory.path + "/index" ? .index : nil
         }
         if path == root.path {
@@ -161,7 +162,8 @@ extension GitWorkingTreeSource {
         guard let entries = now.indexEntries, entries == marks.indexEntries else {
             return .full(reason: "the index gained or lost entries")
         }
-        let paths = batch.paths.filter { !marks.ignores($0) }
+        // Revalidate ignored paths: exclude rules can change outside the watched checkout.
+        let paths = batch.paths
         if paths.isEmpty { return .same(marks) }
         if paths.count > Self.maxRefreshPaths { return .full(reason: "\(paths.count) paths changed") }
         if paths.contains(where: Self.changesRules) { return .full(reason: "a .gitignore or .gitattributes changed") }
