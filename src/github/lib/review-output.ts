@@ -584,7 +584,54 @@ export function formatThreadExpanded(thread: ParsedReviewThread, sessionId: stri
  * Format PR-level comments (reviewer summaries) for LLM consumption.
  * These are walkthrough/overview comments from CodeRabbit, Gemini, Copilot, etc.
  */
-export function formatPrCommentsLLM(prComments: PRLevelComment[], sessionId: string): string {
+type CommentWithUrl = PRLevelComment & { url?: string };
+
+function isBot(author: string): boolean {
+    return (
+        /\[bot\]$/i.test(author) ||
+        /^(?:coderabbitai|gemini-code-assist|github-actions)$/i.test(author) ||
+        /^eve-bot/i.test(author)
+    );
+}
+
+export function collapseBotComment(comment: CommentWithUrl): string {
+    const visibleBody = comment.body.replace(/<!--[\s\S]*?-->/g, "");
+    const lines = visibleBody.split(/\r?\n/);
+    const status =
+        lines.find((line) => line.trim() && !/^\s*>?\s*\[!\w+\]\s*$/.test(line))?.trim() ??
+        comment.reviewState ??
+        "(empty comment)";
+    const progressBody = visibleBody.split(/previous runs/i, 1)[0];
+    const progressLines = progressBody.split(/\r?\n/);
+    const run = /^eve-bot/i.test(comment.author) ? progressBody.match(/\brun\s*#?\s*\d+\b/i)?.[0] : undefined;
+    const checked = progressLines
+        .filter((line) => /^\s*[-*]\s*\[x\]/i.test(line))
+        .at(-1)
+        ?.replace(/^\s*[-*]\s*\[x\]\s*/i, "")
+        .trim();
+    const findings = progressBody.match(/\b\d+\s+(?:[\w-]+\s+){0,2}findings?\b|\bfindings?\s*[:|]\s*\d+\b/i)?.[0];
+    const sha = progressBody.match(
+        /\b(?:head(?:\s+(?:commit|sha|oid))?|commit(?:\s+sha)?)[\s*]*[:|=]?[\s`*]*([a-f0-9]{7,40})\b/i
+    )?.[1];
+    return [
+        `@${comment.author}`,
+        status.slice(0, 240),
+        run && !status.includes(run) ? run : undefined,
+        checked,
+        findings,
+        sha ? `head ${sha}` : undefined,
+        comment.url,
+    ]
+        .filter(Boolean)
+        .join(" | ")
+        .replace(/[\r\n]+/g, " ");
+}
+
+export function formatPrCommentsLLM(
+    prComments: CommentWithUrl[],
+    sessionId: string,
+    options: { fullComments?: boolean } = {}
+): string {
     if (prComments.length === 0) {
         return "No PR-level comments.\n";
     }
@@ -592,6 +639,11 @@ export function formatPrCommentsLLM(prComments: PRLevelComment[], sessionId: str
     let output = `=== PR-Level Comments (${prComments.length}) | Session: ${sessionId} ===\n\n`;
 
     for (const c of prComments) {
+        if (!options.fullComments && isBot(c.author)) {
+            output += `${collapseBotComment(c)}\n`;
+            continue;
+        }
+
         const stateLabel = c.type === "review" && c.reviewState ? ` [${c.reviewState}]` : "";
         const date = c.createdAt.slice(0, 10);
         output += `--- @${c.author}${stateLabel} (${date}) ---\n`;

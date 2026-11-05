@@ -4,7 +4,7 @@ import type { ParsedReviewThread, ReviewThread } from "@genesiscz/utils/github/t
 import { formatReviewLLM, formatThreadExpanded } from "./review-output";
 
 type GraphqlCall = { query: string; variables: Record<string, unknown> };
-type ReadCall = { kind: string; cursor: string | undefined; variables: Record<string, unknown> };
+type ReadCall = { kind: string; cursor: string | undefined; variables: Record<string, unknown>; query: string };
 
 let writeCalls: GraphqlCall[] = [];
 let writeFailure: unknown = null;
@@ -63,7 +63,7 @@ const readClient = {
 
         const kind = readKind(query, variables);
         const cursor = typeof variables.cursor === "string" ? variables.cursor : undefined;
-        readCalls.push({ kind, cursor, variables });
+        readCalls.push({ kind, cursor, variables, query });
         const key = `${kind}:${cursor ?? ""}`;
 
         if (!(key in readScript)) {
@@ -261,11 +261,20 @@ function threadEdge(id: string, comments: ReturnType<typeof commentEdge>[], comm
 }
 
 function reviewEdge(id: string, state: string, body: string, createdAt: string, login: string | null = "frank") {
-    return { node: { id, author: login === null ? null : { login }, body, state, createdAt } };
+    return {
+        node: {
+            id,
+            url: `https://example.com/${id}`,
+            author: login === null ? null : { login },
+            body,
+            state,
+            createdAt,
+        },
+    };
 }
 
 function prCommentEdge(id: string, body: string, createdAt: string) {
-    return { node: { id, author: { login: "gina" }, body, createdAt } };
+    return { node: { id, url: `https://example.com/${id}`, author: { login: "gina" }, body, createdAt } };
 }
 
 function firstPage(over: Record<string, unknown>) {
@@ -327,6 +336,7 @@ describe("fetchPRReviewThreads", () => {
         expect(info.prComments).toEqual([
             {
                 id: "RV2",
+                url: "https://example.com/RV2",
                 author: "ghost",
                 body: "(no review body)",
                 createdAt: "2026-03-08T08:00:00Z",
@@ -335,15 +345,24 @@ describe("fetchPRReviewThreads", () => {
             },
             {
                 id: "RV1",
+                url: "https://example.com/RV1",
                 author: "frank",
                 body: "Ship it",
                 createdAt: "2026-03-09T08:00:00Z",
                 type: "review",
                 reviewState: "APPROVED",
             },
-            { id: "PC1", author: "gina", body: "Thanks", createdAt: "2026-03-10T08:00:00Z", type: "comment" },
+            {
+                id: "PC1",
+                url: "https://example.com/PC1",
+                author: "gina",
+                body: "Thanks",
+                createdAt: "2026-03-10T08:00:00Z",
+                type: "comment",
+            },
         ]);
         expect(readCalls).toHaveLength(1);
+        expect(readCalls[0].query).toMatch(/comments\(first: 50\)[\s\S]*?\burl\b/);
         expect(readCalls[0].variables).toEqual({ owner: "acme", repo: "widgets", pr: 77 });
     });
 
@@ -399,6 +418,16 @@ describe("fetchPRReviewThreads", () => {
         expect(info.threads.map((thread) => thread.id)).toEqual(["T1", "T2"]);
         expect(info.threads[0].comments.map((comment) => comment.id)).toEqual(["C1", "C1b", "C1c"]);
         expect(info.prComments.map((comment) => comment.id)).toEqual(["RV1", "PC1", "RV2", "RV3", "PC2"]);
+        for (const call of readCalls.filter((item) => ["first", "reviews", "pr-comments"].includes(item.kind))) {
+            expect(call.query).toContain("url");
+        }
+        expect(info.prComments.map((comment) => ("url" in comment ? comment.url : undefined))).toEqual([
+            "https://example.com/RV1",
+            "https://example.com/PC1",
+            "https://example.com/RV2",
+            "https://example.com/RV3",
+            "https://example.com/PC2",
+        ]);
         expect(readCalls.map((call) => `${call.kind}:${call.cursor ?? ""}`).sort()).toEqual(
             [
                 "first:",

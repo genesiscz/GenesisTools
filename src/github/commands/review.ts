@@ -33,7 +33,10 @@ import { Command } from "commander";
 /**
  * Main review command handler
  */
-export async function reviewCommand(input: string, options: ReviewCommandOptions): Promise<void> {
+export async function reviewCommand(
+    input: string,
+    options: ReviewCommandOptions & { fullComments?: boolean }
+): Promise<void> {
     // Set global verbose for HTTP request logging
     if (options.verbose) {
         setGlobalVerbose(true);
@@ -162,8 +165,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
     // LLM-optimized output (session-based with refs)
     if (options.llm) {
         const sessionMgr = new ReviewSessionManager();
-        const recentSession = await sessionMgr.findRecentSessionForPR(owner, repo, prNumber);
-        const isFirstFetch = !recentSession;
+
         const sessionId = options.session || sessionMgr.generateSessionId(prNumber);
 
         // Reindex threads with contiguous ref numbers (t1, t2, ...) for session-local refs
@@ -203,11 +205,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
 
         const prComments = reviewData.prComments ?? [];
         if (prComments.length > 0) {
-            if (isFirstFetch) {
-                output += `\n${formatPrCommentsLLM(prComments, sessionId)}`;
-            } else {
-                output += `\nSummary: ${toolCommand("github review summary")} -s ${sessionId}\n`;
-            }
+            output += `\n${formatPrCommentsLLM(prComments, sessionId, { fullComments: options.fullComments })}`;
         }
 
         out.println(output);
@@ -459,7 +457,7 @@ async function summaryCommand(options: { session?: string }): Promise<void> {
     }
 
     const prComments = sessionData.prComments ?? [];
-    out.println(formatPrCommentsLLM(prComments, sessionId));
+    out.println(formatPrCommentsLLM(prComments, sessionId, { fullComments: true }));
 }
 
 /**
@@ -506,6 +504,7 @@ Examples:
         .option("-R, --resolve-thread", "Mark a thread as resolved", false)
         .option("--resolve", "Alias for --resolve-thread", false)
         .option("--llm", "LLM-optimized output with session (compact refs)", false)
+        .option("--full-comments", "Show full bot comment bodies in LLM output", false)
         .option("-s, --session <id>", "Review session ID")
         .option("-v, --verbose", "Enable verbose logging")
         .option("--no-pr-comments", "Hide PR-level review summaries and conversation comments")
