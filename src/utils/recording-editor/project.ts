@@ -595,6 +595,29 @@ export interface ZoomOptions {
 }
 
 /** Adds a zoom over a source range; one that overlaps another zoom is refused with the zoom it meets. */
+/**
+ * Where a zoom asked for from `fromUs` to `toUs` goes (the editor window's rule): at least 0.5 s long, moved past
+ * every zoom it would meet, cut at the end of the source; undefined when less than 0.2 s fits there.
+ */
+export function placeZoom(
+    project: EditProject,
+    fromUs: number,
+    toUs: number
+): { startUs: number; endUs: number } | undefined {
+    const length = Math.max(toUs - fromUs, 500_000);
+    let startUs = Math.max(0, fromUs);
+
+    for (const zoom of [...project.zooms].sort((a, b) => a.startUs - b.startUs)) {
+        if (startUs < zoom.endUs && startUs + length > zoom.startUs) {
+            startUs = zoom.endUs;
+        }
+    }
+
+    const endUs = Math.min(project.source.durationUs, startUs + length);
+    const meets = project.zooms.some((zoom) => startUs < zoom.endUs && endUs > zoom.startUs);
+    return endUs - startUs >= MINIMUM_ZOOM_US && !meets ? { startUs, endUs } : undefined;
+}
+
 export function addZoom(
     project: EditProject,
     fromUs: number,
@@ -602,25 +625,18 @@ export function addZoom(
     options: ZoomOptions = {}
 ): { project: EditProject; zoom: EditZoom } {
     checkRange(project, fromUs, toUs);
-    const endUs = Math.min(project.source.durationUs, toUs);
+    const span = placeZoom(project, fromUs, toUs);
 
-    if (endUs - fromUs < MINIMUM_ZOOM_US) {
-        throw new RangeError(`a zoom lasts at least ${MINIMUM_ZOOM_US / 1e6} s`);
-    }
-
-    const overlap = project.zooms.find((zoom) => fromUs < zoom.endUs && endUs > zoom.startUs);
-
-    if (overlap) {
-        throw new RangeError(
-            `that zoom overlaps zoom ${overlap.id} (${overlap.startUs / 1e6}–${overlap.endUs / 1e6} s); remove or move it first`
-        );
+    if (!span) {
+        throw new RangeError("no room for a zoom here; zooms cannot overlap");
     }
 
     const zoom = zoomSchema.parse({
         id: newId("z"),
-        startUs: Math.round(fromUs),
-        endUs: Math.round(endUs),
-        scale: options.scale,
+        startUs: Math.round(span.startUs),
+        endUs: Math.round(span.endUs),
+        // The editor window's rule: a new zoom takes the scale of the last one.
+        scale: options.scale ?? project.zooms.at(-1)?.scale,
         mode: options.follow ? "follow" : "manual",
         focusX: options.focus?.x,
         focusY: options.focus?.y,
@@ -646,11 +662,14 @@ export function addRedaction(
     }
 ): EditProject {
     checkRange(project, options.fromUs, options.toUs);
-    const { x, y, width, height } = options.rect;
+    // The editor window's rule: the part of the rectangle inside the picture, refused only when under 1 % of it.
+    const { x, y } = options.rect;
+    const width = Math.min(options.rect.width, 1 - x);
+    const height = Math.min(options.rect.height, 1 - y);
 
-    if (x + width > 1.0001 || y + height > 1.0001) {
+    if (width < 0.01 || height < 0.01) {
         throw new RangeError(
-            `the rectangle leaves the picture: x + width is ${Math.round((x + width) * 1000) / 1000} and y + height is ${Math.round((y + height) * 1000) / 1000}; both must be at most 1`
+            `the rectangle is ${Math.round(width * 1000) / 1000} by ${Math.round(height * 1000) / 1000} of the picture inside it; it needs at least 0.01 by 0.01`
         );
     }
 
@@ -1419,6 +1438,25 @@ export interface OpFacts {
     loudnessLufs?: number | null;
 }
 
+/** A `zoom` op whose zoom went past a zoom it met (`placeZoom`), as a sentence a caller can return. */
+export function opPlacementWarnings(op: EditOp, before: EditProject, after: EditProject): string[] {
+    if (op.op !== "zoom") {
+        return [];
+    }
+
+    const had = new Set(before.zooms.map((zoom) => zoom.id));
+    const added = after.zooms.find((zoom) => !had.has(zoom.id));
+
+    if (!added || Math.abs(added.startUs - timeToUs(op.from)) < 1000) {
+        return [];
+    }
+
+    const seconds = (us: number) => Math.round(us / 1000) / 1000;
+    return [
+        `zoom: ${seconds(timeToUs(op.from))} s met another zoom, so it went to ${seconds(added.startUs)}–${seconds(added.endUs)} s (zooms cannot overlap)`,
+    ];
+}
+
 /** The loudest a volume may lift: 200 %, +6 dB. */
 const MAX_VOLUME = 2;
 
@@ -1472,40 +1510,46 @@ function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>)
     }
 
     const durationUs = project.source.durationUs;
-    const place = (startUs: number, endUs: number): { startUs: number; endUs: number } => {
-        if (op.at !== undefined || op.by !== undefined) {
+    const keepsLength = moves > 0;
+    const wanted = (startUs: number, endUs: number): { startUs: number; endUs: number } => {
+        if (keepsLength) {
             const length = endUs - startUs;
-            const wanted = op.at !== undefined ? timeToUs(op.at) : startUs + Math.round((op.by ?? 0) * 1e6);
-            const moved = Math.min(Math.max(0, wanted), Math.max(0, durationUs - length));
+            const start = op.at !== undefined ? timeToUs(op.at) : startUs + Math.round((op.by ?? 0) * 1e6);
+            const moved = Math.min(Math.max(0, start), Math.max(0, durationUs - length));
             return { startUs: moved, endUs: moved + length };
         }
 
-        const nextStart = op.from === undefined ? startUs : Math.max(0, timeToUs(op.from));
-        const nextEnd = op.to === undefined ? endUs : Math.min(durationUs, timeToUs(op.to));
+        return {
+            startUs: op.from === undefined ? startUs : Math.max(0, timeToUs(op.from)),
+            endUs: op.to === undefined ? endUs : Math.min(durationUs, timeToUs(op.to)),
+        };
+    };
+    // The editor window's rule: an edge dragged past the other one stops 0.1 s from it (the end moves on) instead of
+    // refusing the drag half way.
+    const place = (startUs: number, endUs: number): { startUs: number; endUs: number } => {
+        const span = wanted(startUs, endUs);
 
-        if (nextEnd - nextStart < 100_000) {
-            throw new Error(
-                `retime would leave ${op.id} ${(nextStart / 1e6).toFixed(2)}–${(nextEnd / 1e6).toFixed(2)} s; it must last at least 0.1 s`
-            );
+        if (keepsLength) {
+            return span;
         }
 
-        return { startUs: nextStart, endUs: nextEnd };
+        const nextStart = Math.min(span.startUs, Math.max(0, durationUs - 100_000));
+        return { startUs: nextStart, endUs: Math.max(span.endUs, nextStart + 100_000) };
     };
 
     const zoom = project.zooms.find((item) => item.id === op.id);
 
     if (zoom) {
-        const span = place(zoom.startUs, zoom.endUs);
-        const meets = project.zooms.find(
-            (other) => other.id !== op.id && span.startUs < other.endUs && span.endUs > other.startUs
+        // The editor window's rule: a zoom moved or stretched into a neighbour stops at it, 0.2 s long at least.
+        const others = project.zooms.filter((other) => other.id !== op.id);
+        const lower = Math.max(0, ...others.filter((other) => other.endUs <= zoom.startUs).map((other) => other.endUs));
+        const upper = Math.min(
+            durationUs,
+            ...others.filter((other) => other.startUs >= zoom.endUs).map((other) => other.startUs)
         );
-
-        if (meets) {
-            throw new Error(
-                `zoom ${op.id} would overlap zoom ${meets.id} (${meets.startUs / 1e6}–${meets.endUs / 1e6} s); zooms cannot overlap`
-            );
-        }
-
+        const target = wanted(zoom.startUs, zoom.endUs);
+        const startUs = Math.max(lower, Math.min(target.startUs, upper - MINIMUM_ZOOM_US));
+        const span = { startUs, endUs: Math.min(upper, Math.max(target.endUs, startUs + MINIMUM_ZOOM_US)) };
         return { ...project, zooms: project.zooms.map((item) => (item.id === op.id ? { ...item, ...span } : item)) };
     }
 
@@ -1693,7 +1737,15 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 );
             }
 
-            return { ...project, redactions: list.filter((redaction) => redaction.id !== op.id) };
+            // Like `untext` and `unshape` (and the editor window): the last one gone removes the key.
+            const redactions = list.filter((redaction) => redaction.id !== op.id);
+
+            if (redactions.length === 0) {
+                const { redactions: _redactions, ...rest } = project;
+                return rest;
+            }
+
+            return { ...project, redactions };
         }
         case "text": {
             const fromUs = timeToUs(op.from);
@@ -1807,7 +1859,8 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             return { ...project, texts: rest.length ? rest : undefined };
         }
         case "autoZoom":
-            return autoZoom(project, readCursorTrack(project.source.cursor), op.scale);
+            // The editor window's rule: without a scale the zooms take the first zoom's, else 1.6.
+            return autoZoom(project, readCursorTrack(project.source.cursor), op.scale ?? project.zooms[0]?.scale);
         case "annotateClicks":
             return annotateClicks(project, readCursorTrack(project.source.cursor), {
                 fromUs: op.from === undefined ? undefined : timeToUs(op.from),
@@ -1895,7 +1948,15 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 throw new Error(`the music file ${file} does not exist`);
             }
 
-            return { ...project, audio: { ...project.audio, music: musicSchema.parse({ ...merged, file }) } };
+            // The editor window's JSON: the file's beginning and a loop are the defaults, written as absent.
+            const { startMs, loop, ...music } = musicSchema.parse({ ...merged, file });
+            return {
+                ...project,
+                audio: {
+                    ...project.audio,
+                    music: { ...music, ...(startMs ? { startMs } : {}), ...(loop === false ? { loop } : {}) },
+                },
+            };
         }
         case "exportSettings":
             return {
@@ -1919,7 +1980,9 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             return { ...wholeProject(project.source), revision: project.revision };
         case "clicks": {
             const { op: _op, ...change } = op;
-            return { ...project, clicks: clicksSchema.parse({ ...project.clicks, ...change }) };
+            // The editor window's JSON: no click sound is written as absent.
+            const { sound, ...clicks } = clicksSchema.parse({ ...project.clicks, ...change });
+            return { ...project, clicks: { ...clicks, ...(sound ? { sound } : {}) } };
         }
         case "keys": {
             if (!trackHasShortcuts(project.source.cursor)) {
@@ -2023,17 +2086,23 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 );
             }
 
+            const { aspect, fit, ...frame } = frameSchema.parse({
+                ...current,
+                ...(op.aspect === undefined ? {} : { aspect: op.aspect }),
+                ...(op.fit === undefined ? {} : { fit: op.fit }),
+                ...(op.padding === undefined ? {} : { padding: op.padding }),
+                ...(op.cornerRadius === undefined ? {} : { cornerRadius: op.cornerRadius }),
+                ...(op.shadow === undefined ? {} : { shadow: op.shadow }),
+                background,
+            });
+            // The editor window's JSON: the source shape and the whole movie (`contain`) are written as absent.
             return {
                 ...project,
-                frame: frameSchema.parse({
-                    ...current,
-                    ...(op.aspect === undefined ? {} : { aspect: op.aspect }),
-                    ...(op.fit === undefined ? {} : { fit: op.fit }),
-                    ...(op.padding === undefined ? {} : { padding: op.padding }),
-                    ...(op.cornerRadius === undefined ? {} : { cornerRadius: op.cornerRadius }),
-                    ...(op.shadow === undefined ? {} : { shadow: op.shadow }),
-                    background,
-                }),
+                frame: {
+                    ...frame,
+                    ...(aspect && aspect !== "source" ? { aspect } : {}),
+                    ...(fit === "cover" ? { fit } : {}),
+                },
             };
         }
     }
@@ -2150,7 +2219,14 @@ function applyRange(project: EditProject, op: Extract<EditOp, { op: "range" }>):
         case "hide":
             return addRedaction(project, { fromUs, toUs, rect: RANGE_RECTS.hide, style: "blur" });
         case "spotlight":
-            return addRedaction(project, { fromUs, toUs, rect: RANGE_RECTS.spotlight, style: "spotlight" });
+            // The editor window's rule: a recording with a cursor track gets a spotlight that follows the pointer.
+            return addRedaction(project, {
+                fromUs,
+                toUs,
+                rect: RANGE_RECTS.spotlight,
+                style: "spotlight",
+                follow: readCursorTrack(project.source.cursor).length > 0,
+            });
         case "text":
             return applyOpItself(project, { op: "text", ...seconds, text: op.text ?? "Title" }, {});
         case "marker":

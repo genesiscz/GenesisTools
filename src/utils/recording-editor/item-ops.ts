@@ -1,7 +1,7 @@
 import { cameraHiddenId } from "./camera";
 import { denoiseSchema } from "./denoise";
 import type { CursorSample, EditOp, EditProject } from "./project";
-import { MINIMUM_CLIP_US, newId } from "./project";
+import { MINIMUM_CLIP_US, newId, placeZoom } from "./project";
 
 /**
  * The ops that change an item that exists (a zoom, hidden part, text, shape, clip or lane) by its id, as the editor
@@ -183,29 +183,6 @@ export function clipSpeed(project: EditProject, op: Op<"clipSpeed">): EditProjec
     const index = clipIndex(project, op.clip);
     const speed = clamp(op.factor, 0.25, 16);
     return { ...project, clips: project.clips.map((clip, at) => (at === index ? { ...clip, speed } : clip)) };
-}
-
-/**
- * Where a new zoom over [fromUs, toUs) goes, as the window places one: at least 0.5 s long, moved after each zoom it
- * would meet (in start order), cut at the end of the movie; undefined when no 0.2 s are left there.
- */
-export function placeZoom(
-    project: EditProject,
-    fromUs: number,
-    toUs: number
-): { startUs: number; endUs: number } | undefined {
-    const length = Math.max(toUs - fromUs, 500_000);
-    let startUs = Math.max(0, fromUs);
-
-    for (const zoom of [...project.zooms].sort((a, b) => a.startUs - b.startUs)) {
-        if (startUs < zoom.endUs && startUs + length > zoom.startUs) {
-            startUs = zoom.endUs;
-        }
-    }
-
-    const endUs = Math.min(project.source.durationUs, startUs + length);
-    const meets = project.zooms.some((zoom) => startUs < zoom.endUs && endUs > zoom.startUs);
-    return endUs - startUs >= 200_000 && !meets ? { startUs, endUs } : undefined;
 }
 
 /** A copy of an item right after it, with a new id; a zoom's copy goes after any zoom it would meet. */

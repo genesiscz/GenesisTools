@@ -113,17 +113,19 @@ export function addComment(
     path: string,
     comment: { atUs: number; toUs?: number; text: string; author?: string; link?: string }
 ): ReviewComment {
-    if (comment.toUs !== undefined && comment.toUs <= comment.atUs) {
+    if (comment.toUs !== undefined && comment.toUs < comment.atUs) {
         throw new RangeError(
             `a comment's range ends (${comment.toUs / 1e6} s) before it starts (${comment.atUs / 1e6} s)`
         );
     }
 
+    // The editor window's rules: a range of no length is a comment at one moment, and the text keeps 2000 characters.
+    const toUs = comment.toUs !== undefined && comment.toUs > comment.atUs ? Math.round(comment.toUs) : undefined;
     const line: CommentLine = {
         id: `m${randomUUID().slice(0, 8)}`,
         atUs: Math.round(comment.atUs),
-        ...(comment.toUs === undefined ? {} : { toUs: Math.round(comment.toUs) }),
-        text: comment.text.trim(),
+        ...(toUs === undefined ? {} : { toUs }),
+        text: comment.text.trim().slice(0, 2000),
         ...(comment.author ? { author: comment.author } : {}),
         ...(comment.link ? { link: comment.link } : {}),
         at: new Date().toISOString(),

@@ -23,6 +23,7 @@ import {
     type ExportFormat,
     editProjectSchema,
     type OpFacts,
+    opPlacementWarnings,
     opTimeWarnings,
     outputTimeOf,
     partOf,
@@ -268,7 +269,9 @@ export async function computeEdit({
     for (const [index, op] of ops.entries()) {
         try {
             const measured = known?.[index] ?? (await probeFacts(next, op));
+            const before = next;
             next = applyOp(next, op, measured);
+            warnings.push(...opPlacementWarnings(op, before, next));
             facts.push(measured);
             removedIdleUs.push(...(measured.idleUs ?? []).map(([from, to]): [number, number] => [from, to]));
 

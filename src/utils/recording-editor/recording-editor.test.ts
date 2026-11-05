@@ -32,6 +32,7 @@ import {
     editOpSchema,
     editProjectSchema,
     findInTranscript,
+    opPlacementWarnings,
     outputDurationUs,
     outputTimeOf,
     parseEditOps,
@@ -522,12 +523,16 @@ describe("edit project (edit.json)", () => {
         ]);
         expect(() => updateComment(path, early.id, { text: "x" })).toThrow(`no comment ${early.id}`);
         expect(() => addComment(path, { atUs: 3_000_000, toUs: 2_000_000, text: "x" })).toThrow("before it starts");
+        // The editor window's rules: a range of no length is a moment, and a long text keeps 2000 characters.
+        const moment = addComment(path, { atUs: 3_000_000, toUs: 3_000_000, text: ` ${"a".repeat(2100)} ` });
+        expect(moment).not.toHaveProperty("toUs");
+        expect(moment.text).toHaveLength(2000);
     });
 
-    test("refuses a cut of everything and an overlapping zoom, naming why", () => {
-        const project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 3 });
+    test("refuses a cut of everything, and a zoom where no zoom fits, naming why", () => {
+        const project = applyOp(wholeProject(source), { op: "zoom", from: 0, to: 10 });
         expect(() => applyOp(project, { op: "cut", from: 0, to: 10 })).toThrow("whole movie");
-        expect(() => applyOp(project, { op: "zoom", from: 2, to: 4 })).toThrow("overlaps zoom");
+        expect(() => applyOp(project, { op: "zoom", from: 2, to: 4 })).toThrow("no room for a zoom here");
     });
 
     test("parses ops with one readable line per problem", () => {
@@ -774,10 +779,20 @@ describe("edit project (edit.json)", () => {
         });
         const [redaction] = hidden.redactions ?? [];
         expect(redaction).toMatchObject({ startUs: 1_000_000, endUs: 3_000_000, x: 0.1, width: 0.3, style: "blur" });
+        // The editor window's rule: the part of the rectangle inside the picture, refused only under 1 % of it.
+        const clipped = applyOp(project, {
+            op: "redact",
+            from: 1,
+            to: 3,
+            rect: { x: 0.8, y: 0, width: 0.3, height: 0.1 },
+        });
+        expect(clipped.redactions?.[0]?.x).toBe(0.8);
+        expect(clipped.redactions?.[0]?.width).toBeCloseTo(0.2, 9);
         expect(() =>
-            applyOp(project, { op: "redact", from: 1, to: 3, rect: { x: 0.8, y: 0, width: 0.3, height: 0.1 } })
-        ).toThrow("leaves the picture");
-        expect(applyOp(hidden, { op: "unredact", id: redaction?.id ?? "" }).redactions).toEqual([]);
+            applyOp(project, { op: "redact", from: 1, to: 3, rect: { x: 0.995, y: 0, width: 0.3, height: 0.1 } })
+        ).toThrow("at least 0.01 by 0.01");
+        // Like untext and unshape: the last one gone removes the key.
+        expect(applyOp(hidden, { op: "unredact", id: redaction?.id ?? "" }).redactions).toBeUndefined();
         expect(() => applyOp(hidden, { op: "unredact", id: "nope" })).toThrow(`redactions: ${redaction?.id}`);
         // Music: a file once, then changes merge; a missing file is refused; enabled: false removes it.
         const song = join(mkdtempSync(join(tmpdir(), "gt-music-")), "song.m4a");
@@ -895,7 +910,11 @@ describe("edit project (edit.json)", () => {
             startUs: 1_000_000,
             endUs: 4_000_000,
         });
-        expect(() => applyOp(titled, { op: "retime", id: note?.id ?? "", from: 2, to: 2 })).toThrow("at least 0.1 s");
+        // The editor window's rule: an edge on the other one leaves the item 0.1 s long instead of refusing.
+        expect(applyOp(titled, { op: "retime", id: note?.id ?? "", from: 2, to: 2 }).texts?.[0]).toMatchObject({
+            startUs: 2_000_000,
+            endUs: 2_100_000,
+        });
         expect(() => applyOp(titled, { op: "retime", id: note?.id ?? "", by: 1, to: 3 })).toThrow("not both");
         expect(applyOp(titled, { op: "retime", id: note?.id ?? "", at: 6 }).texts?.[0]).toMatchObject({
             startUs: 6_000_000,
@@ -1212,6 +1231,74 @@ describe("the editor window's item ops", () => {
         project = applyOp(project, { op: "range", from: 2, to: 4, action: "keep" });
         expect(project.clips.map((clip) => [clip.fromUs, clip.toUs])).toEqual([[3_000_000, 5_000_000]]);
     });
+
+    // Where the two languages disagreed, the window's behaviour is the rule now (each test names the window's).
+    test("a zoom that meets another goes after it, lasts 0.5 s at least, takes the last zoom's scale and says it moved", () => {
+        let project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 3, scale: 2.5 });
+        const before = project;
+        project = applyOp(project, { op: "zoom", from: 2, to: 4 });
+        expect(project.zooms.map((zoom) => [zoom.startUs, zoom.endUs, zoom.scale])).toEqual([
+            [1_000_000, 3_000_000, 2.5],
+            [3_000_000, 5_000_000, 2.5],
+        ]);
+        expect(opPlacementWarnings({ op: "zoom", from: 2, to: 4 }, before, project)).toEqual([
+            "zoom: 2 s met another zoom, so it went to 3–5 s (zooms cannot overlap)",
+        ]);
+        const short = applyOp(project, { op: "zoom", from: 7, to: 7.1 });
+        expect(short.zooms.at(-1)).toMatchObject({ startUs: 7_000_000, endUs: 7_500_000 });
+        expect(opPlacementWarnings({ op: "zoom", from: 7, to: 7.1 }, project, short)).toEqual([]);
+    });
+
+    test("a zoom moved or stretched into a neighbour stops at it, and a dragged edge keeps 0.1 s instead of refusing", () => {
+        let project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 2 });
+        project = applyOp(project, { op: "zoom", from: 4, to: 6 });
+        const [first, second] = project.zooms;
+        const spans = (next: ReturnType<typeof wholeProject>) => next.zooms.map((zoom) => [zoom.startUs, zoom.endUs]);
+        expect(spans(applyOp(project, { op: "retime", id: first.id, to: 5 }))).toEqual([
+            [1_000_000, 4_000_000],
+            [4_000_000, 6_000_000],
+        ]);
+        expect(spans(applyOp(project, { op: "retime", id: second.id, by: -3.5 }))).toEqual([
+            // Moved 3.5 s back from 4–6 s, it stops at the first zoom's end and keeps what is left of the asked span.
+            [1_000_000, 2_000_000],
+            [2_000_000, 2_500_000],
+        ]);
+
+        let texted = applyOp(wholeProject(source), { op: "text", from: 1, to: 3, text: "Hi" });
+        const text = texted.texts?.[0]?.id ?? "";
+        texted = applyOp(texted, { op: "retime", id: text, to: 0.5 });
+        expect(texted.texts?.[0]).toMatchObject({ startUs: 1_000_000, endUs: 1_100_000 });
+        texted = applyOp(texted, { op: "retime", id: text, from: 4 });
+        expect(texted.texts?.[0]).toMatchObject({ startUs: 4_000_000, endUs: 4_100_000 });
+    });
+
+    test("auto zoom takes the first zoom's scale, and a range spotlight follows a recorded cursor", () => {
+        const project = applyOp(withCursor(), { op: "zoom", from: 8, to: 9, scale: 2.2 });
+        const zoomed = applyOp(project, { op: "autoZoom" });
+        expect(zoomed.zooms.filter((zoom) => zoom.mode === "follow").map((zoom) => zoom.scale)).toEqual([2.2, 2.2]);
+        expect(applyOp(withCursor(), { op: "autoZoom" }).zooms.map((zoom) => zoom.scale)).toEqual([1.6, 1.6]);
+
+        const range = { op: "range", from: 1, to: 3, action: "spotlight" } as const;
+        expect(applyOp(withCursor(), range).redactions?.[0]?.follow).toBe(true);
+        expect(applyOp(wholeProject(source), range).redactions?.[0]).not.toHaveProperty("follow");
+    });
+
+    test("the window's defaults are written as absent: the source canvas, the whole movie, no click sound, a looped music start", () => {
+        const framed = applyOp(wholeProject(source), { op: "frame", aspect: "16:9", fit: "cover" });
+        expect(framed.frame).toMatchObject({ aspect: "16:9", fit: "cover" });
+        const back = applyOp(framed, { op: "frame", aspect: "source", fit: "contain" });
+        expect(back.frame).not.toHaveProperty("aspect");
+        expect(back.frame).not.toHaveProperty("fit");
+
+        const clicks = applyOp(wholeProject(source), { op: "clicks", highlight: true, sound: false });
+        expect(clicks.clicks).not.toHaveProperty("sound");
+
+        const file = join(workspace(), "music.mp3");
+        writeFileSync(file, "not really music");
+        const music = applyOp(wholeProject(source), { op: "music", file, startMs: 0, loop: true }).audio.music;
+        expect(music).not.toHaveProperty("startMs");
+        expect(music).not.toHaveProperty("loop");
+    });
 });
 
 describe("noise reduction on export", () => {
@@ -1396,18 +1483,23 @@ describe("camera bubble", () => {
         });
     }
 
-    test("hidden ranges join, split on a show, and decide where the bubble draws", () => {
+    test("an overlapping hide is a part of its own, a show splits them, and they decide where the bubble draws", () => {
         let project = applyOp(wholeProject(source), { op: "camera", file: "camera.mov" });
         project = applyOp(project, { op: "cameraHide", from: 1, to: 3 });
         const first = project.camera?.hidden[0]?.id;
         project = applyOp(project, { op: "cameraHide", from: 2, to: 5 });
-        expect(project.camera?.hidden).toEqual([{ id: first ?? "", startUs: 1_000_000, endUs: 5_000_000 }]);
+        // The editor window's rule: never merged, so the new part keeps its id (selectable, movable).
+        const second = project.camera?.hidden[1]?.id;
+        expect(project.camera?.hidden).toEqual([
+            { id: first ?? "", startUs: 1_000_000, endUs: 3_000_000 },
+            { id: second ?? "", startUs: 2_000_000, endUs: 5_000_000 },
+        ]);
+        expect(second).not.toBe(first);
         project = applyOp(project, { op: "cameraShow", from: 2, to: 3 });
         expect(project.camera?.hidden).toMatchObject([
             { id: first, startUs: 1_000_000, endUs: 2_000_000 },
-            { startUs: 3_000_000, endUs: 5_000_000 },
+            { id: second, startUs: 3_000_000, endUs: 5_000_000 },
         ]);
-        expect(project.camera?.hidden[1]?.id).not.toBe(first);
         const camera = project.camera;
 
         if (!camera) {

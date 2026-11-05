@@ -174,29 +174,15 @@ export function bubbleShowsAt(bubble: CameraBubble, sourceUs: number): boolean {
     return bubble.show && !bubble.hidden.some((range) => sourceUs >= range.startUs && sourceUs < range.endUs);
 }
 
-/**
- * Hides the bubble from `fromUs` to `toUs`, joined with any hidden part it touches; a joined part keeps the id and the
- * lane of the earliest one.
- */
+/** Hides the bubble from `fromUs` to `toUs` as a part of its own, in start order. */
 export function hideCamera(bubble: CameraBubble, fromUs: number, toUs: number, id = cameraHiddenId()): CameraBubble {
     if (toUs <= fromUs) {
         throw new Error(`a camera hide needs its end after its start (got ${fromUs / 1e6}–${toUs / 1e6} s)`);
     }
 
-    const ranges = [...bubble.hidden, { id, startUs: fromUs, endUs: toUs }].sort((a, b) => a.startUs - b.startUs);
-    const merged: CameraBubble["hidden"] = [];
-
-    for (const range of ranges) {
-        const last = merged.at(-1);
-
-        if (last && range.startUs <= last.endUs) {
-            last.endUs = Math.max(last.endUs, range.endUs);
-        } else {
-            merged.push({ ...range });
-        }
-    }
-
-    return { ...bubble, hidden: merged };
+    // The editor window's rule: a part is never merged into one it overlaps, so it keeps its id (selectable, movable).
+    const hidden = [...bubble.hidden, { id, startUs: fromUs, endUs: toUs }].sort((a, b) => a.startUs - b.startUs);
+    return { ...bubble, hidden };
 }
 
 /** Shows the bubble again from `fromUs` to `toUs`: the hidden ranges lose that part (one may split in two). */

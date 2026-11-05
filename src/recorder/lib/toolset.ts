@@ -9,6 +9,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { awaitStart, startGatePath, stopPassedChild, sweepStartGates } from "@genesiscz/utils/process/start-gate";
 import { checkProject, type EditFacts, fixOps } from "@genesiscz/utils/recording-editor/check";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
+import { placedShape } from "@genesiscz/utils/recording-editor/item-ops";
 import { EFFECT_KINDS } from "@genesiscz/utils/recording-editor/lanes";
 import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
@@ -1001,14 +1002,6 @@ export const moviesApi = defineApi({
     ],
 });
 
-/** Where an arrow starts when only its head is given: 12 % of the picture away, towards the centre and down-left. */
-function arrowTail(at: { x: number; y: number }): { x: number; y: number } {
-    const dx = at.x > 0.5 ? -1 : 1;
-    const dy = at.y > 0.5 ? -1 : 1;
-    const clamp = (value: number) => Math.min(1, Math.max(0, value));
-    return { x: clamp(at.x + dx * 0.085), y: clamp(at.y + dy * 0.085) };
-}
-
 /** One line a reader takes in at a glance: the length and what the edit holds. */
 function summarize(project: EditProject, title: string | undefined): string {
     const seconds = (us: number) => `${Math.round(us / 100_000) / 10} s`;
@@ -1418,7 +1411,8 @@ export class Movie {
                 kind: "arrow",
                 from: options.from,
                 to: options.to,
-                start: options.tail ?? arrowTail(options.at),
+                // Where an arrow starts when only its head is given: the editor window's arrow tail.
+                start: options.tail ?? placedShape("arrow", options.at).start,
                 end: options.at,
                 ...(options.color ? { color: options.color } : {}),
                 ...(options.appear ? { appear: options.appear } : {}),
