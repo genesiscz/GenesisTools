@@ -399,3 +399,9 @@ final class HubUsageTests: XCTestCase {
         XCTAssertEqual(bars.map(\.usd).reduce(0, +), 10)
     }
 }
+
+final class HubUsageDoorTests: XCTestCase {
+    func testLimitsLoadsItsDriftVerdict() {
+        XCTAssertTrue(HubUsageSection.limits.doors(UsageSettings()).contains(.drift))
+    }
+}
