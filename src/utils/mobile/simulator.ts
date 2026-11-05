@@ -297,7 +297,7 @@ export async function setPrivacy(options: {
     action: "grant" | "revoke" | "reset";
     service: SimctlPrivacyService | "all";
     bundleId?: string;
-}): Promise<boolean> {
+}): Promise<boolean | "timeout"> {
     const args = ["privacy", options.udid, options.action, options.service];
 
     if (options.bundleId) {
@@ -308,7 +308,7 @@ export async function setPrivacy(options: {
 
     if (result.status !== 0) {
         log.warn({ ...options, stderr: result.stderr.trim(), error: result.error?.message }, "simctl privacy failed");
-        return false;
+        return result.error?.code === "ETIMEDOUT" ? "timeout" : false;
     }
 
     return true;
