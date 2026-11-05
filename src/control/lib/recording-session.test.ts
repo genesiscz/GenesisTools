@@ -1153,3 +1153,14 @@ describe("a movie recording's live settings", () => {
         }
     });
 });
+
+test("segment re-encoding maps every audio source", () => {
+    const argv = joinSegmentsArgv({ inputs: ["/a.mp4", "/b.mp4"], width: 1280, height: 720,
+        output: "/out.mp4", audioTracks: 2 });
+    const graph = argv[argv.indexOf("-filter_complex") + 1];
+    expect(graph).toContain("[0:a:0]");
+    expect(graph).toContain("[1:a:1]");
+    expect(graph).toContain("concat=n=2:v=1:a=2[out][aout0][aout1]");
+    expect(argv).toContain("[aout0]");
+    expect(argv).toContain("[aout1]");
+});

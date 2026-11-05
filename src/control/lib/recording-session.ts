@@ -733,6 +733,7 @@ export function joinSegmentsArgv({
     height,
     output,
     audio = false,
+    audioTracks = audio ? 1 : 0,
 }: {
     inputs: string[];
     width: number;
@@ -740,6 +741,7 @@ export function joinSegmentsArgv({
     output: string;
     /** Every input has one audio track: it is joined too (resampled across the cuts), as AAC. */
     audio?: boolean;
+    audioTracks?: number;
 }): string[] {
     const w = Math.max(2, Math.floor(width / 2) * 2);
     const h = Math.max(2, Math.floor(height / 2) * 2);
@@ -747,11 +749,16 @@ export function joinSegmentsArgv({
         (_, index) =>
             `[${index}:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
             `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p,settb=AVTB[v${index}]` +
-            (audio ? `;[${index}:a]aresample=async=1:first_pts=0[a${index}]` : "")
+            Array.from({ length: audioTracks }, (_, track) =>
+                `;[${index}:a:${track}]aresample=async=1:first_pts=0[a${index}_${track}]`
+            ).join("")
     );
-    const labels = inputs.map((_, index) => (audio ? `[v${index}][a${index}]` : `[v${index}]`)).join("");
+    const labels = inputs.map((_, index) => `[v${index}]` +
+        Array.from({ length: audioTracks }, (_, track) => `[a${index}_${track}]`).join("")
+    ).join("");
+    const outputs = Array.from({ length: audioTracks }, (_, track) => `[aout${track}]`);
 
-    if (audio) {
+    if (audioTracks > 0) {
         return [
             "ffmpeg",
             "-hide_banner",
@@ -761,11 +768,10 @@ export function joinSegmentsArgv({
             "-y",
             ...inputs.flatMap((input) => ["-i", input]),
             "-filter_complex",
-            `${chains.join(";")};${labels}concat=n=${inputs.length}:v=1:a=1[out][aout]`,
+            `${chains.join(";")};${labels}concat=n=${inputs.length}:v=1:a=${audioTracks}[out]${outputs.join("")}`,
             "-map",
             "[out]",
-            "-map",
-            "[aout]",
+            ...outputs.flatMap((label) => ["-map", label]),
             "-c:v",
             "libx264",
             "-preset",

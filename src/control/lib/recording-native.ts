@@ -245,6 +245,10 @@ export const ffmpegSegmentJoiner: SegmentJoiner = async ({ segments, output }) =
     const videos = facts.map(primaryVideo);
     const first = videos[0];
     const audioCounts = facts.map(audioStreamCount);
+
+    if (!audioCounts.every((count) => count === audioCounts[0])) {
+        throw new Error("recording segments have different audio track counts; kept the source segments");
+    }
     const sameShape =
         first !== null &&
         videos.every(
@@ -269,7 +273,7 @@ export const ffmpegSegmentJoiner: SegmentJoiner = async ({ segments, output }) =
             width: probe.displayWidth,
             height: probe.displayHeight,
             output,
-            audio: audioCounts.every((count) => count > 0),
+            audioTracks: audioCounts[0] ?? 0,
         });
         await runVideoCommand({ command: argv, timeoutMs });
     }
