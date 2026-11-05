@@ -3612,6 +3612,27 @@ describe("the screen at a moment, per display", () => {
         expect(result.displays.map((one) => one.displayId)).toEqual([1]);
     });
 
+    test("later display tracking preserves historical unchanged frames without display ids", () => {
+        const legacy = { file: "frames/legacy.jpg", at: at("30:01"), text: "Legacy screen" };
+        const result = framesAtPerDisplay({
+            lines: [legacy, ...lines],
+            spans,
+            targetMs: Date.parse(at("32:00")),
+            windowMs: 1000,
+            displaySpans: [{ displayId: 1, fromMs: Date.parse(at("35:00")), toMs: Date.parse(at("40:00")) }],
+        });
+        expect(result.recorded).toBe(true);
+        expect(result.displays).toContainEqual({ frames: [{ ...legacy, unchanged: true }] });
+        const later = framesAtPerDisplay({
+            lines: [legacy],
+            spans,
+            targetMs: Date.parse(at("36:00")),
+            windowMs: 1000,
+            displaySpans: [{ displayId: 1, fromMs: Date.parse(at("35:00")), toMs: Date.parse(at("40:00")) }],
+        });
+        expect(later.displays).toEqual([]);
+    });
+
     test("each display shows the frame still on its own screen", () => {
         const { displays, recorded } = framesAtPerDisplay({
             lines,

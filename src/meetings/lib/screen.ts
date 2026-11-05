@@ -134,11 +134,14 @@ export function framesAtPerDisplay(options: {
     let recorded = false;
     const displays: DisplayFrames[] = [];
 
+    const trackedFrom =
+        options.displaySpans?.reduce((first, span) => Math.min(first, span.fromMs), Infinity) ?? Infinity;
+
     for (const [displayId, lines] of [...groups].sort(([a], [b]) => (a ?? -1) - (b ?? -1))) {
         const displaySpans = options.displaySpans?.filter((span) => span.displayId === displayId);
         // A display interval and the session's unpaused interval must both cover the moment.
         const spans =
-            displaySpans === undefined
+            displaySpans === undefined || options.targetMs < trackedFrom
                 ? options.spans
                 : displaySpans.flatMap((display) =>
                       options.spans
