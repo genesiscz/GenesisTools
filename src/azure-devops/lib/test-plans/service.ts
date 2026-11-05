@@ -637,6 +637,8 @@ export class TestPlans {
             throw new Error("Nothing to change: pass at least one field or --steps");
         }
 
+        operations.unshift({ op: "test", path: "/fields/System.WorkItemType", value: "Test Case" });
+
         if (input.rev !== undefined) {
             operations.unshift({ op: "test", path: "/rev", value: input.rev });
         }
