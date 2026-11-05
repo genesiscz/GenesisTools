@@ -322,6 +322,20 @@ describe("writes", () => {
 });
 
 describe("search", () => {
+    test("a suite read failure does not discard other plans", async () => {
+        const transport = new FakeTransport([
+            ["GET /testplan/plans?", () => ({ value: [PLAN, { ...PLAN, id: 20 }] })],
+            [
+                "GET /testplan/Plans/10/suites",
+                () => {
+                    throw new Error("offline");
+                },
+            ],
+            ["GET /testplan/Plans/20/suites", () => ({ value: [{ id: 21, name: "Cart", plan: { id: 20 } }] })],
+        ]);
+        const hits = await new TestPlans(transport, CONFIG).search("cart", { kinds: ["suite"] });
+        expect(hits.map((hit) => hit.id)).toEqual([21]);
+    });
     test("the limit applies separately to suite and case hits", async () => {
         const transport = new FakeTransport([
             ["GET /testplan/plans/10", () => PLAN],
