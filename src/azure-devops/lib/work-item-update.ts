@@ -187,7 +187,7 @@ export function firstStoredDifference(input: {
     sent: string;
     format: StoredTextFormat;
 }): { line: number; sent: string; stored: string } | null {
-    const normalize = (value: string) => (input.format === "plain" ? value : normalizeAdoText(value, "markdown"));
+    const normalize = (value: string) => (input.format === "plain" ? value : normalizeAdoText(value, input.format));
     const sent = normalize(input.sent).split("\n");
     const stored = normalize(input.stored).split("\n");
 
