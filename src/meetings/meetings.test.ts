@@ -787,7 +787,7 @@ describe("evidence rule after a leave", () => {
 });
 
 describe("watchOnce", () => {
-    const settings = { enabled: true, liveWithinSec: 30, stopAfterSilenceSec: 120, notify: true };
+    const settings = { enabled: true, liveWithinSec: 30, notify: true };
     const now = Date.parse("2026-11-02T15:10:00.000Z");
     const live = {
         sourceMeetingId: "w1",
@@ -930,11 +930,16 @@ describe("watchOnce", () => {
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 10_000 })).toBe("recording");
     });
 
-    test("its own recording stops when Wispr goes silent; a recording a person started is left alone", async () => {
+    test("its own recording stops when Wispr's meeting ends, never on silence; a recording a person started is left alone", async () => {
         const h = harness();
         await watchOnce(h.store, { deps: h.deps, now });
 
-        expect(await watchOnce(h.store, { deps: h.deps, now: now + 200_000 })).toBe("stopped");
+        // An hour with no new transcript line: a listener who stays quiet is still in the meeting.
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 3_600_000 })).toBe("recording");
+        expect(h.runs.at(-1)?.[2]).toBe("start");
+
+        h.deps.liveRecording = async () => null;
+        expect(await watchOnce(h.store, { deps: h.deps, now: now + 3_610_000 })).toBe("stopped");
         expect(h.runs.at(-1)).toEqual(["meetings", "record", "stop", "--meeting", "m1", "--started-at", ""]);
 
         const other = harness({
@@ -951,6 +956,7 @@ describe("watchOnce", () => {
         const h = harness();
         await watchOnce(h.store, { deps: h.deps, now });
         const successfulRun = h.deps.run!;
+        h.deps.liveRecording = async () => null;
         h.deps.run = async () => ({ success: false, exitCode: 1, stderr: "timeout" });
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 200_000 })).toBe("failed");
         h.deps.run = successfulRun;
@@ -980,6 +986,7 @@ describe("watchOnce", () => {
         h.deps.run = async (args) =>
             args[2] === "stop" && !stopWorks ? { success: false, exitCode: 1, stderr: "still running" } : run(args);
         await watchOnce(h.store, { deps: h.deps, now });
+        h.deps.liveRecording = async () => null;
 
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 200_000 })).toBe("failed");
         expect(existsSync(join(h.store.root, "watch-auto.json"))).toBe(true);
@@ -987,7 +994,9 @@ describe("watchOnce", () => {
         stopWorks = true;
 
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 215_000 })).toBe("stopped");
-        expect(existsSync(join(h.store.root, "watch-auto.json"))).toBe(false);
+        // What stays is the ended meeting's refresh, not a recording the watcher owns.
+        const saved = SafeJSON.parse(readFileSync(join(h.store.root, "watch-auto.json"), "utf8"));
+        expect(typeof saved.refreshUntil).toBe("string");
     });
 
     test("an already stopped recorder still refreshes when the source meeting ends", async () => {

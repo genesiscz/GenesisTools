@@ -186,8 +186,9 @@ async function refreshEnded(options: {
 }
 
 /**
- * One look: the watched source records and nothing else is recording, so start (and post a notification); the recording the
- * watcher started has ended or gone silent, so stop it. A recording a person started is never stopped here.
+ * One look: the watched source records and nothing else is recording, so start (and post a notification); the meeting of the
+ * recording the watcher started has ended, so stop it. Silence never stops it: a listener who stays quiet is still in the
+ * meeting. A recording a person started is never stopped here.
  */
 
 export async function watchOnce(
@@ -267,9 +268,8 @@ export async function watchOnce(
         }
 
         const ended = !live || live.sourceMeetingId !== auto.sourceMeetingId;
-        const silent = live ? now - Date.parse(live.liveChangedAt) > settings.stopAfterSilenceSec * 1000 : true;
 
-        if (!ended && !silent) {
+        if (!ended) {
             return "recording";
         }
 
@@ -282,14 +282,15 @@ export async function watchOnce(
             "--started-at",
             auto.recorderStartedAt!,
         ]);
-        log.info({ meeting: auto.meetingId, exitCode: result.exitCode, ended, silent }, "auto recording stopped");
+        log.info({ meeting: auto.meetingId, exitCode: result.exitCode }, "auto recording stopped: its meeting ended");
 
         // Not stopped yet: the next look tries again, and still knows the recording is its own.
         if (!result.success || deps.recorder().running) {
             return "failed";
         }
 
-        if (ended && auto.meetingId) {
+        // The meeting ended: its record is refreshed from the source for a while, so the ended meeting's text lands.
+        if (auto.meetingId) {
             const pending = {
                 ...auto,
                 sourceId: source.id,

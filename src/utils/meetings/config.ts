@@ -137,10 +137,11 @@ const sourceBaseShape = {
     autoRecord: z
         .object({
             enabled: z.boolean().default(false),
-            /** A recording is live while its live transcript changed this recently. */
+            /**
+             * A recording is live while its live transcript changed this recently; this only starts a recording. One
+             * stops when the source ends the meeting, never on silence (an older file's `stopAfterSilenceSec` is ignored).
+             */
             liveWithinSec: z.number().int().positive().default(30),
-            /** Stop when the live transcript has been silent this long. */
-            stopAfterSilenceSec: z.number().int().positive().default(120),
             /** Post a notification when a recording starts by itself. */
             notify: z.boolean().default(true),
         })

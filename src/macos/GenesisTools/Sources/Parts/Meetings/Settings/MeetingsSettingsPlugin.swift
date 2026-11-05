@@ -113,11 +113,6 @@ struct MeetingsRecordingPage: View {
                                          identifier: "meetings.autostart.notify",
                                          isOn: Binding(get: { auto?.notify ?? true },
                                                        set: { model.set(["sources", "wisprflow", "autoRecord", "notify"], $0) }))
-                    NativeSettingsPicker("Stop after silence", detail: "The recording stops when the live transcript stays quiet this long.",
-                                         identifier: "meetings.autostart.silence",
-                                         options: [60, 120, 300, 600].map { NativeSettingsOption($0, MeetingsFormat.length(Double($0)) ?? "\($0) s") },
-                                         selection: Binding(get: { auto?.stopAfterSilenceSec ?? 120 },
-                                                            set: { model.set(["sources", "wisprflow", "autoRecord", "stopAfterSilenceSec"], $0) }))
                 }
                 .disabled(auto?.enabled != true)
             }

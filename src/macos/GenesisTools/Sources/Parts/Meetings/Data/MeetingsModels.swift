@@ -317,7 +317,6 @@ struct MeetingsSettings: Decodable, Equatable {
         struct AutoRecord: Decodable, Equatable {
             let enabled: Bool
             let notify: Bool
-            let stopAfterSilenceSec: Int
         }
         let match: [String: Folders]
         let autoRecord: AutoRecord

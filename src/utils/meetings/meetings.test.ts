@@ -47,7 +47,6 @@ describe("meetings config", () => {
         expect(config.sources.wisprflow.autoRecord).toEqual({
             enabled: false,
             liveWithinSec: 30,
-            stopAfterSilenceSec: 120,
             notify: true,
         });
         expect(config.projects).toEqual({});

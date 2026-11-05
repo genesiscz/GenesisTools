@@ -73,7 +73,7 @@ final class MeetingsWindowTests: XCTestCase {
          "pairedBy":[{"kind":"calendar","from":"apple-calendar","entryId":"e1","title":"Sync","at":"2026-11-04T10:00:00.000Z"}]}],
          "title":{"words":["sync"]}},"export":{"folder":"/x/notes"}}},
          "sources":{"wisprflow":{"match":{"work":{"folders":["Work"]}},"suggest":{"ignore":[]},
-         "autoRecord":{"enabled":false,"liveWithinSec":30,"stopAfterSilenceSec":120,"notify":true}}},
+         "autoRecord":{"enabled":false,"liveWithinSec":30,"notify":true}}},
          "languages":{"cs":{"ocr":["cs-CZ","en-US"],"render":{},"fillers":{"sounds":["ehm","ach"],"words":["jako"]}}}}}
         """.utf8)
         let settings = try JSONDecoder().decode(ConfigShow.self, from: json).value

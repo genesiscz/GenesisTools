@@ -196,7 +196,7 @@ it at every login while it is on. The watcher follows the first source in the so
 whose `sources.<id>.autoRecord` is on, today Wispr Flow. Every 15 s the watcher asks Wispr Flow for a meeting it has not ended whose live
 transcript changed in the last `liveWithinSec` (30). It then runs `record start --source wisprflow:<id> --yes` and
 posts a notification (`notify`, default on). It stops only the recordings it started, when Wispr Flow ends the
-meeting or stays silent for `stopAfterSilenceSec` (120). A start that failed (no grant) notifies once and is not
+meeting. Silence never stops one, since a listener who stays quiet is still in the meeting. A start that failed (no grant) notifies once and is not
 retried for the same meeting. A recorder that stopped on its own while the meeting runs (`stopReason: "failed"` or
 `"error"`) is started again 2 min after it stopped, with `record start --meeting <id> --yes`, and every 2 min after
 that; the recorder posts the notice. A stop the user asked for stays stopped. A stop that failed keeps the watcher's
