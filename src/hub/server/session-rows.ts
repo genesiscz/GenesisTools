@@ -106,7 +106,7 @@ export class SessionRowsRunner {
         if (!job.fresh) {
             const hit = await this.cachedAnswer(job);
             if (hit) {
-                if (hit.stale) {
+                if (hit.stale && job.cacheWrite !== false) {
                     this.rebuild({ ...job, fresh: true }, traceId).catch((error) => {
                         log.warn({ error, job }, "hub server: the session rows refresh behind a stale answer failed");
                     });
