@@ -216,7 +216,8 @@ describe("digest folds", () => {
             () => ({ provider: "anthropic-sub", accountId: "acc-work", accountName: "work" })
         );
         expect(distinct.map((entry) => [entry.kind, entry.startPct, entry.endPct])).toEqual([
-            ["session", 10, 20], ["weekly", 70, 80],
+            ["session", 10, 20],
+            ["weekly", 70, 80],
         ]);
         expect([window?.startPct, window?.endPct]).toEqual([50, 70]);
     });

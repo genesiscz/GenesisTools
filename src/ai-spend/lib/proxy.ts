@@ -7,7 +7,6 @@ export function proxySinceDay(now: Date, days: number): string {
     return localDayString(daysBefore(now, days - 1));
 }
 
-
 /**
  * `tools ai-spend proxy` (design 2026-11-01, step U11, proposal 19): what the ai-proxy served, per client and month
  * from its client ledger, and per account and day from its daily store. Cost is the ledger's booked `cost_usd`,
