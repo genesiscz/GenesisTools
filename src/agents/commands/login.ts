@@ -381,6 +381,7 @@ async function drainPending(active: ActiveLogin): Promise<number> {
 
 async function watchUntilDeadline(active: ActiveLogin, deadlineAt: number, exitOnFirst: boolean): Promise<boolean> {
     let emittedAny = false;
+    let drainError: unknown;
 
     await watchFileFeed({
         path: active.paths.feedPath,
@@ -389,7 +390,13 @@ async function watchUntilDeadline(active: ActiveLogin, deadlineAt: number, exitO
         pollFallbackMs: WATCH_POLL_MS,
         onChange: async () => {
             const before = active.cursorSeq;
-            const emitted = await drainPending(active);
+            let emitted: number;
+            try {
+                emitted = await drainPending(active);
+            } catch (error) {
+                drainError = error;
+                return { done: true };
+            }
 
             if (emitted > 0) {
                 emittedAny = true;
@@ -402,6 +409,9 @@ async function watchUntilDeadline(active: ActiveLogin, deadlineAt: number, exitO
         },
     });
 
+    if (drainError !== undefined) {
+        throw drainError;
+    }
     return emittedAny;
 }
 
@@ -579,6 +589,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
     // Set once a timeout is reported: mail that lands after it stays queued for the next login, so exit
     // 124 always means "nothing was delivered".
     let timedOut = false;
+    let drainFailed = false;
 
     onShutdown(async (reason) => {
         exitReason = reason;
@@ -589,10 +600,13 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
         // racing the final cursor write — duplicate delivery, never loss.
         releaseSlot(lockPath);
 
-        try {
-            await drainPending(active);
-        } catch (err) {
-            log.warn({ err }, "final drain failed during shutdown");
+        if (!drainFailed) {
+            try {
+                await drainPending(active);
+            } catch (err) {
+                drainFailed = true;
+                log.warn({ err }, "final drain failed during shutdown");
+            }
         }
 
         try {
@@ -665,11 +679,14 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
             await watchUntilDeadline(active, deadline, false);
             exitReason = "cap";
         }
+    } catch (error) {
+        drainFailed = true;
+        throw error;
     } finally {
         releaseSlot(lockPath);
 
-        if (timedOut) {
-            log.debug({ agentName: record.agent_name }, "timed out: late mail stays queued for the next login");
+        if (timedOut || drainFailed) {
+            log.debug({ agentName: record.agent_name }, "skipping final drain: mail stays queued for the next login");
         } else {
             try {
                 await drainPending(active);
