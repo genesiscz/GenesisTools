@@ -41,4 +41,6 @@ re-deriving how it was produced.
   and `prefix-mark.ts` (the prefix check of the append-only transcript scans, CPU per MB over the largest Claude
   transcripts, every call a cache miss as after an append).
 - [`widget/`](widget/) — `snapshot.ts` (one warm widget snapshot over the cached roster, as the resident watch takes
-  it; `--dump` writes the snapshot for a parity diff between two commits).
+  it; `--dump` writes the snapshot for a parity diff between two commits) and `roster-read.ts` (one widget roster read,
+  CPU per read over reads spaced so a live session appends between them). Both, and `prefix-mark.ts`, take
+  `--record-run "<the change>"`, which appends the run to the baseline's history ([`baselines/`](baselines/README.md)).

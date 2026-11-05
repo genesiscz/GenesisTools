@@ -26,6 +26,39 @@ evidence that a regression happened, and re-recording it destroys that evidence.
 `commit`, `loadAvg` and `hostname` are provenance. They are what lets a reader question a
 suspiciously fast "after" run rather than believe it.
 
+## Runs: the history of a baseline
+
+A baseline may also keep `runs`: every measurement taken against it later, oldest first, each with
+its own provenance and the change it measures. A fix commit's numbers then live next to the before
+they are compared with, and `git log -p` of the file shows when each one landed.
+
+```json
+{
+    "name": "ai-usage-poll",
+    "commit": "5b4b8581f",
+    "metrics": { "idleCpuPercent": 80.4 },
+    "runs": [
+        {
+            "capturedAt": "2026-09-17T09:12:00.000Z",
+            "commit": "7c1d2e3f4",
+            "loadAvg": [2.84, 2.61, 2.55],
+            "hostname": "example.local",
+            "metrics": { "idleCpuPercent": 4.1 },
+            "change": "the poll waits on the file event instead of a 50 ms timer",
+            "notes": "median of 5 interleaved runs"
+        }
+    ]
+}
+```
+
+`recordRun({ name, metrics, change })` appends one; it refuses when the baseline does not exist,
+because a run with nothing to be compared with is not history. `recordBaseline` keeps the runs of a
+baseline it re-records. The benches take `--record-run "<the change>"`: they measure, print the
+comparison, and append the run.
+
+The `widget-snapshot`, `prefix-mark` and `widget-roster-read` histories were measured at each fix
+commit of the 2026-11-05 performance PR, three interleaved rounds per commit in fresh processes.
+
 ## Recording and comparing
 
 ```typescript
