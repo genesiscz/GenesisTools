@@ -282,6 +282,11 @@ export function chosenPlan(frames: readonly SourceFrame[], options: ProxyOptions
     const endUs = frames.length > 0 ? frames[frames.length - 1].atUs + 1 : 1;
 
     if (options.plan) {
+        const windowUs = Math.round(options.plan.windowSec * 1_000_000);
+        if (!Number.isSafeInteger(windowUs) || windowUs <= 0) {
+            throw new Error("proxy plan window must round to positive microseconds");
+        }
+
         if (options.display !== undefined || (options.overrides?.length ?? 0) > 0) {
             throw new Error("a plan is the whole display plan; give it without a display or switches");
         }
