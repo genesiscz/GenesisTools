@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { E2eRunnerKind } from "@genesiscz/utils/e2e/project";
 import type { E2eTestResult, E2eTestState } from "@genesiscz/utils/e2e/spec-env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isObject } from "@genesiscz/utils/object";
 import type { RunNote } from "./runners/types";
 import type { SpecFile } from "./specs";
 
@@ -36,6 +37,28 @@ export interface RunSummary {
     ok: boolean;
 }
 
+const TEST_STATES: readonly E2eTestState[] = ["passed", "failed", "skipped"];
+
+/** A parsed results line is a test only with its suite, title, state and duration; anything else is a runner failure. */
+function isTestResult(value: unknown): value is E2eTestResult {
+    if (!isObject(value)) {
+        return false;
+    }
+
+    const { suite, title, state, durationMs } = value;
+    return (
+        typeof suite === "string" &&
+        typeof title === "string" &&
+        TEST_STATES.some((known) => known === state) &&
+        typeof durationMs === "number" &&
+        Number.isFinite(durationMs)
+    );
+}
+
+function invalidResult(index: number, error: string): E2eTestResult {
+    return { suite: "runner", title: `Invalid result line ${index + 1}`, state: "failed", durationMs: 0, error };
+}
+
 export function readResults(path: string): E2eTestResult[] {
     if (!existsSync(path)) {
         return [];
@@ -45,17 +68,15 @@ export function readResults(path: string): E2eTestResult[] {
         .split("\n")
         .filter(Boolean)
         .map((line, index): E2eTestResult => {
+            let parsed: unknown;
+
             try {
-                return SafeJSON.parse(line, { strict: true }) as E2eTestResult;
+                parsed = SafeJSON.parse(line, { strict: true });
             } catch (error) {
-                return {
-                    suite: "runner",
-                    title: `Invalid result line ${index + 1}`,
-                    state: "failed",
-                    durationMs: 0,
-                    error: error instanceof Error ? error.message : String(error),
-                };
+                return invalidResult(index, error instanceof Error ? error.message : String(error));
             }
+
+            return isTestResult(parsed) ? parsed : invalidResult(index, "not a test result record");
         });
 }
 

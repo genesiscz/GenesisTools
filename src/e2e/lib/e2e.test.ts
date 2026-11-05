@@ -13,7 +13,7 @@ import { listRunDirs, runsRoot, stamp } from "./paths";
 import { runE2e, runSpec } from "./run";
 import { RUNNERS, runnerFlags } from "./runners";
 import { listSpecs, resolveSpecs, specName, suiteSpecs } from "./specs";
-import { compareRuns, countResults, formatSummary, type RunSummary, specFailed } from "./summary";
+import { compareRuns, countResults, formatSummary, type RunSummary, readResults, specFailed } from "./summary";
 
 const root = mkdtempSync(join(tmpdir(), "gt-e2e-run-"));
 
@@ -344,6 +344,21 @@ it("finishes later specs and writes a summary after a truncated result line", as
     expect(summary.ok).toBe(false);
     expect(existsSync(join(runDir, "summary.json"))).toBe(true);
     expect(existsSync(join(runDir, "summary.md"))).toBe(true);
+});
+
+it("reads a results line that parses but is not a test record as a failed test", () => {
+    const path = join(root, "invalid-records.jsonl");
+    const valid = '{"suite":"s","title":"ok","state":"passed","durationMs":1}';
+    writeFileSync(path, ["{}", "null", '{"suite":"s","title":"t","state":"done","durationMs":1}', valid].join("\n"));
+    const results = readResults(path);
+    expect(results.map((result) => result.title)).toEqual([
+        "Invalid result line 1",
+        "Invalid result line 2",
+        "Invalid result line 3",
+        "ok",
+    ]);
+    expect(results.slice(0, 3).every((result) => result.state === "failed")).toBe(true);
+    expect(specFailed({ exitCode: 0, tests: readResults(path).slice(0, 1) })).toBe(true);
 });
 
 it("selects completed run summaries while ignoring newer screen captures", () => {
