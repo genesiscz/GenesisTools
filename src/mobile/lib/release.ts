@@ -1,5 +1,7 @@
+import { once } from "node:events";
 import { createWriteStream, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { finished } from "node:stream/promises";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { iosApp, type MobileProject, type ReleaseCommand } from "@genesiscz/utils/mobile/project";
@@ -200,8 +202,10 @@ export async function runRelease(
         sink.on("error", (error) => {
             sinkError = error;
         });
-        const pump = (chunk: Uint8Array) => {
-            sink.write(chunk);
+        const pump = async (chunk: Uint8Array) => {
+            if (!sink.write(chunk)) {
+                await once(sink, "drain");
+            }
         };
 
         try {
@@ -224,6 +228,16 @@ export async function runRelease(
             }
         } finally {
             sink.end();
+            try {
+                await finished(sink, { signal: AbortSignal.timeout(5_000) });
+            } catch (error) {
+                sink.destroy();
+                sinkError = error instanceof Error ? error : new Error(String(error));
+            }
+        }
+
+        if (sinkError) {
+            throw sinkError;
         }
     }
 }

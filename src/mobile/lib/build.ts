@@ -1,5 +1,7 @@
+import { once } from "node:events";
 import { createWriteStream, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { finished } from "node:stream/promises";
 import { logger } from "@genesiscz/utils/logger";
 import { type IosApp, type IosConfiguration, iosApp, type MobileProject } from "@genesiscz/utils/mobile/project";
 import { installApp } from "@genesiscz/utils/mobile/simulator";
@@ -74,10 +76,13 @@ export async function buildAndInstall(options: {
     sink.on("error", (error) => {
         sinkError = error;
     });
-    const pump = (chunk: Uint8Array) => {
+    const pump = async (chunk: Uint8Array) => {
         const text = new TextDecoder().decode(chunk);
-        sink.write(text);
+        if (!sink.write(text)) {
+            await once(sink, "drain");
+        }
         errors.push(...text.split("\n").filter((line) => /\berror:/.test(line)));
+        errors.splice(0, Math.max(0, errors.length - 5));
     };
     let proc: Awaited<ReturnType<typeof boundedCommand>>;
 
@@ -92,6 +97,12 @@ export async function buildAndInstall(options: {
         });
     } finally {
         sink.end();
+        try {
+            await finished(sink, { signal: AbortSignal.timeout(5_000) });
+        } catch (error) {
+            sink.destroy();
+            sinkError = error instanceof Error ? error : new Error(String(error));
+        }
     }
 
     if (sinkError) {
