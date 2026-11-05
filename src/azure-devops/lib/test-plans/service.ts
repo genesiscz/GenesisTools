@@ -354,6 +354,7 @@ export class TestPlans {
                 items: plans,
                 concurrency: 4,
                 fn: (plan) => this.rest.listSuites(plan.id),
+                onError: (plan, error) => logger.warn({ error, planId: plan.id }, "[test-plans] could not read suites"),
             });
 
             for (const [plan, suites] of perPlan) {
