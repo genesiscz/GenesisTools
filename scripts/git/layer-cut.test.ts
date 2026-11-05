@@ -1,10 +1,25 @@
-import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { afterEach, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { checkProjects, installStamp, ScratchTree, testFolders } from "./layer-cut";
 import { loadTable } from "./layer-cut-tables/load";
 import unified from "./layer-cut-tables/unified";
+
+const fixtureRoots: string[] = [];
+
+function fixtureRoot(label: string): string {
+    const root = mkdtempSync(join(tmpdir(), `layer-cut-${label}-`));
+    fixtureRoots.push(root);
+    return root;
+}
+
+afterEach(() => {
+    for (const root of fixtureRoots.splice(0)) {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
 
 test("default table and explicit unified module preserve the same cut", async () => {
     expect(await loadTable([])).toBe(unified);
@@ -64,7 +79,7 @@ test("install invalidation covers workspace manifests and standalone project loc
 
 test("cut preserves foreign refs and checks recorded tests without resolving a moving source", async () => {
     const script = join(import.meta.dir, "layer-cut.ts");
-    const root = mkdtempSync("/tmp/cc/GenesisTools/a7346bf7-545b-49f3-9f68-bfea934db066/rl-739/cut-");
+    const root = fixtureRoot("cut");
     const invoke = (cmd: string[]) => {
         const result = Bun.spawnSync(cmd, { cwd: root, env: process.env, stdout: "pipe", stderr: "pipe" });
         expect(result.exitCode, result.stderr.toString()).toBe(0);
@@ -151,7 +166,7 @@ test("--table requires a module path", async () => {
 
 test("scratch reuse refuses developer checkouts and dirty owned trees", async () => {
     const original = process.cwd();
-    const root = mkdtempSync("/tmp/cc/GenesisTools/a7346bf7-545b-49f3-9f68-bfea934db066/rl-739/ownership-");
+    const root = fixtureRoot("ownership");
     const git = (args: string[], cwd = root): string => {
         const result = Bun.spawnSync(["git", ...args], { cwd, env: process.env, stdout: "pipe", stderr: "pipe" });
         expect(result.exitCode).toBe(0);
