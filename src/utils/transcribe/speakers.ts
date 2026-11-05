@@ -1,3 +1,4 @@
+import { TranscriptLines } from "./lines";
 import type { Participant, TranscriptEntry } from "./types";
 
 export function speakerLabel(participants: Participant[], speakerId: number | undefined): string {
@@ -191,6 +192,8 @@ export type HintStrength = "weak" | "normal" | "strong";
 /** Two lines that are one sentence cut by diarization: the last word of one and the first word of the next. */
 export interface SplitJoin {
     atSec: number;
+    /** The index of the line after the cut in the transcript given: its address, with `atSec`. */
+    line?: number;
     left: string;
     right: string;
     joined: string;
@@ -305,19 +308,21 @@ export function speakerStats(
     const participants = options.participants ?? [];
     const lines = entries.filter((entry) => entry.text.trim());
     const timed = lines.some((entry) => entry.startSec !== undefined);
+    const addressed = new TranscriptLines(lines);
+    const lastStart = Math.max(...lines.map((entry) => entry.startSec ?? Number.NEGATIVE_INFINITY));
     const spoken = lines.map((entry, index) => {
         const words = wordCount(entry.text);
-        const next = lines[index + 1]?.startSec;
+        const span = addressed.span(index);
 
-        if (entry.startSec === undefined || !timed) {
+        if (entry.startSec === undefined || !timed || !span) {
             return 0;
         }
 
-        if (next === undefined || next <= entry.startSec) {
+        if (entry.startSec >= lastStart) {
             return words * SEC_PER_WORD;
         }
 
-        return Math.min(next - entry.startSec, words * MAX_SEC_PER_WORD);
+        return Math.min(span.toSec - entry.startSec, words * MAX_SEC_PER_WORD);
     });
     const endOf = (index: number): number | undefined => {
         const start = lines[index]?.startSec;
@@ -489,7 +494,9 @@ export function speakerStats(
         }
 
         const lastLine = run.lines.at(-1)!;
-        const join = nextRun ? splitJoin(lines[lastLine]!, endOf(lastLine), lines[nextRun.lines[0]!]) : undefined;
+        const after = nextRun ? lines[nextRun.lines[0]!] : undefined;
+        const cut = after ? splitJoin(lines[lastLine]!, endOf(lastLine), after) : undefined;
+        const join = cut && after ? { ...cut, line: entries.indexOf(after) } : undefined;
         hints.push({
             kind: "split-voice",
             label: stat.label,

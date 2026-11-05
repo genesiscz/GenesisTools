@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -86,6 +87,19 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
         candidates: z.array(z.string()).optional(),
         ...itemBase,
     }),
+    /**
+     * A label that does not track one person over a stretch: diarization put several voices under it there. Its lines
+     * in the stretch count as unlabeled: the rules take no hint from the label, and the transcript marks each one no
+     * range or join gives a voice as unclear. One item stands for what would otherwise be a range per line.
+     */
+    z.object({
+        kind: z.literal("label"),
+        label: z.string(),
+        fromSec: z.number(),
+        toSec: z.number(),
+        meaningless: z.literal(true),
+        ...itemBase,
+    }),
     /** Two lines that are one sentence cut by diarization. */
     z.object({
         kind: z.literal("join"),
@@ -135,6 +149,47 @@ export const meetingItemSchema = z.discriminatedUnion("kind", [
     }),
 ]);
 export type MeetingItem = z.infer<typeof meetingItemSchema>;
+
+/** Why a recorded span ended: asked for (`record stop`, a stop command, a signal), a pause, failed captures, an error. */
+export const RECORDING_STOP_REASONS = ["requested", "paused", "failed", "error"] as const;
+export type RecordingStopReason = (typeof RECORDING_STOP_REASONS)[number];
+
+const recordingSpanSchema = z.object({
+    from: isoTime,
+    to: isoTime.optional(),
+    stopReason: z.enum(RECORDING_STOP_REASONS).optional(),
+});
+export type RecordingSpan = z.infer<typeof recordingSpanSchema>;
+
+/**
+ * The screen recording of a meeting, owned by the recorder. Every key is optional and unknown keys stay, because records
+ * written before this schema hold a subset of it (`display`, one index, instead of `displays`).
+ */
+export const recordingBlockSchema = z
+    .object({
+        startedAt: isoTime.optional(),
+        stoppedAt: isoTime.optional(),
+        status: z.enum(["recording", "paused", "stopped"]).optional(),
+        stopReason: z.enum(RECORDING_STOP_REASONS).optional(),
+        backend: z.string().optional(),
+        /** The display policy of the last start: `all`, `follow-focus`, `main` or an index. */
+        displayPolicy: z.union([z.string(), z.number()]).optional(),
+        /** The screen index of a recording made before `displays`. */
+        display: z.number().optional(),
+        displays: z.array(z.object({ id: z.number(), name: z.string(), frames: z.number().default(0) })).optional(),
+        framesDir: z.string().optional(),
+        ocr: z.string().optional(),
+        frames: z.number().optional(),
+        bytes: z.number().optional(),
+        /** Each stretch the recorder ran, over all its starts. */
+        spans: z.array(recordingSpanSchema).optional(),
+        warning: z.string().optional(),
+        clock: z.object({ source: z.string(), startedAt: isoTime }).optional(),
+        /** When the failure notice of the current failure episode was posted; cleared by a piece that recorded. */
+        failureNotifiedAt: isoTime.optional(),
+    })
+    .loose();
+export type RecordingBlock = z.infer<typeof recordingBlockSchema>;
 
 const historySchema = z.object({ at: isoTime, command: z.string(), change: z.string() });
 
@@ -188,12 +243,17 @@ export const meetingRecordSchema = z.object({
                     systemMedian: z.number().optional(),
                     segments: z.object({ mic: z.number(), system: z.number() }),
                     reason: z.string().optional(),
+                    /**
+                     * The stretches of 5 min or more where the call's channel stayed silent while the microphone
+                     * heard speech (`silentCallSpans`): the call played through the room, so E1 says nothing there.
+                     * Absent in records calibrated before it was stored.
+                     */
+                    callSilent: z.array(z.object({ fromSec: z.number(), toSec: z.number() })).optional(),
                 })
                 .optional(),
         })
         .optional(),
-    /** Written by `record stop`; its shape is owned by the recorder. */
-    recording: z.record(z.string(), z.unknown()).optional(),
+    recording: recordingBlockSchema.optional(),
     /** One line per command that changed the record. Never rewritten. */
     history: z.array(historySchema).default([]),
 });
@@ -297,7 +357,14 @@ export class MeetingStore {
             return undefined;
         }
 
-        const parsed = meetingRecordSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8")));
+        const raw: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
+        if (raw && typeof raw === "object" && "recording" in raw) {
+            const recording = raw.recording;
+            if (recording && typeof recording === "object" && "status" in recording && recording.status === "failed") {
+                raw.recording = { ...recording, status: "stopped", stopReason: "error" };
+            }
+        }
+        const parsed = meetingRecordSchema.safeParse(raw);
 
         if (!parsed.success) {
             log.warn({ path, issues: parsed.error.issues }, "meeting record does not validate; left out");
@@ -308,14 +375,43 @@ export class MeetingStore {
     }
 
     /**
+     * What to change when `GENESIS_TOOLS_HOME` points one level too deep: the records sit in `<home>/meetings/`,
+     * while the tool reads `<home>/.genesis-tools/meetings/`. Undefined for any other layout.
+     */
+    layoutHint(): string | undefined {
+        if (!env.tools.hasExplicitHome()) {
+            return undefined;
+        }
+
+        const home = env.tools.getHome();
+        const misplaced = join(home, basename(this.root));
+
+        if (resolve(misplaced) === resolve(this.root) || !existsSync(misplaced)) {
+            return undefined;
+        }
+
+        const holdsRecords = readdirSync(misplaced, { withFileTypes: true }).some(
+            (entry) => entry.isDirectory() && existsSync(join(misplaced, entry.name, MEETING_FILE))
+        );
+
+        if (!holdsRecords) {
+            return undefined;
+        }
+
+        const parent = basename(home) === ".genesis-tools" ? dirname(home) : "the folder that holds .genesis-tools";
+        return `GENESIS_TOOLS_HOME is ${home}, so meetings are read from ${this.root}, but the records are in ${misplaced}. GENESIS_TOOLS_HOME names the folder above .genesis-tools: set it to ${parent}, or unset it.`;
+    }
+
+    /**
      * Finds a meeting by its id, a unique prefix of it, `last`, or a source reference (`wisprflow:1a2b3c4d`, matched
-     * on the start of `sources.<source>.meetingId`). Throws when a prefix fits several.
+     * on the start of `sources.<source>.meetingId`). Throws when a prefix fits several, and with `layoutHint` when
+     * nothing fits and the records sit one level off.
      */
     resolve(ref: string): MeetingRecord | undefined {
         const records = this.list();
 
         if (ref === "last") {
-            return records[0];
+            return records[0] ?? this.noMatch(ref);
         }
 
         const source = parseSourceRef(ref);
@@ -337,7 +433,18 @@ export class MeetingStore {
             );
         }
 
-        return matches[0];
+        return matches[0] ?? this.noMatch(ref);
+    }
+
+    /** Nothing fits `ref`: undefined, or the `layoutHint` as an error when the records sit one level off. */
+    private noMatch(ref: string): undefined {
+        const hint = this.layoutHint();
+
+        if (hint) {
+            throw new Error(`No meeting "${ref}". ${hint}`);
+        }
+
+        return undefined;
     }
 
     /** Creates a record. A second meeting with the same start and title gets `-2`, `-3` … on its id. */
