@@ -304,6 +304,9 @@ const ROUTES: FixtureRoute[] = [
         handle: () => ({ filled: false, written: 0, failed: 0, skipped: 0, error: "mock data: no Clarity to fill" }),
     },
 
+    { method: ENDPOINTS.gatewayUpload.method, path: ENDPOINTS.gatewayUpload.path,
+        handle: () => ({ path: "/fixture/snap.jpg", bytes: 0, sha256: "0".repeat(64), contentType: "image/jpeg" }) },
+
     // Snap it to the agent (F24): the attach is refused, since a fixture has no shelf.
     {
         method: ENDPOINTS.snap.method,
