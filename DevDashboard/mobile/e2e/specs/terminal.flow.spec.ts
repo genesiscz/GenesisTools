@@ -1,3 +1,4 @@
+import { SafeJSON } from "@genesiscz/utils/json";
 import { agentGet } from "@e2e/pages/agentApi";
 import { appPage } from "@e2e/pages/app.page";
 import { connectPage } from "@e2e/pages/ConnectPage.page";
@@ -19,7 +20,7 @@ describe("Terminal flow", () => {
     });
 
     it("every tmux row is a session the server lists", async () => {
-        const served = JSON.stringify(await agentGet<unknown>("/api/tmux/sessions"));
+        const served = SafeJSON.stringify(await agentGet<unknown>("/api/tmux/sessions"));
         const shown = await terminalsPage.tmuxSessionNames();
         const unknown = shown.filter((name) => !served.includes(`"${name}"`));
         expect(unknown).toEqual([]);
