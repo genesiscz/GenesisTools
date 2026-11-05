@@ -16,6 +16,7 @@ import { linkSource } from "../lib/link";
 import { resolveProject } from "../lib/project";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { showText } from "../lib/show-text";
+import { askProjectAtEnd } from "./watch";
 
 /** The record a command names, or a message saying how to find one. */
 function requireMeeting(store: MeetingStore, ref: string): MeetingRecord | undefined {
@@ -55,6 +56,11 @@ async function create(
                 `${created ? "Created" : "Already there:"} ${record.id}${record.project ? ` (project ${record.project})` : ""}`
             );
             await collectAndReport(store, record);
+
+            if (record.end) {
+                await askProjectAtEnd(store, record.id);
+            }
+
             return;
         }
 
@@ -207,6 +213,10 @@ async function link(ref: string, sourceRef: string, opts: { project?: string }):
         });
         ui.ok(`${record.id}: linked ${sourceRef}`);
         await collectAndReport(store, record);
+
+        if (record.end) {
+            await askProjectAtEnd(store, record.id);
+        }
     } catch (err) {
         fail(errorText(err));
     }

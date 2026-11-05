@@ -38,6 +38,7 @@ import {
 } from "../lib/recorder";
 import { meetingScreen, type ScreenBoxFrame } from "../lib/screen-boxes";
 import { errorText, fail, TOOL } from "../lib/shared";
+import { askProjectAtEnd } from "./watch";
 
 const { log } = logger.scoped("meetings-record-cmd");
 
@@ -491,6 +492,10 @@ async function runCommand(id: string, opts: { display?: string; audio?: string }
         log.error({ err, id }, "recorder failed");
         process.exitCode = 1;
     }
+
+    // Every recording ends here, however it was started (by hand, by the watcher, from the REPL), and a failed one
+    // still ended the meeting.
+    await askProjectAtEnd(store, id);
 }
 
 interface ScreenOptions {

@@ -6,7 +6,7 @@ import { type MeetingsConfig, MeetingsConfigStore, type SourceSettings } from "@
 import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
 import { type LiveRecording, MEETING_SOURCE_IDS, type MeetingSourceId } from "@genesiscz/utils/meetings/sources";
 import { localTime } from "@genesiscz/utils/transcribe/render";
-import { assignSweep } from "./assign";
+import { assignSweep, hasOpenAssignSteps } from "./assign";
 import { linkSource } from "./link";
 import { readRecorderState } from "./recorder";
 import { pruneCapturesDaily } from "./retention";
@@ -360,7 +360,8 @@ async function pruneOldCaptures(store: MeetingStore): Promise<void> {
 
 /**
  * The watcher loop: one look every 15 s until a signal, then the "ask each time" sweep (a question for each ended
- * meeting without a project, and the answers applied), and the capture retention pass once a day.
+ * meeting without a project, and the answers applied), and the capture retention pass once a day. With autoRecord
+ * off it still runs while a project question or a folder step waits, since only the sweep reads those back.
  */
 export async function watchLoop(store: MeetingStore): Promise<void> {
     let stopped = false;
@@ -380,8 +381,8 @@ export async function watchLoop(store: MeetingStore): Promise<void> {
         // After the look, so a meeting the look just refreshed from its source is asked about at once.
         await assignSweep(store).catch((err: unknown) => log.warn({ err }, "assign sweep failed"));
 
-        if (result === "disabled") {
-            log.info("autoRecord is off; the watcher ends");
+        if (result === "disabled" && !hasOpenAssignSteps(store)) {
+            log.info("autoRecord is off and no project question waits; the watcher ends");
             break;
         }
 

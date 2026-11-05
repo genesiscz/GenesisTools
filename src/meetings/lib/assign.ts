@@ -722,6 +722,68 @@ async function advanceFolder(
 }
 
 /** Meeting ids carry their local start (`2026-11-04_15-08-…`): the folders that started after `since`. */
+/** Whether a question or a folder step still waits on some meeting: the watcher must run to read it back. */
+export function hasOpenAssignSteps(store: MeetingStore): boolean {
+    return Object.keys(readState(store).open).length > 0;
+}
+
+/**
+ * "Ask each time" at the moment a meeting ends, from the two places every end goes through: the recorder process
+ * after its stop (`record run`, whoever started the recording) and a source link that gives the meeting its end
+ * (`new --source`, `link`). So a meeting is asked about whether or not the watcher runs. It asks exactly as the sweep
+ * would: once per meeting (the record claims the question under its lock), and only for a meeting that ended after
+ * the sweep's start mark; when no sweep ran yet, the mark is this meeting's end. Never throws: a failure, or an end
+ * the record does not show, is a warning that names the meeting.
+ */
+export async function askAtMeetingEnd(
+    store: MeetingStore,
+    meetingId: string,
+    deps: AssignDeps = defaultAssignDeps()
+): Promise<{ outcome: string; formId?: string }> {
+    try {
+        const config = await deps.config.read();
+
+        if (!config.global.assign.ask) {
+            return { outcome: "ask each time is off" };
+        }
+
+        const record = store.read(meetingId);
+
+        if (!record) {
+            log.warn({ meeting: meetingId }, "a meeting ended but its record is gone, so no project question is asked");
+            return { outcome: "gone" };
+        }
+
+        if (!record.end && record.recording?.status !== "stopped") {
+            log.warn(
+                { meeting: meetingId, status: record.recording?.status },
+                "a meeting ended but its record does not show the end, so no project question is asked until a sweep sees it"
+            );
+            return { outcome: "not ended" };
+        }
+
+        const now = deps.now();
+        const since = Date.parse(
+            readState(store).since ?? markAssignStart(store, new Date(Math.min(now, endedAt(record))))
+        );
+
+        if (endedAt(record) < since) {
+            log.debug({ meeting: meetingId, since: new Date(since).toISOString() }, "ended before ask each time began");
+            return { outcome: "ended before ask each time began" };
+        }
+
+        const asked = await askMeeting(store, record, deps);
+        log.debug({ meeting: meetingId, ...asked }, "ask at meeting end");
+        return asked.formId ? { outcome: "asked", formId: asked.formId } : { outcome: asked.skipped ?? "not asked" };
+    } catch (err) {
+        log.warn(
+            { err, meeting: meetingId },
+            "asking for the project at the meeting's end failed; a later sweep (the watcher, or assign sweep) tries again"
+        );
+        return { outcome: "failed" };
+    }
+}
+
 export function recentMeetingIds(store: MeetingStore, since: number): string[] {
     if (!existsSync(store.root)) {
         return [];

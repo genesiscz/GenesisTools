@@ -10,7 +10,16 @@ import {
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { SourceMeeting, TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { type AssignDeps, assignSweep, buildQuestion, markAssignStart, readAnswer, viewProposals } from "./assign";
+import {
+    type AssignDeps,
+    askAtMeetingEnd,
+    assignSweep,
+    buildQuestion,
+    hasOpenAssignSteps,
+    markAssignStart,
+    readAnswer,
+    viewProposals,
+} from "./assign";
 import type { AskAnswer, AssignInbox, CreateAskFormInput, InboxAnswer } from "./assign-inbox";
 
 const ALICE = { name: "Alice Novak", email: "alice@example.com" };
@@ -331,6 +340,62 @@ describe("ask each time", () => {
         expect(Object.keys(read.projects)).toEqual(["side"]);
         expect(read.sources.wisprflow.match.side?.folders).toEqual(["Side"]);
         expect(store.read(meeting.id)?.assign?.folder).toBeUndefined();
+    });
+
+    test("auto-recording off: a hand-recorded meeting is asked at its end, once, and the watcher is wanted until the answer", async () => {
+        const { store, config, inbox, deps, create } = setup({ mark: false });
+        expect((await config.read()).sources.wisprflow.autoRecord.enabled).toBe(false);
+        await config.addProject("offers");
+        const handRecorded = (title: string, start: string) => {
+            const stoppedAt = new Date(Date.parse(start) + 20 * 60_000).toISOString();
+            return create(title, start, {
+                end: undefined,
+                sources: {},
+                recording: { status: "stopped", startedAt: start, stoppedAt },
+            });
+        };
+        const meeting = await handRecorded("Planning", "2026-11-04T16:00:00.000Z");
+
+        const first = await askAtMeetingEnd(store, meeting.id, deps);
+        expect(first.outcome).toBe("asked");
+        expect(inbox.posted).toHaveLength(1);
+        expect(inbox.posted[0]?.items[0]?.id).toBe("project");
+        expect(hasOpenAssignSteps(store)).toBe(true);
+
+        // A second end call, and the sweep after it, add no second question.
+        expect((await askAtMeetingEnd(store, meeting.id, deps)).outcome).toStartWith("asked at ");
+        expect((await assignSweep(store, deps)).asked).toEqual([]);
+        expect(inbox.posted).toHaveLength(1);
+
+        // The first ask marked the sweep's start at this meeting's end, so an older meeting is never asked.
+        const older = await handRecorded("Older", "2026-11-04T09:00:00.000Z");
+        expect((await askAtMeetingEnd(store, older.id, deps)).outcome).toBe("ended before ask each time began");
+        expect(inbox.posted).toHaveLength(1);
+
+        // The sweep reads the answer back; then nothing waits and the watcher may end.
+        inbox.answer(inbox.posted[0]!.id, [{ itemId: "project", selectedChoices: ["project:offers"] }]);
+        await assignSweep(store, deps);
+        expect(store.read(meeting.id)?.project).toBe("offers");
+        expect(hasOpenAssignSteps(store)).toBe(false);
+    });
+
+    test("an end the record does not show asks nothing, and ask each time off asks nothing", async () => {
+        const { store, config, inbox, deps, create } = setup();
+        const live = await create("Live", "2026-11-04T16:00:00.000Z", {
+            end: undefined,
+            sources: {},
+            recording: { status: "recording" },
+        });
+
+        expect((await askAtMeetingEnd(store, live.id, deps)).outcome).toBe("not ended");
+        expect((await askAtMeetingEnd(store, "2026-11-04_17-00-gone", deps)).outcome).toBe("gone");
+
+        await config.update((raw) => {
+            raw.global = { assign: { ask: false } };
+        });
+        const ended = await create("Ended", "2026-11-04T15:00:00.000Z");
+        expect((await askAtMeetingEnd(store, ended.id, deps)).outcome).toBe("ask each time is off");
+        expect(inbox.posted).toHaveLength(0);
     });
 
     test("the first sweep marks its start and asks only about meetings that end after it", async () => {
