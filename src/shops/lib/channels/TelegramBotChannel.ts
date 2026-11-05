@@ -12,7 +12,10 @@ export interface TelegramBotChannelConfig {
     botToken: string;
     apiRoot?: string;
     /** Sends through the shared Telegram channel of the notification table by default. Tests pass a spy. */
-    post?: (event: NotificationEvent, target: { botToken: string; chatId: string; apiRoot?: string }) => Promise<ChannelReceipt>;
+    post?: (
+        event: NotificationEvent,
+        target: { botToken: string; chatId: string; apiRoot?: string }
+    ) => Promise<ChannelReceipt>;
 }
 
 export class TelegramBotChannel implements NotificationChannel {
