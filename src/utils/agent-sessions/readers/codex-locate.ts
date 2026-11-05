@@ -83,7 +83,8 @@ function codexCallerTranscript({ sessionId, env, home, now }: CallerTranscriptQu
         parseCodexHomeList(env[nativeHomeOverrideVariable("codex")])[0] ?? defaultNativeHome("codex", home);
 
     for (let back = 0; back < CALLER_ROLLOUT_DAYS; back++) {
-        const day = new Date(now.getTime() - back * 86_400_000);
+        // Calendar days, not 24 h steps: across a daylight-saving change a 24 h step can skip a local date.
+        const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back);
         const dir = join(
             codexHome,
             "sessions",
