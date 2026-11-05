@@ -136,12 +136,13 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
 
 /// Waits (up to `seconds`) until `ready` holds, checking every 100 ms; a snapshot needs the data on screen.
 @MainActor
-private func waitUntil(_ seconds: Double, _ ready: () -> Bool) async {
+func waitUntil(_ seconds: Double, _ ready: () -> Bool) async -> Bool {
     var waited = 0.0
     while !ready(), waited < seconds {
         try? await Task.sleep(for: .milliseconds(100))
         waited += 0.1
     }
+    return ready()
 }
 
 private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) -> Never {
@@ -151,10 +152,13 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
         Task {
             let model = MeetingsWindowModel()
             model.load()
-            await waitUntil(40) { model.overview.value != nil || model.overview.failure != nil }
+            guard await waitUntil(40, { model.overview.value != nil || model.overview.failure != nil }) else {
+                FileHandle.standardError.write(Data("meetings snapshot timed out loading overview\n".utf8))
+                exit(1)
+            }
             MeetingsWindow.shared.apply(request, to: model)
             if let detail = model.detail {
-                await waitUntil(60) {
+                let ready = await waitUntil(60) {
                     let tabReady: Bool
                     switch detail.tab {
                     case .transcript: tabReady = detail.transcript.value != nil || detail.transcript.failure != nil
@@ -163,6 +167,10 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
                     case .items, .context: tabReady = true
                     }
                     return tabReady && (detail.record.value != nil || detail.record.failure != nil)
+                }
+                guard ready else {
+                    FileHandle.standardError.write(Data("meetings snapshot timed out loading detail \(detail.tab)\n".utf8))
+                    exit(1)
                 }
             }
             let window = MeetingsWindow.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))

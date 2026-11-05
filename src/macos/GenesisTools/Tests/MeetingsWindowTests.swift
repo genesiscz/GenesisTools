@@ -7,6 +7,13 @@ import XCTest
 /// times it shows, and which meetings each sidebar place lists.
 @MainActor
 final class MeetingsWindowTests: XCTestCase {
+    func testSnapshotReadinessReportsExpiry() async {
+        let expired = await waitUntil(0) { false }
+        let ready = await waitUntil(0) { true }
+        XCTAssertFalse(expired)
+        XCTAssertTrue(ready)
+    }
+
     private func overviewJSON() -> Data {
         Data("""
         {"generatedAt":"2026-11-05T12:00:00.000Z","days":14,"applyAbove":0.5,
