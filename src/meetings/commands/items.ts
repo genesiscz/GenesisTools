@@ -1,12 +1,11 @@
 import { readFileSync } from "node:fs";
+import { itemWhat } from "@app/meetings/lib/item-text";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
 import { logger, out } from "@genesiscz/utils/logger";
-import { languageSettings, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
-import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
+import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { isMeetingPlatformId } from "@genesiscz/utils/meetings/platform";
 import {
     ITEM_STATUSES,
@@ -18,15 +17,12 @@ import {
 import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import type { CorrectionOutcome } from "@genesiscz/utils/transcribe/apply";
-import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import {
     entriesToSrt,
     entriesToVtt,
-    formatClock,
     groupTurns,
     localTime,
     TRANSCRIPT_FORMATS,
-    transcriptMarkdown,
     transcriptTextLines,
 } from "@genesiscz/utils/transcribe/render";
 import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
@@ -34,16 +30,18 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
 import { prepareFindings } from "../lib/add-findings";
+import { decideItems, reopenItems } from "../lib/decide";
+import { transcriptMarkdown } from "../lib/export";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
-import { playLinksFor } from "../lib/link";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
-import { questionIdOf, questionLabel, questionWarnings } from "../lib/questions";
+import { questionLabel, questionWarnings } from "../lib/questions";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { printSpeakerStats } from "../lib/speakers-view";
-import { isSuggestRule, SUGGEST_RULES, suggestItems } from "../lib/suggest";
-import { correctTranscript, ledgerEntryFor, outcomeText } from "../lib/transcript-corrections";
-import { DEFAULT_WORD_CHECK, WORD_CHECKS, type WordCheckChoice } from "../lib/word-check";
+import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
+import { runSuggest } from "../lib/suggest-run";
+import { correctTranscript, outcomeText } from "../lib/transcript-corrections";
+import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
 const { log } = logger.scoped("meetings-items");
 
@@ -68,30 +66,6 @@ async function loadTranscript(store: MeetingStore, record: MeetingRecord): Promi
     return OpenedMeeting.of(store, record).meeting();
 }
 
-function itemWhat(item: MeetingItem): string {
-    if (item.kind === "speaker-range") {
-        const who = item.speaker ?? `? (${item.candidates?.join(", ") || "unknown"})`;
-        return `${item.label} ${formatClock(item.fromSec)}–${formatClock(item.toSec)} → ${who}`;
-    }
-
-    if (item.kind === "join") {
-        return `${formatClock(item.atSec)} "${item.joined ?? ""}"${item.speaker ? ` → ${item.speaker}` : ""}`;
-    }
-
-    if (item.kind === "question") {
-        const range = `${formatClock(item.fromSec)}–${formatClock(item.toSec)}`;
-        const said = item.answer ? `→ ${item.answer}` : item.choices.length > 0 ? `(${item.choices.join(" / ")})` : "";
-        return `${range} ${item.question} ${said}`.trim();
-    }
-
-    if (item.kind === "label") {
-        return `${item.label} ${formatClock(item.fromSec)}–${formatClock(item.toSec)} tracks no one person`;
-    }
-
-    const occurrences = typeof item.evidence?.occurrences === "number" ? ` ×${item.evidence.occurrences}` : "";
-    return `${item.heard} → ${item.proposed ?? "?"}${occurrences}`;
-}
-
 const STATUS_COLOR: Record<MeetingItem["status"], (text: string) => string> = {
     suggested: pc.yellow,
     confirmed: pc.green,
@@ -114,20 +88,6 @@ function printItems(record: MeetingRecord, items: MeetingItem[]): void {
     }
 
     out.println(table.toString());
-}
-
-/** The word check for the term rules, or undefined when it is off or cannot run (said once, with the reason). */
-async function termWordCheck(
-    choice: WordCheckChoice | undefined,
-    meeting: OpenedMeeting
-): Promise<WordCheck | undefined> {
-    const opened = await meeting.wordCheck(choice);
-
-    if (!opened.check && choice !== "off") {
-        ui.warn(`The word check is off (${opened.reason}); the term rules skip every word with a Czech letter.`);
-    }
-
-    return opened.check;
 }
 
 async function suggest(
@@ -166,43 +126,16 @@ async function suggest(
     }
 
     try {
-        // The platform, attendance and channel layout first, when the record lacks any of them.
-        const opened = OpenedMeeting.of(store, record);
-        const collected = await opened.collectWhenIncomplete();
-        const meeting = await opened.meeting();
-        const config = await opened.config();
-        const evidence = rules.includes("evidence") ? await opened.evidence() : null;
-        const wordCheck = rules.includes("terms") ? await termWordCheck(wordCheckChoice, opened) : undefined;
-        const inputs: Parameters<typeof suggestItems>[0] = {
-            record: collected,
-            meeting,
+        const { fresh, warnings } = await runSuggest({
+            store,
+            record,
             rules,
-            dictionary: await opened.dictionary(),
-            sourceWords: await opened.sourceWords(),
-            presence: await opened.presence(opts.attendance),
-            evidence,
-            energyMicShare: (await opened.energy()).share,
-            listenBelow: config.global.suggest.listenBelow,
-            questionBudget: config.global.suggest.questionCap,
-            minPriority: config.global.playback.listen.minPriority,
-            points: await opened.summaryPoints(),
-            wordCheck,
-            sourceLabels: languageSettings(config).render,
-            now: new Date().toISOString(),
-        };
-        let fresh: MeetingItem[] = [];
+            attendance: opts.attendance,
+            wordCheck: wordCheckChoice,
+        });
 
-        try {
-            await store.update(
-                record.id,
-                { command: "suggest", change: "suggest findings and questions" },
-                (current) => {
-                    fresh = suggestItems({ ...inputs, record: current });
-                    current.items.push(...fresh);
-                }
-            );
-        } finally {
-            wordCheck?.dispose();
+        for (const warning of warnings) {
+            ui.warn(warning);
         }
 
         if (opts.json) {
@@ -420,26 +353,11 @@ async function addItems(ref: string, own: AddOptions, command: Command): Promise
     }
 }
 
-/** Picks the items a decision names: ids, or every suggested item at or above a confidence. */
-function pickItems(record: MeetingRecord, ids: string[], minConfidence?: number): MeetingItem[] | string {
-    if (minConfidence !== undefined) {
-        return record.items.filter((item) => item.status === "suggested" && (item.confidence ?? 0) >= minConfidence);
-    }
-
-    const missing = ids.filter((id) => !record.items.some((item) => item.id === id));
-
-    if (missing.length > 0) {
-        return `${record.id} has no item ${missing.join(", ")} (${TOOL} items ${record.id})`;
-    }
-
-    return record.items.filter((item) => ids.includes(item.id));
-}
-
 async function decide(
     status: "confirmed" | "rejected",
     ref: string,
     ids: string[],
-    opts: { speaker?: string; proposed?: string; minConfidence?: string }
+    opts: { speaker?: string; proposed?: string; minConfidence?: string; json?: boolean }
 ): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
@@ -449,106 +367,69 @@ async function decide(
     }
 
     const minConfidence = opts.minConfidence === undefined ? undefined : Number(opts.minConfidence);
-
-    if (minConfidence !== undefined && !(minConfidence >= 0 && minConfidence <= 1)) {
-        fail(`--min-confidence ${opts.minConfidence} must be between 0 and 1 (0.8 = 80 %).`);
-        return;
-    }
-
-    if (ids.length === 0 && minConfidence === undefined) {
-        fail(`Name the items (i1 i2 …) or give --min-confidence <0..1>.`);
-        return;
-    }
-
-    // A question is named by its number as people see it (Q12) as well as by its id.
-    const picked = pickItems(
-        record,
-        ids.map((id) => (/^q\d+$/i.test(id) ? questionIdOf(record, id) : id)),
-        minConfidence
-    );
-
-    if (typeof picked === "string") {
-        fail(picked);
-        return;
-    }
-
-    // A range nobody named, or a term with no spelling, cannot be applied: confirming needs --speaker or --proposed.
-    const unnamed =
-        status === "confirmed"
-            ? picked.filter(
-                  (item) =>
-                      (item.kind === "speaker-range" && !item.speaker && !opts.speaker) ||
-                      (item.kind === "term" && !item.proposed && !item.meaning && !item.quote && !opts.proposed)
-              )
-            : [];
-    // A question is answered by ear, which also decides the items it names.
-    const questions: MeetingItem[] = status === "confirmed" ? picked.filter((item) => item.kind === "question") : [];
-
-    for (const item of questions) {
-        const label = questionLabel(record, item.id);
-        ui.warn(`${label} (${item.id}) is a question; answer it: ${TOOL} listen ${record.id} --item ${label}`);
-    }
-
-    const deciding = picked.filter((item) => !unnamed.includes(item) && !questions.includes(item));
-
-    for (const item of unnamed) {
-        const candidates =
-            item.kind === "speaker-range" && item.candidates?.length
-                ? ` Candidates: ${item.candidates.join(", ")}.`
-                : "";
-        ui.warn(
-            item.kind === "term"
-                ? `${item.id} ("${item.heard}") has no spelling yet; confirm it with --proposed <text>.`
-                : `${item.id} has no speaker yet; confirm it with --speaker <name>.${candidates}`
-        );
-    }
-
-    if (deciding.length === 0) {
-        process.exitCode = unnamed.length + questions.length > 0 ? 1 : 0;
-        return;
-    }
-
-    const now = new Date().toISOString();
-    const ledger: Correction[] = [];
+    const flagOf = {
+        speaker: " Confirm it with --speaker <name>.",
+        proposed: " Confirm it with --proposed <text>.",
+        listen: "",
+    };
 
     try {
-        await store.update(
-            record.id,
-            {
-                command: status === "confirmed" ? "confirm" : "reject",
-                change: deciding.map((item) => item.id).join(" "),
-            },
-            (current) => {
-                for (const item of current.items) {
-                    if (!deciding.some((picked) => picked.id === item.id)) {
-                        continue;
-                    }
+        const result = await decideItems({
+            store,
+            record,
+            status,
+            ids,
+            minConfidence,
+            speaker: opts.speaker,
+            proposed: opts.proposed,
+        });
 
-                    item.status = status;
-                    item.decidedAt = now;
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            process.exitCode = result.decided.length === 0 && result.skipped.length > 0 ? 1 : 0;
+            return;
+        }
 
-                    if (status !== "confirmed") {
-                        continue;
-                    }
+        for (const skip of result.skipped) {
+            ui.warn(`${skip.id}: ${skip.reason}${flagOf[skip.needs]}`);
+        }
 
-                    if (item.kind === "speaker-range" && opts.speaker) {
-                        item.speaker = opts.speaker;
-                    }
+        if (result.decided.length === 0) {
+            process.exitCode = result.skipped.length > 0 ? 1 : 0;
+            return;
+        }
 
-                    if (item.kind === "term" && opts.proposed) {
-                        item.proposed = opts.proposed;
-                    }
-
-                    const entry = ledgerEntryFor(current, item, now);
-
-                    if (entry) {
-                        ledger.push(entry);
-                    }
-                }
-            }
+        ui.ok(
+            `${status} ${result.decided.join(" ")} in ${record.id} (undo: ${TOOL} reopen ${record.id} ${result.decided.join(" ")} --token ${result.token})`
         );
-        appendCorrections(ledger);
-        ui.ok(`${status} ${deciding.map((item) => item.id).join(" ")} in ${record.id}`);
+    } catch (err) {
+        fail(errorText(err).replace(/^minConfidence/, "--min-confidence"));
+    }
+}
+
+async function reopen(ref: string, ids: string[], opts: { token?: string; json?: boolean }): Promise<void> {
+    const store = new MeetingStore();
+    const record = requireMeeting(store, ref);
+
+    if (!record) {
+        return;
+    }
+
+    try {
+        const result = await reopenItems({ store, record, ids, ...(opts.token ? { token: opts.token } : {}) });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            return;
+        }
+
+        for (const skip of result.skipped) {
+            ui.warn(`${skip.id}: ${skip.reason}`);
+        }
+
+        if (result.reopened.length > 0) {
+            ui.ok(`suggested again: ${result.reopened.join(" ")} in ${record.id}`);
+        }
     } catch (err) {
         fail(errorText(err));
     }
@@ -600,10 +481,12 @@ async function speakersRename(ref: string, label: string, name: string): Promise
     }
 
     try {
-        await store.update(record.id, { command: "speakers rename", change: `${label} → ${name}` }, (current) => {
-            current.speakers.labels[label] = name;
-        });
-        ui.ok(`${record.id}: ${label} → ${name} (transcripts of this meeting use it now)`);
+        await store.renameSpeaker(record.id, label, name);
+        ui.ok(
+            name.trim() === label
+                ? `${record.id}: ${label} is ${label} again (the rename is gone)`
+                : `${record.id}: ${label} → ${name.trim()} (transcripts of this meeting use it now)`
+        );
     } catch (err) {
         fail(errorText(err));
     }
@@ -648,11 +531,34 @@ async function transcript(
     try {
         const meeting = await loadTranscript(store, record);
         const config = await new MeetingsConfigStore().read();
-        const applied = correctTranscript({ ...opts, record, transcript: meeting.transcript, config, format });
+        const markdown =
+            format === "md"
+                ? transcriptMarkdown({
+                      record,
+                      transcript: meeting.transcript,
+                      config,
+                      ...(opts.withSuggested !== undefined ? { withSuggested: opts.withSuggested } : {}),
+                      ...(opts.dictionary !== undefined ? { dictionary: opts.dictionary } : {}),
+                      frontmatter: opts.frontmatter !== false,
+                      timestamps: opts.timestamps === true,
+                      playLinks: opts.playLinks === true,
+                  })
+                : undefined;
+        const applied =
+            markdown?.applied ?? correctTranscript({ ...opts, record, transcript: meeting.transcript, config, format });
         reportOutcomes(applied.outcomes);
         ui.dim(
             `applied: ${applied.labels} renamed lines, ${applied.ranges} re-attributed, ${applied.joins} joins, ${applied.terms} term fixes, ${applied.fixes} dictionary fixes, ${applied.spoken} spoken forms, ${applied.fuzzy} fuzzy, ${applied.expansions} expansions, ${applied.meanings} meanings, ${applied.marks} quotes and meanings of spoken words, ${applied.unclear} unclear marks`
         );
+
+        if (markdown) {
+            if (markdown.warning) {
+                ui.warn(markdown.warning);
+            }
+
+            out.print(markdown.markdown);
+            return;
+        }
 
         if (format === "json") {
             out.result(SafeJSON.stringify({ meeting: record.id, entries: applied.entries }, null, 2));
@@ -664,51 +570,9 @@ async function transcript(
             return;
         }
 
-        const turns = groupTurns(applied.entries);
-
-        if (format === "txt") {
-            out.print(
-                `${[record.title, localTime(record.start), "", ...transcriptTextLines(turns, opts.timestamps === true)].join("\n").trimEnd()}\n`
-            );
-            return;
-        }
-
-        const parts: string[] = [];
-
-        if (opts.frontmatter !== false) {
-            parts.push(
-                renderFrontmatter({
-                    title: record.title,
-                    meeting: localTime(record.start),
-                    ...(record.project ? { project: record.project } : {}),
-                    meeting_id: record.id,
-                    sources: Object.keys(record.sources),
-                    // The people after the corrections, with their line counts; an open speaker mark is not a speaker.
-                    speakers: Object.fromEntries(applied.speakers.map((speaker) => [speaker.name, speaker.lines])),
-                    ...(applied.unattributed.length > 0
-                        ? {
-                              unattributed: Object.fromEntries(
-                                  applied.unattributed.map((speaker) => [speaker.name, speaker.lines])
-                              ),
-                          }
-                        : {}),
-                })
-            );
-        }
-
-        // The links are written even while the router preset is off; the warning says how to make them open.
-        const links = opts.playLinks ? playLinksFor(record.id) : undefined;
-        const playLink = links?.link;
-
-        if (links?.warning) {
-            ui.warn(links.warning);
-        }
-
-        parts.push(
-            `# ${record.title || "Untitled meeting"}`,
-            transcriptMarkdown(turns, opts.timestamps === true || opts.playLinks === true, { playLink })
+        out.print(
+            `${[record.title, localTime(record.start), "", ...transcriptTextLines(groupTurns(applied.entries), opts.timestamps === true)].join("\n").trimEnd()}\n`
         );
-        out.print(`${parts.join("\n\n")}\n`);
     } catch (err) {
         fail(errorText(err));
     }
@@ -793,11 +657,27 @@ export function registerItemCommands(program: Command): void {
             .option("--min-confidence <0..1>", "every suggested item at or above this confidence")
             .option("--speaker <name>", "confirm: whose voice a speaker range is")
             .option("--proposed <text>", "confirm: the right spelling of a term, when the proposal is wrong")
+            .option("--json", "print { decided, token, skipped } as JSON (the token is what reopen --token takes)")
             .action(
-                (ref: string, ids: string[], opts: { speaker?: string; proposed?: string; minConfidence?: string }) =>
-                    decide(status, ref, ids, opts)
+                (
+                    ref: string,
+                    ids: string[],
+                    opts: { speaker?: string; proposed?: string; minConfidence?: string; json?: boolean }
+                ) => decide(status, ref, ids, opts)
             );
     }
+
+    program
+        .command("reopen")
+        .argument("<meeting>", MEETING_REF)
+        .argument("<items...>", "item ids: i1 i2 …")
+        .description("Put confirmed or rejected items back to suggested: the Undo of confirm and reject")
+        .option(
+            "--token <token>",
+            "the decision to undo (confirm/reject --json prints it): refused with [item-changed] when another decision changed an item since"
+        )
+        .option("--json", "print { reopened, skipped } as JSON")
+        .action(reopen);
 
     const speakers = program.command("speakers").description("The meeting's speakers: statistics, hints and renames");
 

@@ -4,7 +4,7 @@ import { isInteractive } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { MeetingsConfigStore, mergeLabels } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore, nextId } from "@genesiscz/utils/meetings/record";
 import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
@@ -14,8 +14,9 @@ import pc from "picocolors";
 import { collectAndReport } from "../lib/collect";
 import { linkSource } from "../lib/link";
 import { resolveProject } from "../lib/project";
-import { recordingSummary } from "../lib/screen";
 import { errorText, fail, TOOL } from "../lib/shared";
+import { showText } from "../lib/show-text";
+import { askProjectAtEnd } from "./watch";
 
 /** The record a command names, or a message saying how to find one. */
 function requireMeeting(store: MeetingStore, ref: string): MeetingRecord | undefined {
@@ -55,6 +56,11 @@ async function create(
                 `${created ? "Created" : "Already there:"} ${record.id}${record.project ? ` (project ${record.project})` : ""}`
             );
             await collectAndReport(store, record);
+
+            if (record.end) {
+                await askProjectAtEnd(store, record.id);
+            }
+
             return;
         }
 
@@ -130,68 +136,6 @@ async function list(opts: { project?: string; json?: boolean }): Promise<void> {
     out.println(table.toString());
 }
 
-function showText(record: MeetingRecord): string {
-    const lines = [`# ${record.title || "Untitled meeting"}`, ""];
-    const when = record.end ? `${localTime(record.start)}–${localTime(record.end).slice(11)}` : localTime(record.start);
-    lines.push(`- id: ${record.id}`, `- when: ${when}`);
-    lines.push(
-        record.project
-            ? `- project: ${record.project}`
-            : `- project: none (set it: ${TOOL} set ${record.id} --project <name>)`
-    );
-
-    for (const [source, block] of Object.entries(record.sources)) {
-        lines.push(`- ${source}: ${truncateDisplay(SafeJSON.stringify(block), 140)}`);
-    }
-
-    if (record.calendar) {
-        const event = record.calendar;
-        lines.push(
-            `- calendar (${event.from}): ${event.title ?? "?"}${event.attendees.length ? `, ${event.attendees.length} invited` : ""}`
-        );
-    }
-
-    if (record.participants.length > 0) {
-        lines.push(
-            `- people: ${record.participants.map((person) => person.name + (person.self ? " (you)" : "")).join(", ")}`
-        );
-    }
-
-    lines.push(...recordingSummary(record));
-
-    if (record.context.length > 0) {
-        lines.push("", "## Context");
-
-        for (const entry of record.context) {
-            const label = entry.kind === "note" ? truncateDisplay(entry.ref, 80) : entry.ref;
-            lines.push(
-                `- ${entry.id} ${entry.kind}: ${entry.title ? `${entry.title}: ` : ""}${label}${entry.note ? ` (${entry.note})` : ""}`
-            );
-        }
-    }
-
-    const renames = Object.entries(record.speakers.labels);
-
-    if (renames.length > 0) {
-        lines.push("", "## Speaker renames", ...renames.map(([label, name]) => `- ${label} → ${name}`));
-    }
-
-    if (record.items.length > 0) {
-        const count = (status: string) => record.items.filter((item) => item.status === status).length;
-        lines.push(
-            "",
-            `## Items: ${count("suggested")} suggested, ${count("confirmed")} confirmed, ${count("rejected")} rejected`
-        );
-    }
-
-    lines.push(
-        "",
-        "## History",
-        ...record.history.slice(-8).map((entry) => `- ${localTime(entry.at)} ${entry.command}: ${entry.change}`)
-    );
-    return `${lines.join("\n")}\n`;
-}
-
 async function show(ref: string, opts: { json?: boolean }): Promise<void> {
     const record = requireMeeting(new MeetingStore(), ref);
 
@@ -207,7 +151,10 @@ async function show(ref: string, opts: { json?: boolean }): Promise<void> {
     out.print(showText(record));
 }
 
-async function set(ref: string, opts: { project?: string; title?: string }): Promise<void> {
+async function set(
+    ref: string,
+    opts: { project?: string; title?: string; label?: string[]; unlabel?: string[] }
+): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
 
@@ -215,23 +162,38 @@ async function set(ref: string, opts: { project?: string; title?: string }): Pro
         return;
     }
 
-    if (!opts.project && !opts.title) {
-        fail(`Nothing to set: give --project <name> or --title <text>.`);
+    const labels = opts.label ?? [];
+    const unlabel = opts.unlabel ?? [];
+
+    if (!opts.project && !opts.title && labels.length === 0 && unlabel.length === 0) {
+        fail("Nothing to set: give --project <name>, --title <text>, --label <text> or --unlabel <text>.");
         return;
     }
 
     try {
-        const project = opts.project
-            ? (await resolveProject({ config: new MeetingsConfigStore(), flag: opts.project })).project
-            : undefined;
-        const changes = [project ? `project ${project}` : "", opts.title ? `title "${opts.title}"` : ""].filter(
-            Boolean
-        );
-        await store.update(record.id, { command: "set", change: changes.join(", ") }, (current) => {
+        const config = new MeetingsConfigStore();
+        const project = opts.project ? (await resolveProject({ config, flag: opts.project })).project : undefined;
+        const target = project ?? record.project;
+
+        if (target && labels.length > 0) {
+            await config.setProjectLabels(target, { add: labels });
+        }
+
+        const changes = [
+            project ? `project ${project}` : "",
+            opts.title ? `title "${opts.title}"` : "",
+            labels.length > 0 ? `labels + ${labels.join(", ")}` : "",
+            unlabel.length > 0 ? `labels - ${unlabel.join(", ")}` : "",
+        ].filter(Boolean);
+        const removed = new Set(unlabel.map((label) => label.toLowerCase()));
+        const updated = await store.update(record.id, { command: "set", change: changes.join(", ") }, (current) => {
             current.project = project ?? current.project;
             current.title = opts.title ?? current.title;
+            current.labels = mergeLabels(current.labels, labels).filter((label) => !removed.has(label.toLowerCase()));
         });
-        ui.ok(`${record.id}: ${changes.join(", ")}`);
+        ui.ok(
+            `${record.id}: ${changes.join(", ")}${updated.labels.length > 0 ? ` (labels: ${updated.labels.join(", ")})` : ""}`
+        );
     } catch (err) {
         fail(errorText(err));
     }
@@ -251,6 +213,10 @@ async function link(ref: string, sourceRef: string, opts: { project?: string }):
         });
         ui.ok(`${record.id}: linked ${sourceRef}`);
         await collectAndReport(store, record);
+
+        if (record.end) {
+            await askProjectAtEnd(store, record.id);
+        }
     } catch (err) {
         fail(errorText(err));
     }
@@ -392,9 +358,11 @@ export function registerMeetingCommands(program: Command): void {
     program
         .command("set")
         .argument("<meeting>", MEETING_REF)
-        .description("Change a meeting's project or title")
+        .description("Change a meeting's project, title or labels")
         .option("--project <name>", "its project (a new name joins the known projects)")
         .option("--title <text>", "its title")
+        .option("--label <text...>", "add labels (a new one joins the project's known labels)")
+        .option("--unlabel <text...>", "remove labels from the meeting")
         .action(set);
 
     program

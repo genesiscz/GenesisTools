@@ -81,25 +81,31 @@ interface Observer {
     leftAt: number | null;
 }
 
+/** Each connection of the observer to the call: a rejoin after a disconnect is a session of its own. */
 function observerSessions(events: CallLogEvent[]): Observer[] {
     const sessions: Observer[] = [];
     let current: Observer | undefined;
+
     for (const event of events) {
         if (event.kind !== "self-state") {
             continue;
         }
+
         if (event.state === "Connected" && !current) {
             current = { joinedAt: event.at, leftAt: null };
             sessions.push(current);
         }
+
         if ((event.state === "Disconnected" || event.state === "Disconnecting") && current) {
             current.leftAt = event.at;
             current = undefined;
         }
     }
+
     return sessions;
 }
 
+/** The observer's whole stay: its first join and the end of its last session. */
 export function observerFromEvents(events: CallLogEvent[]): Observer {
     const sessions = observerSessions(events);
     return { joinedAt: sessions[0]?.joinedAt ?? null, leftAt: sessions.at(-1)?.leftAt ?? null };
@@ -202,19 +208,22 @@ function attendanceForCall(args: {
     const rows: AttendanceRow[] = [];
 
     const sessions = observerSessions(events);
-    for (const observer of sessions) {
-        if (selfMri && observer.joinedAt !== null) {
+
+    for (const session of sessions) {
+        if (selfMri && session.joinedAt !== null) {
             rows.push({
                 ...person(selfMri),
-                joinedAt: formatLocalIso(observer.joinedAt),
-                leftAt: observer.leftAt === null ? null : formatLocalIso(observer.leftAt),
+                joinedAt: formatLocalIso(session.joinedAt),
+                leftAt: session.leftAt === null ? null : formatLocalIso(session.leftAt),
                 joinedAtExact: true,
-                leftAtExact: observer.leftAt !== null,
+                leftAtExact: session.leftAt !== null,
                 source: "ms-teams:web-client-log",
             });
         }
     }
 
+    // Remote events count inside the observer session that saw them; a person still listed when the observer left
+    // leaves with that session, and is added again by the next one.
     for (const [index, session] of (sessions.length ? sessions : [observer]).entries()) {
         const previousEnd = sessions[index - 1]?.leftAt;
         const sessionEvents = events.filter(
@@ -223,6 +232,7 @@ function attendanceForCall(args: {
                 (session.joinedAt === null || event.at >= session.joinedAt - PRESENT_AT_JOIN_MS) &&
                 (session.leftAt === null || event.at <= session.leftAt)
         );
+
         for (const interval of intervalsFromEvents(sessionEvents, session)) {
             const leftAt = interval.leftAt ?? session.leftAt;
             rows.push({

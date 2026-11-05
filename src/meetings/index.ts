@@ -1,6 +1,8 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
+import { registerAssignCommands } from "./commands/assign";
 import { registerAttendanceCommand } from "./commands/attendance";
+import { registerConfigCommand } from "./commands/config";
 import { registerDictionaryCommand } from "./commands/dictionary";
 import { registerEvidenceCommand } from "./commands/evidence";
 import { registerItemCommands } from "./commands/items";
@@ -9,6 +11,8 @@ import { registerMeetingCommands } from "./commands/meeting";
 import { registerPlayCommand } from "./commands/play";
 import { registerProjectsCommand } from "./commands/projects";
 import { registerRecordCommands } from "./commands/record";
+import { registerScreenNoteCommand } from "./commands/screen-note";
+import { registerViewCommands } from "./commands/views";
 import { registerWatchCommands } from "./commands/watch";
 
 const program = new Command();
@@ -20,10 +24,14 @@ registerItemCommands(program);
 registerEvidenceCommand(program);
 registerAttendanceCommand(program);
 registerRecordCommands(program);
+registerScreenNoteCommand(program);
 registerPlayCommand(program);
 registerListenCommand(program);
 registerWatchCommands(program);
 registerProjectsCommand(program);
+registerAssignCommands(program);
 registerDictionaryCommand(program);
+registerViewCommands(program);
+registerConfigCommand(program);
 
 await runTool(program, { tool: "meetings" });

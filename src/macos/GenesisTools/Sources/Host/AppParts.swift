@@ -15,6 +15,7 @@ package enum AppParts {
         // The old name of the settings face, from the time Clicky owned the window: relaunch records and scripts.
         "--clicky": "features",
         "--markdown": "markdown",
+        "--meetings": "meetings",
     ]
 
     nonisolated(unsafe) private static var faces: [String: ([String]) -> Never] = [:]
@@ -28,7 +29,7 @@ package enum AppParts {
         }
     }
 
-    static func isLinked(_ part: String) -> Bool {
+    package static func isLinked(_ part: String) -> Bool {
         linkedParts.contains(part)
     }
 

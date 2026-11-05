@@ -1,8 +1,10 @@
 import { existsSync, readdirSync, readFileSync, type Stats, statSync } from "node:fs";
 import { basename, join } from "node:path";
+import { PROXY_FILE } from "@app/recorder/lib/proxy";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import { transcriptCachePath } from "@genesiscz/utils/recording-editor/project";
 import {
     defaultRuleContext,
     graceMinutesFor,
@@ -12,19 +14,29 @@ import {
     planRemoval,
     rmCallerFromRuntime,
 } from "@genesiscz/utils/rm";
+import { RECORDING_MANIFEST } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 
 const { log } = logger.scoped("meetings-retention");
 
 const DAY_MS = 86_400_000;
-/** What `capture.retentionDays` removes from a meeting folder. The meeting record and its items stay. */
+/** The capture `capture.retentionDays` removes from a meeting folder, and dates by. The record and its items stay. */
 const CAPTURE_PATHS = ["frames", "ocr.jsonl", "audio", "audio.jsonl"] as const;
+/**
+ * Made from the capture when the meeting opens in the editor: the frame list, the proxy movie (the same screen, with
+ * the meeting audio) and its caption cache. They go with the capture; opening the editor rewrites them, so their
+ * time dates a meeting only when its capture is already gone.
+ */
+const DERIVED_PATHS = [RECORDING_MANIFEST, PROXY_FILE, basename(transcriptCachePath(PROXY_FILE))] as const;
 /** When the last pass ran, beside the meeting folders. */
 export const RETENTION_STAMP_FILE = "retention-last.json";
 
 export interface PrunePlan {
     meetingId: string;
-    /** The newest frame or OCR line of the meeting, as an mtime. */
+    /**
+     * The newest frame, OCR line or sound track of the meeting (its newest editor file when only those are left), as
+     * an mtime.
+     */
     lastCaptureAt: string;
     paths: string[];
 }
@@ -103,6 +115,7 @@ function newestMtime(paths: string[]): number {
 
 /**
  * The meetings whose frames and OCR are older than `days`: their newest capture file changed before the cut-off.
+ * Each plan also takes the editor files made from that capture.
  * `skip` is the meeting a recorder is recording now.
  */
 export function capturesToPrune(
@@ -122,16 +135,22 @@ export function capturesToPrune(
         }
 
         const folder = store.folder(entry.name);
-        const paths = CAPTURE_PATHS.map((name) => join(folder, name)).filter((path) => existsSync(path));
+        const captured = CAPTURE_PATHS.map((name) => join(folder, name)).filter((path) => existsSync(path));
+        const derived = DERIVED_PATHS.map((name) => join(folder, name)).filter((path) => existsSync(path));
+        const dated = captured.length > 0 ? captured : derived;
 
-        if (paths.length === 0) {
+        if (dated.length === 0) {
             continue;
         }
 
-        const newest = newestMtime(paths);
+        const newest = newestMtime(dated);
 
         if (newest < cutoff) {
-            plans.push({ meetingId: entry.name, lastCaptureAt: new Date(newest).toISOString(), paths });
+            plans.push({
+                meetingId: entry.name,
+                lastCaptureAt: new Date(newest).toISOString(),
+                paths: [...captured, ...derived],
+            });
         }
     }
 
@@ -143,6 +162,7 @@ export const trashWithRm: TrashPaths = (paths) => {
     const config = loadRmConfig();
     const caller = rmCallerFromRuntime();
     const ctx = defaultRuleContext(config, caller, process.cwd());
+    // Automatic retention moves only what the rules allow outright; a path that needs approval stays where it is.
     const plan = planRemoval(paths, ctx).filter((item) => item.verdict.kind === "allow");
 
     if (plan.length === 0) {
@@ -158,7 +178,7 @@ export const trashWithRm: TrashPaths = (paths) => {
     return batch?.id ?? null;
 };
 
-/** Moves the frames and OCR of every meeting past `days` into the trash. */
+/** Moves the frames, OCR and editor files of every meeting past `days` into the trash. */
 export function pruneCaptures(
     store: MeetingStore,
     options: { days: number; now?: number; skip?: string; trash?: TrashPaths }

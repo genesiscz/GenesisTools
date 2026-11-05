@@ -3,7 +3,6 @@ import { suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import {
@@ -18,14 +17,7 @@ import { listLocalMeetings, localAvailable } from "../lib/local";
 import { listMcpMeetings, listMcpSeries } from "../lib/mcp";
 import { calendarFor } from "../lib/meeting-source";
 import { writeGuarded } from "../lib/output";
-import {
-    meetingFrontmatter,
-    type RenderOptions,
-    renderMarkdown,
-    renderSrt,
-    renderText,
-    renderVtt,
-} from "../lib/render";
+import { type RenderOptions, renderMarkdown, renderSrt, renderText, renderVtt, showMarkdown } from "../lib/render";
 import { loadMeeting, resolveMeetingRef } from "../lib/source";
 import type { Meeting, MeetingSummary, SourceChoice, SourceName } from "../lib/types";
 import { errorText, fail, parseSource, reportSource, resolveEnum, TOOL } from "./shared";
@@ -233,54 +225,6 @@ async function transcript(ref: string, opts: TranscriptOpts): Promise<void> {
     });
 }
 
-function showMarkdown(meeting: Meeting, source: SourceName): string {
-    const parts = [
-        renderFrontmatter(
-            meetingFrontmatter(meeting, {
-                source,
-                frontmatter: true,
-                summary: true,
-                timestamps: false,
-                firstNames: false,
-            })
-        ),
-        `# ${meeting.title || "Untitled meeting"}`,
-    ];
-    // Who named each label matters: a platform name is evidence, a language model's name is a guess.
-    const people = meeting.participants.map((p) => {
-        const speaker = p.speakerId === undefined ? "" : `speaker ${p.speakerId}`;
-        const origin = p.origin ? `named by ${p.origin}` : "";
-        const notes = [speaker, origin].filter(Boolean).join(", ");
-        return `- ${p.name}${p.isSelf ? " (you)" : ""}${notes ? ` (${notes})` : ""}`;
-    });
-
-    if (people.length > 0) {
-        parts.push("## Participants", people.join("\n"));
-    }
-
-    const invited = calendarFor(meeting);
-
-    if (invited && invited.attendees.length > 0) {
-        parts.push(
-            "## Invited",
-            [
-                ...invited.attendees.map((name) => `- ${name}`),
-                ...(invited.conferenceUrl ? [``, `Call: ${invited.conferenceUrl}`] : []),
-            ].join("\n")
-        );
-    }
-
-    if (meeting.summary.trim()) {
-        parts.push("## Summary", meeting.summary.trim());
-    }
-
-    if (meeting.notes.trim()) {
-        parts.push("## Notes", meeting.notes.trim());
-    }
-
-    return `${parts.join("\n\n")}\n`;
-}
-
 async function speakers(ref: string, opts: { source?: string }): Promise<void> {
     const source = parseSource(opts.source, ["meetings", "speakers"]);
 
@@ -335,7 +279,7 @@ async function show(ref: string, opts: Record<string, unknown>): Promise<void> {
                 )
             );
         } else {
-            out.print(showMarkdown(loaded.data, loaded.source));
+            out.print(showMarkdown(loaded.data, loaded.source, calendarFor(loaded.data)));
         }
     } catch (err) {
         fail(errorText(err));
@@ -371,7 +315,7 @@ async function exportMeetings(refs: string[], opts: Record<string, unknown>): Pr
                 firstNames: opts.firstNames === true,
             };
             const files: Array<[string, string, boolean]> = [
-                ["Summary.md", showMarkdown(meeting, loaded.source), true],
+                ["Summary.md", showMarkdown(meeting, loaded.source, calendarFor(meeting)), true],
                 ["Transcript.md", renderMarkdown(meeting, base), true],
                 [
                     "meeting.json",

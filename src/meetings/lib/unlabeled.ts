@@ -53,6 +53,8 @@ export function unlabeledView(
         restore: (item) => {
             const label = "label" in item && typeof item.label === "string" ? sourceOf.get(item.label) : undefined;
             const restored = label ? { ...item, label } : item;
+
+            // A join's voice that is the synthetic unlabeled speaker is no voice at all: the join keeps the line's own.
             if (
                 restored.kind === "join" &&
                 "speaker" in restored &&
@@ -61,6 +63,7 @@ export function unlabeledView(
             ) {
                 return { ...restored, speaker: undefined };
             }
+
             return restored;
         },
     };

@@ -31,6 +31,7 @@ let allParts: [AppPart] = [
     AppPart(id: "widget", target: "GenesisToolsWidget", path: "Sources/Parts/Widget", requires: ["features"]),
     AppPart(id: "clicky", target: "GenesisToolsClicky", path: "Sources/Parts/Clicky", requires: ["features"]),
     AppPart(id: "markdown", target: "GenesisToolsMarkdown", path: "Sources/Parts/Markdown"),
+    AppPart(id: "meetings", target: "GenesisToolsMeetings", path: "Sources/Parts/Meetings", requires: ["features"]),
 ]
 
 func part(_ id: String) -> AppPart? {

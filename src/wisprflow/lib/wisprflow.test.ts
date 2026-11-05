@@ -11,7 +11,7 @@ import { parseObservations, participantName } from "./evidence";
 import { completeTranscript, parseLive } from "./live";
 import { pageText, parseMcpTranscript } from "./mcp";
 import { mergeFrontmatter, writeGuarded } from "./output";
-import { renderSrt } from "./render";
+import { renderMarkdown, renderSrt, showMarkdown } from "./render";
 import { fillSpeakerMentions, resolveSpeakers } from "./speakers";
 import type { Meeting } from "./types";
 
@@ -469,5 +469,178 @@ describe("speaker evidence", () => {
         expect(parseObservations(raw)).toEqual([
             { tSec: 15.729, speaking: ["Bob Example"], muted: ["alice@example.com"] },
         ]);
+    });
+});
+
+describe("Wispr Flow markdown", () => {
+    const meeting: Meeting = {
+        id: "w1",
+        title: "Změny ve wiki",
+        start: "2026-11-02T14:00:00.000Z",
+        end: "2026-11-02T14:45:00.000Z",
+        hasTranscript: true,
+        shareLink: "https://example.com/share/w1",
+        folders: [{ id: "f1", name: "Wiki" }],
+        summary: "  Shrnutí.\n\n- bod jedna\n- bod dvě  ",
+        notes: "Poznámka.",
+        participants: [
+            { speakerId: 1, name: "Alice Example", isSelf: true, origin: "self" },
+            { speakerId: 2, name: "Bob Example", isSelf: false },
+            { name: "Carol Example", isSelf: false, origin: "llm" },
+        ],
+        transcript: [
+            entry("Alice Example", 0, "Ahoj."),
+            entry("Alice Example", 40, "Druhý odstavec."),
+            entry("Bob Example", 100, "Odpověď <sup>(`/{type}`)</sup>."),
+        ],
+    };
+    const options = { source: "local" as const, frontmatter: true, summary: true, timestamps: true, firstNames: false };
+
+    test("golden: render md has front matter, title, summary and the transcript", () => {
+        expect(renderMarkdown(meeting, options)).toBe(
+            [
+                "---",
+                "title: Změny ve wiki",
+                "meeting: 2026-11-02 14:00–14:45",
+                "duration_min: 45",
+                "speakers:",
+                "  - Alice Example",
+                "  - Bob Example",
+                "wisprflow_id: w1",
+                "source: https://example.com/share/w1",
+                "folders:",
+                "  - Wiki",
+                "wisprflow_source: local",
+                "---",
+                "",
+                "# Změny ve wiki",
+                "",
+                "## Summary",
+                "",
+                "Shrnutí.",
+                "",
+                "- bod jedna",
+                "- bod dvě",
+                "",
+                "## Transcript",
+                "",
+                "**Alice Example:** `00:00` Ahoj.",
+                "",
+                "`00:40` Druhý odstavec.",
+                "",
+                "**Bob Example:** `01:40` Odpověď <sup>(`/{type}`)</sup>.",
+                "",
+            ].join("\n")
+        );
+    });
+
+    test("golden: a gap note is a warning callout, and an untitled meeting without options has no extras", () => {
+        const gap = { refinedUntilSec: 3600, liveUntilSec: 4000, appendedLines: 7 };
+        const md = renderMarkdown(
+            { ...meeting, title: "", transcriptGap: gap },
+            { ...options, frontmatter: false, summary: false, timestamps: false, firstNames: true }
+        );
+
+        expect(md).toBe(
+            [
+                "# Untitled meeting",
+                "",
+                "> [!warning] Partly unrefined",
+                "> Wispr Flow's refined transcript ends at 1:00:00, the last live line at 1:06:40; 7 unrefined live lines follow after 1:00:00.",
+                "",
+                "## Transcript",
+                "",
+                "**Alice:** Ahoj.",
+                "",
+                "Druhý odstavec.",
+                "",
+                "**Bob:** Odpověď <sup>(`/{type}`)</sup>.",
+                "",
+            ].join("\n")
+        );
+    });
+
+    test("golden: a meeting with no transcript stops after the title", () => {
+        expect(renderMarkdown({ ...meeting, transcript: [] }, { ...options, frontmatter: false, summary: false })).toBe(
+            "# Změny ve wiki\n"
+        );
+    });
+
+    test("golden: show md lists the participants with their origin, the invitees with the call, the summary and notes", () => {
+        const invited = {
+            from: "wisprflow",
+            attendees: ["Alice Example", "Dan Example"],
+            conferenceUrl: "https://example.com/call",
+        };
+
+        expect(showMarkdown(meeting, "mcp", invited)).toBe(
+            [
+                "---",
+                "title: Změny ve wiki",
+                "meeting: 2026-11-02 14:00–14:45",
+                "duration_min: 45",
+                "speakers:",
+                "  - Alice Example",
+                "  - Bob Example",
+                "wisprflow_id: w1",
+                "source: https://example.com/share/w1",
+                "folders:",
+                "  - Wiki",
+                "wisprflow_source: mcp",
+                "---",
+                "",
+                "# Změny ve wiki",
+                "",
+                "## Participants",
+                "",
+                "- Alice Example (you) (speaker 1, named by self)",
+                "- Bob Example (speaker 2)",
+                "- Carol Example (named by llm)",
+                "",
+                "## Invited",
+                "",
+                "- Alice Example",
+                "- Dan Example",
+                "",
+                "Call: https://example.com/call",
+                "",
+                "## Summary",
+                "",
+                "Shrnutí.",
+                "",
+                "- bod jedna",
+                "- bod dvě",
+                "",
+                "## Notes",
+                "",
+                "Poznámka.",
+                "",
+            ].join("\n")
+        );
+    });
+
+    test("golden: show md without invitees, participants, summary or notes is the front matter and the title", () => {
+        const bare = { ...meeting, participants: [], summary: " ", notes: "" };
+
+        expect(showMarkdown(bare, "local", { from: "wisprflow", attendees: [] })).toBe(
+            [
+                "---",
+                "title: Změny ve wiki",
+                "meeting: 2026-11-02 14:00–14:45",
+                "duration_min: 45",
+                "speakers:",
+                "  - Alice Example",
+                "  - Bob Example",
+                "wisprflow_id: w1",
+                "source: https://example.com/share/w1",
+                "folders:",
+                "  - Wiki",
+                "wisprflow_source: local",
+                "---",
+                "",
+                "# Změny ve wiki",
+                "",
+            ].join("\n")
+        );
     });
 });

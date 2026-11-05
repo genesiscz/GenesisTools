@@ -23,14 +23,18 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `items <meeting> [--status …] [--kind …]` | The items with status, confidence and rules |
 | `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker` |
 | `reject <meeting> <ids…>` | Reject items; they are never suggested again |
+| `reopen <meeting> <ids…> [--json]` | Put confirmed or rejected items back to suggested (the Undo of confirm and reject); a question is reopened only by `listen`, and a confirm's line in the corrections ledger stays |
 | `transcript <meeting> [--format md\|txt\|json\|srt\|vtt] [--with-suggested]` | The transcript with renames, confirmed items and the dictionary. In md an expansion and a term's `meaning` (first mention) are a `<sup>`; txt, srt and vtt keep them in parentheses. An open question shows as `[nejasné: "<raw>"; 1) … 2) …]` (`languages.<global.language>.render.unclearLabel`); `--with-suggested` applies the top reading instead. Each applied item that did not change the transcript is a warning (`i42 did not apply: no "X" at 37:43`, `… 2 lines start at 37:43`, `… i41 changed "X" first`). In md the front matter's `speakers` maps each person after the corrections to their line count; `unattributed` holds the source labels nobody named |
 | `record start [--meeting <ref> \| --source wisprflow:<id> \| --title <text>] [--project] [--display all\|follow-focus\|main\|<index>]` | Record the screen: a frame when it changes, OCR per frame; creates the meeting (with the calendar event around now) unless one is named |
 | `record pause`, `record resume`, `record stop`, `record status` | Control the running recording over its socket; stop answers after the last frames, the summary and the collect, and lists the frames per display in status |
-| `record start --audio mic,system`, `record mute\|unmute <source>`, `record set [--active-fps] [--idle-fps] [--threshold] [--max-long-side]` | Sound beside the frames (`.m4a` in `audio/`, listed in `audio.jsonl`), a muted source (silence in its file), live settings |
+| `record mark <label>` | A marker at this moment of the running recording (REPL: `meetings.open(id).mark(label)`): the record keeps it, and the meeting's `recording.json` lists it at its movie time, so the editor shows it |
+| `record start --audio mic,system`, `record mute\|unmute <source>`, `record set [--active-fps] [--idle-fps] [--threshold] [--max-long-side] [--ocr\|--no-ocr] [--ocr-languages en-US,cs-CZ] [--ocr-min-chars N]` | Sound beside the frames (`.m4a` in `audio/`, listed in `audio.jsonl`), a muted source (silence in its file), live settings: the values the REPL's `meeting.setSettings()` takes, checked by the same schema |
 | `record display list\|add <id>\|remove <id>\|switch <id>\|mode <policy>` | Which displays the running recording records; a change applies at once |
 | `screen <meeting> --at 1:23:50 [--window 30s]` | The OCR text of each recorded screen around a transcript time |
+| `screen <meeting> [--at <time>] --boxes [--match <text>] [--level block\|line] --out <dir>` | The OCR boxes of those frames in frame pixels: the ones holding `--match`, or without it the ones that changed since the display's frame before, drawn numbered on each frame (`<frame>.boxes.png`) with a PNG crop of each (`<frame>.<n>.png`). `--match` without `--at` searches every frame (`--limit 5`). REPL: `meetings.open(id).screen({ at, match, boxes: { outDir } })`, and `editorProject()` makes the recording an editor project (`tools recorder proxy <meeting>` does the same) |
+| `screen-note <meeting> [--out <note.md>]` | Write the screen OCR as a note: one section per frame whose text changed on its display, with its picture and its text (default `<meeting folder>/<id>.ScreenOCR.md`). Each picture is an APFS clone in `<note name>.frames/` beside the note (no extra disk space; a plain copy where the volume cannot clone, and the log says so), linked by a relative path, so Genesis Markdown shows it in a vault note. A second run adds nothing, and an `--out` that is another note is refused |
 | `autostart on\|off\|status` | Record the screen whenever Wispr Flow records a meeting (default off) |
-| `watch [--once]` | The watcher behind autostart; the daemon starts it at login when autostart is on |
+| `watch [--once]` | The watcher behind autostart and "ask each time"; the daemon starts it at login when autostart is on or a project question waits |
 | `attendance <meeting> [--from <platform>\|<file>]` | Store who was in the call and when, and the sections derived from it (one per join or leave); suggest, speakers stats and evidence read them when no `--attendance` is given. A file is read in a platform's export format: `teams:<file>` names it, a bare path is read in the meeting's platform's format, else in the one format its text fits (Teams: `tools ms-teams meetings attendance --json` output). Second 0 is the source's transcript clock. A Teams call that lists its people without join or leave times (its call-ended message) counts them present for the whole call, and the note says how many. A fresh home needs `tools ms-teams sync` first |
 | `listen <meeting> [--item Q12]` | Answer the open questions by ear, one at a time: each range is cut with ffmpeg (padding `playback.listen.padSec`, asked on the first run), with a short tone just before the asked words (`beep`, `beepLeadSec`), and played `delaySec` (2) after the question shows, then again after each `repeatGapSec` (1) pause until the question is answered (`repeat`, on by default), also while a "Something else…" answer is typed. A word question shows the line its heard words are in, with the words marked and the lines before and after it. When the round already answered the same heard words at another time, that answer is the first choice and the question says when it was given. Esc goes back one step: from the comment to the choices, from the choices to the previous question, whose answer is undone. "Enough for now", or Esc on the first question, ends the round; the next `listen` goes on from there. Undo reverts only what that answer changed, so an item added meanwhile stays. `--item Q12` (or `12`, or the id `i42`) asks only that question and, after "Several voices", its parts. `--item Q12 --answer "<text>"` answers without audio, in a round of its own, or inside the round a person is listening to |
 | `listen <meeting> --subscribe-answers [--from-start] [--timeout 120]` | For an agent: prints the running round's events as JSON lines (`round-start`, `answered`, `skipped`, `split`, `reopened`, `round-end`) while the person answers, from `questions.ndjson` in the meeting folder, and exits 0 at the round's end (an aborted round when the listener is gone), 2 on the timeout in minutes. Run it under a Monitor, so each answer wakes the agent |
@@ -40,13 +44,30 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `items add <meeting> --from-file findings.json` | A batch in one write: an array (or `{ "findings": [...] }`) of objects with the flags' names (`kind`, `from`, `to`, `at`, `label`, `speaker`, `heard`, `proposed`, `scope`, `joined`, `question`, `choices`, `decides`, `priority`, `confidence`, `reason`), plus `meaning` or `quote` on a term, and `line` (the line's index, as an `items add` warning names it) on a join or a term when two lines start in one second; times as seconds or "37:43". Kinds: `speaker-range`, `label` (`label`, `from`, `to`, `"meaningless": true`, `reason`: the label tracks no one person in that stretch, so its lines there count as unlabeled for the rules and render as `[nejasné: "<label>"]` unless a range or join gives them a voice), `join`, `term`, `question`. A finding may carry a `ref`, and a question's `decides` may list the refs of its own batch: they become the new ids. A term's `proposed` fixes the words everywhere unless `"scope": "line"`. One bad entry adds nothing. Each join and each term bound to a line is anchored to its line (`evidence.transcriptLine`); a time where no line, or two lines, start is a warning, and so is each new item that would not apply |
 | `evidence <meeting> --raw [--word-check hunspell\|hunspell-cc0\|macos\|off]` | The facts per line as JSON for an agent: label, text, channel, speaking, muted, present, the people, the silent call stretches (`meeting.callSilent`), the term part and the summary; no rule and no confidence. Reads existing evidence and cached energy without writing. Run collect for platform and attendance facts and calibrate for channel energy |
 | `play <meeting> --at 1:23:50 [--before 5]` | Play the meeting's audio from a moment in VLC (`playback.player`, ffplay as fallback), to hear a voice before `confirm` |
-| `projects list` | The known projects, with their dictionary size and match rules (`--json`) |
+| `projects list` | The known projects, with their dictionary size, labels and match rules (`--json`) |
 | `projects add <name>` | Add a known project |
+| `projects labels <name> [--add <label...>] [--remove <label...>]` | The labels a meeting of the project can carry ("Checkout 2.0") |
+| `projects pair <name> --person "Name <email>"...` | Pair people with a project by hand; a later meeting with them proposes it |
+| `projects unpair --entry <id>` / `projects unpair <name> --person <who>` | Remove the pairings one calendar entry made (a person another source pairs stays), or one person from a project |
+| `projects people [name] [--json]` | The paired people of each project, with the sources that paired them |
+| `set <meeting> --label <text...> --unlabel <text...>` | Add or remove a meeting's labels; a new label joins the project's labels |
+| `assign proposals <meeting> [--json]` | The ranked project proposals of a meeting and why, the overlapping calendar entries and the folder step; reads only |
+| `assign ask <meeting> [--force]` | Post the meeting's project question to the decision inbox now |
+| `assign apply <meeting> --project <name>\|--none [--label <text...>] [--entry <id>] [--pair-folder]` | Apply an answer without the inbox |
+| `assign sweep [--json]` | One "ask each time" pass, as the watcher runs it |
 | `dictionary show [--project <name>]` | The merged dictionary: global, then the project (`--json`) |
-| `dictionary add <value> [substitution] --type fix\|abbr\|term\|keep [--project <name>]` | Add or replace an entry; a new project name is added to the known projects |
+| `dictionary add <value> [substitution] --type fix\|abbr\|term\|keep [--case-sensitive] [--project <name>]` | Add or replace an entry; a new project name is added to the known projects |
 | `dictionary suggest [--project <name>] [--apply 1,3\|all]` | Entries proposed from the source's own dictionary (Wispr Flow) and from corrections confirmed twice |
 | `dictionary expansion every\|first\|off [--project <name>]` | How abbreviations expand |
 | `dictionary remove <value> [--project <name>]` | Remove an entry |
+| `dictionary test "<phrase>" [--project <name>] [--json]` | The phrase after the dictionary, with each entry that fired and the words close to a term; reads only |
+| `overview [--days 14] [--json]` | The recent meetings by day with their badges (no project, open questions, unclear speakers, recording only, transcript only, suggestions at or above `global.suggest.applyAbove`) and the meetings that wait for you; the Meetings window reads it |
+| `projects preview [--draft <json>] [--limit 20] [--json]` | Which project each recent meeting matches by the saved rules, and with a draft (`{"work":{"titleWords":["sync"],"calendars":[],"folders":{"wisprflow":[]}}}`); reads only |
+| `screen <meeting> --timeline [--all] [--json]` | Every frame in time order with the OCR lines that changed since the display's earlier frame, in frame pixels |
+| `record cost [--json]` | The CPU each capture choice costs: 268.6 ms per kept frame (the meetings-ocr bench) and the newest recording's frame rate |
+| `export <meeting> [--to <folder>] [--dry-run] [--json]` | The polished transcript (md, play links, dictionary, confirmed items) as `<folder>/<meeting id>.md`; the folder is `projects.<p>.export.folder` unless `--to` names one; the same meeting again replaces its file |
+| `window [meeting] [--place needs\|all\|<project>] [--tab transcript\|screen\|items\|speakers\|context] [--no-focus]` | Open the Meetings window of GenesisTools.app (the `meetings` app part); Settings → Meetings holds its pages |
+| `config show [path] [--json]`, `config set <path> <json>`, `config unset <path>` | Read and write one setting; the path is dotted (`global.capture.activeFps`) or a JSON array of keys (`["projects","a.b","labels"]`); a write that would make the config invalid writes nothing |
 
 ## The meeting record
 
@@ -57,6 +78,39 @@ the record's `history`, and a change that would make the record invalid writes n
 Every command that creates or changes a meeting resolves its project in this order: `--project` (a new name joins
 the known projects), the meeting's own, one matching project (`projects.<name>.match`), a choice in a terminal, and
 without a terminal no project. `show` then says how to set it.
+
+A meeting has one project and any `labels`, so meetings group finer without sub-projects.
+
+### Ask each time
+
+A meeting that ended with no project gets one question in the decision inbox (the widget inbox, the dev-dashboard
+`/qa` page and a notification), once. It is asked when the meeting ends, whatever started its recording: the recorder
+process asks after its stop, and `new --source` and `link` ask when the source gives the meeting its end. The watcher
+asks on each look too (`assign sweep`), and its sweep is what reads the answers back, so it runs while autoRecord is
+on and, with autoRecord off, while a question or a folder step waits (an end that posts a question starts it). Only
+meetings that ended after the first sweep (or the first ask) are asked, within `global.assign.lookbackHours` (48). An
+end that cannot be asked about (the record does not show the end, or the post fails) is a warning in the day log that
+names the meeting. The question ranks the known projects, each with
+its reasons, best first (`assign proposals` shows the same):
+
+| Reason | Points |
+|---|---|
+| The source folder the meeting is in is paired with the project (`sources.wisprflow.match.<p>.folders`) | 100 |
+| An overlapping calendar entry is in one of the project's calendars (`match.calendar.calendars`) | 60 |
+| The title has one of the project's words (`match.title.words`) | 40 |
+| People paired with the project are on an overlapping entry, or in the transcript | 15 each, 60 at most |
+| Title words the project's earlier meetings had | 8 each, 24 at most |
+
+It also lists the calendar entries that overlap the meeting (Apple Calendar, which holds the synced Outlook and Teams
+accounts, merged with Wispr Flow's own calendar, which has the attendees' emails), the labels, and the Wispr folder
+step. A calendar that cannot be read says so in the question; an unread calendar is never "no entries". The answer
+applies everything at once: the project (a new name joins the known projects), the labels, the picked entry (its
+attendees are paired with the project, `pairedBy: [{ kind: "calendar", entryId, ... }]`) and the folder pairing.
+A wrong pick is undone with `projects unpair --entry <id>`: it removes only the pairings no other source holds.
+
+The Wispr folder ladder: Wispr Flow cannot be changed from here (its MCP tools only read; its `wispr-flow://` scheme
+only opens pages). A meeting in a folder no project has is offered to pair that folder. A meeting in no folder: the
+question tells you to move it in Wispr Flow, and the next sweep that sees it in a folder asks to pair that folder.
 
 ## Recording
 
@@ -74,15 +128,38 @@ each frame to JPEG under the meeting's `frames/` as `<HH-MM-SS-mmm>-d<displayId>
 (`languages.<global.language>.ocr`, `cs-CZ` and `en-US` for `cs`). Each capture ends at its duration plus 30 s; a
 hung one is stopped and counts as a failed capture.
 
+`capture.ocr` decides which kept frames OCR reads. `threshold` (0 to 1, default 0) is an OCR-only change threshold
+beside `capture.threshold`: a kept frame that changed less keeps the previous frame's text for its display.
+`skipTextless` (default off) reads the changed area at Vision's fast level first, and a frame whose changed area holds
+no text, before or now, keeps the previous text too. A skipped frame's `ocr.jsonl` row carries the copied text and
+`skipped` (`below-threshold` or `no-text`). `region` (`frame` by default, or `changed`) reads only the changed areas
+of a frame (at most four, each grown to hold every line it touches) and keeps the previous frame's other lines; the
+row's `blocks` stay in whole-frame coordinates and `regions` lists the areas read. It is off by default because a crop
+costs about as much as a whole read (each Vision call costs about 110 ms of CPU or more) and reads more small text than
+a whole read of a wide frame does, so the text would change (`docs/benchmarks-cpu.md`, 2026-11-05). The first frame of
+each capture and each display switch is always read whole.
+
+`capture.ocr.read` selects `frame` or `tiles` (default) for a full-frame read, including the first frame and display switches.
+`frame` keeps the existing whole-image read with language correction. `tiles` reads the original image through Vision
+regions, with language correction off: two side-by-side strips when width / height is at least 2, otherwise one region.
+Each strip extends 3% of the full image width past its inner edge. Spatially overlapping duplicate lines are dropped;
+block bounds stay in full-image coordinates. No tile crop files are made. The existing vertical-crop fallback for images
+larger than 6000 pixels remains unchanged. `region: changed` still controls changed-area crops independently; `read`
+applies when a full-frame read is needed. The default and second-meeting measurements are recorded in
+`docs/benchmarks-cpu.md`.
+
 `capture.displays` picks what is recorded: `all` (default) records every connected display at once, one capture per
 display per piece; `main`; `follow-focus` (the display of the focused window, when the recorder supports it, else the
 main one); or a screen index. Each piece reads the display list again by id, so a display that is connected joins at
 the next piece and one that is removed leaves without an error. When an asked index is not connected, the main
 display stands in and the warning says since when.
 
-Frames stay on this Mac and never go into an export. Once a day the watcher moves `frames/`, `ocr.jsonl`, `audio/` and `audio.jsonl` of
-each meeting whose newest capture-file timestamp is older than `capture.retentionDays` (30) into the GenesisTools trash (`tools rm`
-rules, restorable with `tools rm restore <batch>`); the meeting record, its items and the recording block stay. It
+Frames stay on this Mac and never go into an export. Once a day the watcher moves the `frames/`, `ocr.jsonl`,
+`audio/` and `audio.jsonl` of each meeting whose newest capture file (a frame, an OCR line or a sound track) is older
+than `capture.retentionDays` (30) into the GenesisTools trash (`tools rm` rules, restorable with
+`tools rm restore <batch>`), so a recording with sound only expires too. The editor files made from them
+(`recording.json`, `proxy.mp4`, `proxy.transcript.json`) go with them; opening the editor rewrites those files, so it
+never postpones a meeting's retention. The meeting record, its items and the recording block stay. It
 never touches the meeting being recorded, and `retention-last.json` beside the meetings says when it last ran. When a source is linked, `record stop` stores its clock, so
 `screen --at` takes transcript times. A frame is taken only when the screen changes, so `screen --at` shows, per
 display, the frame still on that screen; a time outside the recorded spans says so and when the recording ran.
@@ -108,7 +185,8 @@ to and stop reason: `requested`, `paused`, `failed`, `error`), `frames` and `byt
 those of an earlier start), `displays` (id, name, frames), `backend`, `displayPolicy` and `warning`. Records from
 before the schema still read. Three failed pieces in a row stop the recorder with `stopReason: "failed"`; any other
 error stops it with `"error"`; both always write the stop and post "Screen recording stopped" once per failure
-episode, for recordings a person started too. A recording without a frame says so in its warning. `show` prints
+episode, for recordings a person started too, and the recorder process (`record run`) then exits 1. A recording
+without a frame says so in its warning. `show` prints
 the recording's state, frames per display, spans and warning.
 
 ### Autostart
@@ -118,7 +196,7 @@ it at every login while it is on. The watcher follows the first source in the so
 whose `sources.<id>.autoRecord` is on, today Wispr Flow. Every 15 s the watcher asks Wispr Flow for a meeting it has not ended whose live
 transcript changed in the last `liveWithinSec` (30). It then runs `record start --source wisprflow:<id> --yes` and
 posts a notification (`notify`, default on). It stops only the recordings it started, when Wispr Flow ends the
-meeting or stays silent for `stopAfterSilenceSec` (120). A start that failed (no grant) notifies once and is not
+meeting. Silence never stops one, since a listener who stays quiet is still in the meeting. A start that failed (no grant) notifies once and is not
 retried for the same meeting. A recorder that stopped on its own while the meeting runs (`stopReason: "failed"` or
 `"error"`) is started again 2 min after it stopped, with `record start --meeting <id> --yes`, and every 2 min after
 that; the recorder posts the notice. A stop the user asked for stays stopped. A stop that failed keeps the watcher's
@@ -160,7 +238,12 @@ as an open question is.
   the microphone is ignored for that stretch.
 - `join`: a word cut between two lines ("dot" + "áhnu"), or one sentence cut between two whole words: a `joined`
   value with a space ("jsem zvědavej") keeps the space.
-- `term`: a misheard term and its proposed spelling.
+- `term`: a misheard term and its proposed spelling, a passage read aloud from a context file (its quote and line),
+  or a spoken path or identifier (its meaning after the words). A context file is read as the meeting saw it: when it
+  changed or was deleted after the meeting, from its last git commit before the meeting's end; `suggest` warns when no
+  copy is left. With `global.suggest.restatedIdentifiers` at `skip` (the default), a plain code name that only writes
+  the said words in code form ("entity data", `EntityData`) gets no meaning; a path, a member chain or a CONSTANT_CODE
+  still does. `mark` adds them all.
 - `label` (`meaningless: true`): the label tracks no one person from `fromSec` to `toSec`. The rules see its lines
   there under a label that names nobody, and the transcript marks each such line no range or join gives a voice as
   `[nejasné: "<label>"]`. Its outcome is the lines it marked, or shadowed when ranges gave every line a voice.
@@ -257,7 +340,8 @@ bound to its line (`atSec`), so it never changes the same words elsewhere.
 
 ## The dictionary
 
-- `fix`: a misheard spelling, replaced at every whole-word match (`DTLčko` becomes `DTOčko`).
+- `fix`: a misheard spelling, replaced at every whole-word match in any letter case (`DTLčko` becomes `DTOčko`, and so
+  does `dtlčko`). `--case-sensitive` (config `caseSensitive: true`) keeps the exact-case match.
 - `abbr`: an abbreviation. Its substitution must contain the abbreviation itself, so the original stays:
   `MOP` becomes `MOP (Obchodní partner podnikatel)`. A substitution without it is refused.
 - `term`: a correct spelling the misheard-term check should know; `--spoken` lists how people say it.
@@ -279,24 +363,53 @@ that varies by recorder, source or language sits under that axis:
 
 ```jsonc
 {
-    "version": 2,
+    "version": 3,
     "global": {
         "dictionary": { "abbrExpansion": "every", "entries": [] },
         "language": "cs",
         "capture": { "backend": "native", "activeFps": 1, "retentionDays": 30, "recorders": { "native": { "maxMb": 400 } } },
         "playback": { "listen": { "roundCap": 12 } },
-        "suggest": { "questionCap": 12 }
+        "suggest": { "questionCap": 12 },
+        "assign": {
+            "ask": true, "lookbackHours": 48, "maxProposals": 5, "calendarSlackMin": 15,
+            "calendarLookbehindHours": 3, "folderWaitDays": 14, "retryFailedMin": 10
+        }
     },
     "projects": {
         "work": {
             "dictionary": { "entries": [{ "type": "abbr", "value": "MOP", "substitution": "MOP (Obchodní partner podnikatel)" }] },
-            "match": { "calendar": { "titles": ["Wiki"] } }
+            "labels": ["Checkout 2.0"],
+            "export": { "folder": "/path/to/the/vault/folder" },
+            "match": {
+                "calendar": { "calendars": ["Work"] },
+                "title": { "words": ["Wiki"] },
+                "people": [
+                    {
+                        "name": "Alice Novak",
+                        "email": "alice@example.com",
+                        "pairedBy": [{ "kind": "calendar", "from": "wisprflow", "entryId": "e1", "title": "Planning", "meetingId": "…", "at": "…" }]
+                    }
+                ]
+            }
         }
     },
     "sources": { "wisprflow": { "autoRecord": { "enabled": false }, "match": { "work": { "folders": ["Work"] } } } },
-    "languages": { "cs": { "ocr": ["cs-CZ", "en-US"], "render": { "unclearLabel": "nejasné" }, "wordCheck": "hunspell" } }
+    "languages": {
+        "cs": {
+            "ocr": ["cs-CZ", "en-US"], "render": { "unclearLabel": "nejasné" }, "wordCheck": "hunspell",
+            "fillers": { "sounds": ["ehm", "hm"], "words": ["jako", "jakože"] }
+        }
+    }
 }
 ```
+
+`global.assign` timings: `calendarLookbehindHours` (3) is how long before a meeting a calendar entry may start and still
+be looked up (never less than `calendarSlackMin`), `folderWaitDays` (14) is how long a meeting waits to be moved into a
+source folder before the folder question ends, and `retryFailedMin` (10) is how long after a failed post the project
+question is posted again. `languages.<code>.fillers` is what `recorder cut-fillers` cuts for that language: `sounds` are
+never words, `words` are fillers that are also real words (cut only with `--all`). `cs` and `sk` ship their lists; `en`
+has a shipped list without a block, and a block of another language may omit `fillers` to keep the shipped list of its
+code. An older file without these keys reads with the values above.
 
 `languages` has blocks for `cs` and `sk` with every default; another language is a block with every key
 (`ocr`, `render.unclearLabel`, `readAloudLabel`, `lineLabel`). `global.language` picks the block that labels the
@@ -304,7 +417,9 @@ transcript and reads the screen.
 
 A version 1 file is rewritten once on the first read: `global.render` moves to `languages.cs.render`,
 `playback.listen.budget` to both `global.suggest.questionCap` and `playback.listen.roundCap`, and
-`projects.<p>.match.wisprflow.folders` to `sources.wisprflow.match.<p>.folders`. The code reads only the new places.
+`projects.<p>.match.wisprflow.folders` to `sources.wisprflow.match.<p>.folders`. A version 2 file moves
+`projects.<p>.match.calendar.titles` to `projects.<p>.match.title.words`, since the words test the meeting title from
+any source. The code reads only the new places. A file of a newer version still reads (the keys this code knows).
 
 `languages.<code>.wordCheck` names the word check provider of a language (`hunspell`, `hunspell-cc0`, `macos` or
 `off`). Without `--word-check`, suggest and `evidence --raw` check each language's lines with its own provider, and a

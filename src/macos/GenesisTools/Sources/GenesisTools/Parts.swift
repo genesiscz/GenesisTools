@@ -14,7 +14,7 @@ import GenesisToolsHub
 
 @objc(GenesisKitHostAdapter)
 final class GenesisKitHostAdapter: HubKitAdapter {}
-#elseif GENESIS_PART_FEATURES || GENESIS_PART_WIDGET || GENESIS_PART_CLICKY || GENESIS_PART_MARKDOWN
+#elseif GENESIS_PART_FEATURES || GENESIS_PART_WIDGET || GENESIS_PART_CLICKY || GENESIS_PART_MARKDOWN || GENESIS_PART_RECORDER || GENESIS_PART_MEETINGS
 import GenesisKit
 
 @objc(GenesisKitHostAdapter)
@@ -40,6 +40,14 @@ import GenesisToolsClicky
 import GenesisToolsMarkdown
 #endif
 
+#if GENESIS_PART_RECORDER
+import GenesisToolsRecorder
+#endif
+
+#if GENESIS_PART_MEETINGS
+import GenesisToolsMeetings
+#endif
+
 func registerLinkedParts() {
     #if GENESIS_PART_FEATURES
     // `--clicky` is the face's old name (relaunch records, scripts).
@@ -57,6 +65,12 @@ func registerLinkedParts() {
     #if GENESIS_PART_MARKDOWN
     AppParts.register(part: "markdown", faces: ["--markdown": runMarkdown])
     #endif
+    #if GENESIS_PART_RECORDER
+    AppParts.register(part: "recorder", faces: ["--recorder": runRecorder])
+    #endif
+    #if GENESIS_PART_MEETINGS
+    AppParts.register(part: "meetings", faces: ["--meetings": runMeetings])
+    #endif
     registerSettingsPlugins()
 }
 
@@ -72,6 +86,12 @@ private func registerSettingsPlugins() {
         #endif
         #if GENESIS_PART_HUB
         FeatureSettingsPlugins.add { HubSettingsPlugin() }
+        #endif
+        #if GENESIS_PART_MEETINGS
+        FeatureSettingsPlugins.add { MeetingsSettingsPlugin() }
+        #endif
+        #if GENESIS_PART_RECORDER
+        FeatureSettingsPlugins.add { RecorderSettingsPlugin() }
         #endif
     }
     #endif

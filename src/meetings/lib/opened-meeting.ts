@@ -3,7 +3,7 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
 import { type ChannelCalibration, channelEnergy, type SilentCallSpan } from "@genesiscz/utils/meetings/energy";
-import type { MeetingChange, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { DictionaryCandidate, MeetingEvidence, SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import type { ResolvedDictionary } from "@genesiscz/utils/transcribe/dictionary";
 import { TranscriptLines } from "@genesiscz/utils/transcribe/lines";
@@ -57,12 +57,6 @@ export class OpenedMeeting {
 
     /** The record as the last explicit step left it. */
     get record(): MeetingRecord {
-        return this.current;
-    }
-
-    /** Writes one change through the store and keeps the stored result as this handle's record. */
-    async update(change: MeetingChange, mutate: (record: MeetingRecord) => void): Promise<MeetingRecord> {
-        this.current = await this.store.update(this.current.id, change, mutate);
         return this.current;
     }
 

@@ -477,6 +477,7 @@ export class ListenSession {
 
     /** Undoes the last decision, only what it changed; returns its question, or nothing at the round's start. */
     private async undo(): Promise<string | undefined> {
+        // The step stays until the store took the undo, so a failed write keeps its ledger entry and its inverse.
         const last = this.steps.at(-1);
 
         if (!last) {

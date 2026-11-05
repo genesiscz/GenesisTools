@@ -345,3 +345,211 @@ Rerun, 5 interleaved rounds, load 22–30:
 The full refresh costs about twice the earlier figure and still about a third of a discover process. The 5-minute
 side-by-side totals above stand as measured: they timed the real watch as it runs, with whatever reuse the other
 processes on the machine offered it.
+
+## 2026-11-05 06:29 — Meeting OCR: the cost of one kept frame, and the language-correction verdict
+
+The meeting recorder reads each kept frame with Vision OCR (`recognizeText` in `@genesiscz/utils/macos/ocr`, run by
+the shared darwinkit helper). Three scripts in `scripts/benchmarks/meetings-ocr/` measure it; CPU time is the metric,
+wall time on this Mac is noise (the runs below were taken at load averages between 166 and 266).
+
+- `bench.ts --runs 3 --compare` against the baseline of 63044e75fb, as the recorder calls it (one frame at a time,
+  accurate, the meeting's languages): warm call 178 ms wall (185 before), the helper's CPU per warm call 230 ms (260
+  before), one cold call 396 ms (360 before, +10%, inside the tolerance), over the 537 frames of one meeting's
+  `ocr.jsonl`. PASS.
+- `keep.ts --runs 3`, the whole keep path of one frame (PNG to JPEG through `sips`, OCR, one `ocr.jsonl` row), before
+  and after it moved into the shared `FrameOutput`: inline 229 ms wall and 205 ms helper CPU, shared 228 ms and 200 ms,
+  0 text mismatches, 2 spawned children per frame in both arms.
+- `correction.ts` (commit 0823c5556b), Vision's language correction on and off over 40 frames of one meeting (cs-CZ and
+  en-US), both arms in one Swift process, interleaved per frame: Vision CPU per frame 447 ms on, 185 ms off (total
+  29.0 s against 7.0 s). Without correction 9.1% of the corrected words are missing and 7.4% are new; the words a
+  dictionary knows fall from 81.2% to 79.8%. Verdict: correction stays on (off loses 2.9% of the dictionary words), so
+  the darwinkit `languageCorrection` option is not added.
+
+Not built yet (spec section 3 of the meetings OCR work): the skip rules (no OCR when the changed region holds no text,
+an OCR-only change threshold) and the crop to the changed region. They are the next CPU saving; when they land, rerun
+`bench.ts --compare` and add the numbers here. (Built and measured on 2026-11-05: the next section.)
+
+Rerun:
+
+```bash
+bun scripts/benchmarks/meetings-ocr/bench.ts --runs 3 --compare
+bun scripts/benchmarks/meetings-ocr/keep.ts --runs 3
+bun scripts/benchmarks/meetings-ocr/correction.ts
+```
+
+## 2026-11-05 07:40 — Meeting OCR: the skip rules and the changed-area read, measured
+
+Built on feat/2026-11-05-meetings-ocr-skip-crop (e4c2f55dff skip rules, fcd35cc843 changed-area read). The native
+recorder already reports where a kept "change" frame differs from the last kept frame of its display (`motionBoxes`,
+frame pixels, FrameSampler.swift), and both recorders keep frames from the capture result, which carries them, so
+ax-tool did not change. Three new keys of the recorder's live `ocr` settings, in the meetings config as `capture.ocr`
+beside `capture.threshold`: `threshold` (an OCR-only change threshold), `skipTextless` (a fast read of the changed areas
+decides that they hold no text), and `region` (`frame` or `changed`). A skipped row copies the previous text of its
+display and says `skipped`; a changed-area row says `regions` and keeps its blocks in whole-frame coordinates.
+
+`scripts/benchmarks/meetings-ocr/region.ts --runs 3 --frames 16` feeds 2 × 16 consecutive frames of one meeting (the two
+busiest displays) through `FrameOutput`, one arm per setting, interleaved per frame. The motion boxes are recomputed
+from the JPEGs by `motion.ts`, a port of the Swift check. "Text kept" is the share of the `full` arm's lines that the
+arm's row holds, the same or with a bigram similarity of 0.8 or more. ⚠️ The load was 36 at the start and 195 at the
+end of this run, so the CPU numbers are not reliable; the counts and the text shares do not depend on the load.
+
+- `full` (the defaults): 146 ms helper CPU per frame, 1 spawn per frame.
+- `full-again` (the same settings a second time, the noise floor): 148 ms, text kept 98.3% on average (66.7% at worst).
+  Two whole reads of one frame do not give the same lines.
+- `threshold-5`: 95 ms (-35%), 12 of 32 frames skipped, text kept 84.5% (26.7% at worst). A change below 5% can still
+  hold most of a frame's text (a scrolled chat, a new slide line), so the saving loses real text.
+- `skipTextless`: 149 ms (+2%), 1.44 spawns per frame, no frame skipped. Every changed area either held text before or
+  held text now on this meeting.
+- `region: changed`: 182 ms (+25%), 3.8 spawns per frame, 14 of 32 frames read by area, text kept 84.6% (0% at worst).
+- The causes, measured on one 2880×1205 frame (load about 100): a whole read gave 13 lines for 140 ms, a crop of half
+  the frame gave 121 lines for 1010 ms, a quarter 144 lines for 490 ms, 3% of the frame 14 lines for 110 ms. Vision
+  reads a wide frame at a reduced size, so a crop is read at a higher pixel density: it finds small text that the whole
+  read misses, and it costs more. Every call costs about 110 ms or more, whatever the crop's size. The joined change
+  box of a frame covered a median 84% of it, the motion boxes themselves 16.6%, so the area read crops up to four
+  areas apart, and four calls cost more than one whole read.
+- The coordinates are right: on two real frames, the crop lines whose text the whole read also found overlap its boxes
+  with a median IoU of 0.73 (52 of 56 pairs at 0.5 or more).
+
+Verdict: all three keys default off (`threshold` 0, `skipTextless` false, `region` "frame"), and a recording made with
+the defaults writes the same `ocr.jsonl` rows as before (no `skipped`, no `regions`). The threshold is the only saving
+that pays in CPU, and it loses text, so it is an opt-in for a recording where text does not matter. The finding worth
+following up is the quality one: a whole read of a wide display misses most of its small text (13 lines against 121 to
+144 in its parts). A tiled read (two or four tiles per frame) would find that text at a known cost per frame; that is
+a separate change with its own bench.
+
+The other benches after the change (the shared `recognizeText` path did not change for its callers):
+
+- `bench.ts --runs 3 --compare` against the baseline taken at e4c2f55dff (load 47 to 56; the baseline is in
+  `scripts/benchmarks/baselines/meetings-ocr.json`): warm call 167 ms wall (270 before), 270 ms helper CPU per warm call
+  (260 before, +3.9%), cold call 418 ms (442 before). PASS. Load 38 at the start, 35 at the end.
+- `keep.ts --runs 3` (load 33 to 36): inline 235 ms wall and 225 ms helper CPU, shared 253 ms and 220 ms, 2 spawned
+  children per frame in both arms, 2 of 30 frames with a different text length between the two arms (Vision's own
+  variance, as the noise floor above shows).
+
+Rerun:
+
+```bash
+bun scripts/benchmarks/meetings-ocr/region.ts --runs 3 --frames 16 [--detail]
+bun scripts/benchmarks/meetings-ocr/bench.ts --runs 3 --compare
+bun scripts/benchmarks/meetings-ocr/keep.ts --runs 3
+```
+
+## 2026-11-05 08:41 — Meeting OCR: small text on a wide display, measured
+
+Where Vision runs. A kept frame's OCR goes `FrameOutput.read` (`src/utils/screen-recorder/frame-output.ts`) →
+`visionOcr` → `recognizeText` (`src/utils/macos/ocr.ts`) → `getDarwinKit().vision.ocr({ path, languages, level })`.
+The request runs in the darwinkit helper (`darwinkit serve`, `@genesiscz/darwinkit` 0.8.0), a plain child of the
+recording process. Its `VisionProvider.recognizeText` makes one `VNRecognizeTextRequest` per call and sets three
+properties: `recognitionLevel` (accurate), `usesLanguageCorrection = true` and `recognitionLanguages` (the meeting's,
+`cs-CZ, en-US` by default). It sets no `minimumTextHeight` (its default is 0, automatic, request revision 3 on this
+macOS) and no region of interest. An accurate read that finds nothing is read again at the fast level. The darwinkit
+door takes only `path`, `languages` and `level`. ax-tool's recorder reads no text.
+
+Which display loses text. In the meeting the earlier benches used, a 3440×1440 display at 1x is kept at 2880×1205 by
+`capture.resolutionCap` (2880). Its whole reads hold a median of 13 lines per `ocr.jsonl` row. The built-in Retina
+display (kept at 2880×1861) holds 100, and a 2560×1440 display at 1x holds 162.
+
+`scripts/benchmarks/meetings-ocr/small-text.ts --runs 3 --frames 8 --displays 2,1,4` reads 8 consecutive kept frames of
+each display (from the middle of the meeting) with 14 arms, interleaved per frame, the order turned per frame and run.
+The Vision arms run in one long-lived Swift process (`small-text-arms.swift`, one job per line), with darwinkit's
+settings unless the arm changes one; their CPU is that process's getrusage over the job. `darwinkit-whole`, `changed`
+and `tiles-2-crops` go through the real darwinkit helper (`ps cputime`, 10 ms resolution, plus the CPU of the `sips`
+children). A tile is a vertical strip, left to right, 3% of the width wider on each inner side, read as a region of
+interest. The reference is `halves`: the left and the right half, each read with today's settings. Line recall is the
+share of the reference's folded lines that an arm's read holds (the same, or a bigram similarity of 0.8 or more). Word
+recall is the share of the reference's words (a multiset). Line recall undercounts, because Vision splits a text into
+lines differently in each crop. CPU per frame is the median over the 3 runs of each run's mean. "Weighted" uses the
+meeting's own frames per display (184, 209 and 144 of 537 rows); today's weighted read costs 188 ms. Bun 1.4.2. Load:
+median 16, maximum 41.9. The repeat at 08:35 (load median 58, maximum 127) gave the same recalls and 4% to 8% more CPU
+(`tiles-2-no-correction` 1.20 times today, `tiles-3-no-correction` 1.43 times).
+
+| Arm | 2880×1205: lines | line / word recall | CPU ms | Retina: word recall, CPU ms | 2560×1440: word recall, CPU ms | Weighted CPU ms (× today) | Weighted line / word recall |
+|---|---|---|---|---|---|---|---|
+| `darwinkit-whole` (today) | 12 | 1.5% / 2.0% | 81 | 85.9%, 165 | 62.7%, 358 | 188 (1.00) | 39.6% / 50.9% |
+| `whole` (Swift, same settings) | 12 | 1.5% / 2.0% | 80 | 85.9%, 158 | 62.8%, 353 | 184 (0.98) | 39.6% / 51.0% |
+| `minimumTextHeight` 0.02 | 12 | 1.5% / 2.0% | 77 | 86.5%, 155 | 62.7%, 351 | 181 (0.96) | 40.4% / 51.2% |
+| `minimumTextHeight` 0.01 | 12 | 1.5% / 2.1% | 77 | 85.9%, 157 | 62.6%, 351 | 182 (0.97) | 39.5% / 50.9% |
+| `minimumTextHeight` 0.005 | 12 | 1.5% / 2.0% | 78 | 85.9%, 157 | 62.7%, 348 | 181 (0.96) | 39.6% / 50.9% |
+| `no-correction` | 13 | 1.5% / 1.9% | 39 | 85.9%, 74 | 61.3%, 117 | 73 (0.39) | 38.9% / 50.5% |
+| `fast` | 136 | 0.4% / 4.9% | 423 | 60.8%, 76 | 34.6%, 180 | 223 (1.18) | 21.6% / 34.6% |
+| `tiles-2` | 300 | 70.4% / 86.6% | 1145 | 90.6%, 219 | 93.9%, 485 | 607 (3.23) | 80.4% / 90.1% |
+| `tiles-3` | 377 | 78.9% / 92.2% | 1288 | 90.6%, 239 | 93.0%, 529 | 676 (3.60) | 79.8% / 91.8% |
+| `tiles-2-no-correction` | 304 | 70.1% / 86.2% | 332 | 90.0%, 121 | 92.5%, 198 | 214 (1.14) | 80.1% / 89.4% |
+| `tiles-3-no-correction` | 376 | 77.7% / 91.0% | 406 | 89.9%, 136 | 92.6%, 224 | 252 (1.34) | 79.1% / 91.0% |
+| `changed` (`region: "changed"`) | 14 | 7.4% / 10.1% | 186 | 87.3%, 187 | 67.4%, 255 | 205 (1.09) | 43.7% / 55.5% |
+| `tiles-2-crops` (`sips` + darwinkit) | 268 | 47.7% / 65.9% | 1218 | 69.7%, 391 | 55.0%, 546 | 716 (3.81) | 48.8% / 64.5% |
+| `halves` (the reference) | 325 | 100% / 100% | 1139 | 100%, 205 | 99.8%, 473 | 597 (3.18) | 99.9% / 99.9% |
+
+- `minimumTextHeight` is not the cause. 0.02, 0.01 and 0.005 give the same lines and CPU as the default on every
+  display.
+- Language correction is not the cause either; it is the cost. Without it a read finds the same text (0 to 1.5 points
+  fewer reference words) for 29% to 55% of the CPU (40% for a whole read, weighted).
+- The fast level finds 136 lines on the wide display, but only 4.9% of the reference words: its text is not the small
+  text read correctly.
+- Tiles find the small text: 87% (two) and 92% (three) of the reference words on the wide display, against 2% today.
+  The other displays lose text in a whole read too: the 2560×1440 display keeps 63% of the reference words today and
+  93% with tiles.
+- The CPU follows the text Vision finds: on the wide display about 3.8 ms per line with correction and 1.1 ms without
+  (`tiles-2` and `tiles-2-no-correction`). Today's read of that display is cheap because it finds almost nothing.
+- A resize is not the fix. Two frames of the wide display, scaled to 1440, 2048, 2560 and 3440 wide and read whole,
+  gave 3 to 26 lines (one read each), against about 300 for the halves. So `capture.resolutionCap` does not help this
+  display. A real capture at 3440 wide was not measured.
+- A `sips` PNG crop and a region of interest read nearly alike in one process (169 against 151 and 222 against 221
+  lines, one tile of two frames). The crops arm through darwinkit still found only 66% of the reference words on the
+  wide display, against 87% for the region arm; the cause was not found.
+- The changed-area read does not find the small text (10% of the reference words on the wide display): it reads few
+  areas, and the rest of its text is the previous whole read.
+- One warm-up waited more than 4 minutes inside Vision's text recognizer while darwinkit loaded the same models (one
+  observation). The bench now warms its Swift process first, and each job has a 180 s deadline.
+
+Verdict. The bar was: at least 80% of the reference within about 1.5 times today's CPU per kept frame.
+`tiles-2-no-correction` meets it on the meeting: 1.14 times today's weighted CPU (0.82 times the 260 ms of Vision in
+`KEPT_FRAME_CPU_MS`), 89% of the reference words and 80% of its lines. `tiles-3-no-correction` meets it on words
+(1.34 times, 91%) and misses it on lines by one point (79%). On the wide display alone they cost 4.1 and 5.0 times its
+own whole read (332 and 406 ms against 81 ms). Both need `usesLanguageCorrection = false` and a region of interest (or
+a crop) per tile, and darwinkit 0.8.0's `vision.ocr` offers neither, so a winner needs a new native binary. The tile
+read that ships today (`tiles-2-crops`: `sips` crops read by darwinkit with correction on) costs 3.81 times and finds
+65% of the words, so it misses the bar. Nothing is built: no setting and no new default.
+
+Follow-up, in this order: darwinkit's `vision.ocr` gains `languageCorrection` (a boolean) and `regions` (normalized
+boxes, each read with its own `regionOfInterest`, the boxes answered in whole-image coordinates); then a meetings
+setting `capture.ocr.tiles` (1 is today's whole read) beside `threshold`, `skipTextless` and `region`. Before the
+default changes, rerun `correction.ts` on tile reads: the earlier verdict (correction stays on, 06:29) was taken on
+whole reads, and on tiles correction costs 2.7 to 2.8 times the weighted CPU (3.2 to 3.5 times on the wide display)
+for 0.7 to 0.8 points of the weighted reference words.
+
+Rerun:
+
+```bash
+bun scripts/benchmarks/meetings-ocr/small-text.ts --runs 3 --frames 8 --displays 2,1,4
+```
+
+## 2026-11-05 15:05 — Meeting OCR: shipped region tiles on a second meeting
+
+darwinkit 0.8.1, `small-text.ts --meeting /Users/Martin/.genesis-tools/meetings/2026-11-05_14-02-playwright --runs 3 --frames 4`. The meeting is read only; frames are copied to scratch, all OCR text stays in memory, and retained summaries contain counts only. Every existing arm is retained; `darwinkit-tiles` adds the shipped `FrameOutput` → `recognizeText({ read: "tiles" })` path. Four consecutive frames per display, three repeats, rotated arm order. Reference: the first repeat of `halves`, as above. CPU is the median of repeat means; native arms count helper CPU plus crop-child CPU, with 10 ms resolution; this excludes Bun CPU.
+
+Tile count follows the frame aspect ratio: two strips at width / height >= 2, one region otherwise. Each inner edge extends 3% of full-image width. Correction is off for these region reads. Bounds are already full-image coordinates; duplicate lines are merged spatially. Ordinary displays therefore keep one read rather than the fixed two-region Swift experiment.
+
+Columns below give reference-word recall (%) / helper CPU per kept frame (ms). Weighted values use this meeting's frame counts: display 4 = 67, display 2 = 102, display 1 = 68, total 237. This is a sample of one second meeting, not ground-truth transcription accuracy.
+
+| Arm | Display 4, 2880×1205 | Display 2, 2560×1440 | Display 1, 2880×1861 | Weighted recall % / CPU ms |
+|---|---:|---:|---:|---:|
+| `whole` | 1.4 / 74.9 | 75.0 / 195.2 | 93.2 / 357.0 | 59.4 / 207.6 |
+| `mth-0.02` | 1.4 / 63.0 | 75.0 / 194.3 | 92.1 / 352.5 | 59.1 / 202.6 |
+| `mth-0.01` | 1.4 / 66.6 | 75.1 / 197.8 | 93.2 / 343.0 | 59.5 / 202.4 |
+| `mth-0.005` | 1.4 / 63.2 | 75.1 / 196.8 | 93.2 / 345.8 | 59.5 / 201.8 |
+| `no-correction` | 1.1 / 39.8 | 73.3 / 78.9 | 92.5 / 133.8 | 58.4 / 83.6 |
+| `fast` | 3.5 / 486.9 | 65.3 / 121.9 | 65.3 / 209.8 | 47.8 / 250.3 |
+| `tiles-2` | 76.6 / 1188.4 | 96.2 / 287.9 | 94.5 / 432.9 | 90.2 / 584.1 |
+| `tiles-3` | 85.3 / 1340.9 | 96.4 / 322.3 | 95.1 / 446.4 | 92.9 / 645.9 |
+| `tiles-2-no-correction` | 76.2 / 391.6 | 96.8 / 152.5 | 94.1 / 195.1 | 90.2 / 232.3 |
+| `tiles-3-no-correction` | 84.5 / 481.2 | 96.3 / 178.6 | 94.3 / 210.7 | 92.4 / 273.4 |
+| `halves` | 100.0 / 1203.3 | 99.6 / 271.4 | 100.0 / 410.1 | 99.8 / 574.6 |
+| `darwinkit-whole` | 1.4 / 70.0 | 65.0 / 182.5 | 93.2 / 365.0 | 55.1 / 203.1 |
+| `darwinkit-tiles` | 76.2 / 400.0 | 64.4 / 80.0 | 92.5 / 137.5 | 75.8 / 187.0 |
+| `changed` | 8.7 / 196.6 | 67.2 / 205.2 | 93.2 / 352.5 | 58.1 / 245.0 |
+| `tiles-2-crops` | 71.3 / 1685.7 | 82.9 / 439.0 | 69.8 / 563.9 | 75.9 / 827.3 |
+
+Verdict: meetings defaults to `capture.ocr.read: "tiles"`. Weighted word recall rises from 55.1% to 75.8% (+20.7 points), and CPU falls from 203.1 to 187.0 ms (0.92×), meeting the recall-gain and <=1.5× CPU gate. On the ultrawide display alone it costs 400 vs 70 ms (5.71×) for 76.2% vs 1.4% recall; ordinary displays save CPU but gain no recall. Users can select `frame`. The shared OCR API and generic recorder retain their frame default, and oversized-image vertical cropping is unchanged.
+
+Load: first 75.3, median 51.4, max 98.2, last 33.4; Bun 1.4.2. CPU remains sensitive to machine load. One earlier 8-frame, 3-repeat attempt timed out on vision.ocr after 60 s and produced no valid summary. Measurement also exposed a helper-discovery bug: a loose darwinkit match selected the Swift helper because the scratch directory contained darwinkit-ocr. The matcher now identifies the executable basename, missing helpers fail the bench, and completed repeats save count-only checkpoints. The table uses only the successful rerun with the corrected matcher. Swift whole and darwinkit whole differ on display 2 (75% vs 65% recall); the cause is unknown, and the default comparison uses the shipped native whole arm.

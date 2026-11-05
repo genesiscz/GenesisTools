@@ -55,6 +55,7 @@ export function arrivalItems(options: {
                 continue;
             }
 
+            // A calibrated energy reading of the line outranks the coarse channel segment it falls in.
             const micSaysUser =
                 line.energyMic !== undefined
                     ? line.energyMic >= 0.9

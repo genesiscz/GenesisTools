@@ -4,9 +4,10 @@ import { applyDictionary, dictionaryLevelSchema, fuzzyMatches, mergeDictionaries
 import { labelIdentityTable, lineEvidence, SELF } from "./evidence";
 import { importanceOf } from "./importance";
 import { stemOf } from "./languages/cs";
-import { formatClock, groupTurns, parseClock, transcriptMarkdown } from "./render";
+import { formatClock, groupTurns, parseClock, suspectsCallout, transcriptMarkdown } from "./render";
 import { LEAVE_PHRASES, type Presence, presenceSections, speakerStats } from "./speakers";
 import { citesPoint, keyWords, summaryPoints } from "./summary";
+import type { TermSuggestion } from "./terms";
 import type { Participant, TranscriptEntry } from "./types";
 
 function line(speaker: string, startSec: number | undefined, text: string, speakerId?: number): TranscriptEntry {
@@ -106,6 +107,36 @@ describe("speakerStats", () => {
         expect(stats.hints).toContainEqual(
             expect.objectContaining({ kind: "leave-then-continues", label: "Alice Example", strength: "weak" })
         );
+    });
+
+    test("R13: a bare 'Čau.' greeting at the start is a hello, and the same word after a long talk a goodbye", () => {
+        const talk =
+            "Tak to máme probrané, ještě projdu ten seznam úkolů a pak to shrnu, aby bylo jasné, kdo co dělá dál.";
+        const stats = speakerStats([
+            line("Alice Example", 15, "Čau.", 1),
+            line("Bob Example", 16, "Čau.", 2),
+            line("Alice Example", 60, talk, 1),
+            line("Alice Example", 300, "Čau.", 1),
+            line("Bob Example", 302, "Čau.", 2),
+            line("Alice Example", 400, "Ještě jedna věc.", 1),
+        ]);
+        const alice = stats.speakers.find((s) => s.label === "Alice Example")!;
+
+        expect(alice.leaves.map((leave) => leave.atSec)).toEqual([300]);
+    });
+
+    test("R13: a bare 'Čau.' its label follows within seconds is a hello, however much the label said before", () => {
+        const talk =
+            "Tak to máme probrané, ještě projdu ten seznam úkolů a pak to shrnu, aby bylo jasné, kdo co dělá dál.";
+        const stats = speakerStats([
+            line("Alice Example", 1, talk, 1),
+            line("Alice Example", 15, "Čau.", 1),
+            line("Bob Example", 16, "Čau.", 2),
+            line("Alice Example", 19, "Čau. Zbytek přijde později.", 1),
+            line("Alice Example", 120, "Ještě jedna věc.", 1),
+        ]);
+
+        expect(stats.speakers.find((s) => s.label === "Alice Example")!.leaves).toEqual([]);
     });
 
     test("R14: a 'taky' goodbye right after another label's goodbye names that label as someone else", () => {
@@ -240,6 +271,53 @@ describe("dictionary", () => {
         expect(applied).toMatchObject({ fixes: 1, expansions: 2 });
     });
 
+    test("a fix matches any letter case by default: ZAZA also fixes the spoken Zaza", () => {
+        const spokenLines = [
+            line("Alice Example", 0, "Zaza je ok, ZAZA taky, zaza také, ZaZa už je dobře, Zazaza ne."),
+        ];
+        const applied = applyDictionary(spokenLines, {
+            abbrExpansion: "every",
+            entries: [{ type: "fix", value: "ZAZA", substitution: "ZaZa" }],
+        });
+
+        expect(applied.entries[0]!.text).toBe("ZaZa je ok, ZaZa taky, ZaZa také, ZaZa už je dobře, Zazaza ne.");
+        expect(applied.fixes).toBe(4);
+    });
+
+    test("a fix with caseSensitive keeps the exact-case match", () => {
+        const spokenLines = [line("Alice Example", 0, "Zaza je ok, ZAZA taky.")];
+        const applied = applyDictionary(spokenLines, {
+            abbrExpansion: "every",
+            entries: [{ type: "fix", value: "ZAZA", substitution: "ZaZa", caseSensitive: true }],
+        });
+
+        expect(applied.entries[0]!.text).toBe("Zaza je ok, ZaZa taky.");
+        expect(applied.fixes).toBe(1);
+    });
+
+    test("a fix is whole-word in any case with Czech diacritics, and caseSensitive is an optional entry field", () => {
+        const spokenLines = [line("Alice Example", 0, "Úřad, úřad a ÚŘAD, ale ne úřadu ani xúřad.")];
+        const applied = applyDictionary(spokenLines, {
+            abbrExpansion: "every",
+            entries: [{ type: "fix", value: "ÚŘAD", substitution: "Úřad" }],
+        });
+
+        expect(applied.entries[0]!.text).toBe("Úřad, Úřad a Úřad, ale ne úřadu ani xúřad.");
+        expect(applied.fixes).toBe(3);
+        expect(
+            dictionaryLevelSchema.parse({ entries: [{ type: "fix", value: "a", substitution: "b" }] }).entries[0]
+        ).toEqual({
+            type: "fix",
+            value: "a",
+            substitution: "b",
+        });
+        expect(
+            dictionaryLevelSchema.parse({
+                entries: [{ type: "fix", value: "a", substitution: "b", caseSensitive: true }],
+            }).entries[0]
+        ).toEqual({ type: "fix", value: "a", substitution: "b", caseSensitive: true });
+    });
+
     test("first mention only, and off", () => {
         const first = applyDictionary(lines, { abbrExpansion: "first", entries: [mop] });
         const off = applyDictionary(lines, { abbrExpansion: "off", entries: [mop] });
@@ -336,6 +414,101 @@ describe("transcriptMarkdown", () => {
         expect(md).toBe(
             "**Alice:** `01:05`<sup>[play](https://example.com/play?at=65)</sup> Ahoj.\n\n" +
                 "**Bob:** `01:10`<sup>[play](https://example.com/play?at=70)</sup>\n\n> Kap. 2. <sup>(čte z Notes, ř. 4)</sup>"
+        );
+    });
+
+    const spoken = [
+        line("Alice", 0, "Ahoj."),
+        line("Alice", 40, "Druhý odstavec po pauze."),
+        line("Bob", 100, "Odpověď s <sup>(`/{type}`)</sup> a [nejasné: kdo?] značkou."),
+    ];
+
+    test("golden: turns and paragraphs with a clock on each paragraph and no play link", () => {
+        expect(transcriptMarkdown(groupTurns(spoken), true)).toBe(
+            "**Alice:** `00:00` Ahoj.\n\n" +
+                "`00:40` Druhý odstavec po pauze.\n\n" +
+                "**Bob:** `01:40` Odpověď s <sup>(`/{type}`)</sup> a [nejasné: kdo?] značkou."
+        );
+    });
+
+    test("golden: without timestamps a later paragraph is the bare text", () => {
+        expect(transcriptMarkdown(groupTurns(spoken), false, { playLink: () => "https://example.com/never" })).toBe(
+            "**Alice:** Ahoj.\n\nDruhý odstavec po pauze.\n\n" +
+                "**Bob:** Odpověď s <sup>(`/{type}`)</sup> a [nejasné: kdo?] značkou."
+        );
+    });
+
+    test("golden: a line with no time has no clock, and a play link that is null adds no mark", () => {
+        const turns = groupTurns([line("Alice", undefined, "Bez času."), line("Bob", 3723, "Hodina a něco.")]);
+
+        expect(transcriptMarkdown(turns, true, { playLink: () => null })).toBe(
+            "**Alice:** Bez času.\n\n**Bob:** `1:02:03` Hodina a něco."
+        );
+    });
+
+    test("golden: a quote block inside a paragraph keeps its own lines and the blank lines around it are trimmed", () => {
+        const turns = groupTurns([
+            line("Alice", 5, "Tak čtu:  \n\n  > Kap. 2. <sup>(čte z Notes, ř. 4)</sup> \n\n\n , konec."),
+        ]);
+
+        expect(transcriptMarkdown(turns, true, { playLink: (sec) => `https://example.com/p?at=${sec}` })).toBe(
+            "**Alice:** `00:05`<sup>[play](https://example.com/p?at=5)</sup> Tak čtu:\n\n" +
+                "> Kap. 2. <sup>(čte z Notes, ř. 4)</sup>\n\n, konec."
+        );
+    });
+
+    test("golden: a quote at the start of a paragraph goes under the speaker, also when no clock is shown", () => {
+        const quote = "\n\n> Citace. <sup>(Notes)</sup>\n\n";
+        const turns = groupTurns([line("Alice", 0, "Úvod."), line("Alice", 60, quote), line("Bob", 90, quote)]);
+
+        expect(transcriptMarkdown(turns, false)).toBe(
+            "**Alice:** Úvod.\n\n> Citace. <sup>(Notes)</sup>\n\n**Bob:**\n\n> Citace. <sup>(Notes)</sup>"
+        );
+        expect(transcriptMarkdown(turns, true)).toBe(
+            "**Alice:** `00:00` Úvod.\n\n`01:00`\n\n> Citace. <sup>(Notes)</sup>\n\n**Bob:** `01:30`\n\n> Citace. <sup>(Notes)</sup>"
+        );
+    });
+
+    test("golden: no turns is an empty string", () => {
+        expect(transcriptMarkdown([], true)).toBe("");
+    });
+});
+
+describe("suspectsCallout", () => {
+    const suspects: TermSuggestion[] = [
+        {
+            heard: "zaza",
+            occurrences: 3,
+            kind: "exact",
+            candidates: [
+                { term: "ZaZa", confidence: 91, source: "project" },
+                { term: "Zao", confidence: 72, source: "summary" },
+            ],
+            examples: [],
+        },
+        {
+            heard: "wikinu",
+            occurrences: 1,
+            kind: "stem",
+            candidates: [{ term: "wiki", confidence: 80, source: "dictionary" }],
+            examples: [],
+        },
+    ];
+
+    test("golden: a collapsed warning callout, one bullet per suspect, and the apply command after a blank quote line", () => {
+        expect(suspectsCallout(suspects, { tool: "meetings", fixCommand: "tools meetings fix 1" })).toBe(
+            "> [!warning]- Possibly misheard terms (meetings, confidence per candidate)\n" +
+                "> - `zaza` ×3: ZaZa 91 % (project) · Zao 72 % (summary)\n" +
+                "> - `wikinu` ×1: wiki 80 % (dictionary) _(inflected; name it explicitly to fix)_\n" +
+                ">\n" +
+                "> Apply: `tools meetings fix 1`"
+        );
+    });
+
+    test("golden: without a fix command there is no apply line", () => {
+        expect(suspectsCallout(suspects.slice(0, 1), { tool: "wisprflow" })).toBe(
+            "> [!warning]- Possibly misheard terms (wisprflow, confidence per candidate)\n" +
+                "> - `zaza` ×3: ZaZa 91 % (project) · Zao 72 % (summary)"
         );
     });
 });

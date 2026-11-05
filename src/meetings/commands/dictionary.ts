@@ -10,6 +10,7 @@ import { ABBR_EXPANSIONS, type DictionaryEntry, dictionaryEntrySchema } from "@g
 import type { Command } from "commander";
 import pc from "picocolors";
 import { suggestDictionary } from "../lib/dictionary-suggest";
+import { testPhrase } from "../lib/dictionary-test";
 import { errorText, fail, resolveEnum } from "../lib/shared";
 import { isMeetingSourceId, meetingSource } from "../lib/sources";
 
@@ -75,7 +76,15 @@ function scopeOf(project: string | undefined): DictionaryScope {
 async function add(
     value: string,
     substitution: string | undefined,
-    opts: { type?: string | boolean; project?: string; spoken?: string[]; meaning?: string }
+    opts: {
+        type?: string | boolean;
+        project?: string;
+        spoken?: string[];
+        meaning?: string;
+        caseSensitive?: boolean;
+        replace?: string;
+        ifAbsent?: boolean;
+    }
 ): Promise<void> {
     const type = await resolveEnum({
         value: opts.type,
@@ -89,16 +98,18 @@ async function add(
     }
 
     const candidate =
-        type === "fix" || type === "abbr"
-            ? { type, value, substitution }
-            : type === "term"
-              ? {
-                    type,
-                    value,
-                    ...(opts.spoken?.length ? { spoken: opts.spoken } : {}),
-                    ...(opts.meaning ? { meaning: opts.meaning } : {}),
-                }
-              : { type, value };
+        type === "fix"
+            ? { type, value, substitution, ...(opts.caseSensitive ? { caseSensitive: true } : {}) }
+            : type === "abbr"
+              ? { type, value, substitution }
+              : type === "term"
+                ? {
+                      type,
+                      value,
+                      ...(opts.spoken?.length ? { spoken: opts.spoken } : {}),
+                      ...(opts.meaning ? { meaning: opts.meaning } : {}),
+                  }
+                : { type, value };
     const parsed = dictionaryEntrySchema.safeParse(candidate);
 
     if (!parsed.success) {
@@ -114,9 +125,14 @@ async function add(
             ui.ok(`Added project ${opts.project} to the known projects.`);
         }
 
-        await store.putDictionaryEntry(scopeOf(opts.project), entry);
+        if (opts.replace && opts.replace !== entry.value) {
+            await store.replaceDictionaryEntry(scopeOf(opts.project), opts.replace, entry);
+        } else {
+            await store.putDictionaryEntry(scopeOf(opts.project), entry, { ifAbsent: opts.ifAbsent === true });
+        }
+
         ui.ok(
-            `${entry.type} ${entry.value} saved to the ${opts.project ? `project ${opts.project}` : "global"} dictionary.`
+            `${entry.type} ${entry.value} saved to the ${opts.project ? `project ${opts.project}` : "global"} dictionary${opts.replace && opts.replace !== entry.value ? ` in place of ${opts.replace}` : ""}.`
         );
     } catch (err) {
         fail(errorText(err));
@@ -249,6 +265,32 @@ function collect(value: string, previous: string[] = []): string[] {
     return [...previous, value];
 }
 
+async function test(phrase: string, opts: { project?: string; json?: boolean }): Promise<void> {
+    try {
+        const result = testPhrase(await new MeetingsConfigStore().read(), {
+            phrase,
+            ...(opts.project ? { project: opts.project } : {}),
+        });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            return;
+        }
+
+        out.println(result.text);
+
+        for (const entry of result.fired) {
+            ui.dim(`  ${entry.type} ${entry.value}${"substitution" in entry ? ` → ${entry.substitution}` : ""}`);
+        }
+
+        for (const suggestion of result.suggestions) {
+            ui.dim(`  close to ${suggestion.value}: "${suggestion.heard}" (${suggestion.score})`);
+        }
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
 export function registerDictionaryCommand(program: Command): void {
     const dictionary = program
         .command("dictionary")
@@ -276,6 +318,15 @@ export function registerDictionaryCommand(program: Command): void {
         )
         .option("--spoken <form>", "term: how people say it (repeatable)", collect)
         .option("--meaning <text>", "term: what it means, shown after its first mention in Markdown")
+        .option("--case-sensitive", "fix: match only the exact letter case (default: any case)")
+        .option(
+            "--replace <value>",
+            "rename: this entry replaces the one with that value in one write (a refused entry keeps the old one)"
+        )
+        .option(
+            "--if-absent",
+            "only add it: an entry with that value in the level is left as it is ([dictionary-exists]), as an Undo needs"
+        )
         .action(add);
 
     dictionary
@@ -301,4 +352,12 @@ export function registerDictionaryCommand(program: Command): void {
         .description("Remove an entry")
         .option("--project <name>", "the project's dictionary instead of the global one")
         .action(remove);
+
+    dictionary
+        .command("test")
+        .argument("<phrase>", "a sentence as a transcript would have it")
+        .description("The phrase after the dictionary, with each entry that fired; reads only")
+        .option("--project <name>", "the global dictionary and this project's")
+        .option("--json", "print JSON")
+        .action(test);
 }

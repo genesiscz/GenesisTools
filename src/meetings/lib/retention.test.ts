@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import * as removal from "@genesiscz/utils/rm";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -102,10 +102,46 @@ test("retention leaves approval-required tracked files untouched", () => {
     const move = spyOn(removal, "moveToTrash").mockImplementation(() => {
         throw new Error("must not move a tracked file");
     });
+
     try {
         expect(trashWithRm([import.meta.path])).toBeNull();
         expect(move).not.toHaveBeenCalled();
     } finally {
         move.mockRestore();
     }
+});
+
+describe("capture retention of the editor files", () => {
+    test("they go with an old capture, a newer proxy keeps nothing, and leftovers are dated by themselves", () => {
+        const store = fresh();
+        meetingWithCaptures(store, "2026-09-01_10-00-edited", 60);
+
+        for (const name of ["recording.json", "proxy.mp4", "proxy.transcript.json"]) {
+            // Written now, after the test's clock: opening the editor late must not keep the frames.
+            writeFileSync(join(store.folder("2026-09-01_10-00-edited"), name), "x");
+        }
+
+        for (const [id, ageDays] of [
+            ["2026-09-03_10-00-leftover", 60],
+            ["2026-11-01_10-00-recent-leftover", 2],
+        ] as const) {
+            const folder = store.folder(id);
+            mkdirSync(folder, { recursive: true });
+            writeFileSync(join(folder, "proxy.mp4"), "x");
+            const at = new Date(now - ageDays * DAY_MS);
+            utimesSync(join(folder, "proxy.mp4"), at, at);
+        }
+
+        const plans = capturesToPrune(store, { days: 30, now })
+            .map((plan) => [plan.meetingId, plan.paths.map((path) => relative(store.folder(plan.meetingId), path))])
+            .sort();
+
+        expect(plans).toEqual([
+            [
+                "2026-09-01_10-00-edited",
+                ["frames", "ocr.jsonl", "recording.json", "proxy.mp4", "proxy.transcript.json"],
+            ],
+            ["2026-09-03_10-00-leftover", ["proxy.mp4"]],
+        ]);
+    });
 });

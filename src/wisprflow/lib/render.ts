@@ -1,11 +1,12 @@
-import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
+import { type Block, json2md } from "@genesiscz/utils/json2md";
+import type { MeetingCalendar } from "@genesiscz/utils/meetings/record";
 import {
     entriesToSrt,
     entriesToVtt,
     formatClock,
     groupTurns,
     localTime,
-    transcriptMarkdown,
+    transcriptBlocks,
     transcriptTextLines,
 } from "@genesiscz/utils/transcribe/render";
 import { firstName } from "@genesiscz/utils/transcribe/speakers";
@@ -56,30 +57,34 @@ export function meetingFrontmatter(meeting: Meeting, options: RenderOptions): Re
 }
 
 export function renderMarkdown(meeting: Meeting, options: RenderOptions): string {
-    const parts: string[] = [];
-
-    if (options.frontmatter) {
-        parts.push(renderFrontmatter(meetingFrontmatter(meeting, options)));
-    }
-
-    parts.push(`# ${meeting.title || "Untitled meeting"}`);
+    const blocks: Block[] = [];
 
     if (options.summary && meeting.summary.trim()) {
-        parts.push("## Summary", meeting.summary.trim());
+        blocks.push({ h2: "Summary" }, { p: meeting.summary.trim() });
     }
 
     if (meeting.transcript.length > 0) {
         if (meeting.transcriptGap) {
-            parts.push(`> [!warning] Partly unrefined\n> ${transcriptGapNote(meeting.transcriptGap)}`);
+            blocks.push({
+                callout: {
+                    kind: "warning",
+                    labelCase: "lower",
+                    title: "Partly unrefined",
+                    body: { p: transcriptGapNote(meeting.transcriptGap) },
+                },
+            });
         }
 
-        parts.push(
-            "## Transcript",
-            transcriptMarkdown(groupTurns(meeting.transcript, options.firstNames), options.timestamps)
+        blocks.push(
+            { h2: "Transcript" },
+            ...transcriptBlocks(groupTurns(meeting.transcript, options.firstNames), options.timestamps)
         );
     }
 
-    return `${parts.join("\n\n")}\n`;
+    return json2md(blocks, {
+        title: meeting.title || "Untitled meeting",
+        ...(options.frontmatter ? { frontmatter: meetingFrontmatter(meeting, options) } : {}),
+    });
 }
 
 export function renderText(meeting: Meeting, options: RenderOptions): string {
@@ -100,4 +105,47 @@ export function renderSrt(meeting: Meeting, options: RenderOptions): string {
 
 export function renderVtt(meeting: Meeting, options: RenderOptions): string {
     return entriesToVtt(meeting.transcript, options.firstNames);
+}
+
+/** What `tools wisprflow meetings show` prints: the front matter, the title, participants, invitees, summary and notes. */
+export function showMarkdown(meeting: Meeting, source: SourceName, invited: MeetingCalendar | undefined): string {
+    const blocks: Block[] = [];
+    // Who named each label matters: a platform name is evidence, a language model's name is a guess.
+    const people = meeting.participants.map((p) => {
+        const speaker = p.speakerId === undefined ? "" : `speaker ${p.speakerId}`;
+        const origin = p.origin ? `named by ${p.origin}` : "";
+        const notes = [speaker, origin].filter(Boolean).join(", ");
+        return `${p.name}${p.isSelf ? " (you)" : ""}${notes ? ` (${notes})` : ""}`;
+    });
+
+    if (people.length > 0) {
+        blocks.push({ h2: "Participants" }, { ul: people });
+    }
+
+    if (invited && invited.attendees.length > 0) {
+        blocks.push(
+            { h2: "Invited" },
+            { ul: invited.attendees },
+            ...(invited.conferenceUrl ? [{ p: `Call: ${invited.conferenceUrl}` }] : [])
+        );
+    }
+
+    if (meeting.summary.trim()) {
+        blocks.push({ h2: "Summary" }, { p: meeting.summary.trim() });
+    }
+
+    if (meeting.notes.trim()) {
+        blocks.push({ h2: "Notes" }, { p: meeting.notes.trim() });
+    }
+
+    return json2md(blocks, {
+        title: meeting.title || "Untitled meeting",
+        frontmatter: meetingFrontmatter(meeting, {
+            source,
+            frontmatter: true,
+            summary: true,
+            timestamps: false,
+            firstNames: false,
+        }),
+    });
 }
