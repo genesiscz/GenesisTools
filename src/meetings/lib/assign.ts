@@ -482,6 +482,8 @@ export interface AppliedAnswer {
     entry?: CalendarEntry;
     folderPaired?: string;
     waitsForFolder: boolean;
+    /** The answer was for a question a newer one replaced, or the project was set meanwhile: nothing was applied. */
+    stale?: boolean;
 }
 
 /**
@@ -527,8 +529,19 @@ export async function applyAnswer(options: {
     command?: string;
     /** The entries `answer.calendarIndex` points into; the question's own list by default. */
     entries?: CalendarEntry[];
+    /** The inbox question this answer came from: a replaced question or a project set meanwhile makes it stale. */
+    formId?: string;
 }): Promise<AppliedAnswer> {
     const { store, record, answer, deps } = options;
+    const isStale = (current: MeetingRecord | undefined) =>
+        options.formId !== undefined &&
+        (!current || Boolean(current.project) || current.assign?.ask?.formId !== options.formId);
+
+    if (isStale(store.read(record.id))) {
+        log.info({ meeting: record.id, formId: options.formId }, "answer is stale: question replaced or project set");
+        return { labels: [], paired: [], waitsForFolder: false, stale: true };
+    }
+
     const command = options.command ?? "assign apply";
     const at = new Date(deps.now()).toISOString();
     const ask = record.assign?.ask;
@@ -584,7 +597,14 @@ export async function applyAnswer(options: {
         .filter(Boolean)
         .join("; ");
 
+    let stale = false;
     await store.update(record.id, { command, change }, (current) => {
+        // Checked again under the record lock: another process may have set the project during the awaits above.
+        if (isStale(current)) {
+            stale = true;
+            return;
+        }
+
         if (project) {
             current.project = project;
         } else if (answer.project === null) {
@@ -620,6 +640,11 @@ export async function applyAnswer(options: {
             };
         }
     });
+
+    if (stale) {
+        log.info({ meeting: record.id, formId: options.formId }, "answer is stale under the lock: nothing saved");
+        return { ...applied, stale: true };
+    }
 
     setOpen(store, record.id, applied.waitsForFolder ? "folder-wait" : undefined);
     log.info({ meeting: record.id, project, labels: answer.labels, paired: applied.paired.length }, "answer applied");
@@ -689,8 +714,15 @@ async function advanceAsk(store: MeetingStore, record: MeetingRecord, deps: Assi
     }
 
     if (form.status === "answered") {
-        await applyAnswer({ store, record, answer: readAnswer(form.answers), deps, command: "assign answer" });
-        return "applied";
+        const applied = await applyAnswer({
+            store,
+            record,
+            answer: readAnswer(form.answers),
+            deps,
+            command: "assign answer",
+            formId: ask.formId,
+        });
+        return applied.stale ? "stale" : "applied";
     }
 
     await store.update(record.id, { command: "assign sweep", change: `question ${form.status}` }, (current) => {

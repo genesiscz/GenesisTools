@@ -731,3 +731,59 @@ describe("assign apply", () => {
         expect(store.read(other.id)?.project).toBeUndefined();
     });
 });
+
+test("an inbox answer for a replaced question, or after the project was set meanwhile, applies nothing", async () => {
+    const storage = new Storage(`assign-stale-${process.pid}`);
+    const store = new MeetingStore(storage);
+    const config = new MeetingsConfigStore(new Storage(`assign-stale-config-${process.pid}`));
+    const deps: AssignDeps = {
+        config,
+        now: () => Date.parse("2026-11-05T12:00:00.000Z"),
+        calendars: async () => [],
+        source: async () => undefined,
+        inbox: { read: async () => null, cancel: async () => {}, post: async (input) => ({ id: input.id! }) },
+    };
+    const ask = {
+        formId: "form-2",
+        askedAt: "2026-11-05T11:00:00.000Z",
+        outcome: "pending" as const,
+        proposals: [],
+        calendars: [],
+    };
+    const replaced = await store.create(
+        { title: "Replaced", start: "2026-11-05T10:00:00.000Z", createdBy: "new", assign: { ask } },
+        { command: "new", change: "fixture" }
+    );
+
+    const old = await applyAnswer({
+        store,
+        record: replaced,
+        deps,
+        answer: { project: "work", labels: [] },
+        formId: "form-1",
+    });
+
+    expect(old.stale).toBe(true);
+    expect(store.read(replaced.id)?.project).toBeUndefined();
+    expect(store.read(replaced.id)?.assign?.ask?.outcome).toBe("pending");
+
+    const setMeanwhile = await store.create(
+        { title: "Set", start: "2026-11-05T10:00:00.000Z", createdBy: "new", assign: { ask } },
+        { command: "new", change: "fixture" }
+    );
+    await store.update(setMeanwhile.id, { command: "assign apply", change: "project side" }, (current) => {
+        current.project = "side";
+    });
+
+    const late = await applyAnswer({
+        store,
+        record: setMeanwhile,
+        deps,
+        answer: { project: "work", labels: [] },
+        formId: "form-2",
+    });
+
+    expect(late.stale).toBe(true);
+    expect(store.read(setMeanwhile.id)?.project).toBe("side");
+    expect((await config.read()).projects.work).toBeUndefined();
+});
