@@ -470,6 +470,16 @@ describe("update on quit", () => {
         expect(formatUpdateWait(r, { appName: "Brave Browser" })).toEqual([]);
     });
 
+    test("the quiet window starts after an updater exits", async () => {
+        const c = clock();
+        const r = await waitForUpdateOnQuit({
+            before: OLD,
+            deps: { readState: () => OLD, updater: () => c.now() < 10_000 ? "updater" : null, ...c },
+        });
+        expect(r.settled).toBe(true);
+        expect(r.waitedMs).toBeGreaterThanOrEqual(12_500);
+    });
+
     test("a running updater holds the relaunch, and the cap ends the wait with a warning", async () => {
         const c = clock();
         const updater = "/Users/x/Library/Application Support/BraveSoftware/BraveUpdater/BraveUpdater --install";

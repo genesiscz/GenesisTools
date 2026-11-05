@@ -119,6 +119,9 @@ export async function waitForUpdateOnQuit(opts: {
 
     while (true) {
         updater = opts.deps.updater();
+        if (updater !== null) {
+            stableSince = now();
+        }
         const present = last.version !== null && last.mtimeMs !== null;
 
         if (present && updater === null && now() - stableSince >= stableMs) {
