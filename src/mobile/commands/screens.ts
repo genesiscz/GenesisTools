@@ -23,8 +23,29 @@ function driverOptions(command: Command, settle: string): Command {
     return withConfig(command)
         .option("--udid <udid>", "the simulator; default: the only booted one")
         .option("--driver <driver>", `${SCREEN_DRIVERS.join(" or ")} (simctl raises an "Open in" alert)`, "appium")
-        .option("--appium-port <port>", "the Appium server (default: the simulator's own, started when missing)")
-        .option("--settle <ms>", "the pause after the screen's root shows, in milliseconds", settle);
+        .option(
+            "--appium-port <port>",
+            "the Appium server (default: the simulator's own, started when missing)",
+            (value: string) => {
+                const n = Number(value);
+                if (!Number.isFinite(n) || n <= 0) {
+                    throw new Error("--appium-port must be positive");
+                }
+                return value;
+            }
+        )
+        .option(
+            "--settle <ms>",
+            "the pause after the screen's root shows, in milliseconds",
+            (value: string) => {
+                const n = Number(value);
+                if (!Number.isFinite(n) || n < 0) {
+                    throw new Error("--settle must be nonnegative");
+                }
+                return value;
+            },
+            settle
+        );
 }
 
 async function openDriver(options: ScreenOptions) {
