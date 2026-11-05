@@ -191,15 +191,13 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
                   let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             let started = (root["startedAt"] as? String).flatMap { ISO8601DateFormatter.withFraction.date(from: $0) }
                 ?? ((try? manager.attributesOfItem(atPath: manifest.path)[.modificationDate]) as? Date) ?? .distantPast
-            // The recorder's movie, else the proxy `tools recorder proxy` made of the frames (the editor opens both).
-            let movie = ["screen.mp4", "proxy.mp4"].map { dir.appendingPathComponent($0) }
-                .first { manager.fileExists(atPath: $0.path) } ?? dir.appendingPathComponent("screen.mp4")
-            let hasMovie = manager.fileExists(atPath: movie.path)
+            let movie = RecordingMovie.own(in: dir)
+            let hasMovie = movie != nil
             let firstFrame = ((root["frames"] as? [[String: Any]])?.first?["file"] as? String).map { dir.appendingPathComponent($0) }
             let video = (root["settings"] as? [String: Any])?["video"] as? [String: Any]
             let open = ReviewComments.read(dir.appendingPathComponent("comments.jsonl")).filter { !$0.isResolved }
             list.append(Recent(folder: dir, title: (root["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? name,
-                               started: started, thumbnail: hasMovie ? movie : firstFrame, hasMovie: hasMovie,
+                               started: started, thumbnail: movie ?? firstFrame, hasMovie: hasMovie,
                                edited: manager.fileExists(atPath: dir.appendingPathComponent("edit.json").path),
                                durationMs: (video?["durationMs"] as? NSNumber)?.doubleValue, isMeeting: isMeeting,
                                openComments: open.count, firstOpenCommentUs: open.first?.atUs))

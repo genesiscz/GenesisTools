@@ -1,10 +1,79 @@
+import AppKit
 import AVFoundation
 import SwiftUI
 import Vision
 import XCTest
 @testable import GenesisToolsRecorder
 
+/// A case file in src/utils/recording-editor/__fixtures__/ that the TypeScript tests run too, so the two copies of a
+/// rule fail together when one of them changes.
+enum SharedEditorFixture {
+    static func cases(_ name: String) throws -> [[String: Any]] {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("utils/recording-editor/__fixtures__/\(name)")
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        return try XCTUnwrap(root["cases"] as? [[String: Any]], "\(name) has no cases")
+    }
+}
+
 final class RecorderEditTests: XCTestCase {
+    /// A recording folder with files, each `[name, seconds after a fixed time]`, as recording-movies.json lists them.
+    private func recordingFolder(_ files: [[Any]]) throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("movie-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let base = Date(timeIntervalSince1970: 1_793_000_000)
+        for file in files {
+            let url = folder.appendingPathComponent(try XCTUnwrap(file.first as? String))
+            try Data("x".utf8).write(to: url)
+            let offset = try XCTUnwrap(file.last as? NSNumber).doubleValue
+            try FileManager.default.setAttributes([.modificationDate: base.addingTimeInterval(offset)], ofItemAtPath: url.path)
+        }
+        return folder
+    }
+
+    /// The movie cases as the TypeScript test runs them (library.test.ts): the menu, the library and the editor pick
+    /// the same file as `tools recorder copy` and `movieOf`.
+    func testTheMovieOfARecordingFolderMatchesTheSharedCases() throws {
+        let cases = try SharedEditorFixture.cases("recording-movies.json")
+        XCTAssertGreaterThanOrEqual(cases.count, 7)
+        for item in cases {
+            let name = try XCTUnwrap(item["name"] as? String)
+            let folder = try recordingFolder(try XCTUnwrap(item["files"] as? [[Any]]))
+            defer { try? FileManager.default.removeItem(at: folder) }
+            XCTAssertEqual(RecordingMovie.own(in: folder)?.lastPathComponent, item["movie"] as? String, name)
+            XCTAssertEqual(RecordingMovie.shareable(in: folder)?.lastPathComponent, item["shareable"] as? String, name)
+        }
+    }
+
+    /// The defect: a meeting recording with only proxy.mp4 was offered Copy Movie and the click found no movie.
+    @MainActor
+    func testAProxyOnlyMeetingRecordingOffersCopyMovieAndTheCopyFindsTheProxy() throws {
+        let meetings = FileManager.default.temporaryDirectory.appendingPathComponent("meetings-\(UUID().uuidString)")
+        let folder = meetings.appendingPathComponent("2026-11-04_10-00-standup")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: meetings) }
+        try Data(#"{"title":"Standup","startedAt":"2026-11-04T10:00:00.000Z","frames":[]}"#.utf8).write(to: folder.appendingPathComponent("recording.json"))
+        try Data("{}".utf8).write(to: folder.appendingPathComponent("meeting.json"))
+        try Data("movie".utf8).write(to: folder.appendingPathComponent("proxy.mp4"))
+
+        let item = try XCTUnwrap(RecorderMenu.readRecents(meetings, isMeeting: true).first)
+        XCTAssertTrue(item.hasMovie)
+        XCTAssertEqual(item.thumbnail?.lastPathComponent, "proxy.mp4")
+        XCTAssertTrue(RecordingAction.offered(for: item).contains(.copyMovie))
+        let pasteboard = NSPasteboard(name: .init("genesistools-tests-\(UUID().uuidString)"))
+        RecordingActions.pasteboard = pasteboard
+        defer {
+            pasteboard.releaseGlobally()
+            RecordingActions.pasteboard = .general
+        }
+        var outcome: RecordingActions.Outcome?
+        RecordingActions.run(.copyMovie, item) { outcome = $0 }
+        XCTAssertEqual((pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL])?.first?.lastPathComponent, "proxy.mp4")
+        guard case let .notice(text) = outcome else { return XCTFail("Copy Movie did not copy: \(String(describing: outcome))") }
+        XCTAssertEqual(text, "Copied proxy.mp4 to the clipboard.")
+    }
+
     private func project(_ clips: [EditProject.Clip], zooms: [EditProject.Zoom] = []) -> EditProject {
         var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 1920, height: 1080, cursor: nil, recording: nil)
         project.clips = clips

@@ -41,10 +41,7 @@ final class ProjectStore {
         }
         let video: URL
         if isFolder.boolValue {
-            guard let movie = ["screen.mp4", "screen.mov", "proxy.mp4"].map({ target.appendingPathComponent($0) })
-                .first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
-                throw OpenError.noMovie(target.path)
-            }
+            guard let movie = RecordingMovie.own(in: target) else { throw OpenError.noMovie(target.path) }
             video = movie
         } else {
             video = target

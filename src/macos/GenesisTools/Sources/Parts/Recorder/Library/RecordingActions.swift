@@ -52,6 +52,9 @@ enum RecordingAction: String, CaseIterable, Identifiable {
 
 @MainActor
 enum RecordingActions {
+    /// Where Copy Movie writes; a test swaps in a pasteboard of its own so it never touches the user's clipboard.
+    static var pasteboard = NSPasteboard.general
+
     /// What an action did, for the surface to show: a short notice, a failure, or a move to the Trash (the library
     /// offers Put Back).
     enum Outcome {
@@ -71,12 +74,12 @@ enum RecordingActions {
         case .firstComment:
             RecorderMenu.open(item, atSourceSeconds: item.firstOpenCommentUs.map { Double($0) / 1_000_000 })
         case .copyMovie:
-            guard let movie = LibraryCard.shareableMovie(in: item.folder) else {
+            guard let movie = RecordingMovie.shareable(in: item.folder) else {
                 report(.failed("“\(item.title)” has no movie to copy."))
                 return
             }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.writeObjects([movie as NSURL])
+            pasteboard.clearContents()
+            pasteboard.writeObjects([movie as NSURL])
             report(.notice("Copied \(movie.lastPathComponent) to the clipboard."))
         case .copyGIF:
             report(.working("Making a GIF of “\(item.title)”…"))

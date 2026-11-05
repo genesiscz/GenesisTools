@@ -13,8 +13,18 @@ import { z } from "zod";
 
 const { log } = logger.scoped("recorder-library");
 
-/** The movie a recording folder holds, in the order the editor looks for one. */
+/**
+ * The movie a recording folder holds, in the order the editor looks for one: the recorder's movie, then the proxy
+ * `tools recorder proxy` makes of a frames recording. The Swift app's RecordingMovie keeps the same list; both run
+ * src/utils/recording-editor/__fixtures__/recording-movies.json.
+ */
 export const RECORDING_MOVIES = ["screen.mp4", "screen.mov", "proxy.mp4"] as const;
+
+/** The camera's movie beside `screen.mp4`, written by the recorder face when the recording asked for the camera. */
+export const CAMERA_MOVIE = "camera.mov";
+
+/** The movies of a recording folder that are the recording itself, so never an export of it. */
+export const RECORDING_SOURCE_MOVIES: ReadonlySet<string> = new Set([...RECORDING_MOVIES, CAMERA_MOVIE]);
 
 export interface LibraryRow {
     id: string;

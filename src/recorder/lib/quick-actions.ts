@@ -4,7 +4,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { exportAs } from "./edit";
-import { movieOf } from "./library";
+import { movieOf, RECORDING_SOURCE_MOVIES } from "./library";
 
 const { log } = logger.scoped("recorder-quick-actions");
 
@@ -14,14 +14,15 @@ const { log } = logger.scoped("recorder-quick-actions");
  * open its meeting, move it to the Trash. Rename is `renameRecording` (src/utils/screen-recorder/library.ts).
  */
 
-const RAW_MOVIES = new Set(["screen.mp4", "screen.mov", "proxy.mp4"]);
 const EXPORT_EXTENSIONS = new Set(["mp4", "gif", "webm", "mov"]);
 
 function exportsIn(folder: string): Array<{ path: string; modified: number }> {
     return readdirSync(folder)
         .filter((name) => {
             const extension = name.split(".").pop()?.toLowerCase() ?? "";
-            return EXPORT_EXTENSIONS.has(extension) && !RAW_MOVIES.has(name) && !name.includes(".partial.");
+            return (
+                EXPORT_EXTENSIONS.has(extension) && !RECORDING_SOURCE_MOVIES.has(name) && !name.includes(".partial.")
+            );
         })
         .map((name) => ({ path: join(folder, name), modified: statSync(join(folder, name)).mtimeMs }));
 }

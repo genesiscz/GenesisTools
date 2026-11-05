@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
 import { keptPlan } from "./frames-movie";
-import { editorOpenStatePath, readEditorOpenState, resolveRecording } from "./library";
+import { editorOpenStatePath, movieOf, readEditorOpenState, resolveRecording } from "./library";
 import { framesForPlan, overrideRanges, planMostChange, proxyVideoFilter } from "./proxy";
 import { currentGif, isMeetingFolder, meetingOf, shareableMovie, trashRecording } from "./quick-actions";
 
@@ -150,20 +151,33 @@ describe("the proxy's picture size", () => {
     });
 });
 
-describe("a recording's quick actions", () => {
-    /** A recording folder with files, each `[name, seconds since 2026-11-04 10:00]`, so their order is known. */
-    function folderWith(files: Array<[string, number]>): string {
-        const folder = mkdtempSync(join(tmpdir(), "gt-quick-"));
+/** A recording folder with files, each `[name, seconds since 2026-11-04 10:00]`, so their order is known. */
+function folderWith(files: Array<[string, number]>): string {
+    const folder = mkdtempSync(join(tmpdir(), "gt-quick-"));
 
-        for (const [name, offset] of files) {
-            writeFileSync(join(folder, name), "x");
-            const at = new Date(Date.UTC(2026, 10, 4, 10, 0, offset));
-            utimesSync(join(folder, name), at, at);
-        }
-
-        return folder;
+    for (const [name, offset] of files) {
+        writeFileSync(join(folder, name), "x");
+        const at = new Date(Date.UTC(2026, 10, 4, 10, 0, offset));
+        utimesSync(join(folder, name), at, at);
     }
 
+    return folder;
+}
+
+// The Swift menu, library and editor answer the same cases (RecorderEditTests.swift, RecordingMovie.swift).
+describe("the movie of a recording folder", () => {
+    for (const item of recordingMovies.cases) {
+        it(`shared movie case: ${item.name}`, () => {
+            const folder = folderWith(item.files.map(([name, offset]) => [String(name), Number(offset)]));
+            const name = (path: string | undefined) => (path ? basename(path) : null);
+
+            expect(name(movieOf(folder))).toBe(item.movie);
+            expect(name(shareableMovie(folder))).toBe(item.shareable);
+        });
+    }
+});
+
+describe("a recording's quick actions", () => {
     it("copies the newest export, else the recording's own movie", () => {
         expect(shareableMovie(folderWith([["screen.mp4", 0]]))).toEndWith("/screen.mp4");
         const exported = folderWith([

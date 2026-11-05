@@ -17,11 +17,9 @@ import {
     recordingsLibraryDir,
 } from "@genesiscz/utils/screen-recorder/library";
 import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
+import { CAMERA_MOVIE } from "./library";
 
 const { log } = logger.scoped("recorder-video");
-
-/** The camera's movie beside `screen.mp4`, written by the recorder face when the recording asked for the camera. */
-export const CAMERA_MOVIE = "camera.mov";
 
 /** The longest video recording `tools recorder start` takes: four hours, in 180 s segments. */
 export const VIDEO_RECORDING_MAX_SECONDS = 4 * 60 * 60;
