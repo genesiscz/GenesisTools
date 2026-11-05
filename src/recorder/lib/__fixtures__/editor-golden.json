@@ -92,6 +92,7 @@
     "movie.redoDisplaySwitch",
     "movie.findOnScreen",
     "movie.markers",
+    "movie.clickGroups",
     "movie.comments",
     "movie.comment",
     "movie.resolveComment",

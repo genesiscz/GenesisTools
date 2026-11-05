@@ -1223,8 +1223,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z
         .object({
             op: z.literal("cameraShow"),
-            from: timeSchema.optional(),
-            to: timeSchema.optional(),
+            from: sourceTimeSchema.optional(),
+            to: sourceTimeSchema.optional(),
             id: z.string().optional(),
         })
         .strict(),
