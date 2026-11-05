@@ -226,9 +226,18 @@ function meetingRecorderConfig(run: MeetingRun) {
  */
 async function saveFailedRun(store: MeetingStore, meetingId: string, err: unknown): Promise<void> {
     const warning = errorText(err);
-    // The frames on disk are the meeting's true totals (earlier runs and this one); without the folder the record's stay.
+    // The frames on disk are the meeting's true totals (earlier runs and this one); without the folder, or when the
+    // count fails, the record's totals stay.
     const framesDir = join(store.folder(meetingId), "frames");
-    const onDisk = existsSync(framesDir) && statSync(framesDir).isDirectory() ? framesOnDisk(framesDir) : undefined;
+    let onDisk: { frames: number; bytes: number } | undefined;
+
+    try {
+        onDisk = existsSync(framesDir) && statSync(framesDir).isDirectory() ? framesOnDisk(framesDir) : undefined;
+    } catch (countErr) {
+        // Best effort: a second filesystem error must not keep the terminal state from being written.
+        log.warn({ err: countErr, meetingId }, "the frames on disk could not be counted; the record's totals stay");
+    }
+
     await store
         .update(meetingId, { command: "record stop", change: `error: ${warning}` }, (current) => {
             current.recording = {
