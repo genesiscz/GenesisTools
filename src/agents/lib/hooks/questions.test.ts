@@ -25,22 +25,25 @@ describe("the questions feature", () => {
             join(agents, "hooks.json"),
             SafeJSON.stringify({ questions: { harnesses: { claude: true }, notify: false } })
         );
-        const run = (event: string) =>
+        const run = (event: string, id: string, sessionId?: string) =>
             spawnSync(process.execPath, [join(import.meta.dir, "../../bin/hook-question.ts")], {
                 input: SafeJSON.stringify({
                     hook_event_name: event,
+                    session_id: sessionId,
                     tool_name: "AskUserQuestion",
-                    tool_use_id: "q1",
+                    tool_use_id: id,
                     tool_input: { questions: [{ question: "Continue?" }] },
                 }),
                 env: { GENESIS_TOOLS_HOME: home, CLAUDE_CODE_SESSION_ID: "inherited", HOME: home },
                 encoding: "utf8",
             });
-        expect(run("PreToolUse").status).toBe(0);
         const root = join(agents, "dialogs");
-        expect(openQuestions("claude", "inherited", root)).toHaveLength(1);
-        expect(run("PostToolUse").status).toBe(0);
-        expect(openQuestions("claude", "inherited", root)).toHaveLength(0);
+        for (const [id, sessionId] of [["q1", undefined], ["q2", ""]] as const) {
+            expect(run("PreToolUse", id, sessionId).status).toBe(0);
+            expect(openQuestions("claude", "inherited", root)).toHaveLength(1);
+            expect(run("PostToolUse", id, sessionId).status).toBe(0);
+            expect(openQuestions("claude", "inherited", root)).toHaveLength(0);
+        }
     });
 
     function settingsFile(body: unknown): string {

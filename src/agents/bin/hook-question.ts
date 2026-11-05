@@ -35,7 +35,7 @@ try {
         return hookCaller(payload, env.getProcessEnv(), asks ? { facets: ["host"] } : undefined);
     };
     let caller = payload.sessionId ? undefined : await callerForHook();
-    const sessionId = payload.sessionId ?? caller?.sessionId ?? undefined;
+    const sessionId = payload.sessionId || caller?.sessionId || undefined;
 
     if (!asks && !hasOpenDialogRecords(payload.harness, sessionId)) {
         if (openMarkersIndexed()) {
