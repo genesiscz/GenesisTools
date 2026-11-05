@@ -50,10 +50,15 @@ withConfig(program.command("list").description("List the project's spec files an
         const project = await loadProject(options);
         const specs = listSpecs(project);
         const suites = project.config.suites ?? {};
+        const pages = project.config.pages ? join(project.dir, project.config.pages) : null;
 
         if (options.json) {
-            out.result({ specs, suites });
+            out.result({ specs, suites, pages });
             return;
+        }
+
+        if (pages) {
+            ui.dim(`pages: ${pages}`);
         }
 
         for (const spec of specs) {
