@@ -356,7 +356,8 @@ export async function watchOnce(
 async function pruneOldCaptures(store: MeetingStore): Promise<void> {
     try {
         const config = await new MeetingsConfigStore().read();
-        const skip = readRecorderState(store).state?.meetingId;
+        const recorder = readRecorderState(store);
+        const skip = recorder.running ? recorder.state?.meetingId : undefined;
         const result = pruneCapturesDaily(store, { days: config.global.capture.retentionDays, skip });
 
         if (result && result.plans.length > 0) {

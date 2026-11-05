@@ -1290,6 +1290,72 @@ describe("questions (R2.3)", () => {
         ).toEqual([["i5"], ["i6"]]);
     });
 
+    test("a term question retains the finding line when timestamps coincide", () => {
+        const item = meetingItemSchema.parse({
+            id: "i1",
+            kind: "term",
+            status: "suggested",
+            atSec: 10,
+            heard: "Ada",
+            proposed: "ADA",
+            rules: [MeetingRule.SummaryName],
+            suggestedAt: now,
+            confidence: 0.4,
+            evidence: { occurrences: 2, transcriptLine: 1 },
+        });
+        const transcript = [line("A", 10, "Ada first."), line("B", 10, "Ada second.")];
+        const prepared = questionFor(item, { listenBelow: 0.6, transcript, points: [] });
+        const record = withItems([item, { ...prepared, id: "i2", suggestedAt: now }]);
+        const question = record.items[1]!;
+        if (question.kind !== "question") {
+            throw new Error("missing question");
+        }
+        expect(heardContext(question, transcript, 100)?.rest).toContain("second");
+        expect(question.evidence?.transcriptLine).toBe(1);
+    });
+
+    test("settled propagation confirms the decided speaker range", () => {
+        const record = withItems([
+            { ...range, confidence: 0.4 },
+            {
+                id: "i2",
+                kind: "question",
+                status: "confirmed",
+                about: "speaker",
+                fromSec: 120,
+                toSec: 146,
+                question: "Who?",
+                choices: ["Carol Example"],
+                decides: [],
+                signature: "same",
+                rules: [],
+                suggestedAt: now,
+                evidence: { labels: ["Speaker 5"] },
+            },
+            {
+                id: "i3",
+                kind: "question",
+                status: "suggested",
+                about: "speaker",
+                fromSec: 120,
+                toSec: 146,
+                question: "Who?",
+                choices: ["Carol Example"],
+                decides: ["i1"],
+                signature: "same",
+                rules: [],
+                suggestedAt: now,
+                evidence: { labels: ["Speaker 5"] },
+            },
+        ]);
+        const answered = record.items[1]!;
+        if (answered.kind !== "question") {
+            throw new Error("missing question");
+        }
+        expect(propagateAnswer(record, answered, { answer: "Carol Example", listenBelow: 0.6, now })).toEqual(["i3"]);
+        expect(record.items[0]).toMatchObject({ status: "confirmed", speaker: "Carol Example", decidedAt: now });
+    });
+
     test("an answer keeps other passages open even with the same signature, and two voices split per line", () => {
         const ask = (id: string, decides: string[]) => ({
             id,

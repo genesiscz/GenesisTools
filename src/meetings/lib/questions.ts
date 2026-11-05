@@ -167,7 +167,10 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
         }
 
         const lines = linesOf(context.transcript);
-        const said = lines.heardLine({ heard: item.heard, fromSec: item.atSec, toSec: item.atSec });
+        const transcriptLine = item.evidence?.transcriptLine;
+        const said = lines
+            .occurrences({ heard: item.heard, fromSec: item.atSec, toSec: item.atSec })
+            .find((one) => typeof transcriptLine !== "number" || one.index === transcriptLine);
         const clip = said ? lines.clip(said) : undefined;
 
         return {
@@ -190,6 +193,7 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
             evidence: {
                 impact: Math.log2(1 + occurrences) + (decision ? IMPACT.decision : 0) + (personName ? IMPACT.owner : 0),
                 occurrences,
+                ...(typeof transcriptLine === "number" ? { transcriptLine } : {}),
             },
         };
     }
@@ -270,6 +274,13 @@ export function propagateAnswer(
         question.confidence = lowest;
 
         if (lowest >= options.listenBelow) {
+            for (const item of record.items) {
+                if (item.kind === "speaker-range" && question.decides.includes(item.id)) {
+                    item.status = "confirmed";
+                    item.decidedAt = options.now;
+                }
+            }
+
             question.status = "rejected";
             question.decidedAt = options.now;
             question.comment = `settled by the answer to ${answered.id}`;
@@ -510,7 +521,11 @@ function heardLine(question: QuestionItem, lines: TranscriptLines, occurrence: n
         return undefined;
     }
 
-    return lines.heardLine({ heard: question.heard, fromSec: question.fromSec, toSec: question.toSec }, occurrence);
+    const transcriptLine = question.evidence?.transcriptLine;
+    const matches = lines.occurrences({ heard: question.heard, fromSec: question.fromSec, toSec: question.toSec });
+    return typeof transcriptLine === "number"
+        ? matches.find((one) => one.index === transcriptLine)
+        : matches[occurrence];
 }
 
 /**
