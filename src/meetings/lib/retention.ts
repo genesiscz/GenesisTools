@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, type Stats, statSync } from "node:fs";
+import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
@@ -18,7 +18,7 @@ const { log } = logger.scoped("meetings-retention");
 
 const DAY_MS = 86_400_000;
 /** What `capture.retentionDays` removes from a meeting folder. The meeting record and its items stay. */
-const CAPTURE_PATHS = ["frames", "ocr.jsonl"] as const;
+const CAPTURE_PATHS = ["frames", "ocr.jsonl", "audio", "audio.jsonl"] as const;
 /** When the last pass ran, beside the meeting folders. */
 export const RETENTION_STAMP_FILE = "retention-last.json";
 
@@ -38,8 +38,67 @@ export interface PruneResult {
 /** Moves paths into the GenesisTools trash (`tools rm restore <batch>` brings them back). Returns the batch id. */
 export type TrashPaths = (paths: string[]) => string | null;
 
+/** Capture folders whose files are written in place, so the folder's own mtime does not move with them. */
+const IN_PLACE_FOLDERS = new Set(["audio"]);
+
+/** True for the errors of a path that is no longer there; any other read error is not evidence of age. */
+function wentAway(err: unknown): boolean {
+    return err instanceof Error && "code" in err && (err.code === "ENOENT" || err.code === "ENOTDIR");
+}
+
+/**
+ * A path's stat, or null when it went away during the pass (a recorder or another prune removed it). Any other error
+ * (a denied or failed read) is thrown, so the pass stops instead of pruning a meeting on incomplete evidence.
+ */
+function statOrNull(path: string): Stats | null {
+    try {
+        return statSync(path);
+    } catch (err) {
+        if (!wentAway(err)) {
+            throw err;
+        }
+
+        log.debug({ err, path }, "a capture path went away during the retention pass");
+        return null;
+    }
+}
+
+/** A folder's entries, or none when it went away during the pass; any other error is thrown, as in `statOrNull`. */
+function namesOrEmpty(path: string): string[] {
+    try {
+        return readdirSync(path);
+    } catch (err) {
+        if (!wentAway(err)) {
+            throw err;
+        }
+
+        log.debug({ err, path }, "a capture folder went away during the retention pass");
+        return [];
+    }
+}
+
+/**
+ * The newest change among a meeting's capture paths. Adding or removing a frame moves the `frames/` folder's own
+ * mtime, so its thousands of files are not read; audio tracks are written in place, so `audio/` is read file by file.
+ */
 function newestMtime(paths: string[]): number {
-    return Math.max(...paths.map((path) => statSync(path).mtimeMs));
+    let newest = 0;
+    for (const path of paths) {
+        const stat = statOrNull(path);
+
+        if (!stat) {
+            continue;
+        }
+
+        newest = Math.max(newest, stat.mtimeMs);
+
+        if (stat.isDirectory() && IN_PLACE_FOLDERS.has(basename(path))) {
+            for (const name of namesOrEmpty(path)) {
+                newest = Math.max(newest, statOrNull(join(path, name))?.mtimeMs ?? 0);
+            }
+        }
+    }
+    return newest;
 }
 
 /**
