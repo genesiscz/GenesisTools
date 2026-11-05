@@ -396,9 +396,15 @@ export class ListenSession {
         const now = new Date().toISOString();
         const corrections: Correction[] = [];
         let settled: string[] = [];
+        let applied = false;
         const changes = await this.change(
             outcome === "skip" ? `${question.id} skipped` : `${question.id} → ${outcome.answer}`,
             (current) => {
+                if (!openQuestions(current).some((open) => open.id === question.id)) {
+                    return;
+                }
+
+                applied = true;
                 if (outcome === "skip") {
                     skipQuestion(current, question.id, now);
                     return;
@@ -414,6 +420,10 @@ export class ListenSession {
                 corrections.push(...alike.corrections);
             }
         );
+        if (!applied) {
+            return;
+        }
+
         this.steps.push({
             question,
             changes,

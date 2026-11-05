@@ -355,3 +355,25 @@ test("failed undo preserves the confirmed decision's ledger entry", async () => 
     expect(fx.item("i1")?.status).toBe("confirmed");
     expect(fx.ledger).toContainEqual(expect.objectContaining({ item: "i1", fixed: "ADA" }));
 });
+
+test("a stale terminal decision preserves an answer submitted while it waited", async () => {
+    for (const stale of ["skip", { answer: "Alice Example" }] as const) {
+        const f = await fixture([question("i1")]);
+        const adapter = new ScriptedAdapter([
+            async () => {
+                await f.store.update(f.meeting.id, { command: "test", change: "concurrent answer" }, (current) => {
+                    const item = current.items[0];
+                    if (item.kind === "question") {
+                        item.status = "confirmed";
+                        item.answer = "Bob Example";
+                    }
+                });
+                return stale;
+            },
+        ]);
+        await f.session(adapter).run();
+        expect(f.item("i1")).toMatchObject({ status: "confirmed", answer: "Bob Example" });
+        expect(f.events()).not.toContain("answered");
+        expect(f.events()).not.toContain("skipped");
+    }
+});
