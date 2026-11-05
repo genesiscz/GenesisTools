@@ -211,7 +211,11 @@ export async function bringUp(options: {
     const deadline = Date.now() + options.launchTimeoutMs;
 
     while (Date.now() < deadline) {
-        await watcher?.answerNow({ timeoutMs: 2_000, quietMs: 1_000 });
+        if (watcher) {
+            await watcher.answerNow({ timeoutMs: Math.min(2_000, Math.max(1, deadline - Date.now())), quietMs: 1_000 });
+        } else {
+            await Bun.sleep(Math.min(500, Math.max(0, deadline - Date.now())));
+        }
 
         if (!metro) {
             break;
