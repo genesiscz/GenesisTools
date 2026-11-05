@@ -1,3 +1,4 @@
+import { basename, join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import type { JobInfo } from "@genesiscz/utils/jobs";
 import { logger } from "@genesiscz/utils/logger";
@@ -337,6 +338,11 @@ export class RecordingHandle {
     }
 
     get recordingId(): string {
+        if (!this.owned && this.kind === "meeting") {
+            return this.client.entry.folder
+                ? basename(this.client.entry.folder)
+                : this.client.entry.id.replace(/^meeting-/, "");
+        }
         return this.owned?.id ?? this.client.entry.id;
     }
 
@@ -345,7 +351,8 @@ export class RecordingHandle {
     }
 
     get folder(): string | undefined {
-        return this.owned?.folder ?? this.client.entry.folder;
+        const folder = this.owned?.folder ?? this.client.entry.folder;
+        return !this.owned && this.kind === "meeting" && folder ? join(folder, "frames") : folder;
     }
 
     /** A clear error for a method this recorder kind does not serve, before the call and after an RPC refusal. */

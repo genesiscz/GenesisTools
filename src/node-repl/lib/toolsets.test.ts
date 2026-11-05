@@ -83,6 +83,7 @@ import {
     type FrameRecorderSupport,
     type LiveCapture,
 } from "@genesiscz/utils/screen-recorder/types";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { createCanvas } from "@napi-rs/canvas";
 
 /** Writes one PNG every 60 ms of a colour that changes with each frame, until the capture ends. */
@@ -927,6 +928,53 @@ describe("recorder and editor toolsets", () => {
         } finally {
             client.close();
             await recording.stop();
+        }
+    });
+
+    test("an attached meeting hands its stored id and frames folder to the editor", async () => {
+        const meetingId = "fixture-meeting";
+        const folder = toolDataDir("meetings", meetingId);
+        mkdirSync(join(folder, "frames"), { recursive: true });
+        await Bun.write(join(folder, "frames", "12-00-00-000.jpg"), createCanvas(16, 16).toBuffer("image/jpeg"));
+        class MeetingControl extends RecorderControl {
+            readonly kind = "meeting";
+            readonly methods = ["status", "pause", "resume", "stop"] as const;
+            async status() {
+                return { kind: this.kind, title: "Fixture", state: "recording" as const, displays: [], frames: 1 };
+            }
+            async pause() {
+                return { state: "paused" as const };
+            }
+            async resume() {
+                return { state: "recording" as const };
+            }
+            async stop() {
+                return { state: "stopped" as const };
+            }
+        }
+        const dir = mkdtempSync(join(tmpdir(), "gt-meeting-handoff-"));
+        const id = `meeting-${meetingId}`;
+        const server = new LiveRecordingServer({
+            id,
+            kind: "meeting",
+            title: "Fixture",
+            folder,
+            dir,
+            control: new MeetingControl(),
+        });
+        const client = await RecorderClient.connect(id, { dir });
+        try {
+            const result = await new RecordingHandle(client).stop();
+            expect(result.recordingId).toBe(meetingId);
+            expect(result.folder).toBe(join(folder, "frames"));
+            const { editor } = (await new EditorToolset().load(ctx)) as { editor: { open(source: string): Clip } };
+            for (const source of [result.recordingId, result.folder ?? ""]) {
+                const frames = await editor.open(source).frames();
+                expect(frames.frames).toHaveLength(1);
+            }
+        } finally {
+            client.close();
+            server.close();
         }
     });
 
