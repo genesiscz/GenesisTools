@@ -476,7 +476,7 @@ it("recovers receipt-time context when an older reader consumed a now-retired so
     const db = openReadModel(join(root, "qa.db"));
     try {
         queryEntries(db, { logBase });
-        renameSync(file, file + ".retired");
+        renameSync(file, `${file}.retired`);
         db.run(
             "UPDATE entries SET transcript_anchor_json = NULL, attachments_json = NULL, read_at = 99 WHERE id = 'retired'"
         );

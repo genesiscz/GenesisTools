@@ -1468,7 +1468,7 @@ test("widget snapshot reads dialogs only for the sessions the store lists record
         ...emptySources,
         sessions: async () => [row(target.sessionId), row("fixture-quiet")],
         dialogSessions: () => new Set([target.sessionId]),
-        dialogs: (provider, sessionId) => {
+        dialogs: (_provider, sessionId) => {
             asked.push(sessionId);
             return [
                 {
