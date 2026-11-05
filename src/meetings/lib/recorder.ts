@@ -251,7 +251,12 @@ export async function runRecorder(options: {
                     const at = new Date(piece.startedAt + frame.timestampMs);
                     const name = frameName(at);
                     const jpg = join(framesDir, name);
-                    await toJpeg(frame.path, jpg, capture.jpegQuality);
+                    try {
+                        await toJpeg(frame.path, jpg, capture.jpegQuality);
+                    } catch (err) {
+                        log.warn({ err, frame: frame.path }, "frame conversion failed; frame skipped");
+                        continue;
+                    }
                     const ocr = await recognizeText(jpg, { languages: OCR_LANGUAGES }).catch((err: unknown) => {
                         log.warn({ err, jpg }, "OCR failed for a frame");
                         return { text: "", blocks: [] };
