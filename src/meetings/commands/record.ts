@@ -176,7 +176,7 @@ async function stop(opts: { meeting?: string; startedAt?: string }): Promise<voi
     const recording = record?.recording;
     const frames = typeof recording?.frames === "number" ? recording.frames : 0;
     const bytes = typeof recording?.bytes === "number" ? recording.bytes : 0;
-    if (recording?.status === "failed") {
+    if (recording?.stopReason === "failed" || recording?.stopReason === "error") {
         fail(`Recording failed: ${recording.warning ?? "unknown recording error"}`);
         return;
     }
