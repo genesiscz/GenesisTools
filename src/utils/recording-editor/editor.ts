@@ -311,7 +311,19 @@ async function stillFrames(
 
     if (step.fps !== undefined && inWindow.length > 0) {
         const end = Number.isFinite(toUs) ? toUs : inWindow[inWindow.length - 1].atUs + 1;
-        const byDisplay = Map.groupBy(inWindow, (frame) => frame.displayId ?? -1);
+        const byDisplay = new Map<number, SourceFrame[]>();
+
+        for (const frame of inWindow) {
+            const key = frame.displayId ?? -1;
+            const group = byDisplay.get(key);
+
+            if (group) {
+                group.push(frame);
+            } else {
+                byDisplay.set(key, [frame]);
+            }
+        }
+
         const times = sampleTimes({ fromUs, toUs: end, fps: step.fps });
         chosen = [];
         for (const frames of byDisplay.values()) {
