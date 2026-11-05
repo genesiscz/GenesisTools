@@ -66,6 +66,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `screen <meeting> --timeline [--all] [--json]` | Every frame in time order with the OCR lines that changed since the display's earlier frame, in frame pixels |
 | `record cost [--json]` | The CPU each capture choice costs: 268.6 ms per kept frame (the meetings-ocr bench) and the newest recording's frame rate |
 | `export <meeting> [--to <folder>] [--dry-run] [--json]` | The polished transcript (md, play links, dictionary, confirmed items) as `<folder>/<meeting id>.md`; the folder is `projects.<p>.export.folder` unless `--to` names one; the same meeting again replaces its file |
+| `window [meeting] [--place needs\|all\|<project>] [--tab transcript\|screen\|items\|speakers\|context] [--no-focus]` | Open the Meetings window of GenesisTools.app (the `meetings` app part); Settings → Meetings holds its pages |
 | `config show [path] [--json]`, `config set <path> <json>`, `config unset <path>` | Read and write one setting; the path is dotted (`global.capture.activeFps`) or a JSON array of keys (`["projects","a.b","labels"]`); a write that would make the config invalid writes nothing |
 
 ## The meeting record

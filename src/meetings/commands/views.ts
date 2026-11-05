@@ -11,6 +11,7 @@ import pc from "picocolors";
 import { exportMeeting } from "../lib/export";
 import { type MeetingBadges, meetingsOverview } from "../lib/overview";
 import { errorText, fail, TOOL } from "../lib/shared";
+import { isWindowTab, openMeetingsWindow, WINDOW_TABS } from "../lib/window";
 
 function badgeWords(badges: MeetingBadges): string {
     return [
@@ -100,7 +101,49 @@ async function exportCommand(ref: string, opts: { to?: string; dryRun?: boolean;
     }
 }
 
+async function windowCommand(
+    ref: string | undefined,
+    opts: { place?: string; tab?: string; focus?: boolean }
+): Promise<void> {
+    try {
+        const meeting = ref ? new MeetingStore().resolve(ref)?.id : undefined;
+
+        if (ref && !meeting) {
+            fail(`No meeting "${ref}". List them: ${TOOL} list`);
+            return;
+        }
+
+        const tab = opts.tab;
+
+        if (tab !== undefined && !isWindowTab(tab)) {
+            fail(`--tab ${tab} is not a tab: ${WINDOW_TABS.join(", ")}`);
+            return;
+        }
+
+        const place =
+            opts.place === undefined || opts.place === "needs" || opts.place === "all"
+                ? opts.place
+                : { project: opts.place };
+        openMeetingsWindow({
+            ...(place ? { place } : {}),
+            ...(meeting ? { meeting } : {}),
+            ...(tab ? { tab } : {}),
+            focus: opts.focus !== false,
+        });
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
 export function registerViewCommands(program: Command): void {
+    program
+        .command("window")
+        .argument("[meeting]", "open on this meeting: an id, a unique prefix, last, or wisprflow:<id>")
+        .description("Open the Meetings window (GenesisTools.app): meetings by day, what needs you, projects")
+        .option("--place <place>", "needs, all, or a project's name")
+        .option("--tab <tab>", WINDOW_TABS.join(" | "))
+        .option("--no-focus", "open behind the front window")
+        .action(windowCommand);
     program
         .command("overview")
         .description("The recent meetings by day with what each still needs, and the meetings that wait for you")

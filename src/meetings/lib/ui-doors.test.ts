@@ -15,6 +15,7 @@ import { exportMeeting } from "./export";
 import { matchPreview } from "./match-preview";
 import { meetingsOverview } from "./overview";
 import { screenTimeline } from "./screen-timeline";
+import { windowOpenArgs } from "./window";
 
 let n = 0;
 
@@ -330,6 +331,31 @@ describe("reopen", () => {
         ]);
         expect((await reopenItems({ store: meetings, record: saved ?? created, ids: ["i1"] })).skipped).toEqual([
             { id: "i1", reason: "it is not decided" },
+        ]);
+    });
+});
+
+describe("window", () => {
+    test("the open arguments name the face, the place, the meeting and the tab; no focus opens it behind", () => {
+        expect(windowOpenArgs({ place: { project: "side.quest" }, meeting: "m1", tab: "items" }, "/A.app")).toEqual([
+            "-n",
+            "/A.app",
+            "--args",
+            "--meetings",
+            "--place",
+            "project:side.quest",
+            "--meeting",
+            "m1",
+            "--tab",
+            "items",
+        ]);
+        expect(windowOpenArgs({ focus: false }, "/A.app")).toEqual([
+            "-n",
+            "-g",
+            "/A.app",
+            "--args",
+            "--meetings",
+            "--no-focus",
         ]);
     });
 });
