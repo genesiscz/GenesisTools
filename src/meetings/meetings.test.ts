@@ -4452,3 +4452,15 @@ test("uncertain attendance ends neither exclude speakers nor prove a sole attend
         expect(unconfirmed.some((hint) => hint.kind === "sole-attendee")).toBe(false);
     }
 });
+
+test("listening answers replace quoted and meaning-marked terms", () => {
+    for (const mark of [{ quote: { text: "old", doc: "fixture", line: 1 } }, { meaning: "old meaning" }]) {
+        const draft = meetingRecordSchema.parse({ ...record, items: [
+            { id: "i1", kind: "term", status: "suggested", atSec: 12, heard: "old", rules: [], suggestedAt: meeting.start, ...mark },
+            { id: "i2", kind: "question", status: "suggested", about: "term", question: "Spelling?", decides: ["i1"], choices: [], rules: [], suggestedAt: meeting.start },
+        ] });
+        answerQuestion(draft, "i2", { answer: "new", now: meeting.start });
+        const corrections = correctionsOf(draft, meetingsConfigSchema.parse({}), { format: "md" });
+        expect(applyCorrections([line("Alice", 12, "old")], corrections)[0]?.text).toBe("new");
+    }
+});

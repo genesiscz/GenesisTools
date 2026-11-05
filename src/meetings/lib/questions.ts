@@ -466,12 +466,15 @@ export function answerQuestion(
 
         if (item.kind === "term") {
             item.proposed = answer;
+            delete item.quote;
+            delete item.meaning;
         }
 
         const entry = ledgerEntryFor(record, item, options.now);
 
         if (entry) {
             ledger.push(entry);
+
         }
     }
 
