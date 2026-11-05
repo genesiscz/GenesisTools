@@ -5,6 +5,7 @@ import { basename, join } from "node:path";
 import { Writable } from "node:stream";
 import vm from "node:vm";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 import { readShowable, type ShowInput } from "@genesiscz/utils/repl/show";
 import type { ReplToolset, ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { rewriteTurn } from "./rewrite";
@@ -98,8 +99,6 @@ const replApi = {
 };
 
 globalThis.nodeRepl = replApi;
-
-import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 
 const toolsets: ReplToolset[] = [];
 
