@@ -16,6 +16,7 @@ const autoSchema = z.object({
     sourceId: z.enum(MEETING_SOURCE_IDS).optional(),
     meetingId: z.string().optional(),
     startedAt: z.string(),
+    recorderStartedAt: z.string().optional(),
     /** When the watcher last started the recorder again after it stopped on its own. */
     retriedAt: z.string().optional(),
     /** The source ended the meeting: refresh the record from it (title, end, people) until then. */

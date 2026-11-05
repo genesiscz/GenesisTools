@@ -198,8 +198,22 @@ export async function watchOnce(
         const auto = readAuto(store);
 
         // Turning autostart off ends the recording it started; a manual recording is left alone.
-        if (recorder.running && auto?.meetingId && recorder.state?.meetingId === auto.meetingId) {
-            const result = await deps.run(["meetings", "record", "stop"]);
+        if (
+            recorder.running &&
+            auto?.meetingId &&
+            auto.recorderStartedAt !== undefined &&
+            recorder.state?.meetingId === auto.meetingId &&
+            recorder.state?.startedAt === auto.recorderStartedAt
+        ) {
+            const result = await deps.run([
+                "meetings",
+                "record",
+                "stop",
+                "--meeting",
+                auto.meetingId,
+                "--started-at",
+                auto.recorderStartedAt,
+            ]);
 
             if (!result.success || deps.recorder().running) {
                 return "failed";
@@ -238,7 +252,12 @@ export async function watchOnce(
     }
 
     if (recorder.running) {
-        if (!auto || recorder.state?.meetingId !== auto.meetingId) {
+        if (
+            !auto ||
+            auto.recorderStartedAt === undefined ||
+            recorder.state?.meetingId !== auto.meetingId ||
+            recorder.state?.startedAt !== auto.recorderStartedAt
+        ) {
             return "busy";
         }
 
@@ -249,7 +268,15 @@ export async function watchOnce(
             return "recording";
         }
 
-        const result = await deps.run(["meetings", "record", "stop"]);
+        const result = await deps.run([
+            "meetings",
+            "record",
+            "stop",
+            "--meeting",
+            auto.meetingId!,
+            "--started-at",
+            auto.recorderStartedAt!,
+        ]);
         log.info({ meeting: auto.meetingId, exitCode: result.exitCode, ended, silent }, "auto recording stopped");
 
         // Not stopped yet: the next look tries again, and still knows the recording is its own.
@@ -316,6 +343,7 @@ export async function watchOnce(
     writeAuto(store, {
         sourceMeetingId: live.sourceMeetingId,
         ...(meetingId ? { meetingId } : {}),
+        ...(startedRecorder ? { recorderStartedAt: startedRecorder.startedAt } : {}),
         startedAt: new Date(now).toISOString(),
     });
 
