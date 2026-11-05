@@ -168,7 +168,16 @@ export class EditSession {
                 );
             }
 
-            const edit = await computeEdit({ project: this.project, ops, fresh: this.fresh });
+            let base = this.project;
+            let edit = await computeEdit({ project: base, ops, fresh: this.fresh });
+
+            // A save during the computation (the timer, a render) may have taken in another writer's file: the ops
+            // run again on the edit as it is now, with the measurements they had, so this change keeps that file.
+            while (this.project !== base) {
+                base = this.project;
+                edit = await computeEdit({ project: base, ops, fresh: this.fresh, facts: edit.facts });
+            }
+
             const extras = {
                 ...(edit.removedIdleUs.length ? { removedIdleUs: edit.removedIdleUs } : {}),
                 ...(edit.loudness ? { loudness: edit.loudness } : {}),

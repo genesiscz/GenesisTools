@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,7 @@ import {
 import { callRecorder, LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import type { z } from "zod";
 import fixture from "./__fixtures__/service-protocol.json";
+import * as edits from "./edit";
 import { editProject, readUndoSteps, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
@@ -56,6 +57,34 @@ function editFixture(prefix: string): string {
         wholeProject({ video: join(root, "talk.mp4"), durationUs: 10_000_000, width: 100, height: 100 })
     );
     return path;
+}
+
+/**
+ * Holds the next `count` edit computations after they computed, until `release()`: the pause at the await where a
+ * save, another writer or a cancel can come between an edit's computation and its change. They still compute.
+ */
+function holdComputations(count = 1) {
+    const real = edits.computeEdit;
+    const entered = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    let held = 0;
+    const spy = spyOn(edits, "computeEdit").mockImplementation(async (args) => {
+        const result = await real(args);
+
+        if (held < count) {
+            held += 1;
+
+            if (held === count) {
+                entered.resolve();
+            }
+
+            await resume.promise;
+        }
+
+        return result;
+    });
+    closing.push(() => spy.mockRestore());
+    return { entered: entered.promise, release: () => resume.resolve() };
 }
 
 async function openSession(path: string, saveDelayMs = 10_000) {
@@ -152,6 +181,30 @@ describe("an edit session", () => {
             volume: 0.3,
             markers: ["next"],
         });
+    });
+
+    // Regression test: 2026-11-05 recorder service review, finding 2 — a save while an edit computed lost a rebased change
+    test("a save while an edit computes keeps the other writer's change that the save took in", async () => {
+        const path = editFixture("gt-es-flush-compute-");
+        const { session } = await openSession(path);
+        await session.apply([{ op: "text", from: 1, to: 2, text: "A" }], { by: "editor" });
+        const held = holdComputations();
+        const applying = session.apply([{ op: "marker", at: 3, label: "B" }], { by: "agent" });
+        await held.entered;
+
+        const disk = readProject(path);
+        writeProject(path, { ...disk, audio: { ...disk.audio, volume: 0.3 } }, "editor");
+        session.flush();
+        held.release();
+        await applying;
+        session.flush();
+
+        const saved = readProject(path);
+        expect({
+            volume: saved.audio.volume,
+            texts: saved.texts?.map((text) => text.text),
+            markers: saved.markers?.map((marker) => marker.label),
+        }).toEqual({ volume: 0.3, texts: ["A"], markers: ["B"] });
     });
 
     test("a drag previews without saving, commits as one undo step, and a newer preview replaces the waiting one", async () => {
