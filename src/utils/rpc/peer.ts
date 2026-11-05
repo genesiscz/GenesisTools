@@ -100,24 +100,64 @@ export class LineBuffer {
     }
 }
 
-/** Writes a whole message even when the socket takes only part of it now; the rest goes on `drain`. */
-export class Outbox {
-    private queued: Buffer = Buffer.alloc(0);
+/** The unsent bytes one connection may hold. A reader that stopped reading reaches it, and its connection ends. */
+export const OUTBOX_LIMIT_BYTES = 8 * 1024 * 1024;
 
-    constructor(private readonly write: (bytes: Buffer) => number) {}
+/**
+ * Writes a whole message even when the socket takes only part of it now; the rest goes on `drain`. The queue is a
+ * list of the unsent messages, so a slow reader costs no copy per message, and it holds at most `limit` bytes: the
+ * message that would pass it calls `onFull` once, and the outbox drops it and every later one.
+ */
+export class Outbox {
+    private readonly chunks: Buffer[] = [];
+    private bytes = 0;
+    private full = false;
+
+    constructor(
+        private readonly write: (bytes: Buffer) => number,
+        private readonly onFull: (bytes: number) => void = () => undefined,
+        private readonly limit = OUTBOX_LIMIT_BYTES
+    ) {}
+
+    /** The bytes still waiting for the socket. */
+    get pending(): number {
+        return this.bytes;
+    }
 
     send(text: string): void {
-        this.queued = Buffer.concat([this.queued, Buffer.from(text)]);
+        if (this.full) {
+            return;
+        }
+
+        const message = Buffer.from(text);
+
+        if (this.bytes > 0 && this.bytes + message.length > this.limit) {
+            this.full = true;
+            const held = this.bytes + message.length;
+            this.chunks.length = 0;
+            this.bytes = 0;
+            this.onFull(held);
+            return;
+        }
+
+        this.chunks.push(message);
+        this.bytes += message.length;
         this.flush();
     }
 
     flush(): void {
-        if (this.queued.length === 0) {
-            return;
-        }
+        while (this.chunks.length > 0) {
+            const head = this.chunks[0];
+            const written = Math.max(0, this.write(head));
+            this.bytes -= Math.min(written, head.length);
 
-        const written = this.write(this.queued);
-        this.queued = this.queued.subarray(Math.max(0, written));
+            if (written < head.length) {
+                this.chunks[0] = head.subarray(written);
+                return;
+            }
+
+            this.chunks.shift();
+        }
     }
 }
 
@@ -152,6 +192,8 @@ export interface RpcPeerOptions {
     label: string;
     logFields?: Record<string, unknown>;
     defaultTimeoutMs?: number;
+    /** The other side stopped reading and its unsent messages reached `OUTBOX_LIMIT_BYTES`: end the socket here. */
+    onBacklogFull?: () => void;
 }
 
 function parseOrNull(text: string, log: RpcLog, label: string): unknown {
@@ -174,7 +216,14 @@ export class RpcPeer {
     queue: Promise<void> = Promise.resolve();
 
     constructor(private readonly options: RpcPeerOptions) {
-        this.outbox = new Outbox(options.write);
+        this.outbox = new Outbox(options.write, (bytes) => {
+            options.log.warn(
+                { ...options.logFields, bytes },
+                `${options.label} peer stopped reading its messages; the connection ends`
+            );
+            this.close("the other side stopped reading its messages");
+            options.onBacklogFull?.();
+        });
     }
 
     get closed(): boolean {

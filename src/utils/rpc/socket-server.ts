@@ -54,6 +54,8 @@ class Connection<S> implements RpcConnection<S> {
     ) {
         this.peer = new RpcPeer({
             write: (bytes) => socket.write(bytes),
+            // A subscriber that stopped reading is disconnected; the recording or service it watched goes on.
+            onBacklogFull: () => socket.end(),
             invalid: "answer",
             log: options.log,
             label: options.label,

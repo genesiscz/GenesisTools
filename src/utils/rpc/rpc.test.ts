@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { RPC_CANCELLED, RpcError } from "./errors";
-import { LineBuffer, RpcPeer, type RpcProgress } from "./peer";
+import { LineBuffer, Outbox, RpcPeer, type RpcProgress } from "./peer";
 import { RpcSocketClient, type RpcSocketClientOptions } from "./socket-client";
 import { type RpcConnection, RpcSocketServer } from "./socket-server";
 
@@ -233,4 +233,69 @@ test("an oversized server frame closes the client and rejects its pending call o
     expect(client.closed).toBe(true);
     expect(await pending).toBeInstanceOf(Error);
     expect(notifications).toBe(1);
+});
+
+describe("the outbox of a reader that stops reading", () => {
+    test("holds what the socket did not take and sends it, in order, on the next drain", () => {
+        let room = 0;
+        const sent: string[] = [];
+        const outbox = new Outbox((bytes) => {
+            const taken = Math.min(room, bytes.length);
+            sent.push(bytes.subarray(0, taken).toString());
+            room -= taken;
+            return taken;
+        });
+        outbox.send("one\n");
+        outbox.send("two\n");
+        expect(outbox.pending).toBe(8);
+
+        room = 6;
+        outbox.flush();
+        expect(sent.join("")).toBe("one\ntw");
+        expect(outbox.pending).toBe(2);
+
+        room = 100;
+        outbox.flush();
+        expect(sent.join("")).toBe("one\ntwo\n");
+        expect(outbox.pending).toBe(0);
+    });
+
+    test("past its limit it reports once and drops that message and every later one", () => {
+        const full: number[] = [];
+        const outbox = new Outbox(
+            () => 0,
+            (bytes) => full.push(bytes),
+            10
+        );
+        outbox.send("12345\n");
+        outbox.send("abcd\n");
+        outbox.send("more\n");
+
+        expect(full).toEqual([11]);
+        expect(outbox.pending).toBe(0);
+    });
+
+    test("a peer whose other side stopped reading closes and asks for its socket to end", async () => {
+        let ended = 0;
+        const peer = new RpcPeer({
+            write: () => 0,
+            invalid: "answer",
+            log: logger.scoped("rpc-test").log,
+            label: "test",
+            handle: async () => null,
+            onBacklogFull: () => {
+                ended += 1;
+            },
+        });
+        const waiting = peer.request("render.export", {}, { timeoutMs: 60_000 });
+        const frame = { text: "x".repeat(1024 * 1024) };
+
+        for (let index = 0; index < 10; index++) {
+            peer.notify("frame", frame);
+        }
+
+        expect(ended).toBe(1);
+        expect(peer.closed).toBe(true);
+        await expect(waiting).rejects.toThrow("stopped reading");
+    });
 });
