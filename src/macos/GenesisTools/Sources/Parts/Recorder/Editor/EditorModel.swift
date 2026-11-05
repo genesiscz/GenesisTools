@@ -13,13 +13,13 @@ final class PlayheadClock {
 
 /// One step of the editor's undo: the edit as it was before a change, or a display switch, which changed the proxy
 /// movie and not the edit file, so its undo is the recorder's display undo (proxy.undo.json).
-enum UndoStep {
+enum UndoStep: Equatable {
     case edit(EditProject)
     case display(DisplaySwitchStep)
 }
 
 /// A display switch as an undo step: the frames recording's display plan before and after it.
-struct DisplaySwitchStep {
+struct DisplaySwitchStep: Equatable {
     let before: DisplayPlan
     let after: DisplayPlan
 }
@@ -104,6 +104,9 @@ final class EditorModel {
     /// edit's real undo stack, and each step here mirrors one change this window made or took from outside.
     @ObservationIgnored var undoStack: [UndoStep] = []
     @ObservationIgnored var redoStack: [UndoStep] = []
+    /// Counts the new steps (a change, an outside edit, a display switch); an undo or redo that fails puts its step
+    /// back on the redo list only when no new step came since (a new step empties that list).
+    @ObservationIgnored var historyGeneration = 0
     /// Starts a `tools` command for the window and answers on the main thread (`ToolsRunner.run`); a test answers
     /// for the CLI instead.
     @ObservationIgnored var runTools: (_ argv: [String], _ done: @escaping @MainActor (Int32, String, String) -> Void) -> Void = {
@@ -466,19 +469,17 @@ final class EditorModel {
         show("\(verb): \(change.name)", error: false)
     }
 
-    /// ⌘Z on a display switch: the movie is made again with the plan from before; the step moves to the redo list
-    /// only once it was.
+    /// ⌘Z on a display switch: the movie is made again with the plan from before. The step moves to the redo list at
+    /// once, so an edit made while the movie is made lands above it; a failed remake moves it back.
     func undoDisplaySwitch(_ step: UndoStep, change: (name: String, tab: InspectorTab?)) {
         guard !isSwitchingDisplay else {
             show("The movie is still being made; undo again once it is ready.", error: false)
             return
         }
+        guard let move = beginMove(undoing: true, counterpart: step) else { return }
         stepDisplaySwitch(undo: true, doing: "Undoing the display switch") { [weak self] made in
-            guard let self, made else { return }
-            self.undoStack.removeLast()
-            self.redoStack.append(step)
-            self.refreshUndoState()
-            self.announce("Undid", change)
+            guard let self else { return }
+            if made { self.announce("Undid", change) } else { self.failMove(move) }
         }
     }
 
@@ -487,12 +488,10 @@ final class EditorModel {
             show("The movie is still being made; redo again once it is ready.", error: false)
             return
         }
+        guard let move = beginMove(undoing: false, counterpart: step) else { return }
         stepDisplaySwitch(undo: false, doing: "Redoing the display switch") { [weak self] made in
-            guard let self, made else { return }
-            self.redoStack.removeLast()
-            self.undoStack.append(step)
-            self.refreshUndoState()
-            self.announce("Redid", change)
+            guard let self else { return }
+            if made { self.announce("Redid", change) } else { self.failMove(move) }
         }
     }
 
@@ -503,6 +502,7 @@ final class EditorModel {
         undoStack.append(.display(DisplaySwitchStep(before: before, after: after)))
         if undoStack.count > 200 { undoStack.removeFirst() }
         redoStack.removeAll()
+        historyGeneration += 1
         refreshUndoState()
     }
 

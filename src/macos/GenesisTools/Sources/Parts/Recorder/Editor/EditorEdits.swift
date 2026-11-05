@@ -104,7 +104,7 @@ extension EditorModel {
                 case let .success(answer):
                     self.adopt(answer.project, rebuild: answer.project.clips != self.project.clips || answer.project.audio != self.project.audio)
                 case let .failure(error):
-                    if case let .edit(before) = self.undoStack.last, before == open.mark { self.undoStack.removeLast() }
+                    if let at = self.undoStack.lastIndex(of: .edit(open.mark)) { self.undoStack.remove(at: at) }
                     self.canUndo = !self.undoStack.isEmpty
                     self.show(EditorSession.reason(error), error: true)
                     self.adopt(open.mark, rebuild: open.mark.clips != self.project.clips || open.mark.audio != self.project.audio)
@@ -160,6 +160,7 @@ extension EditorModel {
         undoStack.append(.edit(before))
         if undoStack.count > 200 { undoStack.removeFirst() }
         redoStack.removeAll()
+        historyGeneration += 1
         canUndo = true
         canRedo = false
     }
@@ -188,6 +189,41 @@ extension EditorModel {
 
     // MARK: Undo
 
+    /// An undo or redo in flight: its step left one list when it started (`beginMove`), and `counterpart` (the step
+    /// that takes it back) went onto the other.
+    struct HistoryMove {
+        let undoing: Bool
+        let step: UndoStep
+        let counterpart: UndoStep
+        /// Where `step` was in its list.
+        let index: Int
+        let generation: Int
+    }
+
+    /// Moves the last step of the undo (or redo) list to the other list now, before the slow part runs (the service's
+    /// answer, the CLI, a movie made again), so a change made meanwhile lands above it and no answer pops a list it
+    /// did not read (2026-11-05 review R1.1: a redo answered after an edit popped the emptied list and crashed).
+    func beginMove(undoing: Bool, counterpart: UndoStep) -> HistoryMove? {
+        guard let step = undoing ? undoStack.popLast() : redoStack.popLast() else { return nil }
+        if undoing { redoStack.append(counterpart) } else { undoStack.append(counterpart) }
+        refreshUndoState()
+        return HistoryMove(undoing: undoing, step: step, counterpart: counterpart,
+                           index: undoing ? undoStack.count : redoStack.count, generation: historyGeneration)
+    }
+
+    /// The undo or redo did not happen: its counterpart leaves the list it went onto, and the step goes back where it
+    /// was; to the redo list only while no new step came since (one empties that list).
+    func failMove(_ move: HistoryMove) {
+        if move.undoing {
+            if let at = redoStack.lastIndex(of: move.counterpart) { redoStack.remove(at: at) }
+            undoStack.insert(move.step, at: min(move.index, undoStack.count))
+        } else {
+            if let at = undoStack.lastIndex(of: move.counterpart) { undoStack.remove(at: at) }
+            if historyGeneration == move.generation { redoStack.insert(move.step, at: min(move.index, redoStack.count)) }
+        }
+        refreshUndoState()
+    }
+
     func undo() {
         finishGesture()
         guard let step = undoStack.last else { return }
@@ -197,15 +233,16 @@ extension EditorModel {
             return
         }
         if session.isOnline {
+            guard let move = beginMove(undoing: true, counterpart: .edit(project)) else { return }
             session.edit("edit.undo", [:]) { [weak self] result in
                 guard let self else { return }
                 switch result {
                 case let .success(answer):
-                    self.undoStack.removeLast()
-                    self.redoStack.append(.edit(self.project))
                     self.adopt(answer.project, rebuild: answer.project.clips != self.project.clips || answer.project.audio != self.project.audio)
                     self.announce("Undid", change)
-                case let .failure(error): self.show(EditorSession.reason(error), error: true)
+                case let .failure(error):
+                    self.failMove(move)
+                    self.show(EditorSession.reason(error), error: true)
                 }
             }
             return
@@ -216,17 +253,20 @@ extension EditorModel {
             show("The last change is still saving; press ⌘Z again in a moment.", error: false)
             return
         }
+        guard let move = beginMove(undoing: true, counterpart: .edit(project)) else { return }
         ownOpsRunning += 1
         runTools(["recorder", "undo", store.url.path]) { [weak self] status, _, stderr in
             guard let self else { return }
             defer { self.ownOpsRunning -= 1 }
             guard status == 0, let next = self.readOwnFile() else {
+                self.failMove(move)
                 self.show(stderr.split(separator: "\n").last.map(String.init) ?? "The undo failed (exit \(status)).", error: true)
                 return
             }
             self.store.noteWritten(next.revision)
-            self.undoStack.removeLast()
-            self.redoStack.removeAll()
+            // The CLI keeps no redo: nothing to redo until the service runs.
+            if let at = self.redoStack.lastIndex(of: move.counterpart) { self.redoStack.remove(at: at) }
+            self.refreshUndoState()
             self.adopt(next, rebuild: next.clips != self.project.clips || next.audio != self.project.audio)
             self.announce("Undid", change)
         }
@@ -244,15 +284,16 @@ extension EditorModel {
             show("Redo needs the recorder service (tools recorder serve); it is not running.", error: true)
             return
         }
+        guard let move = beginMove(undoing: false, counterpart: .edit(project)) else { return }
         session.edit("edit.redo", [:]) { [weak self] result in
             guard let self else { return }
             switch result {
             case let .success(answer):
-                self.redoStack.removeLast()
-                self.undoStack.append(.edit(self.project))
                 self.adopt(answer.project, rebuild: answer.project.clips != self.project.clips || answer.project.audio != self.project.audio)
                 self.announce("Redid", change)
-            case let .failure(error): self.show(EditorSession.reason(error), error: true)
+            case let .failure(error):
+                self.failMove(move)
+                self.show(EditorSession.reason(error), error: true)
             }
         }
     }
@@ -427,6 +468,7 @@ extension EditorModel {
         guard next != project else { return }
         undoStack.append(.edit(project))
         redoStack.removeAll()
+        historyGeneration += 1
         let previous = project
         // An agent that transcribed the movie and turned captions on: read the transcript it cached.
         adopt(next, rebuild: next.clips != project.clips || next.audio != project.audio)

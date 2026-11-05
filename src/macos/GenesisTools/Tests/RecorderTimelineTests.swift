@@ -475,6 +475,106 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(model.displayPlan, first)
     }
 
+    /// A frames recording whose display switch the fake CLI makes at once, while its undo and redo (`--undo-switch`,
+    /// `--redo-switch`) wait in `held` until the test answers them, as a proxy rebuild of many seconds does. Zoom ops go
+    /// to the fake service.
+    private func displayModel() throws -> (model: EditorModel, held: () -> [() -> Void]) {
+        let recording = folder.appendingPathComponent("meeting-held-\(UUID().uuidString.prefix(6))")
+        try FileManager.default.createDirectory(at: recording, withIntermediateDirectories: true)
+        let planFile = recording.appendingPathComponent("proxy.json")
+        let before = #"{"policy":"most-change","ranges":[{"displayId":1,"fromUs":0,"toUs":10000000}],"version":1,"windowSec":10}"#
+        let after = #"{"policy":"most-change","ranges":[{"displayId":1,"fromUs":0,"toUs":2000000},{"displayId":2,"fromUs":2000000,"toUs":10000000}],"version":1,"windowSec":10}"#
+        try Data(before.utf8).write(to: planFile)
+        try Data(#"{"displays":[{"id":1,"name":"Built-in"},{"id":2,"name":"Side"}]}"#.utf8).write(to: recording.appendingPathComponent("recording.json"))
+        let project = EditProject.whole(video: recording.appendingPathComponent("proxy.mp4").path, durationUs: 10_000_000,
+                                        width: 1920, height: 1080, cursor: nil, recording: nil)
+        service = FakeServiceLink(project: project, rules: FakeRules.basic)
+        let model = EditorModel.on(service, store: ProjectStore(url: recording.appendingPathComponent("edit.json")))
+        var held: [() -> Void] = []
+        model.runTools = { argv, done in
+            let plan = argv.contains("--undo-switch") ? before : after
+            let answer = {
+                try? Data(plan.utf8).write(to: planFile)
+                done(0, "{}", "")
+            }
+            if argv.contains("--undo-switch") || argv.contains("--redo-switch") { held.append(answer) } else { answer() }
+        }
+        return (model, { defer { held.removeAll() }; return held })
+    }
+
+    // Regression test: 2026-11-05 review of the editor gaps, R1.1. An edit made while a display undo rebuilds the
+    // movie lost its own undo step when the rebuild answered.
+    func testAnEditDuringADisplayUndoStaysTheStepThatUndoesNext() throws {
+        let (model, held) = try displayModel()
+        model.switchDisplay(fromUs: 2_000_000, toUs: 10_000_000, displayId: 2)
+        XCTAssertEqual(model.undoName, "Display Switch")
+        model.undo()
+        model.addZoom(atOutput: 4_000_000)
+        for answer in held() { answer() }
+        XCTAssertEqual(model.undoName, "Add Zoom", "the zoom made during the rebuild is still the next undo")
+        XCTAssertNil(model.redoName, "the new edit leaves nothing to redo")
+    }
+
+    // Regression test: 2026-11-05 review of the editor gaps, R1.1. An edit made while a display redo rebuilds the
+    // movie emptied the redo list, and the rebuild's answer then popped the empty list: the editor crashed.
+    func testAnEditDuringTheRedoOfADisplaySwitchKeepsBothSteps() throws {
+        let (model, held) = try displayModel()
+        model.switchDisplay(fromUs: 2_000_000, toUs: 10_000_000, displayId: 2)
+        model.undo()
+        for answer in held() { answer() }
+        XCTAssertEqual(model.redoName, "Display Switch")
+        model.redo()
+        model.addZoom(atOutput: 4_000_000)
+        for answer in held() { answer() }
+        XCTAssertEqual(model.undoName, "Add Zoom")
+        model.undo()
+        XCTAssertEqual(model.undoName, "Display Switch", "under the zoom, the redone switch")
+    }
+
+    /// A model on the fake service whose movie has a camera bubble: a drag of the bubble is one continuous change,
+    /// and its undo step goes on the list when the drag ends, before the service answers.
+    private func cameraModel() -> EditorModel {
+        var project = EditProject.whole(video: folder.appendingPathComponent("none.mp4").path, durationUs: 10_000_000,
+                                        width: 1920, height: 1080, cursor: nil, recording: nil)
+        project.camera = EditProject.Camera(file: "camera.mov")
+        let own = folder.appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: own, withIntermediateDirectories: true)
+        service = FakeServiceLink(project: project, rules: FakeRules.basic)
+        return EditorModel.on(service, store: ProjectStore(url: own.appendingPathComponent("edit.json")))
+    }
+
+    // Regression test: 2026-11-05 review of the editor gaps, R1.1, on the edit path. The undo's answer took the last
+    // step off the list, and a drag that ended before the answer was that step: the drag could not be undone and the
+    // zoom came back as a redo.
+    func testADragEndedBeforeAnUndoIsAnsweredStaysTheStepThatUndoesNext() {
+        let model = cameraModel()
+        model.addZoom(atOutput: 4_000_000)
+        let zoomed = model.project
+        service.holdAnswers = true
+        model.undo()
+        model.changeCamera(.init(size: 0.3))
+        model.finishGesture()
+        service.deliver()
+        XCTAssertEqual(model.undoStack, [.edit(zoomed)], "only the drag, from where it started")
+        XCTAssertFalse(model.canRedo, "the drag came after the undo, so nothing is left to redo")
+    }
+
+    // Regression test: 2026-11-05 review of the editor gaps, R1.1, on the edit path. A drag ended while a redo was in
+    // flight empties the redo list, and the redo's answer then took the last step off the empty list: the editor crashed.
+    func testTheRedoOfAnEditAnsweredAfterADragKeepsBothSteps() {
+        let model = cameraModel()
+        model.addZoom(atOutput: 4_000_000)
+        model.undo()
+        XCTAssertTrue(model.canRedo)
+        service.holdAnswers = true
+        model.redo()
+        model.changeCamera(.init(size: 0.3))
+        model.finishGesture()
+        service.deliver()
+        XCTAssertEqual(model.undoStack.count, 2, "the redone zoom, and the drag above it")
+        XCTAssertFalse(model.canRedo)
+    }
+
     func testADisplayPlanReadsItsRangesAndNamesAddsItsLaneAndSwitchesThroughTheCLI() throws {
         let recording = folder.appendingPathComponent("meeting")
         try FileManager.default.createDirectory(at: recording, withIntermediateDirectories: true)
