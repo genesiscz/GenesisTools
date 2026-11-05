@@ -121,10 +121,13 @@ enum MarkdownPageMenu {
     /// the page offered.
     static let webKitReload = NSUserInterfaceItemIdentifier("WKMenuItemIdentifierReload")
 
-    /// The selected document's verbs in the window that holds `view`, else in the shared viewer window.
+    /// A page gets only the document belonging to its own viewer window.
     static func entries(for view: NSView?) -> [PathMenuEntry] {
-        let controller = view?.window?.windowController as? MarkdownDocumentWindowController
-            ?? MarkdownDocumentWindowController.shared
+        guard let controller = view?.window?.windowController as? MarkdownDocumentWindowController else { return [] }
+        return entries(for: controller)
+    }
+
+    static func entries(for controller: MarkdownDocumentWindowController) -> [PathMenuEntry] {
         guard let doc = controller.model.selected else { return [] }
         return controller.model.documentMenuEntries(for: doc)
     }
@@ -157,7 +160,9 @@ final class MarkdownDocumentMenu: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let entries = MarkdownPageMenu.entries(for: NSApp.keyWindow?.contentView)
+        let controller = NSApp.keyWindow?.windowController as? MarkdownDocumentWindowController
+            ?? MarkdownDocumentWindowController.shared
+        let entries = MarkdownPageMenu.entries(for: controller)
         if entries.isEmpty {
             menu.addItem(withTitle: "No document open", action: nil, keyEquivalent: "").isEnabled = false
             return

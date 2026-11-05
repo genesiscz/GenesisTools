@@ -70,6 +70,19 @@ final class MarkdownFileOpsTests: XCTestCase {
         XCTAssertEqual(outsideTheViewer.items.map(\.title), ["Reload"])
     }
 
+    func testPageOutsideTheViewerKeepsWebKitMenu() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        let controller = NSWindowController(window: window)
+        let view = NSView(frame: window.contentView!.bounds)
+        window.contentView?.addSubview(view)
+        let menu = NSMenu()
+        menu.addItem(Self.webKitReload())
+        MarkdownPageMenu.adapt(menu, entries: MarkdownPageMenu.entries(for: view))
+        XCTAssertEqual(menu.items.map(\.title), ["Reload"])
+        withExtendedLifetime(controller) {}
+    }
+
     func testAnUnsavedTabBlocksItsFileAndEveryFolderAboveIt() {
         model.open([url("notes/sub/deep.md"), url("readme.md")])
         model.docs.first { $0.url == url("notes/sub/deep.md") }?.edit("changed")
