@@ -607,3 +607,20 @@ test("bounded meeting discovery skips old JSON and applies limits before read", 
         read.mockRestore();
     }
 });
+test("a positive discovery limit parses only that many recent records", async () => {
+    const records = new MeetingStore(new Storage(`bounded-positive-${++stores}`));
+    for (const day of [1, 2, 3]) {
+        await records.create(
+            { title: "Planning", start: `2026-11-0${day}T09:00:00.000Z`, createdBy: "new" },
+            { command: "new", change: "fixture" }
+        );
+    }
+    const read = spyOn(records, "read");
+    try {
+        const result = records.listBounded({ limit: 1 });
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(result.records.map((record) => record.start)).toEqual(["2026-11-03T09:00:00.000Z"]);
+    } finally {
+        read.mockRestore();
+    }
+});

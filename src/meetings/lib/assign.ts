@@ -114,9 +114,10 @@ export async function viewProposals(store: MeetingStore, record: MeetingRecord, 
             slackMin: config.global.assign.calendarSlackMin,
         }),
         participants: record.participants.map((person) => ({ name: person.name, self: person.self })),
+        // Assignment ranking uses a bounded recent sample; never hydrate the whole archive for one detail view.
         history: store
-            .list()
-            .filter((other) => other.id !== record.id)
+            .listBounded({ limit: 200 })
+            .records.filter((other) => other.id !== record.id)
             .map((other) => ({ id: other.id, title: other.title, project: other.project, labels: other.labels })),
     };
     const calendarNotes = lookups.flatMap((lookup) =>
