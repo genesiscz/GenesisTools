@@ -229,6 +229,28 @@ describe("compressFile", () => {
         expect(verifyCompressedFile(result.target, result)).toBe(false);
     });
 
+    it("never publishes a restore whose ledger digest does not match", async () => {
+        const dir = scratch("digest-before-publish");
+        const source = join(dir, "source.log");
+        const target = join(dir, "restored.log");
+        writeFileSync(source, "original history\n");
+        const archive = await compressFile({ source });
+        const publish = spyOn(atomicWriteIo, "linkSync");
+
+        try {
+            await expect(
+                decompressFile({ source: archive.target, target, expectedSha256: "0".repeat(64) })
+            ).rejects.toThrow("output not published");
+            expect(publish).not.toHaveBeenCalled();
+            expect(existsSync(target)).toBe(false);
+        } finally {
+            publish.mockRestore();
+        }
+
+        await decompressFile({ source: archive.target, target, expectedSha256: archive.sha256 });
+        expect(readFileSync(target, "utf8")).toBe("original history\n");
+    });
+
     it("throws and leaves the target as it was when the source is cut while it is read", async () => {
         const dir = scratch("cut");
         const source = join(dir, "2026-10-10.log");
