@@ -22,7 +22,8 @@
             "type": "string",
             "enum": [
               "host",
-              "client"
+              "client",
+              "recording"
             ]
           },
           "protocol": {
@@ -180,6 +181,148 @@
           "gesture"
         ]
       },
+      "recordings.register": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "const": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string"
+          },
+          "pid": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "pidCommand": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "recording",
+              "paused",
+              "stopping"
+            ]
+          },
+          "displays": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "number"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ]
+            }
+          },
+          "frames": {
+            "default": 0,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "lastFrameAt": {
+            "type": "string"
+          },
+          "warning": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string"
+          },
+          "controls": {
+            "default": [
+              "pause",
+              "resume",
+              "stop"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "socket": {
+            "type": "string"
+          },
+          "panel": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "version",
+          "id",
+          "kind",
+          "title",
+          "pid",
+          "startedAt",
+          "state",
+          "socket"
+        ]
+      },
+      "recordings.live": {
+        "type": "object",
+        "properties": {}
+      },
+      "recording.call": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "status",
+              "pause",
+              "resume",
+              "stop",
+              "discard",
+              "restart",
+              "target.switch",
+              "displays.list",
+              "displays.add",
+              "displays.remove",
+              "displays.switch",
+              "displays.mode",
+              "jobs.list",
+              "audio.list",
+              "audio.mute",
+              "audio.setInput",
+              "settings.get",
+              "settings.set",
+              "marker.add"
+            ]
+          },
+          "params": {}
+        },
+        "required": [
+          "id",
+          "method"
+        ]
+      },
       "window.open": {
         "type": "object",
         "properties": {
@@ -204,7 +347,8 @@
               "cursor",
               "captions",
               "audio",
-              "export"
+              "export",
+              "find"
             ]
           }
         },
@@ -382,6 +526,9 @@
       "gesture.preview",
       "gesture.commit",
       "gesture.cancel",
+      "recordings.register",
+      "recordings.live",
+      "recording.call",
       "window.open",
       "window.show",
       "window.list",
@@ -2341,7 +2488,8 @@
           "cursor",
           "captions",
           "audio",
-          "export"
+          "export",
+          "find"
         ]
       },
       "__schema22": {
@@ -2598,6 +2746,141 @@
         ],
         "additionalProperties": false
       },
+      "recordings.register": {
+        "type": "object",
+        "properties": {
+          "registered": {
+            "type": "boolean",
+            "const": true
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "registered",
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "recordings.live": {
+        "type": "object",
+        "properties": {
+          "recordings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "number",
+                  "const": 1
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "title": {
+                  "type": "string"
+                },
+                "pid": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "pidCommand": {
+                  "type": "string"
+                },
+                "startedAt": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "recording",
+                    "paused",
+                    "stopping"
+                  ]
+                },
+                "displays": {
+                  "default": [],
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "number"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "frames": {
+                  "default": 0,
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "lastFrameAt": {
+                  "type": "string"
+                },
+                "warning": {
+                  "type": "string"
+                },
+                "folder": {
+                  "type": "string"
+                },
+                "controls": {
+                  "default": [
+                    "pause",
+                    "resume",
+                    "stop"
+                  ],
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "socket": {
+                  "type": "string"
+                },
+                "panel": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "version",
+                "id",
+                "kind",
+                "title",
+                "pid",
+                "startedAt",
+                "state",
+                "displays",
+                "frames",
+                "controls",
+                "socket"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "recordings"
+        ],
+        "additionalProperties": false
+      },
+      "recording.call": {},
       "window.open": {
         "type": "object",
         "properties": {
@@ -2791,6 +3074,9 @@
       "gesture.preview",
       "gesture.commit",
       "gesture.cancel",
+      "recordings.register",
+      "recordings.live",
+      "recording.call",
       "window.open",
       "window.show",
       "window.list",
@@ -4005,13 +4291,158 @@
           "id"
         ],
         "additionalProperties": false
+      },
+      "recordings.changed": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "change": {
+            "type": "string",
+            "enum": [
+              "registered",
+              "changed",
+              "ended"
+            ]
+          },
+          "recording": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "number",
+                "const": 1
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string"
+              },
+              "pid": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "pidCommand": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "recording",
+                  "paused",
+                  "stopping"
+                ]
+              },
+              "displays": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "number"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "frames": {
+                "default": 0,
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "lastFrameAt": {
+                "type": "string"
+              },
+              "warning": {
+                "type": "string"
+              },
+              "folder": {
+                "type": "string"
+              },
+              "controls": {
+                "default": [
+                  "pause",
+                  "resume",
+                  "stop"
+                ],
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "socket": {
+                "type": "string"
+              },
+              "panel": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "version",
+              "id",
+              "kind",
+              "title",
+              "pid",
+              "startedAt",
+              "state",
+              "displays",
+              "frames",
+              "controls",
+              "socket"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "change"
+        ],
+        "additionalProperties": false
+      },
+      "recording.event": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string"
+          },
+          "params": {}
+        },
+        "required": [
+          "id",
+          "event"
+        ],
+        "additionalProperties": false
       }
     },
     "required": [
       "project.changed",
       "window.changed",
       "$/progress",
-      "$/cancel"
+      "$/cancel",
+      "recordings.changed",
+      "recording.event"
     ],
     "additionalProperties": false,
     "$defs": {

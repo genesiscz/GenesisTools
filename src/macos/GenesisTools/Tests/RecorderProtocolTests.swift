@@ -87,6 +87,12 @@ final class RecorderProtocolTests: XCTestCase {
         for example in try RecorderFixtures.examples() {
             let method = try XCTUnwrap(example["method"] as? String)
             guard !method.hasPrefix("movie"), !method.hasPrefix("$/") || example["notification"] != nil else { continue }
+            // A live recording's own control calls (pause, marker.add) and its register and event messages to the
+            // service are the recording's protocol, checked by RecorderControl on the TypeScript side; the host never
+            // sees them.
+            if let direction = example["direction"] as? String, direction.contains("recording→") || direction.contains("→recording") {
+                continue
+            }
             if let notification = example["notification"] as? [String: Any] {
                 XCTAssertEqual(try schemas.check(notification["params"], "notifications", method), [], method)
                 checked += 1

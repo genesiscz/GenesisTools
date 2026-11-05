@@ -379,6 +379,9 @@ export const NOTIFICATION_SCHEMAS = {
         label: z.string().optional(),
     }),
     "$/cancel": z.object({ id: requestId }),
+    // What a client hears about live recordings (the form the service sends, with the recording's id).
+    "recordings.changed": recordingsChangedSchema,
+    "recording.event": recordingEventSchema,
 } as const;
 
 /** `subscribe`'s params; the transport answers it (`utils/rpc/socket-server.ts`). */
