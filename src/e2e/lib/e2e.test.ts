@@ -10,7 +10,7 @@ import * as mobileProject from "@genesiscz/utils/mobile/project";
 import * as mobileSession from "@genesiscz/utils/mobile/session";
 import * as mobileSimulator from "@genesiscz/utils/mobile/simulator";
 import { listRunDirs, runsRoot, stamp } from "./paths";
-import { runE2e } from "./run";
+import { runE2e, runSpec } from "./run";
 import { RUNNERS, runnerFlags } from "./runners";
 import { listSpecs, resolveSpecs, specName, suiteSpecs } from "./specs";
 import { compareRuns, countResults, formatSummary, type RunSummary, specFailed } from "./summary";
@@ -162,6 +162,24 @@ describe("run loop", () => {
             })
         ).rejects.toThrow();
         expect(prepared).toBe(false);
+    });
+});
+
+describe("a runner that does not start", () => {
+    it("fails its spec and writes why into the spec log (a missing program is the shell's 127 and its own stderr line)", async () => {
+        const logPath = join(root, "no-runner.log");
+        const lines: string[] = [];
+        const status = await runSpec({
+            command: ["true"],
+            cwd: join(root, "no-such-folder"),
+            environment: {},
+            logPath,
+            onLine: (line) => lines.push(line),
+        });
+
+        expect(status).toBe(1);
+        expect(readFileSync(logPath, "utf8")).toContain("true did not start");
+        expect(lines.some((line) => line.includes("did not start"))).toBe(true);
     });
 });
 

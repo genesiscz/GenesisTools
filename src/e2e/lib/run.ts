@@ -16,7 +16,8 @@ const log = logger.child({ component: "e2e.run" });
 
 export const RESULTS_FILE = "results.jsonl";
 
-async function runSpec(options: {
+/** One spec's runner process; its output goes to `logPath`, and a runner that does not start says why there. */
+export async function runSpec(options: {
     command: string[];
     cwd: string;
     environment: Record<string, string | undefined>;
@@ -43,6 +44,14 @@ async function runSpec(options: {
             onStdout: pump,
             onStderr: pump,
         });
+
+        if (result.error) {
+            const line = `${options.command[0]} did not start: ${result.error.message}`;
+            appendFileSync(fd, `${line}\n`);
+            options.onLine?.(line);
+            log.warn({ command: options.command[0], error: result.error }, "e2e runner did not start");
+        }
+
         return result.status ?? 1;
     } finally {
         closeSync(fd);
