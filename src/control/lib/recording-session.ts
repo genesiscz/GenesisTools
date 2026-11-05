@@ -590,9 +590,12 @@ export class RecordingSession {
         const temporary = this.temporaryOutput();
         try {
             const { durationMs } = await this.options.join({ segments: ordered, output: temporary });
-            await rename(temporary, this.options.output);
+            await this.moveMovie(temporary);
             return durationMs;
         } finally {
+            await unlink(cursorTrackPath(temporary)).catch((error: unknown) => {
+                log.debug({ error, temporary }, "recording temporary cursor track already gone");
+            });
             await unlink(temporary).catch((cleanupError: unknown) => {
                 log.debug({ error: cleanupError, temporary }, "recording temporary file already gone");
             });
