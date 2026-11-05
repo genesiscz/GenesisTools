@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { FILLER_WORDS, type FillerLists } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { AUDIO_SOURCES } from "@genesiscz/utils/screen-recorder/control";
 import { FRAME_RECORDER_IDS, type FrameRecorderId } from "@genesiscz/utils/screen-recorder/types";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -182,9 +183,27 @@ const summarySchema = z.object({
 interface LanguageDefaults {
     ocr: string[];
     render: { unclearLabel: string; readAloudLabel: string; lineLabel: string };
+    fillers: { sounds: string[]; words: string[] };
 }
 
 const label = z.string().trim().min(1);
+
+/**
+ * The filler words of one language, in the two levels the editor's `cutFillers` knows: `sounds` are never words
+ * ("ehm"), `words` are fillers that are also real words ("jako" is "as" in "stejně jako"), cut only at level `all`.
+ */
+function fillersSchema(defaults: { sounds: string[]; words: string[] }) {
+    return z.object({
+        sounds: z.array(label).default(defaults.sounds),
+        words: z.array(label).default(defaults.words),
+    });
+}
+
+/** The default lists of a language the code ships (`FILLER_WORDS`), copied so a caller cannot change the table. */
+function shippedFillers(code: string): { sounds: string[]; words: string[] } {
+    const list = FILLER_WORDS[code];
+    return { sounds: [...(list?.sounds ?? [])], words: [...(list?.words ?? [])] };
+}
 
 /** One spoken language: the Vision OCR languages for screen frames, the transcript's labels, and its word check. */
 function languageSchema(defaults: LanguageDefaults) {
@@ -202,6 +221,8 @@ function languageSchema(defaults: LanguageDefaults) {
             .prefault({}),
         /** The spell provider of this language's word check (`hunspell`, `hunspell-cc0`, `macos`); unset is the default one. */
         wordCheck: label.optional(),
+        /** The words `recorder cut-fillers` cuts for a transcript in this language (the editor's `cutFillers` op). */
+        fillers: fillersSchema(defaults.fillers).prefault({}),
     });
 }
 
@@ -210,6 +231,8 @@ const customLanguageSchema = z.object({
     ocr: z.array(label).min(1),
     render: z.object({ unclearLabel: label, readAloudLabel: label, lineLabel: label }),
     wordCheck: label.optional(),
+    /** Unset: the shipped list of that code (`FILLER_WORDS`), or none for a code the editor has no list for. */
+    fillers: fillersSchema({ sounds: [], words: [] }).optional(),
 });
 
 /** One block per spoken language. A new one is a block here (or in the file, with every key) and a class in the word check. */
@@ -218,10 +241,12 @@ const languagesSchema = z
         cs: languageSchema({
             ocr: ["cs-CZ", "en-US"],
             render: { unclearLabel: "nejasné", readAloudLabel: "čte z", lineLabel: "ř." },
+            fillers: shippedFillers("cs"),
         }).prefault({}),
         sk: languageSchema({
             ocr: ["sk-SK", "cs-CZ", "en-US"],
             render: { unclearLabel: "nejasné", readAloudLabel: "číta z", lineLabel: "r." },
+            fillers: shippedFillers("sk"),
         }).prefault({}),
     })
     .catchall(customLanguageSchema);
@@ -238,6 +263,17 @@ const assignSchema = z.object({
     maxProposals: z.number().int().min(1).max(20).default(5),
     /** A calendar entry counts as the meeting's when it overlaps it, or starts this many minutes before or after it. */
     calendarSlackMin: z.number().int().min(0).max(120).default(15),
+    /** Calendar entries that start this many hours before a meeting can still cover it (never less than the slack). */
+    calendarLookbehindHours: z.number().int().min(0).max(48).default(3),
+    /** A meeting waits this many days for the owner to move it into a source folder (Wispr); then the folder step ends. */
+    folderWaitDays: z.number().int().positive().max(365).default(14),
+    /** A project question whose post failed is posted again after this many minutes, so a broken inbox is not hit on every look. */
+    retryFailedMin: z
+        .number()
+        .int()
+        .positive()
+        .max(24 * 60)
+        .default(10),
 });
 
 const storedConfigSchema = z
@@ -399,6 +435,25 @@ export function languageSettings(config: Pick<StoredConfig, "global" | "language
     }
 
     return block;
+}
+
+/**
+ * The filler lists the editor cuts with: the shipped list of each code (`FILLER_WORDS`, so `en` works without a
+ * block), each replaced by the `fillers` of the same code in `languages`. A custom language without `fillers` keeps
+ * the shipped list of its code, or has none.
+ */
+export function fillerListsOf(languages: MeetingsConfig["languages"]): FillerLists {
+    const lists: FillerLists = { ...FILLER_WORDS };
+
+    for (const [code, block] of Object.entries(languages)) {
+        const own = block?.fillers;
+
+        if (own) {
+            lists[code] = { sounds: own.sounds, words: own.words };
+        }
+    }
+
+    return lists;
 }
 
 /** What a recorder takes beyond the shared capture policy: its own block of `capture.recorders`. */

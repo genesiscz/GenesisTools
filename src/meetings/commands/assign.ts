@@ -31,7 +31,8 @@ async function proposals(ref: string, opts: { json?: boolean }): Promise<void> {
 
         const deps = defaultAssignDeps();
         const view = await viewProposals(store, record, deps);
-        const skipped = skipReason(record, store, deps.now());
+        const { assign } = (await deps.config.read()).global;
+        const skipped = skipReason({ record, store, now: deps.now(), retryFailedMin: assign.retryFailedMin });
 
         if (opts.json) {
             out.result(SafeJSON.stringify({ meeting: record.id, skipped, ...view, record: undefined }, null, 2));

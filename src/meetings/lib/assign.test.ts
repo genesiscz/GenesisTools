@@ -13,11 +13,13 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import {
     type AssignDeps,
     askAtMeetingEnd,
+    askMeeting,
     assignSweep,
     buildQuestion,
     hasOpenAssignSteps,
     markAssignStart,
     readAnswer,
+    skipReason,
     viewProposals,
 } from "./assign";
 import type { AskAnswer, AssignInbox, CreateAskFormInput, InboxAnswer } from "./assign-inbox";
@@ -408,6 +410,99 @@ describe("ask each time", () => {
 
         expect((await assignSweep(store, deps)).asked).toEqual([fresh.id]);
         expect(inbox.posted).toHaveLength(1);
+    });
+
+    test("the calendar look-behind is 3 hours without a key, and global.assign.calendarLookbehindHours changes it", async () => {
+        const { store, config, deps, create } = setup();
+        const meeting = await create("Planning", "2026-11-04T14:00:00.000Z");
+        const froms: number[] = [];
+        const watching: AssignDeps = {
+            ...deps,
+            calendars: async (range, linked) => {
+                froms.push(range.from.getTime());
+                return deps.calendars(range, linked);
+            },
+        };
+        const start = Date.parse(meeting.start);
+
+        await viewProposals(store, meeting, watching);
+        await config.update((raw) => {
+            raw.global = { assign: { calendarLookbehindHours: 6 } };
+        });
+        await viewProposals(store, meeting, watching);
+
+        expect(froms).toEqual([start - 3 * 3_600_000, start - 6 * 3_600_000]);
+    });
+
+    test("a meeting waits 14 days for its folder without a key, and global.assign.folderWaitDays changes it", async () => {
+        const answerFolder = async (days?: number) => {
+            const { store, config, inbox, deps, create, state } = setup();
+            await config.addProject("offers");
+
+            if (days !== undefined) {
+                await config.update((raw) => {
+                    raw.global = { assign: { folderWaitDays: days } };
+                });
+            }
+
+            const meeting = await create("Planning", "2026-11-04T14:00:00.000Z");
+            await assignSweep(store, deps);
+            inbox.answer(inbox.posted[0]!.id, [{ itemId: "project", freeText: "offers" }]);
+            await assignSweep(store, deps);
+            const since = Date.parse(store.read(meeting.id)?.assign?.folder?.since ?? "");
+            const outcomeAfter = async (waitedMs: number) => {
+                state.now = since + waitedMs;
+                return (await assignSweep(store, deps)).advanced.map((step) => step.outcome);
+            };
+
+            return { outcomeAfter };
+        };
+        const day = 24 * 3_600_000;
+        const fresh = await answerFolder();
+        expect(await fresh.outcomeAfter(14 * day - 60_000)).toEqual([]);
+        expect(await fresh.outcomeAfter(14 * day + 60_000)).toEqual(["folder wait expired"]);
+
+        const longer = await answerFolder(30);
+        expect(await longer.outcomeAfter(15 * day)).toEqual([]);
+        expect(await longer.outcomeAfter(30 * day + 60_000)).toEqual(["folder wait expired"]);
+    });
+
+    test("a failed post is asked again after 10 minutes without a key, and global.assign.retryFailedMin changes it", async () => {
+        const failedAsk = async (minutes?: number) => {
+            const { store, config, inbox, deps, create, state } = setup();
+
+            if (minutes !== undefined) {
+                await config.update((raw) => {
+                    raw.global = { assign: { retryFailedMin: minutes } };
+                });
+            }
+
+            const meeting = await create("Planning", "2026-11-04T14:00:00.000Z");
+            const post = inbox.post.bind(inbox);
+            inbox.post = async () => {
+                throw new Error("inbox down");
+            };
+            await askMeeting(store, meeting, deps);
+            inbox.post = post;
+
+            const asked = Date.parse(store.read(meeting.id)?.assign?.ask?.askedAt ?? "");
+            const skippedAfter = async (waitedMin: number) => {
+                const retry = (await config.read()).global.assign.retryFailedMin;
+                const record = store.read(meeting.id)!;
+                return (
+                    skipReason({ record, store, now: asked + waitedMin * 60_000, retryFailedMin: retry }) !== undefined
+                );
+            };
+
+            return { skippedAfter, state };
+        };
+        const fresh = await failedAsk();
+        expect(await fresh.skippedAfter(9)).toBe(true);
+        expect(await fresh.skippedAfter(11)).toBe(false);
+
+        const slower = await failedAsk(30);
+        expect(await slower.skippedAfter(11)).toBe(true);
+        expect(await slower.skippedAfter(31)).toBe(false);
     });
 
     test("readAnswer: no project, a known one picked, labels from choices and text", () => {

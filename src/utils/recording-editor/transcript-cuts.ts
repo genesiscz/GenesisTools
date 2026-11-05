@@ -12,7 +12,10 @@ import { z } from "zod";
  * also real words ("jako" is "as" in "stejně jako"), so cutting them is a choice. A caller passes its own list instead.
  * Measured on a 54-minute Czech meeting (2026-11-04): 24 sounds and 199 "jako"/"jakože".
  */
-export const FILLER_WORDS: Record<string, { sounds: readonly string[]; words: readonly string[] }> = {
+export type FillerLists = Record<string, { sounds: readonly string[]; words: readonly string[] }>;
+
+/** The shipped lists. The meetings config (`languages.<code>.fillers`) starts from them and may replace each. */
+export const FILLER_WORDS: FillerLists = {
     cs: { sounds: ["ehm", "hm", "hmm", "eh", "em", "ee", "éé", "mhm"], words: ["jako", "jakože"] },
     sk: { sounds: ["ehm", "hm", "hmm", "eh", "em", "ee", "éé", "mhm"], words: ["akože", "jako"] },
     en: { sounds: ["um", "uh", "uhm", "erm", "er", "hmm", "hm", "mhm"], words: ["like"] },
@@ -162,29 +165,38 @@ export function wordCuts(options: {
     return [picked];
 }
 
-/** The filler words to cut: your own `words`, else `language`'s list (absent: every language's) at `level`. */
-export function fillerList(options: { language?: string; words?: readonly string[]; level?: FillerLevel }): string[] {
+/**
+ * The filler words to cut: your own `words`, else `language`'s list (absent: every language's) at `level`. `lists`
+ * is where the lists come from: the shipped `FILLER_WORDS` unless the caller passes the config's.
+ */
+export function fillerList(options: {
+    language?: string;
+    words?: readonly string[];
+    level?: FillerLevel;
+    lists?: FillerLists;
+}): string[] {
     if (options.words && options.words.length > 0) {
         return options.words.map(foldWord).filter(Boolean);
     }
 
     const level = options.level ?? "sounds";
+    const lists = options.lists ?? FILLER_WORDS;
     const pick = (list: { sounds: readonly string[]; words: readonly string[] }) =>
         level === "all" ? [...list.sounds, ...list.words] : [...list.sounds];
 
     if (options.language !== undefined) {
-        const list = FILLER_WORDS[options.language];
+        const list = lists[options.language];
 
         if (!list) {
             throw new RangeError(
-                `no filler list for "${options.language}"; known: ${Object.keys(FILLER_WORDS).join(", ")}, or pass words`
+                `no filler list for "${options.language}"; known: ${Object.keys(lists).join(", ")}, or pass words`
             );
         }
 
         return pick(list);
     }
 
-    return [...new Set(Object.values(FILLER_WORDS).flatMap(pick))];
+    return [...new Set(Object.values(lists).flatMap(pick))];
 }
 
 /** Every filler word said in the transcript, each as its own cut (a run of fillers is one cut). */

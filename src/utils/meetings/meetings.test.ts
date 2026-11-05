@@ -4,8 +4,10 @@ import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { FILLER_WORDS } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import {
+    fillerListsOf,
     languageSettings,
     MEETINGS_CONFIG_VERSION,
     MeetingsConfigStore,
@@ -45,6 +47,56 @@ describe("meetings config", () => {
         expect(languageSettings(config).ocr).toEqual(["cs-CZ", "en-US"]);
         expect(languageSettings(config, "sk").render.readAloudLabel).toBe("číta z");
         expect(recorderSettings(config.global.capture)).toEqual({ audio: { sources: [] } });
+    });
+
+    const shipped = (code: string) => ({
+        sounds: [...FILLER_WORDS[code].sounds],
+        words: [...FILLER_WORDS[code].words],
+    });
+
+    test("fillers per language: an old file without the key keeps the shipped lists, a changed one replaces its own language", () => {
+        const old = meetingsConfigSchema.parse({ version: 3, languages: { cs: { ocr: ["cs-CZ"] } } });
+        expect(languageSettings(old, "cs").fillers).toEqual(shipped("cs"));
+        expect(languageSettings(old, "sk").fillers).toEqual(shipped("sk"));
+        expect(fillerListsOf(old.languages)).toEqual(FILLER_WORDS);
+
+        const changed = meetingsConfigSchema.parse({
+            languages: {
+                cs: { fillers: { sounds: ["ehm", "ach"] } },
+                de: {
+                    ocr: ["de-DE"],
+                    render: { unclearLabel: "unklar", readAloudLabel: "liest aus", lineLabel: "Z." },
+                    fillers: { sounds: ["äh"], words: ["also"] },
+                },
+            },
+        });
+        const lists = fillerListsOf(changed.languages);
+
+        expect(lists.cs).toEqual({ sounds: ["ehm", "ach"], words: [...FILLER_WORDS.cs.words] });
+        expect(lists.de).toEqual({ sounds: ["äh"], words: ["also"] });
+        expect(lists.sk).toEqual(FILLER_WORDS.sk);
+        expect(lists.en).toEqual(FILLER_WORDS.en);
+
+        const withoutKey = meetingsConfigSchema.parse({
+            languages: {
+                en: {
+                    ocr: ["en-US"],
+                    render: { unclearLabel: "unclear", readAloudLabel: "reads from", lineLabel: "l." },
+                },
+            },
+        });
+        expect(fillerListsOf(withoutKey.languages).en).toEqual(FILLER_WORDS.en);
+    });
+
+    test("an empty file has the three assign timings of today, and a changed one is read", () => {
+        const defaults = meetingsConfigSchema.parse({}).global.assign;
+        expect(defaults).toMatchObject({ calendarLookbehindHours: 3, folderWaitDays: 14, retryFailedMin: 10 });
+
+        const changed = meetingsConfigSchema.parse({
+            global: { assign: { calendarLookbehindHours: 6, folderWaitDays: 30, retryFailedMin: 20 } },
+        }).global.assign;
+        expect(changed).toMatchObject({ calendarLookbehindHours: 6, folderWaitDays: 30, retryFailedMin: 20 });
+        expect(() => meetingsConfigSchema.parse({ global: { assign: { folderWaitDays: 0 } } })).toThrow();
     });
 
     test("a version 1 file moves each key to its axis, and the old places still read", () => {
@@ -112,7 +164,15 @@ describe("meetings config", () => {
         expect(config.projects.work?.match?.title?.words).toEqual(["Sync", "Wiki"]);
         expect(config.projects.work?.labels).toEqual([]);
         expect(config.projects.work?.match?.people).toEqual([]);
-        expect(config.global.assign).toEqual({ ask: true, lookbackHours: 48, maxProposals: 5, calendarSlackMin: 15 });
+        expect(config.global.assign).toEqual({
+            ask: true,
+            lookbackHours: 48,
+            maxProposals: 5,
+            calendarSlackMin: 15,
+            calendarLookbehindHours: 3,
+            folderWaitDays: 14,
+            retryFailedMin: 10,
+        });
         expect(matchProjects(config, { title: "Side quest" })).toEqual(["side"]);
         expect(meetingsConfigSchema.parse({ version: 4, future: { key: 1 } }).version).toBe(4);
     });

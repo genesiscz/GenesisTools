@@ -5,6 +5,7 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { fillerListsOf, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { bubbleFromSidecar, readCameraSidecar } from "@genesiscz/utils/recording-editor/camera";
 import { checkProject } from "@genesiscz/utils/recording-editor/check";
 import { ensureDenoisedSource } from "@genesiscz/utils/recording-editor/denoise";
@@ -33,6 +34,7 @@ import {
 import { formatSubtitles, type SubtitleFormat, subtitleCues } from "@genesiscz/utils/recording-editor/subtitles";
 import {
     type CutMatch,
+    type FillerLists,
     fillerCuts,
     fillerList,
     foldWord,
@@ -356,6 +358,19 @@ export function readTranscriptSegments(project: EditProject): TranscriptSegment[
 }
 
 /**
+ * The filler lists the meetings config holds (`languages.<code>.fillers`). A config that cannot be read leaves the
+ * shipped lists in place, so a movie that is no meeting still edits.
+ */
+async function configuredFillerLists(): Promise<FillerLists | undefined> {
+    try {
+        return fillerListsOf((await new MeetingsConfigStore().read()).languages);
+    } catch (err) {
+        log.warn({ err }, "meetings config not readable; cutFillers uses the shipped filler lists");
+        return undefined;
+    }
+}
+
+/**
  * What `cutWords` or `cutFillers` would cut, without saving: each cut with its source range, the line it is in, whether
  * its time is estimated, and where it plays in the edit now (null when that part is cut already).
  */
@@ -365,6 +380,7 @@ export async function previewTranscriptCuts(
 ): Promise<Array<CutMatch & { plays: number | null }>> {
     const { project } = await openProject(value);
     const segments = readTranscriptSegments(project);
+    const lists = op.op === "cutFillers" ? await configuredFillerLists() : undefined;
     const cuts =
         op.op === "cutWords"
             ? wordCuts({
@@ -376,7 +392,7 @@ export async function previewTranscriptCuts(
               })
             : fillerCuts({
                   segments,
-                  fillers: fillerList({ language: op.language, words: op.words, level: op.level }),
+                  fillers: fillerList({ language: op.language, words: op.words, level: op.level, lists }),
                   padMs: op.padMs,
               });
     return cuts.map((cut) => {
@@ -443,7 +459,8 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
     }
 
     if (op.op === "cutWords" || op.op === "cutFillers") {
-        return { transcript: readTranscriptSegments(project) };
+        const fillerLists = op.op === "cutFillers" ? await configuredFillerLists() : undefined;
+        return { transcript: readTranscriptSegments(project), ...(fillerLists ? { fillerLists } : {}) };
     }
 
     return {};

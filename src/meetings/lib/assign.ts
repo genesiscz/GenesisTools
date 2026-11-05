@@ -30,13 +30,6 @@ import { readAuto } from "./watch-auto";
 
 const { log } = logger.scoped("meetings-assign");
 
-/** A failed post is tried again after this long, so a broken inbox is not hit on every look. */
-const RETRY_FAILED_MS = 10 * 60_000;
-/** A meeting waits this long for the owner to move it into a source folder; then the folder step ends. */
-const FOLDER_WAIT_MS = 14 * 24 * 3_600_000;
-/** Calendar entries that start this long before a meeting can still cover it. */
-const ENTRY_LOOKBEHIND_MS = 3 * 3_600_000;
-
 const OPEN_FILE = "assign-open.json";
 
 /**
@@ -105,8 +98,9 @@ export async function viewProposals(store: MeetingStore, record: MeetingRecord, 
     const start = Date.parse(record.start);
     const end = record.end ? Date.parse(record.end) : start + 30 * 60_000;
     const slack = config.global.assign.calendarSlackMin * 60_000;
+    const lookbehind = config.global.assign.calendarLookbehindHours * 3_600_000;
     const lookups = await deps.calendars(
-        { from: new Date(start - Math.max(slack, ENTRY_LOOKBEHIND_MS)), to: new Date(end + slack) },
+        { from: new Date(start - Math.max(slack, lookbehind)), to: new Date(end + slack) },
         linked?.source
     );
     const entries = mergeCalendarEntries(lookups.flatMap((lookup) => (lookup.ok ? [lookup.entries] : [])));
@@ -345,15 +339,25 @@ function endedAt(record: MeetingRecord): number {
     return Date.parse(record.end ?? record.recording?.stoppedAt ?? record.start);
 }
 
-/** Why a meeting is not asked about now; undefined when it should be. */
-export function skipReason(record: MeetingRecord, store: MeetingStore, now: number): string | undefined {
+/**
+ * Why a meeting is not asked about now; undefined when it should be. `retryFailedMin` is `global.assign.retryFailedMin`:
+ * a question whose post failed is posted again after that long.
+ */
+export function skipReason(options: {
+    record: MeetingRecord;
+    store: MeetingStore;
+    now: number;
+    retryFailedMin: number;
+}): string | undefined {
+    const { record, store, now } = options;
+
     if (record.project) {
         return `has project ${record.project}`;
     }
 
     const ask = record.assign?.ask;
 
-    if (ask && !(ask.outcome === "failed" && now - Date.parse(ask.askedAt) > RETRY_FAILED_MS)) {
+    if (ask && !(ask.outcome === "failed" && now - Date.parse(ask.askedAt) > options.retryFailedMin * 60_000)) {
         return `asked at ${ask.askedAt} (${ask.outcome})`;
     }
 
@@ -374,7 +378,8 @@ export function skipReason(record: MeetingRecord, store: MeetingStore, now: numb
 
 /**
  * Posts the one question of a meeting. The record claims the question first, under its lock, so two watchers never
- * ask twice; a failed post is marked and tried again after ten minutes. Returns the form id, or why it did not ask.
+ * ask twice; a failed post is marked and tried again after `assign.retryFailedMin` minutes. Returns the form id, or
+ * why it did not ask.
  */
 export async function askMeeting(
     store: MeetingStore,
@@ -383,13 +388,15 @@ export async function askMeeting(
     options: { force?: boolean } = {}
 ): Promise<{ formId?: string; skipped?: string }> {
     const now = deps.now();
-    const skipped = options.force ? undefined : skipReason(record, store, now);
+    const config = await deps.config.read();
+    const skipped = options.force
+        ? undefined
+        : skipReason({ record, store, now, retryFailedMin: config.global.assign.retryFailedMin });
 
     if (skipped) {
         return { skipped };
     }
 
-    const config = await deps.config.read();
     const view = await viewProposals(store, record, deps);
     const formId = `meetings-assign-${record.id}-${now.toString(36)}`;
     let claimed = false;
@@ -664,7 +671,9 @@ async function advanceFolder(
         return yes ? "folder paired" : "folder declined";
     }
 
-    if (deps.now() - Date.parse(folder.since) > FOLDER_WAIT_MS) {
+    const config = await deps.config.read();
+
+    if (deps.now() - Date.parse(folder.since) > config.global.assign.folderWaitDays * 24 * 3_600_000) {
         setOpen(store, record.id, undefined);
         return "folder wait expired";
     }
@@ -676,7 +685,6 @@ async function advanceFolder(
         return "waiting";
     }
 
-    const config = await deps.config.read();
     const paired = config.sources[folder.source].match[folder.project]?.folders ?? [];
     const known = folders.find((name) => paired.some((one) => one.toLowerCase() === name.toLowerCase()));
 
@@ -835,10 +843,12 @@ export async function assignSweep(store: MeetingStore, deps: AssignDeps = defaul
     const now = deps.now();
     const since = Date.parse(readState(store).since ?? markAssignStart(store, new Date(now)));
 
+    const retryFailedMin = config.global.assign.retryFailedMin;
+
     for (const id of recentMeetingIds(store, now - config.global.assign.lookbackHours * 3_600_000)) {
         const record = store.read(id);
 
-        if (!record || endedAt(record) < since || skipReason(record, store, now)) {
+        if (!record || endedAt(record) < since || skipReason({ record, store, now, retryFailedMin })) {
             continue;
         }
 

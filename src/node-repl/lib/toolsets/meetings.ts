@@ -729,10 +729,13 @@ export class MeetingsToolset extends ReplToolset {
                     const deps = defaultAssignDeps();
                     const record = current();
                     const view = await viewProposals(store, record, deps);
+                    const { assign } = (await deps.config.read()).global;
                     return {
                         proposals: view.proposals,
                         calendarNotes: view.calendarNotes,
-                        skipped: skipReason(record, store, deps.now()) ?? null,
+                        skipped:
+                            skipReason({ record, store, now: deps.now(), retryFailedMin: assign.retryFailedMin }) ??
+                            null,
                     };
                 },
                 ask: async (input: z.input<typeof assignAsk.params> = {}) => {

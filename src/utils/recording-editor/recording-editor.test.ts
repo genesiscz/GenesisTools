@@ -1130,6 +1130,11 @@ describe("cutting by the transcript", () => {
         const all = fillerCuts({ segments, fillers: fillerList({ language: "cs", level: "all" }), padMs: 0 });
         expect(all.map((cut) => cut.text)).toEqual(["ehm,", "Hmm, hmm.", "jako"]);
         expect(fillerList({ words: ["Ehm!"] })).toEqual(["ehm"]);
+        const lists = { cs: { sounds: ["ach"], words: ["tedy"] }, de: { sounds: ["äh"], words: [] } };
+        expect(fillerList({ language: "cs", lists })).toEqual(["ach"]);
+        expect(fillerList({ language: "cs", level: "all", lists })).toEqual(["ach", "tedy"]);
+        expect(fillerList({ lists })).toEqual(["ach", "äh"]);
+        expect(() => fillerList({ language: "en", lists })).toThrow("known: cs, de");
         expect(() => fillerList({ language: "xx" })).toThrow('no filler list for "xx"');
     });
 

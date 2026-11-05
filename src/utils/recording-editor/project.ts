@@ -22,7 +22,15 @@ import {
     withLane,
 } from "./lanes";
 import { timeSchema, timeToUs } from "./plan";
-import { cutRanges, FILLER_LEVELS, fillerCuts, fillerList, type TranscriptSegment, wordCuts } from "./transcript-cuts";
+import {
+    cutRanges,
+    FILLER_LEVELS,
+    type FillerLists,
+    fillerCuts,
+    fillerList,
+    type TranscriptSegment,
+    wordCuts,
+} from "./transcript-cuts";
 
 const { log } = logger.scoped("recording-editor-project");
 
@@ -1281,6 +1289,8 @@ export interface OpFacts {
     idleUs?: ReadonlyArray<readonly [number, number]>;
     /** The cached transcript's lines (`cutWords`, `cutFillers`). */
     transcript?: readonly TranscriptSegment[];
+    /** The filler lists `cutFillers` picks from (the meetings config's); absent is the shipped `FILLER_WORDS`. */
+    fillerLists?: FillerLists;
     /** The movie's integrated loudness at volume 1; null when it has no unmuted audio. */
     loudnessLufs?: number | null;
 }
@@ -1672,7 +1682,12 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                       })
                     : fillerCuts({
                           segments: facts.transcript,
-                          fillers: fillerList({ language: op.language, words: op.words, level: op.level }),
+                          fillers: fillerList({
+                              language: op.language,
+                              words: op.words,
+                              level: op.level,
+                              lists: facts.fillerLists,
+                          }),
                           ...(op.padMs !== undefined ? { padMs: op.padMs } : {}),
                       });
             return cutRanges(cuts).reduce((next, cut) => cutRange(next, cut.fromUs, cut.toUs), project);
