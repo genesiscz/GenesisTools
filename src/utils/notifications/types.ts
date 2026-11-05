@@ -44,8 +44,9 @@ export interface PhoneApnsConfig {
 export interface PhoneChannelConfig {
     enabled: boolean;
     /**
-     * Whether the prompt and the options go on the lock screen. Apple carries the payload; off sends the label and
-     * the project only (the buttons work either way, their tokens are sealed to the device).
+     * Whether the prompt and the options go on the lock screen. Apple carries the payload; off sends a fixed title and
+     * line instead of the event's title, subtitle and message, which all name the topic (the buttons work either way,
+     * their tokens are sealed to the device).
      */
     text?: boolean;
     apns?: PhoneApnsConfig;

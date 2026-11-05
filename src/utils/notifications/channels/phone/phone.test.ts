@@ -105,8 +105,9 @@ describe("phone channel", () => {
 
         await channel.post(decisionEvent, { enabled: true, text: false });
 
-        const alert = (sent[0].message.payload.aps as { alert: { body: string } }).alert;
-        expect(alert.body).toBe(TEXT_OFF_BODY);
+        const alert = (sent[0].message.payload.aps as { alert: { title: string; subtitle?: string; body: string } })
+            .alert;
+        expect(alert).toEqual({ title: "GenesisTools", body: TEXT_OFF_BODY });
     });
 
     test("a switched-off channel sends nothing", async () => {
