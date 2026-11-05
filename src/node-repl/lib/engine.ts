@@ -89,6 +89,8 @@ export interface ReplEngineOptions {
 
 /** How long `shutdown` and `reset` give the toolsets to release what they started before the worker is killed. */
 const DISPOSE_TIMEOUT_MS = 10_000;
+/** How long a shutdown waits for the recordings this engine owns to finish their post-processing. */
+const RECORDING_FINISH_TIMEOUT_MS = 600_000;
 
 export class ReplEngine {
     private worker: ReplWorker | null = null;
@@ -102,6 +104,8 @@ export class ReplEngine {
     private shutdownJob?: Promise<void>;
     private scratch?: TemporaryArtifacts;
     private readonly recordings = new Set<LibraryRecording>();
+    /** Post-processing failures of recordings that finished on their own; the next shutdown reports them. */
+    private readonly recordingFailures: unknown[] = [];
     private readonly recordingStarts = new Set<Promise<void>>();
     readonly defaultTimeoutMs: number;
     readonly preloadTimeoutMs: number;
@@ -137,6 +141,11 @@ export class ReplEngine {
                 return;
             }
 
+            // A worker that a reset or a shutdown replaced starts nothing: its recording would outlive every owner.
+            if (this.worker !== worker) {
+                return;
+            }
+
             const requestId = message.id;
             const startup = new AbortController();
             const task = (async () => {
@@ -161,6 +170,14 @@ export class ReplEngine {
                         new Error(`Recording startup exceeded ${this.preloadTimeoutMs} ms`)
                     );
                     this.recordings.add(recording);
+                    // A recording the turn stopped itself leaves the set once its post-processing is done.
+                    void recording.finished.then(
+                        () => this.recordings.delete(recording),
+                        (error: unknown) => {
+                            this.recordings.delete(recording);
+                            this.recordingFailures.push(error);
+                        }
+                    );
 
                     if (this.worker === worker && worker.exitCode === null) {
                         worker.send({ id: requestId, recordingId: recording.id });
@@ -443,18 +460,29 @@ export class ReplEngine {
                 }
             }
 
-            await Promise.all(this.recordingStarts);
-
-            const results = await Promise.allSettled([...this.recordings].map((recording) => recording.stop()));
-            this.recordings.clear();
+            // The worker dies first, so no timer in it can start another recording while the owned ones finish.
             this.killWorker(reason);
-            const failures = results.filter((result) => result.status === "rejected");
+            await Promise.all(this.recordingStarts);
+            const owned = [...this.recordings];
+            const results = await withTimeout(
+                Promise.allSettled(owned.map((recording) => recording.stop())),
+                RECORDING_FINISH_TIMEOUT_MS,
+                new Error(`Recording finalization exceeded ${RECORDING_FINISH_TIMEOUT_MS / 60_000} minutes`)
+            );
+
+            for (const recording of owned) {
+                this.recordings.delete(recording);
+            }
+
+            const failures = [
+                ...new Set([
+                    ...this.recordingFailures.splice(0),
+                    ...results.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])),
+                ]),
+            ];
 
             if (failures.length > 0) {
-                throw new AggregateError(
-                    failures.map((result) => result.reason),
-                    "Recording post-processing failed"
-                );
+                throw new AggregateError(failures, "Recording post-processing failed");
             }
         })();
         this.shutdownJob = stop;

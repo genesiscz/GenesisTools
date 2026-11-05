@@ -3,7 +3,14 @@ import { ComputerToolset } from "@app/control/lib/computer-use/toolset";
 import { ReplToolset, type ToolsetContext } from "@genesiscz/utils/repl/toolset";
 
 export class ControlToolset extends ReplToolset {
-    readonly api = { ...computerApi, id: "control", global: "control", title: "Native control" };
+    // The copied notes name the binding this toolset exposes, so an example reads `control.…`, never `computer.…`.
+    readonly api = {
+        ...computerApi,
+        id: "control",
+        global: "control",
+        title: "Native control",
+        notes: computerApi.notes?.map((note) => note.replaceAll("computer.", "control.")),
+    };
     private readonly delegate = new ComputerToolset();
 
     async bootstrap(ctx: ToolsetContext): Promise<Record<string, unknown>> {

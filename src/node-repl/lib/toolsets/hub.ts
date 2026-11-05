@@ -1,4 +1,3 @@
-import { hubPr, hubPrs } from "@app/hub/lib/prs";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import { z } from "zod";
@@ -28,6 +27,8 @@ export class HubToolset extends ReplToolset {
     });
 
     async bootstrap(): Promise<Record<string, unknown>> {
+        // lazy: saves 53.7 ms cold import (tools ts imports lazy, 2026-11-05) — listing the toolsets loads no hub backend
+        const { hubPr, hubPrs } = await import("@app/hub/lib/prs");
         return {
             hub: {
                 prs: (input: z.input<typeof list.params>) => hubPrs(list.params.parse(input)),

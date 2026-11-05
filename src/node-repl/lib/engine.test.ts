@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
+import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 import { jsDescription } from "../mcp/server";
 import { ReplEngine, resultMessage } from "./engine";
-import { parseToolsetList } from "./toolsets";
+import { createToolsets, parseToolsetList } from "./toolsets";
 
 // The MCP server renders a js_add_node_module_dir result with this. A timeout or a worker exit
 // reports through `error` with an EMPTY `text`, so reading `text` alone answered those failures
@@ -333,4 +334,16 @@ it("reset interrupts an active turn and cancels turns queued before it", async (
         await reset;
         engine.dispose();
     }
+});
+
+it("discovery covers handle names, missing names and ambiguous names", async () => {
+    const apis = (await createToolsets(["meetings", "browser", "control"])).map((toolset) => toolset.api);
+    expect(searchMethods(apis, "items.add")).toContain("meetings.Meeting.items.add");
+    expect(describeMethod(apis, "meetings.Meeting.items.add")).toContain("Parameters:");
+    expect(() => describeMethod(apis, "missing.method")).toThrow("Unknown method");
+    expect(() => describeMethod(apis, "open")).toThrow("Ambiguous method");
+    expect(searchMethods(apis, "no-such-method-xyz")).toBe("No matching methods in the loaded toolsets.");
+    const notes = apis.find((api) => api.global === "control")!.notes!.join(" ");
+    expect(notes).toContain("control.read_image");
+    expect(notes).not.toContain("computer.read_image");
 });

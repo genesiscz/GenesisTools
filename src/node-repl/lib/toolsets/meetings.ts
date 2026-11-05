@@ -1,20 +1,11 @@
-import {
-    applyAnswer,
-    askMeeting,
-    assignSweep,
-    defaultAssignDeps,
-    skipReason,
-    viewProposals,
-} from "@app/meetings/lib/assign";
 import { decideItems } from "@app/meetings/lib/decide";
-import { meetingEditorSource } from "@app/meetings/lib/editor-project";
 import { findingItems, findingProblems, findingSchema } from "@app/meetings/lib/findings";
 import { itemWhat } from "@app/meetings/lib/item-text";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { resolveProject } from "@app/meetings/lib/project";
 import { questionLabel } from "@app/meetings/lib/questions";
 import { meetingLiveId } from "@app/meetings/lib/recorder";
-import { meetingScreen } from "@app/meetings/lib/screen-boxes";
+
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { runSuggest } from "@app/meetings/lib/suggest-run";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
@@ -37,6 +28,8 @@ import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/
 import { z } from "zod";
 
 const { log } = logger.scoped("meetings-toolset");
+// lazy: saves 13.8 ms cold import (tools ts imports lazy, 2026-11-05) — calendar assignment loads on its first call
+const loadAssign = () => import("@app/meetings/lib/assign");
 
 const ref = z.object({ ref: z.string().min(1) });
 const ids = z.array(z.string().min(1));
@@ -459,7 +452,7 @@ export class MeetingsToolset extends ReplToolset {
                     },
                 },
                 assign: {
-                    sweep: async () => assignSweep(store),
+                    sweep: async () => (await loadAssign()).assignSweep(store),
                 },
             },
         };
@@ -597,6 +590,7 @@ export class MeetingsToolset extends ReplToolset {
             },
             assign: {
                 proposals: async () => {
+                    const { defaultAssignDeps, skipReason, viewProposals } = await loadAssign();
                     const deps = defaultAssignDeps();
                     const record = current();
                     const view = await viewProposals(store, record, deps);
@@ -606,10 +600,13 @@ export class MeetingsToolset extends ReplToolset {
                         skipped: skipReason(record, store, deps.now()) ?? null,
                     };
                 },
-                ask: async (input: z.input<typeof assignAsk.params> = {}) =>
-                    askMeeting(store, current(), defaultAssignDeps(), assignAsk.params.parse(input)),
+                ask: async (input: z.input<typeof assignAsk.params> = {}) => {
+                    const { askMeeting, defaultAssignDeps } = await loadAssign();
+                    return askMeeting(store, current(), defaultAssignDeps(), assignAsk.params.parse(input));
+                },
                 apply: async (input: z.input<typeof assignApply.params>) => {
                     const parsed = assignApply.params.parse(input);
+                    const { applyAnswer, defaultAssignDeps, viewProposals } = await loadAssign();
                     const deps = defaultAssignDeps();
                     const record = current();
                     const entries =
@@ -685,6 +682,8 @@ export class MeetingsToolset extends ReplToolset {
             },
             editorProject: async (input: z.input<typeof editorProject.params> = {}) => {
                 const options = editorProject.params.parse(input);
+                // lazy: saves 5.5 ms cold import (tools ts imports lazy, 2026-11-05) — only an editor project needs it
+                const { meetingEditorSource } = await import("@app/meetings/lib/editor-project");
                 return meetingEditorSource({
                     store,
                     record: current(),
@@ -709,6 +708,8 @@ export class MeetingsToolset extends ReplToolset {
                     throw new Error(`at "${options.at}" is no transcript time: use seconds, 1:23:50 or 23:50`);
                 }
 
+                // lazy: saves 89.9 ms cold import (tools ts imports lazy, 2026-11-05) — the OCR box renderer loads on use
+                const { meetingScreen } = await import("@app/meetings/lib/screen-boxes");
                 const {
                     displays: _displays,
                     spans: _spans,

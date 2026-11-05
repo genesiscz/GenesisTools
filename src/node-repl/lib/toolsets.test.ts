@@ -905,3 +905,85 @@ test("a MIME hint cannot turn arbitrary bytes into an image", async () => {
         "not a PNG"
     );
 });
+
+test("library capture reuses readiness completed during startup", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rec-ready-once-"));
+    const recorder = new FakeRecorder();
+    const gate = Promise.withResolvers<void>();
+    let calls = 0;
+    recorder.available = async () => {
+        calls += 1;
+
+        if (calls > 1) {
+            await gate.promise;
+        }
+
+        return { ok: true };
+    };
+    const recording = await startRecording({ recorder, folder: join(root, "rec"), liveDir: join(root, "live") });
+
+    try {
+        await withTimeout(recording.stop(), 300);
+        expect(calls).toBe(1);
+    } finally {
+        gate.resolve();
+        await recording.stop();
+    }
+});
+
+test("completed recordings leave the parent ownership set", async () => {
+    const engine = new ReplEngine({ toolsets: ["recorder"], recorder: { create: async () => new FakeRecorder() } });
+
+    try {
+        const result = await engine.run("const rec = await recorder.start(); await rec.stop(); true");
+        expect(result.ok).toBe(true);
+        const owned: Set<LibraryRecording> = Reflect.get(engine, "recordings");
+        expect(owned.size).toBe(0);
+    } finally {
+        await engine.shutdown();
+    }
+});
+
+test("shutdown prevents a worker timer from starting another recording during finalization", async () => {
+    const stopping = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let created = 0;
+    const engine = new ReplEngine({
+        toolsets: ["recorder"],
+        recorder: {
+            create: async () => {
+                const recorder = new FakeRecorder();
+                created += 1;
+
+                if (created === 1) {
+                    const capture = recorder.capture.bind(recorder);
+                    recorder.capture = async (...args) => {
+                        const result = await capture(...args);
+                        stopping.resolve();
+                        await release.promise;
+                        return result;
+                    };
+                }
+
+                return recorder;
+            },
+        },
+    });
+    let shutdown: Promise<void> | undefined;
+
+    try {
+        expect(
+            (await engine.run("await recorder.start(); setTimeout(() => void recorder.start(), 100); true")).ok
+        ).toBe(true);
+        shutdown = engine.shutdown();
+        await withTimeout(stopping.promise, 2000);
+        await Bun.sleep(150);
+        release.resolve();
+        await shutdown;
+        expect(created).toBe(1);
+    } finally {
+        release.resolve();
+        await shutdown;
+        await engine.shutdown();
+    }
+});

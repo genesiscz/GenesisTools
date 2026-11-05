@@ -59,6 +59,8 @@ import {
 const { log } = logger.scoped("screen-recorder-start");
 
 export interface ManagedRecordingOptions {
+    /** Readiness the caller already established, so a capture does not prepare the same recorder twice. */
+    readiness?: Promise<void>;
     recorder: FrameRecorder;
     session: ConstructorParameters<typeof LiveRecordingServer>[0];
 }
@@ -69,6 +71,7 @@ export class ManagedRecording {
 
     constructor(private readonly options: ManagedRecordingOptions) {
         this.live = new LiveRecordingServer(options.session);
+        this.readiness = options.readiness;
     }
 
     ready(): Promise<void> {
@@ -84,6 +87,7 @@ export class ManagedRecording {
     }
 
     async capture(...args: Parameters<FrameRecorder["capture"]>): ReturnType<FrameRecorder["capture"]> {
+        args[1]?.throwIfAborted();
         await this.ready();
         args[1]?.throwIfAborted();
         return this.options.recorder.capture(...args);
@@ -199,6 +203,9 @@ export class LibraryRecording extends RecorderControl {
     private discarded = false;
     /** The folder was made by this recording's start; only then may discard move it to the trash. */
     private ownsFolder = false;
+    private readonly completion = Promise.withResolvers<StopAnswer>();
+    /** Settles once post-processing and the live server's cleanup have finished, whoever stopped the recording. */
+    readonly finished = this.completion.promise;
     private wake?: () => void;
     private loop?: Promise<void>;
     private finishing?: { job: string; done: Promise<StopAnswer> };
@@ -209,6 +216,7 @@ export class LibraryRecording extends RecorderControl {
         super();
         // Two recordings started in one second must not share an id, a socket or a folder.
         this.id = options.id ?? liveRecordingId("library", `${stamp(this.startedAt)}-${randomUUID()}`);
+        void this.finished.catch((error: unknown) => log.debug({ error, id: this.id }, "recording completion failed"));
         this.folder = options.folder ?? recordingsLibraryDir(this.id);
         this.settings = {
             activeFps: options.fps ?? 2,
@@ -297,8 +305,10 @@ export class LibraryRecording extends RecorderControl {
         mkdirSync(this.folder);
         this.ownsFolder = true;
         mkdirSync(join(this.folder, "frames"));
+        // start() checked the recorder's availability above; the captures reuse that answer.
         this.session = startRecording({
             recorder,
+            readiness: Promise.resolve(),
             session: {
                 id: this.id,
                 kind: this.kind,
@@ -526,6 +536,7 @@ export class LibraryRecording extends RecorderControl {
             void done.catch((error: unknown) =>
                 log.warn({ error, id: this.id }, "library recording post-processing failed")
             );
+            void done.then(this.completion.resolve, this.completion.reject);
             this.finishing = { job: finish.job, done };
         }
 

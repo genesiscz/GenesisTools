@@ -164,8 +164,9 @@ export async function startMcpServer(options: { toolsets?: readonly string[]; na
         server: createServer(engine, { toolsetLines }),
         transport: new StdioServerTransport(),
         shutdown: () => engine.shutdown(),
-        // Above the 10 s toolset dispose, so a close is not cut off before the worker is killed.
-        shutdownTimeoutMs: 15_000,
+        // A close waits for a recording's start (the preload budget), the 10 s toolset dispose and the 10 min bound
+        // on finishing the owned recordings, plus a margin.
+        shutdownTimeoutMs: engine.preloadTimeoutMs + 615_000,
         onExit: () => engine.dispose(),
     });
 }
