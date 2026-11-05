@@ -905,13 +905,14 @@ describe("the failure record's caller facts", () => {
 
     it("an old record without the facts and a new one with them both read back, each as written", () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-failures-facts-"));
-        const path = failureLogPath("2026-11-05", dir);
+        const day = "2026-11-05";
+        const path = failureLogPath(day, dir);
         mkdirSync(dir, { recursive: true });
         writeFileSync(path, `${SafeJSON.stringify(OLD_LINE)}\n`);
         const fresh: ToolFailure = {
             ...OLD_LINE,
             id: "f-new-1",
-            at: "2026-11-05T10:00:00.000Z",
+            at: new Date(2026, 10, 5, 12).toISOString(),
             caller: {
                 agent: "codex",
                 sessionId: "t1",
@@ -934,7 +935,7 @@ describe("the failure record's caller facts", () => {
         };
         appendFailure(fresh, dir);
 
-        const [old, now] = [...readFailures({ fromDay: "2026-11-05", toDay: "2026-11-05", dir })];
+        const [old, now] = [...readFailures({ fromDay: day, toDay: day, dir })];
         expect(old).toEqual(OLD_LINE);
         expect(old?.caller?.transcriptPath).toBeUndefined();
         expect(old?.caller?.host).toBeUndefined();
