@@ -183,8 +183,8 @@ enum RecorderHostMethods {
         }
 
         /// The `--snapshot` options as params: `path` (the edit), `library`, `picker`, `shortcuts`, `filter`, `width`,
-        /// `height`, `atSeconds`, `tab`, `selectZoom`, `selectClip`, `part` and `range` (`{ from, to }`, `[from, to]` or
-        /// `"from-to"`, output seconds) and `comment`.
+        /// `height`, `atSeconds`, `tab`, `selectZoom`, `selectClip`, `selectMarker`, `part` and `range` (`{ from, to }`,
+        /// `[from, to]` or `"from-to"`, output seconds) and `comment`.
         func snapshotRequest() throws -> RecorderRequest {
             var request = RecorderRequest()
             request.edit = try optionalPath("path") ?? optionalPath("edit")
@@ -198,6 +198,7 @@ enum RecorderHostMethods {
             request.tab = try tab()
             request.selectZoom = int("selectZoom")
             request.selectClip = int("selectClip")
+            request.selectMarker = int("selectMarker")
             request.part = try span("part")
             request.range = try span("range")
             request.comment = int("comment")

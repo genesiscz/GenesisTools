@@ -33,6 +33,8 @@ struct RecorderRequest {
     var tab: InspectorTab?
     var selectZoom: Int?
     var selectClip: Int?
+    /// `--select-marker 0`: the edit's first marker set while editing, selected (as a click on its flag does).
+    var selectMarker: Int?
     /// `--part 1.5-4`: the export part's marks in output seconds, as I and O would set them.
     var part: (from: Double, to: Double)?
     /// `--range 1.5-4`: a range on the frames lane in output seconds, as a drag there selects it.
@@ -77,6 +79,7 @@ struct RecorderRequest {
             case "--tab": request.tab = value().flatMap(InspectorTab.init(rawValue:))
             case "--select-zoom": request.selectZoom = value().flatMap(Int.init)
             case "--select-clip": request.selectClip = value().flatMap(Int.init)
+            case "--select-marker": request.selectMarker = value().flatMap(Int.init)
             case "--part":
                 let ends = (value() ?? "").split(separator: "-").compactMap { Double($0) }
                 if ends.count == 2 { request.part = (ends[0], ends[1]) }

@@ -75,6 +75,9 @@ enum RecorderRenders {
         if let tab = request.tab { model.tab = tab }
         if let n = request.selectZoom, project.zooms.indices.contains(n) { model.selection = .zoom(project.zooms[n].id); model.tab = .zoom }
         if let n = request.selectClip, project.clips.indices.contains(n) { model.selection = .clip(project.clips[n].id); model.tab = .clip }
+        if let n = request.selectMarker, let markers = project.markers, markers.indices.contains(n) {
+            model.selection = .marker(id: markers[n].id, atUs: markers[n].atUs)
+        }
         if let part = request.part {
             model.partInUs = Int64(part.from * 1_000_000)
             model.partOutUs = Int64(part.to * 1_000_000)
