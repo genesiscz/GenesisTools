@@ -3923,6 +3923,10 @@ test("recorder failure persists a terminal state before releasing ownership", as
         },
         { command: "test", change: "fixture" }
     );
+    mkdirSync(join(store.folder(record.id), "frames"), { recursive: true });
+    for (let index = 0; index < 12; index++) {
+        writeFileSync(join(store.folder(record.id), "frames", `${index}.jpg`), new Uint8Array(index === 11 ? 60 : 40));
+    }
     const update = store.update.bind(store);
     let calls = 0;
     store.update = async (...args: Parameters<typeof update>) => {
