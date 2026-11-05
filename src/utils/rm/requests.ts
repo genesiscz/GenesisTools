@@ -297,7 +297,11 @@ export function priorDenials(
     }
 
     const denied = requests
-        .filter((request) => request.status === "denied" && request.decidedVia !== "cli")
+        .filter(
+            (request) =>
+                (request.status === "denied" || (request.decided?.denied.length ?? 0) > 0) &&
+                request.decidedVia !== "cli"
+        )
         .filter((request) => request.caller?.sessionId === sessionId)
         .sort((a, b) => (b.decidedAt ?? "").localeCompare(a.decidedAt ?? ""));
     const result: RmPriorDenial[] = [];
@@ -305,7 +309,8 @@ export function priorDenials(
     for (const path of paths) {
         const hit = denied.find(
             (request) =>
-                request.decided?.denied.includes(path) || request.targets.some((target) => target.path === path)
+                request.decided?.denied.includes(path) ||
+                (request.status === "denied" && request.targets.some((target) => target.path === path))
         );
 
         if (hit) {
