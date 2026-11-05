@@ -802,23 +802,23 @@ export class ScratchTree {
         for (const result of results) {
             const before = errors.length;
             for (const line of result.text.split("\n")) {
-            const located = TS_ERROR_RE.exec(line);
-            if (located) {
-                errors.push({
-                    file: located[1],
-                    lineNo: Number(located[2]),
-                    code: located[4],
-                    message: located[5],
-                    line,
-                });
-                continue;
-            }
+                const located = TS_ERROR_RE.exec(line);
+                if (located) {
+                    errors.push({
+                        file: located[1],
+                        lineNo: Number(located[2]),
+                        code: located[4],
+                        message: located[5],
+                        line,
+                    });
+                    continue;
+                }
 
-            const global = TS_GLOBAL_RE.exec(line);
-            if (global) {
-                errors.push({ file: "", lineNo: 0, code: global[1], message: global[2], line });
+                const global = TS_GLOBAL_RE.exec(line);
+                if (global) {
+                    errors.push({ file: "", lineNo: 0, code: global[1], message: global[2], line });
+                }
             }
-        }
 
             if (result.exitCode !== 0 && errors.length === before) {
                 throw new Error(
