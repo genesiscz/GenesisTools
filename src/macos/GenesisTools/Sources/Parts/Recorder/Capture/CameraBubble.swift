@@ -6,8 +6,10 @@ import SwiftUI
 /// where the bubble will sit; it can be dragged before and while recording, and the movie leaves it out by its window
 /// id. A recording that asked for the camera (`settings.camera.requested` in its recording.json, from `--camera`)
 /// gets `camera.mov` beside `screen.mp4`, and at its end `camera.json` with where the bubble was, which a new edit
-/// takes as its camera bubble. A recording started with `--camera` outside the picker records the camera without a
-/// preview on screen, because nothing would keep the preview out of its movie. The recorder service starts and stops
+/// takes as its camera bubble. Settings → Recorder → "Show the camera preview" decides whether a recording started
+/// with `--camera` outside the picker (the CLI, an agent) shows the preview too (`CameraPreviewPolicy`, on by default);
+/// nothing keeps that preview out of its screen movie, so the movie shows it where the editor later draws the bubble.
+/// The recorder service starts and stops
 /// the same camera with `start(folder:)` and `stop(folder:)` (`camera.start`, `camera.stop`); `camera.requested`
 /// stays the way for a recording that starts while no service host is connected.
 @MainActor
@@ -31,6 +33,8 @@ final class CameraBubble {
         let target: [String: Any]?
         var byService = false
         var seenLive = false
+        /// The capture picker started it (and left its window out of the movie).
+        var fromPicker = false
     }
 
     enum Key {
@@ -67,11 +71,27 @@ final class CameraBubble {
         return [panel.windowNumber]
     }
 
+    /// When the preview shows (Settings → Recorder → Camera); read at each use, so a change applies at once.
+    var previewPolicy: CameraPreviewPolicy { CameraPreviewPolicy.load() }
+
     func optionChanged(_ on: Bool) {
-        if on {
+        if on, previewPolicy.showsWhilePicking {
             showPreview()
         } else if recording == nil {
             hidePreview()
+        }
+    }
+
+    /// The preview setting changed in Settings: a running camera recording shows or hides its preview to match.
+    func previewPolicyChanged() {
+        guard let current = recording else {
+            if !previewPolicy.showsWhilePicking { hidePreview() }
+            return
+        }
+        if previewPolicy.showsPreview(startedByPicker: current.fromPicker) {
+            if panel?.isVisible != true { showPreview() }
+        } else {
+            panel?.orderOut(nil)
         }
     }
 
@@ -179,15 +199,16 @@ final class CameraBubble {
 
     private func begin(entry: LiveRecording, folder: URL, target: [String: Any]?) {
         let fromPicker = consumePickerStart()
-        recording = Session(id: entry.id, folder: folder, target: target)
+        recording = Session(id: entry.id, folder: folder, target: target, fromPicker: fromPicker)
         screenStartedAt = Date()
-        if !fromPicker { panel?.orderOut(nil) }
+        let shows = previewPolicy.showsPreview(startedByPicker: fromPicker)
+        if !shows { panel?.orderOut(nil) }
         Task {
             guard await ensureCameraAccess() else {
                 recording = nil
                 return
             }
-            startWriting(id: entry.id, folder: folder, fromPicker: fromPicker)
+            startWriting(id: entry.id, folder: folder, preview: shows, fromPicker: fromPicker)
         }
     }
 
@@ -203,10 +224,12 @@ final class CameraBubble {
         if let current = recording { return Self.sameFolder(current.folder.path, folder) ? .started : .busy(current.folder.path) }
         let fromPicker = consumePickerStart()
         let target = Self.manifestSettings(folder)?["target"] as? [String: Any]
-        recording = Session(id: "service:\(folder.path)", folder: folder, target: target, byService: true)
+        recording = Session(id: "service:\(folder.path)", folder: folder, target: target, byService: true,
+                            fromPicker: fromPicker)
         screenStartedAt = Date()
-        if !fromPicker { panel?.orderOut(nil) }
-        startWriting(id: folder.lastPathComponent, folder: folder, fromPicker: fromPicker)
+        let shows = previewPolicy.showsPreview(startedByPicker: fromPicker)
+        if !shows { panel?.orderOut(nil) }
+        startWriting(id: folder.lastPathComponent, folder: folder, preview: shows, fromPicker: fromPicker)
         return .started
     }
 
@@ -224,12 +247,15 @@ final class CameraBubble {
         return awaitingSince.map { Date().timeIntervalSince($0) < 120 } ?? false
     }
 
-    private func startWriting(id: String, folder: URL, fromPicker: Bool) {
+    /// `preview`: the preview shows while it records (`CameraPreviewPolicy`). One the picker did not start was not left
+    /// out of the screen movie, which then shows it too; the editor's bubble is drawn over the same place.
+    private func startWriting(id: String, folder: URL, preview: Bool, fromPicker: Bool) {
         startCamera()
         let writer = CameraMovieWriter(url: folder.appendingPathComponent("camera.mov"))
         self.writer = writer
         source?.onFrame = { frame in writer.append(frame) }
-        HubPerf.log("recorder: camera recording for \(id) (preview \(fromPicker ? "on screen" : "off"))")
+        if preview, panel?.isVisible != true { showPreview() }
+        HubPerf.log("recorder: camera recording for \(id) (preview \(preview ? "on screen" : "off"), \(fromPicker ? "from the picker" : "started elsewhere"))")
     }
 
     private static func sameFolder(_ path: String?, _ folder: URL) -> Bool {

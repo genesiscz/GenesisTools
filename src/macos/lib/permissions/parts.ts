@@ -62,6 +62,8 @@ export const APP_PARTS: readonly AppPart[] = [
         id: "recorder",
         faces: ["--recorder"],
         bundleSteps: [],
+        // Settings → Recorder lives in the feature settings window.
+        requires: ["features"],
         summary: "the screen recorder: its menu bar item, the live recordings' controls and the recording editor",
     },
     {

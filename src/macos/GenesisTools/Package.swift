@@ -31,9 +31,11 @@ let allParts: [AppPart] = [
     AppPart(id: "widget", target: "GenesisToolsWidget", path: "Sources/Parts/Widget", requires: ["features"]),
     AppPart(id: "clicky", target: "GenesisToolsClicky", path: "Sources/Parts/Clicky", requires: ["features"]),
     AppPart(id: "markdown", target: "GenesisToolsMarkdown", path: "Sources/Parts/Markdown"),
-    // The recorder (`--recorder`): its menu bar item, the live recordings' controls and the editor windows.
+    // The recorder (`--recorder`): its menu bar item, the live recordings' controls and the editor windows. It has
+    // pages in the feature settings window (Settings → Recorder), so it makes that window too.
     // GenesisKitPosture: the camera (CameraFrameSource, CameraPreviewView) for the camera bubble.
-    AppPart(id: "recorder", target: "GenesisToolsRecorder", path: "Sources/Parts/Recorder", kits: ["GenesisKitPosture"]),
+    AppPart(id: "recorder", target: "GenesisToolsRecorder", path: "Sources/Parts/Recorder", requires: ["features"],
+            kits: ["GenesisKitPosture"]),
     AppPart(id: "meetings", target: "GenesisToolsMeetings", path: "Sources/Parts/Meetings", requires: ["features"]),
 ]
 

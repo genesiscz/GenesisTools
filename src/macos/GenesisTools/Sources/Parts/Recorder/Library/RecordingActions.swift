@@ -115,21 +115,19 @@ enum RecordingActions {
         }
     }
 
-    /// Asks for a new title and writes it through `tools recorder rename`, the same command the CLI and REPL use.
+    /// Asks for a new title (a panel that leaves the front app in front, or an alert: Settings → Recorder) and writes
+    /// it through `tools recorder rename`, the same command the CLI and REPL use.
     private static func rename(_ item: RecorderMenu.Recent, report: @escaping (Outcome) -> Void) {
-        let alert = NSAlert()
-        alert.messageText = "Rename “\(item.title)”"
-        alert.informativeText = "The library, the editor window and movies.list() show this title."
-        let field = NSTextField(string: item.title)
-        field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Rename")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, title != item.title else { return }
+        let request = RecorderTitleRequest(heading: "Rename “\(item.title)”",
+                                           detail: "The library, the editor window and movies.list() show this title.",
+                                           current: item.title)
+        RecorderNotice.askTitle(request) { title in
+            guard let title else { return }
+            write(title, to: item, report: report)
+        }
+    }
+
+    private static func write(_ title: String, to item: RecorderMenu.Recent, report: @escaping (Outcome) -> Void) {
         ToolsRunner.run(["recorder", "rename", item.folder.path, title]) { status, _, stderr in
             if status == 0 {
                 report(.renamed)

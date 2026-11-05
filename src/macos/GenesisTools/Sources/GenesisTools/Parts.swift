@@ -90,6 +90,9 @@ private func registerSettingsPlugins() {
         #if GENESIS_PART_MEETINGS
         FeatureSettingsPlugins.add { MeetingsSettingsPlugin() }
         #endif
+        #if GENESIS_PART_RECORDER
+        FeatureSettingsPlugins.add { RecorderSettingsPlugin() }
+        #endif
     }
     #endif
 }

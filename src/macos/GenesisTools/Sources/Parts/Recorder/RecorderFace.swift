@@ -193,11 +193,8 @@ final class EditorWindows: NSObject, NSWindowDelegate {
             } catch {
                 HubPerf.log("recorder.editor: \(path) did not open: \(error.localizedDescription)")
                 opened?(.failure(error))
-                let alert = NSAlert()
-                alert.messageText = "The recording did not open"
-                alert.informativeText = error.localizedDescription
-                NSApp.activate(ignoringOtherApps: true)
-                alert.runModal()
+                RecorderNotice.failure("The recording did not open: \(URL(fileURLWithPath: path).lastPathComponent).",
+                                       more: error.localizedDescription)
             }
         }
     }

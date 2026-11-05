@@ -10,6 +10,7 @@ enum RecorderShortcutActions {
     static func install() {
         RecorderShortcuts.shared.onAction = { perform($0) }
         RecorderShortcuts.shared.install()
+        RecorderPreferencesSync.observe()
         watcher.onRefresh = { recordings in
             RecorderShortcuts.shared.setRecording(recordings.contains { !$0.isStopping })
             CameraBubble.shared.liveRecordingsChanged(recordings)
@@ -25,12 +26,15 @@ enum RecorderShortcutActions {
         case .start:
             CapturePicker.shared.choose(.followPointer)
         case .stop:
-            send("stop", params: ["wait": false])
+            send("stop", for: action, params: ["wait": false])
         case .pause:
-            guard let newest = newest(), let command = newest.toggleCommand else { return }
-            send(command.rawValue)
+            guard let newest = newest(), let command = newest.toggleCommand else {
+                nothingRunning(action)
+                return
+            }
+            send(command.rawValue, for: action)
         case .mark:
-            send("marker.add", params: ["label": "Mark"])
+            send("marker.add", for: action, params: ["label": "Mark"])
         }
     }
 
@@ -39,10 +43,10 @@ enum RecorderShortcutActions {
         watcher.recordings.filter { $0.canControl && !$0.isStopping && $0.socket != nil }.max { $0.startedAt < $1.startedAt }
     }
 
-    private static func send(_ method: String, params: [String: Any]? = nil) {
+    private static func send(_ method: String, for action: RecorderShortcutAction, params: [String: Any]? = nil) {
         guard let recording = newest(), let socket = recording.socket else {
             HubPerf.log("recorder: shortcut \(method) with no recording running")
-            NSSound.beep()
+            nothingRunning(action)
             return
         }
         let client = LiveRecordingRPCClient(path: socket)
@@ -57,6 +61,20 @@ enum RecorderShortcutActions {
                 HubPerf.log("recorder: \(method) on \(recording.id) failed: \(error.localizedDescription)")
             }
             client.close()
+        }
+    }
+
+    /// Stop, pause or mark with no recording running: a short note, a beep or nothing (Settings → Recorder).
+    private static func nothingRunning(_ action: RecorderShortcutAction) {
+        RecorderNotice.nothingToActOn(nothingToActOnTitle(action), detail: "No recording is running")
+    }
+
+    static func nothingToActOnTitle(_ action: RecorderShortcutAction) -> String {
+        switch action {
+        case .stop: "Nothing to stop"
+        case .pause: "Nothing to pause"
+        case .mark: "Nothing to mark"
+        case .picker, .start: "Nothing to do"
         }
     }
 }

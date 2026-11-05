@@ -53,17 +53,11 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         HubPerf.log("recorder: open frames-only \(recent.folder.path) through tools recorder open")
         do {
             try ToolsRunner.detached(["recorder", "open", recent.folder.path]) { status, tail in
-                let alert = NSAlert()
-                alert.messageText = "The recording did not open (exit \(status))"
-                alert.informativeText = tail.isEmpty ? "tools recorder open \(recent.folder.path)" : tail
-                NSApp.activate(ignoringOtherApps: true)
-                alert.runModal()
+                RecorderNotice.failure("“\(recent.title)” did not open: making its movie failed (exit \(status)).",
+                                       more: tail.isEmpty ? "tools recorder open \(recent.folder.path)" : tail)
             }
         } catch {
-            let alert = NSAlert()
-            alert.messageText = "The recording did not open"
-            alert.informativeText = error.localizedDescription
-            alert.runModal()
+            RecorderNotice.failure("“\(recent.title)” did not open.", more: error.localizedDescription)
         }
     }
 
@@ -100,7 +94,7 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         let picker = row("Capture Picker…", symbol: "rectangle.dashed.badge.record", action: #selector(openPicker), key: "")
         let chord = RecorderShortcutBinding.load(.picker)
-        picker.toolTip = chord.enabled ? "Also \(chord.chord.label) from any app" : "Its shortcut is off (Capture Picker → Shortcuts)"
+        picker.toolTip = chord.enabled ? "Also \(chord.chord.label) from any app" : "Its shortcut is off (Recorder Settings → Shortcuts, or the picker's Shortcuts)"
         menu.addItem(picker)
         menu.addItem(row("Record Screen", symbol: "record.circle", action: #selector(recordScreen), key: ""))
         menu.addItem(row("Record Screen with Audio", symbol: "mic.circle", action: #selector(recordScreenWithAudio), key: ""))
@@ -116,6 +110,9 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         menu.addItem(row("Open Recording…", symbol: "film", action: #selector(openRecording), key: "o"))
         menu.addItem(row("Recordings Library…", symbol: "square.grid.2x2", action: #selector(openLibrary), key: "l"))
         menu.addItem(row("Open Recordings Folder", symbol: "folder", action: #selector(openFolder), key: ""))
+        let settings = row("Recorder Settings…", symbol: "gearshape", action: #selector(openSettings), key: ",")
+        settings.toolTip = "Every recorder option in one place: recording, camera, shortcuts, the menu bar and the editor"
+        menu.addItem(settings)
         if !recents.isEmpty {
             menu.addItem(.separator())
             let header = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
@@ -279,8 +276,8 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         UserDefaults.standard.set(!Self.recentActions, forKey: Self.recentActionsKey)
     }
 
-    /// A quick action's outcome from the menu: a failure is an alert, a GIF in the making shows an hourglass on the
-    /// item until it is copied, and a change reads the list again.
+    /// A quick action's outcome from the menu: a failure is a note under the item (or an alert, Settings → Recorder),
+    /// a GIF in the making shows an hourglass on the item until it is copied, and a change reads the list again.
     private func report(_ outcome: RecordingActions.Outcome) {
         switch outcome {
         case let .working(text):
@@ -291,10 +288,8 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
             item?.button?.toolTip = nil
         case let .failed(text):
             item?.button?.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "GenesisTools recorder")
-            let alert = NSAlert()
-            alert.messageText = text
-            NSApp.activate(ignoringOtherApps: true)
-            alert.runModal()
+            item?.button?.toolTip = nil
+            RecorderNotice.failure(text)
         case .trashed, .renamed:
             refresh()
         }
@@ -319,17 +314,11 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         HubPerf.log("recorder: start \(args.joined(separator: " "))")
         do {
             try ToolsRunner.detached(args) { status, tail in
-                let alert = NSAlert()
-                alert.messageText = "The recording stopped at once (exit \(status))"
-                alert.informativeText = tail.isEmpty ? "See ~/.genesis-tools/logs/recorder-start.log" : tail
-                NSApp.activate(ignoringOtherApps: true)
-                alert.runModal()
+                RecorderNotice.failure("The recording stopped at once (exit \(status)).",
+                                       more: tail.isEmpty ? "See ~/.genesis-tools/logs/recorder-start.log" : tail)
             }
         } catch {
-            let alert = NSAlert()
-            alert.messageText = "The recording did not start"
-            alert.informativeText = error.localizedDescription
-            alert.runModal()
+            RecorderNotice.failure("The recording did not start.", more: error.localizedDescription)
         }
     }
 
@@ -351,6 +340,16 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
 
     @objc private func openLibrary() {
         LibraryWindow.shared.show(focus: true)
+    }
+
+    @objc private func openSettings() {
+        FeatureSettingsLaunch.open(pageID: RecorderSettingsPlugin.recordingPageID)
+    }
+
+    /// The item's button on screen, for the failure note under it; nil while the item is hidden.
+    var statusItemFrame: CGRect? {
+        guard let item, item.isVisible, let window = item.button?.window, window.isVisible else { return nil }
+        return window.frame
     }
 
     @objc private func openFolder() {

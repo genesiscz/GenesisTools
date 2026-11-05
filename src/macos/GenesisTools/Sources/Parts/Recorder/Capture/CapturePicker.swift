@@ -44,6 +44,13 @@ final class CapturePicker {
         panel.dismiss()
     }
 
+    /// Settings changed in the settings window: an open picker shows the stored options again.
+    func preferencesChanged() {
+        guard panel.isVisible else { return }
+        model.reloadFromDefaults()
+        CameraBubble.shared.optionChanged(model.options.camera)
+    }
+
     private func present() {
         let view = RecordingTargetPicker(
             load: load, title: "Record", initial: initial,
@@ -245,6 +252,14 @@ final class CapturePickerModel: ObservableObject {
     func reload() {
         options = CaptureOptions.load()
         bindings = Self.loadBindings()
+    }
+
+    /// Everything the panel shows, read again (a change made in the settings window).
+    func reloadFromDefaults() {
+        reload()
+        if cameraSize != CameraBubble.bubbleSide { cameraSize = CameraBubble.bubbleSide }
+        if cameraShape != CameraBubble.shape { cameraShape = CameraBubble.shape }
+        if alwaysHeld != RecorderShortcuts.alwaysHeld { alwaysHeld = RecorderShortcuts.alwaysHeld }
     }
 
     func binding(_ action: RecorderShortcutAction) -> RecorderShortcutBinding {
