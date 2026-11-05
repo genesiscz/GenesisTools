@@ -1999,7 +1999,7 @@ async function reapStaleAppFaces({
     }
 
     // The long-lived faces among them, with their exact argv, recorded before anything is killed.
-    let reopen: RelaunchCapture = { steps: [], relay: false };
+    let reopen: RelaunchCapture = { steps: [], relay: false, unrestorable: [], recordDirs: [] };
 
     if (relaunch) {
         // A failed capture only costs the reopen; the reap below must still run.
@@ -2012,7 +2012,7 @@ async function reapStaleAppFaces({
                 launcherPath: launcher,
                 stalePids: new Set(stale),
             });
-            reopen = { steps: [], relay };
+            reopen = { steps: [], relay, unrestorable: [], recordDirs: [] };
             logger.warn({ err, relay }, "relaunch: faces could not be recorded; they stay closed after the reap");
         }
     } else {
@@ -2023,11 +2023,14 @@ async function reapStaleAppFaces({
         await killStaleFaces(stale, launcher, step);
     } finally {
         if (relaunch) {
-            const steps = reopen.steps.filter((face) => {
+            const linked = (face: { argv: string[] }) => {
                 const part = partForFace(face.argv[0] ?? "");
                 return part === undefined || parts.includes(part);
-            });
-            runRelaunch({ ...reopen, steps }, step);
+            };
+            runRelaunch(
+                { ...reopen, steps: reopen.steps.filter(linked), unrestorable: reopen.unrestorable.filter(linked) },
+                step
+            );
         }
     }
 }

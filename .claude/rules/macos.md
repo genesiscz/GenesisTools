@@ -43,6 +43,14 @@ path gets it; it is proven to catch by planting a `--window` instance and rebuil
 `GenesisTools <program> [args...]`, which is the launcher running the user's real work — dev servers,
 editor sessions, long builds all run under it.
 
+The faces it reopens come back with their own `GENESIS_TOOLS_HOME`, `GENESIS_TOOLS_BIN` and `GENESIS_HUB_SERVER`
+(`RESTORED_ENVIRONMENT` in `src/macos/lib/permissions/relaunch.ts`), read from each stopped process through the kernel,
+and with the argv record from that face's own home. `open` hands its caller's environment to the app (a recorder face
+reopened by a worktree build carried that build's `node_modules/.bin` PATH and its Claude session variables), so before
+2026-11-05 a Meetings window started on a sandbox came back on the real data, and a build run on a sandbox would have
+moved every face onto it. A face whose environment the kernel withholds stays closed, and the build output says so
+("did not reopen the … face").
+
 **Which commit is installed? One command: `bun run app:status`.** Its `source` line reads
 `<branch> @ <12-char sha>[+dirty] (<checkout>)`, written into `~/.genesis-tools/app/manifest.json` by every build
 (`sourceRoot`, `sourceBranch`, `sourceCommit`, `sourceDirty`). `+dirty` means the Swift sources had uncommitted changes,

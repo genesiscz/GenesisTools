@@ -1,10 +1,13 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath, genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
-import type { ProcessEntry } from "@genesiscz/utils/process/processes";
+import { type ProcessEntry, readProcessEnvironment } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { faceOfFirstArgument, type WindowFaceKind } from "./parts";
 
 /**
@@ -22,6 +25,12 @@ import { faceOfFirstArgument, type WindowFaceKind } from "./parts";
 
 export type { WindowFaceKind };
 
+/**
+ * The variables that decide whose data a face reads and which `tools` it runs: a face started on a sandbox
+ * (`GENESIS_TOOLS_HOME=/tmp/x`) or on a worktree's CLI comes back with the values it had, never with the build's.
+ */
+export const RESTORED_ENVIRONMENT = ["GENESIS_TOOLS_HOME", "GENESIS_TOOLS_BIN", "GENESIS_HUB_SERVER"] as const;
+
 export interface WindowFace {
     pid: number;
     kind: WindowFaceKind;
@@ -33,6 +42,8 @@ export interface WindowFace {
      * process's pid, so only this one may activate. Absent for a face that is one window.
      */
     front?: boolean;
+    /** The face's values of {@link RESTORED_ENVIRONMENT}; absent when it had none of them. */
+    environment?: Record<string, string>;
 }
 
 export interface RelaunchStep {
@@ -40,6 +51,8 @@ export interface RelaunchStep {
     kind: WindowFaceKind;
     argv: string[];
     activate: boolean;
+    /** Set on the reopened face with `open --env`; every other restored variable is removed (`openEnvironment`). */
+    environment?: Record<string, string>;
 }
 
 interface FaceRecord {
@@ -274,12 +287,20 @@ export function relaunchPlan(faces: WindowFace[], frontPid: number | null): Rela
             argv.push("--no-activate");
         }
 
-        return { pid: face.pid, kind: face.kind, argv, activate };
+        return {
+            pid: face.pid,
+            kind: face.kind,
+            argv,
+            activate,
+            ...(face.environment ? { environment: face.environment } : {}),
+        };
     });
     const unique = new Map<string, RelaunchStep>();
 
     for (const step of steps) {
-        const key = step.argv.filter((arg) => arg !== "--no-activate").join("\0");
+        // The same window on another sandbox is another window.
+        const environment = Object.entries(step.environment ?? {}).map(([key, value]) => `${key}=${value}`);
+        const key = [...environment, ...step.argv.filter((arg) => arg !== "--no-activate")].join("\0");
         const kept = unique.get(key);
 
         if (!kept || (step.activate && !kept.activate)) {
@@ -291,9 +312,12 @@ export function relaunchPlan(faces: WindowFace[], frontPid: number | null): Rela
     return [...once.filter((step) => !step.activate), ...once.filter((step) => step.activate)];
 }
 
-function spawnText(cmd: string[]): { code: number; stdout: string; stderr: string } {
+function spawnText(
+    cmd: string[],
+    environment?: Record<string, string | undefined>
+): { code: number; stdout: string; stderr: string } {
     logger.debug({ cmd }, "relaunch: spawn");
-    const proc = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "pipe", ...(environment ? { env: environment } : {}) });
     return {
         code: proc.exitCode,
         stdout: new TextDecoder().decode(proc.stdout),
@@ -425,12 +449,35 @@ export interface RelaunchCapture {
     steps: RelaunchStep[];
     /** A link relay was among the stopped faces, or a face that comes back needs one in front of it. */
     relay: boolean;
+    /**
+     * Faces that stay closed because the kernel withheld their environment: reopened with the build's, a face started
+     * on a sandbox would come back on the real data. The build output names each one.
+     */
+    unrestorable: WindowFace[];
+    /** Every faces folder the capture read, the sandboxes of the stopped faces among them: the relaunch prunes each. */
+    recordDirs: string[];
+}
+
+/** A face's values of {@link RESTORED_ENVIRONMENT}, or undefined when it had none of them. */
+export function restoredEnvironment(environment: Record<string, string>): Record<string, string> | undefined {
+    const kept = Object.fromEntries(
+        RESTORED_ENVIRONMENT.flatMap((key) => (environment[key] ? [[key, environment[key]]] : []))
+    );
+    return Object.keys(kept).length > 0 ? kept : undefined;
+}
+
+/**
+ * The home a face keeps its records in, as `genesisHome()` in Swift: its `GENESIS_TOOLS_HOME`, else its `HOME`.
+ */
+export function faceHome(environment: Record<string, string>): string {
+    return environment.GENESIS_TOOLS_HOME || environment.HOME || homedir();
 }
 
 /**
  * The faces among `stalePids` with their argv, in start order. `frontPid` is asked only when a face comes
  * back. A link relay that was not running starts only for the faces that come back (each window face
- * starts one first itself), so a reap of nothing but short-lived faces starts nothing.
+ * starts one first itself), so a reap of nothing but short-lived faces starts nothing. `environment` reads a
+ * stopped process's environment, null when the kernel withholds it; such a face stays closed (`unrestorable`).
  */
 export function planRelaunch(options: {
     processes: Pick<ProcessEntry, "pid" | "command">[];
@@ -440,32 +487,115 @@ export function planRelaunch(options: {
     windows?: Map<number, string[][]>;
     fronts?: Map<number, number>;
     frontPid: () => number | null;
+    environment: (pid: number) => Record<string, string> | null;
+    recordDirs?: string[];
 }): RelaunchCapture {
-    const faces = windowFacesFromPs(options);
+    const faces: WindowFace[] = [];
+    const unrestorable: WindowFace[] = [];
+
+    for (const face of windowFacesFromPs(options)) {
+        const environment = options.environment(face.pid);
+
+        if (environment === null) {
+            unrestorable.push(face);
+            continue;
+        }
+
+        const restored = restoredEnvironment(environment);
+        faces.push(restored ? { ...face, environment: restored } : face);
+    }
+
     const steps = faces.length > 0 ? relaunchPlan(faces, options.frontPid()) : [];
-    return { steps, relay: steps.length > 0 || linkRelayAmong(options) };
+    return {
+        steps,
+        relay: steps.length > 0 || linkRelayAmong(options),
+        unrestorable,
+        recordDirs: options.recordDirs ?? [],
+    };
 }
 
-/** The faces of `stalePids` with their argv, and which of them is in front. Call before the reap. */
+interface FaceFolder {
+    records: Map<number, string[]>;
+    windows: Map<number, string[][]>;
+    fronts: Map<number, number>;
+}
+
+/**
+ * Each stopped face's record, window list and front window, read only from the faces folder of its own home
+ * (`faceHome`), so a record a sandbox holds for a reused pid never answers for a face of another home. A face whose
+ * environment is unreadable reads the build's folder (`defaultDir`): it stays closed, and its argv names it.
+ */
+export function readStoppedFaceRecords(
+    environments: Map<number, Record<string, string> | null>,
+    defaultDir = facesRecordDir()
+): FaceFolder & { recordDirs: string[] } {
+    const folders = new Map<string, FaceFolder>();
+    const found: FaceFolder = { records: new Map(), windows: new Map(), fronts: new Map() };
+
+    for (const [pid, environment] of environments) {
+        const dir = environment ? genesisToolsDirIn(faceHome(environment), "app", "faces") : defaultDir;
+        const folder = folders.get(dir) ?? {
+            records: readFaceRecords(dir),
+            windows: readFaceWindows(dir),
+            fronts: readFaceFrontWindows(dir),
+        };
+        folders.set(dir, folder);
+        const argv = folder.records.get(pid);
+        const list = folder.windows.get(pid);
+        const front = folder.fronts.get(pid);
+
+        if (argv) {
+            found.records.set(pid, argv);
+        }
+
+        if (list) {
+            found.windows.set(pid, list);
+        }
+
+        if (front !== undefined) {
+            found.fronts.set(pid, front);
+        }
+    }
+
+    return { ...found, recordDirs: [...folders.keys()] };
+}
+
+/**
+ * The faces of `stalePids` with their argv, and which of them is in front. Call before the reap. Each face's record
+ * is read from its own home: a face started on a sandbox (`GENESIS_TOOLS_HOME`) wrote it there, not into the build's.
+ */
 export function captureRelaunch(options: {
     processes: Pick<ProcessEntry, "pid" | "command">[];
     launcherPath: string;
     stalePids: string[];
 }): RelaunchCapture {
+    const stalePids = new Set(options.stalePids);
+    const lines = staleLauncherLines({ processes: options.processes, launcherPath: options.launcherPath, stalePids });
+    const environments = new Map(lines.map(({ pid }) => [pid, readProcessEnvironment(pid)]));
+    const { records, windows, fronts, recordDirs } = readStoppedFaceRecords(environments);
     const capture = planRelaunch({
         processes: options.processes,
         launcherPath: options.launcherPath,
-        stalePids: new Set(options.stalePids),
-        records: readFaceRecords(),
-        windows: readFaceWindows(),
-        fronts: readFaceFrontWindows(),
+        stalePids,
+        records,
+        windows,
+        fronts,
         frontPid: frontmostPid,
+        environment: (pid) => environments.get(pid) ?? null,
+        recordDirs,
     });
     logger.info(
         {
-            faces: capture.steps.map((entry) => ({ pid: entry.pid, kind: entry.kind, argv: entry.argv })),
+            faces: capture.steps.map((entry) => ({
+                pid: entry.pid,
+                kind: entry.kind,
+                argv: entry.argv,
+                environment: entry.environment,
+            })),
+            unrestorable: capture.unrestorable.map((face) => ({ pid: face.pid, kind: face.kind, argv: face.argv })),
             relay: capture.relay,
             front: capture.steps.find((entry) => entry.activate)?.pid ?? null,
+            recordDirs,
         },
         "relaunch: faces recorded before the reap"
     );
@@ -477,10 +607,27 @@ export function linkRelayOpenArgs(bundle: string): string[] {
     return ["open", "-n", "-g", bundle, "--args", "--link-relay"];
 }
 
+/** `open --env` for each restored variable the face had. */
+function environmentArgs(environment: Record<string, string> | undefined): string[] {
+    return Object.entries(environment ?? {}).flatMap(([key, value]) => ["--env", `${key}=${value}`]);
+}
+
+/**
+ * The environment `open` runs with for a face: the build's, without any {@link RESTORED_ENVIRONMENT} variable. `open`
+ * hands its own environment to the app it starts, so a build run on a sandbox would otherwise move every face onto
+ * that sandbox; the face's own values come back through `--env`.
+ */
+export function openEnvironment(
+    environment: Record<string, string | undefined> = env.getProcessEnv()
+): Record<string, string | undefined> {
+    const restored: readonly string[] = RESTORED_ENVIRONMENT;
+    return Object.fromEntries(Object.entries(environment).filter(([key]) => !restored.includes(key)));
+}
+
 /**
  * The `open` commands a relaunch runs, in order: the link relay first (the oldest instance gets the links,
- * LinkRelay.swift), then one per face, behind the front app (`-g`) unless it was the front face.
- * `step` is null for the relay.
+ * LinkRelay.swift), then one per face, behind the front app (`-g`) unless it was the front face, with the
+ * restored variables it had (`--env`). `step` is null for the relay.
  */
 export function relaunchCommands(
     capture: RelaunchCapture,
@@ -488,17 +635,50 @@ export function relaunchCommands(
 ): Array<{ step: RelaunchStep | null; args: string[] }> {
     const faces = capture.steps.map((entry) => ({
         step: entry,
-        args: ["open", "-n", ...(entry.activate ? [] : ["-g"]), bundle, "--args", ...entry.argv],
+        args: [
+            "open",
+            "-n",
+            ...(entry.activate ? [] : ["-g"]),
+            ...environmentArgs(entry.environment),
+            bundle,
+            "--args",
+            ...entry.argv,
+        ],
     }));
     return capture.relay ? [{ step: null, args: linkRelayOpenArgs(bundle) }, ...faces] : faces;
 }
 
+/** The build output line for a face that stays closed because its environment could not be read. */
+export function unrestorableMessage(face: WindowFace): string {
+    return (
+        `did not reopen the ${face.kind} face (was pid ${face.pid}): its environment could not be read, so it could ` +
+        `come back on another GENESIS_TOOLS_HOME; start it again yourself: ${face.argv.join(" ") || "--window"}`
+    );
+}
+
+function environmentText(environment: Record<string, string> | undefined): string {
+    const pairs = Object.entries(environment ?? {}).map(([key, value]) => `${key}=${value}`);
+    return pairs.length > 0 ? ` with ${pairs.join(" ")}` : "";
+}
+
 /** Starts each recorded face from the installed bundle through Launch Services, as `tools hub` does. */
 export function runRelaunch(capture: RelaunchCapture, step: (message: string) => void): void {
-    pruneFaceRecords();
+    for (const dir of new Set([facesRecordDir(), ...capture.recordDirs])) {
+        pruneFaceRecords(dir);
+    }
+
+    for (const face of capture.unrestorable) {
+        logger.warn(
+            { pid: face.pid, kind: face.kind, argv: face.argv },
+            "relaunch: environment unreadable, left closed"
+        );
+        step(unrestorableMessage(face));
+    }
+
+    const faceEnvironment = openEnvironment();
 
     for (const { step: entry, args } of relaunchCommands(capture, genesisAppBundlePath())) {
-        const result = spawnText(args);
+        const result = spawnText(args, entry ? faceEnvironment : undefined);
 
         if (!entry) {
             if (result.code !== 0) {
@@ -515,9 +695,17 @@ export function runRelaunch(capture: RelaunchCapture, step: (message: string) =>
         }
 
         logger.info(
-            { was: entry.pid, kind: entry.kind, argv: entry.argv, activate: entry.activate },
+            {
+                was: entry.pid,
+                kind: entry.kind,
+                argv: entry.argv,
+                activate: entry.activate,
+                environment: entry.environment,
+            },
             "relaunch: reopened"
         );
-        step(`reopened the ${entry.kind} face (was pid ${entry.pid}): ${entry.argv.join(" ")}`);
+        step(
+            `reopened the ${entry.kind} face (was pid ${entry.pid})${environmentText(entry.environment)}: ${entry.argv.join(" ")}`
+        );
     }
 }
