@@ -11,6 +11,7 @@
 - `bun run app` reaps the widget face; restart it with `staging.ts start`.
 
 ## Driving without the pointer
+- Headless, snapshot and benchmark runs open the requested page without saving the selected page or window frame and without starting a widget (ad8607934c, a6fd2ac0df). Deliberate settings writes still use real defaults. Preserve the starting environment when a rebuild reopens a face (1235b999ea). Check the saved page and widget state before and after a headless run.
 - `bun scripts/native/widget-drive.ts [--preview] send "<command>"`: `expand <edge> [group]`,
   `module <id> <edge> [group]`, `hover|unhover <edge> [group]`, `collapse`, `select <key>`, `settings [page]`.
 - Change preferences through the widget's own door: `tools hub widget call --input <json>` with

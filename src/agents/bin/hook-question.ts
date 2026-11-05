@@ -31,6 +31,7 @@ const event = normalizeEvent(payload.event);
 const asks = event === "pretooluse" || event === "notification";
 
 try {
+    // A question the hook records keeps the T3 Code thread's provider instance too (one read of T3's own store).
     const callerForHook = async (facets: IdentityFacet[] | undefined = asks ? ["host"] : undefined) => {
         const { hookCaller } = await import("../lib/hooks/caller");
         return hookCaller(payload, env.getProcessEnv(), facets ? { facets } : undefined);

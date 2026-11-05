@@ -26,7 +26,9 @@
  *   with `git worktree remove` / the worktree-lock release, never by deleting files). The one exception is SwiftPM's
  *   own dependency clone, `<scratch>/checkouts/<package>/.git`, in a dead session's folder, and in the `cc/` folder of
  *   a left-behind apply folder, where only session folders judged that way were moved;
- * - a running process holds a file open inside it (lsof is refreshed before every removal; a failed listing stops apply);
+ * - a running process holds a file open inside it. The lsof listing that clears a move is at most 5 s old, and one more
+ *   listing after the last move puts back every moved entry with a file open in it before anything is deleted; a
+ *   failed listing stops apply and puts every moved entry back;
  * - it is, holds or lies in the aside folder of a `tools rm` request that waits for a person (re-read right before
  *   every removal, own-session plans included);
  * - anything inside it changed in the last --min-age-hours (default 6; newest mtime or ctime in the tree);
@@ -337,6 +339,73 @@ export function openPaths(): string[] {
 }
 
 /**
+ * One lsof listing as a set of every open path and every folder above one, so "does a process hold a file open
+ * inside this entry" is one lookup. A listing here holds about 57,000 paths (2026-11-05), and a scan of all of them per
+ * candidate cost more than the rest of the check.
+ */
+export class OpenFiles {
+    private readonly held = new Set<string>();
+
+    constructor(
+        paths: readonly string[],
+        /** When the listing started: a file opened after this moment may be missing from it. */
+        readonly takenAt = Date.now()
+    ) {
+        for (const path of paths) {
+            let current = path;
+
+            // A folder already in the set has its own parents in it too, so the walk up stops there.
+            while (current.length > 1 && !this.held.has(current)) {
+                this.held.add(current);
+                const cut = current.lastIndexOf("/");
+
+                if (cut <= 0) {
+                    break;
+                }
+
+                current = current.slice(0, cut);
+            }
+        }
+    }
+
+    /** True when an open path is `path` or lies inside it. */
+    holds(path: string): boolean {
+        return this.held.has(path);
+    }
+}
+
+/** A fresh listing; a failed one throws, as {@link openPaths} does. */
+export function openFiles(): OpenFiles {
+    const takenAt = Date.now();
+    return new OpenFiles(openPaths(), takenAt);
+}
+
+/**
+ * How old the listing that clears an entry for its move may be. One listing takes about 0.7 s, and a fresh one per
+ * entry made an apply of 5,113 entries run for about an hour (2026-11-05). A move is a rename, which apply undoes when
+ * the listing taken after the last move shows a file open in the moved entry, so the delete itself never trusts an
+ * older listing than that one.
+ */
+export const OPEN_FILES_MAX_AGE_MS = 5_000;
+
+/** The listing to judge with now: the last one while it is at most `maxAgeMs` old, else a new one. */
+export function recentOpenFiles(
+    maxAgeMs: number,
+    read: () => OpenFiles = openFiles,
+    now: () => number = Date.now
+): () => OpenFiles {
+    let last: OpenFiles | null = null;
+
+    return () => {
+        if (!last || now() - last.takenAt > maxAgeMs) {
+            last = read();
+        }
+
+        return last;
+    };
+}
+
+/**
  * True for `<scratch>/checkouts/<package>/.git` when `<scratch>` is a SwiftPM scratch path: a `.build`, a folder with
  * one of SwiftPM's own state files, or a folder whose `repositories/` the clone takes its objects from (a resolve
  * killed before SwiftPM wrote its state files). SwiftPM clones its dependencies there; the user never works in them.
@@ -500,7 +569,7 @@ function scan(
 export function judge(
     path: string,
     protection: Protection,
-    open: string[],
+    open: OpenFiles,
     pending: readonly PendingAside[] = pendingAsideDirs()
 ): Candidate | string {
     const name = basename(path);
@@ -555,7 +624,7 @@ export function judge(
         return "aside-pending";
     }
 
-    if (open.some((o) => o === path || o.startsWith(`${path}/`))) {
+    if (open.holds(path)) {
         return "open-file";
     }
 
@@ -733,7 +802,7 @@ export function ownBuildOutput(sessionDir: string): string[] {
  */
 export function judgeOwn(
     path: string,
-    options: { sessionDirs: string[]; open: string[]; minAgeMinutes: number; pending?: readonly PendingAside[] }
+    options: { sessionDirs: string[]; open: OpenFiles; minAgeMinutes: number; pending?: readonly PendingAside[] }
 ): Candidate | string {
     const st = lstatSync(path, { throwIfNoEntry: false });
 
@@ -789,7 +858,7 @@ export function judgeOwn(
         return "not-build-output";
     }
 
-    if (options.open.some((o) => o === path || o.startsWith(`${path}/`) || o === real || o.startsWith(`${real}/`))) {
+    if (options.open.holds(path) || options.open.holds(real)) {
         return "open-file";
     }
 
@@ -807,17 +876,18 @@ export function judgeOwn(
 }
 
 /**
- * Why apply must not move `path` now, or null. Read fresh, immediately before the irreversible move, for both plan
- * kinds: scanning earlier candidates may take minutes, and a `tools rm` run can put an aside copy under the entry or
- * a process can open a file in it meanwhile. The pending asides are read after the slow lsof listing, so they are the
- * last thing read before the rename; both the lexical and the canonical path are checked. A failed lsof listing
+ * Why apply must not move `path` now, or null, for both plan kinds: scanning earlier candidates may take minutes, and
+ * a `tools rm` run can put an aside copy under the entry or a process can open a file in it meanwhile. `open` is a
+ * listing at most {@link OPEN_FILES_MAX_AGE_MS} old (a new one when left out); the move it clears is undone when the
+ * listing after the last move shows a file open in the entry. The pending asides are read here, fresh, so they are
+ * the last thing read before the rename; both the lexical and the canonical path are checked. A failed lsof listing
  * throws and stops apply: an old snapshot cannot authorize a deletion. Tests pass `open` and `pending`.
  */
 export function moveBlocker(
     path: string,
-    fresh: { open?: readonly string[]; pending?: readonly PendingAside[] } = {}
+    fresh: { open?: OpenFiles; pending?: readonly PendingAside[] } = {}
 ): string | null {
-    const open = fresh.open ?? openPaths();
+    const open = fresh.open ?? openFiles();
     let real: string;
 
     try {
@@ -826,9 +896,7 @@ export function moveBlocker(
         return "gone";
     }
 
-    const inside = (o: string) => o === path || o.startsWith(`${path}/`) || o === real || o.startsWith(`${real}/`);
-
-    if (open.some(inside)) {
+    if (open.holds(path) || open.holds(real)) {
         return "open-file";
     }
 
@@ -953,7 +1021,7 @@ function ownSessionDryRun(id: string): void {
         process.exit(2);
     }
 
-    const open = openPaths();
+    const open = openFiles();
     const candidates: Candidate[] = [];
     const skipped: Record<string, number> = {};
 
@@ -996,7 +1064,7 @@ function main(): void {
 
     if (!has("--apply")) {
         const protection = protectedEntries();
-        const open = openPaths();
+        const open = openFiles();
         const pending = pendingAsideDirs();
         const candidates: Candidate[] = [];
         const skipped: Record<string, number> = {};
@@ -1066,13 +1134,31 @@ function main(): void {
     // An own-session plan is re-checked by judgeOwn, which needs no live-session list (that scan reads every
     // agent's transcript folders).
     const protection = own ? null : protectedEntries();
-    const open = openPaths();
+    const open = recentOpenFiles(OPEN_FILES_MAX_AGE_MS);
     let freed = 0;
     let removed = 0;
     const refused: Record<string, number> = {};
 
     // Only these exclusively created, private (0700) directories belong to this run.
     const quarantines = new Map<string, string>();
+    // Every rename into a quarantine, so the check after the last one can put an entry back.
+    const moved: { from: string; to: string; bytes: number; trash: string }[] = [];
+    // A quarantine that still holds an entry apply could not put back stays for a later run, which judges it again.
+    const kept = new Set<string>();
+    let cleared = false;
+    const putBack = (entry: (typeof moved)[number]): void => {
+        try {
+            if (lstatSync(entry.from, { throwIfNoEntry: false })) {
+                throw new Error("something new sits at its old path");
+            }
+
+            renameSync(entry.to, entry.from);
+        } catch (error) {
+            kept.add(entry.trash);
+            console.error(`could not put ${entry.from} back from ${entry.to}: ${String(error)}; ${entry.trash} stays`);
+        }
+    };
+
     try {
         for (const planned of plan.candidates) {
             let root: string | null = null;
@@ -1088,8 +1174,8 @@ function main(): void {
             }
 
             const now = own
-                ? judgeOwn(planned.path, { sessionDirs: own.dirs, open, minAgeMinutes: own.minAgeMinutes })
-                : judge(planned.path, protection ?? protectedEntries(), open);
+                ? judgeOwn(planned.path, { sessionDirs: own.dirs, open: open(), minAgeMinutes: own.minAgeMinutes })
+                : judge(planned.path, protection ?? protectedEntries(), open());
 
             if (typeof now === "string" || now.ino !== planned.ino) {
                 const why = typeof now === "string" ? now : "replaced";
@@ -1097,17 +1183,19 @@ function main(): void {
                 continue;
             }
 
-            const blocker = moveBlocker(planned.path);
+            // A killed apply's quarantine is out of the way already, so it is deleted where it is. Moved into this
+            // run's quarantine, its session folders would leave its `cc/` folder, and a second killed apply would
+            // strand their SwiftPM clones behind the `.git` guard. That delete has no move to undo, so its check
+            // reads a new listing.
+            const plannedSt = lstatSync(planned.path, { throwIfNoEntry: false });
+            const leftBehind = !own && plannedSt !== undefined && isRegularQuarantine(planned.path, plannedSt);
+            const blocker = moveBlocker(planned.path, { open: leftBehind ? openFiles() : open() });
             if (blocker) {
                 refused[blocker] = (refused[blocker] ?? 0) + 1;
                 continue;
             }
 
-            // A killed apply's quarantine is out of the way already, so it is deleted where it is. Moved into this
-            // run's quarantine, its session folders would leave its `cc/` folder, and a second killed apply would
-            // strand their SwiftPM clones behind the `.git` guard.
-            const plannedSt = lstatSync(planned.path, { throwIfNoEntry: false });
-            if (!own && plannedSt && isRegularQuarantine(planned.path, plannedSt)) {
+            if (leftBehind) {
                 try {
                     rmSync(planned.path, { recursive: true, force: true });
                     removed++;
@@ -1133,14 +1221,41 @@ function main(): void {
                         : join(trash, `${removed}-${basename(planned.path)}`);
                 mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
                 renameSync(planned.path, target);
+                moved.push({ from: planned.path, to: target, bytes: now.bytes, trash });
                 removed++;
                 freed += now.bytes;
             } catch (error) {
                 console.error(`could not move ${planned.path}: ${String(error)}`);
             }
         }
+
+        // The listing after the last move clears the delete. lsof names a file by its current path, so a file opened
+        // in a moved entry since that entry's check shows inside the quarantine, and the entry goes back to its place.
+        const after = openFiles();
+
+        for (const entry of moved) {
+            if (after.holds(entry.to)) {
+                putBack(entry);
+                removed--;
+                freed -= entry.bytes;
+                refused["open-file"] = (refused["open-file"] ?? 0) + 1;
+            }
+        }
+
+        cleared = true;
     } finally {
+        // A listing that failed, or anything else that stopped apply, clears nothing: every moved entry goes back.
+        if (!cleared) {
+            for (const entry of moved) {
+                putBack(entry);
+            }
+        }
+
         for (const trash of quarantines.values()) {
+            if (kept.has(trash)) {
+                continue;
+            }
+
             rmSync(trash, { recursive: true, force: true });
         }
     }

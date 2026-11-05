@@ -10,6 +10,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { formatStack, type StackPr } from "./fill-brief-stack";
 import { roundPolicy } from "./policy";
 import { flag, has, loadRun, worktreeFor } from "./run";
 
@@ -18,7 +19,7 @@ const pr = flag("--pr") ?? "";
 const round = Number(flag("--round") ?? "1");
 const judgeFile = flag("--judge");
 const view = Bun.spawnSync(
-    ["gh", "pr", "view", pr, "--repo", run.repo, "--json", "title,headRefName,baseRefName,changedFiles"],
+    ["gh", "pr", "view", pr, "--repo", run.repo, "--json", "number,title,headRefName,baseRefName,changedFiles"],
     {
         stdout: "pipe",
         stderr: "pipe",
@@ -31,12 +32,54 @@ if (!pr || view.exitCode !== 0) {
 }
 
 const meta = SafeJSON.parse(view.stdout.toString(), { strict: true }) as {
+    number: number;
     title: string;
     headRefName: string;
     baseRefName: string;
     changedFiles: number;
 };
 const policy = roundPolicy({ round, changedFiles: meta.changedFiles, dedicatedReview: has("--dedicated-review") }).text;
+const ghApi = (endpoint: string, args: string[] = []): string => {
+    const result = Bun.spawnSync(["gh", "api", endpoint, ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+    if (result.exitCode !== 0) {
+        console.error(`cannot read GitHub API ${endpoint}: ${result.stderr.toString().slice(0, 200)}`);
+        process.exit(2);
+    }
+
+    return result.stdout.toString();
+};
+const defaultBranch = ghApi(`repos/${run.repo}`, ["--jq", ".default_branch"]).trim();
+interface ApiPull {
+    number: number;
+    head: { ref: string };
+    base: { ref: string };
+}
+const pages: ApiPull[][] = SafeJSON.parse(
+    ghApi(`repos/${run.repo}/pulls?state=open&per_page=100`, ["--paginate", "--slurp"]),
+    { strict: true }
+);
+const openPrs: StackPr[] = pages.flat().map((pull) => ({
+    number: pull.number,
+    headRefName: pull.head.ref,
+    baseRefName: pull.base.ref,
+}));
+const filePages: { filename: string }[][] = SafeJSON.parse(
+    ghApi(`repos/${run.repo}/pulls/${meta.number}/files?per_page=100`, ["--paginate", "--slurp"]),
+    { strict: true }
+);
+const files =
+    filePages
+        .flat()
+        .map((file) => `- \`${file.filename}\``)
+        .join("\n") || "No changed files.";
+const stack = formatStack({
+    pr: { number: meta.number, headRefName: meta.headRefName, baseRefName: meta.baseRefName },
+    openPrs,
+    defaultBranch,
+});
 // Another repository's run card names its own checks: GenesisTools' commands do not exist there (2026-10-14,
 // GenesisPlayground #94 round 2 got `bun scripts/test.ts` and lint-rules in its brief).
 const verify = run.verify ? run.verify.map((line) => `   - ${line}`).join("\n") : defaultVerify();
@@ -77,6 +120,8 @@ const text = readFileSync(join(import.meta.dir, "../references/brief-self-fetch.
     .replaceAll("{{BRANCH}}", meta.headRefName)
     .replaceAll("{{BASE}}", meta.baseRefName)
     .replaceAll("{{TITLE}}", meta.title)
+    .replaceAll("{{STACK}}", stack)
+    .replaceAll("{{FILES}}", files)
     .replaceAll("{{SCOPES}}", flag("--scopes") ?? "tools")
     .replaceAll("{{MODEL_LABEL}}", flag("--model") ?? "GPT-6.1 Sol")
     .replaceAll("{{ROUND_POLICY}}", policy)

@@ -65,6 +65,7 @@ usage (`src/claude/lib/usage/session-rows.ts`, `parseTailLines`) is such a reade
   (claude-mem, claudish). Risk: it depends on the serializer's exact byte form (no spaces). Locally 13,766
   transcripts use the compact form and 1 uses a spaced form, so a prefilter must fall back to a full parse, never
   skip silently. Measure it before trusting it.
+- A retained slice can keep a whole decoded chunk alive. Scan line ends and markers in bytes, then decode only kept lines. Peak RSS on a 329 MB session fell from 630 MB to 450 MB (44904bfbd3). Share the filter with the full parser and test identical output with Unicode and partial lines.
 - **A reviver does not filter cheaply**: Node issue 60247 reports a 10 to 50% slowdown with a reviver.
 
 ## 6. Other findings from the research

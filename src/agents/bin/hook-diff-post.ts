@@ -3,7 +3,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { fileToolSource } from "../lib/changes/log";
 import { loadHooksConfig, megabytes } from "../lib/hooks/config";
-import { composePostDiff, noteFileToolInput, recordFileToolChange } from "../lib/hooks/diff/run";
+import { claimFileToolState, composePostDiff, noteFileToolInput, recordFileToolChange } from "../lib/hooks/diff/run";
 import { sweepAbandonedCaptures } from "../lib/hooks/gc";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { isTerminalTool, normalizeEvent, parseHookPayload } from "../lib/hooks/payload";
@@ -25,11 +25,12 @@ if (!payload || !["posttooluse", "posttoolusefailure"].includes(normalizeEvent(p
     process.exit(0);
 }
 
-// Edit and Write render their own diff; they only need a row in the session change log, and
-// their file in this session's mention index and the cross-session touches ledger.
+// Edit and Write render their own diff; they only need a row in the session change log, their file in this session's
+// mention index and the cross-session touches ledger, and a claim on the state they drew, so no Bash diff repeats it.
 if (fileToolSource(payload.tool)) {
     noteFileToolInput(payload);
     recordFileToolChange(payload);
+    claimFileToolState({ payload, config });
     process.exit(0);
 }
 

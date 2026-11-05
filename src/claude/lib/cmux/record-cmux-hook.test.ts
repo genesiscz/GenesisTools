@@ -11,7 +11,7 @@ import {
     syncResumeBinding,
     terminalPlace,
 } from "../../../../plugins/genesis-tools/hooks/record-session-cmux";
-import { isHeadlessAgent } from "../../../../plugins/genesis-tools/lib/agent-process";
+import { findAgentProcess, isHeadlessAgent } from "../../../../plugins/genesis-tools/lib/agent-process";
 import { resumeArgv as pluginResumeArgv } from "../../../../plugins/genesis-tools/lib/resume-argv";
 
 /**
@@ -31,6 +31,12 @@ const HOOK = join(
 
 let home: string;
 
+/** Whether the nearest agent above this test is a Claude without its terminal UI, as the hook's walk would see it. */
+function runnerUnderHeadlessClaude(): boolean {
+    const agent = findAgentProcess(process.pid);
+    return agent !== null && agent.harness === "claude" && (agent.tty === null || isHeadlessAgent(agent));
+}
+
 async function runHook(payload: string, env: Record<string, string> = {}): Promise<number> {
     const proc = Bun.spawn(["bun", HOOK], {
         stdin: new TextEncoder().encode(payload),
@@ -42,7 +48,9 @@ async function runHook(payload: string, env: Record<string, string> = {}): Promi
             CMUX_WORKSPACE_ID: "TEST-WS",
             CMUX_SURFACE_ID: "TEST-SURFACE",
             TMUX_PANE: "",
-            CLAUDE_PID: "",
+            // A dead pid fails open. A blank one makes the hook walk up from this test to the agent running it,
+            // and a headless one (a T3 Code or `claude -p` child, no tty) correctly records nothing.
+            CLAUDE_PID: "999999",
             ...env,
         },
     });
@@ -186,8 +194,10 @@ describe("record-session-cmux tty gate", () => {
         }
     });
 
-    test("no CLAUDE_PID fails open and records", async () => {
-        await runHook(PAYLOAD);
+    // The hook walks up from its parent, this test, so the answer depends on what runs the suite: under a headless
+    // Claude (T3 Code, `claude -p`) the walk finds it and nothing is recorded, which is the gate working.
+    test.skipIf(runnerUnderHeadlessClaude())("no CLAUDE_PID fails open and records", async () => {
+        await runHook(PAYLOAD, { CLAUDE_PID: "" });
         const entries = await readJournal();
 
         expect(entries).toHaveLength(1);

@@ -126,6 +126,17 @@ function decodeMetadata(row: MetadataRow): CachedHistoryMetadata {
     };
 }
 
+/** SQL's `COALESCE(first_timestamp, '') DESC`: ISO timestamps are ASCII, so code-unit order is SQLite's byte order. */
+function byFirstTimestampDesc(a: CachedHistoryMetadata, b: CachedHistoryMetadata): number {
+    const left = a.firstTimestamp ?? "";
+    const right = b.firstTimestamp ?? "";
+    if (left === right) {
+        return 0;
+    }
+
+    return left < right ? 1 : -1;
+}
+
 /** SQL only. Opening a repository neither initializes schema nor discovers sources. */
 export class HistoryRepository {
     constructor(private readonly db: Database) {}
@@ -298,20 +309,32 @@ export class HistoryRepository {
             clauses.push("m.mtime >= ?");
             params.push(options.mtimeFrom);
         }
+        // No index serves the first-timestamp order, so SQLite sorts every matched row whole and spills the sort to
+        // temp files past its 2 MB page cache: 3.4 MB of writes per 72-hour hub listing, 145 MB per unbounded one
+        // (macOS flagged gt-hub for 2.1 GB of writes in 4.5 h on 2026-11-03). Without a LIMIT every row is read anyway,
+        // so the sort runs here; with one, SQLite keeps only the top rows.
+        const sortHere = options.orderBy === "firstTimestamp" && options.limit === undefined;
         const order = options.orderBy === "firstTimestamp" ? "COALESCE(m.first_timestamp, '') DESC" : "m.mtime DESC";
+        const orderBy = sortHere ? "" : ` ORDER BY ${order}`;
         const limit = options.limit === undefined ? "" : " LIMIT ?";
         if (options.limit !== undefined) {
             params.push(options.limit);
         }
-        return (
+
+        const metadata = (
             this.db
                 .query(`
                     SELECT ${this.metadataColumns(options.withUserText ?? true)}, f.root FROM session_metadata m
                     LEFT JOIN file_index f ON f.source_key = m.source_key
-                    WHERE ${clauses.join(" AND ")} ORDER BY ${order}${limit}
+                    WHERE ${clauses.join(" AND ")}${orderBy}${limit}
                 `)
                 .all(...params) as MetadataRow[]
         ).map(decodeMetadata);
+        if (sortHere) {
+            metadata.sort(byFirstTimestampDesc);
+        }
+
+        return metadata;
     }
 
     getMetadataBySourceKey(options: { providerId: string; sourceKey: string }): CachedHistoryMetadata | null {

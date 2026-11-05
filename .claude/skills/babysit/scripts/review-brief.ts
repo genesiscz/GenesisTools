@@ -6,6 +6,12 @@
  * `tools codex spawn --mode review` line that starts the reviewer with it.
  *
  *   bun review-brief.ts --run <dir> --pr 517 --wt <worktree> [--base master] [--post-merge] [--swift] [--fresh]
+ *   bun review-brief.ts --run <dir> --pr 517 --wt <worktree> --delegate [--effort high|xhigh|max]
+ *
+ * `--delegate`: for a reviewer started WITHOUT the review harness (a T3 Code `delegate_task` child). The brief then
+ * carries what `--mode review` would inject: the diff manifest (one `git diff base...head -- <path>` per file) and
+ * the tier's review contract from `@genesiscz/utils/worker/contract`, so the reviewer reads hunks, not whole files
+ * (2026-11-05: reviewers told to "read the touched files" covered about 10 of 155 files).
  *
  * The depth rules (read every file, probe each finding, the coverage line) are not in this brief: `--mode review`
  * gives the worker its tier's contract and the diff manifest, and gates the depth after the turn
@@ -18,9 +24,18 @@
  */
 
 import { join } from "node:path";
+import { defaultReviewEffort } from "@app/codex/lib/review/prepare";
 import { resolveOpenAiSubModel } from "@genesiscz/utils/ai/openai/sub-models";
+import { createGit } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { shellWord } from "@genesiscz/utils/shell/quote";
+import {
+    manifestLines,
+    REVIEW_EFFORTS,
+    type ReviewEffort,
+    type ReviewManifest,
+    reviewLines,
+} from "@genesiscz/utils/worker/contract";
 import { flag, has, loadRun, reviewScratch } from "./run";
 
 export interface ReviewBriefInput {
@@ -33,17 +48,31 @@ export interface ReviewBriefInput {
     swift: boolean;
     /** A PR opened minutes ago: the bots review it at the same time, so there are no earlier threads yet. */
     fresh?: boolean;
+    /** A reviewer without the review harness: the brief carries the diff manifest and the tier's contract. */
+    delegate?: { manifest: ReviewManifest; effort: ReviewEffort };
 }
 
-export function reviewBrief({ pr, title, wt, base, scratch, postMerge, swift, fresh }: ReviewBriefInput): string {
+export function reviewBrief({
+    pr,
+    title,
+    wt,
+    base,
+    scratch,
+    postMerge,
+    swift,
+    fresh,
+    delegate,
+}: ReviewBriefInput): string {
     const why = postMerge
         ? `PR #${pr} ("${title}") already merged into master, and the user asked for one more review. This is an independent review of the MERGED code; your findings become a follow-up PR.`
         : fresh
           ? `PR #${pr} ("${title}") was just opened, and the reviewer bots read it at the same time as you. The lead wants an independent review next to theirs; your findings join the bots' threads in the first fix round.`
           : `The reviewer bot found nothing more to fix on PR #${pr} ("${title}"), so the lead wants an independent review. Your findings become the next fix round.`;
-    const read = postMerge
-        ? `It is detached at current master, which contains the PR. Read what the PR changed with \`gh pr diff ${pr}\`, then read the CURRENT version of each touched file in this folder (later PRs may have changed them).`
-        : `Base: \`origin/${base}\`. Read the diff with \`git diff --no-textconv --no-ext-diff origin/${base}...HEAD\` (git diff, show and log need both flags, blame and grep need \`--no-textconv\`, or the read waits for the lead), then read the touched files in full where needed.`;
+    const read = delegate
+        ? "Read the change FILE BY FILE from the manifest at the end of this brief, each file with the diff command it names, never a whole file. To judge a hunk, open only the code around it, and the callers and the tests of the function it changes (git diff, show and log need `--no-textconv --no-ext-diff`, blame and grep need `--no-textconv`, or the read waits for the lead)."
+        : postMerge
+          ? `It is detached at current master, which contains the PR. Read what the PR changed with \`gh pr diff ${pr}\`, then read the CURRENT version of each touched file in this folder (later PRs may have changed them).`
+          : `Base: \`origin/${base}\`. Read the diff with \`git diff --no-textconv --no-ext-diff origin/${base}...HEAD\` (git diff, show and log need both flags, blame and grep need \`--no-textconv\`, or the read waits for the lead), then read the touched files in full where needed.`;
     const lines = [
         `## Independent review of PR #${pr} (read-only)`,
         "",
@@ -63,6 +92,18 @@ export function reviewBrief({ pr, title, wt, base, scratch, postMerge, swift, fr
         "- Change NO source file, commit nothing, post nothing to GitHub. Do NOT run `git checkout`, `git switch`, `bun install` or the hook installer. No app builds, installs, launches or relaunches. Another reviewer may read this same folder, so write only your own review file.",
         "",
         "Then stop with a report: the finding count by severity and the review file path, then RESULT / AT / CHANGED / VERIFY / OPEN.",
+        ...(delegate
+            ? [
+                  "",
+                  "## The diff, file by file",
+                  "",
+                  ...manifestLines(delegate.manifest),
+                  "",
+                  `## Review contract (the review mode's, \`${delegate.effort}\` tier)`,
+                  "",
+                  ...reviewLines(delegate.effort),
+              ]
+            : []),
     ];
     return `${lines.join("\n")}\n`;
 }
@@ -102,6 +143,38 @@ interface PrView {
     files?: Array<{ path: string }>;
 }
 
+/** The manifest and tier a reviewer without the review harness gets: the PR's diff from its merge base, per file. */
+async function delegateReview(input: {
+    wt: string;
+    base: string;
+    postMerge: boolean;
+}): Promise<{ manifest: ReviewManifest; effort: ReviewEffort }> {
+    if (input.postMerge) {
+        throw new Error("--delegate reviews an open PR; a merged PR's review runs through the spawn line");
+    }
+
+    const git = createGit({ cwd: input.wt });
+    const head = await git.getSha("HEAD");
+    const mergeBase = await git.mergeBase(`origin/${input.base}`, head);
+    const entries = await git.numstat({ from: mergeBase, to: head });
+    const manifest: ReviewManifest = {
+        base: mergeBase,
+        head,
+        files: entries.map((entry) => ({
+            path: entry.path,
+            added: entry.insertions,
+            deleted: entry.deletions,
+            ...(entry.binary ? { binary: true } : {}),
+        })),
+        added: entries.reduce((sum, entry) => sum + entry.insertions, 0),
+        deleted: entries.reduce((sum, entry) => sum + entry.deletions, 0),
+    };
+    const asked = flag("--effort");
+    const effort = REVIEW_EFFORTS.find((tier) => tier === asked) ?? defaultReviewEffort(manifest);
+
+    return { manifest, effort };
+}
+
 if (import.meta.main) {
     const run = loadRun();
     const pr = Number(flag("--pr"));
@@ -109,7 +182,7 @@ if (import.meta.main) {
 
     if (!Number.isInteger(pr) || pr <= 0 || !wt) {
         console.error(
-            "usage: review-brief.ts --run <dir> --pr <N> --wt <worktree> [--base master] [--post-merge] [--swift] [--fresh]"
+            "usage: review-brief.ts --run <dir> --pr <N> --wt <worktree> [--base master] [--post-merge] [--swift] [--fresh] [--delegate [--effort high|xhigh|max]]"
         );
         process.exit(2);
     }
@@ -129,6 +202,7 @@ if (import.meta.main) {
     }) as PrView;
     const base = flag("--base") ?? baseRefName ?? "master";
     const postMerge = has("--post-merge");
+    const delegate = has("--delegate") ? await delegateReview({ wt, base, postMerge }) : undefined;
     const out = join(run.dir, `steer-review-${pr}.md`);
     await Bun.write(
         out,
@@ -141,9 +215,17 @@ if (import.meta.main) {
             postMerge,
             swift: has("--swift"),
             fresh: has("--fresh"),
+            delegate,
         })
     );
     console.log(out);
+
+    if (delegate) {
+        console.log(
+            `Start the reviewer with delegate_task (isolation "shared", effort ${delegate.effort}); its task is the text of ${out}. ${delegate.manifest.files.length} files, +${delegate.manifest.added} -${delegate.manifest.deleted}.`
+        );
+        process.exit(0);
+    }
 
     if (postMerge && !mergeCommit?.oid) {
         console.error(`✖ PR #${pr} has no merge commit, so a post-merge review has no base.`);

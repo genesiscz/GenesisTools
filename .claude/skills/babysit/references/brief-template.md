@@ -26,6 +26,13 @@ afterwards. Work carefully; quality is judged, not speed.
   Change every file a required fix needs, including files outside the original diff, and explain added files in the reply.
 - Commit subject: `{{SUBJECT}}`
 
+## Stack and changed files
+
+{{STACK}}
+
+Files changed by this PR:
+{{FILES}}
+
 ## Verify
 
 {{VERIFY}}

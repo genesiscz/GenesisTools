@@ -1,4 +1,6 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { runWho } from "@app/ai/lib/accounts/run-who";
 import { registerWhoCommand } from "@app/claude/commands/who";
 import {
@@ -156,6 +158,16 @@ describe("extractLaunchDetails", () => {
             model: null,
         });
         expect(extractLaunchDetails("/bin/claude --resume").resumeId).toBeNull();
+    });
+
+    // A bare `--resume` opens Claude's own picker; the flag after it is not a session id. `who` showed two live
+    // panes as session "--settings" (2026-11-03), so neither one could be focused or guarded against a second copy.
+    test("a bare --resume followed by another flag names no session", () => {
+        const args = '/bin/claude --dangerously-skip-permissions --resume --settings {"crossSessionInbound":"accept"}';
+
+        expect(extractLaunchDetails(args).resumeId).toBeNull();
+        expect(extractLaunchDetails("/bin/claude -r --model fable")).toEqual({ resumeId: null, model: "fable" });
+        expect(extractLaunchDetails("/bin/claude --session-id --verbose").resumeId).toBeNull();
     });
 
     test("--session-id names the session a new launch creates", () => {
@@ -440,18 +452,34 @@ describe("buildSessionHints", () => {
     ]);
 
     test("joins by the stable surface UUID, whatever case it is printed in", () => {
-        const hints = buildSessionHints(refs, new Map([["uuid-1", "ttys001"]]));
+        const hints = buildSessionHints(refs.values(), new Map([["uuid-1", "ttys001"]]));
 
-        expect(hints).toEqual([{ sessionId: "s1", tty: "ttys001", cwd: "/a" }]);
+        expect(hints).toEqual([{ sessionId: "s1", tty: "ttys001", cwd: "/a", at: 1 }]);
     });
 
     // After a relaunch the record's "surface:1" can be another session's tab.
     test("never joins by the renumberable ref", () => {
-        expect(buildSessionHints(refs, new Map([["surface:1", "ttys002"]]))).toEqual([]);
+        expect(buildSessionHints(refs.values(), new Map([["surface:1", "ttys002"]]))).toEqual([]);
     });
 
     test("a session whose surface is gone produces no hint", () => {
-        expect(buildSessionHints(refs, new Map())).toEqual([]);
+        expect(buildSessionHints(refs.values(), new Map())).toEqual([]);
+    });
+
+    test("a tab runs the session of its newest line, and none after that session's /exit", () => {
+        const first = refs.get("s1");
+
+        if (!first) {
+            throw new Error("fixture missing");
+        }
+
+        const resumedHere = { ...first, sessionId: "s2", at: 2 };
+        const tty = new Map([["uuid-1", "ttys001"]]);
+
+        expect(buildSessionHints([first, resumedHere], tty)).toEqual([
+            { sessionId: "s2", tty: "ttys001", cwd: "/a", at: 2 },
+        ]);
+        expect(buildSessionHints([first, resumedHere, { ...resumedHere, at: 3, ended: true }], tty)).toEqual([]);
     });
 });
 
@@ -512,6 +540,20 @@ describe("assignSessionIds with hook hints", () => {
 
         expect(result.get(1)?.sessionId).toBe("sess-1");
         expect(result.get(2)?.sessionId).toBeNull();
+    });
+
+    test("a hook line written after the process started names it, even when argv already claimed that session", () => {
+        const procs = [
+            { pid: 1, cwd: "/a", resumeId: "sess-1", tty: "ttys001", startedAt: 5_000 },
+            { pid: 2, cwd: "/a", resumeId: null, tty: "ttys002", startedAt: 1_000 },
+        ];
+
+        expect(
+            assignSessionIds(procs, [], [{ sessionId: "sess-1", tty: "ttys002", cwd: "/a", at: 2_000 }]).get(2)
+        ).toEqual({ sessionId: "sess-1", candidates: 1, source: "hook-tty" });
+        expect(
+            assignSessionIds(procs, [], [{ sessionId: "sess-1", tty: "ttys002", cwd: "/a", at: 500 }]).get(2)?.sessionId
+        ).toBeNull();
     });
 });
 
@@ -698,7 +740,7 @@ describe("running session resume selection", () => {
             { ...processRow, pid: 102, tty: "ttys002" },
             { ...processRow, pid: 103, tty: "ttys003" },
         ]);
-        const refs = spyOn(journalRefs, "loadAllSessionCmuxRefs").mockReturnValue(new Map());
+        const refs = spyOn(journalRefs, "readSessionCmuxRecords").mockReturnValue([]);
         const source = {
             alias: "codex" as const,
             classify: classifyCodexArgs,
@@ -790,7 +832,7 @@ describe("running sessions the resume picker may focus", () => {
                 args: `codex resume ${sessionId.replace("1", "2")}`,
             },
         ]);
-        const refs = spyOn(journalRefs, "loadAllSessionCmuxRefs").mockReturnValue(new Map());
+        const refs = spyOn(journalRefs, "readSessionCmuxRecords").mockReturnValue([]);
         const source = {
             alias: "codex" as const,
             classify: classifyCodexArgs,
@@ -851,26 +893,21 @@ describe("helper processes cannot claim live sessions", () => {
                 { ...tui, pid: 100, args: "codex app-server", kind: "app-server" },
                 tui,
             ]);
-            const refs = spyOn(journalRefs, "loadAllSessionCmuxRefs").mockReturnValue(
-                new Map([
-                    [
-                        sessionId,
-                        {
-                            sessionId,
-                            provider: "codex",
-                            surfaceId: "surface-uuid",
-                            workspaceId: null,
-                            workspaceRef: null,
-                            paneRef: null,
-                            surfaceRef: null,
-                            windowRef: null,
-                            tmuxPane: null,
-                            cwd: tui.cwd,
-                            at: Date.now(),
-                        },
-                    ],
-                ])
-            );
+            const refs = spyOn(journalRefs, "readSessionCmuxRecords").mockReturnValue([
+                {
+                    sessionId,
+                    provider: "codex",
+                    surfaceId: "surface-uuid",
+                    workspaceId: null,
+                    workspaceRef: null,
+                    paneRef: null,
+                    surfaceRef: null,
+                    windowRef: null,
+                    tmuxPane: null,
+                    cwd: tui.cwd,
+                    at: Date.now(),
+                },
+            ]);
             const options = {
                 alias: "codex" as const,
                 classify: classifyCodexArgs,
@@ -983,7 +1020,7 @@ describe("bounded adapter catalogs cannot prove cwd uniqueness", () => {
                         cwd,
                     },
                 ]);
-                const refs = spyOn(journalRefs, "loadAllSessionCmuxRefs").mockReturnValue(new Map());
+                const refs = spyOn(journalRefs, "readSessionCmuxRecords").mockReturnValue([]);
 
                 try {
                     const sessions = await listActiveAgentSessions(
@@ -1020,4 +1057,142 @@ describe("bounded adapter catalogs cannot prove cwd uniqueness", () => {
             }
         );
     }
+});
+
+// 2026-11-03: a tab started as a fresh `claude`, then `/resume`d the "mac-bottleneck" session inside the TUI. The
+// journal named the fresh session first and the resumed one after it, on the same surface. `who` read the newest
+// line PER SESSION, so the tab kept the fresh id (no transcript) or, while the resumed session's newest line was in
+// that tab, two hints on one tty that cancelled each other. Either way the resume guard did not see the session
+// running and `tools claude run <account> --resume <id>` opened a second process on it.
+describe("a session resumed inside a running TUI", () => {
+    const fresh = "43050500-0000-4000-8000-000000000001";
+    const resumed = "f8f6bebc-0000-4000-8000-000000000002";
+    const cwd = "/repo/notes";
+    const tree = (surfaces: Array<{ id: string; ref: string; tty: string }>) =>
+        SafeJSON.stringify({ windows: [{ workspaces: [{ panes: [{ surfaces }] }] }] });
+    const resetJournal = () => {
+        mkdirSync(dirname(journalRefs.CMUX_REFS_PATH), { recursive: true });
+        writeFileSync(journalRefs.CMUX_REFS_PATH, "");
+    };
+    const record = (sessionId: string, surfaceId: string, at: number): SessionCmuxRefs => ({
+        sessionId,
+        provider: "claude",
+        workspaceId: null,
+        surfaceId,
+        workspaceRef: null,
+        paneRef: null,
+        surfaceRef: null,
+        windowRef: null,
+        tmuxPane: null,
+        cwd,
+        at,
+    });
+    const source = {
+        alias: "claude" as const,
+        classify: classifyClaudeArgs,
+        sessionKinds: ["tui", "sdk"],
+        resumeIdFromArgs: (args: string) => extractLaunchDetails(args).resumeId,
+        activeSessions: async () => [],
+    };
+    const tui = (pid: number, tty: string, startedAt: number, args: string): ActiveAgentProcess => ({
+        pid,
+        ppid: 1,
+        tty,
+        startedAt,
+        cpuTime: "0:00.01",
+        args,
+        kind: "tui",
+        account: "work",
+        proxyTarget: null,
+        host: null,
+        cwd,
+    });
+
+    test("the tab runs the session it resumed last, not the one it started with", async () => {
+        const start = Date.now() - 60 * 60_000;
+        const scan = spyOn(processScan, "listActiveAgentProcesses").mockResolvedValue([
+            tui(201, "ttys004", start, "/bin/claude --settings {}"),
+        ]);
+        const runner = async () => tree([{ id: "surface-a", ref: "surface:1", tty: "ttys004" }]);
+
+        resetJournal();
+        journalRefs.appendSessionCmuxRef(record(fresh, "SURFACE-A", start + 2_000));
+        journalRefs.appendSessionCmuxRef(record(resumed, "SURFACE-A", start + 3_000));
+
+        try {
+            const running = await listRunningCmuxSessions(source, { runner });
+
+            expect(running).toEqual([expect.objectContaining({ pid: 201, sessionId: resumed })]);
+        } finally {
+            resetJournal();
+            scan.mockRestore();
+        }
+    });
+
+    test("a second process opened on that session leaves both tabs running it", async () => {
+        const start = Date.now() - 60 * 60_000;
+        const later = start + 30 * 60_000;
+        const scan = spyOn(processScan, "listActiveAgentProcesses").mockResolvedValue([
+            tui(201, "ttys004", start, "/bin/claude --settings {}"),
+            tui(202, "ttys010", later, `/bin/claude --resume ${resumed} --settings {}`),
+        ]);
+        const runner = async () =>
+            tree([
+                { id: "surface-a", ref: "surface:1", tty: "ttys004" },
+                { id: "surface-b", ref: "surface:2", tty: "ttys010" },
+            ]);
+
+        resetJournal();
+        journalRefs.appendSessionCmuxRef(record(fresh, "SURFACE-A", start + 2_000));
+        journalRefs.appendSessionCmuxRef(record(resumed, "SURFACE-A", start + 3_000));
+        journalRefs.appendSessionCmuxRef(record(resumed, "SURFACE-A", start + 10 * 60_000));
+        // The second process's own prompt is the resumed session's newest line, in the other tab.
+        journalRefs.appendSessionCmuxRef(record(resumed, "SURFACE-B", later + 2_000));
+
+        try {
+            const all = await listActiveAgentSessions(source, { runner, tails: false });
+
+            expect(all.find((entry) => entry.pid === 201)).toMatchObject({
+                sessionId: resumed,
+                sessionSource: "hook-tty",
+                sessionInstances: 2,
+            });
+            expect(all.find((entry) => entry.pid === 202)).toMatchObject({
+                sessionId: resumed,
+                sessionSource: "resume-arg",
+                sessionInstances: 2,
+            });
+        } finally {
+            resetJournal();
+            scan.mockRestore();
+        }
+    });
+
+    test("a tab whose process started after the session's last line there does not inherit it", async () => {
+        // An older claude ran the session in this tab and quit; the new one in the same tab wrote no line yet.
+        const start = Date.now() - 60 * 60_000;
+        const restarted = start + 30 * 60_000;
+        const scan = spyOn(processScan, "listActiveAgentProcesses").mockResolvedValue([
+            tui(201, "ttys004", restarted, "/bin/claude --settings {}"),
+            tui(202, "ttys010", start, `/bin/claude --resume ${resumed}`),
+        ]);
+        const runner = async () =>
+            tree([
+                { id: "surface-a", ref: "surface:1", tty: "ttys004" },
+                { id: "surface-b", ref: "surface:2", tty: "ttys010" },
+            ]);
+
+        resetJournal();
+        journalRefs.appendSessionCmuxRef(record(resumed, "SURFACE-A", start + 2_000));
+
+        try {
+            const all = await listActiveAgentSessions(source, { runner, tails: false });
+
+            expect(all.find((entry) => entry.pid === 201)?.sessionId).toBeNull();
+            expect(all.find((entry) => entry.pid === 202)).toMatchObject({ sessionId: resumed, sessionInstances: 1 });
+        } finally {
+            resetJournal();
+            scan.mockRestore();
+        }
+    });
 });

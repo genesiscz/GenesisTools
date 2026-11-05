@@ -70,7 +70,7 @@ export function digestWindows(rows: readonly DailyRow[], keyOf: (row: DailyRow) 
     const groups = new Map<string, DailyRow[]>();
 
     for (const row of rows) {
-        const id = `${row.provider}\u0000${row.accountName}\u0000${row.kind ?? ""}\u0000${row.bucket}`;
+        const id = `${row.provider}\u0000${row.accountName}\u0000${row.bucket}\u0000${row.kind ?? ""}`;
         groups.set(id, [...(groups.get(id) ?? []), row]);
     }
 

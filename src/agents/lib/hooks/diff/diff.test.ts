@@ -72,6 +72,7 @@ import {
     capturedAfter,
     capturedBefore,
     capturedBefores,
+    claimFileToolState,
     commandLines,
     composePostDiff,
     type DiffDecision,
@@ -6027,6 +6028,49 @@ describe("the misfires of 2026-10-14", () => {
         } finally {
             rmSync(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project), { recursive: true, force: true });
             rmSync(target, { force: true });
+        }
+    });
+
+    it("does not draw again an Edit made inside a background call's window; a later write by the task still draws", () => {
+        const project = `gt-bg-edit-${process.pid}`;
+        const tasks = join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project, "gt-diff-test", "tasks");
+        const output = join(tasks, "bgedit1.output");
+        const transcript = join(tmpdir(), project, "transcript.jsonl");
+        const edited = join(repo, "edited-in-window.ts");
+        const written = join(repo, "written-by-task.ts");
+
+        mkdirSync(tasks, { recursive: true });
+        writeFileSync(output, "");
+
+        try {
+            const started = begin({ toolUseId: "bg-edit-call", command: "bun /x/long.ts" });
+            runDiffPost({
+                payload: { ...started, transcriptPath: transcript, toolResponse: { backgroundTaskId: "bgedit1" } },
+                config: plain,
+            });
+
+            // The Edit tool writes the file while the task runs; Claude Code draws that diff under the Edit.
+            writeFileSync(edited, "EDIT-TOOL-CHANGE\n");
+            claimFileToolState({
+                payload: payload({ tool: "Edit", toolInput: { file_path: "edited-in-window.ts" } }),
+                config: plain,
+            });
+            writeFileSync(written, "TASK-CHANGE\n");
+            writeFileSync(output, "done\n\n[exited with code 0]\n");
+
+            const flushed = flushDeferred({
+                payload: begin({ command: "true", transcriptPath: transcript }),
+                config: plain,
+            });
+            const message = flushed[0]?.message ?? "";
+
+            expect(flushed.map((item) => item.task?.id)).toEqual(["bgedit1"]);
+            expect(message).toContain("TASK-CHANGE");
+            expect(message).not.toContain("EDIT-TOOL-CHANGE");
+        } finally {
+            rmSync(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project), { recursive: true, force: true });
+            rmSync(edited, { force: true });
+            rmSync(written, { force: true });
         }
     });
 

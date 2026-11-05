@@ -5,8 +5,14 @@ import { CLAUDE_WHO_SOURCE } from "@app/claude/lib/active-sessions";
 import * as p from "@clack/prompts";
 import { warnUnresolvedIdentities } from "@genesiscz/utils/agent-sessions/history-cli";
 import { createClaudeAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
-import { chooseResume } from "@genesiscz/utils/agent-sessions/select-resume";
 import {
+    chooseResume,
+    focusableRunning,
+    readRunning,
+    runningRowDisplay,
+} from "@genesiscz/utils/agent-sessions/select-resume";
+import {
+    buildResumeTableOpts,
     buildSessionTableOpts,
     displayProjectName,
     printAmbiguousSessions,
@@ -14,7 +20,7 @@ import {
     toSessionDisplay,
 } from "@genesiscz/utils/agent-sessions/session-display";
 import type { AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
-import { listRunningCmuxSessions } from "@genesiscz/utils/ai/active-sessions";
+import { listRunningCmuxSessions, type RunningCmuxSession } from "@genesiscz/utils/ai/active-sessions";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -22,7 +28,7 @@ import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
 import { canonicalPath } from "@genesiscz/utils/paths";
 import { profiler } from "@genesiscz/utils/profile";
-import { tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
+import { type TableSelectOptions, tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
 import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { escapeShellArg } from "@genesiscz/utils/string";
 import type { Command } from "commander";
@@ -256,29 +262,51 @@ function noSessionsError({ query, allProjects, cwd }: { query?: string; allProje
     );
 }
 
-export async function selectClaudeResumeSession({
+/** What the Claude resume picker decided: resume a session, or focus the tab where it already runs. */
+export type ClaudeResumeChoice =
+    | { action: "resume"; session: DisplaySession }
+    | { action: "focus"; running: RunningCmuxSession };
+
+/**
+ * The picker over Claude's own listing (no query). A session that already runs in another cmux tab goes on top,
+ * marked live, and Enter on it focuses that tab: on 2026-11-03 a bare `--resume` showed "mac-bottleneck" like any
+ * other row while it ran, and picking it opened a second process on the session. `running` is the scan
+ * `focusableRunning` already narrowed to other tabs; a running session of this folder is offered even when the
+ * listing's limit cut it off, because focusing it is the answer.
+ */
+export async function chooseClaudeResumeSession({
     candidates,
     query,
     interactive = isInteractive(),
     allProjects = false,
     cwd = process.cwd(),
+    running = [],
+    pick = tableSelect,
 }: {
     candidates: DisplaySession[];
     query?: string;
     interactive?: boolean;
     allProjects?: boolean;
     cwd?: string;
-}): Promise<DisplaySession> {
-    if (candidates.length === 0) {
+    running?: RunningCmuxSession[];
+    /** The table picker. Only tests replace it. */
+    pick?: <T>(opts: TableSelectOptions<T>) => Promise<T | null>;
+}): Promise<ClaudeResumeChoice> {
+    const listed = new Set(candidates.map((candidate) => candidate.sessionId.toLowerCase()));
+    const offered = running.filter(
+        (entry) => listed.has(entry.sessionId.toLowerCase()) || allProjects || entry.cwd === cwd
+    );
+
+    if (candidates.length === 0 && offered.length === 0) {
         throw noSessionsError({ query, allProjects, cwd });
     }
 
-    if (candidates.length === 1) {
+    if (candidates.length === 1 && offered.length === 0) {
         const s = candidates[0];
         p.log.info(
             `${pc.bold(s.name)} ${pc.dim(s.sessionId.slice(0, 8))} ${pc.magenta(s.branch)} ${s.project ? pc.blue(displayProjectName(s)) : ""}`
         );
-        return s;
+        return { action: "resume", session: s };
     }
 
     if (!interactive) {
@@ -288,16 +316,58 @@ export async function selectClaudeResumeSession({
         );
     }
 
-    const result = await tableSelect(
-        buildSessionTableOpts(candidates, { message: "Select session to resume:", query })
+    const message = "Select session to resume:";
+
+    if (offered.length === 0) {
+        const result = await pick(buildSessionTableOpts(candidates, { message, query }));
+
+        if (!result) {
+            p.cancel("Cancelled");
+            process.exit(0);
+        }
+
+        return { action: "resume", session: result };
+    }
+
+    const picked = await pick(
+        buildResumeTableOpts({
+            running: offered.map((entry) => ({
+                running: entry,
+                display:
+                    candidates.find((candidate) => candidate.sessionId === entry.sessionId) ?? runningRowDisplay(entry),
+            })),
+            history: candidates,
+            elsewhere: running,
+            message,
+            query,
+        })
     );
 
-    if (!result) {
+    if (!picked) {
         p.cancel("Cancelled");
         process.exit(0);
     }
 
-    return result;
+    return picked.action === "focus"
+        ? { action: "focus", running: picked.running }
+        : { action: "resume", session: picked.display };
+}
+
+/**
+ * Every Claude resume door ends here when the session it would resume already runs in another cmux tab: that tab is
+ * focused and nothing launches. `pickSessionForResume` is the one door `tools claude resume`, `tools claude
+ * start|run --resume` (bare or with a query) and `tools claude codex --resume` pass, so none of them opens a second
+ * process on a session.
+ */
+async function focusInsteadOfResuming(running: RunningCmuxSession): Promise<never> {
+    const focused = await focusRunningSession(running);
+    await out.flush();
+    process.exit(focused ? 0 : 1);
+}
+
+/** Claude's sessions that run in a cmux tab now, from `who`'s process scan. */
+function runningClaudeSessions(): Promise<RunningCmuxSession[]> {
+    return listRunningCmuxSessions(CLAUDE_WHO_SOURCE);
 }
 
 /**
@@ -364,6 +434,9 @@ export interface SessionPickOptions {
  * No query at all still uses Claude's own loader. The shared ladder answers "which session is
  * this query", and a listing is not a query. `--list` never comes here: see
  * `listClaudeResumeSessions`.
+ *
+ * Both branches read which Claude sessions run in cmux (interactive only, beside the history search), and a pick of
+ * a running session focuses its tab through `focusInsteadOfResuming` instead of returning.
  */
 export async function pickSessionForResume(
     query: string | undefined,
@@ -388,7 +461,7 @@ export async function pickSessionForResume(
             },
             ...(opts.interactive === undefined ? {} : { interactive: opts.interactive }),
             preferredHome: nativeHome("claude"),
-            running: () => listRunningCmuxSessions(CLAUDE_WHO_SOURCE),
+            running: runningClaudeSessions,
         });
 
         if (!choice) {
@@ -396,10 +469,7 @@ export async function pickSessionForResume(
         }
 
         if (choice.action === "focus") {
-            // The session already runs in that tab: going there is the whole command, and nothing launches here.
-            const focused = await focusRunningSession(choice.running);
-            await out.flush();
-            process.exit(focused ? 0 : 1);
+            return focusInsteadOfResuming(choice.running);
         }
 
         const selected = toSessionDisplay(choice.session);
@@ -417,6 +487,9 @@ export async function pickSessionForResume(
         return selected;
     }
 
+    const interactive = opts.interactive ?? isInteractive();
+    // Started beside the listing: the process scan and the cmux tree cost about 2 s, which the listing mostly hides.
+    const runningScan = interactive ? readRunning("claude", runningClaudeSessions) : undefined;
     const spinner = p.spinner();
     // Named phases, because the transcript pass costs seconds on a large corpus and a spinner
     // that only says "synchronizing" for four of them reads as a hang.
@@ -431,22 +504,28 @@ export async function pickSessionForResume(
         throw error;
     }
 
-    const selected = await selectClaudeResumeSession({
+    const choice = await chooseClaudeResumeSession({
         candidates,
         query,
-        interactive: opts.interactive,
+        interactive,
         allProjects: opts.allProjects,
         cwd: opts.cwd ?? process.cwd(),
+        running: focusableRunning((await runningScan) ?? []),
     });
-    assertClaudeResumeHome({ session: selected });
 
-    return selected;
+    if (choice.action === "focus") {
+        return focusInsteadOfResuming(choice.running);
+    }
+
+    assertClaudeResumeHome({ session: choice.session });
+
+    return choice.session;
 }
 
 /**
  * `--list` prints the table and returns — it never enters the interactive picker and never
  * resumes anything, with or without a TTY (#453.2). A listing is not a selection, so this never
- * calls `selectClaudeResumeSession`. A query still filters what is listed: `tools cc <query>
+ * calls `chooseClaudeResumeSession`. A query still filters what is listed: `tools cc <query>
  * --list` shows the sessions that match it, not the most recent ones.
  */
 export async function listClaudeResumeSessions(

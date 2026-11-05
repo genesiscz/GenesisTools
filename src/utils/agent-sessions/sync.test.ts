@@ -13,6 +13,7 @@ import {
     noBackwardRead,
     noContinuedIn,
     noCurrentModel,
+    noMidWork,
     noRowAnchors,
     noSessionChanges,
 } from "./testing/no-backward-read";
@@ -77,6 +78,7 @@ function createFixture(): {
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
         currentModel: noCurrentModel,
+        midWork: noMidWork,
         scanInsights: () => ({ native: null, defaultModel: null }),
         classifyPath: classifiesNoPath,
         readChanges: noSessionChanges,
@@ -444,6 +446,7 @@ test("selective refresh reuses full discovery, retains unselected sources, and l
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
         currentModel: noCurrentModel,
+        midWork: noMidWork,
         scanInsights: () => ({ native: null, defaultModel: null }),
         classifyPath: classifiesNoPath,
         readChanges: noSessionChanges,

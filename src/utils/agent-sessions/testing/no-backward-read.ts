@@ -26,13 +26,19 @@ export function noRowAnchors(): RowAnchorWalk {
     return () => ({ messageIds: [], toolCallIds: [], turnIds: [] });
 }
 
+/** `readChanges` for a test reader whose sessions record no file changes. */
+export function noSessionChanges(): null {
+    return null;
+}
+
 /** `analysis` for a test reader whose test never analyses a session: every fact answers that it cannot. */
 export const noAnalysis: SessionAnalysisReader = {
     callTrace: async () => ({ supported: false, reason: "test reader" }),
     compactions: async () => ({ supported: false, reason: "test reader" }),
     quotaReadings: async () => ({ supported: false, reason: "test reader" }),
 };
-/** `readChanges` for a test reader whose sessions record no file changes. */
-export function noSessionChanges(): null {
-    return null;
+
+/** `midWork` for a test reader whose sessions are never asked whether they still work: always finished. */
+export function noMidWork(): boolean {
+    return false;
 }

@@ -21,6 +21,7 @@ import { loadAllSessionCmuxRefs, resolveRefsProvider, type SessionCmuxRefs } fro
 import { isFunctionPart, toolParts } from "@genesiscz/utils/harness/tool-parts";
 import { logger } from "@genesiscz/utils/logger";
 import { collapsePath } from "@genesiscz/utils/paths";
+import { type T3SessionThread, type T3ThreadParent, t3SessionThreads } from "@genesiscz/utils/t3code/session-threads";
 
 /**
  * One session row for ANY coding agent, so a reader does not need a client per provider.
@@ -53,8 +54,11 @@ export interface AgentSessionRow {
      * started before the hook learned about Codex, or outside `tools codex run`, stays null.
      */
     account: string | null;
-    /** The app that hosted the session (a T3 Code thread), from its pin; null when none did or no pin says. */
-    host?: PinHost | null;
+    /**
+     * The app that hosts the session (a T3 Code thread), from its pin, else from T3 Code's own state (`withT3Hosts`);
+     * null when none does. `parent` is the thread that started it when another agent did (a `delegate_task` sub-agent).
+     */
+    host?: SessionHost | null;
     filePath: string;
     /** Native home this session was read from. The only provenance Codex has. */
     sourceHome?: string;
@@ -79,6 +83,47 @@ export interface AgentSessionRow {
     cmux?: SessionCmuxLocation | null;
     /** Claude only: whether a claude process still runs it (registry); null when the registry is unreadable. */
     alive?: boolean | null;
+}
+
+/** A session's host app, and the host's thread that started it when another agent did. */
+export interface SessionHost extends PinHost {
+    /** The thread that started this one, and how they relate ("subagent" for a `delegate_task` thread). */
+    parent?: T3ThreadParent;
+}
+
+/**
+ * Each row's host, with T3 Code's own record of its thread: the thread's parent when another agent started it, and
+ * the thread itself for a session no pin names (a Codex session T3 starts writes no pin). A newest pin that names no
+ * host wins: the session was resumed in a terminal and no longer runs in T3. A pin that names another host or another
+ * thread keeps it, without a parent.
+ */
+export function withT3Hosts(
+    rows: AgentSessionRow[],
+    { pins, threads }: { pins: ReadonlyMap<string, SessionPin>; threads: ReadonlyMap<string, T3SessionThread> }
+): AgentSessionRow[] {
+    if (threads.size === 0) {
+        return rows;
+    }
+
+    return rows.map((row) => {
+        const thread = threads.get(row.sessionId);
+        const pin = pins.get(row.sessionId);
+
+        if (!thread || (pin && !pin.host)) {
+            return row;
+        }
+
+        if (pin?.host && (pin.host.kind !== "t3" || (pin.host.id !== undefined && pin.host.id !== thread.threadId))) {
+            return row;
+        }
+
+        const host: SessionHost = {
+            kind: "t3",
+            id: thread.threadId,
+            ...(thread.parent ? { parent: thread.parent } : {}),
+        };
+        return { ...row, host };
+    });
 }
 
 export interface AgentSessionRowsOptions {
@@ -400,7 +445,11 @@ export async function listAgentSessionRows(options: AgentSessionRowsOptions = {}
             }
         })
     );
-    const rows = perProvider.flat();
+    // T3 Code's own record of each session's thread: its host when no pin names one, and the agent that started it.
+    const rows = withT3Hosts(perProvider.flat(), {
+        pins: await loadPins({ readOnly: true }),
+        threads: t3SessionThreads(),
+    });
 
     rows.sort((a, b) => b.mtime - a.mtime);
 

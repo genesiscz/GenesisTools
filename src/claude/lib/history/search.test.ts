@@ -9,6 +9,7 @@ import {
     noBackwardRead,
     noContinuedIn,
     noCurrentModel,
+    noMidWork,
     noRowAnchors,
     noSessionChanges,
 } from "@genesiscz/utils/agent-sessions/testing/no-backward-read";
@@ -256,6 +257,7 @@ function reader(overrides: Partial<Reader> = {}): Reader {
         readBackward: noBackwardRead,
         continuedIn: noContinuedIn,
         currentModel: noCurrentModel,
+        midWork: noMidWork,
         scanInsights: null,
         classifyPath: classifiesNoPath,
         readChanges: noSessionChanges,

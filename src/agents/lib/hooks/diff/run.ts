@@ -2285,6 +2285,37 @@ export function recordFileToolChange(payload: HookPayload): void {
 }
 
 /**
+ * The file an Edit, MultiEdit, Write or NotebookEdit call changed, claimed as it stands now: the harness drew that
+ * change in the call's own result, so it is this state's one render. A background Bash call whose window held the edit
+ * then does not draw it a second time when its task ends (2026-11-05: "background task … ended … Updated cli.ts
+ * (+18 -0)", the same diff Claude Code had drawn under the Edit). A later write moves the mtime, so it is a new state
+ * and still renders. Both spellings of the path are claimed: a Bash diff names a file under the git root it resolved.
+ * Never throws.
+ */
+export function claimFileToolState({ payload, config }: { payload: HookPayload; config: HooksConfig }): void {
+    try {
+        const named = text(payload.toolInput?.file_path) ?? text(payload.toolInput?.notebook_path);
+
+        if (!named || !payload.sessionId) {
+            return;
+        }
+
+        const path = resolve(payload.cwd, named);
+        const diff = diffFor(config, payload.harness);
+
+        for (const spelling of new Set([path, canonical(path)])) {
+            claim({ path: spelling, deleted: false, config: diff, session: payload.sessionId });
+        }
+    } catch (err) {
+        hookDiag("Could not claim the file-tool change", { err });
+    }
+}
+
+function text(value: unknown): string | undefined {
+    return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/**
  * An Edit, MultiEdit, Write or NotebookEdit call names its file outright, so it goes into this
  * session's mention index and the touches ledger at once. A later Bash post phase in another
  * session then knows the file is not its own, even when that session's command overlapped.

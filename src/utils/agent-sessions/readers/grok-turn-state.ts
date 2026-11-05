@@ -214,3 +214,16 @@ export function grokTurnState(input: TurnStateInput): TurnSnapshot {
         calls,
     });
 }
+
+/**
+ * The Grok reader's `midWork` member, from the turn snapshot of the tail's `updates.jsonl` records: the agent works
+ * while its newest turn has not ended. No records at all counts as working, as Claude's does.
+ */
+export function grokMidWork(records: readonly JsonRecord[]): boolean {
+    if (records.length === 0) {
+        return true;
+    }
+
+    const snapshot = grokTurnState({ records, lastModified: 0, now: 0, stallTimeoutMs: Number.POSITIVE_INFINITY });
+    return !snapshot.turnEnded && !snapshot.interrupted;
+}

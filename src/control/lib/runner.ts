@@ -714,7 +714,13 @@ export function setCursorNote(note: string | undefined): void {
     cursorNote = note?.trim() || undefined;
 }
 
-let sessionLabel: string | null | undefined;
+let ancestorNames: string[] | undefined;
+/** The process-table read is the costly part of the label, so only it is kept; the label follows the environment. */
+function cachedAncestorNames(): string[] {
+    ancestorNames ??= ancestorNamesOfThisProcess();
+    return ancestorNames;
+}
+
 /**
  * The environment every ax-tool spawn gets: this process's own, plus the overlay label's note and
  * session. A note passed for one call wins over the command's `--note`; a variable the caller set
@@ -722,16 +728,14 @@ let sessionLabel: string | null | undefined;
  */
 export function nativeEnvironment(note?: string): NodeJS.ProcessEnv {
     const environment = env.getProcessEnv();
-    if (sessionLabel === undefined) {
-        sessionLabel = cursorSessionLabel({ environment, ancestors: ancestorNamesOfThisProcess }) ?? null;
-    }
+    const sessionLabel = cursorSessionLabel({ environment, ancestors: cachedAncestorNames });
 
     return {
         ...environment,
         ...foregroundGuardEnvironment(environment),
         ...cursorEnvironment({
             note: note ?? cursorNote ?? environment[CURSOR_NOTE_ENV],
-            session: environment[CURSOR_SESSION_ENV] ?? sessionLabel ?? undefined,
+            session: environment[CURSOR_SESSION_ENV] ?? sessionLabel,
         }),
     };
 }

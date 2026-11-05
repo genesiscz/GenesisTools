@@ -110,6 +110,21 @@ function validFold<S>(value: unknown, validState: (state: unknown) => state is S
     );
 }
 
+/**
+ * True when the store already holds this fold: the same file, read to the same byte under the same prefix mark. A head
+ * fold whose head is complete reads nothing new, and rewriting the whole store for it (189 KB for each large live
+ * transcript, on every hub poll) was most of the hub server's disk writes left after the listing sort (2026-11-03).
+ */
+function storedAlready<S>(stored: unknown, fold: StoredFold<S>, validState: (state: unknown) => state is S): boolean {
+    return (
+        validFold(stored, validState) &&
+        stored.ino === fold.ino &&
+        stored.consumed === fold.consumed &&
+        stored.mark === fold.mark &&
+        stored.records === fold.records
+    );
+}
+
 function writeStore(path: string, store: FoldStore): void {
     const keys = Object.keys(store.files);
     for (const key of keys.slice(0, Math.max(0, keys.length - STORE_FILES))) {
@@ -254,7 +269,7 @@ export function foldJsonlResumable<S>(options: FoldJsonlOptions<S>): S | null {
                 }
             }
 
-            if (resumable) {
+            if (resumable && !storedAlready(stored, fold, options.validState)) {
                 delete store.files[options.path];
                 store.files[options.path] = { ...fold, state: options.copy(fold.state) } as StoredFold<unknown>;
                 writeStore(options.storePath, store);

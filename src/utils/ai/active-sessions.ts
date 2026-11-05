@@ -1,7 +1,7 @@
 import type { AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
 import { type ActiveAgentProcess, listActiveAgentProcesses, runCapture } from "@genesiscz/utils/ai/active-processes";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
-import { loadAllSessionCmuxRefs, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
+import { readSessionCmuxRecords, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -154,25 +154,44 @@ export interface SessionHint {
     sessionId: string;
     tty: string;
     cwd: string | null;
+    /** When the journal line behind this hint was written (epoch ms). */
+    at?: number;
 }
 
 /**
- * Session → tty, by joining the hook journal to the live cmux surfaces by surface UUID.
+ * Tab → the session it runs now, by joining the hook journal to the live cmux surfaces by surface UUID.
+ *
+ * A tab runs the session of its NEWEST line. Only the tab's interactive occupant writes lines (the hook's `ownsTab`),
+ * and a `/resume` inside a running TUI writes the resumed session's line into the same tab. Reading the newest line
+ * per SESSION instead left the session the tab started with on the tab forever (2026-11-03: a fresh session with no
+ * transcript stood for the tab that ran "mac-bottleneck", so the resume guard missed it and a second process opened
+ * on the session). A tab whose newest line ended its session (`/exit`) runs none.
  *
  * Only the UUID: a surface REF is renumbered when cmux restarts, so a journal line's ref can
  * name a tab another session owns now. `assignSessionIds` additionally requires the cwd to agree.
  */
 export function buildSessionHints(
-    refs: Map<string, SessionCmuxRefs>,
+    records: Iterable<SessionCmuxRefs>,
     ttyBySurfaceId: Map<string, string>
 ): SessionHint[] {
+    const newestBySurface = new Map<string, SessionCmuxRefs>();
+
+    for (const entry of records) {
+        const surface = entry.surfaceId?.toLowerCase();
+        const newest = surface ? newestBySurface.get(surface) : undefined;
+
+        if (surface && (!newest || (entry.at ?? 0) >= (newest.at ?? 0))) {
+            newestBySurface.set(surface, entry);
+        }
+    }
+
     const hints: SessionHint[] = [];
 
-    for (const [sessionId, entry] of refs) {
-        const tty = entry.surfaceId ? ttyBySurfaceId.get(entry.surfaceId.toLowerCase()) : undefined;
+    for (const [surface, entry] of newestBySurface) {
+        const tty = ttyBySurfaceId.get(surface);
 
-        if (tty) {
-            hints.push({ sessionId, tty, cwd: entry.cwd });
+        if (tty && !entry.ended) {
+            hints.push({ sessionId: entry.sessionId, tty, cwd: entry.cwd, at: entry.at });
         }
     }
 
@@ -188,11 +207,15 @@ export function buildSessionHints(
  *    used to print "—" for exactly the panes you most wanted to identify.
  * 3. A cwd with exactly one unclaimed active session and one unresolved process.
  *
+ * A hook hint may name a session another process already claimed by argv only when its line was written after this
+ * process started: then this process wrote it, and two processes really run one session (a `--resume` of a session
+ * that was already open in another tab). An older line belongs to an earlier occupant of the tab.
+ *
  * Anything else stays null with the candidate count, because guessing here would point
  * `cmux focus` at the wrong pane.
  */
 export function assignSessionIds(
-    procs: Array<{ pid: number; cwd: string | null; resumeId: string | null; tty?: string }>,
+    procs: Array<{ pid: number; cwd: string | null; resumeId: string | null; tty?: string; startedAt?: number | null }>,
     activeSessions: Array<{ sessionId: string; cwd: string | null }>,
     hints: SessionHint[] = []
 ): Map<number, SessionIdAssignment> {
@@ -217,7 +240,7 @@ export function assignSessionIds(
     const hintByTty = new Map<string, SessionHint>();
 
     for (const hint of hints) {
-        if (ttyCounts.get(hint.tty) === 1 && !claimed.has(hint.sessionId)) {
+        if (ttyCounts.get(hint.tty) === 1) {
             hintByTty.set(hint.tty, hint);
         }
     }
@@ -229,7 +252,7 @@ export function assignSessionIds(
 
         const hint = hintByTty.get(proc.tty);
 
-        if (!hint || claimed.has(hint.sessionId)) {
+        if (!hint || (claimed.has(hint.sessionId) && !writtenSince(hint, proc.startedAt))) {
             continue;
         }
 
@@ -272,6 +295,11 @@ export function assignSessionIds(
     return result;
 }
 
+/** The hint's line was written after the process started (`ps` start times are whole seconds, rounded down). */
+function writtenSince(hint: SessionHint, startedAt: number | null | undefined): boolean {
+    return hint.at !== undefined && typeof startedAt === "number" && hint.at >= startedAt;
+}
+
 /** tty → the surface's display ref (`surface:N`), from the UUID-keyed maps. */
 export function invertSurfaceTtys(surfaces: CmuxSurfaceTtys): Map<string, string> {
     const surfaceByTty = new Map<string, string>();
@@ -305,20 +333,12 @@ export function countSessionInstances(sessionIds: Array<string | null>): Map<str
 }
 
 /**
- * Newest journal line per session of this agent. A record carries its `provider`; an untagged one predates the tag
- * and is Claude's. A Codex or Grok session started inside a Claude tab inherits the tab, so reading another
- * agent's line as this agent's would claim the tab twice, and `assignSessionIds` then drops both hints.
+ * This agent's journal lines. A record carries its `provider`; an untagged one predates the tag and is Claude's.
+ * A Codex or Grok session started inside a Claude tab inherits the tab, so reading another agent's line as this
+ * agent's would name the tab after the wrong agent's session.
  */
-function journalOf(alias: AccountProviderAlias): Map<string, SessionCmuxRefs> {
-    const own = new Map<string, SessionCmuxRefs>();
-
-    for (const [sessionId, entry] of loadAllSessionCmuxRefs()) {
-        if ((entry.provider ?? "claude") === alias && !entry.ended) {
-            own.set(sessionId, entry);
-        }
-    }
-
-    return own;
+function journalOf(alias: AccountProviderAlias): SessionCmuxRefs[] {
+    return readSessionCmuxRecords().filter((entry) => (entry.provider ?? "claude") === alias);
 }
 
 interface CmuxContext {

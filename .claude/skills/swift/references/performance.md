@@ -66,8 +66,10 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
   `@Environment(\.rowLive)`); `.liveRow` goes outside the row's `rowButton` and tooltips; a control that must stay
   live in a resting row gets `.rowLive(true)`; a resting `IconButton` keeps the button's footprint (glyph + 3 pt),
   so nothing moves on hover; the hover fill appears on the next pointer move after the row turns live.
+- A resting row must act on its first click without a preceding hover. A stationary pointer left inbox rows unresponsive (dafe8e779f). Give the resting label the same `.onTapGesture` action and test one click without a mouse move in a first-mouse-capable hosted window.
 - A plain `VStack` is right for tens of rows when exact heights matter (anchoring that survives a width
   change); a lazy stack estimates rows above the viewport and moves the visible ones as it measures.
+- Build hundreds of heavy cards near the viewport. Building 116 cards at once stalled for 4.8 seconds (e58266530d), while batching all 219 still took 12 seconds with accessibility active (5df16d2a22). Build one screen beyond the viewport, append as needed for scrolling or find, count the full list in headers, and exclude folded cards from the budget (cf64283f37, 9e9d8a7888). Bench with accessibility enabled and a large folded group.
 - What Apple documents behind these rules, and what stays our observation: [sources.md](sources.md) "How SwiftUI decides to re-run a body".
 
 ### Defer large recipient menus until the user opens them
@@ -205,6 +207,7 @@ are in [genesistools.md](genesistools.md)). Add a new entry at the end of its se
   tests, and show that removing the index fails the query-plan regression.
 
 ### A resident process remembers what did not change
+- A path-only refresh must not rewrite a full review snapshot. The hub dirtied 2.1 GB in 4.5 hours across this and other unchanged writes (f275ef7e32). Save a full snapshot only after a full load, and check bytes written by an identical second poll.
 - Key caches by **file identity**: inode + size + exact mtime (a float; a value rebuilt from an ISO
   string loses sub-millisecond precision and never matches), plus any side file it reads.
 - Recompute only clock-dependent fields (running/stopped from "now") on a hit.
@@ -541,6 +544,7 @@ samples in `MarkdownRootHostingView.layout`. Report: the notes vault's `2026-10-
   brought the switch to 74 ms (150 before, 142 before the table).
 
 ### Closures make a view unequal, focus modifiers rebuild the key-view loop
+- Do not store a rarely changing list-wide value in every equatable row. One flip ran 212 card bodies (5df16d2a22). Pass a shared setting or mode through the environment to the leaf, keep frequently changing values out of environment keys, and count row bodies as described in `audit.md`.
 - A view that takes closures never compares equal, so it runs again on every parent publish. Make the heavy child
   `Equatable` on what it shows (closures left out of `==`), apply `.equatable()`, and stop observing the window model
   in its parent (`MarkdownGitSidebar`, `GitRepoPanel`). **Measured:** an unrelated publish 22.9 → 8.6 ms.

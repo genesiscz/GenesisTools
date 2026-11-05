@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import * as fsPromises from "node:fs/promises";
@@ -10,10 +11,12 @@ import {
     grokHistoryReader,
 } from "@genesiscz/utils/agent-sessions/compact-readers";
 import * as historyCatalog from "@genesiscz/utils/agent-sessions/open-service";
+import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { type AgentSessionRow, cmuxLocationForRow, listAgentSessionRows } from "./agent-session-rows";
+import { t3SessionThreads } from "@genesiscz/utils/t3code/session-threads";
+import { type AgentSessionRow, cmuxLocationForRow, listAgentSessionRows, withT3Hosts } from "./agent-session-rows";
 
 /**
  * The contract this file pins is the ROW SHAPE, because a reader outside this repo (the
@@ -47,6 +50,95 @@ function coolingRow(provider: AgentSessionRow["provider"], ttlMs: number): Agent
         cacheLifetimeSec: Math.ceil(ttlMs / 1000),
     };
 }
+
+/** A T3 Code state database with the two tables `t3SessionThreads` reads: native id → thread, thread → lineage. */
+function t3StateHome(threads: Array<{ thread: string; native?: string; parent?: string }>): string {
+    const home = mkdtempSync(join(tmpdir(), "gt-t3-threads-"));
+    mkdirSync(join(home, "userdata"));
+    const db = new Database(join(home, "userdata", "statev2.sqlite"));
+    db.exec("CREATE TABLE orchestration_v2_projection_provider_threads (thread_id TEXT, payload_json TEXT)");
+    db.exec("CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, payload_json TEXT)");
+    for (const { thread, native, parent } of threads) {
+        const ref = native ? { nativeThreadRef: { nativeId: native } } : {};
+        db.query("INSERT INTO orchestration_v2_projection_provider_threads VALUES (?, ?)").run(
+            thread,
+            SafeJSON.stringify(ref)
+        );
+        const lineage = parent ? { lineage: { parentThreadId: parent, relationshipToParent: "subagent" } } : {};
+        db.query("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?)").run(
+            thread,
+            SafeJSON.stringify(lineage)
+        );
+    }
+
+    db.close();
+    return home;
+}
+
+function pin(sessionId: string, host?: SessionPin["host"]): SessionPin {
+    return {
+        sessionId,
+        ...(host ? { host } : {}),
+        account: null,
+        model: null,
+        cwd: "/work",
+        workspaceId: null,
+        source: "hook",
+        at: 1,
+    };
+}
+
+test("T3 Code's state names the thread of each native session and the thread that started it", () => {
+    const home = t3StateHome([
+        { thread: "thread:delegated-task:review", native: "codex-review", parent: "mcp:launch:lead" },
+        { thread: "mcp:launch:lead", native: "claude-lead" },
+        { thread: "thread:pending", parent: "mcp:launch:lead" },
+    ]);
+
+    expect([...t3SessionThreads(home)]).toEqual([
+        [
+            "codex-review",
+            { threadId: "thread:delegated-task:review", parent: { id: "mcp:launch:lead", relationship: "subagent" } },
+        ],
+        ["claude-lead", { threadId: "mcp:launch:lead", parent: null }],
+    ]);
+    // No T3 Code here (the test sandbox's own T3 home is empty too): no thread, and no error.
+    expect(t3SessionThreads(join(home, "missing")).size).toBe(0);
+    expect(t3SessionThreads().size).toBe(0);
+});
+
+test("a row takes its T3 thread where no pin names one; a pin with no host, another host or another thread wins", () => {
+    const row = (sessionId: string, host: AgentSessionRow["host"] = null): AgentSessionRow => ({
+        ...coolingRow("codex", CODEX_CACHE_TTL_MS),
+        sessionId,
+        host,
+    });
+    const subagent = { id: "mcp:launch:lead", relationship: "subagent" };
+    const threads = new Map([
+        ["review", { threadId: "thread:delegated-task:review", parent: subagent }],
+        ["lead", { threadId: "mcp:launch:lead", parent: null }],
+        ["pinned", { threadId: "thread:delegated-task:pinned", parent: subagent }],
+        ["resumed", { threadId: "thread:delegated-task:resumed", parent: subagent }],
+        ["elsewhere", { threadId: "thread:delegated-task:elsewhere", parent: subagent }],
+    ]);
+    const pins = new Map([
+        ["pinned", pin("pinned", { kind: "t3", id: "thread:delegated-task:pinned" })],
+        ["resumed", pin("resumed")],
+        ["elsewhere", pin("elsewhere", { kind: "t3", id: "thread:other" })],
+    ]);
+    const rows = ["review", "lead", "pinned", "resumed", "elsewhere", "terminal"].map((id) =>
+        row(id, pins.get(id)?.host ?? null)
+    );
+
+    expect(withT3Hosts(rows, { pins, threads }).map((each) => each.host)).toEqual([
+        { kind: "t3", id: "thread:delegated-task:review", parent: subagent },
+        { kind: "t3", id: "mcp:launch:lead" },
+        { kind: "t3", id: "thread:delegated-task:pinned", parent: subagent },
+        null,
+        { kind: "t3", id: "thread:other" },
+        null,
+    ]);
+});
 
 test("a codex row reports the 30-minute subscription cache clock", () => {
     const row = coolingRow("codex", CODEX_CACHE_TTL_MS);

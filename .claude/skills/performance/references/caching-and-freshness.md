@@ -22,6 +22,8 @@ answer is not "none", the cache is wrong, however rare the case.
 
 ## 3. `FileIdentityCache` (`src/utils/fs/identity-cache.ts`)
 
+- Folder identity can cache names alone, not file contents or metadata. For the settled-folder guard and tests, see `filesystem.md` (b8bb24683e).
+
 ```ts
 const cache = new FileIdentityCache<Header>({
     limit: 10_000,
@@ -71,7 +73,9 @@ Before, those fields were as old as the cached rows, up to 90 s.
 `tools hub serve` (TypeScript, unix socket `~/.genesis-tools/hub/server/hub.sock`, `src/hub/server/`) answers 13
 doors from warm memory. Every caller works without it. Started by the GenesisTools.app hub window, and by the
 daemon's tick when a health probe finds nothing listening (`ensureHubServer`, at most once per 5 minutes; a busy
-server is left alone). It exits after 10 minutes without a connection, above 512 MB, or when its source changes.
+server is left alone). It exits after 10 minutes without a connection or when its source changes.
+
+- Above 512 MB, drop rebuildable caches and check again before restarting. Cold restarts repeated four times in two hours, while a cache drop reduced footprint from 276 MB to 176 MB after 15 seconds (44904bfbd3). Test both recovery below the cap and draining when the next check remains above it.
 
 ## 7. Incremental scans of append-only files
 
@@ -88,6 +92,8 @@ A model refreshed by change events is only as fresh as its event source. Genesis
 `.git` folder and to saves in the viewer, so edits by other programs never refreshed the status or the file dates:
 "Last update" showed a note 5 h old while files changed minutes ago. It now also watches the working tree (`.git`
 excluded, throttled to 3 s). Ask of every event-driven model: "which writer does not produce this event?"
+
+- Reload on the first event after quiet, then merge roots and reload at most once per stated gap. One busy watcher caused 394 reloads and 2,173 git runs in an hour (9d1b56152d). A view may lag by that gap; test continuous writes and the first event after quiet.
 
 ## 8. Rejected
 

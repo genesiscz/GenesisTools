@@ -192,7 +192,8 @@ export function extractLaunchDetails(args: string): { resumeId: string | null; m
         if (token === "--resume" || token === "-r" || token === "--session-id") {
             const next = tokens[i + 1];
 
-            if (next && /^[\w-]+$/.test(next)) {
+            // A bare `--resume` opens Claude's own picker, so the token after it can be the next flag.
+            if (next && !next.startsWith("-") && /^[\w-]+$/.test(next)) {
                 resumeId = next;
             }
         } else if (token.startsWith("--resume=")) {

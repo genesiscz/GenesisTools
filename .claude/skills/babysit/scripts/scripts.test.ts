@@ -23,6 +23,7 @@ import {
 } from "./approve-codex";
 import { type ConflictPick, resolutionProblems, resolveConflictText } from "./conflicts";
 import { threadRefs } from "./fetch-threads";
+import { formatStack } from "./fill-brief-stack";
 import { earlierVerdicts, PRE_PUSH_GUARDS, postingExitCode } from "./integrate";
 import { recordLandingPush } from "./land";
 import { appendEvent, readEvents, renderMarkdown } from "./ledger";
@@ -39,9 +40,11 @@ import {
     judge,
     judgeOwn,
     moveBlocker,
+    OpenFiles,
     openPaths,
     ownBuildOutput,
     ownSessionDirs,
+    recentOpenFiles,
 } from "./tmp-reclaim";
 import {
     conflictedFiles,
@@ -1048,6 +1051,28 @@ describe("independent review brief", () => {
         }
     });
 
+    test("a delegate brief carries the diff manifest and the review contract, and never asks for whole files", () => {
+        const input = { pr: 498, title: "t", wt: "/w", base: "master", scratch: "/s", postMerge: false, swift: false };
+        const manifest = {
+            base: "abc1234",
+            head: "def5678",
+            files: [
+                { path: "src/a.ts", added: 10, deleted: 2 },
+                { path: "src/b.ts", added: 1, deleted: 1 },
+            ],
+            added: 11,
+            deleted: 3,
+        };
+        const text = reviewBrief({ ...input, delegate: { manifest, effort: "high" } });
+        expect(text).toContain("Files to review (2, +11 -3):");
+        expect(text).toContain("git diff --no-textconv --no-ext-diff abc1234...def5678 -- <path>");
+        expect(text).toContain("Read every hunk of every file in the manifest.");
+        expect(text).toContain("Open the callers and the tests of every changed function.");
+        expect(text).toContain("Files reviewed: <n> of <N>");
+        expect(text).not.toContain("read the touched files in full");
+        expect(reviewBrief(input)).not.toContain("Files to review (");
+    });
+
     test("a fresh PR's brief says the bots review next to it, not that they found nothing", () => {
         const input = { pr: 498, title: "t", wt: "/w", base: "master", scratch: "/s", postMerge: false, swift: false };
         const fresh = reviewBrief({ ...input, fresh: true });
@@ -1705,6 +1730,41 @@ describe("round 1 regression guards", () => {
         }
     });
 
+    test("OpenFiles holds an open path and every folder above it, never a sibling that shares a prefix", () => {
+        const open = new OpenFiles(["/fixture/root/a/b/held.log", "/fixture/root/other.txt"]);
+        for (const path of [
+            "/fixture/root/a/b/held.log",
+            "/fixture/root/a/b",
+            "/fixture/root/a",
+            "/fixture/root",
+            "/fixture/root/other.txt",
+        ]) {
+            expect(open.holds(path)).toBe(true);
+        }
+        for (const path of ["/fixture/root/a/bc", "/fixture/root/a/b/held", "/fixture/elsewhere", "/"]) {
+            expect(open.holds(path)).toBe(false);
+        }
+    });
+
+    test("recentOpenFiles reads a new listing only once the last one is older than the limit", () => {
+        let clock = 1_000;
+        let reads = 0;
+        const recent = recentOpenFiles(
+            5_000,
+            () => {
+                reads++;
+                return new OpenFiles([], clock);
+            },
+            () => clock
+        );
+        const first = recent();
+        clock += 5_000;
+        expect(recent()).toBe(first);
+        clock += 1;
+        expect(recent()).not.toBe(first);
+        expect(reads).toBe(2);
+    });
+
     test("executable probes remain on disk after success and timeout", async () => {
         const original = Bun.spawn;
         const files: string[] = [];
@@ -2279,23 +2339,17 @@ test("generated worker briefs follow the round and dedicated-review policy", () 
     const dir = fs.mkdtempSync(join(tmpdir(), "babysit-policy-"));
     const preload = join(dir, "github-fixture.ts");
     fs.writeFileSync(join(dir, "run.json"), SafeJSON.stringify({ repo: "fixture/repo", main: dir }));
-    const fixture = SafeJSON.stringify({
-        title: "Fixture review",
-        headRefName: "fixture",
-        baseRefName: "main",
-        changedFiles: 63,
-    });
-    fs.writeFileSync(
-        preload,
+    const pulls = [
         [
-            "const spawn = Bun.spawnSync;",
-            "Bun.spawnSync = (args, options) => args[0] === 'gh'",
-            " ? spawn([process.execPath, '-e', " +
-                SafeJSON.stringify("console.log(" + SafeJSON.stringify(fixture) + ")") +
-                "], options)",
-            " : spawn(args, options);",
-        ].join("\n")
-    );
+            { number: 535, head: { ref: "feature/base" }, base: { ref: "main" } },
+            { number: 536, head: { ref: "fixture" }, base: { ref: "feature/base" } },
+            { number: 537, head: { ref: "feature/top" }, base: { ref: "fixture" } },
+        ],
+    ];
+    const files = [
+        Array.from({ length: 100 }, (_, i) => ({ filename: `src/file-${i}.ts` })),
+        [{ filename: "src/last.ts" }],
+    ];
     for (const [changedFiles, round, dedicated, all] of [
         [63, 1, false, true],
         [63, 2, false, true],
@@ -2304,12 +2358,30 @@ test("generated worker briefs follow the round and dedicated-review policy", () 
         [120, 4, false, false],
         [120, 32, true, true],
     ] as const) {
-        const metadata = { title: "Fixture review", headRefName: "fixture", baseRefName: "main", changedFiles };
+        const metadata = {
+            number: 536,
+            title: "Fixture review",
+            headRefName: "fixture",
+            baseRefName: "feature/base",
+            changedFiles,
+        };
         fs.writeFileSync(
             preload,
-            "Bun.spawnSync=(args)=>({exitCode:0,stdout:Buffer.from(JSON.stringify(" +
-                SafeJSON.stringify(metadata) +
-                ")),stderr:Buffer.alloc(0)});"
+            [
+                "Bun.spawnSync=(args)=>{",
+                "if(args[0]!=='gh') return {exitCode:0,stdout:Buffer.from(''),stderr:Buffer.alloc(0)};",
+                "if(args[1]==='pr') return {exitCode:0,stdout:Buffer.from(JSON.stringify(" +
+                    SafeJSON.stringify(metadata) +
+                    ")),stderr:Buffer.alloc(0)};",
+                "if(args[2].includes('/pulls') && (!args.includes('--paginate') || !args.includes('--slurp'))) throw new Error('pagination required');",
+                "const data=args[2].includes('/files?') ? " +
+                    SafeJSON.stringify(files) +
+                    " : args[2].includes('/pulls?') ? " +
+                    SafeJSON.stringify(pulls) +
+                    " : null;",
+                "return {exitCode:0,stdout:Buffer.from(data ? JSON.stringify(data) : 'main\\n'),stderr:Buffer.alloc(0)};",
+                "};",
+            ].join("\n")
         );
         const target = join(dir, "brief-" + round + ".md");
         const result = Bun.spawnSync(
@@ -2337,6 +2409,10 @@ test("generated worker briefs follow the round and dedicated-review policy", () 
         expect(brief).toContain(all ? "fix EVERY valid finding" : "fix Critical, Major and High");
         expect(brief).toContain("A valid security finding is always fixed");
         expect(brief).toContain("Change every file the fix needs in this PR");
+        expect(brief).toContain("#535 feature/base");
+        expect(brief).toContain("#537 feature/top");
+        expect(brief).toContain("`src/file-0.ts`");
+        expect(brief).toContain("`src/last.ts`");
         if (!all) {
             expect(brief).toContain("about 20 changed lines");
             expect(brief).toContain("deferred");
@@ -3166,28 +3242,33 @@ describe("round 7 additional review regressions", () => {
 });
 
 describe("round 8 review regressions", () => {
-    test("reclaim refreshes lsof before every rename and stops closed if that refresh fails", () => {
+    test("reclaim judges with one recent lsof listing, reads one more after the last move, and puts back what it shows open", () => {
         for (const mode of ["open", "failure"]) {
-            const dir = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "babysit-open-refresh-")));
+            const dir = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "babysit-open-after-move-")));
             const root = join(dir, "tmp");
             const run = join(dir, "run");
-            for (const folder of [root, run, join(root, "fixture-first"), join(root, "fixture-second")]) {
+            const names = [
+                "fixture-first",
+                "fixture-second",
+                ...Array.from({ length: 20 }, (_, index) => `fixture-extra-${index}`),
+            ];
+            for (const folder of [root, run, ...names.map((name) => join(root, name))]) {
                 fs.mkdirSync(folder);
             }
-            const first = join(root, "fixture-first");
             const second = join(root, "fixture-second");
             fs.writeFileSync(join(second, "held.txt"), "fixture");
             const plan = join(dir, "plan.json");
             const moves = join(dir, "moves.txt");
+            const reads = join(dir, "reads.txt");
             const preload = join(dir, "preload.ts");
             fs.writeFileSync(
                 plan,
                 SafeJSON.stringify({
                     createdAt: Date.now(),
                     minAgeHours: 0,
-                    candidates: [first, second].map((path) => ({
-                        path,
-                        ino: fs.lstatSync(path).ino,
+                    candidates: names.map((name) => ({
+                        path: join(root, name),
+                        ino: fs.lstatSync(join(root, name)).ino,
                         bytes: 0,
                         newest: 0,
                     })),
@@ -3206,12 +3287,22 @@ describe("round 8 review regressions", () => {
                     "mock.module(" +
                         SafeJSON.stringify(providers) +
                         ",()=>({nativeSessionRoots:()=>[],nativeTranscriptMaxDepth:()=>4,nativeHomePath:()=>'/nonexistent-fixture-claude-home'}));",
-                    "let reads=0; Bun.spawnSync=(args)=>{if(args[0] !== 'lsof') throw new Error('unexpected command'); reads++;",
-                    "const failure=reads >= 3 && " + SafeJSON.stringify(mode) + " === 'failure';",
-                    "const open=reads >= 3 ? " +
-                        SafeJSON.stringify(second + "/held.txt") +
-                        " : '/unrelated-fixture-file';",
-                    "return {exitCode:failure?1:0,stdout:Buffer.from('p1\\nn'+open+'\\n'),stderr:Buffer.alloc(0)};};",
+                    // The first listing shows nothing in the fixtures. The one after the moves shows held.txt where
+                    // lsof names it by then, inside this apply's quarantine, or fails in the failure mode.
+                    "Bun.spawnSync=(args)=>{if(args[0] !== 'lsof') throw new Error('unexpected command');",
+                    "original.appendFileSync(" +
+                        SafeJSON.stringify(reads) +
+                        ",'x'); const n=original.readFileSync(" +
+                        SafeJSON.stringify(reads) +
+                        ",'utf8').length;",
+                    "if(n >= 2 && " +
+                        SafeJSON.stringify(mode) +
+                        " === 'failure') return {exitCode:1,stdout:Buffer.alloc(0),stderr:Buffer.from('fixture failure')};",
+                    "const held=n >= 2 ? original.readdirSync(" +
+                        SafeJSON.stringify(root) +
+                        ",{recursive:true}).map(String).find((p)=>p.includes('.tmp-reclaim-') && p.endsWith('fixture-second/held.txt')) : undefined;",
+                    "const open=held ? " + SafeJSON.stringify(root) + "+'/'+held : '/unrelated-fixture-file';",
+                    "return {exitCode:0,stdout:Buffer.from('p1\\nn'+open+'\\n'),stderr:Buffer.alloc(0)};};",
                 ].join("\n")
             );
             const result = Bun.spawnSync(
@@ -3228,15 +3319,24 @@ describe("round 8 review regressions", () => {
                 ],
                 { stdout: "pipe", stderr: "pipe", env: { ...env.getProcessEnv(), TMPDIR: root }, timeout: 5000 }
             );
-            expect(result.exitCode).toBe(mode === "open" ? 0 : 1);
-            expect(fs.existsSync(first)).toBe(false);
-            expect(fs.existsSync(second)).toBe(true);
-            expect(fs.readFileSync(moves, "utf8").trim().split("\n")).toEqual([first]);
+            // One listing judged all 22 entries and one more cleared the delete, never one listing per entry.
+            expect(fs.readFileSync(reads, "utf8").length).toBe(2);
             expect(fs.readdirSync(root).filter((name) => name.startsWith(".tmp-reclaim-"))).toEqual([]);
+            const renames = fs.readFileSync(moves, "utf8").trim().split("\n");
             if (mode === "open") {
+                expect(result.exitCode).toBe(0);
+                // The held entry is back at its place with its file; every other entry is gone.
+                expect(fs.readFileSync(join(second, "held.txt"), "utf8")).toBe("fixture");
+                expect(names.filter((name) => fs.existsSync(join(root, name)))).toEqual(["fixture-second"]);
+                expect(renames).toHaveLength(names.length + 1);
+                expect(result.stdout.toString()).toContain(`removed ${names.length - 1} of ${names.length}`);
                 expect(result.stdout.toString()).toContain('"open-file":1');
             } else {
+                // No listing after the moves clears nothing: every moved entry goes back and nothing is deleted.
+                expect(result.exitCode).toBe(1);
                 expect(result.stderr.toString()).toContain("lsof listing incomplete");
+                expect(names.filter((name) => fs.existsSync(join(root, name)))).toEqual(names);
+                expect(renames).toHaveLength(names.length * 2);
             }
         }
     });
@@ -4084,14 +4184,15 @@ describe("round 15 review regressions", () => {
         const preload = join(dir, "preload.ts");
         fs.writeFileSync(
             preload,
-            "Bun.spawnSync=(args)=>{if(args[0] !== 'gh' && args[0] !== 'git') throw new Error('unexpected command');return {exitCode:0,stdout:Buffer.from(args[0] === 'gh'?'" +
+            "Bun.spawnSync=(args)=>{if(args[0] !== 'gh' && args[0] !== 'git') throw new Error('unexpected command');const value=args[0] === 'git' ? '' : args[1] === 'pr' ? '" +
                 SafeJSON.stringify({
+                    number: 1,
                     title: "Fixture",
                     headRefName: "fixture",
                     baseRefName: "main",
                     changedFiles: 63,
                 }) +
-                "':''),stderr:Buffer.alloc(0)};};"
+                "' : args[2].includes('/pulls') ? '[[]]' : 'main';return {exitCode:0,stdout:Buffer.from(value),stderr:Buffer.alloc(0)};};"
         );
         for (const model of ["Grok", "GPT-6.1 Sol"]) {
             const out = join(dir, "brief.md");
@@ -6409,19 +6510,21 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         fs.writeFileSync(join(triple, "fix.patch"), "a patch");
         expect(fs.lstatSync(triple).ino).toBe(before);
         expect(buildOutputKind(triple)).toBeNull();
-        expect(judgeOwn(triple, { sessionDirs: [dir], open: [], minAgeMinutes: 0 })).toBe("not-build-output");
+        expect(judgeOwn(triple, { sessionDirs: [dir], open: new OpenFiles([]), minAgeMinutes: 0 })).toBe(
+            "not-build-output"
+        );
     });
 
     test("judgeOwn keeps the guards: recent, open, FIFO, outside the session, not build output", () => {
         const { cc, dir } = plantSession();
         // A change time can sit a millisecond ahead of Date.now(); with a zero age limit that still reads as recent.
         Bun.sleepSync(20);
-        const options = { sessionDirs: [dir], open: [] as string[], minAgeMinutes: 0 };
+        const options = { sessionDirs: [dir], open: new OpenFiles([]), minAgeMinutes: 0 };
         const hub = join(dir, "pluggable/b-hub");
         const verdict = judgeOwn(hub, options);
         expect(typeof verdict === "string" ? verdict : verdict.path).toBe(hub);
         expect(judgeOwn(hub, { ...options, minAgeMinutes: 10 })).toBe("recent");
-        expect(judgeOwn(hub, { ...options, open: [join(hub, "build.db")] })).toBe("open-file");
+        expect(judgeOwn(hub, { ...options, open: new OpenFiles([join(hub, "build.db")]) })).toBe("open-file");
         const asideInHub = { dir: join(hub, "arm64-apple-macosx"), requestId: "asdown" };
         expect(judgeOwn(hub, { ...options, pending: [asideInHub] })).toBe("aside-pending");
         expect(judgeOwn(join(dir, "pluggable/b-notes"), options)).toBe("not-build-output");
@@ -6456,7 +6559,7 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         const listed = ownBuildOutput(dir);
         expect(listed.filter((path) => path.includes("/.tmp-reclaim-"))).toEqual([legacy, orphan, shared, live].sort());
         Bun.sleepSync(20);
-        const options = { sessionDirs: [dir], open: [] as string[], minAgeMinutes: 0 };
+        const options = { sessionDirs: [dir], open: new OpenFiles([]), minAgeMinutes: 0 };
         for (const taken of [orphan, legacy]) {
             const verdict = judgeOwn(taken, options);
             expect(typeof verdict === "string" ? verdict : verdict.path).toBe(taken);
@@ -6464,9 +6567,9 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         expect(judgeOwn(live, options)).toBe("live-quarantine");
         expect(judgeOwn(shared, options)).toBe("not-build-output");
         expect(judgeOwn(nested, options)).toBe("not-build-output");
-        expect(judgeOwn(orphan, { ...options, open: [join(orphan, "0-arm64-apple-macosx/debug/App.o")] })).toBe(
-            "open-file"
-        );
+        expect(
+            judgeOwn(orphan, { ...options, open: new OpenFiles([join(orphan, "0-arm64-apple-macosx/debug/App.o")]) })
+        ).toBe("open-file");
     });
 
     test("the session is found by its full uuid only", () => {
@@ -6564,7 +6667,7 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         Bun.sleepSync(20);
         // The dry run's own steps: list, then judge each entry.
         const planned = ownBuildOutput(dir).flatMap((path) => {
-            const verdict = judgeOwn(path, { sessionDirs: [dir], open: [], minAgeMinutes: 0 });
+            const verdict = judgeOwn(path, { sessionDirs: [dir], open: new OpenFiles([]), minAgeMinutes: 0 });
             return typeof verdict === "string" || verdict.path !== orphan ? [] : [verdict];
         });
         expect(planned.map((candidate) => candidate.path)).toEqual([orphan]);
@@ -6617,11 +6720,11 @@ describe("tmp-reclaim never lists a pending aside copy", () => {
         const protection = { ids: [], paths: [] };
         saveRmRequest(request);
 
-        expect(judge(scratch, protection, [], pendingAsideDirs())).toBe("aside-pending");
-        expect(judge(asideDir, protection, [], pendingAsideDirs())).toBe("aside-pending");
+        expect(judge(scratch, protection, new OpenFiles([]), pendingAsideDirs())).toBe("aside-pending");
+        expect(judge(asideDir, protection, new OpenFiles([]), pendingAsideDirs())).toBe("aside-pending");
 
         saveRmRequest({ ...request, status: "denied" });
-        expect(judge(scratch, protection, [], pendingAsideDirs())).not.toBe("aside-pending");
+        expect(judge(scratch, protection, new OpenFiles([]), pendingAsideDirs())).not.toBe("aside-pending");
     });
 
     test("the guard right before an apply move reads the pending asides again, so one made during the scan counts", () => {
@@ -6630,7 +6733,7 @@ describe("tmp-reclaim never lists a pending aside copy", () => {
         fs.mkdirSync(asideDir, { recursive: true });
         fs.writeFileSync(join(asideDir, "0-y-copy.txt"), "y");
         // The plan was judged before this request existed; the move guard must not trust that snapshot.
-        expect(moveBlocker(scratch, { open: [] })).toBeNull();
+        expect(moveBlocker(scratch, { open: new OpenFiles([]) })).toBeNull();
         const request: RmRequest = {
             id: "asdlat",
             kind: "delete",
@@ -6652,12 +6755,54 @@ describe("tmp-reclaim never lists a pending aside copy", () => {
         };
         saveRmRequest(request);
 
-        expect(moveBlocker(scratch, { open: [] })).toBe("aside-pending");
-        expect(moveBlocker(asideDir, { open: [] })).toBe("aside-pending");
-        expect(moveBlocker(scratch, { open: [join(scratch, "held.log")], pending: [] })).toBe("open-file");
-        expect(moveBlocker(join(scratch, "nothing-here"), { open: [], pending: [] })).toBe("gone");
+        expect(moveBlocker(scratch, { open: new OpenFiles([]) })).toBe("aside-pending");
+        expect(moveBlocker(asideDir, { open: new OpenFiles([]) })).toBe("aside-pending");
+        expect(moveBlocker(scratch, { open: new OpenFiles([join(scratch, "held.log")]), pending: [] })).toBe(
+            "open-file"
+        );
+        expect(moveBlocker(join(scratch, "nothing-here"), { open: new OpenFiles([]), pending: [] })).toBe("gone");
 
         saveRmRequest({ ...request, status: "denied" });
-        expect(moveBlocker(scratch, { open: [] })).toBeNull();
+        expect(moveBlocker(scratch, { open: new OpenFiles([]) })).toBeNull();
+    });
+});
+
+describe("brief stack", () => {
+    const prs = [
+        { number: 1, headRefName: "feature/base", baseRefName: "main" },
+        { number: 2, headRefName: "feature/middle", baseRefName: "feature/base" },
+        { number: 3, headRefName: "feature/top", baseRefName: "feature/middle" },
+    ];
+
+    test("shows the middle PR's parent and child", () => {
+        const text = formatStack({ pr: prs[1], openPrs: prs, defaultBranch: "main" });
+        expect(text).toContain("#1 feature/base");
+        expect(text).toContain("#3 feature/top");
+        expect(text).toContain("Push the parent before the child.");
+        expect(text).toContain("reply");
+    });
+
+    test("shows all direct children", () => {
+        const openPrs = [...prs, { number: 4, headRefName: "feature/other", baseRefName: "feature/base" }];
+        const text = formatStack({ pr: prs[0], openPrs, defaultBranch: "main" });
+        expect(text).toContain("#2 feature/middle");
+        expect(text).toContain("#4 feature/other");
+    });
+
+    test("uses one line for a standalone PR", () => {
+        expect(formatStack({ pr: prs[0], openPrs: [prs[0]], defaultBranch: "main" })).toBe(
+            "This PR is not part of a stack."
+        );
+    });
+
+    test("stops a cycle without listing the current PR as its own parent", () => {
+        const cycle = [
+            { number: 5, headRefName: "feature/a", baseRefName: "feature/b" },
+            { number: 6, headRefName: "feature/b", baseRefName: "feature/a" },
+        ];
+        const text = formatStack({ pr: cycle[0], openPrs: cycle, defaultBranch: "main" });
+        expect(text).toContain("#6 feature/b");
+        expect(text).toContain("cycle");
+        expect(text).not.toContain("#5 feature/a");
     });
 });

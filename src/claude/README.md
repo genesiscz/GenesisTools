@@ -87,6 +87,11 @@ usage/spending observations. Never delete the whole database as a cache reset.
 A non-interactive resume query with several matches fails instead of silently
 choosing the first session.
 
+In a terminal, `tools claude resume`, `tools claude start|run --resume` (bare or with a
+query) and `tools claude codex --resume` all go through one picker. A session that
+already runs in a cmux tab is listed on top as live, and Enter on it focuses that tab
+instead of opening a second Claude process on the session.
+
 ## `proxy` — Claude Code on a proxied model
 
 Launches Claude Code against a model served by `tools ai-proxy` (Grok, GitHub Copilot,

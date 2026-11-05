@@ -76,6 +76,7 @@ readLastLines(path, { method: "ffi" });                  // libSystem open/lseek
 ## 5. APFS and FSEvents
 
 - Appending to a file does NOT change its folder's mtime. A folder mtime check finds new files, not grown ones.
+- Cache folder names only while the folder inode, mtime and ctime match, and relist folders changed less than 2 seconds ago to guard coarse clocks. A scan of 481 folders fell from 16 to 19 ms to 2.3 to 3.2 ms (b8bb24683e). Test add, remove, rename and in-place content changes.
 - `@parcel/watcher` `getEventsSince(dir, snapshot)` replays FSEvents history in about 1 ms of CPU. It is the cheap
   way to learn which files to re-stat; it is not a substitute for one full walk when the history is gone.
 - Bun 1.3.13: every `fs.watch` created after the first `FSWatcher.close()` in a process goes deaf. Use the

@@ -575,6 +575,17 @@ function canAutopick(account: ScoredAccount): boolean {
 }
 
 /**
+ * The account an automatic pick launches: the first that can serve and whose 5h window will not stall it. The
+ * grouped order puts a surplus week that resets soon on top, so on 2026-11-04 an account with 6% of its 5h window
+ * left topped the list and won the launch. A starved account wins only when every account that can serve is starved.
+ */
+export function autopickBest(scored: ScoredAccount[]): ScoredAccount {
+    const eligible = scored.filter(canAutopick);
+
+    return eligible.find((s) => s.tier !== "session-starved") ?? eligible[0] ?? scored[0];
+}
+
+/**
  * The account a resumed session last ran on, while it can still serve: its week is open and its 5h window is not
  * nearly spent. The prompt cache does not cross accounts, so a thread that moves pays its whole context again, and
  * T3 Code relaunches a thread's claude often (2026-11-01: session 4c749d15 moved accounts on a resume).
@@ -662,7 +673,7 @@ async function pickAccount(
 
         // The interactive table still SHOWS the accounts that cannot serve; only the automatic choice skips them.
         const eligible = scored.filter(canAutopick);
-        const best = eligible[0] ?? scored[0];
+        const best = autopickBest(scored);
 
         if (eligible.length === 0) {
             out.printlnErr(pc.yellow("No account has usable headroom; picking the best of a bad set."));
@@ -674,7 +685,7 @@ async function pickAccount(
 
         out.printlnErr(`${TIER_BADGE[best.tier]} ${pc.cyan(best.accountName)} — ${scoredHint(best)}`);
 
-        const runnerUp = scored[1];
+        const runnerUp = scored.find((s) => s !== best);
         if (runnerUp) {
             out.printlnErr(pc.dim(`  vs ${runnerUp.accountName} — ${runnerUp.why}`));
         }
@@ -875,9 +886,20 @@ async function offerLimitKilledResume(): Promise<string[]> {
     return picked ? ["--resume", picked] : [];
 }
 
-async function resolveResumeArgs(
-    opts: StartOptions,
-    passthrough: string[]
+/**
+ * The claude arguments for `--continue` / `--resume [query]`. A resume in a terminal goes through
+ * `pickSessionForResume`, bare or with a query: that picker knows which sessions already run in a cmux tab and
+ * focuses the tab instead of returning one. A bare `--resume` handed to Claude's own picker could not know, and on
+ * 2026-11-03 picking a session that ran in another tab opened a second process on it. Without a terminal, or for an
+ * embedding app (`--sdk`), a bare `--resume` still reaches claude as is.
+ */
+export async function resolveResumeArgs(
+    opts: Pick<StartOptions, "continue" | "resume" | "sdk">,
+    passthrough: string[],
+    deps: {
+        interactive?: boolean;
+        pick?: (query: string | undefined) => Promise<{ sessionId: string; name: string }>;
+    } = {}
 ): Promise<{ args: string[]; title?: string }> {
     if (opts.continue) {
         if (opts.resume) {
@@ -887,12 +909,14 @@ async function resolveResumeArgs(
         return { args: ["--continue"] };
     }
 
-    if (opts.resume === true) {
+    const pick = deps.pick ?? ((query: string | undefined) => pickSessionForResume(query, { allProjects: false }));
+
+    if (opts.resume === true && (opts.sdk || !(deps.interactive ?? isInteractive()))) {
         return { args: ["--resume"] };
     }
 
-    if (typeof opts.resume === "string") {
-        const session = await pickSessionForResume(opts.resume, { allProjects: false });
+    if (opts.resume) {
+        const session = await pick(opts.resume === true ? undefined : opts.resume);
         if (!/^[\w-]+$/.test(session.sessionId)) {
             throw new Error(`Invalid session ID: ${session.sessionId}`);
         }
@@ -1303,7 +1327,10 @@ export function registerStartCommand(program: Command): void {
             "-e, --effort <level>",
             "Reasoning effort: claude's own --effort, or the :<effort> suffix for an ai-proxy target (account/provider)"
         )
-        .option("-r, --resume [query]", "Resume a session: bare uses claude's own picker, query searches locally")
+        .option(
+            "-r, --resume [query]",
+            "Resume a session: bare lists this folder's sessions, a query searches; a session already running in cmux is focused"
+        )
         .option("-c, --continue", "Continue the most recent session")
         .option(
             "--keychain",

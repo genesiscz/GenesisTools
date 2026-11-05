@@ -503,3 +503,13 @@ checklist.md or motion.md as well.
   a per-call `live ? x : nil` is the defect (Martin, 2026-10-29 21:30: "doing those checks INSIDE some util or
   component instead of every caller").
 
+- 2026-11-05 00:32 — **An `.offset` before a gesture leaves the click where the view was, not where it is drawn.**
+  The recorder timeline placed each zoom, clip and hidden part with `.offset(x:)` and then added `.contentShape` and
+  the tap or drag after it. `.offset` moves the drawing only; the modifiers after it see the unshifted frame, so a
+  zoom's hit area sat at the lane's start (a click on the zoom added another one), every clip's hit area was the
+  first clip's, and the zoom lane read the pointer one inset (28 pt) to the left, so a new zoom started right of
+  the pointer (fixed in bd94636630 and cf8df6da07). How to see it: send real mouse events to an off-screen window and
+  check what changed (`RecorderTimelineTests`). Rule: `.offset` is the last modifier of anything that takes a
+  click, or place it with a layout (`.padding(.leading:)`, `.position`). A stationary real pointer can also miss
+  the hover event when a row opens, scrolls or refreshes, so its first click must work without a mouse move. The
+  resting label now handles the same tap (dafe8e779f). Test a click with no preceding move.
