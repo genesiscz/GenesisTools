@@ -208,7 +208,12 @@ export class Job<S> {
             const guard = new InputGuard(this.options.inputs);
             const keys = chainKeys(steps, this.options.fingerprint);
             if (receipts) {
-                mkdirSync(receipts, { recursive: true });
+                // The receipt cache only saves work later; a cache that cannot be written never fails the job.
+                try {
+                    mkdirSync(receipts, { recursive: true });
+                } catch (error) {
+                    log.warn({ error, job: this.id }, "could not create receipt cache");
+                }
 
                 for (let index = steps.length - 1; index >= 0; index--) {
                     const key = keys[index];
@@ -263,10 +268,13 @@ export class Job<S> {
 
                 if (receipts && key) {
                     const receipt: Receipt = { version: 1, key, state, at: new Date().toISOString() };
-                    atomicWriteFileSync(
-                        guard.claim(receiptPath({ dir: receipts, index, name: step.name })),
-                        SafeJSON.stringify(receipt, null, 2)
-                    );
+                    const path = guard.claim(receiptPath({ dir: receipts, index, name: step.name }));
+
+                    try {
+                        atomicWriteFileSync(path, SafeJSON.stringify(receipt, null, 2));
+                    } catch (error) {
+                        log.warn({ error, job: this.id, step: step.name }, "could not save receipt cache");
+                    }
                 }
 
                 this.emit({ step: step.name, done: index + 1, total: steps.length, unit: "steps", message: "done" });

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { JobInfo } from "@genesiscz/utils/jobs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
@@ -208,6 +209,12 @@ export type LiveEntryChange = Partial<
     Pick<LiveEntry, "title" | "state" | "displays" | "frames" | "lastFrameAt" | "warning">
 >;
 
+/** The answer deadline of a call: a `stop` that waits for its finish gets the finish's time, any other call the short one. */
+function callTimeoutFor(method: string, params: unknown): number {
+    const waits = !(typeof params === "object" && params !== null && "wait" in params && params.wait === false);
+    return method === "stop" && waits ? STOP_TIMEOUT_MS : CALL_TIMEOUT_MS;
+}
+
 /**
  * The live recording of one recorder in this process: the `<id>.json` discovery entry, written on every change, and a
  * JSON-RPC 2.0 server on its socket (one message per line) that serves the recorder's RecorderControl, plus
@@ -235,14 +242,48 @@ export class LiveRecordingServer {
         mkdirSync(dir, { recursive: true });
         this.entryPath = join(dir, `${options.id}.json`);
         const socket = liveSocketPath(dir, options.id);
-
-        // A socket file left by a recorder that died; this process now owns the id.
-        if (existsSync(socket)) {
-            unlinkSync(socket);
-        }
-
         const control = options.control;
-        this.listener = Bun.listen<Connection>({
+        const pidCommand = readProcessCommand(process.pid);
+        this.entry = {
+            version: 1,
+            id: options.id,
+            kind: options.kind,
+            title: options.title,
+            pid: process.pid,
+            ...(pidCommand ? { pidCommand } : {}),
+            startedAt: new Date().toISOString(),
+            state: "recording",
+            displays: options.displays ?? [],
+            frames: 0,
+            ...(options.folder ? { folder: options.folder } : {}),
+            controls: [...control.methods],
+            socket,
+            ...(options.panel ? { panel: true } : {}),
+        };
+        // One process at a time decides who owns the id: a live or unreadable entry keeps it, and only a socket file
+        // left by a recorder that died is removed. The entry is published under the same lock as the socket.
+        this.listener = withPathArbitrationSync(socket, () => {
+            if (existsSync(this.entryPath)) {
+                const previous = liveEntrySchema.safeParse(parseOrNull(readFileSync(this.entryPath, "utf8")));
+
+                if (!previous.success || isLiveEntryAlive(previous.data)) {
+                    throw new Error(`Recording "${options.id}" already owns its control socket`);
+                }
+            }
+
+            if (existsSync(socket)) {
+                unlinkSync(socket);
+            }
+
+            const listener = this.listen(socket, control);
+            this.write();
+            return listener;
+        });
+        log.info({ id: options.id, kind: options.kind, socket }, "live recording listening");
+    }
+
+    private listen(socket: string, control: RecorderControl): ReturnType<typeof Bun.listen<Connection>> {
+        return Bun.listen<Connection>({
             unix: socket,
             socket: {
                 open: (client) => {
@@ -268,25 +309,6 @@ export class LiveRecordingServer {
                 },
             },
         });
-        const pidCommand = readProcessCommand(process.pid);
-        this.entry = {
-            version: 1,
-            id: options.id,
-            kind: options.kind,
-            title: options.title,
-            pid: process.pid,
-            ...(pidCommand ? { pidCommand } : {}),
-            startedAt: new Date().toISOString(),
-            state: "recording",
-            displays: options.displays ?? [],
-            frames: 0,
-            ...(options.folder ? { folder: options.folder } : {}),
-            controls: [...control.methods],
-            socket,
-            ...(options.panel ? { panel: true } : {}),
-        };
-        this.write();
-        log.info({ id: options.id, kind: options.kind, socket }, "live recording listening");
     }
 
     get id(): string {
@@ -355,12 +377,23 @@ export class LiveRecordingServer {
                 });
         }
 
-        this.listener.stop();
+        const remove = () => {
+            this.listener.stop();
 
-        for (const path of [this.entryPath, this.entry.socket]) {
-            if (existsSync(path)) {
-                unlinkSync(path);
+            for (const path of [this.entryPath, this.entry.socket]) {
+                if (existsSync(path)) {
+                    unlinkSync(path);
+                }
             }
+        };
+
+        // Under the same lock as a start, so a new owner never sees this entry gone while its socket still exists.
+        try {
+            withPathArbitrationSync(this.entry.socket, remove);
+        } catch (error) {
+            // A start holding the lock now reads this entry as alive and gives up, so removing without it is safe.
+            log.warn({ error, id: this.entry.id }, "live recording socket lock busy; removing without it");
+            remove();
         }
 
         log.info({ id: this.entry.id }, "live recording removed");
@@ -559,7 +592,8 @@ export class RecorderClient extends RecorderControl {
     }
 
     /** One JSON-RPC call; an error reply rejects with an RpcError that carries its code. */
-    call<T = unknown>(method: string, params?: unknown, timeoutMs = CALL_TIMEOUT_MS): Promise<T> {
+    /** A waiting `stop` gets the time a finish takes, through this path as through `stop()`. */
+    call<T = unknown>(method: string, params?: unknown, timeoutMs = callTimeoutFor(method, params)): Promise<T> {
         if (this.closedReason) {
             return Promise.reject(new Error(this.closedReason));
         }

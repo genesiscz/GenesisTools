@@ -24,7 +24,7 @@ import {
     type SegmentRecorder,
     type SegmentResult,
 } from "./recording-session";
-import { SessionRecorderControl } from "./recording-session-control";
+import { applyRecordingCommand, SessionRecorderControl } from "./recording-session-control";
 import {
     defaultRecordingTarget,
     describeRecordingTarget,
@@ -499,6 +499,79 @@ describe("RecordingSession", () => {
         await recording.command({ cmd: "stop" });
         expect(await recording.finished).toBe("done");
         expect(await readFile(join(root, "out.mp4"), "utf8")).toBe("movie 0 app");
+    });
+
+    it("commands arriving together validate state in arrival order", async () => {
+        const { recorder } = fakeRecorder();
+        let control: SessionRecorderControl | undefined;
+        const recording = new RecordingSession({
+            target: finder,
+            directory: join(root, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            join: async () => ({ durationMs: 0 }),
+            emit: (event) => control?.observe(event),
+            now: () => clock,
+            tickMs: 0,
+            slowStartMs: 0,
+        });
+        control = new SessionRecorderControl(recording, { target: finder });
+
+        try {
+            await recording.start();
+            await Promise.all([
+                applyRecordingCommand(control, { cmd: "pause" }),
+                applyRecordingCommand(control, { cmd: "resume" }),
+            ]);
+            expect((await control.status()).state).toBe("recording");
+        } finally {
+            await recording.command({ cmd: "discard" });
+        }
+    });
+
+    it("control stop rejects a failed save and permits a retry", async () => {
+        const { recorder } = fakeRecorder();
+        let control: SessionRecorderControl | undefined;
+        let attempts = 0;
+        const recording = new RecordingSession({
+            target: finder,
+            directory: join(root, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            join: async ({ output }) => {
+                attempts += 1;
+
+                if (attempts === 1) {
+                    throw new Error("disk full");
+                }
+
+                await writeFile(output, "joined");
+                return { durationMs: 1000 };
+            },
+            emit: (event) => control?.observe(event),
+            now: () => clock,
+            tickMs: 0,
+            slowStartMs: 0,
+        });
+        control = new SessionRecorderControl(recording, { target: finder });
+
+        try {
+            await recording.start();
+            await control.pause();
+            await control.resume();
+            await expect(
+                Promise.race([
+                    control.stop(),
+                    Bun.sleep(300).then(() => {
+                        throw new Error("stop hung");
+                    }),
+                ])
+            ).rejects.toThrow("disk full");
+            expect(await control.stop()).toMatchObject({ state: "stopped", outcome: "done" });
+            expect(attempts).toBe(2);
+        } finally {
+            await recording.command({ cmd: "discard" });
+        }
     });
 
     it("a discard after a failed save deletes every segment", async () => {

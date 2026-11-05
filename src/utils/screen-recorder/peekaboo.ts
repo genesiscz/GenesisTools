@@ -109,7 +109,13 @@ export class PeekabooFrameRecorder extends FrameRecorder {
             throw peekabooCaptureError(result.status, result.stdout, result.stderr);
         }
 
-        return parseDisplayList(SafeJSON.parse(result.stdout));
+        const parsed = parseOutput(result.stdout);
+
+        if (parsed === null) {
+            throw new CaptureError("failed", "peekaboo screen list returned invalid JSON");
+        }
+
+        return parseDisplayList(parsed);
     }
 
     async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {

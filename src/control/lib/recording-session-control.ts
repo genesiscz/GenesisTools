@@ -146,7 +146,19 @@ export class SessionRecorderControl extends RecorderControl {
 
         const job = this.jobs.task<string>("join", async (ctx) => {
             ctx.progress({ done: 0, total: 1, unit: "steps", message: "joining the segments" });
-            void this.session.command({ cmd: "stop" });
+
+            // A save that failed leaves the session paused with a warning; the stop fails and can be sent again.
+            try {
+                await this.session.command({ cmd: "stop" });
+
+                if (this.state === "paused") {
+                    throw new Error(this.warning ?? "The recording could not be saved; stop can be retried.");
+                }
+            } catch (error) {
+                this.finishJob = undefined;
+                throw error;
+            }
+
             const outcome = await this.session.finished;
             ctx.progress({ done: 1, total: 1, unit: "steps", message: outcome });
             return outcome;
@@ -222,8 +234,27 @@ export class SessionRecorderControl extends RecorderControl {
     }
 }
 
-/** One stdin command of the session, as the same RecorderControl call the socket makes. */
-export async function applyRecordingCommand(control: RecorderControl, command: RecordingCommand): Promise<void> {
+/** The last queued command of each control; the next one starts when it has settled. */
+const commandQueues = new WeakMap<RecorderControl, Promise<void>>();
+
+/**
+ * One stdin command of the session, as the same RecorderControl call the socket makes, queued behind the commands
+ * before it: a pause and a resume sent together each check the state the one before left.
+ */
+export function applyRecordingCommand(control: RecorderControl, command: RecordingCommand): Promise<void> {
+    const next = (commandQueues.get(control) ?? Promise.resolve()).then(() =>
+        dispatchRecordingCommand(control, command)
+    );
+    commandQueues.set(
+        control,
+        next.catch((error: unknown) => {
+            log.debug({ error }, "queued recording command refused");
+        })
+    );
+    return next;
+}
+
+async function dispatchRecordingCommand(control: RecorderControl, command: RecordingCommand): Promise<void> {
     log.debug({ command: command.cmd }, "session command through its RecorderControl");
 
     switch (command.cmd) {

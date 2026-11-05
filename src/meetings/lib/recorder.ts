@@ -393,11 +393,14 @@ export async function runRecorder(options: {
                 ...nativeKeys,
                 heartbeatSec: settings.heartbeatSec,
             }),
-            // One capture records the sound: two would write the same microphone twice.
-            audio: () =>
-                deps.recorder.supports.audio && audio.sources.length > 0
-                    ? { sources: audio.sources, ...(audio.micDevice ? { micDeviceId: audio.micDevice } : {}) }
-                    : undefined,
+            // One capture records the sound: two would write the same microphone twice. A muted source is left out
+            // of a new capture, so its start-up buffers never reach the file; unmuting restarts the capture with it.
+            audio: () => {
+                const sources = audio.sources.filter((source) => !audio.muted[source]);
+                return deps.recorder.supports.audio && sources.length > 0
+                    ? { sources, ...(audio.micDevice ? { micDeviceId: audio.micDevice } : {}) }
+                    : undefined;
+            },
             audioOwnership: "single",
             hooks: pieceHooks,
         });
@@ -507,6 +510,15 @@ export async function runRecorder(options: {
                             throw new RpcError(RPC_ERRORS.unsupported, "this recorder cannot mute while it records");
                         }
 
+                        // The running capture was started without the muted source: only a new capture can add it.
+                        if (!muted && audio.muted[source]) {
+                            restart(() => {
+                                audio.muted[source] = false;
+                            });
+                            log.info({ source }, "audio unmuted over the socket; the piece restarts");
+                            return { ...audio, muted: { ...audio.muted } };
+                        }
+
                         await capture?.live?.mute?.(source, muted).catch((error: unknown) => {
                             throw new RpcError(RPC_ERRORS.internal, errorText(error));
                         });
@@ -537,7 +549,8 @@ export async function runRecorder(options: {
                                 throw new RpcError(RPC_ERRORS.internal, errorText(error));
                             });
                         } else {
-                            capture?.controller.abort();
+                            // Every capture restarts, so the one that takes the sound again uses the new microphone.
+                            restart(() => undefined);
                         }
 
                         return { ...audio, muted: { ...audio.muted } };
@@ -644,6 +657,12 @@ export async function runRecorder(options: {
                                 );
                             }
 
+                            // The capture may have ended while the switch was in flight; the next piece records it.
+                            if (running.get(only.target.displayId) !== only) {
+                                chosen = [display.id];
+                                return answer("next-piece");
+                            }
+
                             for (const other of others) {
                                 other.controller.abort();
                             }
@@ -728,23 +747,20 @@ export async function runRecorder(options: {
                 file: frame.path,
             });
         };
-        pieceHooks.onLive = (entry, channel) => {
+        pieceHooks.onLive = (_entry, channel) => {
             if (paused) {
                 channel.pause();
-            }
-
-            for (const source of entry.audio ? audio.sources : []) {
-                if (audio.muted[source]) {
-                    void channel.mute?.(source, true).catch((err: unknown) => log.warn({ err }, "mute failed"));
-                }
             }
         };
         pieceHooks.onResult = async (entry, result) => {
             keepTracks(result, entry.target);
             await jobs.task("ocr", (ctx) =>
-                keepFrames(result, entry.target, entry.streamed > 0, (done) =>
-                    ctx.progress({ done, total: result.frames.length, unit: "frames" })
-                )
+                keepFrames({
+                    result,
+                    target: entry.target,
+                    streamed: entry.streamed > 0,
+                    onFrame: (done) => ctx.progress({ done, total: result.frames.length, unit: "frames" }),
+                })
             ).done;
             entry.streamed = 0;
 
@@ -809,12 +825,17 @@ export async function runRecorder(options: {
         });
 
         /** `streamed`: the socket announced these frames as they landed already. */
-        const keepFrames = async (
-            result: CaptureResult,
-            target: PieceTarget,
-            streamed: boolean,
-            onFrame: (done: number) => void = () => undefined
-        ): Promise<void> => {
+        const keepFrames = async ({
+            result,
+            target,
+            streamed,
+            onFrame = () => undefined,
+        }: {
+            result: CaptureResult;
+            target: PieceTarget;
+            streamed: boolean;
+            onFrame?: (done: number) => void;
+        }): Promise<void> => {
             let done = 0;
 
             for (const frame of [...result.frames].sort((a, b) => a.atMs - b.atMs)) {

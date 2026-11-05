@@ -174,3 +174,17 @@ describe("job runner", () => {
         expect(seen).toContain("ocr:3/4");
     });
 });
+
+test("an unwritable receipt cache cannot turn successful work into a failed job", async () => {
+    const receipts = join(workspace(), "receipts");
+    writeFileSync(receipts, "not a directory");
+    const job = runJob({
+        id: "unwritable-receipt",
+        kind: "fixture",
+        initial: 0n,
+        receipts,
+        steps: [{ name: "value", key: "v1", run: async () => 1n }],
+    });
+    expect((await job.done).state).toBe(1n);
+    expect(job.info().state).toBe("done");
+});

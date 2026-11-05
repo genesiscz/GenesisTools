@@ -407,7 +407,16 @@ export class NativeLiveCapture implements LiveCapture {
             return;
         }
 
-        const parsed = controlEvent.safeParse(SafeJSON.parse(line, { strict: true }));
+        let raw: unknown;
+
+        try {
+            raw = SafeJSON.parse(line, { strict: true });
+        } catch (error) {
+            log.debug({ error }, "recorder stderr line is not an event");
+            return;
+        }
+
+        const parsed = controlEvent.safeParse(raw);
 
         if (!parsed.success) {
             return;

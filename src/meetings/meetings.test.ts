@@ -1933,6 +1933,8 @@ describe("the meetings recorder loop", () => {
         readonly commands: string[] = [];
         private piece = 0;
         private notified = -1;
+        private finishCapture?: () => void;
+        private switchWait?: () => void;
         /** How often the recorder asked for the connected displays (once per piece, and per socket call that needs it). */
         displayReads = 0;
 
@@ -1944,6 +1946,8 @@ describe("the meetings recorder loop", () => {
                 parallel?: boolean;
                 /** The live channel also takes settings, mute and a microphone (ax-tool with those commands). */
                 liveSettings?: boolean;
+                /** The first capture ends while its live switch is still in flight. */
+                lateSwitch?: boolean;
                 audio?: boolean;
             },
             private readonly whenDone: () => void
@@ -1986,6 +1990,11 @@ describe("the meetings recorder loop", () => {
 
         async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
             this.requests.push(request);
+
+            if (this.requests.length > 1) {
+                this.switchWait?.();
+            }
+
             const step = this.script.steps[this.requests.length - 1] ?? "hang";
             const displayId = request.target.kind === "display" ? request.target.displayId : 0;
 
@@ -1998,6 +2007,13 @@ describe("the meetings recorder loop", () => {
                 await Bun.write(path, "png");
                 request.hooks?.onLive?.({
                     switchDisplay: async (id) => {
+                        if (this.script.lateSwitch && this.requests.length === 1) {
+                            this.finishCapture?.();
+                            await new Promise<void>((resolve) => {
+                                this.switchWait = resolve;
+                            });
+                        }
+
                         this.commands.push(`switch ${id}`);
                         current = id;
                     },
@@ -2032,9 +2048,10 @@ describe("the meetings recorder loop", () => {
                     this.whenDone();
                 }
 
-                await new Promise<void>((resolve) =>
-                    signal?.addEventListener("abort", () => resolve(), { once: true })
-                );
+                await new Promise<void>((resolve) => {
+                    this.finishCapture = resolve;
+                    signal?.addEventListener("abort", () => resolve(), { once: true });
+                });
                 const track = request.audio ? join(request.outDir, "audio-mic.m4a") : undefined;
 
                 if (track) {
@@ -2086,6 +2103,7 @@ describe("the meetings recorder loop", () => {
         }>;
         liveControl?: boolean;
         liveSettings?: boolean;
+        lateSwitch?: boolean;
         audio?: boolean;
         /** What the test does over the socket at each hanging piece; after the last, it stops the recording. */
         actions?: Array<
@@ -2115,6 +2133,7 @@ describe("the meetings recorder loop", () => {
                 steps: options.steps,
                 liveControl: options.liveControl,
                 liveSettings: options.liveSettings,
+                lateSwitch: options.lateSwitch,
                 audio: options.audio,
             },
             () => {
@@ -2136,6 +2155,7 @@ describe("the meetings recorder loop", () => {
             store,
             meetingId: created.id,
             capture,
+            ...(options.lateSwitch ? { display: 1 } : {}),
             ...(options.audio ? { audio: ["mic" as const] } : {}),
             deps: {
                 recorder,
@@ -2538,6 +2558,17 @@ describe("the meetings recorder loop", () => {
         expect(readdirSync(join(run.folder, "frames"))).toHaveLength(2);
     });
 
+    test("a switch completing after its capture ended does not resurrect it", async () => {
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang", "hang"],
+            liveControl: true,
+            lateSwitch: true,
+            actions: [async (call) => call("displays.switch", { displayId: 4 }), async (call) => call("stop")],
+        });
+        expect(run.state.stopReason).toBe("requested");
+    }, 2000);
+
     test("a display switch applies at once, and an unknown display is refused", async () => {
         const run = await recordWith({
             displays: [[builtIn, external]],
@@ -2718,6 +2749,37 @@ describe("the meetings recorder loop", () => {
         expect(restarted.answers[0]).toMatchObject({ applied: "restart" });
         expect(restarted.recorder.requests.map((request) => request.activeFps)).toEqual([1, 2]);
     });
+
+    test("muted audio is absent from a restarted capture and unmute restarts it enabled", async () => {
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["hang", "hang", "hang"],
+            liveControl: true,
+            liveSettings: true,
+            audio: true,
+            actions: [
+                async (call) => {
+                    await call("audio.mute", { source: "mic", muted: true });
+                    return call("displays.mode", { mode: "all" });
+                },
+                async (call) => call("audio.mute", { source: "mic", muted: false }),
+                async (call) => call("stop"),
+            ],
+        });
+        expect(run.recorder.requests.map((request) => request.audio?.sources ?? [])).toEqual([["mic"], [], ["mic"]]);
+    });
+
+    test("changing microphone without live setMic restarts all displays", async () => {
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang", "hang", "hang", "hang"],
+            liveControl: true,
+            audio: true,
+            actions: [async (call) => call("audio.setInput", { deviceId: "desk-mic" }), async (call) => call("stop")],
+        });
+        expect(run.recorder.requests).toHaveLength(4);
+        expect(run.recorder.requests[2]?.audio?.micDeviceId).toBe("desk-mic");
+    }, 2000);
 
     test("sound: mute and a microphone switch go to the running capture, its file lands in audio/, and progress reaches a subscriber", async () => {
         const progress: string[] = [];

@@ -1000,3 +1000,51 @@ describe("characterization: what a library recording asks its recorder for", () 
         expect(plain.requests.map((request) => request.activeFps)).toEqual([2, 3]);
     });
 });
+
+test("malformed native stderr is ignored without losing valid events", () => {
+    const frames: string[] = [];
+    const live = new NativeLiveCapture(() => undefined, 1, { onFrame: (frame) => frames.push(frame.path) });
+    expect(() => live.receive("{unfinished")).not.toThrow();
+    live.receive(SafeJSON.stringify({ event: "frame", path: "frame.png", timestampMs: 1, reason: "change" }));
+    expect(frames).toEqual(["frame.png"]);
+});
+
+test("duplicate live recording ownership does not steal the first socket", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "live-owner-"));
+    const options = { id: "same", kind: "meeting", title: "Fixture", dir, control: new TestControl() };
+    const first = new LiveRecordingServer(options);
+    let second: LiveRecordingServer | undefined;
+
+    try {
+        expect(() => {
+            second = new LiveRecordingServer(options);
+        }).toThrow();
+        const client = await RecorderClient.connect("same", { dir });
+
+        try {
+            expect((await client.status()).title).toBe("Planning");
+        } finally {
+            client.close();
+        }
+    } finally {
+        second?.close();
+        first.close();
+    }
+});
+
+test("peekaboo display output rejects incomplete JSON as a capture error", async () => {
+    const commands = await import("@genesiscz/utils/process/bounded-command");
+    const { PeekabooFrameRecorder } = await import("./peekaboo");
+    const run = spyOn(commands, "boundedCommand").mockResolvedValue({
+        status: 0,
+        stdout: "{unfinished",
+        stderr: "",
+        signal: null,
+    });
+
+    try {
+        await expect(new PeekabooFrameRecorder().displays()).rejects.toBeInstanceOf(CaptureError);
+    } finally {
+        run.mockRestore();
+    }
+});
