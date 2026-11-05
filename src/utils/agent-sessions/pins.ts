@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
@@ -49,11 +49,40 @@ export interface LoadPinsOptions {
     path?: string;
 }
 
-/** Every pin, newest write per session id. Missing or torn lines are skipped, never fatal. */
-export async function loadPins(opts: LoadPinsOptions = {}): Promise<Map<string, SessionPin>> {
-    const path = opts.path ?? pinsPath();
-    let text: string;
+/** The journal parsed: every usable record in file order, and the line counts compaction decides on. */
+interface ParsedJournal {
+    records: SessionPin[];
+    lines: number;
+    /** Lines the map cannot hold. `compact` rewrites the journal as the map, so it would delete them. */
+    unusable: number;
+}
 
+/**
+ * The last parse of each journal, served again while the file's inode, size, mtime and ctime read the same: every
+ * append and every compaction changes them. A widget roster read loaded the 1.6 MB journal (6,475 lines) about ten
+ * times, 37 ms of CPU per read (2026-11-05).
+ */
+const parsedJournals = new Map<string, { identity: string; journal: ParsedJournal }>();
+
+async function readJournal(path: string): Promise<ParsedJournal | null> {
+    let identity: string;
+    try {
+        const status = await stat(path, { bigint: true });
+        identity = `${status.dev}:${status.ino}:${status.size}:${status.mtimeNs}:${status.ctimeNs}`;
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+            logger.warn({ err, path }, "[cmux-pins] could not stat the pin journal");
+        }
+
+        return null;
+    }
+
+    const cached = parsedJournals.get(path);
+    if (cached?.identity === identity) {
+        return cached.journal;
+    }
+
+    let text: string;
     try {
         text = await readFile(path, "utf8");
     } catch (err) {
@@ -61,41 +90,65 @@ export async function loadPins(opts: LoadPinsOptions = {}): Promise<Map<string, 
             logger.warn({ err, path }, "[cmux-pins] could not read the pin journal");
         }
 
-        return new Map();
+        return null;
     }
 
-    const pins = new Map<string, SessionPin>();
-    let lines = 0;
-    // Lines the map cannot hold. `compact` rewrites the journal as the map, so it would delete them.
-    let unusable = 0;
-
+    const journal: ParsedJournal = { records: [], lines: 0, unusable: 0 };
     for (const line of text.split("\n")) {
         if (!line.trim()) {
             continue;
         }
 
-        lines += 1;
+        journal.lines += 1;
 
         try {
             const pin = SafeJSON.parse(line, { strict: true }) as SessionPin;
 
             if (typeof pin.sessionId !== "string" || !Number.isFinite(pin.at)) {
-                unusable += 1;
+                journal.unusable += 1;
                 continue;
             }
 
-            if (opts.provider && (pin.provider ?? "claude") !== opts.provider) {
-                continue;
-            }
-
-            const existing = pins.get(pin.sessionId);
-
-            if (!existing || pin.at >= existing.at) {
-                pins.set(pin.sessionId, pin);
-            }
+            journal.records.push(pin);
         } catch (err) {
-            unusable += 1;
+            journal.unusable += 1;
             logger.debug({ err }, "[cmux-pins] skipping an unparseable journal line");
+        }
+    }
+
+    // Read under the identity taken before the read: a write in between makes the next stat differ, so it is
+    // parsed again then.
+    parsedJournals.delete(path);
+    parsedJournals.set(path, { identity, journal });
+    if (parsedJournals.size > 8) {
+        const oldest = parsedJournals.keys().next().value;
+        if (oldest !== undefined) {
+            parsedJournals.delete(oldest);
+        }
+    }
+
+    return journal;
+}
+
+/** Every pin, newest write per session id. Missing or torn lines are skipped, never fatal. */
+export async function loadPins(opts: LoadPinsOptions = {}): Promise<Map<string, SessionPin>> {
+    const path = opts.path ?? pinsPath();
+    const journal = await readJournal(path);
+    if (!journal) {
+        return new Map();
+    }
+
+    const { lines, unusable } = journal;
+    const pins = new Map<string, SessionPin>();
+    for (const pin of journal.records) {
+        if (opts.provider && (pin.provider ?? "claude") !== opts.provider) {
+            continue;
+        }
+
+        const existing = pins.get(pin.sessionId);
+
+        if (!existing || pin.at >= existing.at) {
+            pins.set(pin.sessionId, pin);
         }
     }
 

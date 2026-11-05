@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -198,5 +198,37 @@ describe("one journal, three agents", () => {
 
         expect((await loadPins({ provider: "codex" })).size).toBe(1);
         expect((await readFile(path, "utf8")).split("\n").filter(Boolean)).toHaveLength(lines.length);
+    });
+});
+
+describe("the parsed journal", () => {
+    test("an unchanged journal is parsed once, and an append shows at the next read", async () => {
+        await recordPin(pin({ sessionId: "s1", account: "work" }));
+        expect((await loadPins({ readOnly: true })).get("s1")?.account).toBe("work");
+        const parse = spyOn(SafeJSON, "parse");
+        try {
+            expect((await loadPins({ readOnly: true })).get("s1")?.account).toBe("work");
+            expect((await loadPins({ readOnly: true, provider: "claude" })).size).toBe(1);
+            expect(parse).not.toHaveBeenCalled();
+
+            await recordPin(pin({ sessionId: "s1", account: "personal", at: 2_000 }));
+            expect((await loadPins({ readOnly: true })).get("s1")?.account).toBe("personal");
+        } finally {
+            parse.mockRestore();
+        }
+    });
+
+    test("a provider filter still keeps that agent's newest record when another agent wrote the same id later", async () => {
+        await recordPin(pin({ sessionId: "shared", provider: "codex", account: "work", at: 1_000 }));
+        await recordPin(pin({ sessionId: "shared", account: "personal", at: 2_000 }));
+        expect((await loadPins({ readOnly: true })).get("shared")?.account).toBe("personal");
+        expect((await loadPins({ readOnly: true, provider: "codex" })).get("shared")?.account).toBe("work");
+    });
+
+    test("a caller that changes its map does not change the next answer", async () => {
+        await recordPin(pin({ sessionId: "s1" }));
+        const first = await loadPins({ readOnly: true });
+        first.delete("s1");
+        expect((await loadPins({ readOnly: true })).has("s1")).toBe(true);
     });
 });
