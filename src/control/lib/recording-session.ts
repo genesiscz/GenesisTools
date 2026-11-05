@@ -560,7 +560,25 @@ export class RecordingSession {
     private async moveMovie(source: string): Promise<void> {
         // A one-segment recording's cursor track goes with its movie; the joiner makes the track of several.
         if (existsSync(cursorTrackPath(source))) {
-            await rename(cursorTrackPath(source), cursorTrackPath(this.options.output));
+            const track = cursorTrackPath(source);
+            const destination = cursorTrackPath(this.options.output);
+            try {
+                await rename(track, destination);
+            } catch (error) {
+                if (!(error instanceof Error) || !("code" in error) || error.code !== "EXDEV") {
+                    throw error;
+                }
+
+                const temporary = `${destination}.${randomUUID()}.tmp`;
+                try {
+                    await copyFile(track, temporary);
+                    await rename(temporary, destination);
+                } finally {
+                    await unlink(temporary).catch((error: unknown) => {
+                        log.debug({ error, temporary }, "cursor temporary file already gone");
+                    });
+                }
+            }
         }
 
         try {
