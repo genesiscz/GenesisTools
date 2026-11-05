@@ -19,6 +19,8 @@ const correctionSchema = z.object({
     item: z.string(),
     /** A term's reach: `line` fixed one line only, so it does not teach the dictionary. Absent on older lines. */
     scope: z.enum(["line", "everywhere"]).optional(),
+    /** An Undo withdrew the confirmation of this meeting's item with this heard and fixed text; a later line may confirm it again. */
+    retracted: z.literal(true).optional(),
 });
 export type Correction = z.infer<typeof correctionSchema>;
 
@@ -26,7 +28,7 @@ export function correctionsPath(): string {
     return join(toolDataDir("meetings"), "corrections.jsonl");
 }
 
-/** Appends one line per confirmed correction. One short line per write, so concurrent writers do not interleave. */
+/** Appends one line per confirmed correction, or per withdrawn one (`retracted`). One short line per write, so concurrent writers do not interleave. */
 export function appendCorrections(corrections: Correction[]): void {
     if (corrections.length === 0) {
         return;

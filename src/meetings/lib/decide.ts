@@ -134,6 +134,36 @@ export async function decideItems(options: {
     return { decided: deciding.map((item) => item.id), token, skipped };
 }
 
+/** The item as it was before its decision: `decision.previous`, else suggested. */
+function restoreBefore(item: MeetingItem): void {
+    const previous = item.decision?.previous;
+    item.status = previous?.status ?? "suggested";
+
+    if (previous?.decidedAt) {
+        item.decidedAt = previous.decidedAt;
+    } else {
+        delete item.decidedAt;
+    }
+
+    if (previous && item.kind === "speaker-range") {
+        if (previous.speaker) {
+            item.speaker = previous.speaker;
+        } else {
+            delete item.speaker;
+        }
+    }
+
+    if (previous && item.kind === "term") {
+        if (previous.proposed) {
+            item.proposed = previous.proposed;
+        } else {
+            delete item.proposed;
+        }
+    }
+
+    delete item.decision;
+}
+
 function reopenSkips(record: MeetingRecord, picked: MeetingItem[]): Array<{ id: string; reason: string }> {
     return picked.flatMap((item) => {
         if (item.kind === "question") {
@@ -150,9 +180,11 @@ function reopenSkips(record: MeetingRecord, picked: MeetingItem[]): Array<{ id: 
 }
 
 /**
- * Puts decided items back to suggested: the Undo of a confirm or a reject. A question is never reopened here, because
- * its answer also decided other items; `listen` reopens its own answers. The corrections ledger is append-only, so a
- * confirm's ledger line stays; it counts as one confirmation for `dictionary suggest`. `token` names the decision
+ * Takes back the decision of items: the Undo of a confirm or a reject. Each item gets back the fields the decision
+ * changed (its status, a speaker or spelling the confirm gave); an item decided before this code kept them goes back to
+ * suggested. A question is never reopened here, because its answer also decided other items; `listen` reopens its own
+ * answers. The corrections ledger is append-only, so a confirm's line stays and a retraction line follows it, which
+ * `dictionary suggest` reads as the confirmation withdrawn. `token` names the decision
  * being undone (a `DecideResult.token`): when another decision changed one of the items since, nothing is reopened
  * (`item-changed`). The items are checked again under the record's lock.
  */
@@ -173,6 +205,7 @@ export async function reopenItems(options: {
 
     let reopened: string[] = [];
     let skipped = before;
+    const retracted: Correction[] = [];
     await store.update(record.id, { command: "reopen", change: options.ids.join(" ") }, (current) => {
         const picked = pickItems(current, options.ids);
         skipped = reopenSkips(current, picked);
@@ -189,14 +222,21 @@ export async function reopenItems(options: {
             }
         }
 
+        const now = new Date().toISOString();
+
         for (const item of reopening) {
-            item.status = "suggested";
-            delete item.decidedAt;
-            delete item.decision;
+            const confirmation = ledgerEntryFor(current, item, now);
+
+            if (confirmation) {
+                retracted.push({ ...confirmation, retracted: true });
+            }
+
+            restoreBefore(item);
         }
 
         reopened = reopening.map((item) => item.id);
     });
+    appendCorrections(retracted);
 
     return { reopened, skipped };
 }

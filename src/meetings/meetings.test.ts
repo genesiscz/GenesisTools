@@ -240,6 +240,32 @@ describe("suggestDictionary", () => {
         ).toEqual([]);
     });
 
+    test("a confirmation withdrawn by an Undo does not count; confirming it again counts again", () => {
+        const correction = {
+            at: "t",
+            meeting: "m",
+            kind: "term" as const,
+            scope: "everywhere" as const,
+            heard: "Viky",
+            fixed: "wiki",
+            item: "i1",
+        };
+        const suggest = (corrections: Array<typeof correction & { retracted?: true }>) =>
+            suggestDictionary({
+                dictionary: { abbrExpansion: "every", entries: [] },
+                sourceId: "wisprflow",
+                sourceWords: [],
+                ignore: [],
+                corrections,
+            });
+        const second = { ...correction, meeting: "m2", at: "t2" };
+
+        expect(suggest([correction, second, { ...second, at: "t3", retracted: true }])).toEqual([]);
+        expect(
+            suggest([correction, second, { ...second, at: "t3", retracted: true }, { ...second, at: "t4" }])
+        ).toEqual([{ entry: { type: "fix", value: "Viky", substitution: "wiki" }, from: "confirmed 2 times" }]);
+    });
+
     test("source rows become fix or term, twice-confirmed corrections become fix, known and ignored values are left out", () => {
         const correction = {
             at: "t",

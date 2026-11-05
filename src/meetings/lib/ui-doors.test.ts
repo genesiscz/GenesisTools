@@ -3,6 +3,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileS
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
+import { readCorrections } from "@genesiscz/utils/meetings/corrections";
 import { type MeetingRecord, MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { createCanvas } from "@napi-rs/canvas";
@@ -473,6 +474,69 @@ describe("undo of a decision", () => {
         expect(
             (await reopenItems({ store: meetings, record: created, ids: ["i1"], token: rejected.token })).reopened
         ).toEqual(["i1"]);
+    });
+});
+
+describe("undo puts back what the decision changed", () => {
+    test("the speaker a confirm gave, the state before a reject, and a withdrawn ledger line", async () => {
+        const { meetings } = stores();
+        const created = await meetings.create(
+            {
+                title: "Northwind review",
+                start: "2026-11-05T10:00:00.000Z",
+                createdBy: "new",
+                items: [
+                    {
+                        kind: "speaker-range",
+                        id: "i1",
+                        status: "suggested",
+                        label: "S1",
+                        fromSec: 0,
+                        toSec: 9,
+                        rules: [],
+                        suggestedAt,
+                    },
+                    {
+                        kind: "term",
+                        id: "i2",
+                        status: "suggested",
+                        heard: "Viky",
+                        proposed: "wiki",
+                        rules: [],
+                        suggestedAt,
+                    },
+                ],
+            },
+            { command: "test", change: "fixture" }
+        );
+        const named = await decideItems({
+            store: meetings,
+            record: created,
+            status: "confirmed",
+            ids: ["i1"],
+            speaker: "Alice Example",
+        });
+        const term = await decideItems({ store: meetings, record: created, status: "confirmed", ids: ["i2"] });
+        const rejected = await decideItems({ store: meetings, record: created, status: "rejected", ids: ["i2"] });
+
+        await reopenItems({ store: meetings, record: created, ids: ["i1"], token: named.token });
+        await reopenItems({ store: meetings, record: created, ids: ["i2"], token: rejected.token });
+        let saved = meetings.read(created.id);
+        expect(saved?.items[0]).toMatchObject({ status: "suggested" });
+        expect(saved?.items[0] && "speaker" in saved.items[0] ? saved.items[0].speaker : undefined).toBeUndefined();
+        expect(saved?.items[0]?.decision).toBeUndefined();
+        expect(saved?.items[1]).toMatchObject({ status: "confirmed" });
+
+        await reopenItems({ store: meetings, record: created, ids: ["i2"] });
+        saved = meetings.read(created.id);
+        expect(saved?.items[1]).toMatchObject({ status: "suggested", proposed: "wiki" });
+        expect(term.token).not.toBe(rejected.token);
+
+        const ledger = readCorrections().filter((line) => line.meeting === created.id);
+        expect(ledger.map((line) => [line.item, line.retracted === true])).toEqual([
+            ["i2", false],
+            ["i2", true],
+        ]);
     });
 });
 
