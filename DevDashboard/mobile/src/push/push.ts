@@ -44,14 +44,14 @@ async function registerCategories(): Promise<void> {
                     ...category.letters.map((letter) => ({
                         identifier: answerActionId(letter),
                         buttonTitle: letter === category.recommended ? `${letter} ★` : letter,
-                        // The answer runs without opening the app; the receipt comes back as a notice.
-                        options: { opensAppToForeground: false },
+                        // Request credentials remain protected until the phone unlocks.
+                        options: { opensAppToForeground: true, isAuthenticationRequired: true },
                     })),
                     {
                         identifier: REPLY_ACTION_ID,
                         buttonTitle: "Reply",
                         textInput: { submitButtonTitle: "Send", placeholder: "Your answer" },
-                        options: { opensAppToForeground: false },
+                        options: { opensAppToForeground: true, isAuthenticationRequired: true },
                     },
                 ]
             )
