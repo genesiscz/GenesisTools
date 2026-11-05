@@ -10,6 +10,7 @@ import { registerMeetingCommands } from "./commands/meeting";
 import { registerPlayCommand } from "./commands/play";
 import { registerProjectsCommand } from "./commands/projects";
 import { registerRecordCommands } from "./commands/record";
+import { registerScreenNoteCommand } from "./commands/screen-note";
 import { registerWatchCommands } from "./commands/watch";
 
 const program = new Command();
@@ -21,6 +22,7 @@ registerItemCommands(program);
 registerEvidenceCommand(program);
 registerAttendanceCommand(program);
 registerRecordCommands(program);
+registerScreenNoteCommand(program);
 registerPlayCommand(program);
 registerListenCommand(program);
 registerWatchCommands(program);
