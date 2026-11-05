@@ -248,3 +248,21 @@ describe("release plan", () => {
         expect(clockBuildNumber(new Date("2026-11-04T21:05:33Z"))).toBe("202611042105");
     });
 });
+
+describe("review regression cases", () => {
+    it("rejects inherited platform names", () => {
+        expect(() => choosePlatform("constructor", null)).toThrow("--platform");
+    });
+    it("keeps redirect URLs inside route queries", () => {
+        const route = { name: "home", url: "shop://home", rootId: "home-root" };
+        expect(resolveRoute([route], "home?redirect=https://example.com")).toEqual({
+            ...route,
+            url: "shop://home?redirect=https://example.com",
+        });
+    });
+    it("rejects a partially unknown route selection", () => {
+        expect(() => selectRoutes([{ name: "home", url: "shop://home" }], ["home", "nope"])).toThrow(
+            "no route matches"
+        );
+    });
+});
