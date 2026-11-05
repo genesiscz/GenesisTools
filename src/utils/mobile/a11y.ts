@@ -251,8 +251,8 @@ export function readLogBox(nodes: A11yNode[]): LogBoxView {
     }
 
     const [, index, total] = copyOf(counter).match(/^Log (\d+) of (\d+)$/) ?? [];
-    const dismiss = all.find((node) => copyOf(node) === "Dismiss");
-    const minimize = all.find((node) => copyOf(node) === "Minimize");
+    const dismiss = all.find((node) => copyOf(node) === "Dismiss" && node.rect.y > counter.rect.y);
+    const minimize = all.find((node) => copyOf(node) === "Minimize" && node.rect.y > counter.rect.y);
     const top = counter.rect.y;
     const bottom = dismiss?.rect.y ?? Number.POSITIVE_INFINITY;
     const seen = new Set<string>();
