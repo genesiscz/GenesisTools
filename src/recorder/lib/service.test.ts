@@ -207,6 +207,37 @@ describe("an edit session", () => {
         }).toEqual({ volume: 0.3, texts: ["A"], markers: ["B"] });
     });
 
+    // Regression test: 2026-11-05 recorder service review, finding 8 — a closed session still made an edit it had accepted
+    test("an edit the session accepted before its close is refused, and the closed session stays as it was", async () => {
+        const path = editFixture("gt-es-closed-work-");
+        const { session } = await openSession(path);
+        const applying = session.apply([{ op: "volume", volume: 0.2 }], { by: "agent" });
+        session.close();
+
+        await expect(applying).rejects.toThrow(/closed/);
+        expect({ dirty: session.dirty, volume: session.current.project.audio.volume }).toEqual({
+            dirty: false,
+            volume: 1,
+        });
+    });
+
+    // Regression test: 2026-11-05 recorder service review, finding 8 — an edit computing at the close still changed the session
+    test("an edit that is still computing when the session closes is refused when it finishes", async () => {
+        const path = editFixture("gt-es-closed-computing-");
+        const { session } = await openSession(path);
+        const held = holdComputations();
+        const applying = session.apply([{ op: "volume", volume: 0.2 }], { by: "agent" });
+        await held.entered;
+        session.close();
+        held.release();
+
+        await expect(applying).rejects.toThrow(/closed/);
+        expect({ dirty: session.dirty, volume: session.current.project.audio.volume }).toEqual({
+            dirty: false,
+            volume: 1,
+        });
+    });
+
     test("a drag previews without saving, commits as one undo step, and a newer preview replaces the waiting one", async () => {
         const path = editFixture("gt-es-drag-");
         const { session, changes } = await openSession(path);

@@ -344,7 +344,7 @@ export class EditSession {
         log.debug({ path: this.path, revision: this.project.revision }, "edit session saved");
     }
 
-    /** Saves what waits and ends the session; later calls are refused. */
+    /** Saves what waits and ends the session; later calls are refused, and so is work it accepted and did not finish. */
     close(): void {
         if (this.closed) {
             return;
@@ -365,10 +365,16 @@ export class EditSession {
 
     private exclusive<T>(work: () => Promise<T>): Promise<T> {
         if (this.closed) {
-            return Promise.reject(new Error(`the edit session of ${this.path} is closed`));
+            return Promise.reject(this.closedError());
         }
 
-        const next = this.turn.then(work);
+        const next = this.turn.then(() => {
+            if (this.closed) {
+                throw this.closedError();
+            }
+
+            return work();
+        });
         this.turn = next.catch(() => undefined);
         return next;
     }
@@ -400,7 +406,16 @@ export class EditSession {
         this.redoSteps = [];
     }
 
+    private closedError(): Error {
+        return new Error(`the edit session of ${this.path} is closed`);
+    }
+
     private replace({ next, by, unsaved }: { next: EditProject; by: string; unsaved: Unsaved }): void {
+        // The close saved the session last; a change that finished its computation after it would never be saved.
+        if (this.closed) {
+            throw this.closedError();
+        }
+
         this.project = { ...next, revision: this.project.revision + 1, updatedBy: by };
         // In memory the edit exists now; the file may not yet (diskText stays null until the save).
         this.fresh = false;
