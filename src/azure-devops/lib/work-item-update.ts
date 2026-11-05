@@ -226,7 +226,7 @@ export function escapeMarkdownTagLikes(markdown: string): string {
         }
     }
     return markdown
-        .split(/(?<=\n)/)
+        .split(/(?<=\n)|(?<=\r)(?!\n)/)
         .map((line, index) => {
             if (codeLines.has(index)) {
                 return line.replace(/<(?=[A-Za-z/])/g, "&lt;");
