@@ -77,6 +77,16 @@ export type RecordingSessionEvent =
     | { event: "preparing"; message: string }
     | { event: "error"; message: string; code?: string; fatal: boolean };
 
+/**
+ * A movie's frame rates and change threshold. `idleFps` equal to `activeFps` keeps one rate (no drop while still);
+ * the threshold, in percent of the picture, decides when the stream leaves the idle rate.
+ */
+export interface MovieRates {
+    activeFps: number;
+    idleFps: number;
+    threshold: number;
+}
+
 /** How one recorder run ended: asked to stop, reached its own deadline, or failed. */
 export type SegmentEnd = "stop" | "deadline" | "failure";
 
@@ -99,6 +109,8 @@ export interface SegmentResult {
 export interface SegmentRecorder {
     record(input: {
         target: RecordingTarget;
+        /** The session's rates for this run, when it has them; a recorder without rates keeps its own. */
+        rates?: MovieRates;
         output: string;
         maxSeconds: number;
         signal: AbortSignal;
@@ -165,6 +177,7 @@ export class RecordingSession {
     private readonly limitMs: number;
     private readonly segmentSeconds: number;
     private readonly now: () => number;
+    private rates: MovieRates | undefined;
 
     constructor(
         private readonly options: {
@@ -183,9 +196,12 @@ export class RecordingSession {
             tickMs?: number;
             /** A segment with no first frame after this long says so (`FIRST_FRAME_MESSAGE`); 0 never does. */
             slowStartMs?: number;
+            /** The movie's rates; a session with them can change them while it records (`retune`). */
+            rates?: MovieRates;
         }
     ) {
         this.target = options.target;
+        this.rates = options.rates;
         this.limitMs = Math.round((options.maxSeconds ?? RECORDING_SESSION_MAX_SECONDS) * 1000);
         this.segmentSeconds = Math.min(options.segmentSeconds ?? RECORDING_SEGMENT_MAX_SECONDS, 180);
         this.now = options.now ?? Date.now;
@@ -222,6 +238,45 @@ export class RecordingSession {
 
     command(command: RecordingCommand): Promise<void> {
         return this.enqueue(() => this.apply(command));
+    }
+
+    /** The rates the running segment, or the next one, records with; undefined for a session started without them. */
+    currentRates(): MovieRates | undefined {
+        return this.rates;
+    }
+
+    /**
+     * New rates for the movie. A segment records with the rates it started with, so a running one ends here and the
+     * next starts with the new ones at once (`restart`: a short gap while it arms); while paused the next segment
+     * takes them (`next-piece`). Rates equal to the current ones change nothing (`live`).
+     */
+    retune(rates: MovieRates): Promise<"live" | "restart" | "next-piece"> {
+        let applied: "live" | "restart" | "next-piece" = "live";
+        return this.enqueue(async () => {
+            applied = await this.applyRates(rates);
+        }).then(() => applied);
+    }
+
+    private async applyRates(rates: MovieRates): Promise<"live" | "restart" | "next-piece"> {
+        const before = this.rates;
+        this.rates = rates;
+
+        if (
+            before?.activeFps === rates.activeFps &&
+            before.idleFps === rates.idleFps &&
+            before.threshold === rates.threshold
+        ) {
+            return "live";
+        }
+
+        if (!this.current) {
+            return "next-piece";
+        }
+
+        log.info({ before, rates }, "recording rates changed; starting the next segment with them");
+        await this.stopSegment();
+        this.resumeOrRefuse(this.target);
+        return "restart";
     }
 
     elapsedMs(): number {
@@ -339,6 +394,7 @@ export class RecordingSession {
         run.result = this.options.recorder
             .record({
                 target,
+                ...(this.rates ? { rates: this.rates } : {}),
                 output: path,
                 maxSeconds,
                 signal: controller.signal,

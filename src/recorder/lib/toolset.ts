@@ -42,12 +42,7 @@ import {
 import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recording-editor/subtitles";
 import { type CutMatch, FILLER_LEVELS, type FillerLevel } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { ReplToolset, type ToolsetContext } from "@genesiscz/utils/repl/toolset";
-import {
-    RECORDER_SET_SETTINGS_DOC,
-    RECORDER_SETTINGS_DOC,
-    recorderSetSchema,
-    settingsPatchOf,
-} from "@genesiscz/utils/repl/toolsets/recorder";
+import { recorderSetSchema, settingsPatchOf } from "@genesiscz/utils/repl/toolsets/recorder";
 import { readRecordingManifest, renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -916,16 +911,16 @@ const recordingMethods = [
         name: "settings",
         params: z.object({}),
         result: z.unknown(),
-        resultName: "{ settings, audio }",
-        doc: RECORDER_SETTINGS_DOC,
+        resultName: "{ settings, audio, fixed }",
+        doc: "The movie's rates (activeFps, idleFps: the same as activeFps when it keeps one rate) and threshold, its audio, and fixed: the keys a movie keeps as they are, with why.",
         effect: "read",
     }),
     defineMethod({
         name: "setSettings",
         params: recorderSetSchema,
         result: z.unknown(),
-        resultName: "{ settings, audio, applied }",
-        doc: RECORDER_SET_SETTINGS_DOC,
+        resultName: "{ settings, audio, applied, fixed }",
+        doc: 'Changes fps, idleFps or threshold while it records: the running segment ends and the next one records with them (applied "restart", a gap of about a second while it arms; "next-piece" while paused). A movie keeps maxLongSide, heartbeatSec and ocr as they are, and refuses them by name.',
         effect: "reversible",
     }),
     defineMethod({

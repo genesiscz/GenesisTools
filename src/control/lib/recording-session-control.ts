@@ -1,16 +1,20 @@
 import { type JobInfo, JobRegistry, type ProgressEvent } from "@genesiscz/utils/jobs";
 import { logger } from "@genesiscz/utils/logger";
 import {
+    type AudioSource,
     type RecorderState as ControlState,
     type DisplayEntry,
     type DisplaySelection,
     RecorderControl,
     type RecorderMethod,
+    type RecorderSettings,
+    type RecorderSettingsPatch,
     type RecorderStatus,
     type RecordingMarker,
     RPC_ERRORS,
     RpcError,
     refuseMarker,
+    type SettingsAnswer,
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
 import { parseDisplayList } from "@genesiscz/utils/screen-recorder/displays";
@@ -21,6 +25,38 @@ import { type AxResult, runAxAsync } from "./runner";
 const { log } = logger.scoped("control-recording-session-control");
 
 const SCREENS_TIMEOUT_MS = 5_000;
+
+const SESSION_METHODS: readonly RecorderMethod[] = [
+    "status",
+    "pause",
+    "resume",
+    "stop",
+    "discard",
+    "restart",
+    "target.switch",
+    "displays.list",
+    "displays.switch",
+    "jobs.list",
+    "marker.add",
+];
+
+/** The settings keys a movie keeps as they are, and why; `settings.set` refuses them by name. */
+type MovieFixedKey = "maxLongSide" | "heartbeatSec" | "ocr";
+
+const MOVIE_FIXED: Record<MovieFixedKey, string> = {
+    maxLongSide: "a movie keeps the full size of what it records",
+    heartbeatSec: "a movie has no heartbeat: its rates decide every frame",
+    ocr: "a movie reads no text",
+};
+
+const MOVIE_FIXED_KEYS: readonly MovieFixedKey[] = ["maxLongSide", "heartbeatSec", "ocr"];
+
+/** What a movie answers for the keys it keeps: no size cap below the largest, no heartbeat, no OCR. */
+const MOVIE_FIXED_SETTINGS: Pick<RecorderSettings, MovieFixedKey> = {
+    maxLongSide: 16_384,
+    heartbeatSec: 0,
+    ocr: { enabled: false, languages: ["en-US"], minChars: 0 },
+};
 
 const CONTROL_STATE: Record<RecordingState, ControlState> = {
     starting: "recording",
@@ -36,19 +72,8 @@ const CONTROL_STATE: Record<RecordingState, ControlState> = {
  */
 export class SessionRecorderControl extends RecorderControl {
     readonly kind = "control-session";
-    readonly methods: readonly RecorderMethod[] = [
-        "status",
-        "pause",
-        "resume",
-        "stop",
-        "discard",
-        "restart",
-        "target.switch",
-        "displays.list",
-        "displays.switch",
-        "jobs.list",
-        "marker.add",
-    ];
+    /** The session's methods, and `settings.get`/`settings.set` when the session has movie rates. */
+    readonly methods: readonly RecorderMethod[];
     /** The moments marked while it records, at their movie time. */
     readonly markers: RecordingMarker[] = [];
     private state: ControlState = "recording";
@@ -67,9 +92,13 @@ export class SessionRecorderControl extends RecorderControl {
             title?: string;
             onProgress?: (event: ProgressEvent) => void;
             screens?: () => Promise<AxResult>;
+            /** The movie's sound, for `settings.get`; a movie mutes nothing. */
+            audio?: { sources: AudioSource[]; micDevice?: string };
         }
     ) {
         super();
+        this.methods = session.currentRates() ? [...SESSION_METHODS, "settings.get", "settings.set"] : SESSION_METHODS;
+        this.audio = options.audio ?? { sources: [] };
         this.target = options.target;
         this.title = options.title ?? describeRecordingTarget(options.target);
         this.jobs = new JobRegistry(options.onProgress);
@@ -78,6 +107,54 @@ export class SessionRecorderControl extends RecorderControl {
 
     private readonly title: string;
     private readonly screens: () => Promise<AxResult>;
+    private readonly audio: { sources: AudioSource[]; micDevice?: string };
+
+    /** The movie's rates and threshold, and the keys it keeps as they are (`fixed`, with why). */
+    override async getSettings(): Promise<SettingsAnswer> {
+        const rates = this.session.currentRates();
+
+        if (!rates) {
+            return super.getSettings();
+        }
+
+        return {
+            settings: { ...rates, ...MOVIE_FIXED_SETTINGS },
+            audio: {
+                sources: this.audio.sources,
+                muted: { mic: false, system: false },
+                ...(this.audio.micDevice ? { micDevice: this.audio.micDevice } : {}),
+            },
+            fixed: MOVIE_FIXED,
+        };
+    }
+
+    /** Changes the movie's rates and threshold (`activeFps`, `idleFps`, `threshold`); the next segment records with them. */
+    override async setSettings(patch: RecorderSettingsPatch): Promise<SettingsAnswer> {
+        const rates = this.session.currentRates();
+
+        if (!rates) {
+            return super.setSettings(patch);
+        }
+
+        const kept = MOVIE_FIXED_KEYS.filter((key) => patch[key] !== undefined);
+
+        if (kept.length > 0) {
+            throw new RpcError(
+                RPC_ERRORS.unsupported,
+                `a movie recording keeps ${kept.join(", ")} as they are (${kept.map((key) => MOVIE_FIXED[key]).join("; ")}); it changes activeFps, idleFps and threshold`
+            );
+        }
+
+        const activeFps = patch.activeFps ?? rates.activeFps;
+        // ax-tool never records the idle rate above the active one (Record.swift setFrameRates).
+        const idleFps = Math.min(patch.idleFps ?? rates.idleFps, activeFps);
+        const applied = await this.session.retune({
+            activeFps,
+            idleFps,
+            threshold: patch.threshold ?? rates.threshold,
+        });
+        return { ...(await this.getSettings()), applied };
+    }
 
     /** Every session event passes here, so the state and target stay what the session says. */
     observe(event: RecordingSessionEvent): void {

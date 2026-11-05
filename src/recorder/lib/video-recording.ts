@@ -3,7 +3,12 @@ import { existsSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runCountdown } from "@app/control/lib/peekaboo";
-import { cursorTrackPath, ffmpegSegmentJoiner, nativeSegmentRecorder } from "@app/control/lib/recording-native";
+import {
+    cursorTrackPath,
+    ffmpegSegmentJoiner,
+    nativeSegmentRecorder,
+    SESSION_MOTION_THRESHOLD,
+} from "@app/control/lib/recording-native";
 import { RecordingSession, type RecordingSessionEvent } from "@app/control/lib/recording-session";
 import { SessionRecorderControl } from "@app/control/lib/recording-session-control";
 import { describeRecordingTarget, type RecordingTarget } from "@app/control/lib/recording-targets";
@@ -21,7 +26,7 @@ import {
 import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { cameraRefusal, missingCameraWarning, recorderFaceState } from "./camera-recorder";
 import { CAMERA_MOVIE } from "./library";
-import { VIDEO_RECORDING_MAX_SECONDS } from "./start-options";
+import { DEFAULT_MOVIE_FPS, VIDEO_RECORDING_MAX_SECONDS } from "./start-options";
 
 const { log } = logger.scoped("recorder-video");
 
@@ -165,6 +170,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
             ? `Screen recording ${pad(started.getHours())}:${pad(started.getMinutes())}`
             : describeRecordingTarget(options.target));
     await mkdir(folder, { recursive: true, mode: 0o700 });
+    const fps = options.fps ?? DEFAULT_MOVIE_FPS;
     const manifest: RecordingManifest = {
         version: 1,
         id,
@@ -174,7 +180,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         settings: {
             kind: "video",
             target: options.target,
-            fps: options.fps ?? 60,
+            fps,
             ...(options.idleFps === undefined ? {} : { idleFps: options.idleFps }),
             ...(options.threshold === undefined ? {} : { threshold: options.threshold }),
             ...(options.camera ? { camera: { requested: true, file: CAMERA_MOVIE } } : {}),
@@ -239,11 +245,18 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         join: ffmpegSegmentJoiner,
         emit,
         maxSeconds: options.maxSeconds ?? VIDEO_RECORDING_MAX_SECONDS,
+        // The rates `settings.set` changes while it records; a movie without an idle rate keeps its fps when still.
+        rates: {
+            activeFps: fps,
+            idleFps: Math.min(options.idleFps ?? fps, fps),
+            threshold: options.threshold ?? SESSION_MOTION_THRESHOLD,
+        },
     });
     control = new SessionRecorderControl(session, {
         target: options.target,
         title,
         onProgress: (event) => live?.emit("progress", { ...event }),
+        audio: { sources: options.audio ?? [], ...(options.micDevice ? { micDevice: options.micDevice } : {}) },
     });
     live = new LiveRecordingServer({
         id: liveRecordingId("recorder", `${process.pid}-${randomUUID().slice(0, 8)}`),

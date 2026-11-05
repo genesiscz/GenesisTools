@@ -133,6 +133,8 @@ export interface SettingsAnswer {
     audio: AudioState;
     /** How the change took effect on the running captures. */
     applied?: "live" | "restart" | "next-piece";
+    /** Keys this recording keeps as they are, with why; `settings.set` refuses them (a movie: size, heartbeat, OCR). */
+    fixed?: Partial<Record<keyof RecorderSettings, string>>;
 }
 
 /** `all`, `follow-focus`, `main` or a screen index. */

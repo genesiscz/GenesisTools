@@ -18,6 +18,7 @@ import {
     type FinishedSegment,
     joinCursorTracks,
     joinSegmentsArgv,
+    type MovieRates,
     PREPARING_MESSAGE,
     parseRecordingCommand,
     RecordingSession,
@@ -79,6 +80,8 @@ const editor: RecordingTarget = { kind: "window", windowIds: [77], app: "Editor"
 
 interface FakeRun {
     target: RecordingTarget;
+    /** The frame rates and threshold the session gave this run. */
+    rates?: MovieRates;
     output: string;
     maxSeconds: number;
     signal: AbortSignal;
@@ -95,7 +98,7 @@ interface FakeRun {
 function fakeRecorder(options: { failFirst?: boolean; armLater?: boolean; prepares?: boolean } = {}) {
     const runs: FakeRun[] = [];
     const recorder: SegmentRecorder = {
-        record({ target, output, maxSeconds, signal, onRecording, onPreparing }) {
+        record({ target, rates, output, maxSeconds, signal, onRecording, onPreparing }) {
             if (options.prepares) {
                 onPreparing?.();
             }
@@ -114,7 +117,7 @@ function fakeRecorder(options: { failFirst?: boolean; armLater?: boolean; prepar
                     armed = true;
                     onRecording();
                 };
-                runs.push({ target, output, maxSeconds, signal, end, arm });
+                runs.push({ target, rates, output, maxSeconds, signal, end, arm });
                 if (options.failFirst && index === 0) {
                     void end({ ok: false, endedBy: "failure", error: "[screen-recording-denied] no grant" }, false);
                     return;
@@ -807,6 +810,41 @@ describe("nativeSegmentRecorder", () => {
         return { result: await run, output, probes: probe.mock.calls.length };
     }
 
+    it("a run records with the session's rates, and passes no idle rate when it equals the active one", async () => {
+        const plans: Array<{ activeFps?: number; idleFps?: number; threshold?: number }> = [];
+        spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async ({ plan }) => {
+            plans.push({
+                activeFps: plan.capture.activeFps,
+                idleFps: plan.capture.idleFps,
+                threshold: plan.capture.threshold,
+            });
+            return {
+                ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+                captureFailed: true,
+                warnings: [],
+                capture: null,
+            };
+        });
+        const recorder = nativeSegmentRecorder({ fps: 60, idleFps: 2, threshold: 0.5 });
+        const run = (rates: MovieRates) =>
+            recorder.record({
+                target: display,
+                rates,
+                output: join(root, "segment.mp4"),
+                maxSeconds: 3,
+                signal: new AbortController().signal,
+                onRecording: () => undefined,
+            });
+
+        await run({ activeFps: 30, idleFps: 1, threshold: 2 });
+        await run({ activeFps: 30, idleFps: 30, threshold: 2 });
+
+        expect(plans).toEqual([
+            { activeFps: 30, idleFps: 1, threshold: 2 },
+            { activeFps: 30, idleFps: undefined, threshold: 2 },
+        ]);
+    });
+
     it("a stop on a recorder that failed probes its movie and drops an unfinished one", async () => {
         const { result, output, probes } = await stoppedRun(true);
         expect(probes).toBe(1);
@@ -1005,5 +1043,106 @@ describe("start flags for a target", () => {
         expect(() => parseWindowIdList("41,x", "--exclude-window-ids")).toThrow(
             "--exclude-window-ids takes CG window ids"
         );
+    });
+});
+
+describe("a movie recording's live settings", () => {
+    let root: string;
+
+    beforeEach(async () => {
+        root = join(tmpdir(), `movie-settings-${randomUUID()}`);
+        await mkdir(root, { recursive: true });
+    });
+
+    afterEach(async () => {
+        await rm(root, { recursive: true, force: true });
+    });
+
+    /** A movie session started at 60 fps, 1 fps while still and a 0.5 % threshold, served over its live socket. */
+    async function movie() {
+        const { recorder, runs } = fakeRecorder();
+        let control: SessionRecorderControl | undefined;
+        const recording = new RecordingSession({
+            target: display,
+            directory: join(root, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            rates: { activeFps: 60, idleFps: 1, threshold: 0.5 },
+            join: async ({ output }) => {
+                await writeFile(output, "joined");
+                return { durationMs: 1000 };
+            },
+            emit: (event) => control?.observe(event),
+            tickMs: 0,
+            slowStartMs: 0,
+        });
+        control = new SessionRecorderControl(recording, { target: display, audio: { sources: ["mic"] } });
+        const dir = join(root, "live");
+        const server = new LiveRecordingServer({
+            id: "movie-settings",
+            kind: control.kind,
+            title: "Movie",
+            control,
+            dir,
+        });
+        await recording.start();
+        const client = await RecorderClient.connect("movie-settings", { dir });
+        const close = async () => {
+            client.close();
+            server.close();
+            await recording.command({ cmd: "discard" });
+        };
+        return { client, runs, close };
+    }
+
+    it("reads the movie's rates and threshold, and names the keys a movie keeps as they are", async () => {
+        const { client, close } = await movie();
+
+        try {
+            expect(client.methods).toContain("settings.set");
+            const answer = await client.getSettings();
+            expect(answer.settings).toEqual({
+                activeFps: 60,
+                idleFps: 1,
+                threshold: 0.5,
+                maxLongSide: 16_384,
+                heartbeatSec: 0,
+                ocr: { enabled: false, languages: ["en-US"], minChars: 0 },
+            });
+            expect(answer.audio).toEqual({ sources: ["mic"], muted: { mic: false, system: false } });
+            expect(Object.keys(answer.fixed ?? {}).sort()).toEqual(["heartbeatSec", "maxLongSide", "ocr"]);
+        } finally {
+            await close();
+        }
+    });
+
+    it("a change while it records ends the running segment and starts the next one with the new rates", async () => {
+        const { client, runs, close } = await movie();
+
+        try {
+            const answer = await client.setSettings({ activeFps: 30, threshold: 2 });
+            expect(answer.applied).toBe("restart");
+            expect(answer.settings).toMatchObject({ activeFps: 30, idleFps: 1, threshold: 2 });
+            expect(runs).toHaveLength(2);
+            expect(runs[0].signal.aborted).toBe(true);
+            expect(runs[0].rates).toEqual({ activeFps: 60, idleFps: 1, threshold: 0.5 });
+            expect(runs[1].rates).toEqual({ activeFps: 30, idleFps: 1, threshold: 2 });
+        } finally {
+            await close();
+        }
+    });
+
+    it("refuses the keys a movie keeps, naming each, and changes nothing", async () => {
+        const { client, runs, close } = await movie();
+
+        try {
+            const refused = client.setSettings({ activeFps: 30, maxLongSide: 1280, ocr: { enabled: true } });
+            await expect(refused).rejects.toMatchObject({ code: RPC_ERRORS.unsupported });
+            await expect(refused).rejects.toThrow("maxLongSide, ocr");
+            expect(runs).toHaveLength(1);
+            expect((await client.getSettings()).settings.activeFps).toBe(60);
+        } finally {
+            await close();
+        }
     });
 });

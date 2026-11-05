@@ -13,6 +13,7 @@ import {
     cursorTrackPath,
     joinCursorTracks,
     joinSegmentsArgv,
+    type MovieRates,
     type SegmentJoiner,
     type SegmentRecorder,
     type SegmentResult,
@@ -28,7 +29,7 @@ export const SCREEN_RECORDING_DENIED = "screen-recording-denied";
  * Motion threshold for the recorder's frame-rate policy. A session keeps one PNG (`maxFrames: 1`), so the threshold
  * only decides when the stream drops to the idle rate; a low one keeps typing and small edits at the active rate.
  */
-const SESSION_MOTION_THRESHOLD = 0.5;
+export const SESSION_MOTION_THRESHOLD = 0.5;
 
 export interface NativeRecorderOptions {
     /** CG window ids no movie may show: the host's own recording controls. */
@@ -146,11 +147,28 @@ export function refusalCode(message: string): string | undefined {
     return /Screen Recording is not granted/i.test(message) ? SCREEN_RECORDING_DENIED : undefined;
 }
 
+/**
+ * The recorder's options with a session's rates on top. An idle rate equal to the active one is "keep one rate", which
+ * ax-tool spells as no `--idle-fps` (it takes 0.1–5 there).
+ */
+function withRates(options: NativeRecorderOptions, rates: MovieRates | undefined): NativeRecorderOptions {
+    if (!rates) {
+        return options;
+    }
+
+    return {
+        ...options,
+        fps: rates.activeFps,
+        idleFps: rates.idleFps < rates.activeFps ? rates.idleFps : undefined,
+        threshold: rates.threshold,
+    };
+}
+
 /** One `tools control capture record` run per segment, on the ScreenCaptureKit recorder. */
 export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): SegmentRecorder {
     return {
-        async record({ target, output, maxSeconds, signal, onRecording, onPreparing }): Promise<SegmentResult> {
-            const capture = segmentCaptureSpec({ target, output, maxSeconds, options });
+        async record({ target, rates, output, maxSeconds, signal, onRecording, onPreparing }): Promise<SegmentResult> {
+            const capture = segmentCaptureSpec({ target, output, maxSeconds, options: withRates(options, rates) });
             let sessionDir: string | undefined;
             try {
                 const result = await runCapturePlanWithSignal({

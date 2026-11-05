@@ -2,6 +2,8 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { RecordingSession, type SegmentRecorder } from "@app/control/lib/recording-session";
+import { SessionRecorderControl } from "@app/control/lib/recording-session-control";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
 import { ReplEngine } from "@app/node-repl/lib/engine";
@@ -891,41 +893,79 @@ class SettingsControl extends RecorderControl {
 }
 
 describe("live recording settings from the movies and meetings toolsets", () => {
-    test("movies: a MovieRecording reads and changes the live threshold and OCR, and the docs list both methods", async () => {
+    test("movies: a movie recording changes fps, idleFps and threshold through its real control, and refuses the keys it keeps", async () => {
         const { MovieRecording } = await import("@app/recorder/lib/toolset");
-        const { moviesApi } = await import("@app/recorder/lib/toolset");
-        const control = new SettingsControl();
+        const root = mkdtempSync(join(tmpdir(), "gt-movie-rates-"));
+        const runs: Array<{ rates?: unknown; signal: AbortSignal }> = [];
+        // The segment recorder is the boundary to ax-tool: each run records until the session aborts it.
+        const recorder: SegmentRecorder = {
+            record: ({ rates, output, signal, onRecording }) => {
+                runs.push({ rates, signal });
+                onRecording();
+                return new Promise((resolve) =>
+                    signal.addEventListener(
+                        "abort",
+                        () => {
+                            writeFileSync(output, "movie");
+                            resolve({ ok: true, endedBy: "stop", durationMs: 1000 });
+                        },
+                        { once: true }
+                    )
+                );
+            },
+        };
+        let control: SessionRecorderControl | undefined;
+        const session = new RecordingSession({
+            target: { kind: "display", screenIndex: 0 },
+            directory: join(root, "segments"),
+            output: join(root, "screen.mp4"),
+            recorder,
+            rates: { activeFps: 60, idleFps: 60, threshold: 0.5 },
+            join: async () => ({ durationMs: 2000 }),
+            emit: (event) => control?.observe(event),
+            tickMs: 0,
+            slowStartMs: 0,
+        });
+        control = new SessionRecorderControl(session, { target: { kind: "display", screenIndex: 0 } });
         const server = new LiveRecordingServer({
-            id: `movie-settings-${process.pid}`,
-            kind: "movie",
-            title: "Settings",
+            id: `movie-rates-${process.pid}`,
+            kind: control.kind,
+            title: "Movie",
             control,
         });
+        await session.start();
 
         try {
             const recording = new MovieRecording(server.current);
-            expect(await recording.settings()).toMatchObject({ settings: { threshold: 3, ocr: { enabled: true } } });
-            const changed = await recording.setSettings({ threshold: 7.5, fps: 6, ocr: { enabled: false } });
-            expect(changed).toMatchObject({
-                applied: "live",
-                settings: { activeFps: 6, threshold: 7.5, ocr: { enabled: false, minChars: 4 } },
+            expect(await recording.settings()).toMatchObject({
+                settings: { activeFps: 60, idleFps: 60, threshold: 0.5 },
             });
-            expect(control.patches).toEqual([{ threshold: 7.5, activeFps: 6, ocr: { enabled: false } }]);
-            await expect(recording.setSettings({ threshold: 120 })).rejects.toThrow();
-            await expect(
-                Reflect.apply(recording.setSettings, recording, [{ nonsense: 1 }]) as Promise<unknown>
-            ).rejects.toThrow();
-            expect(control.patches).toHaveLength(1);
+            const changed = await recording.setSettings({ fps: 30, idleFps: 1, threshold: 2 });
+            expect(changed).toMatchObject({
+                applied: "restart",
+                settings: { activeFps: 30, idleFps: 1, threshold: 2 },
+            });
+            expect(runs.map((run) => run.rates)).toEqual([
+                { activeFps: 60, idleFps: 60, threshold: 0.5 },
+                { activeFps: 30, idleFps: 1, threshold: 2 },
+            ]);
+            await expect(recording.setSettings({ ocr: { enabled: true }, heartbeatSec: 5 })).rejects.toThrow(
+                "a movie recording keeps heartbeatSec, ocr as they are"
+            );
+            expect(runs).toHaveLength(2);
         } finally {
             server.close();
+            await session.command({ cmd: "discard" });
         }
+    });
 
+    test("movies: the docs of a MovieRecording's settings name the keys a movie takes and the ones it keeps", async () => {
+        const { moviesApi } = await import("@app/recorder/lib/toolset");
         const docs = moviesApi.handles?.find((handle) => handle.name === "MovieRecording")?.methods ?? [];
-        const doc = (name: string) => docs.find((method) => method.name === name)?.doc;
-        expect(doc("settings")).toBe("The live settings and the audio state.");
-        expect(doc("setSettings")).toBe(
-            "Changes fps, idleFps, threshold, maxLongSide, heartbeatSec or ocr while it records."
-        );
+        const doc = (name: string) => docs.find((method) => method.name === name)?.doc ?? "";
+        expect(doc("setSettings")).toContain("fps, idleFps or threshold");
+        expect(doc("setSettings")).toContain("maxLongSide, heartbeatSec and ocr");
+        expect(doc("settings")).toContain("fixed");
     });
 
     test("movies: a MovieRecording reads and changes the settings of a real library recording's control over its socket", async () => {
