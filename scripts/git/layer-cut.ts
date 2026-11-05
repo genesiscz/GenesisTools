@@ -40,7 +40,7 @@
  *
  * Writes only local refs under refs/heads/cut/ and never pushes. `<scratch>/report.json` holds the full result.
  */
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { stripAnsi } from "@genesiscz/utils/string";
@@ -680,7 +680,7 @@ async function run(params: { cmd: string[]; cwd: string; log: string }): Promise
     return { exitCode, text };
 }
 
-class ScratchTree {
+export class ScratchTree {
     private lockStamp: string | null = null;
 
     constructor(
@@ -689,15 +689,40 @@ class ScratchTree {
     ) {}
 
     ensure(startCommit: string): void {
-        if (existsSync(join(this.dir, ".git"))) {
-            return;
+        if (!existsSync(this.dir)) {
+            git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", this.dir, startCommit]);
+            writeFileSync(this.markerPath(), this.identity());
         }
 
-        git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", this.dir, startCommit]);
+        this.assertOwnedClean();
+    }
+
+    private markerPath(): string {
+        return git(["rev-parse", "--path-format=absolute", "--git-path", "layer-cut-owner"], { cwd: this.dir }).trim();
+    }
+
+    private identity(): string {
+        const common = realpathSync(git(["rev-parse", "--path-format=absolute", "--git-common-dir"]).trim());
+        return `${realpathSync(this.dir)}\n${common}\n`;
+    }
+
+    private assertOwnedClean(): void {
+        const top = realpathSync(git(["rev-parse", "--show-toplevel"], { cwd: this.dir }).trim());
+        const common = realpathSync(git(["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: this.dir }).trim());
+        const marker = this.markerPath();
+        if (top !== realpathSync(this.dir) || !existsSync(marker) ||
+            readFileSync(marker, "utf8") !== this.identity() || !this.identity().endsWith(`\n${common}\n`)) {
+            throw new Error(`refusing unowned scratch tree: ${this.dir}`);
+        }
+
+        if (git(["status", "--porcelain", "--untracked-files=normal"], { cwd: this.dir }).trim()) {
+            throw new Error(`refusing dirty scratch tree: ${this.dir}`);
+        }
     }
 
     async checkout(commit: string): Promise<void> {
-        git(["-c", "core.hooksPath=/dev/null", "checkout", "--detach", "--force", "--quiet", commit], {
+        this.assertOwnedClean();
+        git(["-c", "core.hooksPath=/dev/null", "checkout", "--detach", "--quiet", commit], {
             cwd: this.dir,
         });
         const stamp = git(["rev-parse", `${commit}:bun.lock`]).trim();
@@ -1548,4 +1573,6 @@ function finish(state: {
     return failed ? 1 : 0;
 }
 
-process.exitCode = await main();
+if (import.meta.main) {
+    process.exitCode = await main();
+}

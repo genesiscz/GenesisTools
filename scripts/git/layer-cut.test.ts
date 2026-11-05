@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { ScratchTree } from "./layer-cut";
 import { expect, test } from "bun:test";
 import { loadTable } from "./layer-cut-tables/load";
 import unified from "./layer-cut-tables/unified";
@@ -19,4 +22,37 @@ test("--table selects a complete alternate cut without changing the default", as
 test("--table requires a module path", async () => {
     await expect(loadTable(["--table"])).rejects.toThrow("requires a path");
     await expect(loadTable(["--table", "--tests"])).rejects.toThrow("requires a path");
+});
+
+
+test("scratch reuse refuses developer checkouts and dirty owned trees", async () => {
+    const original = process.cwd();
+    const root = mkdtempSync("/tmp/cc/GenesisTools/a7346bf7-545b-49f3-9f68-bfea934db066/rl-739/ownership-");
+    const git = (args: string[], cwd = root): string => {
+        const result = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+        expect(result.exitCode).toBe(0);
+        return result.stdout.toString().trim();
+    };
+    git(["init"]);
+    git(["config", "user.name", "Fixture"]);
+    git(["config", "user.email", "alice@example.com"]);
+    writeFileSync(join(root, "tracked.txt"), "original");
+    git(["add", "tracked.txt"]);
+    git(["-c", "core.hooksPath=/dev/null", "commit", "-m", "fixture"]);
+    const sha = git(["rev-parse", "HEAD"]);
+    try {
+        process.chdir(root);
+        const developer = new ScratchTree(root, root);
+        expect(() => developer.ensure(sha)).toThrow("unowned scratch");
+        const dir = join(root, "owned");
+        const owned = new ScratchTree(dir, root);
+        owned.ensure(sha);
+        owned.ensure(sha);
+        writeFileSync(join(dir, "tracked.txt"), "precious edits");
+        await expect(owned.checkout(sha)).rejects.toThrow("dirty scratch");
+        expect(readFileSync(join(dir, "tracked.txt"), "utf8")).toBe("precious edits");
+        expect(git(["rev-parse", "HEAD"], dir)).toBe(sha);
+    } finally {
+        process.chdir(original);
+    }
 });
