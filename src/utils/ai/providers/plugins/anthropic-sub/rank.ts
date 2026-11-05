@@ -71,6 +71,10 @@ export function usageFromWindows(snapshot: AccountUsageSnapshot): UsageResponse 
     }
 
     const session = snapshot.limits.find((window) => window.key === "five_hour");
+
+    if (!session && !snapshot.absentLimits?.some((window) => window.key === "five_hour")) {
+        return undefined;
+    }
     const usage: UsageResponse = { five_hour: session ? bucketOf(session) : null, seven_day: bucketOf(weekly) };
     const limits: ApiLimit[] = [];
 
