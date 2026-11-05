@@ -4778,6 +4778,36 @@ test("recovered assignment choices keep the saved calendar order and folder", ()
     expect(SafeJSON.stringify(question)).not.toContain("New entry");
     expect(SafeJSON.stringify(question)).not.toContain("New folder");
 });
+test("a new start clears the warning a failed earlier run left on the recording", async () => {
+    const store = new MeetingStore(new Storage("stale-warning"));
+    const record = await store.create(
+        { title: "Warning fixture", start: meeting.start, createdBy: "new" },
+        { command: "new", change: "fixture" }
+    );
+    await store.update(record.id, { command: "record stop", change: "fixture failure" }, (current) => {
+        current.recording = {
+            startedAt: meeting.start,
+            backend: "native",
+            displayPolicy: "all",
+            framesDir: "frames",
+            ocr: "ocr.jsonl",
+            status: "stopped",
+            stopReason: "error",
+            stoppedAt: meeting.start,
+            warning: "No frame was recorded",
+        };
+    });
+
+    await new RecordingRecord(store, record.id, []).start({
+        startedAt: meeting.start,
+        backend: "native",
+        displayPolicy: "all",
+    });
+
+    expect(store.read(record.id)?.recording).toMatchObject({ status: "recording" });
+    expect(store.read(record.id)?.recording?.warning).toBeUndefined();
+});
+
 test("finalization drains a blocked resume write in pause/resume order", async () => {
     const store = new MeetingStore(new Storage("status-write-order"));
     const record = await store.create(

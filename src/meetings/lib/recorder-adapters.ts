@@ -112,6 +112,8 @@ export class RecordingRecord {
                 };
                 delete current.recording.stoppedAt;
                 delete current.recording.stopReason;
+                // The last run's warning ("No frame was recorded") is not this run's; this run sets its own.
+                delete current.recording.warning;
             }
         );
     }
