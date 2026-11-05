@@ -363,11 +363,12 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                 durationSec: this.pieceSec,
             }),
             // A muted source is left out of a new capture, so its start-up buffers never reach the file; unmuting
-            // restarts the captures with it.
+            // restarts the captures with it. A capture without the microphone gets no microphone device either.
             audio: () => {
                 const sources = this.sound.sources.filter((source) => !this.sound.muted[source]);
+                const micDevice = sources.includes("mic") ? this.sound.micDevice : undefined;
                 return config.recorder.supports.audio && sources.length > 0
-                    ? { sources, ...(this.sound.micDevice ? { micDeviceId: this.sound.micDevice } : {}) }
+                    ? { sources, ...(micDevice ? { micDeviceId: micDevice } : {}) }
                     : undefined;
             },
             audioOwnership: config.pieces.audioOwnership,

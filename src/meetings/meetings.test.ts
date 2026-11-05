@@ -3233,6 +3233,25 @@ describe("the meetings recorder loop", () => {
         expect(run.recorder.requests.map((request) => request.audio?.sources ?? [])).toEqual([["mic"], [], ["mic"]]);
     });
 
+    test("a system-only restart omits the selected but muted microphone", async () => {
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["hang", "hang"],
+            liveControl: true,
+            liveSettings: true,
+            audioSources: ["mic", "system"],
+            actions: [
+                async (call) => {
+                    await call("audio.setInput", { deviceId: "desk-mic" });
+                    await call("audio.mute", { source: "mic", muted: true });
+                    return call("displays.mode", { mode: "all" });
+                },
+                async (call) => call("stop"),
+            ],
+        });
+        expect(run.recorder.requests[1]?.audio).toEqual({ sources: ["system"] });
+    });
+
     test("a rejected live microphone stays unchanged for settings and the next piece", async () => {
         let settings: unknown;
         let refused: unknown;
