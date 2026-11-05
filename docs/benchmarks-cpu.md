@@ -367,7 +367,7 @@ wall time on this Mac is noise (the runs below were taken at load averages betwe
 
 Not built yet (spec section 3 of the meetings OCR work): the skip rules (no OCR when the changed region holds no text,
 an OCR-only change threshold) and the crop to the changed region. They are the next CPU saving; when they land, rerun
-`bench.ts --compare` and add the numbers here.
+`bench.ts --compare` and add the numbers here. (Built and measured on 2026-11-05: the next section.)
 
 Rerun:
 
@@ -375,4 +375,61 @@ Rerun:
 bun scripts/benchmarks/meetings-ocr/bench.ts --runs 3 --compare
 bun scripts/benchmarks/meetings-ocr/keep.ts --runs 3
 bun scripts/benchmarks/meetings-ocr/correction.ts
+```
+
+## 2026-11-05 07:40 — Meeting OCR: the skip rules and the changed-area read, measured
+
+Built on feat/2026-11-05-meetings-ocr-skip-crop (e4c2f55dff skip rules, fcd35cc843 changed-area read). The native
+recorder already reports where a kept "change" frame differs from the last kept frame of its display (`motionBoxes`,
+frame pixels, FrameSampler.swift), and both recorders keep frames from the capture result, which carries them, so
+ax-tool did not change. Three new keys of the recorder's live `ocr` settings, in the meetings config as `capture.ocr`
+beside `capture.threshold`: `threshold` (an OCR-only change threshold), `skipTextless` (a fast read of the changed areas
+decides that they hold no text), and `region` (`frame` or `changed`). A skipped row copies the previous text of its
+display and says `skipped`; a changed-area row says `regions` and keeps its blocks in whole-frame coordinates.
+
+`scripts/benchmarks/meetings-ocr/region.ts --runs 3 --frames 16` feeds 2 × 16 consecutive frames of one meeting (the two
+busiest displays) through `FrameOutput`, one arm per setting, interleaved per frame. The motion boxes are recomputed
+from the JPEGs by `motion.ts`, a port of the Swift check. "Text kept" is the share of the `full` arm's lines that the
+arm's row holds, the same or with a bigram similarity of 0.8 or more. ⚠️ The load was 36 at the start and 195 at the
+end of this run, so the CPU numbers are not reliable; the counts and the text shares do not depend on the load.
+
+- `full` (the defaults): 146 ms helper CPU per frame, 1 spawn per frame.
+- `full-again` (the same settings a second time, the noise floor): 148 ms, text kept 98.3% on average (66.7% at worst).
+  Two whole reads of one frame do not give the same lines.
+- `threshold-5`: 95 ms (-35%), 12 of 32 frames skipped, text kept 84.5% (26.7% at worst). A change below 5% can still
+  hold most of a frame's text (a scrolled chat, a new slide line), so the saving loses real text.
+- `skipTextless`: 149 ms (+2%), 1.44 spawns per frame, no frame skipped. Every changed area either held text before or
+  held text now on this meeting.
+- `region: changed`: 182 ms (+25%), 3.8 spawns per frame, 14 of 32 frames read by area, text kept 84.6% (0% at worst).
+- The causes, measured on one 2880×1205 frame (load about 100): a whole read gave 13 lines for 140 ms, a crop of half
+  the frame gave 121 lines for 1010 ms, a quarter 144 lines for 490 ms, 3% of the frame 14 lines for 110 ms. Vision
+  reads a wide frame at a reduced size, so a crop is read at a higher pixel density: it finds small text that the whole
+  read misses, and it costs more. Every call costs about 110 ms or more, whatever the crop's size. The joined change
+  box of a frame covered a median 84% of it, the motion boxes themselves 16.6%, so the area read crops up to four
+  areas apart, and four calls cost more than one whole read.
+- The coordinates are right: on two real frames, the crop lines whose text the whole read also found overlap its boxes
+  with a median IoU of 0.73 (52 of 56 pairs at 0.5 or more).
+
+Verdict: all three keys default off (`threshold` 0, `skipTextless` false, `region` "frame"), and a recording made with
+the defaults writes the same `ocr.jsonl` rows as before (no `skipped`, no `regions`). The threshold is the only saving
+that pays in CPU, and it loses text, so it is an opt-in for a recording where text does not matter. The finding worth
+following up is the quality one: a whole read of a wide display misses most of its small text (13 lines against 121 to
+144 in its parts). A tiled read (two or four tiles per frame) would find that text at a known cost per frame; that is
+a separate change with its own bench.
+
+The other benches after the change (the shared `recognizeText` path did not change for its callers):
+
+- `bench.ts --runs 3 --compare` against the baseline taken at e4c2f55dff (load 47 to 56; the baseline is in
+  `scripts/benchmarks/baselines/meetings-ocr.json`): warm call 167 ms wall (270 before), 270 ms helper CPU per warm call
+  (260 before, +3.9%), cold call 418 ms (442 before). PASS. Load 38 at the start, 35 at the end.
+- `keep.ts --runs 3` (load 33 to 36): inline 235 ms wall and 225 ms helper CPU, shared 253 ms and 220 ms, 2 spawned
+  children per frame in both arms, 2 of 30 frames with a different text length between the two arms (Vision's own
+  variance, as the noise floor above shows).
+
+Rerun:
+
+```bash
+bun scripts/benchmarks/meetings-ocr/region.ts --runs 3 --frames 16 [--detail]
+bun scripts/benchmarks/meetings-ocr/bench.ts --runs 3 --compare
+bun scripts/benchmarks/meetings-ocr/keep.ts --runs 3
 ```
