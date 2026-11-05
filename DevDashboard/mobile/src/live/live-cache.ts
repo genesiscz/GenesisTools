@@ -92,6 +92,13 @@ export function createLiveCache(options: LiveCacheOptions): LiveCache {
         }
 
         if (subscription) {
+            const added = channels.filter((channel) => !streamChannels.includes(channel));
+            for (const channel of added) {
+                for (const queryKey of rowOf(table, channel).resync) {
+                    void queryClient.invalidateQueries({ queryKey });
+                }
+            }
+
             streamChannels = channels;
             subscription.setChannels(channels);
             emit();

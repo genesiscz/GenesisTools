@@ -209,6 +209,21 @@ describe("createLiveCache", () => {
         expect(queryClient.getQueryState(answerQueueKeys.queue)?.isInvalidated).toBe(true);
     });
 
+    it("resyncs a notice channel added to an open pulse stream", async () => {
+        const fake = fakeClient();
+        const queryClient = new QueryClient();
+        const cache = createLiveCache({ client: fake.client, queryClient });
+        cache.demand("pulse");
+        await tick();
+        fake.hello("c1", ["pulse"]);
+        queryClient.setQueryData(answerQueueKeys.queue, { sessions: [] });
+        cache.demand("decisions");
+        await tick();
+        expect(fake.urls).toHaveLength(1);
+        expect(queryClient.getQueryState(answerQueueKeys.queue)?.isInvalidated).toBe(true);
+        cache.close();
+    });
+
     it("holds no stream in the background and reopens on return", async () => {
         const fake = fakeClient();
         const cache = createLiveCache({ client: fake.client, queryClient: new QueryClient() });
