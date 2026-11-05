@@ -2201,3 +2201,11 @@ test("confirmed attribution wins over later overlapping suggestions", () => {
     const corrections = correctionsOf(draft, meetingsConfigSchema.parse({}), { format: "md", withSuggested: true });
     expect(applyCorrections([line("Unknown", 10, "Hello")], corrections).entries[0]?.speaker).toBe("Alice");
 });
+
+test("frame filenames distinguish resumed dates and repeated local hours", async () => {
+    const { frameName } = await import("./lib/recorder");
+    const dates = ["2026-10-24T02:30:00+02:00", "2026-10-25T02:30:00+02:00", "2026-10-25T02:30:00+01:00"];
+    const names = dates.map((date) => frameName(new Date(date)));
+    expect(new Set(names).size).toBe(3);
+    expect(names).toEqual([...names].sort());
+});

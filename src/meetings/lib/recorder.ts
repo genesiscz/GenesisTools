@@ -100,13 +100,9 @@ const liveOutput = z.object({
     data: z.object({ frames: z.array(z.object({ timestampMs: z.number(), path: z.string() })).default([]) }).optional(),
 });
 
-function pad(n: number, width = 2): string {
-    return String(n).padStart(width, "0");
-}
-
-/** `15-23-41-502.jpg`: the frame's local wall time, sortable within a day. */
-function frameName(at: Date): string {
-    return `${pad(at.getHours())}-${pad(at.getMinutes())}-${pad(at.getSeconds())}-${pad(at.getMilliseconds(), 3)}.jpg`;
+/** An absolute timestamp keeps resumed dates and repeated DST hours distinct. */
+export function frameName(at: Date): string {
+    return `${at.toISOString().replace(/[:.]/g, "-")}.jpg`;
 }
 
 async function run(argv: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
