@@ -2022,3 +2022,32 @@ test("stale stop actions cannot stop a different meeting or recorder run", async
     expect(requestRecorderStop(store, { meeting: "meeting-b", startedAt: meeting.start })).toBe(true);
     expect(Date.parse(readFileSync(files.stop, "utf8"))).toBeGreaterThan(0);
 });
+
+test("audio processing kills expired children and names the affected audio", async () => {
+    const { cutClip } = await import("./lib/audio");
+    const { channelEnergy } = await import("@genesiscz/utils/meetings/energy");
+    const originalSpawn = Bun.spawn;
+    const which = spyOn(Bun, "which").mockReturnValue("/fixture/ffmpeg");
+    const spawn = spyOn(Bun, "spawn").mockImplementation(() =>
+        originalSpawn(["/bin/sleep", "10"], {
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "pipe",
+            timeout: 20,
+            killSignal: "SIGKILL",
+        })
+    );
+    const store = new MeetingStore(new Storage("audio-deadline-fixture"));
+    const clip = join(store.root, "clip.wav");
+    try {
+        await expect(
+            cutClip({ audioPath: "fixture.wav", outPath: clip, fromSec: 0, toSec: 1, padSec: 0 })
+        ).rejects.toThrow(clip);
+        expect(spawn.mock.calls[0]?.[1]).toMatchObject({ timeout: 60_000, killSignal: "SIGKILL" });
+        await expect(channelEnergy("fixture.wav", join(store.root, "energy.bin"))).rejects.toThrow("fixture.wav");
+        expect(spawn.mock.calls[1]?.[1]).toMatchObject({ timeout: 300_000, killSignal: "SIGKILL" });
+    } finally {
+        spawn.mockRestore();
+        which.mockRestore();
+    }
+});

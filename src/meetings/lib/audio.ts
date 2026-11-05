@@ -82,12 +82,20 @@ export async function cutClip(options: {
         "pcm_s16le",
         options.outPath,
     ];
-    const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "pipe" });
+    const proc = Bun.spawn(argv, {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+        timeout: 60_000,
+        killSignal: "SIGKILL",
+    });
     const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
     log.debug({ argv, code }, "clip cut");
 
     if (code !== 0) {
-        throw new Error(`ffmpeg could not cut the clip (exit ${code}): ${stderr.trim().slice(0, 300)}`);
+        throw new Error(
+            `ffmpeg could not cut clip ${options.outPath} (exit ${code}, signal ${proc.signalCode ?? "none"}; deadline 60 s): ${stderr.trim().slice(0, 300)}`
+        );
     }
 }
 

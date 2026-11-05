@@ -73,37 +73,41 @@ export async function channelEnergy(audioPath: string, cachePath: string): Promi
     const build = randomUUID();
     const leftRaw = join(dir, `${build}-L.raw`);
     const rightRaw = join(dir, `${build}-R.raw`);
-    const proc = Bun.spawn(
-        [
-            "ffmpeg",
-            "-nostdin",
-            "-v",
-            "error",
-            "-y",
-            "-i",
-            audioPath,
-            "-filter_complex",
-            "[0:a]channelsplit=channel_layout=stereo[L][R]",
-            "-map",
-            "[L]",
-            "-ar",
-            String(RATE),
-            "-f",
-            "s16le",
-            leftRaw,
-            "-map",
-            "[R]",
-            "-ar",
-            String(RATE),
-            "-f",
-            "s16le",
-            rightRaw,
-        ],
-        { stdin: "ignore", stdout: "ignore", stderr: "pipe" }
-    );
-    const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-
     try {
+        const proc = Bun.spawn(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                audioPath,
+                "-filter_complex",
+                "[0:a]channelsplit=channel_layout=stereo[L][R]",
+                "-map",
+                "[L]",
+                "-ar",
+                String(RATE),
+                "-f",
+                "s16le",
+                leftRaw,
+                "-map",
+                "[R]",
+                "-ar",
+                String(RATE),
+                "-f",
+                "s16le",
+                rightRaw,
+            ],
+            { stdin: "ignore", stdout: "ignore", stderr: "pipe", timeout: 300_000, killSignal: "SIGKILL" }
+        );
+        const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+
+        if (proc.signalCode === "SIGKILL") {
+            throw new Error(`ffmpeg energy processing terminated for ${audioPath} (deadline 300 s)`);
+        }
+
         if (exitCode !== 0) {
             log.warn({ exitCode, stderr: stderr.slice(-400), audioPath }, "ffmpeg downmix failed; energy skipped");
             return undefined;
