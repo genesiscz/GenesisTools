@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { copyFile, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -136,6 +137,23 @@ export function setEditOwner(owner: EditOwner | undefined): void {
 
 function ownedEdit(editPath: string): OwnedEdit | undefined {
     return editOwner?.sessionOf(editPath);
+}
+
+const editCancel = new AsyncLocalStorage<AbortSignal>();
+
+/**
+ * Runs `work` with `signal` as the cancel of every edit it makes: `editProject` and an open session check it right
+ * before they change or save, so a request the caller cancelled (the recorder service's `$/cancel`) never saves after
+ * its cancel was answered. The REPL's Movie methods reach these functions through layers that take no signal, so the
+ * service sets it once around each request instead.
+ */
+export function withEditCancel<T>(signal: AbortSignal, work: () => T): T {
+    return editCancel.run(signal, work);
+}
+
+/** Throws the cancel of the request this runs for (an RpcError of code 1013 from the service), if it came. */
+export function throwIfEditCancelled(): void {
+    editCancel.getStore()?.throwIfAborted();
 }
 
 /** The edit file of a recording argument, whether or not it exists yet. */
@@ -314,6 +332,7 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
 
         const base = opened;
         const next = edit.project;
+        throwIfEditCancelled();
         const attempt = saveIfAt(base.path, base.fresh ? null : base.project.revision, () => {
             const written = writeProject(base.path, next);
             pushUndo({

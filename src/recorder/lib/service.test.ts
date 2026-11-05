@@ -67,6 +67,7 @@ function holdComputations(count = 1) {
     const real = edits.computeEdit;
     const entered = Promise.withResolvers<void>();
     const resume = Promise.withResolvers<void>();
+    const finished = Promise.withResolvers<void>();
     let held = 0;
     const spy = spyOn(edits, "computeEdit").mockImplementation(async (args) => {
         const result = await real(args);
@@ -79,12 +80,21 @@ function holdComputations(count = 1) {
             }
 
             await resume.promise;
+            finished.resolve();
         }
 
         return result;
     });
     closing.push(() => spy.mockRestore());
-    return { entered: entered.promise, release: () => resume.resolve() };
+    // `finished`: the held computations returned; a timer tick later, whatever their callers do next has run.
+    return {
+        entered: entered.promise,
+        release: () => resume.resolve(),
+        settled: async () => {
+            await finished.promise;
+            await Bun.sleep(1);
+        },
+    };
 }
 
 async function openSession(path: string, saveDelayMs = 10_000) {
@@ -660,6 +670,49 @@ describe("edits that run at the same time", () => {
             texts: saved.texts?.map((text) => text.text),
             markers: saved.markers?.map((marker) => marker.label),
         }).toEqual({ volume: 0.4, texts: ["A"], markers: ["C"] });
+    });
+
+    /** Sends edit.apply, cancels it while it computes, and lets it finish after the service heard the cancel. */
+    async function cancelWhileComputing(entry: ServiceEntry, path: string) {
+        const agent = await connect(entry);
+        await agent.call<unknown>("hello", hello("client"));
+        const held = holdComputations();
+        const controller = new AbortController();
+        const answer = agent
+            .call<unknown>("edit.apply", { path, ops: [{ op: "volume", volume: 0.2 }] }, { signal: controller.signal })
+            .catch((error: unknown) => error);
+        await held.entered;
+        controller.abort();
+        // The connection's next request is answered only once the service took the cancel and let the edit go.
+        await agent.call<unknown>("hello", hello("client"));
+        held.release();
+        await held.settled();
+        return answer;
+    }
+
+    // Regression test: 2026-11-05 recorder service review, finding 4 — a cancelled edit still saved after its answer
+    test("an edit.apply cancelled while it computes is never saved to the file", async () => {
+        const { service } = await serviceFixture();
+        const path = editFixture("rs-cancel-file-");
+
+        expect(await cancelWhileComputing(service.entry, path)).toMatchObject({ code: RPC_ERRORS.cancelled });
+        expect(readProject(path).audio.volume).toBe(1);
+    });
+
+    // Regression test: 2026-11-05 recorder service review, finding 4 — a cancelled edit still changed the open session
+    test("an edit.apply cancelled while it computes never changes the open session", async () => {
+        const { service } = await serviceFixture({ saveDelayMs: 10_000 });
+        const path = editFixture("rs-cancel-session-");
+        const window = await connect(service.entry);
+        await window.call<unknown>("hello", hello("host"));
+        await window.call<unknown>("session.open", { path });
+
+        expect(await cancelWhileComputing(service.entry, path)).toMatchObject({ code: RPC_ERRORS.cancelled });
+        const session = service.sessions.get(path);
+        expect({ volume: session?.current.project.audio.volume, dirty: session?.dirty }).toEqual({
+            volume: 1,
+            dirty: false,
+        });
     });
 });
 

@@ -16,6 +16,7 @@ import {
     inItsFolder,
     openProject,
     readUndoSteps,
+    throwIfEditCancelled,
     type UndoStep,
     writeUndoSteps,
 } from "./edit";
@@ -416,6 +417,7 @@ export class EditSession {
             throw this.closedError();
         }
 
+        throwIfEditCancelled();
         this.project = { ...next, revision: this.project.revision + 1, updatedBy: by };
         // In memory the edit exists now; the file may not yet (diskText stays null until the save).
         this.fresh = false;

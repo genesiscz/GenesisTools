@@ -14,7 +14,7 @@ import { callTimeoutFor } from "@genesiscz/utils/screen-recorder/live";
 import { RECORDING_EVENT, RECORDINGS_CHANGED } from "@genesiscz/utils/screen-recorder/service-link";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
-import { editPathOf, editProject, setEditOwner, undoEdit } from "./edit";
+import { editPathOf, editProject, setEditOwner, undoEdit, withEditCancel } from "./edit";
 import { type EditSession, EditSessions } from "./edit-session";
 import { ConnectedAppHost, type HeadlessDeps, HeadlessHost, type HostCallContext, type RecorderHost } from "./host";
 import { listLibrary } from "./library";
@@ -602,7 +602,9 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
         const listening = new RpcSocketServer<ConnectionState>({
             socket,
             state: () => ({ holds: new Set(), recordings: new Set() }),
-            call: ({ method, params, connection, context }) => answer(method, params, connection, context),
+            // A cancelled request's edit never lands: every edit it makes checks this request's signal before it saves.
+            call: ({ method, params, connection, context }) =>
+                withEditCancel(context.signal, () => answer(method, params, connection, context)),
             onOpen: () => {
                 lastBusy = Date.now();
             },
