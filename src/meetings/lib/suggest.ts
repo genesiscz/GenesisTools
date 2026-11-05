@@ -1021,7 +1021,12 @@ function evidenceItems(options: {
     const byLabel = new Map<string, LineEvidence[]>();
 
     for (const line of lines) {
-        byLabel.set(line.label, [...(byLabel.get(line.label) ?? []), line]);
+        const group = byLabel.get(line.label);
+        if (group) {
+            group.push(line);
+        } else {
+            byLabel.set(line.label, [line]);
+        }
     }
 
     const platformLines = lines
