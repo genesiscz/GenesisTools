@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { CANARY_PACKAGES, lockStamp, STAMP_FILE } from "../test-deps";
 import { checkProjects, installStamp, ScratchTree, testFolders } from "./layer-cut";
+import { buildBody, classifyDifferences, overlayPlan } from "./layer-cut-report";
 import { loadTable } from "./layer-cut-tables/load";
 import unified from "./layer-cut-tables/unified";
 
@@ -229,4 +230,78 @@ test("scratch reuse refuses developer checkouts and dirty owned trees", async ()
     } finally {
         process.chdir(original);
     }
+});
+
+test("overlay plan follows report order, including siblings and deletions", () => {
+    const plan = overlayPlan([
+        { name: "first", parent: "base", commit: "a", fileList: ["one", "gone"] },
+        { name: "left", parent: "first", commit: "b", fileList: ["shared"] },
+        { name: "right", parent: "first", commit: "c", fileList: ["shared", "gone"] },
+    ]);
+    const trees = new Map([
+        [
+            "a",
+            new Map([
+                ["one", "first"],
+                ["gone", "present"],
+            ]),
+        ],
+        ["b", new Map([["shared", "left"]])],
+        ["c", new Map([["shared", "right"]])],
+    ]);
+    const result = new Map<string, string>();
+    for (const step of plan) {
+        const value = trees.get(step.commit)?.get(step.file);
+        if (value === undefined) {
+            result.delete(step.file);
+        } else {
+            result.set(step.file, value);
+        }
+    }
+    expect([...result]).toEqual([
+        ["one", "first"],
+        ["shared", "right"],
+    ]);
+});
+
+test("ledger distinguishes other PR ownership, listed source-only and unexplained files", () => {
+    const result = classifyDifferences(
+        ["owned", "kept", "derived", "unknown"],
+        new Map([["owned", [12]]]),
+        new Set(["kept", "derived"])
+    );
+    expect(result).toEqual({
+        owned: [{ file: "owned", prs: [12] }],
+        sourceOnly: ["kept", "derived", "unknown"],
+        unexplained: ["unknown"],
+    });
+});
+
+test("body preserves the old review notes section exactly", () => {
+    const oldNotes = "## Notes for review\n\nKeep this  \n\n### Detail\n- proof\n\n## Later\nuntouched\n";
+    const body = buildBody({
+        report: { unified: "abcdef123456", base: "base", branches: [] },
+        branch: {
+            name: "feat/one",
+            parent: "base",
+            commit: "a",
+            fileList: ["src/widget/a.ts"],
+            files: 1,
+            added: 1,
+            modified: 0,
+            deleted: 0,
+            typecheck: null,
+            tests: null,
+            swift: null,
+        },
+        baseSha: "1234567890abcdef",
+        prs: new Map([["feat/one", 12]]),
+        oldBody: `Intro\n\n${oldNotes}`,
+        extra: "A note.",
+    });
+    expect(body).toContain("abcdef1234");
+    expect(body).toContain("1234567890");
+    expect(body).toContain("src/widget/");
+    expect(body).toContain("A note.");
+    expect(body.endsWith(oldNotes)).toBe(true);
 });
