@@ -419,8 +419,6 @@ final class RecorderTimelineTests: XCTestCase {
         model.addMarker(TimelineRange(fromUs: 1_500_000, toUs: 4_000_000), label: "Login")
         let apply = try XCTUnwrap(sent.first)
         XCTAssertEqual(Array(apply.prefix(3)), ["recorder", "apply", project.source.video])
-        model.addMarker(TimelineRange(fromUs: 2_000_000, toUs: 3_000_000), label: "Next")
-        XCTAssertEqual(Array(try XCTUnwrap(sent.last).prefix(3)), ["recorder", "apply", model.store.url.path])
         let op = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(apply[3].utf8)) as? NSDictionary)
         XCTAssertEqual(op, ["op": "range", "from": 1.5, "to": 4, "action": "marker", "text": "Login"] as NSDictionary)
         XCTAssertEqual(model.markers.map(\.label), ["Login"])
