@@ -120,8 +120,8 @@ export const FRAME_RECORDING_METHODS = [
 
 /**
  * A verdict rule for the meetings recorder: only a capture that threw a `CaptureError` fails a piece (a missing
- * display included); any other error (a frame that cannot be converted) ends the recording. A piece cut by a pause or
- * a stop is neither.
+ * display included); any other error (a cleanup that fails) ends the recording. A frame that cannot be converted
+ * never gets here: the meetings run skips it. A piece cut by a pause or a stop is neither.
  */
 export function captureErrorVerdict(piece: PieceResult, now: { paused: boolean; stopping: boolean }): PieceVerdict {
     const { outcome, error } = piece;

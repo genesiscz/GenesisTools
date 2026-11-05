@@ -2843,13 +2843,12 @@ describe("the meetings recorder loop", () => {
         expect(readdirSync(join(run.folder, "frames"))).toHaveLength(3);
     });
 
-    test("an error outside the capture still ends the recording, with the reason", async () => {
+    test("a failed frame conversion is skipped and capture finishes normally", async () => {
         const run = await recordWith({ displays: [[builtIn]], steps: ["frames"], failOnJpeg: true });
 
-        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "error" });
-        expect(run.rejected?.message).toContain("disk full");
-        expect(run.saved?.recording?.warning).toContain("disk full");
-        expect(run.notes).toHaveLength(1);
+        expect(run.saved?.recording).toMatchObject({ status: "stopped", stopReason: "requested", frames: 0 });
+        expect(run.saved?.recording?.warning).toContain("No frame was recorded");
+        expect(run.notes).toHaveLength(0);
         expect(listLiveRecordings(run.liveDir)).toEqual([]);
     });
 
