@@ -40,8 +40,8 @@ export async function boundedCommand(options: {
     streamOnly?: boolean;
     cwd?: string;
     environment?: Record<string, string | undefined>;
-    onStdout?: (chunk: Uint8Array) => void;
-    onStderr?: (chunk: Uint8Array) => void;
+    onStdout?: (chunk: Uint8Array) => void | Promise<void>;
+    onStderr?: (chunk: Uint8Array) => void | Promise<void>;
 }): Promise<BoundedCommandResult> {
     options.signal?.throwIfAborted();
     const timeoutMs = Math.floor(options.timeoutMs);
@@ -90,6 +90,8 @@ export async function boundedCommand(options: {
         let stderrBytes = 0;
         let failure: BoundedCommandResult["error"];
         let settled = false;
+        let pendingConsumers = 0;
+        let closing = false;
         let escalation: ReturnType<typeof setTimeout> | undefined;
         let reap: ReturnType<typeof setTimeout> | undefined;
         const kill = (signal: NodeJS.Signals) => {
@@ -108,6 +110,11 @@ export async function boundedCommand(options: {
             }
         };
         const finish = () => {
+            closing = true;
+
+            if (pendingConsumers > 0 && !failure) {
+                return;
+            }
             if (settled) {
                 return;
             }
@@ -155,11 +162,28 @@ export async function boundedCommand(options: {
             }
             if (options.streamOnly) {
                 stdout.splice(0, stdout.length, Buffer.from(value.subarray(-16_384)));
-                try {
-                    options.onStdout?.(value);
-                } catch (error) {
-                    stop(error instanceof Error ? error : new Error("Command output callback failed."));
-                }
+                child.stdout?.pause();
+                pendingConsumers++;
+                Promise.resolve()
+                    .then(() => options.onStdout?.(value))
+                    .then(
+                        () => {
+                            pendingConsumers--;
+                            if (!failure && !settled) {
+                                child.stdout?.resume();
+                            }
+                            if (closing) {
+                                finish();
+                            }
+                        },
+                        (error: unknown) => {
+                            pendingConsumers--;
+                            stop(error instanceof Error ? error : new Error("Command output callback failed."));
+                            if (closing) {
+                                finish();
+                            }
+                        }
+                    );
                 return;
             }
 
@@ -181,11 +205,28 @@ export async function boundedCommand(options: {
             }
             if (options.streamOnly) {
                 stderr.splice(0, stderr.length, Buffer.from(value.subarray(-16_384)));
-                try {
-                    options.onStderr?.(value);
-                } catch (error) {
-                    stop(error instanceof Error ? error : new Error("Command output callback failed."));
-                }
+                child.stderr?.pause();
+                pendingConsumers++;
+                Promise.resolve()
+                    .then(() => options.onStderr?.(value))
+                    .then(
+                        () => {
+                            pendingConsumers--;
+                            if (!failure && !settled) {
+                                child.stderr?.resume();
+                            }
+                            if (closing) {
+                                finish();
+                            }
+                        },
+                        (error: unknown) => {
+                            pendingConsumers--;
+                            stop(error instanceof Error ? error : new Error("Command output callback failed."));
+                            if (closing) {
+                                finish();
+                            }
+                        }
+                    );
                 return;
             }
 
