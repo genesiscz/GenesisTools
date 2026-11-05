@@ -267,6 +267,15 @@ const setRecordingSettings = defineMethod({
     effect: "reversible",
     doc: `${RECORDER_SET_SETTINGS_DOC} Only while this meeting is being recorded.`,
 });
+const recordingMark = defineMethod({
+    name: "mark",
+    params: z.object({ label: z.string().min(1).max(80) }),
+    positional: ["label"],
+    result: z.unknown(),
+    resultName: "{ atMs, label }",
+    effect: "reversible",
+    doc: 'Marks this moment of the screen recording with a label ("demo starts"); the meeting\'s editor project lists it at its time in the movie. Only while this meeting is being recorded.',
+});
 const screen = defineMethod({
     name: "screen",
     params: z
@@ -371,6 +380,7 @@ export class MeetingsToolset extends ReplToolset {
                     set,
                     recordingSettings,
                     setRecordingSettings,
+                    recordingMark,
                     screen,
                     editorProject,
                     assignProposals,
@@ -478,7 +488,7 @@ export class MeetingsToolset extends ReplToolset {
         };
         const opened = () => OpenedMeeting.of(store, current());
         const liveId = meetingLiveId(id);
-        const callLive = (method: "settings.get" | "settings.set", params?: unknown) => {
+        const callLive = (method: "settings.get" | "settings.set" | "marker.add", params?: unknown) => {
             if (!readLiveRecording(liveId)) {
                 throw new Error(`The meeting ${id} is not being recorded now (no live recording ${liveId})`);
             }
@@ -639,6 +649,7 @@ export class MeetingsToolset extends ReplToolset {
             settings: async () => callLive("settings.get"),
             setSettings: async (input: z.input<typeof recorderSetSchema>) =>
                 callLive("settings.set", settingsPatchOf(input)),
+            mark: async (label: string) => callLive("marker.add", recordingMark.params.parse({ label })),
             set: async (input: z.input<typeof set.params>) => {
                 const { title, project, labels = [], unlabel = [] } = set.params.parse(input);
 

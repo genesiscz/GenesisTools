@@ -256,6 +256,17 @@ async function pauseOrResume(command: "pause" | "resume"): Promise<void> {
     }
 }
 
+/** A marker at this moment of the running recording, at its time in the meeting's movie. */
+async function markMoment(label: string): Promise<void> {
+    const answer = await callRunning(new MeetingStore(), (recorder) => recorder.addMarker(label));
+
+    if (answer) {
+        ui.ok(
+            `Marked "${answer.result.label}" at ${(answer.result.atMs / 1000).toFixed(1)} s of ${answer.meetingId}'s movie.`
+        );
+    }
+}
+
 /** Connected displays, with the ones being recorded marked. */
 async function displayList(opts: { json?: boolean }): Promise<void> {
     const answer = await callRunning(new MeetingStore(), (recorder) => recorder.listDisplays());
@@ -654,6 +665,11 @@ export function registerRecordCommands(program: Command): void {
         .command("resume")
         .description("Record again after a pause")
         .action(() => pauseOrResume("resume"));
+    record
+        .command("mark")
+        .argument("<label>", "what happened (1 to 80 characters)")
+        .description("Mark this moment of the recording with a label; the meeting's editor project lists it")
+        .action(markMoment);
     record
         .command("mute")
         .argument("<source>", "mic or system")

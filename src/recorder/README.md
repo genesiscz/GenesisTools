@@ -13,7 +13,7 @@ tools recorder start [--audio system,mic] [--title T] [--max-seconds N]
                      [--system-cursor] [--no-controls] [--no-indicator] [--open] [--json]
 tools recorder demo <script.json | -> [--no-export]  # a finished demo from a JSON script of steps (below)
 tools recorder stop|pause|resume|status [id]     # the newest live recording, or the id given
-tools recorder mark <label> [id]                 # a marker at this moment; the editor and movie.markers() show it
+tools recorder mark <label> [id]                 # a marker at this moment (a movie, frames or meeting recording); the editor and movie.markers() show it
 tools recorder markers <recording> [--chapters]  # its markers as JSON with where each plays, or "0:00 Intro" chapter lines
 tools recorder rename <recording> <title>        # a new title for the library, the editor window and movies.list()
 tools recorder undo <recording>                  # back one step of apply or the REPL (30 steps in <edit>.undo.json)

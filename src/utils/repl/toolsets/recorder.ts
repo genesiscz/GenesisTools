@@ -8,6 +8,7 @@ import {
     type RecorderMethod,
     type RecorderSettingsPatch,
     type RecorderStatus,
+    type RecordingMarker,
     RPC_ERRORS,
     RpcError,
     recorderSettingsPatchSchema,
@@ -211,6 +212,15 @@ const recordingMethods = [
         effect: "reversible",
     }),
     defineMethod({
+        name: "mark",
+        params: z.object({ label: z.string().min(1).max(80) }),
+        positional: ["label"],
+        result: z.custom<RecordingMarker>(),
+        resultName: "{ atMs, label }",
+        doc: 'Marks this moment with a label ("login done") at its time in the movie; the editor lists it on the timeline and movie.markers() returns it.',
+        effect: "reversible",
+    }),
+    defineMethod({
         name: "jobs",
         params: z.object({}),
         result: z.custom<JobInfo[]>(),
@@ -366,6 +376,10 @@ export class RecordingHandle {
 
     discard() {
         return this.check("discard", () => this.client.discard());
+    }
+
+    mark(label: string): Promise<RecordingMarker> {
+        return this.check("marker.add", () => this.client.addMarker(label));
     }
 
     settings() {

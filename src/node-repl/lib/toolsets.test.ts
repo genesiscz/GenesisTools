@@ -43,6 +43,7 @@ import {
     type RecorderSettings,
     type RecorderSettingsPatch,
     type RecorderStatus,
+    type RecordingMarker,
     recorderSettingsSchema,
     type SettingsAnswer,
     type StopAnswer,
@@ -767,7 +768,10 @@ describe("recorder and editor toolsets", () => {
         expect(recorder.calls).toContain("rates 8");
         await handle.pause();
         expect((await handle.status()).state).toBe("paused");
+        await expect(handle.mark("while paused")).rejects.toThrow("cannot marker.add");
         await handle.resume();
+        const marked = await handle.mark("login done");
+        expect(marked).toEqual({ atMs: expect.any(Number), label: "login done" });
         await expect(handle.audio.mute("mic")).rejects.toThrow("cannot audio.mute");
         expect((await handle.displays.switch(4)).applied).toBe("live");
         expect(recorder.calls).toContain("switch 4");
@@ -784,6 +788,7 @@ describe("recorder and editor toolsets", () => {
         expect(progress.length).toBeGreaterThan(0);
         const manifest = readRecordingManifest(recording.folder);
         expect(manifest?.frames.length).toBe(stopped.frames);
+        expect(manifest?.settings.markers).toEqual([marked]);
         expect(existsSync(join(recording.folder, ".pieces"))).toBe(false);
 
         const toolset = new EditorToolset();
@@ -822,7 +827,7 @@ describe("recorder and editor toolsets", () => {
 /** A live recording that serves `settings.get` and `settings.set` and keeps the settings it was given. */
 class SettingsControl extends RecorderControl {
     readonly kind = "meeting";
-    readonly methods: readonly RecorderMethod[] = ["status", "stop", "settings.get", "settings.set"];
+    readonly methods: readonly RecorderMethod[] = ["status", "stop", "marker.add", "settings.get", "settings.set"];
     settings: RecorderSettings = recorderSettingsSchema.parse({
         activeFps: 2,
         idleFps: 0.5,
@@ -862,6 +867,10 @@ class SettingsControl extends RecorderControl {
             ocr: { ...this.settings.ocr, ...ocrPatch },
         });
         return { ...(await this.getSettings()), applied: "live" };
+    }
+
+    override async addMarker(label: string): Promise<RecordingMarker> {
+        return { atMs: 1234, label };
     }
 }
 
@@ -950,11 +959,13 @@ describe("live recording settings from the movies and meetings toolsets", () => 
                 open(ref: string): {
                     settings(): Promise<SettingsAnswer>;
                     setSettings(patch: unknown): Promise<SettingsAnswer>;
+                    mark(label: string): Promise<RecordingMarker>;
                 };
             };
         };
         const meeting = meetings.open(record.id);
         await expect(meeting.settings()).rejects.toThrow("not being recorded");
+        await expect(meeting.mark("demo starts")).rejects.toThrow("not being recorded");
 
         const control = new SettingsControl();
         const server = new LiveRecordingServer({
@@ -970,12 +981,14 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             expect(changed).toMatchObject({ applied: "live", settings: { threshold: 9, ocr: { enabled: false } } });
             expect(control.patches).toEqual([{ threshold: 9, ocr: { enabled: false } }]);
             await expect(meeting.setSettings({ threshold: -1 })).rejects.toThrow();
+            expect(await meeting.mark("demo starts")).toEqual({ atMs: 1234, label: "demo starts" });
+            await expect(meeting.mark("")).rejects.toThrow();
         } finally {
             server.close();
         }
 
         const docs = new MeetingsToolset().api.handles?.find((handle) => handle.name === "Meeting")?.methods ?? [];
-        expect(docs.map((method) => method.name)).toEqual(expect.arrayContaining(["settings", "setSettings"]));
+        expect(docs.map((method) => method.name)).toEqual(expect.arrayContaining(["settings", "setSettings", "mark"]));
     });
 
     test("meetings: labels, people pairings and unpairing by entry through the REPL, each method documented", async () => {
