@@ -143,7 +143,9 @@ export function registerAppCommands(program: Command): void {
                     out.result({ logbox, metro });
                 } else {
                     logbox.entries.length === 0
-                        ? ui.ok("no LogBox entry")
+                        ? logbox.before === "none"
+                            ? ui.ok("no LogBox entry")
+                            : ui.err("visible LogBox could not be read")
                         : ui.warn(`${logbox.entries.length} LogBox entr${logbox.entries.length === 1 ? "y" : "ies"}`);
 
                     for (const entry of logbox.entries) {
@@ -163,7 +165,7 @@ export function registerAppCommands(program: Command): void {
                     }
                 }
 
-                if (logbox.entries.length > 0 || (metro?.fatal.length ?? 0) > 0) {
+                if (logbox.before !== "none" || logbox.entries.length > 0 || (metro?.fatal.length ?? 0) > 0) {
                     process.exitCode = 1;
                 }
             }
