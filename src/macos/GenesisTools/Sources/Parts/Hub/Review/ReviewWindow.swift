@@ -811,10 +811,21 @@ final class ReviewModel: ObservableObject {
         watchBatches[folder, default: ReviewWatchBatch()].merge(batch)
         guard !watchReloadQueued else { return }
         watchReloadQueued = true
-        let gap = refreshes(folder) ? Self.refreshGap : Self.watchGap
-        let wait = max(0, watchReloadAt.addingTimeInterval(gap).timeIntervalSinceNow)
+        scheduleWatchReload()
+    }
+
+    private var currentWatchGap: TimeInterval {
+        watchBatches.keys.allSatisfy { refreshes($0) } ? Self.refreshGap : Self.watchGap
+    }
+
+    private func scheduleWatchReload() {
+        let wait = max(0, watchReloadAt.addingTimeInterval(currentWatchGap).timeIntervalSinceNow)
         DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
             guard let self else { return }
+            if started, scope.followsWorkingTree, Date() < watchReloadAt.addingTimeInterval(currentWatchGap) {
+                scheduleWatchReload()
+                return
+            }
             watchReloadQueued = false
             watchReloadAt = Date()
             let batches = watchBatches
