@@ -5,6 +5,7 @@ import {
     type RecorderState as ControlState,
     type DisplayEntry,
     type DisplaySelection,
+    OCR_READ_DEFAULTS,
     RecorderControl,
     type RecorderMethod,
     type RecorderSettings,
@@ -55,7 +56,7 @@ const MOVIE_FIXED_KEYS: readonly MovieFixedKey[] = ["maxLongSide", "heartbeatSec
 const MOVIE_FIXED_SETTINGS: Pick<RecorderSettings, MovieFixedKey> = {
     maxLongSide: 16_384,
     heartbeatSec: 0,
-    ocr: { enabled: false, languages: ["en-US"], minChars: 0 },
+    ocr: { enabled: false, languages: ["en-US"], minChars: 0, ...OCR_READ_DEFAULTS },
 };
 
 const CONTROL_STATE: Record<RecordingState, ControlState> = {

@@ -1107,7 +1107,14 @@ describe("a movie recording's live settings", () => {
                 threshold: 0.5,
                 maxLongSide: 16_384,
                 heartbeatSec: 0,
-                ocr: { enabled: false, languages: ["en-US"], minChars: 0 },
+                ocr: {
+                    enabled: false,
+                    languages: ["en-US"],
+                    minChars: 0,
+                    threshold: 0,
+                    skipTextless: false,
+                    region: "frame",
+                },
             });
             expect(answer.audio).toEqual({ sources: ["mic"], muted: { mic: false, system: false } });
             expect(Object.keys(answer.fixed ?? {}).sort()).toEqual(["heartbeatSec", "maxLongSide", "ocr"]);
