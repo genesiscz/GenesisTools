@@ -1925,3 +1925,53 @@ describe("the CLI doors of a frames recording and of the live OCR settings take 
         expect(() => settingsPatchFromFlags({ ocrLanguages: " , " })).toThrow("--ocr-languages:");
     });
 });
+
+test("waitFor bounds a stalled subscription without closing concurrent waits or control calls", async () => {
+    class Control extends RecorderControl {
+        readonly kind = "meeting";
+        readonly methods = ["status", "pause", "resume", "stop"] as const;
+        async status() {
+            return { kind: this.kind, title: "Fixture", state: "recording" as const, displays: [], frames: 1 };
+        }
+        async pause() {
+            return { state: "paused" as const };
+        }
+        async resume() {
+            return { state: "recording" as const };
+        }
+        async stop() {
+            return { state: "stopped" as const };
+        }
+    }
+    const dir = mkdtempSync(join(tmpdir(), "gt-wait-deadline-"));
+    const server = new LiveRecordingServer({
+        id: "deadline",
+        kind: "meeting",
+        title: "Fixture",
+        dir,
+        control: new Control(),
+    });
+    const client = await RecorderClient.connect("deadline", { dir });
+    const pending = Promise.withResolvers<void>();
+    const subscribe = spyOn(client, "subscribe").mockReturnValue(pending.promise);
+    try {
+        const handle = new RecordingHandle(client);
+        const longer = handle.waitFor(() => true, { timeoutMs: 1000 });
+        await expect(
+            withTimeout(
+                new RecordingHandle(client).waitFor(() => true, { timeoutMs: 20 }),
+                500,
+                new Error("outer deadline")
+            )
+        ).rejects.toThrow("within 20 ms");
+        await expect(client.status()).resolves.toMatchObject({ state: "recording" });
+        pending.resolve();
+        await expect(longer).resolves.toMatchObject({ state: "recording" });
+        await expect(handle.pause()).resolves.toMatchObject({ state: "paused" });
+    } finally {
+        pending.resolve();
+        subscribe.mockRestore();
+        client.close();
+        server.close();
+    }
+});
