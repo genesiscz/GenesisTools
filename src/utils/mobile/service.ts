@@ -70,25 +70,41 @@ export async function startDetached(
         exited = true;
     });
 
-    while (Date.now() < deadline) {
-        if (await options.ready()) {
-            // Written once it answers: a launcher (`bunx`, `env`) re-executes into the real program, and a record of the
-            // first command line would read as a foreign process ever after.
-            writePidFile(service.pidPath, { pid: child.pid });
-            return child.pid;
+    try {
+        while (Date.now() < deadline) {
+            if (await options.ready()) {
+                writePidFile(service.pidPath, { pid: child.pid });
+                return child.pid;
+            }
+
+            if (exited) {
+                throw new Error(`${service.name} exited during start-up:\n${logTail(service.logPath)}`);
+            }
+
+            await Bun.sleep(Math.min(500, Math.max(0, deadline - Date.now())));
         }
 
-        if (exited) {
-            clearPidFile(service.pidPath, { force: true });
-            throw new Error(`${service.name} exited during start-up:\n${logTail(service.logPath)}`);
+        throw new Error(
+            `${service.name} did not answer within ${options.timeoutMs / 1000} s:\n${logTail(service.logPath)}`
+        );
+    } catch (error) {
+        if (!exited) {
+            // pid-verified: this is the child just spawned above, tracked by its exit event.
+            process.kill(-child.pid, "SIGTERM");
+            const cleanupDeadline = Date.now() + 5_000;
+
+            while (!exited && Date.now() < cleanupDeadline) {
+                await Bun.sleep(100);
+            }
+
+            if (!exited) {
+                // pid-verified: the same owned child has not emitted exit.
+                process.kill(-child.pid, "SIGKILL");
+            }
         }
 
-        await Bun.sleep(500);
+        throw error;
     }
-
-    throw new Error(
-        `${service.name} did not answer within ${options.timeoutMs / 1000} s (pid ${child.pid}):\n${logTail(service.logPath)}`
-    );
 }
 
 /** Stops a service this tool started: SIGTERM to its process group, SIGKILL after `graceMs`. False when none ran. */
