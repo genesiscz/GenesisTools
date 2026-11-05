@@ -5,7 +5,15 @@ import { join } from "node:path";
 import { meetingLiveId } from "@app/meetings/lib/recorder";
 import { ReplEngine } from "@app/node-repl/lib/engine";
 import { MeetingsToolset } from "@app/node-repl/lib/toolsets/meetings";
-import { collapseUndo, defaultExportName, editProject, inItsFolder, undoDepth, undoEdit } from "@app/recorder/lib/edit";
+import {
+    collapseUndo,
+    defaultExportName,
+    editProject,
+    inItsFolder,
+    transcriptWords,
+    undoDepth,
+    undoEdit,
+} from "@app/recorder/lib/edit";
 import { chapterMetadata, chaptersOf, chaptersOfPart, recordingFolderOf, spreadTimes } from "@app/recorder/lib/moments";
 import { MoviesToolset } from "@app/recorder/lib/toolset";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
@@ -14,6 +22,8 @@ import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as ocr from "@genesiscz/utils/macos/ocr";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import transcriptCuts from "@genesiscz/utils/recording-editor/__fixtures__/transcript-cuts.json";
+import transcriptWordsFixture from "@genesiscz/utils/recording-editor/__fixtures__/transcript-words.json";
 import { RecordingEditor } from "@genesiscz/utils/recording-editor/editor";
 import { readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import { readShowable } from "@genesiscz/utils/repl/show";
@@ -283,6 +293,52 @@ describe("movie chapters", () => {
             )
         ).toEqual(["0:00 Start", "0:30 Next"]);
         expect(chaptersOf([])).toEqual([]);
+    });
+
+    test("a line's words come as cutWords reads them, and the editor's pick of one place cuts only that place", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-rec-words-"));
+        const path = join(root, "talk.edit.json");
+        writeProject(
+            path,
+            wholeProject({ video: join(root, "talk.mp4"), durationUs: 30_000_000, width: 100, height: 100 })
+        );
+        writeFileSync(
+            join(root, "talk.transcript.json"),
+            SafeJSON.stringify({ segments: [{ text: " So jako, we start jako now.", start: 10, end: 14 }] })
+        );
+        const [line] = await transcriptWords(path, { at: 11 });
+        expect(line.text).toBe("So jako, we start jako now.");
+        expect(line.plays).toBe(10);
+        expect(line.words.map((word) => word.fold)).toEqual(["so", "jako", "we", "start", "jako", "now"]);
+        expect(line.words.every((word) => word.estimated)).toBe(true);
+        expect(await transcriptWords(path)).toHaveLength(1);
+
+        // The second "jako" alone, the way the editor sends it through tools recorder apply.
+        await editProject(path, [{ op: "cutWords", at: line.start, words: "jako", occurrence: 2, padMs: 0 }]);
+        const [kept] = readProject(path).clips.slice(1);
+        expect(kept.fromUs).toBe(Math.round(line.words[4].end * 1_000_000));
+    });
+
+    // The editor's word pick decodes this file (RecorderEditTests.swift), so it reads what the door prints.
+    test("the words door prints the shared transcript-words fixture", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-rec-words-fixture-"));
+        const path = join(root, "talk.edit.json");
+        const project = wholeProject({
+            video: join(root, "talk.mp4"),
+            durationUs: transcriptWordsFixture.durationUs,
+            width: 100,
+            height: 100,
+        });
+        project.clips = transcriptWordsFixture.clips.map(([fromUs, toUs, speed], index) => ({
+            id: `c${index}`,
+            fromUs,
+            toUs,
+            speed,
+        }));
+        writeProject(path, project);
+        writeFileSync(join(root, "talk.transcript.json"), SafeJSON.stringify({ segments: transcriptCuts.segments }));
+
+        expect(await transcriptWords(path)).toEqual(transcriptWordsFixture.lines);
     });
 
     test("an edit that hides an item warns, and an edit that changes nothing saves nothing", async () => {

@@ -61,6 +61,7 @@ import {
     exportAs,
     openProject,
     previewTranscriptCuts,
+    transcriptWords,
     undoDepth,
     undoEdit,
     writeSubtitles,
@@ -594,14 +595,23 @@ const movieMethods = [
             .object({
                 at: timeSchema,
                 words: z.string().min(1),
+                occurrence: z.number().int().min(1).optional(),
                 padMs: z.number().int().min(0).max(500).optional(),
                 dryRun: z.boolean().optional(),
             })
             .strict(),
         result: z.unknown(),
         resultName: "{ …info() } | { from, to, text, line, estimated, plays }[] (dryRun)",
-        doc: "Cuts words out of the transcript line spoken at `at` (any source time inside it, a line's from from transcript() or find()): words \"you know\" cuts every place the line says them. A word's time comes from the provider's word times, else it is estimated from where its letters sit in the line (estimated: true; check with still() or sheet()). dryRun: true lists the cuts and saves nothing. One undo() puts it back.",
+        doc: "Cuts words out of the transcript line spoken at `at` (any source time inside it, a line's from from transcript() or find()): words \"you know\" cuts every place the line says them, occurrence: 2 only the second place (the editor's word pick does this). A word's time comes from the provider's word times, else it is estimated from where its letters sit in the line (estimated: true; check with still() or sheet()). dryRun: true lists the cuts and saves nothing. One undo() puts it back.",
         effect: "reversible",
+    }),
+    defineMethod({
+        name: "lineWords",
+        params: z.object({ at: timeSchema.optional() }).strict(),
+        result: z.unknown(),
+        resultName: "{ start, end, text, plays, words: { word, fold, start, end, estimated }[] }[]",
+        doc: "The words of every transcript line (or of the line spoken at `at`) as cutWords splits and times them: pick words, then cutWords({ at: line.start, words, occurrence }), where occurrence counts the earlier places of the same folded words in that line.",
+        effect: "read",
     }),
     defineMethod({
         name: "cutFillers",
@@ -1327,10 +1337,14 @@ export class Movie {
         ]);
     }
 
-    async cutWords(options: { at: TimeValue; words: string; padMs?: number; dryRun?: boolean }) {
+    async cutWords(options: { at: TimeValue; words: string; occurrence?: number; padMs?: number; dryRun?: boolean }) {
         const { dryRun, ...rest } = options;
         const op = { op: "cutWords" as const, ...rest };
         return dryRun ? cutsOut(await previewTranscriptCuts(this.recording, op)) : this.change([op]);
+    }
+
+    async lineWords(options: { at?: TimeValue } = {}) {
+        return transcriptWords(this.recording, options);
     }
 
     async cutFillers(

@@ -28,6 +28,7 @@ import {
     exportAs,
     finishExport,
     openProject,
+    transcriptWords,
     undoEdit,
     writeSubtitles,
 } from "./lib/edit";
@@ -1080,24 +1081,47 @@ program
 program
     .command("cut-words")
     .description(
-        "Cut words out of the transcript line spoken at a source time (every place that line says them); one undo"
+        "Cut words out of the transcript line spoken at a source time (every place that line says them, or --occurrence); one undo"
     )
     .argument("<recording>", "a library id, `last`, a meeting id, a recording folder, a movie or an edit.json")
     .requiredOption("--at <time>", "any source time inside the line (seconds, m:ss or h:mm:ss)")
     .requiredOption("--words <text>", "the word or words, in order")
+    .option("--occurrence <n>", "only this place of the words in the line (1 is the first)")
     .option("--pad-ms <ms>", "kept off the words' edges", "40")
     .option("--dry-run", "list what it would cut, save nothing")
-    .action(async (value: string, flags: { at: string; words: string; padMs?: string; dryRun?: boolean }) => {
+    .action(
+        async (
+            value: string,
+            flags: { at: string; words: string; occurrence?: string; padMs?: string; dryRun?: boolean }
+        ) => {
+            try {
+                const movie = new Movie(value);
+                out.result(
+                    await movie.cutWords({
+                        at: parseTime(flags.at, "--at"),
+                        words: flags.words,
+                        ...(flags.occurrence !== undefined ? { occurrence: Number(flags.occurrence) } : {}),
+                        padMs: Number(flags.padMs ?? 40),
+                        dryRun: flags.dryRun,
+                    })
+                );
+            } catch (error) {
+                out.printlnErr(error instanceof Error ? error.message : String(error));
+                process.exitCode = 1;
+            }
+        }
+    );
+
+program
+    .command("words")
+    .description(
+        "The words of each transcript line as cut-words splits and times them (the editor's word pick reads this)"
+    )
+    .argument("<recording>", "a library id, `last`, a meeting id, a recording folder, a movie or an edit.json")
+    .option("--at <time>", "only the line spoken at this source time (seconds, m:ss or h:mm:ss)")
+    .action(async (value: string, flags: { at?: string }) => {
         try {
-            const movie = new Movie(value);
-            out.result(
-                await movie.cutWords({
-                    at: parseTime(flags.at, "--at"),
-                    words: flags.words,
-                    padMs: Number(flags.padMs ?? 40),
-                    dryRun: flags.dryRun,
-                })
-            );
+            out.result(await transcriptWords(value, flags.at ? { at: parseTime(flags.at, "--at") } : {}));
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;

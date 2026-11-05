@@ -116,6 +116,16 @@ final class EditorModel {
     private(set) var isTranscribing = false
     /// The movie has a cached transcript, so captions can be drawn.
     private(set) var hasTranscript = false
+    /// Each transcript line's words as `tools recorder words` splits them, for the Captions tab's word pick; nil until
+    /// read (EditorTranscriptCuts.swift).
+    var lineWords: [TranscriptLineWords]?
+    /// `tools recorder words` runs.
+    var isReadingLineWords = false
+    /// A cut by the transcript runs in `tools recorder apply`; its buttons wait for it.
+    var isCuttingTranscript = false
+    /// Edit ops this window runs through `tools recorder apply`: their saved edit is this window's own change, so it is
+    /// adopted without the banner of an outside edit.
+    @ObservationIgnored private var ownOpsRunning = 0
     /// Pixels of the timeline per second; the transport's slider sets it.
     var pointsPerSecond: Double = 0
 
@@ -1279,6 +1289,32 @@ final class EditorModel {
         }
     }
 
+    /// Runs edit ops in `tools recorder apply`, the TypeScript op itself, so the window keeps no copy of its rule. The
+    /// saved edit becomes one undo step; `done` gets how much shorter the edit got, or the failure's last line.
+    func applyOps(_ ops: String, done: @escaping @MainActor (Result<Int64, ApplyFailure>) -> Void) {
+        saveTask?.cancel()
+        saveNow()
+        let before = durationUs
+        ownOpsRunning += 1
+        ToolsRunner.run(["recorder", "apply", store.url.path, ops]) { [weak self] status, _, stderr in
+            guard let self else { return }
+            defer { self.ownOpsRunning -= 1 }
+            guard status == 0 else {
+                done(.failure(ApplyFailure(reason: stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")))
+                return
+            }
+            // The watcher may not have delivered the file yet; read it now so the notice has the new length.
+            if let data = try? Data(contentsOf: self.store.url), let next = try? EditProject.decode(data, at: self.store.url) {
+                self.adoptExternal(next)
+            }
+            done(.success(before - self.durationUs))
+        }
+    }
+
+    struct ApplyFailure: Error {
+        let reason: String
+    }
+
     /// An agent changed the edit file: its version replaces this one, and this one stays one undo away.
     private func adoptExternal(_ next: EditProject) {
         guard next != project else { return }
@@ -1293,6 +1329,8 @@ final class EditorModel {
         canRedo = false
         if rebuildMovie { rebuild() } else { refreshFrame() }
         let previous = undoStack.last ?? next
+        // The window's own op (applyOps) names itself in its notice.
+        guard ownOpsRunning == 0 else { return }
         if !announceExternal(old: previous, new: next) {
             show("The edit changed on disk (\(next.updatedBy ?? "another process")); ⌘Z brings this version back.", error: false)
         }
@@ -1316,6 +1354,7 @@ final class EditorModel {
                 return
             }
             self.hasTranscript = true
+            self.lineWords = nil
             self.setLooks { $0.captions = $0.captions ?? EditProject.Captions() }
             self.show("Captions are on.", error: false)
         }

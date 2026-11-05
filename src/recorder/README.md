@@ -36,7 +36,9 @@ tools recorder proxy <recording> [--display most-change|ID] [--window S] [--swit
                                                  # or one display; a meeting also gets its transcript as captions
                                                  # with the speakers' names
 tools recorder find-screen <recording> <text>    # where a text was on the screen (OCR), at source seconds
-tools recorder cut-words <recording> --at T --words "you know" [--dry-run]  # cut words out of the line at T
+tools recorder words <recording> [--at T]       # each transcript line's words as cut-words splits and times them
+tools recorder cut-words <recording> --at T --words "you know" [--occurrence N] [--dry-run]  # cut words out of the
+                                                 # line at T: every place, or with --occurrence only the Nth
 tools recorder cut-fillers <recording> [--lang cs|sk|en] [--all] [--words a,b] [--dry-run]  # every ehm, hm, um;
                                                  # --all also the fillers that are words (jako, like)
 tools recorder subtitles <recording> [--format srt|vtt] [--out F] [--from T --to T]  # the transcript as subtitles
@@ -76,7 +78,9 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   (`"1800": "the right words"`, `""` hides the line). Kept in the edit, so a new transcription keeps them; captions,
   `transcript()`, `find()` and `movies.search()` read the fixed words. Ops `fixLine` (`from` the line's start) and
   `unfixLine`; `movie.fixLine(at, text)` takes any time inside the line, `movie.fixLines([{ at, text }])` many in one
-  save and one undo; the editor's Captions tab lists the lines.
+  save and one undo; the editor's Captions tab lists the lines. Its scissors per line pick words to cut (the
+  `cutWords` op with `occurrence`, through `tools recorder apply`), and Cut Fillers sends `cutFillers` at the level
+  the tab sets (`recorder.captions.fillerLevel`: `sounds`, the default, or `all`).
 - `texts` (optional): lines of text over the picture (a title, a step's name) from `startUs` to `endUs`: `text`,
   `x`/`y` its centre as 0 to 1 of the CANVAS (so it stays put through a zoom; 0.5, 0.12 by default), `size` 0.02 to
   0.15 of the short side (0.055), `style` `plate` or `plain`. Each fades in and out over 0.2 s. Ops `text` and

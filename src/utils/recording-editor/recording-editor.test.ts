@@ -29,6 +29,7 @@ import {
     autoZoom,
     cameraOpSchema,
     describeProject,
+    editOpSchema,
     editProjectSchema,
     findInTranscript,
     outputDurationUs,
@@ -51,13 +52,14 @@ import { createCanvas } from "@napi-rs/canvas";
 import { ZodError } from "zod";
 import cameraOps from "./__fixtures__/camera-ops.json";
 import legacyEvidence from "./__fixtures__/legacy-evidence.json";
+import transcriptCuts from "./__fixtures__/transcript-cuts.json";
 import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema } from "./denoise";
 import { RecordingEditor } from "./editor";
 import { atempoChain, concatList, exportVideoArgv, speedArgv, trimArgv } from "./ffmpeg";
 import { parseEditPlan, timeToUs } from "./plan";
 import { locateSource } from "./source";
 import { formatSubtitles, subtitleCues } from "./subtitles";
-import { cutRanges, fillerCuts, fillerList, wordCuts, wordSpans } from "./transcript-cuts";
+import { cutRanges, fillerCuts, fillerList, transcriptSegmentSchema, wordCuts, wordSpans } from "./transcript-cuts";
 
 function workspace(): string {
     return mkdtempSync(join(tmpdir(), "gt-editor-"));
@@ -1117,6 +1119,35 @@ describe("cutting by the transcript", () => {
         expect(outputDurationUs(cut)).toBe(40_000_000 - removed);
         expect(() => applyOp(project, { op: "cutFillers" })).toThrow("needs the transcript");
     });
+
+    // The editor window sends these ops through tools recorder apply; the cases pin what each one cuts.
+    for (const item of transcriptCuts.cases) {
+        test(`transcript cut case: ${item.name}`, () => {
+            const project = wholeProject({
+                video: "/rec/screen.mp4",
+                durationUs: transcriptCuts.durationUs,
+                width: 1920,
+                height: 1080,
+            });
+            const clips = "clips" in item ? item.clips : undefined;
+
+            if (clips) {
+                project.clips = clips.map(([fromUs, toUs, speed], index) => ({ id: `c${index}`, fromUs, toUs, speed }));
+            }
+
+            const run = () =>
+                applyOp(project, editOpSchema.parse(item.op), {
+                    transcript: transcriptSegmentSchema.array().parse(transcriptCuts.segments),
+                });
+
+            if ("throws" in item) {
+                expect(run).toThrow(item.throws);
+                return;
+            }
+
+            expect(run().clips.map((clip) => [clip.fromUs, clip.toUs, clip.speed])).toEqual(item.after);
+        });
+    }
 });
 
 describe("camera bubble", () => {

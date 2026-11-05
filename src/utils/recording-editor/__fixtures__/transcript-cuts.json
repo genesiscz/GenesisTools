@@ -1,0 +1,410 @@
+{
+    "about": "The cutWords and cutFillers ops (src/utils/recording-editor/project.ts, transcript-cuts.ts) on one transcript, as recording-editor.test.ts applies them. The editor window sends the same ops through tools recorder apply, so it has no copy of these rules. Each clip is [fromUs, toUs, speed].",
+    "durationUs": 60000000,
+    "segments": [
+        {
+            "text": " Hello, ehm, my name is Ann",
+            "start": 10,
+            "end": 13
+        },
+        {
+            "text": "Hmm, hmm. We start jako now, jako always",
+            "start": 20,
+            "end": 24
+        },
+        {
+            "text": "you know it, you know",
+            "start": 30,
+            "end": 33,
+            "words": [
+                {
+                    "word": "you",
+                    "start": 30,
+                    "end": 30.2
+                },
+                {
+                    "word": "know",
+                    "start": 30.3,
+                    "end": 30.6
+                },
+                {
+                    "word": "it,",
+                    "start": 31.5,
+                    "end": 31.8
+                },
+                {
+                    "text": "you",
+                    "start": 32,
+                    "end": 32.2
+                },
+                {
+                    "text": "know",
+                    "start": 32.3,
+                    "end": 32.6
+                }
+            ]
+        },
+        {
+            "text": "Éé, to je jakože dobré",
+            "start": 40,
+            "end": 43
+        },
+        {
+            "text": "Um, like, uh, so",
+            "start": 50,
+            "end": 52
+        }
+    ],
+    "cases": [
+        {
+            "name": "one word, its time estimated from its letters",
+            "op": {
+                "op": "cutWords",
+                "at": 11,
+                "words": "ehm",
+                "padMs": 0
+            },
+            "after": [
+                [
+                    0,
+                    10888889,
+                    1
+                ],
+                [
+                    11333333,
+                    60000000,
+                    1
+                ]
+            ]
+        },
+        {
+            "name": "every place the line says the word",
+            "op": {
+                "op": "cutWords",
+                "at": 21,
+                "words": "jako"
+            },
+            "after": [
+                [
+                    0,
+                    21860000,
+                    1
+                ],
+                [
+                    22340000,
+                    22860000,
+                    1
+                ],
+                [
+                    23340000,
+                    60000000,
+                    1
+                ]
+            ]
+        },
+        {
+            "name": "only the second place, as the editor's word pick cuts",
+            "op": {
+                "op": "cutWords",
+                "at": 21,
+                "words": "jako",
+                "occurrence": 2
+            },
+            "after": [
+                [
+                    0,
+                    22860000,
+                    1
+                ],
+                [
+                    23340000,
+                    60000000,
+                    1
+                ]
+            ]
+        },
+        {
+            "name": "a run of words with the provider's word times",
+            "op": {
+                "op": "cutWords",
+                "at": 31,
+                "words": "you know",
+                "occurrence": 1,
+                "padMs": 0
+            },
+            "after": [
+                [
+                    0,
+                    30000000,
+                    1
+                ],
+                [
+                    30600000,
+                    60000000,
+                    1
+                ]
+            ]
+        },
+        {
+            "name": "a word after an earlier cut",
+            "op": {
+                "op": "cutWords",
+                "at": 31,
+                "words": "it"
+            },
+            "clips": [
+                [
+                    0,
+                    25000000,
+                    1
+                ],
+                [
+                    28000000,
+                    60000000,
+                    1
+                ]
+            ],
+            "after": [
+                [
+                    0,
+                    25000000,
+                    1
+                ],
+                [
+                    28000000,
+                    31460000,
+                    1
+                ],
+                [
+                    31840000,
+                    60000000,
+                    1
+                ]
+            ]
+        },
+        {
+            "name": "a time within 1 s before a line finds that line",
+            "op": {
+                "op": "cutWords",
+                "at": 9.5,
+                "words": "Ann"
+            },
+            "after": [
+                [
+                    0,
+                    12626667,
+                    1
+                ],
+                [
+                    13000000,
+                    60000000,
+                    1
+                ]
+            ]
+        },
+        {
+            "name": "a word with accents on a sped-up clip",
+            "op": {
+                "op": "cutWords",
+                "at": 41,
+                "words": "dobré",
+                "padMs": 10
+            },
+            "clips": [
+                [
+                    0,
+                    60000000,
+                    2
+                ]
+            ],
+            "after": [
+                [
+                    0,
+                    42308182,
+                    2
+                ],
+                [
+                    43000000,
+                    60000000,
+                    2
+                ]
+            ]
+        },
+        {
+            "name": "filler sounds of every language",
+            "op": {
+                "op": "cutFillers"
+            },
+            "after": [
+                [
+                    0,
+                    10848889,
+                    1
+                ],
+                [
+                    11373333,
+                    20000000,
+                    1
+                ],
+                [
+                    20940000,
+                    40000000,
+                    1
+                ],
+                [
+                    40449091,
+                    50000000,
+                    1
+                ],
+                [
+                    50415000,
+                    51210000,
+                    1
+                ],
+                [
+                    51665000,
+                    60000000,
+                    1
+                ]
+            ]
+        },
+        {
+            "name": "Czech fillers with the filler words",
+            "op": {
+                "op": "cutFillers",
+                "language": "cs",
+                "level": "all",
+                "padMs": 0
+            },
+            "after": [
+                [
+                    0,
+                    10888889,
+                    1
+                ],
+                [
+                    11333333,
+                    20000000,
+                    1
+                ],
+                [
+                    20900000,
+                    21900000,
+                    1
+                ],
+                [
+                    22300000,
+                    22900000,
+                    1
+                ],
+                [
+                    23300000,
+                    40000000,
+                    1
+                ],
+                [
+                    40409091,
+                    41363636,
+                    1
+                ],
+                [
+                    42181818,
+                    60000000,
+                    1
+                ]
+            ]
+        },
+        {
+            "name": "your own filler words",
+            "op": {
+                "op": "cutFillers",
+                "words": [
+                    "So",
+                    "like"
+                ]
+            },
+            "after": [
+                [
+                    0,
+                    50460000,
+                    1
+                ],
+                [
+                    51165000,
+                    51710000,
+                    1
+                ],
+                [
+                    52000000,
+                    60000000,
+                    1
+                ]
+            ]
+        },
+        {
+            "name": "English filler sounds",
+            "op": {
+                "op": "cutFillers",
+                "language": "en"
+            },
+            "after": [
+                [
+                    0,
+                    20000000,
+                    1
+                ],
+                [
+                    20940000,
+                    50000000,
+                    1
+                ],
+                [
+                    50415000,
+                    51210000,
+                    1
+                ],
+                [
+                    51665000,
+                    60000000,
+                    1
+                ]
+            ]
+        },
+        {
+            "name": "nobody speaks there",
+            "op": {
+                "op": "cutWords",
+                "at": 25,
+                "words": "x"
+            },
+            "throws": "nobody speaks at 25 s"
+        },
+        {
+            "name": "the line does not say the words",
+            "op": {
+                "op": "cutWords",
+                "at": 11,
+                "words": "goodbye"
+            },
+            "throws": "does not say \"goodbye\""
+        },
+        {
+            "name": "a place the line does not have",
+            "op": {
+                "op": "cutWords",
+                "at": 21,
+                "words": "jako",
+                "occurrence": 3
+            },
+            "throws": "there is no place 3"
+        },
+        {
+            "name": "a language without a list",
+            "op": {
+                "op": "cutFillers",
+                "language": "xx"
+            },
+            "throws": "no filler list for \"xx\""
+        }
+    ]
+}

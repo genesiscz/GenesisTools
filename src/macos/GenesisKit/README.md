@@ -1783,6 +1783,19 @@ FittedScroll(maxHeight: 320, minHeight: 40) {
 }
 ```
 
+#### `WrapLayout`
+
+A `Layout` that places its views left to right and starts a new row when the next view does not fit the proposed width, as words wrap in a paragraph. Use it for chips, tags or the words of a transcript line. Each view keeps its ideal size and is centred in its row's height.
+
+- `spacing: CGFloat = 4`: the gap between two views of a row.
+- `lineSpacing: CGFloat = 4`: the gap between two rows.
+
+```swift
+WrapLayout(spacing: 4, lineSpacing: 4) {
+    ForEach(words) { word in WordChip(word: word) }
+}
+```
+
 #### `OverlayScrollViewport`
 
 A narrow vertical viewport whose scrollbar never adds to its proposed width, for a fixed-width rail such as a side strip of buttons. The scroller is the overlay style and hides when idle. Each edge with more content past it fades out, so an overflowing rail does not look like it ends, and the scroller flashes once when the content starts to overflow. The content is laid out at exactly `width`.

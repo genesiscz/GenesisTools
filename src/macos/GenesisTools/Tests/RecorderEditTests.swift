@@ -8,16 +8,129 @@ import XCTest
 /// A case file in src/utils/recording-editor/__fixtures__/ that the TypeScript tests run too, so the two copies of a
 /// rule fail together when one of them changes.
 enum SharedEditorFixture {
-    static func cases(_ name: String) throws -> [[String: Any]] {
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    static func url(_ name: String) -> URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("utils/recording-editor/__fixtures__/\(name)")
-        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+    }
+
+    static func cases(_ name: String) throws -> [[String: Any]] {
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url(name))) as? [String: Any])
         return try XCTUnwrap(root["cases"] as? [[String: Any]], "\(name) has no cases")
+    }
+
+    /// What `tools recorder words` printed for transcript-cuts.json's segments (toolsets.test.ts keeps it current).
+    static func transcriptWords() throws -> [TranscriptLineWords] {
+        struct File: Decodable { let lines: [TranscriptLineWords] }
+        return try JSONDecoder().decode(File.self, from: Data(contentsOf: url("transcript-words.json"))).lines
+    }
+}
+
+/// Pictures of editor views for review, written into `RECORDER_EDITOR_SHOTS` (or the temporary folder) from an
+/// off-screen borderless window that is never shown, never key: `cacheDisplay` draws AppKit-backed controls too.
+@MainActor
+enum EditorShots {
+    @discardableResult
+    static func write<V: View>(_ view: V, name: String, width: CGFloat) throws -> CGImage {
+        let host = NSHostingView(rootView: view.frame(width: width, alignment: .topLeading)
+            .background(RecorderPalette.window)
+            .environment(\.colorScheme, .dark))
+        host.frame = CGRect(origin: .zero, size: CGSize(width: width, height: max(40, host.fittingSize.height)))
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: rep)
+        let dir = ProcessInfo.processInfo.environment["RECORDER_EDITOR_SHOTS"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: dir.appendingPathComponent("\(name).png"))
+        return try XCTUnwrap(rep.cgImage)
+    }
+
+    /// The words Vision reads in a picture, joined, for asserting what a view shows.
+    static func text(_ image: CGImage) throws -> String {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        // Vision reads curly quotes as straight ones, so both compare as straight.
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
+            .replacingOccurrences(of: "“", with: "\"").replacingOccurrences(of: "”", with: "\"")
+    }
+}
+
+/// The Captions tab's cut by transcript, rendered with a transcript and the words the door printed.
+@MainActor
+final class RecorderTranscriptCutViewTests: XCTestCase {
+    private var folder: URL!
+
+    override func setUp() async throws {
+        folder = FileManager.default.temporaryDirectory.appendingPathComponent("transcript-cut-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() async throws {
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    /// A model of a movie with the shared transcript cached beside it, and its words read.
+    private func model() throws -> EditorModel {
+        let cuts = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: SharedEditorFixture.url("transcript-cuts.json"))) as? [String: Any])
+        let segments = try JSONSerialization.data(withJSONObject: ["segments": try XCTUnwrap(cuts["segments"])])
+        try segments.write(to: folder.appendingPathComponent("talk.transcript.json"))
+        let project = EditProject.whole(video: folder.appendingPathComponent("talk.mp4").path, durationUs: 60_000_000,
+                                        width: 1920, height: 1080, cursor: nil, recording: nil)
+        let model = EditorModel(project: project, store: ProjectStore(url: folder.appendingPathComponent("edit.json")))
+        model.lineWords = try SharedEditorFixture.transcriptWords()
+        return model
+    }
+
+    func testTheCaptionLinesOfferTheFillerCutAndAScissorsPerLine() throws {
+        let model = try model()
+        XCTAssertTrue(model.hasTranscript)
+        let image = try EditorShots.write(CaptionLinesList(model: model).padding(18), name: "captions-cut-by-transcript", width: 300)
+        let text = try EditorShots.text(image).lowercased()
+        for word in ["cut filler words", "sounds", "sounds and words", "cut fillers", "lines", "hello, ehm"] {
+            XCTAssertTrue(text.contains(word), "\(word) missing from: \(text)")
+        }
+    }
+
+    func testTheWordPickerShowsTheLinesWordsAndNamesThePickedOnes() throws {
+        let model = try model()
+        let line = try XCTUnwrap(model.zoom.captionLines.first { $0.fromUs == 20_000_000 })
+        let picker = TranscriptWordPicker(model: model, line: line, picked: 6...6) {}
+        let image = try EditorShots.write(picker, name: "captions-word-picker", width: 320)
+        let text = try EditorShots.text(image).lowercased()
+        for word in ["cut words of this line", "hmm,", "start", "always", "cut \"jako\"", "estimated"] {
+            XCTAssertTrue(text.contains(word), "\(word) missing from: \(text)")
+        }
     }
 }
 
 final class RecorderEditTests: XCTestCase {
+    /// The word pick reads what `tools recorder words` prints and sends the place of the picked words, as the
+    /// `cutWords` op numbers them (it cuts every run of the same folded words).
+    func testTheWordPickSendsThePlaceOfThePickedWordsAsCutWordsNumbersThem() throws {
+        let lines = try SharedEditorFixture.transcriptWords()
+        XCTAssertEqual(lines.count, 5)
+        let start = try XCTUnwrap(lines.first { $0.start == 20 })
+        XCTAssertEqual(start.words.map(\.fold), ["hmm", "hmm", "we", "start", "jako", "now", "jako", "always"])
+        XCTAssertEqual(EditorModel.occurrence(of: 6...6, in: start.words), 2)
+        XCTAssertEqual(EditorModel.occurrence(of: 4...4, in: start.words), 1)
+        XCTAssertEqual(EditorModel.occurrence(of: 1...1, in: start.words), 2, "the second hmm, though its word is \"hmm.\"")
+        let you = try XCTUnwrap(lines.first { $0.start == 30 })
+        XCTAssertEqual(EditorModel.occurrence(of: 3...4, in: you.words), 2, "the second \"you know\"")
+        XCTAssertEqual(EditorModel.occurrence(of: 0...1, in: you.words), 1)
+        let op = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(EditorModel.cutWordsOp(start, picked: 6...6).utf8)) as? NSDictionary)
+        XCTAssertEqual(op, ["op": "cutWords", "at": 20, "words": "jako", "occurrence": 2] as NSDictionary)
+        let run = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(EditorModel.cutWordsOp(you, picked: 3...4).utf8)) as? NSDictionary)
+        XCTAssertEqual(run["words"] as? String, "you know")
+    }
+
     /// A recording folder with files, each `[name, seconds after a fixed time]`, as recording-movies.json lists them.
     private func recordingFolder(_ files: [[Any]]) throws -> URL {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("movie-\(UUID().uuidString)")

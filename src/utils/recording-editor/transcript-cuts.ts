@@ -107,11 +107,15 @@ export function lineAt(segments: readonly TranscriptSegment[], atSec: number): T
     );
 }
 
-/** Where `words` (one or more words, in order) are said in the line at `atSec`; every place they occur. */
+/**
+ * Where `words` (one or more words, in order) are said in the line at `atSec`: every place they occur, or with
+ * `occurrence` only that one (1 is the first place in the line), as the editor cuts the words picked in a line.
+ */
 export function wordCuts(options: {
     segments: readonly TranscriptSegment[];
     atSec: number;
     words: string;
+    occurrence?: number;
     padMs?: number;
 }): CutMatch[] {
     const segment = lineAt(options.segments, options.atSec);
@@ -143,7 +147,19 @@ export function wordCuts(options: {
         );
     }
 
-    return matches;
+    if (options.occurrence === undefined) {
+        return matches;
+    }
+
+    const picked = matches[options.occurrence - 1];
+
+    if (!picked) {
+        throw new RangeError(
+            `the line at ${segment.start} s says "${options.words}" ${matches.length === 1 ? "once" : `${matches.length} times`}, so there is no place ${options.occurrence}`
+        );
+    }
+
+    return [picked];
 }
 
 /** The filler words to cut: your own `words`, else `language`'s list (absent: every language's) at `level`. */

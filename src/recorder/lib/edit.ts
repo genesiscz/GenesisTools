@@ -11,7 +11,7 @@ import { ensureDenoisedSource } from "@genesiscz/utils/recording-editor/denoise"
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { integratedLoudness } from "@genesiscz/utils/recording-editor/loudness";
-import { timeToUs } from "@genesiscz/utils/recording-editor/plan";
+import { type TimeValue, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
     applyOp,
     type EditOp,
@@ -35,9 +35,12 @@ import {
     type CutMatch,
     fillerCuts,
     fillerList,
+    foldWord,
+    lineAt,
     type TranscriptSegment,
     transcriptFileSchema,
     wordCuts,
+    wordSpans,
 } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -246,7 +249,13 @@ export async function previewTranscriptCuts(
     const segments = readTranscriptSegments(project);
     const cuts =
         op.op === "cutWords"
-            ? wordCuts({ segments, atSec: timeToUs(op.at) / 1_000_000, words: op.words, padMs: op.padMs })
+            ? wordCuts({
+                  segments,
+                  atSec: timeToUs(op.at) / 1_000_000,
+                  words: op.words,
+                  occurrence: op.occurrence,
+                  padMs: op.padMs,
+              })
             : fillerCuts({
                   segments,
                   fillers: fillerList({ language: op.language, words: op.words, level: op.level }),
@@ -255,6 +264,45 @@ export async function previewTranscriptCuts(
     return cuts.map((cut) => {
         const plays = outputTimeOf(project, cut.fromUs);
         return { ...cut, plays: plays === undefined ? null : Math.round(plays / 1000) / 1000 };
+    });
+}
+
+/** A transcript line as `cutWords` reads it: its source seconds, where it plays now, and its words. */
+export interface TranscriptLineWords {
+    start: number;
+    end: number;
+    text: string;
+    /** Output seconds where the line starts in the edit now; null when that moment is cut. */
+    plays: number | null;
+    /** `fold` is the form `cutWords` matches (lowercase, no punctuation around it); times are source seconds. */
+    words: Array<{ word: string; fold: string; start: number; end: number; estimated: boolean }>;
+}
+
+/**
+ * The words of each transcript line (or only of the line spoken at `at`), as `cutWords` splits and times them, so a
+ * caller can pick words and send `{ op: "cutWords", at, words, occurrence }` without splitting a line itself.
+ */
+export async function transcriptWords(value: string, options: { at?: TimeValue } = {}): Promise<TranscriptLineWords[]> {
+    const { project } = await openProject(value);
+    const segments = readTranscriptSegments(project);
+    const picked =
+        options.at === undefined ? segments : [lineAt(segments, timeToUs(options.at) / 1_000_000)].filter(Boolean);
+
+    return picked.flatMap((segment) => {
+        if (!segment) {
+            return [];
+        }
+
+        const plays = outputTimeOf(project, Math.round(segment.start * 1_000_000));
+        return [
+            {
+                start: segment.start,
+                end: segment.end,
+                text: segment.text.trim(),
+                plays: plays === undefined ? null : Math.round(plays / 1000) / 1000,
+                words: wordSpans(segment).map((span) => ({ ...span, fold: foldWord(span.word) })),
+            },
+        ];
     });
 }
 

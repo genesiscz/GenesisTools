@@ -1135,6 +1135,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             at: timeSchema,
             /** The word or words (in order) to cut out of that line; every place the line says them. */
             words: z.string().min(1),
+            /** Only this place of the words in the line (1 is the first); absent cuts every place. */
+            occurrence: z.number().int().min(1).optional(),
             /** Kept off the words' edges, so the next word is not clipped. Default 40. */
             padMs: z.number().int().min(0).max(500).optional(),
         })
@@ -1627,6 +1629,7 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                           segments: facts.transcript,
                           atSec: timeToUs(op.at) / 1_000_000,
                           words: op.words,
+                          ...(op.occurrence !== undefined ? { occurrence: op.occurrence } : {}),
                           ...(op.padMs !== undefined ? { padMs: op.padMs } : {}),
                       })
                     : fillerCuts({

@@ -706,8 +706,9 @@ private func swiftColor(_ hex: String) -> Color {
 }
 
 /// The transcript's lines, each editable: a click on the time seeks to it, the words can be corrected (kept in the
-/// edit as a fix, so a new transcription keeps them), and the eye hides a line from the captions.
-private struct CaptionLinesList: View {
+/// edit as a fix, so a new transcription keeps them), the scissors cut picked words out of the movie, and the eye hides
+/// a line from the captions.
+struct CaptionLinesList: View {
     @Bindable var model: EditorModel
     @State private var find = ""
     @State private var replacement = ""
@@ -731,6 +732,7 @@ private struct CaptionLinesList: View {
                     .disabled(find.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .padding(.bottom, 4)
+            FillerCutRow(model: model)
             HStack {
                 Text("Lines").font(.system(size: 12.5, weight: .medium))
                 Spacer()
@@ -774,6 +776,7 @@ private struct CaptionLinesList: View {
                             }
                         }
                         .accessibilityAction(named: "Back to the Transcript") { model.fixCaption(line, text: nil) }
+                        CaptionLineCutButton(model: model, line: line)
                         IconButton(systemName: hidden ? "eye.slash" : "eye", tooltip: hidden ? "Show this line again" : "Hide this line from the captions",
                                    size: 10) {
                             model.fixCaption(line, text: hidden ? nil : "")
