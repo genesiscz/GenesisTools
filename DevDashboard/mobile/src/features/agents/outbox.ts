@@ -9,6 +9,8 @@ import Storage from "expo-sqlite/kv-store";
 export interface SteerDraft {
     /** Missing on legacy drafts whose destination is unknown; never replay those automatically. */
     connectionId?: string;
+    /** A refusal or uncertain delivery needs explicit user action, never automatic replay. */
+    blocked?: boolean;
     /** The idempotency key of every attempt. */
     id: string;
     /** The board key of the session. */
@@ -101,13 +103,23 @@ export async function flushDrafts({
     connectionId: string;
     send: (draft: SteerDraft) => Promise<AgentSendReceiptDto>;
 }): Promise<FlushResult> {
-    const drafts = (await store.read()).filter((draft) => draft.connectionId === connectionId)
+    const drafts = (await store.read()).filter((draft) => draft.connectionId === connectionId && !draft.blocked)
         .sort((a, b) => a.createdAt - b.createdAt);
     const result: FlushResult = { sent: [], failed: [], waiting: [] };
 
     for (const draft of drafts) {
         try {
-            result.sent.push({ draft, receipt: await send(draft) });
+            const receipt = await send(draft);
+            if (receipt.outcome === "refused" || receipt.outcome === "unknown") {
+                const error = receipt.outcome === "unknown"
+                    ? `Check the session before retrying: ${receipt.detail}`
+                    : receipt.detail;
+                result.failed.push({ draft, error });
+                result.waiting.push({ ...draft, blocked: true, lastError: error, attempts: draft.attempts + 1 });
+                continue;
+            }
+
+            result.sent.push({ draft, receipt });
         } catch (error) {
             if (isOfflineError(error)) {
                 result.waiting.push({ ...draft, attempts: draft.attempts + 1, lastError: String(error) });
@@ -115,6 +127,7 @@ export async function flushDrafts({
             }
 
             result.failed.push({ draft, error: error instanceof Error ? error.message : String(error) });
+            result.waiting.push({ ...draft, blocked: true, lastError: String(error), attempts: draft.attempts + 1 });
         }
     }
 

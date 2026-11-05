@@ -272,8 +272,14 @@ export function SteerComposer({
             {composer.drafts.map((draft) => (
                 <View key={draft.id} testID={`steer-draft-${draft.id}`} className="flex-row items-center gap-2">
                     <Text numberOfLines={1} className="flex-1" style={{ color: c.warning, fontSize: 12 }}>
-                        {`Waiting (${TIMING_CHIPS[draft.timing].word}): ${draft.text}`}
+                        {`${draft.blocked ? draft.lastError : `Waiting (${TIMING_CHIPS[draft.timing].word})`}: ${draft.text}`}
                     </Text>
+                    {draft.blocked ? (
+                        <Pressable accessibilityRole="button" accessibilityLabel="Retry saved message"
+                            onPress={() => void composer.retry(draft.id)}>
+                            <Text style={{ color: c.accent, fontSize: 12 }}>Retry</Text>
+                        </Pressable>
+                    ) : null}
                     <Pressable accessibilityRole="button" onPress={() => void composer.discard(draft.id)}>
                         <Text style={{ color: c.textMuted, fontSize: 12 }}>Discard</Text>
                     </Pressable>
