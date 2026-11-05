@@ -223,6 +223,21 @@ describe("pane approvals", () => {
         expect(pressed).toEqual([]);
     });
 
+    it("a dialog with no tool-call id refuses allow, so an old card cannot approve a later call", async () => {
+        const { deps, pressed } = paneDeps(null, "permission");
+        const source = paneApprovals(deps);
+        const [approval] = await source.list();
+        const target = { backend: "pane" as const, provider: "claude" as const, session: SESSION, callId: "unknown" };
+
+        expect(approval.verdicts.allow.supported).toBe(false);
+        expect(approval.verdicts["allow-always"].supported).toBe(false);
+        expect(approval.verdicts.deny).toEqual({ supported: true });
+        expect((await source.answer(target, { id: approval.id, verdict: "allow" })).outcome).toBe("refused");
+        expect((await source.answer(target, { id: approval.id, verdict: "allow-always" })).outcome).toBe("refused");
+        expect(pressed).toEqual([]);
+        expect((await source.answer(target, { id: approval.id, verdict: "deny" })).outcome).toBe("sent");
+    });
+
     it("a question dialog is not an approval", async () => {
         const { deps } = paneDeps(BASH, "decision");
         expect(await paneApprovals(deps).list()).toEqual([]);

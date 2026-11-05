@@ -42,8 +42,25 @@ export function livePaneApprovalDeps(): PaneApprovalDeps {
     };
 }
 
-function verdictsOf(provider: HarnessId, dialog: PendingApproval["dialog"]): PendingApproval["verdicts"] {
+const UNIDENTIFIED_CALL =
+    "neither the transcript nor the dialog names this tool call, so an approval could reach a later call that " +
+    "replaced it; approve it in the terminal";
+
+function verdictsOf({
+    provider,
+    dialog,
+    identified,
+}: {
+    provider: HarnessId;
+    dialog: PendingApproval["dialog"];
+    /** False when the call has no id: every such dialog of the session shares one approval id. */
+    identified: boolean;
+}): PendingApproval["verdicts"] {
     const support = (verdict: ApprovalVerdict): ApprovalVerdictSupport => {
+        if (!identified && verdict !== "deny") {
+            return { supported: false, reason: UNIDENTIFIED_CALL };
+        }
+
         const plan = planApprovalKeys({ provider, kind: dialog, verdict });
         return plan.ok ? { supported: true } : { supported: false, reason: plan.reason };
     };
@@ -68,10 +85,15 @@ async function paneApprovalOf(entry: PaneFleetRow, deps: PaneApprovalDeps): Prom
 
     const call = deps.pendingCall(entry.provider, entry.transcript.filePath);
     const kind = call?.detail.kind === "plan" || dialog.kind === "plan" ? "plan" : "permission";
-    const callId = call?.callId ?? dialog.toolCallId ?? "unknown";
+    const knownId = call?.callId ?? dialog.toolCallId ?? null;
 
     return {
-        id: approvalId({ backend: "pane", provider: entry.provider, session: entry.sessionId, callId }),
+        id: approvalId({
+            backend: "pane",
+            provider: entry.provider,
+            session: entry.sessionId,
+            callId: knownId ?? "unknown",
+        }),
         backend: "pane",
         provider: entry.provider,
         session: entry.sessionId,
@@ -83,7 +105,7 @@ async function paneApprovalOf(entry: PaneFleetRow, deps: PaneApprovalDeps): Prom
             input: dialog.question ?? "the call's input is not in the transcript's tail; read it in the terminal",
         },
         askedAt: call?.at ?? null,
-        verdicts: verdictsOf(entry.provider, kind),
+        verdicts: verdictsOf({ provider: entry.provider, dialog: kind, identified: knownId !== null }),
     };
 }
 
@@ -115,6 +137,13 @@ export function paneApprovals(deps: PaneApprovalDeps = livePaneApprovalDeps()): 
 
             if (now.id !== answer.id) {
                 return refuse("the dialog now asks about another tool call; nothing was pressed. Read it again");
+            }
+
+            // Checked on the fresh listing, right before the keys go out: a call without an id takes no approval.
+            const support = now.verdicts[answer.verdict];
+
+            if (!support.supported) {
+                return refuse(`${support.reason}; nothing was pressed`);
             }
 
             const plan = planApprovalKeys({
