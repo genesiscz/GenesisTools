@@ -165,7 +165,11 @@ export function useSteerComposer(sessionKey: string, store: DraftStore = kvDraft
                 const receipt = await send(draft);
                 setResult({ kind: "receipt", receipt });
                 void queryClient.invalidateQueries({ queryKey: agentsKeys.transcript(sessionKey) });
-                return receipt.outcome !== "refused" && receipt.outcome !== "unknown";
+                if (receipt.outcome === "unknown") {
+                    await addDraft(store, { ...draft, blocked: true, attempts: 1, lastError: `Check the session before retrying: ${receipt.detail}` });
+                    return true;
+                }
+                return receipt.outcome !== "refused";
             } catch (error) {
                 if (isOfflineError(error)) {
                     await addDraft(store, { ...draft, attempts: 1, lastError: String(error) });

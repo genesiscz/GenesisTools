@@ -60,7 +60,7 @@ it("reports acceptance only for delivered or queued sends, retaining refused and
     const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client: queryClient }, children);
     const hook = await renderHook(() => useSteerComposer("session", store), { wrapper });
     unavailable = false;
-    for (const [next, accepted] of [["delivered", true], ["queued-session", true], ["refused", false], ["unknown", false], ["error", false]] as const) {
+    for (const [next, accepted] of [["delivered", true], ["queued-session", true], ["refused", false], ["unknown", true], ["error", false]] as const) {
         outcome = next;
         await act(async () => { expect(await hook.result.current.submit("hello", "now")).toBe(accepted); });
     }
