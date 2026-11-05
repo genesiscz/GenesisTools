@@ -17,7 +17,7 @@ import { type MeetingsConfig, recorderSettings } from "@genesiscz/utils/meetings
 import type { MeetingRecord, MeetingStore, RecordingBlock } from "@genesiscz/utils/meetings/record";
 import type { AudioState, RecorderSettings } from "@genesiscz/utils/screen-recorder/control";
 import { PolicyDisplays } from "@genesiscz/utils/screen-recorder/display-choice";
-import type { FrameOutput } from "@genesiscz/utils/screen-recorder/frame-output";
+import type { FrameOutput, KeptFrame } from "@genesiscz/utils/screen-recorder/frame-output";
 import type { FrameRecording } from "@genesiscz/utils/screen-recorder/recording";
 import type { PieceTarget } from "@genesiscz/utils/screen-recorder/targets";
 import type { CaptureResult } from "@genesiscz/utils/screen-recorder/types";
@@ -198,11 +198,19 @@ export class MeetingRun {
         let done = 0;
 
         for (const frame of [...result.frames].sort((a, b) => a.atMs - b.atMs)) {
-            const kept = await output.keep(frame, {
-                atMs: result.startedAtMs + frame.atMs,
-                originMs: Date.parse(state.startedAt),
-                displayId: frame.displayId ?? target.displayId,
-            });
+            let kept: KeptFrame;
+
+            try {
+                kept = await output.keep(frame, {
+                    atMs: result.startedAtMs + frame.atMs,
+                    originMs: Date.parse(state.startedAt),
+                    displayId: frame.displayId ?? target.displayId,
+                });
+            } catch (err) {
+                // A frame that cannot be kept (its conversion failed) costs that frame, not the recording.
+                log.warn({ err, frame: frame.path }, "a frame could not be kept; frame skipped");
+                continue;
+            }
 
             if (kept.read && state.frames === 0 && kept.read.text.trim().length < EMPTY_FRAME_CHARS) {
                 this.note(
