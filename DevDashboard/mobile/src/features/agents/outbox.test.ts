@@ -16,6 +16,22 @@ const receipt = (key: string) =>
     ({ key, outcome: "delivered", timing: "now", route: "claude-peer", detail: "peer" }) as const;
 
 describe("steer outbox (F10)", () => {
+    it("shares one flush across composers so uncertainty cannot be overwritten", async () => {
+        const store = memoryDraftStore([draft("a", 1)]);
+        let finish!: (value: ReturnType<typeof receipt>) => void;
+        let entered!: () => void;
+        const started = new Promise<void>((resolve) => { entered = resolve; });
+        const send = mock(() => { entered(); return new Promise<ReturnType<typeof receipt>>((resolve) => { finish = resolve; }); });
+        const first = flushDrafts({ store, connectionId: "mac-a", send });
+        await started;
+        const second = flushDrafts({ store, connectionId: "mac-a", send: async () => { throw new Error("offline"); } });
+        expect(second).toBe(first);
+        finish(receipt("claude:s-1"));
+        await Promise.all([first, second]);
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(await store.read()).toEqual([]);
+    });
+
     it("tells a network failure or a down gateway from the Mac's own answer", () => {
         expect(isOfflineError(new TypeError("Network request failed"))).toBe(true);
         expect(isOfflineError(new Error("/api/agents/send -> 503: unavailable"))).toBe(true);
