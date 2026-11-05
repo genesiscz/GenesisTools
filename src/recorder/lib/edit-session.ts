@@ -1,11 +1,12 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
 import {
     applyOp,
     type EditOp,
     type EditProject,
     type OpFacts,
-    readProject,
+    parseProject,
+    projectFileText,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
 import { RPC_ERRORS, RpcError } from "@genesiscz/utils/screen-recorder/control";
@@ -70,23 +71,39 @@ function stale(message: string): RpcError {
     return new RpcError(RPC_ERRORS.staleRevision, message);
 }
 
-/** Writes the project with the revision it carries: each change in memory took the next one already. */
-function saveAt(path: string, project: EditProject): void {
-    writeProject(path, { ...project, revision: project.revision - 1 }, project.updatedBy ?? "agent");
+/**
+ * Writes the project with the revision it carries (each change in memory took the next one already), and answers the
+ * text it wrote.
+ */
+function saveAt(path: string, project: EditProject): string {
+    return projectFileText(
+        writeProject(path, { ...project, revision: project.revision - 1 }, project.updatedBy ?? "agent")
+    );
+}
+
+/** The edit file as it is: its exact text, which tells one save from another, and its project. */
+function readDiskFile(path: string): { text: string; project: EditProject } | undefined {
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    const text = readFileSync(path, "utf8");
+    return { text, project: inItsFolder(path, parseProject(text, path)) };
 }
 
 /**
  * The one owner of a recording's edit.json while the recorder service runs. It reads the file once, applies ops in
  * memory with the same `applyOp` and measurements as `editProject`, keeps one undo stack with redo, previews drags
- * without saving, and saves 250 ms after the last change. Before each change and each save it reads the revision on
- * disk: when another writer (the window, a CLI without the service) saved since, unsaved ops are applied again on
- * the new file once, and when that fails the session takes the file as it is and refuses with `staleRevision`.
+ * without saving, and saves 250 ms after the last change. Before each change and each save it reads the file: when
+ * its text is not the text this session last read or wrote, another writer (the window, a CLI without the service)
+ * saved since, even one that gave its file the same revision, and unsaved ops are applied again on the new file once.
+ * When that fails the session takes the file as it is and refuses with `staleRevision`.
  */
 export class EditSession {
     private project: EditProject;
     private fresh: boolean;
-    /** The revision on disk at the last read or write; null while the edit has no file. */
-    private diskRevision: number | null;
+    /** The file's text at the last read or write; null while the edit has no file. */
+    private diskText: string | null;
     private unsaved: Unsaved[] = [];
     private undoSteps: UndoStep[];
     private redoSteps: RedoStep[] = [];
@@ -97,12 +114,12 @@ export class EditSession {
 
     private constructor(
         readonly path: string,
-        opened: { project: EditProject; fresh: boolean },
+        opened: { project: EditProject; fresh: boolean; text: string | null },
         private readonly options: { onChange: (change: ProjectChanged) => void; saveDelayMs: number }
     ) {
         this.project = opened.project;
         this.fresh = opened.fresh;
-        this.diskRevision = opened.fresh ? null : opened.project.revision;
+        this.diskText = opened.text;
         // The file's history continues here when it ends at this revision; otherwise undo refuses, as undoEdit does.
         const steps = readUndoSteps(path);
         this.undoSteps = steps.at(-1)?.afterRevision === opened.project.revision ? steps : [];
@@ -114,8 +131,10 @@ export class EditSession {
         options: { onChange: (change: ProjectChanged) => void; saveDelayMs?: number }
     ): Promise<EditSession> {
         const opened = await openProject(value);
+        // The text and the project of one read, so a save between two reads is never taken for this session's own.
+        const disk = readDiskFile(opened.path);
         log.debug({ path: opened.path, revision: opened.project.revision, fresh: opened.fresh }, "edit session opened");
-        return new EditSession(opened.path, opened, {
+        return new EditSession(opened.path, disk ? { ...disk, fresh: false } : { ...opened, text: null }, {
             onChange: options.onChange,
             saveDelayMs: options.saveDelayMs ?? SAVE_DELAY_MS,
         });
@@ -228,7 +247,7 @@ export class EditSession {
         ];
 
         // Nothing waits for a save: the undo file gets the collapsed history now.
-        if (this.unsaved.length === 0 && this.diskRevision !== null) {
+        if (this.unsaved.length === 0 && this.diskText !== null) {
             writeUndoSteps(this.path, this.undoSteps);
         }
     }
@@ -310,9 +329,8 @@ export class EditSession {
             return;
         }
 
-        saveAt(this.path, this.project);
+        this.diskText = saveAt(this.path, this.project);
         writeUndoSteps(this.path, this.undoSteps);
-        this.diskRevision = this.project.revision;
         this.unsaved = [];
         log.debug({ path: this.path, revision: this.project.revision }, "edit session saved");
     }
@@ -375,7 +393,7 @@ export class EditSession {
 
     private replace({ next, by, unsaved }: { next: EditProject; by: string; unsaved: Unsaved }): void {
         this.project = { ...next, revision: this.project.revision + 1, updatedBy: by };
-        // In memory the edit exists now; the file may not yet (diskRevision stays null until the save).
+        // In memory the edit exists now; the file may not yet (diskText stays null until the save).
         this.fresh = false;
         this.unsaved.push(unsaved);
         this.scheduleSave();
@@ -398,32 +416,28 @@ export class EditSession {
         }, this.options.saveDelayMs);
     }
 
-    private readDisk(): EditProject | undefined {
-        return existsSync(this.path) ? inItsFolder(this.path, readProject(this.path)) : undefined;
-    }
-
     /**
      * Another writer saved since this session last read or wrote: take its file, and apply the unsaved ops on it
      * once (with the measurements they had). The history before its change ends there, as undoEdit refuses then.
      */
     private syncWithDisk(): void {
-        const disk = this.readDisk();
-        const revision = disk?.revision ?? null;
+        const file = readDiskFile(this.path);
 
-        if (!disk || revision === this.diskRevision) {
+        if (!file || file.text === this.diskText) {
             return;
         }
 
+        const disk = file.project;
         const by = disk.updatedBy ?? "another process";
         log.info(
-            { path: this.path, disk: revision, ours: this.diskRevision, unsaved: this.unsaved.length, by },
+            { path: this.path, disk: disk.revision, ours: this.project.revision, unsaved: this.unsaved.length, by },
             "the edit changed on disk under the session"
         );
         const unsaved = this.unsaved;
         const latest = this.project;
         this.undoSteps = [];
         this.redoSteps = [];
-        this.diskRevision = revision;
+        this.diskText = file.text;
         this.fresh = false;
         this.unsaved = [];
 

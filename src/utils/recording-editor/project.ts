@@ -404,7 +404,12 @@ export function wholeProject(source: EditProject["source"]): EditProject {
 
 /** Reads an edit file; refuses a newer version instead of reading it wrongly. */
 export function readProject(path: string): EditProject {
-    const raw: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+    return parseProject(readFileSync(path, "utf8"), path);
+}
+
+/** An edit file's text as a project; `path` names it in the errors. */
+export function parseProject(text: string, path: string): EditProject {
+    const raw: unknown = SafeJSON.parse(text, { strict: true });
     const version = typeof raw === "object" && raw !== null ? Reflect.get(raw, "version") : undefined;
 
     if (typeof version === "number" && version > EDIT_PROJECT_VERSION) {
@@ -425,9 +430,14 @@ export function readProject(path: string): EditProject {
 /** Writes atomically with the next revision, so the open window reloads it and knows who changed it. */
 export function writeProject(path: string, project: EditProject, by = "agent"): EditProject {
     const saved = { ...project, version: EDIT_PROJECT_VERSION, revision: project.revision + 1, updatedBy: by };
-    atomicWriteFileSync(path, `${SafeJSON.stringify(saved, null, 2)}\n`);
+    atomicWriteFileSync(path, projectFileText(saved));
     log.debug({ path, revision: saved.revision, clips: saved.clips.length, zooms: saved.zooms.length }, "edit saved");
     return saved;
+}
+
+/** The exact text `writeProject` puts in the file for a saved project. */
+export function projectFileText(saved: EditProject): string {
+    return `${SafeJSON.stringify(saved, null, 2)}\n`;
 }
 
 export function clipOutputUs(clip: EditClip): number {

@@ -134,6 +134,26 @@ describe("an edit session", () => {
         expect(session.current.revision).toBe(readProject(path).revision);
     });
 
+    // Regression test: 2026-11-05 recorder service review, finding 3 — a window save at the session's revision was overwritten
+    test("a window save that reuses the session's revision is taken in, not overwritten", async () => {
+        const path = editFixture("gt-es-same-rev-");
+        const windowCopy = readProject(path);
+        const { session } = await openSession(path);
+        await session.apply([{ op: "text", from: 1, to: 2, text: "service" }], { by: "agent" });
+        session.flush();
+        // The window saves from the copy it loaded before, and gives its file the revision the session just wrote.
+        writeProject(path, { ...windowCopy, audio: { ...windowCopy.audio, volume: 0.3 } }, "editor");
+        expect(readProject(path).revision).toBe(2);
+
+        await session.apply([{ op: "marker", at: 2, label: "next" }], { by: "agent" });
+        session.flush();
+        const saved = readProject(path);
+        expect({ volume: saved.audio.volume, markers: saved.markers?.map((marker) => marker.label) }).toEqual({
+            volume: 0.3,
+            markers: ["next"],
+        });
+    });
+
     test("a drag previews without saving, commits as one undo step, and a newer preview replaces the waiting one", async () => {
         const path = editFixture("gt-es-drag-");
         const { session, changes } = await openSession(path);
