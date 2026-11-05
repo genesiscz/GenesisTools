@@ -66,6 +66,11 @@ export function answerActionId(letter: string): string {
     return `answer:${letter}`;
 }
 
+/** The Reply field of an answer category: a text answer, sent with the token under `REPLY_TOKEN_KEY`. */
+export const REPLY_ACTION_ID = "answer:reply";
+/** The key of the reply token in `PushSecrets.tokens`, beside the letters. */
+export const REPLY_TOKEN_KEY = "reply";
+
 /** The letter an answer button stands for, or null for any other action (a plain tap, a dismiss). */
 export function letterOfAction(actionId: string): string | null {
     const match = /^answer:([a-z])$/.exec(actionId);

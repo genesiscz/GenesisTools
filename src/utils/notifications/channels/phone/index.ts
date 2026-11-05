@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { type DeskPresence, readDeskPresence } from "@genesiscz/utils/macos/desk-presence";
 import {
     answerCategoryId,
     MAX_ANSWER_LETTERS,
@@ -11,6 +12,7 @@ import type { ChannelDefinition, NotificationEvent, PhoneChannelConfig } from ".
 import { filePhoneDeviceStore, type PhoneDevice, type PhoneDeviceStore, type PhoneRoute } from "./devices";
 import { loadPushKeys, type PushKeyPair, sealForDevice } from "./seal";
 import { PUSH_TRANSPORTS, type PushMessage, type PushResult, type PushTransportTable } from "./transports";
+import { phoneHold } from "./when";
 
 const log = logger.child({ component: "notifications:phone" });
 
@@ -62,6 +64,8 @@ export interface PhoneChannelDeps {
     devices: PhoneDeviceStore;
     transports: PushTransportTable;
     keys: () => Promise<PushKeyPair>;
+    /** Whether someone sits at the Mac (F14 desk mode); `readDeskPresence` when omitted. */
+    presence?: () => Promise<DeskPresence>;
 }
 
 function send(transports: PushTransportTable, device: PhoneDevice, message: PushMessage, config: PhoneChannelConfig) {
@@ -142,6 +146,13 @@ export function createPhoneChannel(deps: PhoneChannelDeps): ChannelDefinition<"p
 
             if (devices.length === 0) {
                 return { ok: true, detail: "no phone registered" };
+            }
+
+            const hold = await phoneHold({ event, when: config.when, presence: deps.presence ?? readDeskPresence });
+
+            if (hold) {
+                log.info({ id: event.id, hold }, "phone alert held");
+                return { ok: true, detail: `held: ${hold}` };
             }
 
             try {

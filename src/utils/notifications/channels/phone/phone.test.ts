@@ -7,12 +7,14 @@ import {
     letterOfAction,
     PUSH_DATA_KEY,
     type PushNoticeData,
+    REPLY_ACTION_ID,
 } from "../../phone-wire";
 import type { NotificationEvent } from "../../types";
 import { memoryPhoneDeviceStore, type PhoneDevice, type PhoneRoute, registerPhoneDevice } from "./devices";
 import { createPhoneChannel, retractPayload, TEXT_OFF_BODY } from "./index";
 import { openOnDevice, type PushKeyPair } from "./seal";
 import type { PushMessage, PushResult, PushTransportTable } from "./transports";
+import { inQuietHours, phoneHold } from "./when";
 
 const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 
@@ -39,6 +41,8 @@ function fakeTransports(answer: (route: PhoneRoute) => PushResult = () => ({ ok:
 
 const phoneKeys = keyPair();
 const macKeys = keyPair();
+/** The Mac is locked: desk mode lets every alert through, so these tests never read the real Mac's presence. */
+const AWAY = async () => ({ idleSeconds: null, locked: true });
 
 function device(route: PhoneRoute, id = "phone-1"): PhoneDevice {
     return {
@@ -68,7 +72,7 @@ describe("phone channel", () => {
     test("an alert carries the answer category and tokens only the device opens", async () => {
         const store = memoryPhoneDeviceStore({ "phone-1": device({ kind: "simctl", udid: "SIM-1" }) });
         const { sent, transports } = fakeTransports();
-        const channel = createPhoneChannel({ devices: store, transports, keys: async () => macKeys });
+        const channel = createPhoneChannel({ devices: store, transports, keys: async () => macKeys, presence: AWAY });
 
         const receipt = await channel.post(decisionEvent, { enabled: true });
 
@@ -97,7 +101,7 @@ describe("phone channel", () => {
     test("text off keeps the message off the lock screen", async () => {
         const store = memoryPhoneDeviceStore({ "phone-1": device({ kind: "simctl", udid: "SIM-1" }) });
         const { sent, transports } = fakeTransports();
-        const channel = createPhoneChannel({ devices: store, transports, keys: async () => macKeys });
+        const channel = createPhoneChannel({ devices: store, transports, keys: async () => macKeys, presence: AWAY });
 
         await channel.post(decisionEvent, { enabled: true, text: false });
 
@@ -108,7 +112,7 @@ describe("phone channel", () => {
     test("a switched-off channel sends nothing", async () => {
         const store = memoryPhoneDeviceStore({ "phone-1": device({ kind: "simctl", udid: "SIM-1" }) });
         const { sent, transports } = fakeTransports();
-        const channel = createPhoneChannel({ devices: store, transports, keys: async () => macKeys });
+        const channel = createPhoneChannel({ devices: store, transports, keys: async () => macKeys, presence: AWAY });
 
         expect(await channel.post(decisionEvent, { enabled: false })).toEqual({ ok: true });
         expect(sent).toHaveLength(0);
@@ -123,7 +127,7 @@ describe("phone channel", () => {
                 ? { ok: false, reason: "BadDeviceToken", otherEnvironment: true }
                 : { ok: true }
         );
-        const channel = createPhoneChannel({ devices: store, transports, keys: async () => macKeys });
+        const channel = createPhoneChannel({ devices: store, transports, keys: async () => macKeys, presence: AWAY });
 
         expect((await channel.post(decisionEvent, { enabled: true })).ok).toBe(true);
         expect(sent.map(({ route }) => route.kind === "apns" && route.environment)).toEqual(["production", "sandbox"]);
@@ -133,7 +137,7 @@ describe("phone channel", () => {
     test("an unregistered device is dropped", async () => {
         const store = memoryPhoneDeviceStore({ "phone-1": device({ kind: "simctl", udid: "SIM-GONE" }) });
         const { transports } = fakeTransports(() => ({ ok: false, reason: "Invalid device", gone: true }));
-        const channel = createPhoneChannel({ devices: store, transports, keys: async () => macKeys });
+        const channel = createPhoneChannel({ devices: store, transports, keys: async () => macKeys, presence: AWAY });
 
         expect((await channel.post(decisionEvent, { enabled: true })).ok).toBe(false);
         expect(store.devices).toEqual({});
@@ -145,7 +149,7 @@ describe("phone channel", () => {
             "phone-2": device({ kind: "apns", token: "t2", environment: "sandbox" }, "phone-2"),
         });
         const { sent, transports } = fakeTransports();
-        const channel = createPhoneChannel({ devices: store, transports, keys: async () => macKeys });
+        const channel = createPhoneChannel({ devices: store, transports, keys: async () => macKeys, presence: AWAY });
 
         expect(await channel.retract("qa-decision-d3", { enabled: false })).toBe(true);
         expect(sent).toHaveLength(2);
@@ -205,6 +209,33 @@ describe("phone wire", () => {
         expect(ids).toContain("gt-answer-3-c");
         expect(answerCategoryId(2, "z")).toBe("gt-answer-2");
         expect(letterOfAction("answer:b")).toBe("b");
+        expect(letterOfAction(REPLY_ACTION_ID)).toBeNull();
         expect(letterOfAction("com.apple.UNNotificationDefaultActionIdentifier")).toBeNull();
+    });
+});
+
+describe("when the phone gets an alert (F14)", () => {
+    const atDesk = async () => ({ idleSeconds: 30, locked: false });
+    const noon = new Date(2026, 10, 4, 12, 0);
+
+    test("desk mode away holds an alert while the Mac is in use and sends it once idle or locked", async () => {
+        expect(await phoneHold({ event: {}, presence: atDesk, now: noon })).toMatch(/in use/);
+        expect(
+            await phoneHold({ event: {}, presence: async () => ({ idleSeconds: 600, locked: false }), now: noon })
+        ).toBeNull();
+        expect(await phoneHold({ event: {}, presence: AWAY, now: noon })).toBeNull();
+        expect(await phoneHold({ event: {}, when: { desk: "always" }, presence: atDesk, now: noon })).toBeNull();
+    });
+
+    test("quiet hours wrap past midnight and a time-sensitive alert breaks them", async () => {
+        const quiet = { from: "22:00", to: "07:00" };
+        expect(inQuietHours(quiet, new Date(2026, 10, 4, 23, 30))).toBe(true);
+        expect(inQuietHours(quiet, new Date(2026, 10, 4, 6, 59))).toBe(true);
+        expect(inQuietHours(quiet, noon)).toBe(false);
+        const night = new Date(2026, 10, 4, 23, 30);
+        expect(await phoneHold({ event: {}, when: { quiet }, presence: AWAY, now: night })).toMatch(/quiet hours/);
+        expect(
+            await phoneHold({ event: { timeSensitive: true }, when: { quiet }, presence: AWAY, now: night })
+        ).toBeNull();
     });
 });
