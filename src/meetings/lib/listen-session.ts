@@ -450,7 +450,8 @@ export class ListenSession {
 
     /** Undoes the last decision, only what it changed; returns its question, or nothing at the round's start. */
     private async undo(): Promise<string | undefined> {
-        const last = this.steps.pop();
+        // The step stays until the store took the undo, so a failed write keeps its ledger entry and its inverse.
+        const last = this.steps.at(-1);
 
         if (!last) {
             return undefined;
@@ -463,6 +464,8 @@ export class ListenSession {
                 next.items = revertChanges(next.items, last.changes);
             }
         );
+
+        this.steps.pop();
 
         for (const part of last.parts ?? []) {
             this.parentOf.delete(part);

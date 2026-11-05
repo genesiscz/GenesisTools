@@ -118,6 +118,16 @@ function narrowed(narrow: LineLookup, wide: LineLookup): LineLookup {
  */
 export function joinLine(source: TranscriptLines, join: { atSec: number; line?: number; joined?: string }): LineLookup {
     const joined = join.joined?.toLowerCase();
+    const explicit = source.resolve(join);
+
+    // An address that still names its line decides: a join that does not fit it is not moved to its neighbour.
+    if (join.line !== undefined && explicit.kind === "found" && explicit.index === join.line) {
+        const word = bareWord(firstWord(source.entries[explicit.index]!.text).word);
+        return explicit.index > 0 && (joined === undefined || (word !== "" && joined.endsWith(word)))
+            ? explicit
+            : { kind: "none" };
+    }
+
     return narrowed(
         source.resolve(join, (entry, index) => {
             const word = bareWord(firstWord(entry.text).word);
@@ -133,6 +143,13 @@ export function heardLineAt(
     anchor: { atSec: number; line?: number },
     heard: string
 ): LineLookup {
+    const explicit = source.resolve(anchor);
+
+    // An address that still names its line decides: heard words missing there are not looked for in another line.
+    if (anchor.line !== undefined && explicit.kind === "found" && explicit.index === anchor.line) {
+        return heardIn(source.entries[explicit.index]!.text, heard).length > 0 ? explicit : { kind: "none" };
+    }
+
     return narrowed(
         source.resolve(anchor, (entry) => heardIn(entry.text, heard).length > 0),
         source.resolve(anchor)
@@ -210,6 +227,8 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
     const attributionTime = new Map(lines.map((line) => [line, line.startSec]));
     const voiced = new Map<TranscriptEntry, string | undefined>();
     const ranged = new Set<TranscriptEntry>();
+    /** The range item that set each line's voice last; a later range over the same line takes it over. */
+    const rangeOwner = new Map<TranscriptEntry, string>();
 
     for (const join of corrections.joins ?? []) {
         const found = joinLine(source, join);
@@ -230,6 +249,10 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         const before = lineBeforeCut(all, found.index, join.joined);
 
         if (!before) {
+            if (join.item) {
+                outcomes.push({ item: join.item, status: "not-found", reason: "no preceding nonempty line" });
+            }
+
             continue;
         }
 
@@ -267,6 +290,7 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
         for (const line of moved) {
             line.speaker = range.speaker;
             ranged.add(line);
+            rangeOwner.set(line, range.item ?? "later range");
             counts.ranges += 1;
         }
 
@@ -286,6 +310,24 @@ export function applyCorrections(entries: TranscriptEntry[], corrections: Transc
                         reason: `no line of "${range.label}" from ${at(range.fromSec)} to ${at(range.toSec)}`,
                     }
         );
+    }
+
+    // A range's outcome lists only the lines it still owns at the end; one whose every line a later range took is shadowed.
+    const rangeItems = new Set(corrections.ranges?.flatMap((range) => (range.item ? [range.item] : [])) ?? []);
+
+    for (const [index, outcome] of outcomes.entries()) {
+        if (outcome.status !== "applied" || !rangeItems.has(outcome.item)) {
+            continue;
+        }
+
+        const surviving = outcome.lines.filter((address) => rangeOwner.get(all[address.index]!) === outcome.item);
+
+        if (surviving.length > 0) {
+            outcome.lines = surviving;
+        } else {
+            const by = rangeOwner.get(all[outcome.lines[0]!.index]!) ?? "later range";
+            outcomes[index] = { item: outcome.item, status: "shadowed", by, reason: `${by} replaced its assignments` };
+        }
     }
 
     const unclearLabel = corrections.unclear?.label ?? "";

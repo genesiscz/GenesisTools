@@ -79,3 +79,45 @@ describe("a label that tracks no one person", () => {
         expect(unlabeledView(meeting, unlabeledStretches([rejected])).meeting).toBe(meeting);
     });
 });
+
+test("speaker suggestions never persist a synthetic join voice", async () => {
+    const { suggestItems } = await import("./suggest");
+    const { meetingRecordSchema } = await import("@genesiscz/utils/meetings/record");
+    const label = meetingItemSchema.parse({
+        id: "i1",
+        kind: "label",
+        status: "confirmed",
+        suggestedAt: now,
+        rules: [],
+        label: "Room",
+        fromSec: 0,
+        toSec: 30,
+        meaningless: true,
+    });
+    const record = meetingRecordSchema.parse({
+        id: "fixture",
+        title: "Fixture",
+        start: now,
+        createdAt: now,
+        createdBy: "new",
+        items: [label],
+    });
+    const found = suggestItems({
+        record,
+        meeting: {
+            ...meeting,
+            speakers: [],
+            transcript: [
+                { speaker: "Cut", startSec: 10, text: "dot" },
+                { speaker: "Room", startSec: 11, text: "áhnu to do konce." },
+            ],
+        },
+        rules: ["speakers"],
+        dictionary: { abbrExpansion: "every", entries: [] },
+        sourceWords: [],
+        now,
+    });
+    const joins = found.filter((item) => item.kind === "join");
+    expect(joins.length).toBeGreaterThan(0);
+    expect(joins.some((item) => item.speaker?.startsWith("Unlabeled "))).toBe(false);
+});

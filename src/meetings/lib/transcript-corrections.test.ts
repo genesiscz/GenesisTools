@@ -269,3 +269,29 @@ describe("a label that tracks no one person", () => {
         expect(result.entries.map((entry) => entry.speaker)).toEqual(mixed.map((entry) => entry.speaker));
     });
 });
+
+test("later ranges shadow earlier outcomes", () => {
+    const result = applyCorrections([line("Voice", 5, "Hello")], {
+        ranges: [
+            { item: "i1", label: "Voice", fromSec: 5, toSec: 5, speaker: "Alice" },
+            { item: "i2", label: "Voice", fromSec: 5, toSec: 5, speaker: "Bob" },
+        ],
+    });
+    expect(result.outcomes).toContainEqual(expect.objectContaining({ item: "i1", status: "shadowed", by: "i2" }));
+    expect(result.outcomes).toContainEqual(expect.objectContaining({ item: "i2", status: "applied" }));
+});
+
+test("an addressed term does not move to another line at the same time", () => {
+    const result = applyCorrections([line("Voice", 5, "Hello"), line("Voice", 5, "Ada")], {
+        terms: [{ item: "i1", atSec: 5, line: 0, heard: "Ada", replacement: "Bob" }],
+    });
+    expect(result.entries[1]?.text).toBe("Ada");
+    expect(result.outcomes).toContainEqual(expect.objectContaining({ item: "i1", status: "not-found" }));
+});
+
+test("a join after blank lines still reports a missing predecessor", () => {
+    const result = applyCorrections([line("Voice", 0, ""), line("Voice", 5, "suffix")], {
+        joins: [{ item: "i1", atSec: 5 }],
+    });
+    expect(result.outcomes).toContainEqual(expect.objectContaining({ item: "i1", status: "not-found" }));
+});

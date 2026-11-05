@@ -84,7 +84,8 @@ export const trashWithRm: TrashPaths = (paths) => {
     const config = loadRmConfig();
     const caller = rmCallerFromRuntime();
     const ctx = defaultRuleContext(config, caller, process.cwd());
-    const plan = planRemoval(paths, ctx).filter((item) => item.verdict.kind !== "deny");
+    // Automatic retention moves only what the rules allow outright; a path that needs approval stays where it is.
+    const plan = planRemoval(paths, ctx).filter((item) => item.verdict.kind === "allow");
 
     if (plan.length === 0) {
         return null;

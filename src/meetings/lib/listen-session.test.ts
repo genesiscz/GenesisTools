@@ -335,3 +335,23 @@ describe("a word question finds its own occurrence of the heard words", () => {
         expect(findingItems(parsed, [], now)[0]).toMatchObject({ kind: "question", priority: 6 });
     });
 });
+
+test("failed undo preserves the confirmed decision's ledger entry", async () => {
+    const fx = await fixture([
+        term("i1", 10, { proposed: "ADA" }),
+        question("i2", { about: "term", heard: "Ada", decides: ["i1"], priority: 2 }),
+        question("i3", { fromSec: 50, priority: 1 }),
+    ]);
+    const adapter = new ScriptedAdapter([
+        { answer: "ADA" },
+        async () => {
+            fx.store.update = async () => {
+                throw new Error("undo write failed");
+            };
+            return "back";
+        },
+    ]);
+    await expect(fx.session(adapter).run()).rejects.toThrow("undo write failed");
+    expect(fx.item("i1")?.status).toBe("confirmed");
+    expect(fx.ledger).toContainEqual(expect.objectContaining({ item: "i1", fixed: "ADA" }));
+});

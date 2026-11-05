@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
+import * as removal from "@genesiscz/utils/rm";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { capturesToPrune, pruneCapturesDaily } from "./retention";
+import { capturesToPrune, pruneCapturesDaily, trashWithRm } from "./retention";
 
 const DAY_MS = 86_400_000;
 const now = Date.parse("2026-11-03T12:00:00.000Z");
@@ -57,4 +58,17 @@ describe("capture retention", () => {
         expect(pruneCapturesDaily(store, { days: 30, now: now + DAY_MS, trash })?.plans).toHaveLength(1);
         expect(trashed).toHaveLength(2);
     });
+});
+
+test("retention leaves approval-required tracked files untouched", () => {
+    const move = spyOn(removal, "moveToTrash").mockImplementation(() => {
+        throw new Error("must not move a tracked file");
+    });
+
+    try {
+        expect(trashWithRm([import.meta.path])).toBeNull();
+        expect(move).not.toHaveBeenCalled();
+    } finally {
+        move.mockRestore();
+    }
 });
