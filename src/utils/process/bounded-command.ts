@@ -92,6 +92,10 @@ export async function boundedCommand(options: {
         let settled = false;
         let pendingConsumers = 0;
         let closing = false;
+        let stdoutConsumer = Promise.resolve();
+        let stderrConsumer = Promise.resolve();
+        let stdoutPending = 0;
+        let stderrPending = 0;
         let escalation: ReturnType<typeof setTimeout> | undefined;
         let reap: ReturnType<typeof setTimeout> | undefined;
         const kill = (signal: NodeJS.Signals) => {
@@ -164,12 +168,14 @@ export async function boundedCommand(options: {
                 stdout.splice(0, stdout.length, Buffer.from(Buffer.concat([...stdout, value]).subarray(-16_384)));
                 child.stdout?.pause();
                 pendingConsumers++;
-                Promise.resolve()
-                    .then(() => options.onStdout?.(value))
+                stdoutPending++;
+                stdoutConsumer = stdoutConsumer
+                    .then(() => (!failure && !settled ? options.onStdout?.(value) : undefined))
                     .then(
                         () => {
                             pendingConsumers--;
-                            if (!failure && !settled) {
+                            stdoutPending--;
+                            if (!failure && !settled && stdoutPending === 0) {
                                 child.stdout?.resume();
                             }
                             if (closing) {
@@ -207,12 +213,14 @@ export async function boundedCommand(options: {
                 stderr.splice(0, stderr.length, Buffer.from(Buffer.concat([...stderr, value]).subarray(-16_384)));
                 child.stderr?.pause();
                 pendingConsumers++;
-                Promise.resolve()
-                    .then(() => options.onStderr?.(value))
+                stderrPending++;
+                stderrConsumer = stderrConsumer
+                    .then(() => (!failure && !settled ? options.onStderr?.(value) : undefined))
                     .then(
                         () => {
                             pendingConsumers--;
-                            if (!failure && !settled) {
+                            stderrPending--;
+                            if (!failure && !settled && stderrPending === 0) {
                                 child.stderr?.resume();
                             }
                             if (closing) {
