@@ -54,6 +54,8 @@ export const RPC_ERRORS = {
     nothingToRedo: 1018,
     /** A host method no connected host answered, and no headless way does it (the camera). */
     hostUnavailable: 1019,
+    /** The recorder service's `recording.call`: no live recording with that id is registered with it. */
+    unknownRecording: 1020,
 } as const;
 
 export { RpcError };

@@ -10,6 +10,8 @@ import { readProject } from "@genesiscz/utils/recording-editor/project";
 import type { RpcCallContext } from "@genesiscz/utils/rpc/peer";
 import { type RpcConnection, RpcSocketServer } from "@genesiscz/utils/rpc/socket-server";
 import { RPC_ERRORS, RpcError } from "@genesiscz/utils/screen-recorder/control";
+import { callTimeoutFor } from "@genesiscz/utils/screen-recorder/live";
+import { RECORDING_EVENT, RECORDINGS_CHANGED } from "@genesiscz/utils/screen-recorder/service-link";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
 import { editPathOf, editProject, setEditOwner, undoEdit } from "./edit";
@@ -25,9 +27,12 @@ import {
     type HostParams,
     type HostResult,
     isHostMethod,
+    type LiveRecordingRow,
     protocolVersion,
+    type RecordingsChanged,
     readLiveService,
     recorderServiceDir,
+    recordingEventSchema,
     SERVICE_PROTOCOL,
     type ServiceEntry,
     type ServiceRole,
@@ -54,9 +59,16 @@ interface ConnectionState {
     pid?: number;
     /** The edit paths this connection holds sessions of. */
     holds: Set<string>;
+    /** A `recording` connection: the ids of the live recordings it registered. */
+    recordings: Set<string>;
 }
 
 type Connection = RpcConnection<ConnectionState>;
+/** What a service method handler gets beside its params: the caller's connection and its request's context. */
+interface HandlerContext {
+    connection: Connection;
+    context: RpcCallContext;
+}
 
 export interface RecorderServiceOptions {
     /** `<recordings>` by default; tests use a scratch folder. */
@@ -76,6 +88,8 @@ export interface RecorderServiceOptions {
 export interface RecorderService {
     readonly entry: ServiceEntry;
     readonly sessions: EditSessions;
+    /** The live recordings registered now, oldest first. */
+    liveRecordings(): LiveRecordingRow[];
     /** The host methods, answered as a client of this process would get them (the connected app or the fallback). */
     readonly host: RecorderHost;
     stop(reason: string): void;
@@ -157,6 +171,11 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
     const stopped = Promise.withResolvers<string>();
     // `server` is assigned below; notifications only start once it listens.
     let server: RpcSocketServer<ConnectionState> | undefined;
+    /** The live recordings their processes registered, by id, with the connection that answers their calls. */
+    const recordings = new Map<string, { connection: Connection; row: LiveRecordingRow }>();
+    const emitRecordings = (change: RecordingsChanged): void => server?.emit(RECORDINGS_CHANGED, { ...change });
+    const liveRecordings = (): LiveRecordingRow[] =>
+        [...recordings.values()].map(({ row }) => row).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
     const sessions = new EditSessions({
         onChange: (change) => server?.emit("project.changed", { ...change }),
         saveDelayMs: options.saveDelayMs,
@@ -269,8 +288,8 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
     ];
     const version = protocolVersion(allMethods);
 
-    const serviceHandlers = toRpcTable(serviceApi, {
-        hello: (params, { connection }: { connection: Connection }) => {
+    const serviceHandlers = toRpcTable<typeof serviceApi, HandlerContext>(serviceApi, {
+        hello: (params, { connection }: HandlerContext) => {
             if (params.protocol !== SERVICE_PROTOCOL) {
                 throw new RpcError(
                     RPC_ERRORS.protocolMismatch,
@@ -299,7 +318,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             connection.state.pid = params.pid;
             return { protocol: SERVICE_PROTOCOL, methods: allMethods, version };
         },
-        "session.open": async (params, { connection }: { connection: Connection }) => {
+        "session.open": async (params, { connection }: HandlerContext) => {
             const path = editPathOf(params.path);
 
             if (connection.state.holds.has(path)) {
@@ -310,7 +329,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             connection.state.holds.add(session.path);
             return { path: session.path, ...session.current };
         },
-        "session.close": (params, { connection }: { connection: Connection }) => {
+        "session.close": (params, { connection }: HandlerContext) => {
             const path = editPathOf(params.path);
 
             if (!connection.state.holds.delete(path)) {
@@ -321,7 +340,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             lastBusy = Date.now();
             return { closed: true };
         },
-        "edit.apply": async (params, { connection }: { connection: Connection }) => {
+        "edit.apply": async (params, { connection }: HandlerContext) => {
             const session = sessions.get(editPathOf(params.path));
 
             if (session) {
@@ -359,7 +378,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
                 ...(opened.loudness ? { loudness: opened.loudness } : {}),
             };
         },
-        "edit.undo": async (params, { connection }: { connection: Connection }) => {
+        "edit.undo": async (params, { connection }: HandlerContext) => {
             const session = sessions.get(editPathOf(params.path));
 
             if (session) {
@@ -375,7 +394,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             const undone = await undoEdit(params.path);
             return { revision: undone.project.revision, project: undone.project, undone: undone.undone ?? [] };
         },
-        "edit.redo": async (params, { connection }: { connection: Connection }) => {
+        "edit.redo": async (params, { connection }: HandlerContext) => {
             const session = sessions.get(editPathOf(params.path));
 
             if (!session) {
@@ -392,9 +411,57 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
         },
         "gesture.begin": (params) => sessionOf(params.path).beginGesture(params.gesture),
         "gesture.preview": (params) => sessionOf(params.path).previewGesture(params.gesture, params.ops),
-        "gesture.commit": (params, { connection }: { connection: Connection }) =>
+        "gesture.commit": (params, { connection }: HandlerContext) =>
             sessionOf(params.path).commitGesture(params.gesture, { by: byOf(connection) }),
         "gesture.cancel": (params) => sessionOf(params.path).cancelGesture(params.gesture),
+        "recordings.register": (params, { connection }: HandlerContext) => {
+            if (connection.state.role !== "recording") {
+                throw new RpcError(RPC_ERRORS.invalidParams, 'recordings.register needs a hello with role "recording"');
+            }
+
+            const held = recordings.get(params.id);
+
+            if (held && held.connection !== connection && !held.connection.closed) {
+                throw new RpcError(
+                    RPC_ERRORS.invalidParams,
+                    `the recording ${params.id} is registered by another connection (pid ${held.connection.state.pid})`
+                );
+            }
+
+            recordings.set(params.id, { connection, row: params });
+            connection.state.recordings.add(params.id);
+
+            if (!held || held.connection !== connection) {
+                log.info({ id: params.id, kind: params.kind, pid: params.pid }, "a live recording joined");
+            }
+
+            emitRecordings({
+                id: params.id,
+                change: held?.connection === connection ? "changed" : "registered",
+                recording: params,
+            });
+            return { registered: true as const, id: params.id };
+        },
+        "recordings.live": () => ({ recordings: liveRecordings() }),
+        "recording.call": (params, { connection, context }: HandlerContext) => {
+            const held = recordings.get(params.id);
+
+            if (!held || held.connection.closed) {
+                throw new RpcError(
+                    RPC_ERRORS.unknownRecording,
+                    `no live recording "${params.id}" is registered with the recorder service`
+                );
+            }
+
+            log.debug(
+                { id: params.id, method: params.method, by: connection.state.pid },
+                "forwarding a recording call"
+            );
+            return held.connection.request(params.method, params.params, {
+                timeoutMs: callTimeoutFor(params.method, params.params),
+                signal: context.signal,
+            });
+        },
     });
 
     const movies = toRpcTable(
@@ -421,8 +488,20 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             return null;
         }
 
+        if (method === RECORDING_EVENT) {
+            // A recording's notification: subscribers hear it with the recording's id.
+            const event = recordingEventSchema.omit({ id: true }).safeParse(params);
+            const [id] = connection.state.recordings;
+
+            if (event.success && id !== undefined) {
+                server?.emit(RECORDING_EVENT, { id, ...event.data });
+            }
+
+            return null;
+        }
+
         if (serviceHandlers.has(method)) {
-            return serviceHandlers.call(method, params, { connection });
+            return serviceHandlers.call(method, params, { connection, context });
         }
 
         if (isHostMethod(method)) {
@@ -513,7 +592,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
 
         const listening = new RpcSocketServer<ConnectionState>({
             socket,
-            state: () => ({ holds: new Set() }),
+            state: () => ({ holds: new Set(), recordings: new Set() }),
             call: ({ method, params, connection, context }) => answer(method, params, connection, context),
             onOpen: () => {
                 lastBusy = Date.now();
@@ -526,6 +605,16 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
                 }
 
                 connection.state.holds.clear();
+
+                for (const id of connection.state.recordings) {
+                    if (recordings.get(id)?.connection === connection) {
+                        recordings.delete(id);
+                        log.info({ id }, "a live recording left the recorder service");
+                        emitRecordings({ id, change: "ended" });
+                    }
+                }
+
+                connection.state.recordings.clear();
 
                 if (app?.connection === connection) {
                     log.info({ pid: connection.state.pid }, "the recorder host disconnected");
@@ -563,6 +652,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
     return {
         entry,
         sessions,
+        liveRecordings,
         host,
         stop,
         stopped: stopped.promise,

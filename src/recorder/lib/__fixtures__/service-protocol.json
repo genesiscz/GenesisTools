@@ -1,6 +1,6 @@
 {
   "protocol": 1,
-  "about": "One real request and reply per recorder service method (src/recorder/lib/service-protocol.ts), captured from the TypeScript service with a fake host; paths are invented. The Swift host tests decode these; src/recorder/lib/service.test.ts checks every one against the method's schemas.",
+  "about": "One real request and reply per recorder service method (src/recorder/lib/service-protocol.ts), captured from the TypeScript service with a fake host and a fake live recording; paths are invented. The Swift host tests decode these; src/recorder/lib/service.test.ts checks every one against the method's schemas.",
   "examples": [
     {
       "method": "hello",
@@ -42,6 +42,9 @@
             "gesture.preview",
             "gesture.commit",
             "gesture.cancel",
+            "recordings.register",
+            "recordings.live",
+            "recording.call",
             "subscribe",
             "window.open",
             "window.show",
@@ -133,7 +136,7 @@
             "movies.list",
             "movies.search"
           ],
-          "version": "8bd34b828afb"
+          "version": "fb66211ea504"
         }
       }
     },
@@ -223,6 +226,9 @@
             "gesture.preview",
             "gesture.commit",
             "gesture.cancel",
+            "recordings.register",
+            "recordings.live",
+            "recording.call",
             "subscribe",
             "window.open",
             "window.show",
@@ -314,7 +320,7 @@
             "movies.list",
             "movies.search"
           ],
-          "version": "8bd34b828afb"
+          "version": "fb66211ea504"
         }
       }
     },
@@ -1691,6 +1697,492 @@
               "window": 4711
             }
           ]
+        }
+      }
+    },
+    {
+      "method": "hello",
+      "direction": "recording→service",
+      "note": "a live recording's process joins the service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "hello",
+        "params": {
+          "role": "recording",
+          "protocol": 1,
+          "pid": 4242
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocol": 1,
+          "methods": [
+            "hello",
+            "session.open",
+            "session.close",
+            "edit.apply",
+            "edit.undo",
+            "edit.redo",
+            "gesture.begin",
+            "gesture.preview",
+            "gesture.commit",
+            "gesture.cancel",
+            "recordings.register",
+            "recordings.live",
+            "recording.call",
+            "subscribe",
+            "window.open",
+            "window.show",
+            "window.list",
+            "render.still",
+            "render.sheet",
+            "render.export",
+            "render.snapshot",
+            "camera.start",
+            "camera.stop",
+            "movie.info",
+            "movie.check",
+            "movie.fix",
+            "movie.split",
+            "movie.cut",
+            "movie.keep",
+            "movie.speed",
+            "movie.zoom",
+            "movie.unzoom",
+            "movie.redact",
+            "movie.unredact",
+            "movie.text",
+            "movie.untext",
+            "movie.retime",
+            "movie.fixLine",
+            "movie.replaceWords",
+            "movie.fixLines",
+            "movie.unfixLine",
+            "movie.autoZoom",
+            "movie.titleMarkers",
+            "movie.annotateClicks",
+            "movie.volume",
+            "movie.mute",
+            "movie.unmute",
+            "movie.apply",
+            "movie.undo",
+            "movie.shape",
+            "movie.arrow",
+            "movie.unshape",
+            "movie.music",
+            "movie.spotlight",
+            "movie.addLane",
+            "movie.removeLane",
+            "movie.moveLane",
+            "movie.moveToLane",
+            "movie.range",
+            "movie.marker",
+            "movie.unmarker",
+            "movie.reset",
+            "movie.clicks",
+            "movie.keys",
+            "movie.captions",
+            "movie.cursor",
+            "movie.motion",
+            "movie.camera",
+            "movie.cameraHide",
+            "movie.cameraShow",
+            "movie.frame",
+            "movie.removeIdle",
+            "movie.polish",
+            "movie.cutWords",
+            "movie.lineWords",
+            "movie.cutFillers",
+            "movie.denoise",
+            "movie.normalize",
+            "movie.export",
+            "movie.subtitles",
+            "movie.transcript",
+            "movie.poster",
+            "movie.sheet",
+            "movie.itemsAt",
+            "movie.still",
+            "movie.find",
+            "movie.switchDisplay",
+            "movie.findOnScreen",
+            "movie.markers",
+            "movie.comments",
+            "movie.comment",
+            "movie.resolveComment",
+            "movie.uncomment",
+            "movie.importComments",
+            "movie.copy",
+            "movie.reveal",
+            "movie.trash",
+            "movie.rename",
+            "movie.chapters",
+            "movie.shortcuts",
+            "movie.show",
+            "movies.list",
+            "movies.search"
+          ],
+          "version": "fb66211ea504"
+        }
+      }
+    },
+    {
+      "method": "recordings.register",
+      "direction": "recording→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "recordings.register",
+        "params": {
+          "version": 1,
+          "id": "recorder-4242-1a2b3c4d",
+          "kind": "recorder",
+          "title": "Display 1",
+          "pid": 4242,
+          "startedAt": "2026-11-05T08:30:00.000Z",
+          "state": "recording",
+          "displays": [
+            {
+              "id": 1,
+              "name": "Built-in Retina Display"
+            }
+          ],
+          "frames": 0,
+          "folder": "/Users/alice/.genesis-tools/recordings/library/2026-11-05_09-30-display-1",
+          "controls": [
+            "status",
+            "pause",
+            "resume",
+            "stop",
+            "marker.add"
+          ],
+          "socket": "/Users/alice/.genesis-tools/recordings/live/recorder-4242-1a2b3c4d.sock",
+          "panel": true
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "registered": true,
+          "id": "recorder-4242-1a2b3c4d"
+        }
+      }
+    },
+    {
+      "method": "recordings.changed",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "recordings.changed",
+        "params": {
+          "id": "recorder-4242-1a2b3c4d",
+          "change": "registered",
+          "recording": {
+            "version": 1,
+            "id": "recorder-4242-1a2b3c4d",
+            "kind": "recorder",
+            "title": "Display 1",
+            "pid": 4242,
+            "startedAt": "2026-11-05T08:30:00.000Z",
+            "state": "recording",
+            "displays": [
+              {
+                "id": 1,
+                "name": "Built-in Retina Display"
+              }
+            ],
+            "frames": 0,
+            "folder": "/Users/alice/.genesis-tools/recordings/library/2026-11-05_09-30-display-1",
+            "controls": [
+              "status",
+              "pause",
+              "resume",
+              "stop",
+              "marker.add"
+            ],
+            "socket": "/Users/alice/.genesis-tools/recordings/live/recorder-4242-1a2b3c4d.sock",
+            "panel": true
+          }
+        }
+      }
+    },
+    {
+      "method": "recordings.live",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "recordings.live",
+        "params": {}
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "recordings": [
+            {
+              "version": 1,
+              "id": "recorder-4242-1a2b3c4d",
+              "kind": "recorder",
+              "title": "Display 1",
+              "pid": 4242,
+              "startedAt": "2026-11-05T08:30:00.000Z",
+              "state": "recording",
+              "displays": [
+                {
+                  "id": 1,
+                  "name": "Built-in Retina Display"
+                }
+              ],
+              "frames": 0,
+              "folder": "/Users/alice/.genesis-tools/recordings/library/2026-11-05_09-30-display-1",
+              "controls": [
+                "status",
+                "pause",
+                "resume",
+                "stop",
+                "marker.add"
+              ],
+              "socket": "/Users/alice/.genesis-tools/recordings/live/recorder-4242-1a2b3c4d.sock",
+              "panel": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "recording.call",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "recording.call",
+        "params": {
+          "id": "recorder-4242-1a2b3c4d",
+          "method": "marker.add",
+          "params": {
+            "label": "Login done"
+          }
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "atMs": 12400,
+          "label": "Login done"
+        }
+      }
+    },
+    {
+      "method": "marker.add",
+      "direction": "service→recording",
+      "note": "the service forwards recording.call to the recording's connection",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "marker.add",
+        "params": {
+          "label": "Login done"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "atMs": 12400,
+          "label": "Login done"
+        }
+      }
+    },
+    {
+      "method": "recording.call",
+      "direction": "client→service",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "recording.call",
+        "params": {
+          "id": "recorder-4242-1a2b3c4d",
+          "method": "pause"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "state": "paused"
+        }
+      }
+    },
+    {
+      "method": "pause",
+      "direction": "service→recording",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "pause"
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "state": "paused"
+        }
+      }
+    },
+    {
+      "method": "recordings.register",
+      "direction": "recording→service",
+      "note": "on every change the recording sends its entry again, as a notification",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "recordings.register",
+        "params": {
+          "version": 1,
+          "id": "recorder-4242-1a2b3c4d",
+          "kind": "recorder",
+          "title": "Display 1",
+          "pid": 4242,
+          "startedAt": "2026-11-05T08:30:00.000Z",
+          "state": "paused",
+          "displays": [
+            {
+              "id": 1,
+              "name": "Built-in Retina Display"
+            }
+          ],
+          "frames": 0,
+          "folder": "/Users/alice/.genesis-tools/recordings/library/2026-11-05_09-30-display-1",
+          "controls": [
+            "status",
+            "pause",
+            "resume",
+            "stop",
+            "marker.add"
+          ],
+          "socket": "/Users/alice/.genesis-tools/recordings/live/recorder-4242-1a2b3c4d.sock",
+          "panel": true
+        }
+      }
+    },
+    {
+      "method": "recordings.changed",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "recordings.changed",
+        "params": {
+          "id": "recorder-4242-1a2b3c4d",
+          "change": "changed",
+          "recording": {
+            "version": 1,
+            "id": "recorder-4242-1a2b3c4d",
+            "kind": "recorder",
+            "title": "Display 1",
+            "pid": 4242,
+            "startedAt": "2026-11-05T08:30:00.000Z",
+            "state": "paused",
+            "displays": [
+              {
+                "id": 1,
+                "name": "Built-in Retina Display"
+              }
+            ],
+            "frames": 0,
+            "folder": "/Users/alice/.genesis-tools/recordings/library/2026-11-05_09-30-display-1",
+            "controls": [
+              "status",
+              "pause",
+              "resume",
+              "stop",
+              "marker.add"
+            ],
+            "socket": "/Users/alice/.genesis-tools/recordings/live/recorder-4242-1a2b3c4d.sock",
+            "panel": true
+          }
+        }
+      }
+    },
+    {
+      "method": "recording.event",
+      "direction": "recording→service",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "recording.event",
+        "params": {
+          "event": "state",
+          "params": {
+            "state": "paused"
+          }
+        }
+      }
+    },
+    {
+      "method": "recording.event",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "recording.event",
+        "params": {
+          "id": "recorder-4242-1a2b3c4d",
+          "event": "state",
+          "params": {
+            "state": "paused"
+          }
+        }
+      }
+    },
+    {
+      "method": "recording.call",
+      "direction": "client→service",
+      "note": "no such recording: unknownRecording",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "recording.call",
+        "params": {
+          "id": "recorder-9999-gone",
+          "method": "status"
+        }
+      },
+      "reply": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "error": {
+          "code": 1020,
+          "message": "no live recording \"recorder-9999-gone\" is registered with the recorder service"
+        }
+      }
+    },
+    {
+      "method": "recording.event",
+      "direction": "service→client",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "recording.event",
+        "params": {
+          "id": "recorder-4242-1a2b3c4d",
+          "event": "ended",
+          "params": {
+            "reason": "stopped"
+          }
+        }
+      }
+    },
+    {
+      "method": "recordings.changed",
+      "direction": "service→client",
+      "note": "the recording's connection closed",
+      "notification": {
+        "jsonrpc": "2.0",
+        "method": "recordings.changed",
+        "params": {
+          "id": "recorder-4242-1a2b3c4d",
+          "change": "ended"
         }
       }
     }

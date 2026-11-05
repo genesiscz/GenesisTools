@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
-import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
-import { classifyPid } from "@genesiscz/utils/process-identity";
 import { editOpSchema, editProjectSchema } from "@genesiscz/utils/recording-editor/project";
-import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
-import { liveSocketPath } from "@genesiscz/utils/screen-recorder/live";
+import { RECORDER_METHODS } from "@genesiscz/utils/screen-recorder/control";
+import { liveEntrySchema, liveSocketPath } from "@genesiscz/utils/screen-recorder/live";
+import {
+    RECORDING_EVENT,
+    RECORDINGS_CHANGED,
+    ROLES,
+    SERVICE_PROTOCOL,
+} from "@genesiscz/utils/screen-recorder/service-link";
 import { z } from "zod";
 import { EDITOR_TABS } from "./library";
 
@@ -15,64 +17,30 @@ import { EDITOR_TABS } from "./library";
  * The recorder service's protocol: newline-delimited JSON-RPC 2.0 on `<recordings>/service.sock`, both directions on
  * one connection (the live recordings' framing). The service answers the edit methods; the host (GenesisTools.app's
  * recorder face) answers the window, render and camera methods, which the service forwards to it for any client.
+ * Live recordings join it as `recording` connections: the service lists them and forwards control calls to them.
  * `__fixtures__/service-protocol.json` holds one example request and reply per method; the Swift host tests read it.
+ * The discovery (`service.json`, the roles, the protocol number) lives in `@genesiscz/utils/screen-recorder/service-link`,
+ * because the live recordings in that package join the service; it is re-exported here.
  */
 
-const { log } = logger.scoped("recorder-service");
-
-export const SERVICE_PROTOCOL = 1;
-
-/** `<genesis-tools root>/recordings`: the library's parent, where `service.json` and the socket live. */
-export function recorderServiceDir(): string {
-    return dirname(recordingsLibraryDir());
-}
+export {
+    ROLES,
+    readLiveService,
+    recorderServiceDir,
+    SERVICE_PROTOCOL,
+    type ServiceEntry,
+    type ServiceRole,
+    serviceEntryPath,
+    serviceEntrySchema,
+} from "@genesiscz/utils/screen-recorder/service-link";
 
 export function serviceSocketPath(dir: string): string {
     return liveSocketPath(dir, "service");
 }
 
-export function serviceEntryPath(dir: string): string {
-    return join(dir, "service.json");
-}
-
 export function servicePidPath(dir: string): string {
     return join(dir, "service.pid");
 }
-
-/** `service.json`: where the running service listens. */
-export const serviceEntrySchema = z.object({
-    version: z.literal(1),
-    protocol: z.number().int(),
-    pid: z.number().int().positive(),
-    /** The service's command line when it wrote the entry, so a recycled pid reads as gone. */
-    pidCommand: z.string().optional(),
-    socket: z.string(),
-    startedAt: z.string(),
-    /** When the service started, in ms; a module of the repo changed after it makes the service exit. */
-    codeStamp: z.number(),
-});
-export type ServiceEntry = z.infer<typeof serviceEntrySchema>;
-
-/** The running service named in `service.json`, or undefined when there is none or its process is gone. */
-export function readLiveService(dir = recorderServiceDir()): ServiceEntry | undefined {
-    const path = serviceEntryPath(dir);
-
-    if (!existsSync(path)) {
-        return undefined;
-    }
-
-    try {
-        const entry = serviceEntrySchema.parse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
-        const status = classifyPid(entry.pid, entry.pidCommand).status;
-        return status === "live" || status === "unverified" ? entry : undefined;
-    } catch (error) {
-        log.debug({ error, path }, "service.json does not read; no service");
-        return undefined;
-    }
-}
-
-export const ROLES = ["host", "client"] as const;
-export type ServiceRole = (typeof ROLES)[number];
 
 export const helloParamsSchema = z.object({
     role: z.enum(ROLES),
@@ -81,6 +49,21 @@ export const helloParamsSchema = z.object({
     /** A host: the host methods it answers. */
     answers: z.array(z.string()).optional(),
 });
+
+/** A live recording as the service holds it: the recording's discovery entry, sent on join and on every change. */
+export const liveRecordingRowSchema = liveEntrySchema;
+export type LiveRecordingRow = z.output<typeof liveRecordingRowSchema>;
+
+/** `recordings.changed`: a recording registered, changed (its state, title, displays, warning or counts) or went. */
+export const recordingsChangedSchema = z.object({
+    id: z.string(),
+    change: z.enum(["registered", "changed", "ended"]),
+    recording: liveRecordingRowSchema.optional(),
+});
+export type RecordingsChanged = z.infer<typeof recordingsChangedSchema>;
+
+/** `recording.event`: one live recording event (state, frame, displays, warning, progress, ended) with its id. */
+export const recordingEventSchema = z.object({ id: z.string(), event: z.string(), params: z.unknown().optional() });
 export const helloAnswerSchema = z.object({
     protocol: z.number().int(),
     methods: z.array(z.string()),
@@ -181,6 +164,31 @@ export const serviceApi = defineApi({
             result: z.object(project),
             doc: "Ends the drag with no change.",
             effect: "read",
+        }),
+        defineMethod({
+            name: "recordings.register",
+            params: liveRecordingRowSchema,
+            result: z.object({ registered: z.literal(true), id: z.string() }),
+            doc: "A recording connection names its live recording (its entry); sent again as a notification on every change. Subscribers hear recordings.changed.",
+            effect: "reversible",
+        }),
+        defineMethod({
+            name: "recordings.live",
+            params: z.object({}),
+            result: z.object({ recordings: z.array(liveRecordingRowSchema) }),
+            doc: "The live recordings registered now, oldest first.",
+            effect: "read",
+        }),
+        defineMethod({
+            name: "recording.call",
+            params: z.object({
+                id: z.string().min(1),
+                method: z.enum(RECORDER_METHODS),
+                params: z.unknown().optional(),
+            }),
+            result: z.unknown(),
+            doc: "One control method of a live recording (status, pause, marker.add, stop, ...), answered by its process; 1020 when no such recording is registered.",
+            effect: "reversible",
         }),
     ],
 });
@@ -353,8 +361,11 @@ export const HOST_TIMEOUT_MS: Record<HostMethod, number> = {
     "camera.stop": 10_000,
 };
 
-/** Notifications: the service sends `project.changed`, the host `window.changed` (the service passes it on). */
-export const SERVICE_EVENTS = ["project.changed", "window.changed"] as const;
+/**
+ * Notifications: the service sends `project.changed` and `recordings.changed`, the host `window.changed` and a live
+ * recording `recording.event` (the service passes both on).
+ */
+export const SERVICE_EVENTS = ["project.changed", "window.changed", RECORDINGS_CHANGED, RECORDING_EVENT] as const;
 
 /** The protocol's fingerprint, which `hello` answers: a change of the method list is a new version. */
 export function protocolVersion(methods: readonly string[]): string {

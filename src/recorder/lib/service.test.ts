@@ -7,7 +7,17 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { readProject, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import type { RpcProgress } from "@genesiscz/utils/rpc/peer";
 import { type RpcNotification, RpcSocketClient, type RpcSocketClientOptions } from "@genesiscz/utils/rpc/socket-client";
-import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
+import {
+    RecorderControl,
+    type RecorderMethod,
+    type RecorderState,
+    type RecorderStatus,
+    type RecordingMarker,
+    RPC_ERRORS,
+    type StopAnswer,
+} from "@genesiscz/utils/screen-recorder/control";
+import { callRecorder, LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
+import type { z } from "zod";
 import fixture from "./__fixtures__/service-protocol.json";
 import { readUndoSteps, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
@@ -20,6 +30,8 @@ import {
     HOST_METHODS,
     hostApi,
     readLiveService,
+    recordingEventSchema,
+    recordingsChangedSchema,
     SERVICE_EVENTS,
     SERVICE_PROTOCOL,
     type ServiceEntry,
@@ -203,7 +215,7 @@ async function connect(entry: ServiceEntry, onRequest?: RpcSocketClientOptions["
     return client;
 }
 
-function hello(role: "host" | "client", answers?: string[]) {
+function hello(role: "host" | "client" | "recording", answers?: string[]) {
     return { role, protocol: SERVICE_PROTOCOL, pid: process.pid, ...(answers ? { answers } : {}) };
 }
 
@@ -527,7 +539,164 @@ describe("the REPL's and the CLI's way to the service", () => {
     });
 });
 
+/** A recording control with no capture: it answers status, pause, resume, stop and marker.add, and counts its stops. */
+class FakeRecordingControl extends RecorderControl {
+    readonly kind = "fake";
+    readonly methods: RecorderMethod[] = ["status", "pause", "resume", "stop", "marker.add"];
+    state: RecorderState = "recording";
+    stops = 0;
+    live?: LiveRecordingServer;
+
+    async status(): Promise<RecorderStatus> {
+        return { kind: this.kind, title: "Fake", state: this.state, displays: [], frames: 3 };
+    }
+
+    async pause(): Promise<{ state: RecorderState }> {
+        this.state = "paused";
+        this.live?.update({ state: "paused" });
+        return { state: this.state };
+    }
+
+    async resume(): Promise<{ state: RecorderState }> {
+        this.state = "recording";
+        this.live?.update({ state: "recording" });
+        return { state: this.state };
+    }
+
+    async stop(): Promise<StopAnswer> {
+        this.stops += 1;
+        return { state: "stopped", outcome: "requested" };
+    }
+
+    override async addMarker(label: string): Promise<RecordingMarker> {
+        return { atMs: 1500, label };
+    }
+}
+
+async function waitUntil(what: string, condition: () => boolean, timeoutMs = 5_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+
+    while (!condition()) {
+        if (Date.now() > deadline) {
+            throw new Error(`${what} did not happen within ${timeoutMs} ms`);
+        }
+
+        await Bun.sleep(20);
+    }
+}
+
+/** A fake live recording in the service fixture's folder that joins the service there (a short safety poll). */
+function liveFixture(dir: string, id = "fake-1") {
+    const control = new FakeRecordingControl();
+    const liveDir = join(dir, "live");
+    const live = new LiveRecordingServer({
+        id,
+        kind: control.kind,
+        title: "Fake",
+        folder: join(dir, "library", id),
+        control,
+        dir: liveDir,
+        service: { dir, pollMs: 200 },
+    });
+    control.live = live;
+    closing.push(() => live.close());
+    return { control, live, liveDir };
+}
+
+describe("live recordings in the service", () => {
+    test("a recording joins as a recording connection; a client lists it, calls its control and hears its changes", async () => {
+        const { dir, service } = await serviceFixture();
+        const { control, live, liveDir } = liveFixture(dir);
+        await waitUntil("the join", () => live.joinedService);
+        expect(service.liveRecordings().map((row) => [row.id, row.kind, row.state])).toEqual([
+            ["fake-1", "fake", "recording"],
+        ]);
+
+        const watcher = await connect(service.entry);
+        await watcher.call("hello", hello("client"));
+        const heard: RpcNotification[] = [];
+        watcher.onNotification((notification) => heard.push(notification));
+        await watcher.call("subscribe", { events: ["recordings.changed", "recording.event"] });
+        const listed = await watcher.call<{ recordings: Array<{ id: string; controls: string[] }> }>(
+            "recordings.live",
+            {}
+        );
+        expect(listed.recordings.map((row) => row.id)).toEqual(["fake-1"]);
+        expect(listed.recordings[0].controls).toContain("marker.add");
+
+        const client = await RecorderClient.connect("fake-1", { dir: liveDir, service: { dir } });
+        closing.push(() => client.close());
+        expect(client.via).toBe("service");
+        expect(client.entry.folder).toBe(join(dir, "library", "fake-1"));
+        const events: string[] = [];
+        await client.subscribe((notification) => events.push(notification.event), ["state"]);
+        expect(await client.addMarker("Login done")).toEqual({ atMs: 1500, label: "Login done" });
+        expect(await client.pause()).toEqual({ state: "paused" });
+        await waitUntil("the paused change", () => service.liveRecordings()[0]?.state === "paused");
+        await waitUntil("the state event", () => events.includes("state"));
+        expect(control.state).toBe("paused");
+        expect(await callRecorder({ id: "fake-1", method: "status", dir: liveDir, service: { dir } })).toMatchObject({
+            state: "paused",
+            frames: 3,
+        });
+        await expect(client.restart()).rejects.toMatchObject({ code: RPC_ERRORS.unsupported });
+        await expect(watcher.call("recording.call", { id: "nobody", method: "status" })).rejects.toMatchObject({
+            code: RPC_ERRORS.unknownRecording,
+        });
+
+        live.close();
+        await waitUntil("the end", () => service.liveRecordings().length === 0);
+        await waitUntil("the ended change", () =>
+            heard.some((each) => each.method === "recordings.changed" && Object(each.params).change === "ended")
+        );
+        expect(
+            heard
+                .filter((each) => each.method === "recordings.changed")
+                .map((each) => [Object(each.params).change, Object(each.params).recording?.state])
+        ).toEqual([
+            ["changed", "paused"],
+            ["ended", undefined],
+        ]);
+        expect(
+            heard.filter((each) => each.method === "recording.event").map((each) => Object(each.params).event)
+        ).toEqual(["state", "ended"]);
+    });
+
+    test("a service restart never stops a recording: it goes on on its own socket and joins the next service", async () => {
+        const { dir, service } = await serviceFixture();
+        const { control, live, liveDir } = liveFixture(dir);
+        await waitUntil("the join", () => live.joinedService);
+
+        service.stop("restart");
+        await waitUntil("the leave", () => !live.joinedService);
+        const direct = await RecorderClient.connect("fake-1", { dir: liveDir, service: { dir } });
+        expect(direct.via).toBe("socket");
+        expect(await direct.addMarker("No service")).toEqual({ atMs: 1500, label: "No service" });
+        direct.close();
+
+        const next = await startRecorderService({ dir, idleMs: 0, hostWaitMs: 60 });
+
+        if (next.status !== "started") {
+            throw new Error("the second service did not start");
+        }
+
+        closing.push(() => next.service.stop("test"));
+        await waitUntil("the second join", () => next.service.liveRecordings().length === 1);
+        const again = await RecorderClient.connect("fake-1", { dir: liveDir, service: { dir } });
+        closing.push(() => again.close());
+        expect(again.via).toBe("service");
+        expect(await again.status()).toMatchObject({ state: "recording" });
+        expect(control.stops).toBe(0);
+    });
+});
+
 describe("the protocol fixture the Swift host tests read", () => {
+    /** The notifications whose params have a schema of their own, by method and direction; the service adds the id. */
+    const NOTIFICATION_SCHEMAS: Record<string, z.ZodType | undefined> = {
+        "recordings.changed service→client": recordingsChangedSchema,
+        "recording.event service→client": recordingEventSchema,
+        "recording.event recording→service": recordingEventSchema.omit({ id: true }),
+    };
     const schemasOf = (method: string) =>
         [...serviceApi.methods, ...hostApi.methods].find((each) => each.name === method) ??
         moviesApi.handles
@@ -540,6 +709,16 @@ describe("the protocol fixture the Swift host tests read", () => {
             const schemas = schemasOf(example.method);
             const request = "request" in example ? example.request : undefined;
             const reply = "reply" in example ? example.reply : undefined;
+            const notification = "notification" in example ? example.notification : undefined;
+            const notified = notification && "params" in notification ? notification.params : undefined;
+            const eventSchema = NOTIFICATION_SCHEMAS[`${example.method} ${example.direction}`] ?? schemas?.params;
+
+            if (notified !== undefined && eventSchema) {
+                expect({ method: example.method, ok: eventSchema.safeParse(notified).success }).toEqual({
+                    method: example.method,
+                    ok: true,
+                });
+            }
 
             if (schemas && request && "params" in request) {
                 const { recording: _recording, ...params } = Object(request.params);
@@ -581,6 +760,7 @@ describe("the protocol fixture the Swift host tests read", () => {
                 RPC_ERRORS.cameraBusy,
                 RPC_ERRORS.staleRevision,
                 RPC_ERRORS.nothingToRedo,
+                RPC_ERRORS.unknownRecording,
             ].sort()
         );
     });
