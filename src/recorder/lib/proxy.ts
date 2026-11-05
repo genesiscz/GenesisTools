@@ -353,6 +353,9 @@ function meetingAudioPieces(folder: string, startedMs: number): Array<{ path: st
         .filter((piece) => existsSync(piece.path));
 }
 
+/** The editor's proxy movie in a frames recording's folder. */
+export const PROXY_FILE = "proxy.mp4";
+
 /**
  * Makes `proxy.mp4` for a frames recording so the editor can open it: each kept frame of one display shown until the
  * next one (the recording's own timing), with the audio pieces placed at their start times and mixed. The frames and
@@ -405,7 +408,7 @@ export async function makeProxy(folder: string, options: ProxyOptions = {}): Pro
         libraryPieces.length > 0 || !Number.isFinite(startedMs)
             ? libraryPieces
             : meetingAudioPieces(folder, startedMs).sort((a, b) => a.delayMs - b.delayMs);
-    const output = join(folder, "proxy.mp4");
+    const output = join(folder, PROXY_FILE);
     const partial = join(folder, ".proxy.partial.mp4");
     const audioInputs = pieces.flatMap((piece) => ["-i", piece.path]);
     const audioGraph = pieces.length

@@ -1,9 +1,12 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { RECORDING_MANIFEST, type RecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+
+const { log } = logger.scoped("meetings-recording-manifest");
 
 /** A frame line of `ocr.jsonl`: every frame the recorder kept has one, with its exact time (older rows lack the change). */
 interface OcrLine {
@@ -12,6 +15,29 @@ interface OcrLine {
     displayId?: unknown;
     changePercent?: unknown;
     reason?: unknown;
+}
+
+function isOcrLine(value: unknown): value is OcrLine {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** One `ocr.jsonl` row, or undefined for a row an interrupted run cut short (its frame then takes its file time). */
+function parseOcrLine(line: string, ocrPath: string): OcrLine | undefined {
+    let row: unknown;
+
+    try {
+        row = SafeJSON.parse(line);
+    } catch (error) {
+        log.debug({ ocrPath, error }, "skipped an unreadable ocr.jsonl row");
+        return undefined;
+    }
+
+    if (!isOcrLine(row)) {
+        log.debug({ ocrPath, row }, "skipped an ocr.jsonl row that is not an object");
+        return undefined;
+    }
+
+    return row;
 }
 
 interface TimedFrame {
@@ -38,7 +64,12 @@ function frameTimes(folder: string): Map<string, TimedFrame> | undefined {
                 continue;
             }
 
-            const row = SafeJSON.parse(line) as OcrLine;
+            const row = parseOcrLine(line, ocrPath);
+
+            if (!row) {
+                continue;
+            }
+
             const at = typeof row.at === "string" ? Date.parse(row.at) : Number.NaN;
 
             if (typeof row.file === "string" && Number.isFinite(at)) {

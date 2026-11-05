@@ -148,8 +148,9 @@ display stands in and the warning says since when.
 Frames stay on this Mac and never go into an export. Once a day the watcher moves the `frames/`, `ocr.jsonl`,
 `audio/` and `audio.jsonl` of each meeting whose newest capture file (a frame, an OCR line or a sound track) is older
 than `capture.retentionDays` (30) into the GenesisTools trash (`tools rm` rules, restorable with
-`tools rm restore <batch>`), so a recording with sound only expires too; the meeting record, its items and the
-recording block stay. It
+`tools rm restore <batch>`), so a recording with sound only expires too. The editor files made from them
+(`recording.json`, `proxy.mp4`, `proxy.transcript.json`) go with them; opening the editor rewrites those files, so it
+never postpones a meeting's retention. The meeting record, its items and the recording block stay. It
 never touches the meeting being recorded, and `retention-last.json` beside the meetings says when it last ran. When a source is linked, `record stop` stores its clock, so
 `screen --at` takes transcript times. A frame is taken only when the screen changes, so `screen --at` shows, per
 display, the frame still on that screen; a time outside the recorded spans says so and when the recording ran.

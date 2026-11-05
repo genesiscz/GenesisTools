@@ -352,7 +352,10 @@ export async function watchOnce(
     return "started";
 }
 
-/** Once a day: the frames and OCR of meetings past `capture.retentionDays` go to the trash. Never fails a look. */
+/**
+ * Once a day: the frames, OCR and editor files of meetings past `capture.retentionDays` go to the trash. Never fails
+ * a look.
+ */
 async function pruneOldCaptures(store: MeetingStore): Promise<void> {
     try {
         const config = await new MeetingsConfigStore().read();

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -89,5 +89,40 @@ describe("a meeting's screen recording as a recorder recording", () => {
             source: "meeting",
             meetingId: record.id,
         });
+    });
+});
+
+describe("a meeting's ocr.jsonl after an interrupted run", () => {
+    it("skips a cut-off row and a non-object row, and dates that frame by its file", () => {
+        const cut = mkdtempSync(join(tmpdir(), "gt-test-meeting-manifest-cut-"));
+
+        try {
+            mkdirSync(join(cut, "frames"));
+            writeFileSync(join(cut, "frames", "10-00-01-500-d2.jpg"), "x");
+            writeFileSync(join(cut, "frames", "10-00-05-000-d2.jpg"), "x");
+            const fileAt = new Date("2026-03-02T09:00:07.000Z");
+            utimesSync(join(cut, "frames", "10-00-05-000-d2.jpg"), fileAt, fileAt);
+            writeFileSync(
+                join(cut, "ocr.jsonl"),
+                [
+                    SafeJSON.stringify({
+                        file: "frames/10-00-01-500-d2.jpg",
+                        at: "2026-03-02T09:00:01.500Z",
+                        displayId: 2,
+                    }),
+                    "null",
+                    '{"file":"frames/10-00-05-000-d2.jpg","at":"2026-03-02T09:00:0',
+                ].join("\n")
+            );
+
+            expect(meetingMovieZeroMs(cut, "2026-03-02T09:00:00.000Z")).toBe(Date.parse("2026-03-02T09:00:00.000Z"));
+            writeMeetingRecordingManifest(cut, record);
+            expect(readRecordingManifest(cut)?.frames.map((frame) => [frame.file, frame.atMs])).toEqual([
+                ["frames/10-00-01-500-d2.jpg", 1500],
+                ["frames/10-00-05-000-d2.jpg", 7000],
+            ]);
+        } finally {
+            rmSync(cut, { recursive: true, force: true });
+        }
     });
 });
