@@ -24,7 +24,7 @@
  * --table <module path> loads a trusted module with a default CutTable export (see layer-cut-tables/types.ts).
  * Without it, layer-cut-tables/unified.ts preserves the original cut. A diff table takes every base-to-source path
  * through its sweeps; a commits table selects by scope and excludes open PR work as before.
- * The next run drops obsolete refs within the table's namespace. Derived files fail loudly when the source changes.
+ * Obsolete refs are retained for manual cleanup. Derived files fail loudly when the source changes.
  *
  * A replay of unified's commits onto the stack conflicts (27 of 247 applied on 2026-11-05), because unified holds the
  * stack's code in another form. So each cut branch is one commit whose tree is its parent's tree plus unified's
@@ -1261,15 +1261,7 @@ async function main(): Promise<number> {
             git(["update-ref", ref, commit]);
         }
 
-        // A branch the table no longer names (a layering change) leaves its old cut/ ref behind: drop it.
-        const current = new Set(CUT.map((branch) => `${CUT_REF_PREFIX}${branch.name}`));
-        const namespaces = new Set(CUT.map((branch) => `${CUT_REF_PREFIX}${branch.name.split("/")[0]}/`));
-        for (const ref of git(["for-each-ref", "--format=%(refname)", CUT_REF_PREFIX]).split("\n").filter(Boolean)) {
-            if ([...namespaces].some((prefix) => ref.startsWith(prefix)) && !current.has(ref)) {
-                git(["update-ref", "-d", ref]);
-                say(`  dropped ${ref}, which the table no longer names`);
-            }
-        }
+        // Ref names do not prove table ownership. Retain obsolete refs for explicit manual cleanup.
 
         const checks = await runChecks({
             options,
