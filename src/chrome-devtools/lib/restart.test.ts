@@ -22,7 +22,13 @@ import {
     verifyRestart,
     verifyRestartTwice,
 } from "./restart.ts";
-import { type BundleState, formatUpdateWait, parseShortVersion, updaterPattern, waitForUpdateOnQuit } from "./update-on-quit.ts";
+import {
+    type BundleState,
+    formatUpdateWait,
+    parseShortVersion,
+    updaterPattern,
+    waitForUpdateOnQuit,
+} from "./update-on-quit.ts";
 
 const HOME = "/home/tester";
 
@@ -474,7 +480,7 @@ describe("update on quit", () => {
         const c = clock();
         const r = await waitForUpdateOnQuit({
             before: OLD,
-            deps: { readState: () => OLD, updater: () => c.now() < 10_000 ? "updater" : null, ...c },
+            deps: { readState: () => OLD, updater: () => (c.now() < 10_000 ? "updater" : null), ...c },
         });
         expect(r.settled).toBe(true);
         expect(r.waitedMs).toBe(13_000);
@@ -495,7 +501,9 @@ describe("update on quit", () => {
     });
 
     test("Edge does not wait on generic Microsoft AutoUpdate processes", () => {
-        expect(updaterPattern("edge")?.test("/Applications/Microsoft AutoUpdate.app/Contents/MacOS/msupdate")).toBe(false);
+        expect(updaterPattern("edge")?.test("/Applications/Microsoft AutoUpdate.app/Contents/MacOS/msupdate")).toBe(
+            false
+        );
         expect(updaterPattern("edge")?.test("/Applications/EdgeUpdater.app/Contents/MacOS/EdgeUpdater")).toBe(true);
     });
 
@@ -565,6 +573,12 @@ describe("second check after the relaunch", () => {
             join(dir, "Brave Browser Helper-2026-11-02-172237.ips")
         );
         expect(newestCrashReport({ appName: "Brave Browser", sinceMs: 3_000_000, dir })).toBeNull();
-        expect(newestCrashReport({ appName: "Brave Browser", sinceMs: 0, dir: join(dir, "Brave Browser-2026-11-02-100000.ips") })).toBeNull();
+        expect(
+            newestCrashReport({
+                appName: "Brave Browser",
+                sinceMs: 0,
+                dir: join(dir, "Brave Browser-2026-11-02-100000.ips"),
+            })
+        ).toBeNull();
     });
 });

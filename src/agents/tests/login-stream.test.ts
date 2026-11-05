@@ -12,20 +12,27 @@ const agentsEntry = join(import.meta.dir, "../index.ts");
 
 type JsonLine = Record<string, unknown>;
 
-function spawnAgents(home: string, args: string[], closeAfterReady = false): Bun.Subprocess<"ignore", "pipe", "ignore"> {
+function spawnAgents(
+    home: string,
+    args: string[],
+    closeAfterReady = false
+): Bun.Subprocess<"ignore", "pipe", "ignore"> {
     const command = ["bun", agentsEntry, ...args];
-    return Bun.spawn(closeAfterReady ? ["bash", "-o", "pipefail", "-c", '"$@" | head -n 1', "test", ...command] : command, {
-        stdout: "pipe",
-        stderr: "ignore",
-        env: {
-            ...process.env,
-            GENESIS_TOOLS_HOME: home,
-            GENESIS_AGENTS_SESSION: "",
-            CLAUDE_CODE_SESSION_ID: "",
-            GROK_SESSION_ID: "",
-            COPILOT_AGENT_SESSION_ID: "",
-        },
-    });
+    return Bun.spawn(
+        closeAfterReady ? ["bash", "-o", "pipefail", "-c", '"$@" | head -n 1', "test", ...command] : command,
+        {
+            stdout: "pipe",
+            stderr: "ignore",
+            env: {
+                ...process.env,
+                GENESIS_TOOLS_HOME: home,
+                GENESIS_AGENTS_SESSION: "",
+                CLAUDE_CODE_SESSION_ID: "",
+                GROK_SESSION_ID: "",
+                COPILOT_AGENT_SESSION_ID: "",
+            },
+        }
+    );
 }
 
 class JsonlTap {
@@ -266,11 +273,25 @@ describe("agents login --once --timeout", () => {
         const session = `closed-${Date.now()}`;
         await runOnce(home, ["--agent-name", "alpha", "--session", session, "--timeout", "0.1"]);
         await runOnce(home, ["--agent-name", "beta", "--session", session, "--timeout", "0.1"]);
-        const listener = spawnAgents(home, ["login", "--agent-name", "beta", "--session", session, "--format", "json"], true);
+        const listener = spawnAgents(
+            home,
+            ["login", "--agent-name", "beta", "--session", session, "--format", "json"],
+            true
+        );
         const tap = new JsonlTap(listener.stdout);
         try {
             await tap.waitUntil((line) => line.type === "ready", 8_000);
-            const sent = spawnAgents(home, ["message", "--from", "alpha", "--to", "beta", "--body", "undelivered", "--session", session]);
+            const sent = spawnAgents(home, [
+                "message",
+                "--from",
+                "alpha",
+                "--to",
+                "beta",
+                "--body",
+                "undelivered",
+                "--session",
+                session,
+            ]);
             expect(await sent.exited).toBe(0);
             const exited = await Promise.race([listener.exited, Bun.sleep(8_000).then(() => null)]);
             expect(exited).toBe(0);
