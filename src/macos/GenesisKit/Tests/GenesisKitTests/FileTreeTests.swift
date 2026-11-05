@@ -119,6 +119,21 @@ final class FileTreeTests: XCTestCase {
         XCTAssertFalse(model.rows.contains { $0.name == ".hidden" })
     }
 
+    func testRevealedHiddenFileAppearsAndDisappearsAfterDeletion() async throws {
+        let model = FileTreeModel(root: root)
+        model.watchesDisk = false
+        model.setRoot(root)
+        await settle(model) { model.rows.contains { $0.name == "beta" } }
+        let file = root.appendingPathComponent(".hidden")
+        model.reveal(file)
+        await settle(model) { model.rows.contains { $0.name == ".hidden" } }
+        XCTAssertTrue(model.rows.contains { $0.name == ".hidden" })
+        try FileManager.default.removeItem(at: file)
+        model.diskChanged([root.standardizedFileURL.path])
+        await settle(model) { !model.rows.contains { $0.name == ".hidden" } }
+        XCTAssertFalse(model.rows.contains { $0.name == ".hidden" })
+    }
+
     func testReRootingReadsAnOpenFolderWhoseReadItDropped() async {
         let model = FileTreeModel(root: root)
         model.setRoot(root)

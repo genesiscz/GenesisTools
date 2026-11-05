@@ -207,7 +207,14 @@ public final class FileTreeModel: ObservableObject {
         guard folder.path == rootPath else { return }
         let path = file.standardizedFileURL.path.nativeUTF8
         for item in chain + [path] where (item as NSString).lastPathComponent.hasPrefix(".") {
-            shownHidden.insert(item)
+            if shownHidden.insert(item).inserted {
+                let parent = (item as NSString).deletingLastPathComponent
+                if loading.contains(parent) {
+                    stale.insert(parent)
+                } else {
+                    relist(parent)
+                }
+            }
         }
         // Every tab selection reveals its note, and a rebuild walks every open folder's rows: only a folder that
         // opens now changes the tree (a read that lands rebuilds by itself).
@@ -225,7 +232,7 @@ public final class FileTreeModel: ObservableObject {
         // did nothing (2026-10-15: notes saved at 05:30:49, "Show in Sidebar" on one at 05:33:14). Such a folder is
         // read again; the row arrives with the new listing.
         for (parent, child) in zip([rootPath] + chain.reversed(), chain.reversed() + [path]) {
-            // A hidden child is never in a listing: `entries(in:)` adds it, so a relist would find nothing new.
+            // A newly revealed hidden child already scheduled its parent's relist above.
             if let listed = children[parent], !listed.contains(where: { $0.path == child }), !shownHidden.contains(child),
                FileManager.default.fileExists(atPath: child) {
                 relist(parent)
@@ -299,8 +306,9 @@ public final class FileTreeModel: ObservableObject {
         let generation = generation
         let epoch = relistEpoch[path, default: 0]
         let read = listing
+        let hidden = shownHidden.filter { ($0 as NSString).deletingLastPathComponent == path }
         Task { [weak self] in
-            let listed = await Task.detached(priority: .utility) { read(path) }.value
+            let listed = await Task.detached(priority: .utility) { Self.readFolder(path, read: read, hidden: hidden) }.value
             guard let self else { return }
             self.relisting.remove(path)
             // Discarding an obsolete snapshot must still drain an event queued in the new generation.
@@ -324,8 +332,9 @@ public final class FileTreeModel: ObservableObject {
         rebuild()
         let generation = generation
         let read = listing
+        let hidden = shownHidden.filter { ($0 as NSString).deletingLastPathComponent == path }
         Task { [weak self] in
-            let listed = await Task.detached(priority: .userInitiated) { read(path) }.value
+            let listed = await Task.detached(priority: .userInitiated) { Self.readFolder(path, read: read, hidden: hidden) }.value
             guard let self, generation == self.generation else { return }
             self.loading.remove(path)
             if self.stale.remove(path) != nil {
@@ -341,26 +350,23 @@ public final class FileTreeModel: ObservableObject {
         }
     }
 
-    /// A read folder's listing plus the hidden items a reveal walked through (`shownHidden`), in the listing's order.
-    private func entries(in folder: String) -> [FileTreeEntry] {
-        guard let listed = children[folder] else { return [] }
-        let extra = shownHidden.filter { hidden in
-            (hidden as NSString).deletingLastPathComponent == folder && !listed.contains { $0.path == hidden }
-        }
-        guard !extra.isEmpty else { return listed }
-        let added = extra.compactMap { hidden -> FileTreeEntry? in
+    /// Read revealed hidden entries with the ordinary listing, away from the main actor.
+    nonisolated private static func readFolder(_ path: String, read: @Sendable (String) -> [FileTreeEntry], hidden: Set<String>) -> [FileTreeEntry] {
+        let listed = read(path)
+        let added = hidden.compactMap { item -> FileTreeEntry? in
+            guard !listed.contains(where: { $0.path == item }) else { return nil }
             var isFolder: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: hidden, isDirectory: &isFolder) else { return nil }
-            return FileTreeEntry(path: hidden, name: (hidden as NSString).lastPathComponent.nativeUTF8, isFolder: isFolder.boolValue)
+            guard FileManager.default.fileExists(atPath: item, isDirectory: &isFolder) else { return nil }
+            return FileTreeEntry(path: item, name: (item as NSString).lastPathComponent.nativeUTF8, isFolder: isFolder.boolValue)
         }
-        return FileTreeListing.sorted(listed + added)
+        return added.isEmpty ? listed : FileTreeListing.sorted(listed + added)
     }
 
     /// The flat list of what is visible: depth-first, an open folder's children right under it.
     private func rebuild() {
         var out: [FileTreeRow] = []
         func walk(_ path: String, depth: Int) {
-            for entry in entries(in: path) {
+            for entry in children[path] ?? [] {
                 let open = entry.isFolder && expanded.contains(entry.path)
                 out.append(FileTreeRow(
                     id: entry.path,
