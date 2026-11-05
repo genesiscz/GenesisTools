@@ -9,7 +9,8 @@ import PackageDescription
 //
 // Optional parts live in libraries of their own, so an app compiles only what it imports (Martin, 2026-10-14/15):
 // `GenesisKitCharts` (sunburst, treemap, donut, ring, health bar) and `GenesisKitOverlay` (screen effects) may be
-// imported by any app; `GenesisKitPosture` (PostureWatcher: camera, pose, posture rules) and `GenesisKitDisk` (Disk
+// imported by any app, and so may `GenesisKitCamera` (one webcam, its grant and preview; the recorder's camera bubble);
+// `GenesisKitPosture` (PostureWatcher: pose and posture rules, re-exporting the camera) and `GenesisKitDisk` (Disk
 // Manager: disk providers) are Genesis's. GenesisTools.app links `GenesisKit` and imports the others only where it
 // uses them. They reach core helpers through `package` access, not `public`.
 //
@@ -30,6 +31,7 @@ let kitProducts: [Product] = [
     .library(name: "GenesisKit", targets: ["GenesisKit"]),
     .library(name: "GenesisKitCharts", targets: ["GenesisKitCharts"]),
     .library(name: "GenesisKitOverlay", targets: ["GenesisKitOverlay"]),
+    .library(name: "GenesisKitCamera", targets: ["GenesisKitCamera"]),
     .library(name: "GenesisKitPosture", targets: ["GenesisKitPosture"]),
     .library(name: "GenesisKitDisk", targets: ["GenesisKitDisk"]),
     // Test targets only: the one copy of the `tools` disk fixtures (KitFixture). The GenesisTools bun tests
@@ -59,7 +61,9 @@ let kitTargets: [Target] = [
     ),
     .target(name: "GenesisKitCharts", dependencies: ["GenesisKit"], path: "Sources/GenesisKitCharts"),
     .target(name: "GenesisKitOverlay", dependencies: ["GenesisKit"], path: "Sources/GenesisKitOverlay"),
-    .target(name: "GenesisKitPosture", dependencies: ["GenesisKit"], path: "Sources/GenesisKitPosture"),
+    // One webcam at low energy, without the pose and posture code: the recorder's camera bubble links only this.
+    .target(name: "GenesisKitCamera", dependencies: ["GenesisKit"], path: "Sources/GenesisKitCamera"),
+    .target(name: "GenesisKitPosture", dependencies: ["GenesisKit", "GenesisKitCamera"], path: "Sources/GenesisKitPosture"),
     .target(name: "GenesisKitDisk", dependencies: ["GenesisKit"], path: "Sources/GenesisKitDisk"),
     // Disk/: the frozen CLI contracts and real `tools` JSON output the disk decoders are tested against.
     .target(name: "GenesisKitFixtures", path: "Sources/GenesisKitFixtures", resources: [.copy("Disk"), .copy("Git")]),
@@ -69,7 +73,7 @@ let kitTargets: [Target] = [
     .testTarget(
         name: "GenesisKitTests",
         dependencies: [
-            "GenesisKitBase", "GenesisKit", "GenesisKitCharts", "GenesisKitOverlay", "GenesisKitPosture", "GenesisKitDisk",
+            "GenesisKitBase", "GenesisKit", "GenesisKitCharts", "GenesisKitOverlay", "GenesisKitCamera", "GenesisKitPosture", "GenesisKitDisk",
             "GenesisKitFixtures", "GenesisKitTestHooks",
         ],
         path: "Tests/GenesisKitTests"

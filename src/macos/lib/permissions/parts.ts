@@ -99,6 +99,16 @@ const PARTS = [
         summary: "the markdown viewer",
     },
     {
+        id: "recorder",
+        // A menu bar item and the live recordings' controls, no window: the quit question never names it, and a
+        // rebuild brings the item back.
+        faces: [{ flag: "--recorder", window: false, reopen: "recorder" }],
+        bundleSteps: [],
+        // Settings → Recorder lives in the feature settings window.
+        requires: ["features"],
+        summary: "the screen recorder: its menu bar item, the live recordings' controls and the recording editor",
+    },
+    {
         id: "meetings",
         faces: [{ flag: "--meetings", window: true, reopen: "meetings", quit: { name: "Meetings", order: 60 } }],
         bundleSteps: [],

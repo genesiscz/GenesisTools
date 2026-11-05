@@ -1,0 +1,2164 @@
+import AVFoundation
+import AppKit
+import SwiftUI
+
+struct EditorView: View {
+    @Bindable var model: EditorModel
+    /// A `--snapshot` run draws a still frame instead of the player layer, which an off-screen window never paints.
+    var stillPreview: CGImage?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(EditorModel.lanesShownKey) private var lanesShown = 4
+
+    var body: some View {
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    IconRail(model: model)
+                    Divider().overlay(RecorderPalette.hairline)
+                    InspectorView(model: model)
+                        .frame(width: InspectorView.width)
+                        .background(RecorderPalette.panel)
+                    Divider().overlay(RecorderPalette.hairline)
+                    VStack(spacing: 0) {
+                        PreviewView(model: model, still: stillPreview)
+                            .attentionPulse(trigger: model.previewFlash,
+                                            style: Self.pulse(cornerRadius: 4))
+                            .overlay(alignment: .topTrailing) { ChangeBanners(model: model) }
+                            // On the preview's bottom edge: over the transport bar it covered the play buttons.
+                            .overlay(alignment: .bottom) {
+                                if let notice = model.notice {
+                                    NoticePill(text: notice, isError: model.noticeIsError, dismiss: { model.notice = nil })
+                                        .padding(.bottom, 12)
+                                        .id(notice)
+                                }
+                            }
+                        Divider().overlay(RecorderPalette.hairline)
+                        TransportBar(model: model)
+                    }
+                }
+                Divider().overlay(RecorderPalette.hairline)
+                TimelineView(model: model, viewportWidth: geometry.size.width)
+                    .frame(height: TimelineLayout(model: model, lanesShown: lanesShown).totalHeight)
+            }
+            // A lane that comes or goes eases the preview to its new size instead of jumping under the pointer.
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: TimelineLayout(model: model, lanesShown: lanesShown).totalHeight)
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .background(RecorderPalette.window)
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    /// The flash an outside edit plays on what it changed: the border flash, as long as the banner stays.
+    static func pulse(cornerRadius: CGFloat) -> AttentionPulseStyle {
+        var style = AttentionPulseStyle.borderFlash(color: RecorderPalette.zoom, cornerRadius: cornerRadius)
+        style.duration = EditorModel.agentEditSeconds
+        return style
+    }
+}
+
+// MARK: - Rail
+
+private struct IconRail: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ForEach(InspectorTab.allCases) { tab in
+                Button {
+                    model.tab = tab
+                } label: {
+                    Image(systemName: tab.symbol)
+                        .font(.system(size: 14, weight: .medium))
+                        .frame(width: 34, height: 34)
+                        .foregroundStyle(model.tab == tab ? Color.white : RecorderPalette.dim)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(model.tab == tab ? RecorderPalette.zoom : Color.clear))
+                }
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip(tab.shortcutIndex.map { "\(tab.title) (⌘\($0))" } ?? tab.title)
+                .accessibilityLabel(tab.title)
+                .accessibilityAddTraits(model.tab == tab ? .isSelected : [])
+                .accessibilityIdentifier("recorder.tab.\(tab.rawValue)")
+            }
+            Spacer()
+        }
+        .padding(.top, 12)
+        .frame(width: 54)
+        .background(RecorderPalette.panel)
+    }
+}
+
+// MARK: - Inspector
+
+private struct InspectorView: View {
+    @Bindable var model: EditorModel
+    static let width: CGFloat = 300
+    static let padding: CGFloat = 18
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                switch model.tab {
+                case .zoom: ZoomInspector(model: model)
+                case .clip: ClipInspector(model: model)
+                case .style: StyleInspector(model: model)
+                case .cursor: CursorInspector(model: model)
+                case .captions: CaptionsInspector(model: model)
+                case .audio: AudioInspector(model: model)
+                case .export: ExportInspector(model: model)
+                case .hide: HideInspector(model: model)
+                case .text: TextInspector(model: model)
+                case .find: ScreenFindInspector(model: model)
+                }
+            }
+            // A fixed width, so a wide row wraps or truncates instead of moving the column's left edge.
+            .frame(width: Self.width - 2 * Self.padding, alignment: .leading)
+            .padding(Self.padding)
+        }
+    }
+}
+
+struct SectionLabel: View {
+    let text: String
+    var value: String?
+
+    var body: some View {
+        HStack {
+            // The control's name in the text colour (dim read as disabled), its value dim and monospaced.
+            Text(text).font(.system(size: 12.5, weight: .medium)).foregroundStyle(RecorderPalette.text)
+            Spacer()
+            if let value {
+                Text(verbatim: value).font(.system(size: 12, weight: .regular).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+            }
+        }
+    }
+}
+
+/// A switch at the right edge of the inspector with its label on the left, like the rows of System Settings.
+struct SwitchRow: View {
+    let title: String
+    @Binding var isOn: Bool
+
+    init(_ title: String, isOn: Binding<Bool>) {
+        self.title = title
+        _isOn = isOn
+    }
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            Text(title).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .toggleStyle(.switch)
+    }
+}
+
+private struct WideButton: View {
+    let title: String
+    var systemImage: String?
+    var role: ButtonRole?
+    let action: () -> Void
+
+    var body: some View {
+        // lint-rules-ignore: a wide action button; the only ForEach of them is the four fixed export presets
+        Button(role: role, action: action) {
+            HStack(spacing: 6) {
+                if let systemImage { Image(systemName: systemImage) }
+                Text(title)
+            }
+            .font(.system(size: 13, weight: .medium))
+            .frame(maxWidth: .infinity, minHeight: 30)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.white.opacity(0.08)))
+            .foregroundStyle(role == .destructive ? Color(red: 1, green: 0.45, blue: 0.42) : RecorderPalette.text)
+        }
+        .buttonStyle(.genHoverPlain())
+    }
+}
+
+private struct ZoomInspector: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        if case let .zoom(id) = model.selection, let zoom = model.project.zooms.first(where: { $0.id == id }) {
+            let index = (model.project.zooms.firstIndex(where: { $0.id == id }) ?? 0) + 1
+            VStack(alignment: .leading, spacing: 3) {
+                Text(verbatim: "Zoom \(index) of \(model.project.zooms.count)").font(.system(size: 15, weight: .semibold))
+                let range = editRange(model.project, fromUs: zoom.startUs, toUs: zoom.endUs)
+                Text(verbatim: [range.edit, range.recording].compactMap { $0 }.joined(separator: " · "))
+                    .font(.system(size: 12).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                SectionLabel(text: "Zoom level", value: "\(Int((zoom.scale * 100).rounded()))%")
+                Slider(value: Binding(get: { zoom.scale }, set: { value in model.updateZoom(id) { $0.scale = (value * 20).rounded() / 20 } }),
+                       in: 1.1...4)
+                    .accessibilityLabel("Zoom level")
+                    .accessibilityIdentifier("recorder.zoom.level")
+                if model.project.zooms.count > 1 {
+                    WideButton(title: "Apply Zoom Level to All") { model.applyScaleToAll(zoom.scale) }
+                }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                SectionLabel(text: "Zoom mode")
+                GenSegmentedTabs("Zoom mode", items: [.init(EditProject.ZoomMode.follow, "Follow Cursor"), .init(.manual, "Manual")],
+                                 selection: Binding(get: { zoom.mode }, set: { mode in model.updateZoom(id) { $0.mode = mode } }),
+                                 minSegmentWidth: 110, identifier: "recorder.zoom.mode", fillsWidth: true)
+                if zoom.mode == .follow && model.cursor == nil {
+                    Text("This recording has no cursor track, so the zoom holds the focus below.")
+                        .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                }
+                FocusPicker(model: model, zoom: zoom)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                SectionLabel(text: "Zoom in", value: "\(zoom.easeInMs) ms")
+                Slider(value: Binding(get: { Double(zoom.easeInMs) }, set: { value in model.updateZoom(id) { $0.easeInMs = Int((value / 50).rounded()) * 50 } }), in: 0...1500)
+                    .accessibilityLabel("Zoom in time")
+                SectionLabel(text: "Zoom out", value: "\(zoom.easeOutMs) ms")
+                Slider(value: Binding(get: { Double(zoom.easeOutMs) }, set: { value in model.updateZoom(id) { $0.easeOutMs = Int((value / 50).rounded()) * 50 } }), in: 0...1500)
+                    .accessibilityLabel("Zoom out time")
+            }
+            WideButton(title: "Delete Zoom", systemImage: "trash", role: .destructive) { model.deleteSelection() }
+            Divider().overlay(RecorderPalette.hairline)
+            MotionBlurSection(model: model)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Zoom").font(.system(size: 15, weight: .semibold))
+                    if !model.project.zooms.isEmpty {
+                        Text(verbatim: Plural.count(model.project.zooms.count, "zoom"))
+                            .font(.system(size: 12)).foregroundStyle(RecorderPalette.dim)
+                    }
+                }
+                Text("Click or drag in the zoom lane to add a zoom, or select one to change it. Z adds one at the playhead.")
+                    .font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+                WideButton(title: "Add Zoom at Playhead", systemImage: "plus.magnifyingglass") { model.addZoom() }
+                    .instantTooltip("A 2 s zoom from the playhead (Z)")
+                WideButton(title: "Auto Zoom from Clicks", systemImage: "cursorarrow.click.2") { model.autoZoom() }
+                    .disabled(model.cursor == nil)
+                    .instantTooltip(model.cursor == nil ? "This recording has no cursor track" : "One zoom per group of clicks, following the cursor")
+                if model.cursor == nil {
+                    Text("Needs a cursor track. A recording made with the recorder has one.")
+                        .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Divider().overlay(RecorderPalette.hairline)
+                MotionBlurSection(model: model)
+            }
+        }
+    }
+}
+
+/// One setting for all zooms, shown with a zoom selected too: how much the picture smears while a zoom moves.
+private struct MotionBlurSection: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        let blur = (model.project.motion ?? .init()).blur
+        let label = blur == 0 ? "Off" : "\(Int((blur * 100).rounded()))%"
+        VStack(alignment: .leading, spacing: 6) {
+            SectionLabel(text: "Motion blur, all zooms", value: label)
+            Slider(value: Binding(get: { blur }, set: { value in
+                model.setLooks { $0.motion = EditProject.Motion(blur: (value * 20).rounded() / 20) }
+            }), in: 0...1)
+                .disabled(model.project.zooms.isEmpty)
+                .accessibilityLabel("Motion blur for all zooms")
+                .accessibilityValue(label)
+                .accessibilityIdentifier("recorder.zoom.motionBlur")
+                .instantTooltip("Smears the picture while a zoom moves in, out or along with the cursor, as a camera would (50% by default). 0 keeps every frame sharp.")
+            if model.project.zooms.isEmpty {
+                Text("Applies while a zoom moves; this edit has no zoom yet.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// The frame under the zoom with the zoomed rectangle on it; dragging moves the focus.
+private struct FocusPicker: View {
+    @Bindable var model: EditorModel
+    let zoom: EditProject.Zoom
+
+    var body: some View {
+        let aspect = CGFloat(model.project.source.width) / CGFloat(max(1, model.project.source.height))
+        GeometryReader { geometry in
+            let size = geometry.size
+            let side = 1 / zoom.scale
+            let rect = CGRect(x: (min(max(zoom.focusX, side / 2), 1 - side / 2) - side / 2) * size.width,
+                              y: (min(max(zoom.focusY, side / 2), 1 - side / 2) - side / 2) * size.height,
+                              width: side * size.width, height: side * size.height)
+            ZStack(alignment: .topLeading) {
+                if let tile = model.filmstrip.tile(atSource: zoom.startUs) {
+                    Image(decorative: tile.image, scale: 1).resizable().aspectRatio(contentMode: .fill)
+                        .frame(width: size.width, height: size.height).clipped()
+                } else {
+                    Color.black
+                }
+                Color.black.opacity(0.35)
+                RoundedRectangle(cornerRadius: 4).strokeBorder(Color.white, lineWidth: 1.5)
+                    .frame(width: rect.width, height: rect.height)
+                    .offset(x: rect.minX, y: rect.minY)
+                Circle().fill(Color.white).frame(width: 12, height: 12)
+                    .offset(x: rect.midX - 6, y: rect.midY - 6)
+            }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                model.updateZoom(zoom.id) {
+                    $0.focusX = Double(value.location.x / size.width)
+                    $0.focusY = Double(value.location.y / size.height)
+                    if $0.mode == .follow, model.cursor != nil {
+                        $0.mode = .manual
+                        model.show("Set to Manual: the zoom holds the place you picked.", error: false)
+                    }
+                }
+            })
+        }
+        .aspectRatio(aspect, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityElement()
+        .accessibilityLabel("Zoom focus")
+        .accessibilityValue("x \(Int((zoom.focusX * 100).rounded()))%, y \(Int((zoom.focusY * 100).rounded()))%")
+        .accessibilityAdjustableAction { direction in nudgeFocus(dx: direction == .increment ? 0.02 : -0.02, dy: 0) }
+        .accessibilityAction(named: "Move Up") { nudgeFocus(dx: 0, dy: -0.02) }
+        .accessibilityAction(named: "Move Down") { nudgeFocus(dx: 0, dy: 0.02) }
+        .focusable()
+        .onKeyPress(.leftArrow) { nudgeFocus(dx: -0.02, dy: 0); return .handled }
+        .onKeyPress(.rightArrow) { nudgeFocus(dx: 0.02, dy: 0); return .handled }
+        .onKeyPress(.upArrow) { nudgeFocus(dx: 0, dy: -0.02); return .handled }
+        .onKeyPress(.downArrow) { nudgeFocus(dx: 0, dy: 0.02); return .handled }
+        .accessibilityIdentifier("recorder.zoom.focus")
+    }
+
+    /// The keyboard and VoiceOver path to aim the zoom: 2 % of the picture per step, kept inside it.
+    private func nudgeFocus(dx: Double, dy: Double) {
+        model.updateZoom(zoom.id) {
+            $0.focusX = min(max(0, $0.focusX + dx), 1)
+            $0.focusY = min(max(0, $0.focusY + dy), 1)
+            if $0.mode == .follow { $0.mode = .manual }
+        }
+    }
+}
+
+/// Still parts (nothing moves, nothing is heard): how long they must be and what happens to them, then one button.
+private struct StillPartsSection: View {
+    @Bindable var model: EditorModel
+    @AppStorage(EditorModel.idleMinKey) private var minSeconds = 2.0
+    /// 0 cuts them; 4, 8 or 16 plays them that much faster.
+    @AppStorage(EditorModel.idleSpeedKey) private var speed = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(text: "Still parts", value: "nothing moves, nothing is heard")
+            Text("Longer than").font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+            GenSegmentedTabs("Longer than", items: [.init(1.0, "1 s"), .init(2.0, "2 s"), .init(5.0, "5 s")], selection: $minSeconds,
+                             minSegmentWidth: 44, identifier: "recorder.clip.idleMin", fillsWidth: true)
+            Text("Then").font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+            GenSegmentedTabs("Then", items: [.init(0, "Cut"), .init(4, "4×"), .init(8, "8×"), .init(16, "16×")], selection: $speed,
+                             minSegmentWidth: 44, identifier: "recorder.clip.idleSpeed", fillsWidth: true)
+            WideButton(title: model.isRemovingIdle ? "Looking for Still Parts…"
+                       : (speed == 0 ? "Cut Still Parts" : "Speed Up Still Parts \(speed)×"),
+                       systemImage: speed == 0 ? "wand.and.stars" : "forward.fill") {
+                model.removeIdle(speed: speed == 0 ? nil : speed)
+            }
+            .disabled(model.isRemovingIdle)
+            .instantTooltip(speed == 0
+                            ? "Cuts every stretch of \(Int(minSeconds)) s or more where the picture does not change and nothing is heard (⌘Z brings them back)"
+                            : "Plays those stretches \(speed)× faster instead of cutting them, so the viewer sees time pass (⌘Z undoes it)")
+            .accessibilityIdentifier("recorder.clip.speedIdle")
+        }
+    }
+}
+
+private struct ClipInspector: View {
+    @Bindable var model: EditorModel
+    /// 8× is what Speed Up Still Parts sets, so such a clip shows its own segment.
+    private let speeds: [Double] = [0.5, 1, 1.5, 2, 4, 8]
+
+    var body: some View {
+        let placed = TimelineMap.placed(model.project)
+        if case let .clip(id) = model.selection, let current = placed.first(where: { $0.clip.id == id }) {
+            let clip = current.clip
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Clip \(current.index + 1) of \(placed.count)").font(.system(size: 15, weight: .semibold))
+                SectionLabel(text: "In the edit", value: "\(formatClock(current.outStartUs, tenths: true)) – \(formatClock(current.outEndUs, tenths: true))")
+                SectionLabel(text: "In the recording", value: "\(formatClock(clip.fromUs, tenths: true)) – \(formatClock(clip.toUs, tenths: true))")
+                SectionLabel(text: "Plays for", value: formatClock(clip.outputDurationUs, tenths: true))
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                SectionLabel(text: "Speed", value: speedLabel(clip.speed))
+                GenSegmentedTabs("Speed", items: speeds.map { .init($0, speedLabel($0)) },
+                                 selection: Binding(get: { clip.speed }, set: { model.setSpeed(id, $0) }),
+                                 minSegmentWidth: 38, identifier: "recorder.clip.speed", fillsWidth: true)
+                if !speeds.contains(clip.speed) {
+                    Text(verbatim: "Plays at \(speedLabel(clip.speed)); pick a speed above to change it.")
+                        .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                }
+            }
+            WideButton(title: "Split at Playhead", systemImage: "scissors") { model.splitAtPlayhead() }
+                .instantTooltip("Splits the clip under the playhead in two (S)")
+            WideButton(title: "Delete Clip", systemImage: "trash", role: .destructive) { model.deleteSelection() }
+                .disabled(placed.count < 2)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Clips").font(.system(size: 15, weight: .semibold))
+                Text("Select a clip to change its speed or delete it. Drag its edges to trim. S splits the clip at the playhead.")
+                    .font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+                SectionLabel(text: Plural.count(placed.count, "clip"), value: formatClock(model.durationUs, tenths: true))
+                WideButton(title: "Split at Playhead", systemImage: "scissors") { model.splitAtPlayhead() }
+                    .instantTooltip("Splits the clip under the playhead in two (S)")
+                StillPartsSection(model: model)
+            }
+        }
+    }
+}
+
+private struct StyleInspector: View {
+    @Bindable var model: EditorModel
+
+    /// Background presets: two colors are a gradient from the top left, one is a flat color.
+    private static let backgrounds: [(name: String, colors: [String])] = [
+        ("Indigo", ["#4F46E5", "#DB2777"]),
+        ("Ocean", ["#0EA5E9", "#14B8A6"]),
+        ("Sunset", ["#F97316", "#E11D48"]),
+        ("Forest", ["#16A34A", "#0F766E"]),
+        ("Graphite", ["#27272A"]),
+        ("Paper", ["#F4F4F5"]),
+    ]
+    var body: some View {
+        let frame = model.project.frame
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Style").font(.system(size: 15, weight: .semibold))
+            // The canvas shape is always here: a vertical Short or a square post must not hide behind a switch.
+            SectionLabel(text: "Canvas")
+            GenSegmentedTabs("Canvas", items: EditProject.CanvasAspect.allCases.map { .init($0, $0 == .source ? "Source" : $0.rawValue) },
+                             selection: Binding(get: { frame?.aspect ?? .source }, set: { value in
+                                 model.setLooks { project in
+                                     if value != .source, project.frame == nil { project.frame = EditProject.Frame() }
+                                     project.frame?.aspect = value == .source ? nil : value
+                                 }
+                             }),
+                             minSegmentWidth: 40, identifier: "recorder.style.canvas", fillsWidth: true)
+                .instantTooltip("The movie's shape; 9:16 for a Short or a Reel, 1:1 for a post. Another shape than Source puts the movie on a frame.")
+            SwitchRow("Frame", isOn: Binding(get: { frame != nil }, set: { on in
+                model.setLooks { $0.frame = on ? ($0.frame ?? EditProject.Frame()) : nil }
+            }))
+            .accessibilityIdentifier("recorder.style.frame")
+            if frame == nil {
+                Text("A background, padding, rounded corners and a shadow around the movie, as in a product video.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let frame {
+                if (frame.aspect ?? .source) != .source {
+                    SwitchRow("Crop to fill", isOn: Binding(get: { frame.fit == .cover }, set: { on in
+                        model.setLooks { $0.frame?.fit = on ? .cover : nil }
+                    }))
+                    .instantTooltip("Crops the movie to the canvas's shape; the crop follows the cursor")
+                    .accessibilityIdentifier("recorder.style.fill")
+                }
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 30), spacing: 6), count: 6), spacing: 8) {
+                    ForEach(Self.backgrounds, id: \.name) { preset in
+                        let selected = frame.background.kind != .image && frame.background.colors == preset.colors
+                        Button {
+                            model.setLooks {
+                                $0.frame?.background = EditProject.Background(kind: preset.colors.count > 1 ? .gradient : .color,
+                                                                              colors: preset.colors)
+                            }
+                        } label: {
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(LinearGradient(colors: preset.colors.map(swiftColor), startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .frame(maxWidth: .infinity, minHeight: 26, maxHeight: 26)
+                                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(selected ? 0.95 : 0.15), lineWidth: selected ? 2 : 1))
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .instantTooltip(preset.name)
+                        .accessibilityLabel("\(preset.name) background")
+                    }
+                }
+                HStack(spacing: 8) {
+                    GhostButton("Desktop Picture", symbol: "photo", tooltip: "The picture of the main display's desktop",
+                                identifier: "recorder.style.desktopPicture") { model.useDesktopPicture() }
+                    GhostButton("Choose Image…", symbol: "folder", tooltip: "A picture file for the frame's background",
+                                identifier: "recorder.style.chooseImage") { model.chooseBackgroundImage() }
+                }
+                if frame.background.kind == .image {
+                    // The picture in use, as a selected tile, so the swatches above read as "not chosen".
+                    if let image = frame.background.image {
+                        HStack(spacing: 8) {
+                            BackgroundPictureTile(path: image)
+                            Text(verbatim: URL(fileURLWithPath: image).lastPathComponent)
+                                .font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+                            Spacer(minLength: 4)
+                            IconButton(systemName: "folder", tooltip: "Show the picture in Finder", size: 11) {
+                                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: image)])
+                            }
+                        }
+                    }
+                    SectionLabel(text: "Picture blur", value: "\(Int(((frame.background.blur ?? 0) * 100).rounded()))%")
+                    Slider(value: Binding(get: { frame.background.blur ?? 0 }, set: { value in
+                        model.setLooks { $0.frame?.background.blur = (value * 20).rounded() / 20 }
+                    }), in: 0...1)
+                        .accessibilityLabel("Picture blur")
+                        .accessibilityIdentifier("recorder.style.pictureBlur")
+                }
+                SectionLabel(text: "Padding", value: "\(Int((frame.padding * 100).rounded()))%")
+                Slider(value: Binding(get: { frame.padding }, set: { value in model.setLooks { $0.frame?.padding = (value * 200).rounded() / 200 } }),
+                       in: 0...0.2)
+                    .accessibilityLabel("Padding")
+                    .accessibilityIdentifier("recorder.style.padding")
+                SectionLabel(text: "Corners", value: sizeLabel(frame.cornerRadius, model.project))
+                Slider(value: Binding(get: { frame.cornerRadius }, set: { value in model.setLooks { $0.frame?.cornerRadius = (value * 1000).rounded() / 1000 } }),
+                       in: 0...0.05)
+                    .accessibilityLabel("Corners")
+                    .accessibilityIdentifier("recorder.style.corners")
+                SwitchRow("Shadow", isOn: Binding(get: { frame.shadow }, set: { on in model.setLooks { $0.frame?.shadow = on } }))
+            }
+            if model.project.camera != nil {
+                Divider().padding(.vertical, 4)
+                CameraBubbleSection(model: model)
+            }
+        }
+    }
+}
+
+private struct CursorInspector: View {
+    @Bindable var model: EditorModel
+    private static let clickColors = ["#FFD60A", "#FF453A", "#0A84FF", "#FFFFFF"]
+    private static let clickColorNames = ["#FFD60A": "yellow", "#FF453A": "red", "#0A84FF": "blue", "#FFFFFF": "white"]
+
+    var body: some View {
+        let clicks = model.project.clicks
+        Text("Cursor and Clicks").font(.system(size: 15, weight: .semibold))
+        VStack(alignment: .leading, spacing: 10) {
+            SwitchRow("Click rings", isOn: Binding(get: { clicks?.highlight == true }, set: { on in
+                model.setLooks { project in
+                    var next = project.clicks ?? EditProject.Clicks()
+                    next.highlight = on
+                    project.clicks = next
+                }
+            }))
+            .accessibilityIdentifier("recorder.style.clicks")
+            .instantTooltip("A ring at each click as it plays. To move or delete single marks, Annotate → Circle Every Click adds editable circles instead.")
+            if model.cursor != nil {
+                SwitchRow("Click sound", isOn: Binding(get: { clicks?.sound == true }, set: { on in
+                    model.setLooks { project in
+                        var next = project.clicks ?? EditProject.Clicks()
+                        next.sound = on ? true : nil
+                        project.clicks = next
+                    }
+                }))
+                .instantTooltip("A soft tick at each click in the movie's sound; off by default")
+                .accessibilityIdentifier("recorder.style.clickSound")
+            }
+            if model.cursor == nil {
+                Text("This recording has no cursor track, so there are no clicks to draw.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let clicks, clicks.highlight {
+                HStack(spacing: 8) {
+                    ForEach(Self.clickColors, id: \.self) { hex in
+                        Button {
+                            model.setLooks { $0.clicks?.color = hex }
+                        } label: {
+                            Circle().fill(swiftColor(hex)).frame(width: 20, height: 20)
+                                .overlay(Circle().strokeBorder(Color.white.opacity(clicks.color == hex ? 0.95 : 0.2), lineWidth: clicks.color == hex ? 2 : 1))
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .accessibilityLabel("Click color \(Self.clickColorNames[hex] ?? hex)")
+                    }
+                }
+                SectionLabel(text: "Size", value: sizeLabel(clicks.radius, model.project))
+                Slider(value: Binding(get: { clicks.radius }, set: { value in model.setLooks { $0.clicks?.radius = (value * 1000).rounded() / 1000 } }),
+                       in: 0.01...0.1)
+                    .accessibilityLabel("Click size")
+                    .accessibilityIdentifier("recorder.style.clickSize")
+            }
+        }
+        VStack(alignment: .leading, spacing: 10) {
+            let cursor = model.project.cursor ?? EditProject.Cursor()
+            if model.cursor?.drawsCursor == true {
+                SwitchRow("Show cursor", isOn: Binding(get: { cursor.show }, set: { on in
+                    model.setCursor { $0.show = on }
+                }))
+                .accessibilityIdentifier("recorder.style.cursor")
+                if cursor.show {
+                    SectionLabel(text: "Cursor size", value: String(format: "%.1f×", cursor.size))
+                    Slider(value: Binding(get: { cursor.size }, set: { value in
+                        model.setCursor { $0.size = (value * 10).rounded() / 10 }
+                    }), in: 0.5...3)
+                        .accessibilityLabel("Cursor size")
+                        .accessibilityIdentifier("recorder.style.cursorSize")
+                    SectionLabel(text: "Smoothing", value: "\(Int((cursor.smoothing * 100).rounded()))%")
+                    Slider(value: Binding(get: { cursor.smoothing }, set: { value in
+                        model.setCursor { $0.smoothing = (value * 20).rounded() / 20 }
+                    }), in: 0...1)
+                        .accessibilityLabel("Cursor smoothing")
+                        .accessibilityIdentifier("recorder.style.cursorSmoothing")
+                    SwitchRow("Hide when still", isOn: Binding(get: { (cursor.hideAfterMs ?? 0) > 0 }, set: { on in
+                        model.setCursor { $0.hideAfterMs = on ? 1500 : 0 }
+                    }))
+                    .accessibilityIdentifier("recorder.style.cursorHide")
+                    if let hide = cursor.hideAfterMs, hide > 0 {
+                        SectionLabel(text: "Hide after", value: String(format: "%.1f s", Double(hide) / 1000))
+                        Slider(value: Binding(get: { Double(hide) }, set: { value in
+                            model.setCursor { $0.hideAfterMs = Int((value / 250).rounded() * 250) }
+                        }), in: 500...5000)
+                            .accessibilityLabel("Hide the cursor after")
+                            .accessibilityIdentifier("recorder.style.cursorHideAfter")
+                    }
+                }
+            } else if model.cursor != nil {
+                Text("This recording has the system cursor in its picture. Record without --system-cursor to draw a smoothed cursor of any size.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+private struct CaptionsInspector: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        Text("Captions and Shortcuts").font(.system(size: 15, weight: .semibold))
+        if let track = model.cursor, !track.keys.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                let keys = model.project.keys
+                SwitchRow("Show shortcuts", isOn: Binding(get: { keys?.show == true }, set: { on in
+                    model.setLooks { project in
+                        var next = project.keys ?? EditProject.Keys()
+                        next.show = on
+                        project.keys = next
+                    }
+                }))
+                .instantTooltip("Draws the ⌘ and ⌃ shortcuts pressed while recording (\(Plural.count(track.keys.count, "press")))")
+                .accessibilityIdentifier("recorder.style.keys")
+                if let keys, keys.show {
+                    GenSegmentedTabs("Shortcuts position", items: EditProject.CaptionPosition.allCases.map { .init($0, $0.rawValue.capitalized) },
+                                     selection: Binding(get: { keys.position }, set: { value in model.setLooks { $0.keys?.position = value } }),
+                                     minSegmentWidth: 60, identifier: "recorder.style.keysPosition", fillsWidth: true)
+                    SectionLabel(text: "Shortcut size", value: sizeLabel(keys.size, model.project))
+                    Slider(value: Binding(get: { keys.size }, set: { value in model.setLooks { $0.keys?.size = (value * 1000).rounded() / 1000 } }),
+                           in: 0.03...0.1)
+                        .accessibilityLabel("Shortcut size")
+                        .accessibilityIdentifier("recorder.style.keysSize")
+                }
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                SwitchRow("Show shortcuts", isOn: .constant(false)).disabled(true)
+                Text(model.cursor == nil ? "This recording has no cursor track, so it kept no shortcuts."
+                                         : "No ⌘ or ⌃ shortcut was pressed while it recorded.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        VStack(alignment: .leading, spacing: 10) {
+            let captions = model.project.captions
+            if model.hasTranscript {
+                SwitchRow("Captions", isOn: Binding(get: { captions?.show == true }, set: { on in
+                    model.setLooks { project in
+                        var next = project.captions ?? EditProject.Captions()
+                        next.show = on
+                        project.captions = next
+                    }
+                }))
+                .accessibilityIdentifier("recorder.style.captions")
+                if let captions, captions.show {
+                    GenSegmentedTabs("Captions position", items: EditProject.CaptionPosition.allCases.map { .init($0, $0.rawValue.capitalized) },
+                                     selection: Binding(get: { captions.position }, set: { value in model.setLooks { $0.captions?.position = value } }),
+                                     minSegmentWidth: 60, identifier: "recorder.style.captionsPosition", fillsWidth: true)
+                    SectionLabel(text: "Text size", value: sizeLabel(captions.size, model.project))
+                    Slider(value: Binding(get: { captions.size }, set: { value in model.setLooks { $0.captions?.size = (value * 1000).rounded() / 1000 } }),
+                           in: 0.025...0.08)
+                        .accessibilityLabel("Caption text size")
+                        .accessibilityIdentifier("recorder.style.captionsSize")
+                }
+                CaptionLinesList(model: model)
+            } else {
+                HStack {
+                    Text("Captions").font(.system(size: 13))
+                    Spacer()
+                    Button(model.isTranscribing ? "Transcribing…" : "Transcribe") { model.transcribe() }
+                        .buttonStyle(.genHoverPlain())
+                        .disabled(model.isTranscribing)
+                        .instantTooltip("Runs tools transcribe once; the spoken lines become captions that follow every cut")
+                        .accessibilityIdentifier("recorder.style.transcribe")
+                }
+            }
+        }
+    }
+
+}
+
+/// A size kept as a fraction of the picture's short side, in pixels of the export ("6 px · 0.5%"), so a user can
+/// picture it; the stored value stays relative.
+@MainActor
+private func sizeLabel(_ fraction: Double, _ project: EditProject) -> String {
+    let short = Double(min(project.source.width, project.source.height))
+    let exported = project.export.maxHeight > 0 ? min(short, Double(project.export.maxHeight)) : short
+    return "\(Int((fraction * exported).rounded())) px · " + String(format: "%.1f%%", fraction * 100)
+}
+
+private func swiftColor(_ hex: String) -> Color {
+    let color = Looks.color(hex)
+    return Color(red: color.red, green: color.green, blue: color.blue)
+}
+
+/// The transcript's lines, each editable: a click on the time seeks to it, the words can be corrected (kept in the
+/// edit as a fix, so a new transcription keeps them), the scissors cut picked words out of the movie, and the eye hides
+/// a line from the captions.
+struct CaptionLinesList: View {
+    @Bindable var model: EditorModel
+    @State private var find = ""
+    @State private var replacement = ""
+
+    var body: some View {
+        let lines = model.zoom.captionLines
+        let fixes = model.project.transcript?.fixes ?? [:]
+        VStack(alignment: .leading, spacing: 6) {
+            // A name the transcriber got wrong is wrong in every line: one replace fixes them all (one ⌘Z).
+            SectionLabel(text: "Replace in every line")
+            TextField("Find words, e.g. a name it misheard", text: $find)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("recorder.captions.find")
+            HStack(spacing: 6) {
+                TextField("Replace with", text: $replacement)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { model.replaceWords(find: find, replace: replacement) }
+                    .accessibilityIdentifier("recorder.captions.replace")
+                GhostButton("Replace All", symbol: "text.badge.checkmark", tooltip: "Replace these words in every line (whole words, any case; ⌘Z takes it back)",
+                            identifier: "recorder.captions.replaceAll") { model.replaceWords(find: find, replace: replacement) }
+                    .disabled(find.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .padding(.bottom, 4)
+            FillerCutRow(model: model)
+            HStack {
+                Text("Lines").font(.system(size: 12.5, weight: .medium))
+                Spacer()
+                Text(verbatim: fixes.isEmpty ? Plural.count(lines.count, "line") : "\(fixes.count) of \(Plural.count(lines.count, "line")) edited")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+            }
+            LazyVStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    let key = EditProject.TranscriptSettings.key(line)
+                    let hidden = fixes[key] == ""
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Button {
+                            if let at = TimelineMap.outputTime(ofSource: line.fromUs, in: model.project) { model.seek(at) }
+                        } label: {
+                            Text(verbatim: TimelineMap.outputTime(ofSource: line.fromUs, in: model.project).map { formatClock($0) } ?? "cut")
+                                .font(.system(size: 11).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+                                .frame(width: 38, alignment: .leading)
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .instantTooltip("Go to this line")
+                        TextField("", text: Binding(get: { hidden ? line.text : (fixes[key] ?? line.text) }, set: { value in
+                            model.fixCaption(line, text: value == line.text ? nil : value)
+                        }), axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .foregroundStyle(hidden ? RecorderPalette.dim : RecorderPalette.text)
+                        .strikethrough(hidden)
+                        .lineLimit(1...4)
+                        .accessibilityLabel("Caption line at \(formatClock(line.fromUs))\(fixes[key] == nil ? "" : ", edited")")
+                        .overlay(alignment: .leading) {
+                            // An edited line has a dot; its tooltip and menu give the transcript's words back.
+                            if fixes[key] != nil && !hidden {
+                                Circle().fill(RecorderPalette.zoom).frame(width: 5, height: 5).offset(x: -8)
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                        .instantTooltip(fixes[key] == nil || hidden ? "Click to correct the words" : "Edited; the transcript said: \(line.text)")
+                        .contextMenu {
+                            if fixes[key] != nil {
+                                Button("Back to the Transcript") { model.fixCaption(line, text: nil) }
+                            }
+                        }
+                        .accessibilityAction(named: "Back to the Transcript") { model.fixCaption(line, text: nil) }
+                        CaptionLineCutButton(model: model, line: line)
+                        IconButton(systemName: hidden ? "eye.slash" : "eye", tooltip: hidden ? "Show this line again" : "Hide this line from the captions",
+                                   size: 10) {
+                            model.fixCaption(line, text: hidden ? nil : "")
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+}
+
+/// A small thumbnail of the background picture with the selected ring, read once off the main thread.
+private struct BackgroundPictureTile: View {
+    let path: String
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+            } else {
+                Image(systemName: "photo").font(.system(size: 12)).foregroundStyle(RecorderPalette.dim)
+            }
+        }
+        .frame(width: 46, height: 30)
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.white.opacity(0.95), lineWidth: 2))
+        .task(id: path) {
+            let url = URL(fileURLWithPath: path)
+            image = await Task.detached(priority: .utility) {
+                guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                      let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                          kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 120,
+                      ] as CFDictionary) else { return nil }
+                return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+            }.value
+        }
+        .accessibilityLabel("Background picture")
+    }
+}
+
+/// Where the export goes: the file's name in full, its folder dim under it, Reveal, and Change… (a save panel).
+private struct ExportFileRow: View {
+    @Bindable var model: EditorModel
+    let url: URL
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: url.lastPathComponent).font(.system(size: 12.5, weight: .medium)).lineLimit(2)
+                Text(verbatim: (url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath)
+                    .font(.system(size: 11)).foregroundStyle(RecorderPalette.dim)
+                    .lineLimit(1).truncationMode(.head)
+            }
+            Spacer(minLength: 4)
+            IconButton(systemName: "folder", tooltip: "Show the folder in Finder", size: 12) {
+                PathOpener.finder(url.deletingLastPathComponent().path)
+            }
+            Button("Change…") { model.chooseExportFile() }
+                .buttonStyle(.genHoverPlain())
+                .font(.system(size: 12, weight: .medium))
+                .accessibilityIdentifier("recorder.export.change")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Exports to \(url.path)")
+    }
+}
+
+/// Lines of text over the picture: a list, and for the selected one its words, place, size, style and length.
+private struct TextInspector: View {
+    @Bindable var model: EditorModel
+    private static let places: [(name: String, x: Double, y: Double)] = [
+        ("Top left", 0.2, 0.12), ("Top", 0.5, 0.12), ("Top right", 0.8, 0.12),
+        ("Left", 0.2, 0.5), ("Middle", 0.5, 0.5), ("Right", 0.8, 0.5),
+        ("Bottom left", 0.2, 0.88), ("Bottom", 0.5, 0.88), ("Bottom right", 0.8, 0.88),
+    ]
+
+    var body: some View {
+        let list = model.project.texts ?? []
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Annotate").font(.system(size: 15, weight: .semibold))
+            Text("A title or a step's name over the picture for a time. It stays in place through a zoom and fades in and out. An arrow, box or circle points at something and moves with a zoom.")
+                .font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
+                .fixedSize(horizontal: false, vertical: true)
+            WideButton(title: "Add Text at Playhead", systemImage: "textformat") { model.addText() }
+                .instantTooltip("A 3 s text at the top middle, from the playhead")
+                .accessibilityIdentifier("recorder.text.add")
+            HStack(spacing: 8) {
+                WideButton(title: "Arrow", systemImage: "arrow.up.right") { model.addShape(.arrow) }
+                    .instantTooltip("A 3 s arrow from the playhead (A); drag its two dots on the preview to point it")
+                    .accessibilityIdentifier("recorder.shape.arrow")
+                WideButton(title: "Box", systemImage: "rectangle") { model.addShape(.box) }
+                    .instantTooltip("A 3 s box from the playhead (B); drag its corners on the preview")
+                    .accessibilityIdentifier("recorder.shape.box")
+                WideButton(title: "Circle", systemImage: "circle") { model.addShape(.circle) }
+                    .instantTooltip("A 3 s circle from the playhead (C); drag its corners on the preview")
+                    .accessibilityIdentifier("recorder.shape.circle")
+            }
+            if !model.markers.isEmpty {
+                WideButton(title: "Title Every Marker", systemImage: "list.number") { model.titleMarkers() }
+                    .instantTooltip("A 2.5 s step title at each of the \(Plural.count(model.markers.count, "marker")) set while recording (\"1. \(model.markers[0].label)\"); ⌘Z takes them back")
+                    .accessibilityIdentifier("recorder.text.titleMarkers")
+            }
+            if let clicks = model.cursor?.clicks.count, clicks > 0 {
+                WideButton(title: model.isMarkingClicks ? "Marking the Clicks…" : "Circle Every Click",
+                           systemImage: "cursorarrow.click.2") { model.markClicks() }
+                    .disabled(model.isMarkingClicks)
+                    .instantTooltip("A 1.2 s circle at each of the \(Plural.count(clicks, "recorded click")) (a double click gets one); a click that has one already is left alone, and ⌘Z takes them all back")
+                    .accessibilityIdentifier("recorder.shape.markClicks")
+                let circles = model.clickCircles.count
+                if circles > 0 {
+                    GhostButton("Remove \(Plural.count(circles, "Click Circle"))", symbol: "trash",
+                                tooltip: "Takes out the circles at the clicks in one step; your other shapes stay (⌘Z puts them back)",
+                                identifier: "recorder.shape.removeClickCircles") { model.removeClickCircles() }
+                }
+            }
+            // Texts and shapes in one list in time order; a kind with more than one gets numbers ("Box 2").
+            let shapes = model.project.shapes ?? []
+            let numbers = Dictionary(uniqueKeysWithValues: EditProject.ShapeKind.allCases.flatMap { kind in
+                let same = shapes.filter { $0.kind == kind }.sorted { ($0.startUs, $0.id) < ($1.startUs, $1.id) }
+                return same.count > 1 ? same.enumerated().map { ($1.id, $0 + 1) } : []
+            })
+            let rows = (shapes.map { (start: $0.startUs, id: $0.id, shape: Optional($0), note: EditProject.TextNote?.none) }
+                + list.map { (start: $0.startUs, id: $0.id, shape: EditProject.Shape?.none, note: Optional($0)) })
+                .sorted { ($0.start, $0.id) < ($1.start, $1.id) }
+            ForEach(rows, id: \.id) { row in
+                if let shape = row.shape {
+                    ShapeRow(model: model, shape: shape, number: numbers[shape.id])
+                } else if let note = row.note {
+                    textRow(note)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func textRow(_ note: EditProject.TextNote) -> some View {
+        Group {
+            let selected = model.selectedText == note.id
+            HStack(spacing: 4) {
+                Button {
+                    model.selectedText = selected ? nil : note.id
+                    if !selected, let at = TimelineMap.outputTime(ofSource: note.startUs, in: model.project) { model.seek(at) }
+                } label: {
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(verbatim: note.text).font(.system(size: 12.5, weight: .medium)).lineLimit(1).truncationMode(.tail)
+                            Text(verbatim: editRange(model.project, fromUs: note.startUs, toUs: note.endUs).edit)
+                                .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+                        }
+                        Spacer(minLength: 4)
+                        Image(systemName: selected ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(RecorderPalette.dim)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.genHoverRow())
+                .accessibilityLabel("Text \(note.text), \(editRange(model.project, fromUs: note.startUs, toUs: note.endUs).edit)")
+                IconButton(systemName: "trash", tooltip: "Delete this text", size: 12) { model.deleteText(note.id) }
+            }
+            if selected { editor(note) }
+        }
+    }
+
+    private func editor(_ note: EditProject.TextNote) -> some View {
+        let id = note.id
+        return VStack(alignment: .leading, spacing: 8) {
+            TextField("Text", text: Binding(get: { note.text }, set: { value in
+                let words = String(value.prefix(200))
+                if !words.trimmingCharacters(in: .whitespaces).isEmpty { model.updateText(id) { $0.text = words } }
+            }), axis: .vertical)
+            .lineLimit(1...3)
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier("recorder.text.words")
+            SectionLabel(text: "Place")
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(30), spacing: 6), count: 3), spacing: 6) {
+                ForEach(Self.places, id: \.name) { place in
+                    let here = abs(note.x - place.x) < 0.01 && abs(note.y - place.y) < 0.01
+                    Button { model.updateText(id) { $0.x = place.x; $0.y = place.y } } label: {
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(here ? RecorderPalette.zoom : Color.white.opacity(0.08))
+                            .frame(width: 30, height: 20)
+                    }
+                    .buttonStyle(.genHoverPlain())
+                    .instantTooltip(place.name)
+                    .accessibilityLabel("Place \(place.name)")
+                }
+            }
+            GenSegmentedTabs("Style", items: [.init(EditProject.TextStyle.plate, "On a plate"), .init(.plain, "Plain")],
+                             selection: Binding(get: { note.style }, set: { value in model.updateText(id) { $0.style = value } }),
+                             minSegmentWidth: 90, identifier: "recorder.text.style", fillsWidth: true)
+            SectionLabel(text: "Size", value: sizeLabel(note.size, model.project))
+            Slider(value: Binding(get: { note.size }, set: { value in model.updateText(id) { $0.size = (value * 1000).rounded() / 1000 } }), in: 0.02...0.15)
+                .accessibilityLabel("Text size")
+                .accessibilityIdentifier("recorder.text.size")
+            SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(note.endUs - note.startUs) / 1_000_000))
+            Slider(value: Binding(get: { Double(note.endUs - note.startUs) / 1_000_000 }, set: { value in
+                model.updateText(id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
+            }), in: 0.2...max(0.3, Double(model.project.source.durationUs - note.startUs) / 1_000_000))
+            .accessibilityLabel("Text length")
+            WideButton(title: "Delete", systemImage: "trash", role: .destructive) { model.deleteText(id) }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.05)))
+    }
+}
+
+/// The parts of the picture to hide: a list, and for the selected one a frame to drag it on, its size, style and time.
+private struct HideInspector: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        let list = model.project.redactions ?? []
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Hide and Spotlight").font(.system(size: 15, weight: .semibold))
+            Text("Blur, pixelate or black out a part of the picture for a time: an address, a token, a notification. A spotlight does the opposite: it dims the rest to point at it. Each moves with a zoom.")
+                .font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                WideButton(title: "Hide a Part", systemImage: "eye.slash") { model.addRedaction() }
+                    .instantTooltip("A 3 s blur in the middle of the picture; or drag on the preview to draw one")
+                    .accessibilityIdentifier("recorder.hide.add")
+                WideButton(title: "Spotlight", systemImage: "light.max") { model.addSpotlight() }
+                    .instantTooltip(model.cursor == nil ? "A 3 s spotlight in the middle: the rest of the picture dims"
+                                    : "A 3 s spotlight on the pointer: it follows the cursor and the rest of the picture dims")
+                    .accessibilityIdentifier("recorder.hide.spotlight")
+            }
+            ForEach(list) { redaction in
+                let selected = model.selectedRedaction == redaction.id
+                let range = editRange(model.project, fromUs: redaction.startUs, toUs: redaction.endUs)
+                HStack(spacing: 4) {
+                    Button {
+                        model.selectedRedaction = selected ? nil : redaction.id
+                        if !selected, let at = TimelineMap.outputTime(ofSource: redaction.startUs, in: model.project) { model.seek(at) }
+                    } label: {
+                        HStack(spacing: 8) {
+                            RedactionThumb(model: model, redaction: redaction)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(verbatim: redaction.label ?? redaction.style.rawValue.capitalized)
+                                        .font(.system(size: 12.5, weight: .medium)).lineLimit(1).truncationMode(.tail)
+                                    if redaction.label != nil { Badge(redaction.style.rawValue.capitalized) }
+                                }
+                                Text(verbatim: range.edit)
+                                    .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 4)
+                            Image(systemName: selected ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(RecorderPalette.dim)
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.genHoverRow())
+                    .instantTooltip(range.recording.map { "\(range.edit) in the edit; \($0)" } ?? "\(range.edit) in the edit")
+                    .accessibilityLabel("\(redaction.style == .spotlight ? "Spotlight" : "Hidden part"), \(editRange(model.project, fromUs: redaction.startUs, toUs: redaction.endUs).edit), \(redaction.style.rawValue)")
+                    IconButton(systemName: "trash", tooltip: redaction.style == .spotlight ? "Delete this spotlight" : "Delete this hidden part", size: 12) {
+                        model.deleteRedaction(redaction.id)
+                    }
+                }
+                if selected { RedactionEditor(model: model, redaction: redaction) }
+            }
+        }
+    }
+}
+
+private struct RedactionEditor: View {
+    @Bindable var model: EditorModel
+    let redaction: EditProject.Redaction
+
+    var body: some View {
+        let id = redaction.id
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Name (what it hides)", text: Binding(get: { redaction.label ?? "" }, set: { value in
+                let name = String(value.prefix(60))
+                model.updateRedaction(id) { $0.label = name.trimmingCharacters(in: .whitespaces).isEmpty ? nil : name }
+            }))
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier("recorder.hide.name")
+            if redaction.follow == true {
+                Text("Centred on the pointer: only its size below counts.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                RedactionPicker(model: model, redaction: redaction)
+            }
+            GenSegmentedTabs("Style", items: EditProject.RedactionStyle.allCases.map { .init($0, $0.rawValue.capitalized) },
+                             selection: Binding(get: { redaction.style }, set: { value in
+                                 let revealed = redaction.style != .spotlight && value == .spotlight
+                                 model.updateRedaction(id) { $0.style = value }
+                                 // A spotlight lights its rectangle: what the blur hid is readable again.
+                                 if revealed { model.show("This part is a spotlight now: what it hid shows again (⌘Z hides it).", error: true) }
+                             }),
+                             minSegmentWidth: 70, identifier: "recorder.hide.style", fillsWidth: true)
+            SwitchRow("Follow the cursor", isOn: Binding(get: { redaction.follow == true }, set: { on in
+                model.updateRedaction(id) { $0.follow = on ? true : nil }
+            }))
+            .disabled(model.cursor == nil)
+            .accessibilityIdentifier("recorder.hide.follow")
+            .instantTooltip(model.cursor == nil ? "This recording has no cursor track"
+                            : "The part keeps its size and moves with the pointer, so a spotlight lights where you point")
+            if redaction.style == .spotlight {
+                GenSegmentedTabs("Lit shape", items: [.init(EditProject.SpotlightCutout.rounded, "Rounded"), .init(.rect, "Rectangle"), .init(.circle, "Circle")],
+                                 selection: Binding(get: { redaction.cutout ?? .rounded }, set: { value in
+                                     model.updateRedaction(id) { $0.cutout = value == .rounded ? nil : value }
+                                 }),
+                                 minSegmentWidth: 70, identifier: "recorder.hide.cutout", fillsWidth: true)
+                let dim = redaction.dim ?? Looks.spotlightDim
+                SectionLabel(text: "Dim the rest", value: "\(Int((dim * 100).rounded()))%")
+                Slider(value: Binding(get: { dim }, set: { value in
+                    model.updateRedaction(id) { $0.dim = abs(value - Looks.spotlightDim) < 0.005 ? nil : (value * 100).rounded() / 100 }
+                }), in: 0.2...0.95)
+                    .accessibilityLabel("How dark the rest of the picture gets")
+            }
+            SectionLabel(text: "Width", value: "\(Int((redaction.width * 100).rounded()))%")
+            Slider(value: Binding(get: { redaction.width }, set: { value in model.updateRedaction(id) { $0.width = (value * 200).rounded() / 200 } }), in: 0.02...1)
+                .accessibilityLabel("Hidden part width")
+            SectionLabel(text: "Height", value: "\(Int((redaction.height * 100).rounded()))%")
+            Slider(value: Binding(get: { redaction.height }, set: { value in model.updateRedaction(id) { $0.height = (value * 200).rounded() / 200 } }), in: 0.02...1)
+                .accessibilityLabel("Hidden part height")
+            SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(redaction.endUs - redaction.startUs) / 1_000_000))
+            Slider(value: Binding(get: { Double(redaction.endUs - redaction.startUs) / 1_000_000 }, set: { value in
+                model.updateRedaction(id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
+            }), in: 0.2...max(0.3, Double(model.project.source.durationUs - redaction.startUs) / 1_000_000))
+            .accessibilityLabel("Hidden part length")
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.05)))
+    }
+}
+
+/// The hidden area of the frame at the redaction's start, as the row's leading picture: which part this row hides.
+private struct RedactionThumb: View {
+    let model: EditorModel
+    let redaction: EditProject.Redaction
+
+    var body: some View {
+        Group {
+            if let tile = model.filmstrip.tile(atSource: redaction.startUs),
+               let crop = tile.image.cropping(to: CGRect(x: redaction.x * Double(tile.image.width), y: redaction.y * Double(tile.image.height),
+                                                         width: max(1, redaction.width * Double(tile.image.width)),
+                                                         height: max(1, redaction.height * Double(tile.image.height))).integral) {
+                Image(decorative: crop, scale: 1).resizable().aspectRatio(contentMode: .fill)
+            } else {
+                Image(systemName: "eye.slash").font(.system(size: 11)).foregroundStyle(RecorderPalette.dim)
+            }
+        }
+        .frame(width: 44, height: 28)
+        .background(Color.black.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .accessibilityHidden(true)
+    }
+}
+
+/// The source frame at the redaction's start with its rectangle on it; dragging moves the rectangle.
+private struct RedactionPicker: View {
+    @Bindable var model: EditorModel
+    let redaction: EditProject.Redaction
+    @State private var grab: CGSize?
+
+    var body: some View {
+        let aspect = CGFloat(model.project.source.width) / CGFloat(max(1, model.project.source.height))
+        GeometryReader { geometry in
+            let size = geometry.size
+            let rect = CGRect(x: redaction.x * size.width, y: redaction.y * size.height,
+                              width: redaction.width * size.width, height: redaction.height * size.height)
+            ZStack(alignment: .topLeading) {
+                if let tile = model.filmstrip.tile(atSource: redaction.startUs) {
+                    Image(decorative: tile.image, scale: 1).resizable().aspectRatio(contentMode: .fill)
+                        .frame(width: size.width, height: size.height).clipped()
+                } else {
+                    Color.black
+                }
+                Rectangle().fill(Color.black.opacity(0.45))
+                    .frame(width: rect.width, height: rect.height)
+                    .overlay(Rectangle().strokeBorder(Color.white, style: StrokeStyle(lineWidth: 1.5, dash: [5, 3])))
+                    .offset(x: rect.minX, y: rect.minY)
+            }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                // The rectangle keeps the offset of the point grabbed; a press outside it centres it there.
+                let offset = grab ?? (rect.contains(value.startLocation)
+                    ? CGSize(width: value.startLocation.x - rect.minX, height: value.startLocation.y - rect.minY)
+                    : CGSize(width: rect.width / 2, height: rect.height / 2))
+                grab = offset
+                model.updateRedaction(redaction.id) {
+                    $0.x = Double((value.location.x - offset.width) / size.width)
+                    $0.y = Double((value.location.y - offset.height) / size.height)
+                }
+            }.onEnded { _ in grab = nil })
+        }
+        .aspectRatio(aspect, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityLabel("Hidden part position")
+        .accessibilityIdentifier("recorder.hide.position")
+    }
+}
+
+private struct AudioInspector: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        let audio = model.project.audio
+        if model.waveform.loaded && !model.waveform.hasAudio {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Audio").font(.system(size: 15, weight: .semibold))
+                EmptyState(symbol: "speaker.slash", text: "The recording has no sound of its own",
+                           detail: "Record with the microphone or the system audio on to get a sound track, or put music under it below.")
+                MusicSection(model: model)
+            }
+        } else {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Audio").font(.system(size: 15, weight: .semibold))
+            SwitchRow("Include audio", isOn: Binding(get: { audio.include }, set: { value in model.setAudio { $0.include = value } }))
+                .accessibilityIdentifier("recorder.audio.include")
+            VStack(alignment: .leading, spacing: 8) {
+                SectionLabel(text: "Volume", value: volumeLabel(audio.volume))
+                // 0 dB (100%) snaps, so the original level is easy to find again.
+                Slider(value: Binding(get: { audio.volume }, set: { value in
+                    let stepped = (value * 20).rounded() / 20
+                    model.setAudio { $0.volume = abs(stepped - 1) < 0.06 ? 1 : stepped }
+                }), in: 0...2)
+                    .accessibilityLabel("Volume")
+                    .accessibilityValue(volumeLabel(audio.volume))
+                    .accessibilityIdentifier("recorder.audio.volume")
+                HStack {
+                    Text("Mute").font(.system(size: 10.5)).foregroundStyle(RecorderPalette.dim)
+                    Spacer()
+                    Text("0 dB").font(.system(size: 10.5)).foregroundStyle(RecorderPalette.dim)
+                    Spacer()
+                    Text("+6 dB").font(.system(size: 10.5)).foregroundStyle(RecorderPalette.dim)
+                }
+            }
+            .disabled(!audio.include)
+            if model.audioTrackCount > 1 {
+                VStack(alignment: .leading, spacing: 6) {
+                    SectionLabel(text: "Tracks")
+                    ForEach(0..<model.audioTrackCount, id: \.self) { index in
+                        SwitchRow("Track \(index + 1)",
+                                  isOn: Binding(get: { !audio.mutedTracks.contains(index) }, set: { on in model.setTrackMuted(index, !on) }))
+                            .accessibilityIdentifier("recorder.audio.track\(index)")
+                    }
+                }
+                .disabled(!audio.include)
+            }
+            if model.waveform.hasAudio {
+                WideButton(title: model.isNormalizing ? "Measuring the Loudness…" : "Normalize Loudness", systemImage: "waveform.badge.magnifyingglass") {
+                    model.normalizeLoudness()
+                }
+                .disabled(model.isNormalizing)
+                .instantTooltip("Sets the volume so the export reaches -16 LUFS, the level of speech on the web")
+                .accessibilityIdentifier("recorder.audio.normalize")
+                if let lufs = model.measuredLufs {
+                    Text(verbatim: String(format: "The movie measured %.1f LUFS at 100%%; -16 LUFS is the target.", lufs))
+                        .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if model.waveform.hasAudio {
+                NoiseReductionSection(model: model)
+            }
+            MusicSection(model: model)
+        }
+        }
+    }
+}
+
+/// Noise reduction on export (the `denoise` op): on or off, each track in or out, and each track's strength.
+private struct NoiseReductionSection: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        let denoise = model.project.audio.denoise
+        let tracks = max(1, model.audioTrackCount)
+        VStack(alignment: .leading, spacing: 8) {
+            SwitchRow("Reduce noise", isOn: Binding(get: { denoise != nil }, set: { on in model.setDenoise(enabled: on) }))
+                .instantTooltip("Turns fan and room hum down in the export; the preview plays the sound as recorded")
+                .accessibilityIdentifier("recorder.audio.denoise")
+            if let denoise {
+                ForEach(0..<tracks, id: \.self) { index in
+                    VStack(alignment: .leading, spacing: 4) {
+                        if tracks > 1 {
+                            SwitchRow("Clean track \(index + 1)", isOn: Binding(get: { denoise.cleans(track: index) },
+                                                                                 set: { on in model.setDenoiseTrack(index, on: on) }))
+                                .accessibilityIdentifier("recorder.audio.denoise.track\(index)")
+                        }
+                        if denoise.cleans(track: index) {
+                            SectionLabel(text: tracks > 1 ? "Track \(index + 1) strength" : "Strength",
+                                         value: Self.strengthLabel(denoise.strength(ofTrack: index)))
+                            Slider(value: Binding(get: { denoise.strength(ofTrack: index) },
+                                                  set: { value in model.setDenoiseStrength(index, reductionDb: value) }),
+                                   in: 1...40)
+                                .accessibilityLabel(tracks > 1 ? "Track \(index + 1) noise reduction" : "Noise reduction")
+                                .accessibilityValue(Self.strengthLabel(denoise.strength(ofTrack: index)))
+                                .accessibilityIdentifier("recorder.audio.denoise.strength\(index)")
+                        }
+                    }
+                }
+                Text("12 dB takes hum away; above 25 dB words start to blur. Only the export is cleaned.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    static func strengthLabel(_ db: Double) -> String { "\(Int(db.rounded())) dB" }
+}
+
+/// Music under the movie: a file, its level and how far it dips under speech.
+private struct MusicSection: View {
+    @Bindable var model: EditorModel
+    /// The chosen file's length in seconds, read once per file, for the "Starts at" slider.
+    @State private var fileSeconds: Double?
+    @State private var preview: AVAudioPlayer?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(text: "Music")
+            if let music = model.project.audio.music {
+                let missing = !FileManager.default.fileExists(atPath: music.file)
+                HStack(spacing: 8) {
+                    Image(systemName: missing ? "exclamationmark.triangle.fill" : "music.note")
+                        .foregroundStyle(missing ? Color.red : RecorderPalette.dim)
+                    Text(verbatim: missing ? "Missing: \(URL(fileURLWithPath: music.file).lastPathComponent)" : URL(fileURLWithPath: music.file).lastPathComponent)
+                        .foregroundStyle(missing ? Color.red : Color.primary)
+                        .lineLimit(1).truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .instantTooltip(missing ? "\(music.file) is gone; the export plays without music. Choose the file again below." : music.file)
+                    if !missing {
+                        IconButton(systemName: preview?.isPlaying == true ? "stop.fill" : "play.fill",
+                                   tooltip: preview?.isPlaying == true ? "Stop the preview" : "Play the music alone from where it starts") {
+                            togglePreview(music)
+                        }
+                        .accessibilityIdentifier("recorder.audio.music.preview")
+                    }
+                    IconButton(systemName: "trash", tooltip: "Remove the music") {
+                        stopPreview()
+                        model.setAudio { $0.music = nil }
+                    }
+                    .accessibilityIdentifier("recorder.audio.music.remove")
+                }
+                .task(id: music.file) {
+                    fileSeconds = nil
+                    stopPreview()
+                    guard !missing, let duration = try? await AVURLAsset(url: URL(fileURLWithPath: music.file)).load(.duration) else { return }
+                    fileSeconds = duration.seconds.isFinite ? duration.seconds : nil
+                }
+                if let fileSeconds, fileSeconds > 1 {
+                    let start = Double(music.startMs ?? 0) / 1000
+                    SectionLabel(text: "Starts at", value: formatClock(Int64(start * 1_000_000), tenths: true) + " of " + formatClock(Int64((fileSeconds * 1_000_000).rounded()), tenths: true))
+                    Slider(value: Binding(get: { min(start, fileSeconds - 0.5) }, set: { value in
+                        model.setMusic { $0.startMs = value < 0.25 ? nil : Int((value * 2).rounded() * 500) }
+                    }), in: 0...max(0.5, fileSeconds - 0.5))
+                        .accessibilityLabel("Where in the music file it starts")
+                        .instantTooltip("Skip an intro: the movie's music begins this far into the file")
+                }
+                SwitchRow("Loop to the movie's length", isOn: Binding(get: { music.loop != false }, set: { on in
+                    model.setMusic { $0.loop = on ? nil : false }
+                }))
+                .accessibilityIdentifier("recorder.audio.music.loop")
+                .instantTooltip("Off plays the file once, then the movie goes on without music")
+                SectionLabel(text: "Fade in and out")
+                GenSegmentedTabs("Fade", items: [.init(0, "Off"), .init(500, "0.5 s"), .init(1500, "1.5 s"), .init(3000, "3 s")],
+                                 selection: Binding(get: { [0, 500, 1500, 3000].min { abs($0 - music.fadeMs) < abs($1 - music.fadeMs) } ?? 1500 },
+                                                    set: { value in model.setMusic { $0.fadeMs = value } }),
+                                 minSegmentWidth: 50, identifier: "recorder.audio.music.fade", fillsWidth: true)
+                SectionLabel(text: "Music volume", value: "\(Int((music.volume * 100).rounded()))%")
+                Slider(value: Binding(get: { music.volume }, set: { value in model.setMusic { $0.volume = (value * 20).rounded() / 20 } }), in: 0...1)
+                    .accessibilityLabel("Music volume")
+                SectionLabel(text: "Quieter under speech", value: music.duck == 0 ? "Off" : "\(Int((music.duck * 100).rounded()))%")
+                Slider(value: Binding(get: { music.duck }, set: { value in model.setMusic { $0.duck = (value * 20).rounded() / 20 } }), in: 0...1)
+                    .accessibilityLabel("Music quieter under speech")
+                    .instantTooltip("While a transcript line plays the music drops by this much, so speech stays clear")
+                if model.zoom.captionLines.isEmpty && music.duck > 0 {
+                    Text("Nothing ducks yet: the movie has no transcript (Captions tab → Transcribe).")
+                        .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            WideButton(title: model.project.audio.music == nil ? "Add Music…" : "Choose Other Music…", systemImage: "music.note.list") {
+                model.chooseMusic()
+            }
+            .accessibilityIdentifier("recorder.audio.music.choose")
+        }
+        .onDisappear { stopPreview() }
+    }
+
+    /// Plays the file alone at the music volume from its start, or stops it.
+    private func togglePreview(_ music: EditProject.Music) {
+        if preview?.isPlaying == true {
+            stopPreview()
+            return
+        }
+
+        do {
+            let player = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: music.file))
+            player.volume = Float(max(0.2, music.volume))
+            player.currentTime = Double(music.startMs ?? 0) / 1000
+            player.play()
+            preview = player
+        } catch {
+            HubPerf.log("recorder.music.preview failed for \(music.file): \(error.localizedDescription)")
+            model.notice = "The music file could not be played: \(error.localizedDescription)"
+            model.noticeIsError = true
+        }
+    }
+
+    private func stopPreview() {
+        preview?.stop()
+        preview = nil
+    }
+}
+
+/// One click for a common destination: it sets every choice below (format, codec, size, subtitle file, chapters),
+/// which stay editable; the preset that matches the current choices shows a check mark.
+private struct ExportPreset {
+    let name: String
+    let symbol: String
+    let detail: String
+    let format: EditProject.ExportFormat?
+    let codec: EditProject.Codec
+    let maxHeight: Int
+    /// The subtitle file it asks for when the movie has a transcript.
+    let subtitles: EditProject.SubtitleFormat?
+    let chapters: Bool?
+
+    func set(_ settings: inout EditProject.ExportSettings, transcript: Bool) {
+        settings.format = format
+        settings.codec = codec
+        settings.maxHeight = maxHeight
+        settings.subtitles = transcript ? subtitles : nil
+        settings.chapters = chapters
+    }
+
+    func matches(_ settings: EditProject.ExportSettings, transcript: Bool) -> Bool {
+        var expected = settings
+        set(&expected, transcript: transcript)
+        return expected == settings
+    }
+
+    static let all: [ExportPreset] = [
+        ExportPreset(name: "YouTube", symbol: "play.rectangle",
+                     detail: "MP4, H.264 at 1080p, the markers as chapters, and an SRT subtitle file when the movie has a transcript",
+                     format: nil, codec: .h264, maxHeight: 1080, subtitles: .srt, chapters: nil),
+        ExportPreset(name: "Chat", symbol: "bubble.left", detail: "A small MP4 for Slack, Teams or a mail: H.264 at 720p, no subtitle file, no chapters",
+                     format: nil, codec: .h264, maxHeight: 720, subtitles: nil, chapters: false),
+        ExportPreset(name: "README GIF", symbol: "photo.on.rectangle", detail: "A GIF for a README or an issue: 10 fps, at most 960 pixels wide, no sound",
+                     format: .gif, codec: .h264, maxHeight: 0, subtitles: nil, chapters: false),
+        ExportPreset(name: "Archive", symbol: "archivebox", detail: "HEVC at the recording's full size with chapters: the best picture in the smallest file",
+                     format: nil, codec: .hevc, maxHeight: 0, subtitles: nil, chapters: nil),
+    ]
+}
+
+/// "100% (0 dB)", "50% (−6.0 dB)", "Muted".
+private func volumeLabel(_ volume: Double) -> String {
+    guard volume > 0.001 else { return "Muted" }
+    let db = 20 * log10(volume)
+    return abs(db) < 0.05 ? "100% (0 dB)" : String(format: "%d%% (%@%.1f dB)", Int((volume * 100).rounded()), db > 0 ? "+" : "−", abs(db))
+}
+
+/// What `tools recorder check` found: things to fix first (red), then things to look at; Show moves the playhead there.
+private struct ExportIssues: View {
+    let model: EditorModel
+
+    var body: some View {
+        let fixes = model.issues.filter(\.mustFix).count
+        VStack(alignment: .leading, spacing: 6) {
+            SectionLabel(text: fixes > 0 ? "Fix before you export" : "Look at before you export",
+                         value: Plural.count(model.issues.count, "thing"))
+            let fixable = model.issues.filter { $0.actionOps != nil }.count
+            if fixable > 1 {
+                GhostButton("Fix All", symbol: "wand.and.stars",
+                            tooltip: "Run the \(fixable) fixes below in one step (⌘Z undoes them all)",
+                            identifier: "recorder.export.issue.fixAll") { model.fixAll() }
+            }
+            ForEach(model.issues) { issue in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: issue.mustFix ? "exclamationmark.triangle.fill" : "info.circle")
+                        .foregroundStyle(issue.mustFix ? Color.red : RecorderPalette.dim)
+                        .font(.system(size: 11.5))
+                    // The message gets the whole width; its actions sit on a row under it, so two never squeeze it.
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(verbatim: issue.message)
+                            .font(.system(size: 12))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        let shownAt = issue.at.flatMap { TimelineMap.outputTime(ofSource: Int64($0 * 1_000_000), in: model.project) }
+                        let removable = issue.mustFix && issue.selection != nil && issue.action == nil
+                        let action = issue.actionOps == nil ? nil : issue.action
+                        // No empty row (and its gap) under an issue that has nothing to press.
+                        if shownAt != nil || removable || action != nil {
+                            HStack(spacing: 6) {
+                                if let out = shownAt {
+                                    GhostButton("Show", symbol: "arrow.right.circle", tooltip: "Move the playhead there",
+                                                identifier: "recorder.export.issue.show") { model.seek(out) }
+                                } else if removable {
+                                    GhostButton("Remove", symbol: "trash", tooltip: "Remove it: it never shows (⌘Z brings it back)",
+                                                identifier: "recorder.export.issue.remove") { model.remove(issue) }
+                                }
+                                if let action {
+                                    GhostButton(action.label, symbol: action.label == "Remove" ? "trash" : "wand.and.stars",
+                                                tooltip: "\(issue.fix.map { "Runs \($0)" } ?? action.label) (⌘Z undoes it)",
+                                                identifier: "recorder.export.issue.action") { model.runAction(issue) }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Contain, not combine: a combined row would read as one element and hide its buttons from VoiceOver.
+                .accessibilityElement(children: .contain)
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill((fixes > 0 ? Color.red : Color.white).opacity(0.07)))
+    }
+}
+
+private struct ExportInspector: View {
+    @Bindable var model: EditorModel
+    /// Opinionated, so a setting: an export reveals its file in Finder by default (Finder then comes to the front).
+    @AppStorage(EditorModel.revealAfterExportKey) private var revealAfterExport = true
+    @AppStorage(EditorModel.copyAfterExportKey) private var copyAfterExport = false
+    private let heights: [Int] = [0, 2160, 1440, 1080, 720]
+
+    var body: some View {
+        let settings = model.project.export
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Export").font(.system(size: 15, weight: .semibold))
+                // Once the edit rests for 0.4 s after a save: a drag saves many revisions, and each check is a tools run.
+                .task(id: model.project.revision) {
+                    try? await Task.sleep(for: .milliseconds(400))
+                    if !Task.isCancelled { model.refreshIssues() }
+                }
+            if !model.issues.isEmpty {
+                ExportIssues(model: model)
+            }
+            SectionLabel(text: "Presets")
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                let transcript = !model.zoom.captionLines.isEmpty
+                ForEach(ExportPreset.all, id: \.name) { preset in
+                    let active = preset.matches(settings, transcript: transcript)
+                    WideButton(title: preset.name, systemImage: active ? "checkmark" : preset.symbol) {
+                        model.setExport { preset.set(&$0, transcript: transcript) }
+                    }
+                    .instantTooltip(preset.detail + (active ? " (the current settings)" : ""))
+                    .accessibilityLabel("\(preset.name) preset\(active ? ", active" : "")")
+                    .accessibilityIdentifier("recorder.export.preset.\(preset.name)")
+                }
+            }
+            SectionLabel(text: "Format")
+            GenSegmentedTabs("Format", items: EditProject.ExportFormat.allCases.map { .init($0, $0.rawValue.uppercased()) },
+                             selection: Binding(get: { settings.format ?? .mp4 }, set: { format in model.setExport { $0.format = format == .mp4 ? nil : format } }),
+                             minSegmentWidth: 70, identifier: "recorder.export.format", fillsWidth: true)
+            if let format = settings.format, format != .mp4 {
+                Text(format == .gif ? "A GIF is 10 fps and at most 960 pixels wide, without sound." : "WebM is VP9 with Opus sound.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // A GIF has its own size and both converted formats their own codec, so those choices show for MP4 only.
+            if (settings.format ?? .mp4) == .mp4 {
+                SectionLabel(text: "Codec")
+                GenSegmentedTabs("Codec", items: [.init(EditProject.Codec.h264, "H.264"), .init(.hevc, "HEVC")],
+                                 selection: Binding(get: { settings.codec }, set: { codec in model.setExport { $0.codec = codec } }),
+                                 minSegmentWidth: 110, identifier: "recorder.export.codec", fillsWidth: true)
+            }
+            if settings.format != .gif {
+                SectionLabel(text: "Size")
+                // A size at or above the recording's own height is the same as Source, so it is not offered.
+                let offered = heights.filter { $0 == 0 || $0 < model.project.source.height || $0 == settings.maxHeight }
+                GenSegmentedTabs("Size", items: offered.map { .init($0, $0 == 0 ? "Source" : ($0 == 2160 ? "4K" : "\($0)p")) },
+                                 selection: Binding(get: { settings.maxHeight }, set: { value in model.setExport { $0.maxHeight = value } }),
+                                 minSegmentWidth: 36, identifier: "recorder.export.size", fillsWidth: true)
+            }
+            // A GIF has no sound and no player for subtitles or chapters; WebM players read WebVTT; only an MP4 carries chapters.
+            if settings.format != .gif {
+                SectionLabel(text: "Subtitle file")
+                GenSegmentedTabs("Subtitle file", items: [.init(Optional<EditProject.SubtitleFormat>.none, "None"), .init(.srt, "SRT"), .init(.vtt, "WebVTT")],
+                                 selection: Binding(get: { settings.subtitles }, set: { format in model.setExport { $0.subtitles = format } }),
+                                 minSegmentWidth: 60, identifier: "recorder.export.subtitles", fillsWidth: true)
+                    .instantTooltip("A subtitle file beside the movie, from the transcript with your fixes, in the movie's time")
+            }
+            if !model.markers.isEmpty && (settings.format ?? .mp4) == .mp4 {
+                SwitchRow("Chapters from the markers", isOn: Binding(get: { settings.chapters != false }, set: { on in
+                    model.setExport { $0.chapters = on ? nil : false }
+                }))
+                .accessibilityIdentifier("recorder.export.chapters")
+                .instantTooltip("An MP4 lists the recording's \(Plural.count(model.markers.count, "marker")) as chapters (QuickTime: View → Chapters)")
+            }
+            if settings.subtitles != nil, settings.format != .gif, model.zoom.captionLines.isEmpty {
+                Text("This movie has no transcript yet: Transcribe on the Captions tab, or the export writes no subtitles.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            let source = CGSize(width: model.project.source.width, height: model.project.source.height)
+            // A screen recording exports at 60 fps; the label uses the same size rule as the export.
+            let aspect = model.project.frame?.aspect
+            let size = EditRenderer.outputSizes(source: source, maxHeight: settings.maxHeight, aspect: aspect,
+                                                h264Fps: settings.codec == .h264 ? 60 : nil).canvas
+            let full = EditRenderer.outputSizes(source: source, maxHeight: settings.maxHeight, aspect: aspect).canvas
+            let capped = size.height < full.height
+            let movie = (settings.format ?? .mp4) == .mp4
+            let part = model.exportPart
+            let length = part.map { $0.toUs - $0.fromUs } ?? model.durationUs
+            HStack {
+                SectionLabel(text: "Part", value: part.map { "\(formatClock($0.fromUs, tenths: true)) – \(formatClock($0.toUs, tenths: true))" }
+                    ?? "Everything (\(formatClock(model.durationUs, tenths: true)))")
+                if part != nil {
+                    IconButton(systemName: "xmark.circle.fill", tooltip: "Export the whole edit again", size: 12) { model.clearPart() }
+                        .accessibilityIdentifier("recorder.export.clearPart")
+                }
+            }
+            if part == nil {
+                HStack(spacing: 8) {
+                    WideButton(title: "Set In (I)") { model.markIn() }
+                        .accessibilityIdentifier("recorder.export.markIn")
+                    WideButton(title: "Set Out (O)") { model.markOut() }
+                        .accessibilityIdentifier("recorder.export.markOut")
+                }
+                Text("A part from In to Out exports alone; the edit stays whole.")
+                    .font(.system(size: 11)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            SectionLabel(text: "Output", value: movie ? "\(Int(size.width)) × \(Int(size.height)) · \(formatClock(length, tenths: true))"
+                                                      : formatClock(length, tenths: true))
+            if movie {
+                let bytes = EditExporter.estimatedBytes(size: size, lengthUs: length, codec: settings.codec)
+                SectionLabel(text: "File size", value: "about \(ByteFormat.file(bytes))")
+                    .instantTooltip("From screen exports of this kind (about 0.08 bits per pixel and frame at 60 fps, HEVC 40 % less); a busy movie can be twice as large")
+                if bytes > 25_000_000 {
+                    Text("Many chats take 25 MB at most: the Chat preset (720p) or a part from In to Out makes it smaller.")
+                        .font(.system(size: 11)).foregroundStyle(Color.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if capped && movie {
+                Text(verbatim: "H.264 at 60 fps stops at \(Int(size.width)) × \(Int(size.height)). HEVC keeps \(Int(full.width)) × \(Int(full.height)).")
+                    .font(.system(size: 11))
+                    .foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ExportFileRow(model: model, url: EditExporter.outputURL(for: model.project, format: settings.format ?? .mp4))
+            if let progress = model.exportProgress {
+                ProgressView(value: progress).progressViewStyle(.linear)
+                HStack {
+                    Text(verbatim: "Exporting… \(Int(progress * 100))%").font(.system(size: 12).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+                    Spacer()
+                    if model.canCancelExport {
+                        GhostButton("Cancel", symbol: "xmark.circle", tooltip: "Stop the export; no file is written (Esc)",
+                                    identifier: "recorder.export.cancel") { model.cancelExport() }
+                            .keyboardShortcut(.cancelAction)
+                    }
+                }
+            } else {
+                SwitchRow("Copy to clipboard when done", isOn: $copyAfterExport)
+                    .instantTooltip("Puts the exported file on the clipboard, ready to paste into a chat or a mail")
+                    .accessibilityIdentifier("recorder.export.copy")
+                SwitchRow("Show in Finder when done", isOn: $revealAfterExport)
+                    .accessibilityIdentifier("recorder.export.reveal")
+                Button { model.export() } label: {
+                    Text(verbatim: "\((settings.format ?? .mp4) == .mp4 ? "Export Movie" : "Export \(settings.format?.rawValue.uppercased() ?? "")")   ⌘E")
+                        .frame(maxWidth: .infinity, minHeight: 22)
+                }
+                .buttonStyle(.genPrimary())
+                .keyboardShortcut("e", modifiers: .command)
+                .accessibilityIdentifier("recorder.export.start")
+            }
+        }
+    }
+}
+
+// MARK: - Preview and transport
+
+private struct PreviewView: View {
+    @Bindable var model: EditorModel
+    let still: CGImage?
+
+    var body: some View {
+        // The canvas the export draws: the movie's own shape, or the frame's aspect.
+        let canvas = EditRenderer.outputSizes(source: CGSize(width: model.project.source.width, height: model.project.source.height),
+                                              maxHeight: 0, aspect: model.project.frame?.aspect).canvas
+        let aspect = canvas.width / max(1, canvas.height)
+        ZStack {
+            RecorderPalette.window
+            Group {
+                if let still {
+                    Image(decorative: still, scale: 1).resizable()
+                } else {
+                    PlayerLayerView(player: model.player)
+                }
+            }
+            .aspectRatio(aspect, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .onTapGesture { model.togglePlay() }
+            .overlay {
+                if model.tab == .hide && !model.isPlaying {
+                    HiddenPartHandles(model: model, clock: model.clock)
+                } else if model.tab == .style && !model.isPlaying && model.project.camera != nil {
+                    CameraBubbleHandle(model: model, clock: model.clock)
+                } else if model.tab == .text && !model.isPlaying {
+                    ZStack {
+                        TextHandles(model: model, clock: model.clock)
+                        ShapeHandles(model: model, clock: model.clock)
+                    }
+                } else if model.tab == .find && !model.isPlaying {
+                    ScreenBoxOverlay(model: model, clock: model.clock)
+                }
+            }
+            .shadow(color: .black.opacity(0.5), radius: 18, y: 6)
+            .padding(28)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityLabel("Preview")
+    }
+}
+
+/// The Hide tab on the preview itself: every hidden part showing at the playhead is outlined where it lands (through
+/// the zoom and the frame); the selected one has a dashed frame to drag and corner handles to size it. With none
+/// selected, a drag on the picture draws a new hidden part from the playhead.
+private struct HiddenPartHandles: View {
+    @Bindable var model: EditorModel
+    let clock: PlayheadClock
+    @State private var drawing: CGRect?
+    @State private var grabbed: CGRect?
+
+    private enum Grip: CaseIterable { case topLeft, topRight, bottomLeft, bottomRight }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let map = model.sourceToCanvas(atOutput: clock.outUs)
+            let sourceUs = TimelineMap.sourceTime(atOutput: clock.outUs, in: model.project)
+            // A part that follows the cursor is outlined where the picture draws it now.
+            let showing = (model.project.redactions ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
+                .map { ZoomState.placed($0, atSourceUs: sourceUs, track: model.cursor) }
+            let toView = { (rect: CGRect) in CGRect(x: rect.minX * size.width, y: rect.minY * size.height,
+                                                    width: rect.width * size.width, height: rect.height * size.height) }
+            ZStack(alignment: .topLeading) {
+                // The surface that draws a new part; a tap on it still plays and pauses.
+                Color.clear.contentShape(Rectangle())
+                    .onTapGesture { model.togglePlay() }
+                    .gesture(DragGesture(minimumDistance: 6).onChanged { value in
+                        drawing = CGRect(x: min(value.startLocation.x, value.location.x), y: min(value.startLocation.y, value.location.y),
+                                         width: abs(value.location.x - value.startLocation.x), height: abs(value.location.y - value.startLocation.y))
+                    }.onEnded { _ in
+                        defer { drawing = nil }
+                        guard let drawn = drawing, drawn.width > 8, drawn.height > 8 else { return }
+                        let canvas = CGRect(x: drawn.minX / size.width, y: drawn.minY / size.height,
+                                            width: drawn.width / size.width, height: drawn.height / size.height)
+                        model.addRedaction(rect: map.sourceRect(ofCanvas: canvas))
+                    })
+                    .accessibilityLabel("Draw a part to hide")
+                ForEach(showing) { redaction in
+                    // Only the part the picture shows: a zoom or a cover crop can put the rest outside it.
+                    let mapped = map.rect(CGRect(x: redaction.x, y: redaction.y, width: redaction.width, height: redaction.height))
+                    let rect = toView(mapped.intersection(map.shown).isNull ? .zero : mapped.intersection(map.shown))
+                    let selected = model.selectedRedaction == redaction.id
+                    Rectangle()
+                        .strokeBorder(Color.white.opacity(selected ? 1 : 0.6), style: StrokeStyle(lineWidth: selected ? 1.5 : 1, dash: [5, 3]))
+                        .background(Color.white.opacity(selected ? 0.06 : 0.001))
+                        .frame(width: rect.width, height: rect.height)
+                        .contentShape(Rectangle())
+                        .offset(x: rect.minX, y: rect.minY)
+                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                            model.selectedRedaction = redaction.id
+                            let start = grabbed ?? rect
+                            grabbed = start
+                            move(redaction.id, to: start.offsetBy(dx: value.translation.width, dy: value.translation.height), size: size, map: map)
+                        }.onEnded { _ in grabbed = nil })
+                        .instantTooltip("\(redaction.style.rawValue.capitalized): drag to move")
+                        .accessibilityLabel("\(redaction.style == .spotlight ? "Spotlight" : "Hidden part"), \(redaction.style.rawValue)")
+                    if selected {
+                        ForEach(Grip.allCases, id: \.self) { grip in
+                            let corner = Self.corner(grip, of: rect)
+                            RoundedRectangle(cornerRadius: 2).fill(Color.white)
+                                .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(Color.black.opacity(0.4), lineWidth: 1))
+                                .frame(width: 10, height: 10)
+                                .contentShape(Rectangle().inset(by: -5))
+                                .offset(x: corner.x - 5, y: corner.y - 5)
+                                .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                                    let start = grabbed ?? rect
+                                    grabbed = start
+                                    move(redaction.id, to: Self.resized(start, grip: grip, by: value.translation), size: size, map: map)
+                                }.onEnded { _ in grabbed = nil })
+                                .accessibilityHidden(true)
+                        }
+                    }
+                }
+                if let drawing {
+                    Rectangle().strokeBorder(Color.white, style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                        .background(Color.black.opacity(0.35))
+                        .frame(width: drawing.width, height: drawing.height)
+                        .offset(x: drawing.minX, y: drawing.minY)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
+    }
+
+    private func move(_ id: String, to rect: CGRect, size: CGSize, map: Looks.SourceToCanvas) {
+        let canvas = CGRect(x: rect.minX / size.width, y: rect.minY / size.height,
+                            width: max(4, rect.width) / size.width, height: max(4, rect.height) / size.height)
+        let source = map.sourceRect(ofCanvas: canvas)
+        model.updateRedaction(id) {
+            $0.x = source.minX
+            $0.y = source.minY
+            $0.width = source.width
+            $0.height = source.height
+        }
+    }
+
+    private static func corner(_ grip: Grip, of rect: CGRect) -> CGPoint {
+        switch grip {
+        case .topLeft: CGPoint(x: rect.minX, y: rect.minY)
+        case .topRight: CGPoint(x: rect.maxX, y: rect.minY)
+        case .bottomLeft: CGPoint(x: rect.minX, y: rect.maxY)
+        case .bottomRight: CGPoint(x: rect.maxX, y: rect.maxY)
+        }
+    }
+
+    /// The rectangle with one corner moved; the opposite corner stays where it is.
+    private static func resized(_ rect: CGRect, grip: Grip, by delta: CGSize) -> CGRect {
+        var minX = rect.minX, minY = rect.minY, maxX = rect.maxX, maxY = rect.maxY
+        switch grip {
+        case .topLeft: minX += delta.width; minY += delta.height
+        case .topRight: maxX += delta.width; minY += delta.height
+        case .bottomLeft: minX += delta.width; maxY += delta.height
+        case .bottomRight: maxX += delta.width; maxY += delta.height
+        }
+        return CGRect(x: min(minX, maxX - 4), y: min(minY, maxY - 4), width: max(4, abs(maxX - minX)), height: max(4, abs(maxY - minY)))
+    }
+}
+
+/// The Text tab on the preview: a grip at the centre of every text showing at the playhead; a drag moves it (in the
+/// canvas, where a text lives), a click selects it.
+private struct TextHandles: View {
+    @Bindable var model: EditorModel
+    let clock: PlayheadClock
+    @State private var grabbed: CGPoint?
+
+    var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let sourceUs = TimelineMap.sourceTime(atOutput: clock.outUs, in: model.project)
+            let showing = (model.project.texts ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
+            ZStack(alignment: .topLeading) {
+                Color.clear.allowsHitTesting(false)
+                ForEach(showing) { note in
+                    let selected = model.selectedText == note.id
+                    let center = CGPoint(x: note.x * size.width, y: note.y * size.height)
+                    Circle()
+                        .fill(selected ? RecorderPalette.zoom : Color.white.opacity(0.85))
+                        .overlay(Circle().strokeBorder(Color.black.opacity(0.45), lineWidth: 1))
+                        .overlay(Image(systemName: "arrow.up.and.down.and.arrow.left.and.right").font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(selected ? Color.white : Color.black.opacity(0.7)))
+                        .frame(width: 22, height: 22)
+                        .contentShape(Circle().inset(by: -6))
+                        .offset(x: center.x - 11, y: center.y - 11)
+                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                            model.selectedText = note.id
+                            let start = grabbed ?? CGPoint(x: note.x, y: note.y)
+                            grabbed = start
+                            model.updateText(note.id) {
+                                $0.x = start.x + value.translation.width / max(1, size.width)
+                                $0.y = start.y + value.translation.height / max(1, size.height)
+                            }
+                        }.onEnded { _ in grabbed = nil })
+                        .instantTooltip("\(note.text): drag to move")
+                        .accessibilityLabel("Text \(note.text)")
+                }
+            }
+        }
+    }
+}
+
+/// One arrow, box or circle in the Text tab: select it (the playhead goes to it), its colour, line and length, delete.
+private struct ShapeRow: View {
+    @Bindable var model: EditorModel
+    let shape: EditProject.Shape
+    /// Its number among the shapes of its kind, when there is more than one ("Box 2").
+    var number: Int?
+    private static let colors = [("#FF3B30", "Red"), ("#FFCC00", "Yellow"), ("#34C759", "Green"), ("#0A84FF", "Blue"), ("#FFFFFF", "White")]
+
+    var body: some View {
+        let selected = model.selectedShape == shape.id
+        let name = shape.kind.rawValue.capitalized + (number.map { " \($0)" } ?? "")
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Button {
+                    model.selectedShape = selected ? nil : shape.id
+                    if !selected, let at = TimelineMap.outputTime(ofSource: shape.startUs, in: model.project) { model.seek(at) }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: shape.kind == .arrow ? "arrow.up.right" : (shape.kind == .box ? "rectangle" : "circle"))
+                            .foregroundStyle(swiftColor(shape.color))
+                            .frame(width: 20)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(verbatim: name).font(.system(size: 12.5, weight: .medium))
+                            Text(verbatim: editRange(model.project, fromUs: shape.startUs, toUs: shape.endUs).edit)
+                                .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+                        }
+                        Spacer(minLength: 4)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.genHoverRow())
+                .accessibilityLabel("\(name), \(editRange(model.project, fromUs: shape.startUs, toUs: shape.endUs).edit)")
+                IconButton(systemName: "trash", tooltip: "Delete this \(shape.kind.rawValue)", size: 12) { model.deleteShape(shape.id) }
+            }
+            if selected {
+                HStack(spacing: 8) {
+                    ForEach(Self.colors, id: \.0) { hex, name in
+                        Button { model.updateShape(shape.id) { $0.color = hex } } label: {
+                            Circle().fill(swiftColor(hex)).frame(width: 18, height: 18)
+                                .overlay(Circle().strokeBorder(Color.white.opacity(shape.color == hex ? 0.95 : 0.2), lineWidth: shape.color == hex ? 2 : 1))
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .instantTooltip(name)
+                        .accessibilityLabel("Color \(name)")
+                        .accessibilityAddTraits(shape.color == hex ? .isSelected : [])
+                    }
+                }
+                SectionLabel(text: "Line", value: sizeLabel(shape.width, model.project))
+                Slider(value: Binding(get: { shape.width }, set: { value in model.updateShape(shape.id) { $0.width = (value * 2000).rounded() / 2000 } }), in: 0.002...0.03)
+                    .accessibilityLabel("\(name) line width")
+                SectionLabel(text: "Appears", value: nil)
+                Picker("Appears", selection: Binding(get: { shape.appear ?? .draw }, set: { value in
+                    model.updateShape(shape.id) { $0.appear = value == .draw ? nil : value }
+                })) {
+                    Text("Draws On").tag(EditProject.ShapeAppear.draw)
+                    Text("Fades In").tag(EditProject.ShapeAppear.fade)
+                    Text("At Once").tag(EditProject.ShapeAppear.none)
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                .accessibilityLabel("How the \(name.lowercased()) appears")
+                HStack {
+                    SectionLabel(text: "Starts", value: editRange(model.project, fromUs: shape.startUs, toUs: shape.endUs).edit)
+                    GhostButton("Start at Playhead", symbol: "arrow.right.to.line", tooltip: "Move the start here and keep the length",
+                                identifier: "recorder.shape.startHere") { model.moveShapeStart(shape.id) }
+                }
+                let longest = max(0.6, min(15, Double(model.project.source.durationUs - shape.startUs) / 1_000_000))
+                SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(shape.endUs - shape.startUs) / 1_000_000))
+                Slider(value: Binding(get: { min(longest, Double(shape.endUs - shape.startUs) / 1_000_000) }, set: { value in
+                    model.updateShape(shape.id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }
+                }), in: 0.5...longest)
+                    .accessibilityLabel("\(name) length in seconds")
+            }
+        }
+        .liveRow(selected: selected)
+    }
+}
+
+/// The two points of each arrow, box or circle showing at the playhead, on the preview: drag a dot to move that end,
+/// drag the line between to move the whole shape. Points live in the source picture, mapped through the zoom.
+private struct ShapeHandles: View {
+    @Bindable var model: EditorModel
+    let clock: PlayheadClock
+    @State private var grabbed: (x1: Double, y1: Double, x2: Double, y2: Double)?
+
+    /// A handle's place for VoiceOver: "x 52%, y 40%" of the picture from its top left.
+    static func spoken(_ x: Double, _ y: Double) -> String {
+        "x \(Int((x * 100).rounded()))%, y \(Int((y * 100).rounded()))%"
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let map = model.sourceToCanvas(atOutput: clock.outUs)
+            let sourceUs = TimelineMap.sourceTime(atOutput: clock.outUs, in: model.project)
+            let showing = (model.project.shapes ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
+            let toView = { (p: CGPoint) in CGPoint(x: map.point(p).x * size.width, y: map.point(p).y * size.height) }
+            ZStack(alignment: .topLeading) {
+                Color.clear.allowsHitTesting(false)
+                // Only the selected shape has its handles; another shape shows one small dot at its end that selects it.
+                ForEach(showing.filter { model.selectedShape != $0.id }) { shape in
+                    let b = toView(CGPoint(x: shape.x2, y: shape.y2))
+                    Circle().fill(Color.white.opacity(0.55))
+                        .overlay(Circle().strokeBorder(Color.black.opacity(0.4), lineWidth: 1))
+                        .frame(width: 10, height: 10)
+                        .contentShape(Circle().inset(by: -6))
+                        .offset(x: b.x - 5, y: b.y - 5)
+                        .onTapGesture { model.selectedShape = shape.id }
+                        .instantTooltip("Select this \(shape.kind.rawValue)")
+                        .accessibilityLabel("Select \(shape.kind.rawValue)")
+                        .accessibilityAddTraits(.isButton)
+                }
+                ForEach(showing.filter { model.selectedShape == $0.id }) { shape in
+                    let selected = true
+                    let a = toView(CGPoint(x: shape.x1, y: shape.y1))
+                    let b = toView(CGPoint(x: shape.x2, y: shape.y2))
+                    ForEach([true, false], id: \.self) { first in
+                        let point = first ? a : b
+                        Circle()
+                            .fill(selected ? RecorderPalette.zoom : Color.white.opacity(0.9))
+                            .overlay(Circle().strokeBorder(Color.black.opacity(0.45), lineWidth: 1))
+                            .frame(width: 16, height: 16)
+                            .contentShape(Circle().inset(by: -6))
+                            .offset(x: point.x - 8, y: point.y - 8)
+                            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                                model.selectedShape = shape.id
+                                let start = grabbed ?? (shape.x1, shape.y1, shape.x2, shape.y2)
+                                grabbed = start
+                                // From where the drag began, so the point stays under the pointer.
+                                let origin = toView(first ? CGPoint(x: start.x1, y: start.y1) : CGPoint(x: start.x2, y: start.y2))
+                                let moved = map.sourcePoint(ofCanvas: CGPoint(x: (origin.x + value.translation.width) / max(1, size.width),
+                                                                             y: (origin.y + value.translation.height) / max(1, size.height)))
+                                model.updateShape(shape.id) {
+                                    if first { $0.x1 = moved.x; $0.y1 = moved.y } else { $0.x2 = moved.x; $0.y2 = moved.y }
+                                }
+                            }.onEnded { _ in grabbed = nil })
+                            .instantTooltip(shape.kind == .arrow ? (first ? "The arrow's tail: drag it" : "Where the arrow points: drag it") : "A corner: drag it")
+                            .accessibilityLabel("\(shape.kind.rawValue.capitalized) \(first ? "start" : "end")")
+                            .accessibilityValue(Self.spoken(first ? shape.x1 : shape.x2, first ? shape.y1 : shape.y2))
+                            .accessibilityAdjustableAction { direction in
+                                model.nudgeShape(shape.id, dx: direction == .increment ? 0.01 : -0.01, dy: 0, point: first ? 1 : 2)
+                            }
+                            .accessibilityAction(named: "Move Up") { model.nudgeShape(shape.id, dx: 0, dy: -0.01, point: first ? 1 : 2) }
+                            .accessibilityAction(named: "Move Down") { model.nudgeShape(shape.id, dx: 0, dy: 0.01, point: first ? 1 : 2) }
+                    }
+                    // The middle: drags the whole shape, both points by the same amount, kept inside the picture.
+                    let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+                    Circle()
+                        .fill(Color.white.opacity(0.9))
+                        .overlay(Circle().strokeBorder(Color.black.opacity(0.45), lineWidth: 1))
+                        .overlay(Image(systemName: "arrow.up.and.down.and.arrow.left.and.right").font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(Color.black.opacity(0.7)))
+                        .frame(width: 20, height: 20)
+                        .contentShape(Circle().inset(by: -6))
+                        // Set, never pushed: a handle that goes away under the pointer (its time ends, a deselect)
+                        // gets no exit, and a pushed hand would stay.
+                        .onHover { inside in (inside ? NSCursor.openHand : NSCursor.arrow).set() }
+                        .onDisappear { NSCursor.arrow.set() }
+                        .offset(x: middle.x - 10, y: middle.y - 10)
+                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                            let start = grabbed ?? (shape.x1, shape.y1, shape.x2, shape.y2)
+                            grabbed = start
+                            let from = map.sourcePoint(ofCanvas: .zero)
+                            let to = map.sourcePoint(ofCanvas: CGPoint(x: value.translation.width / max(1, size.width), y: value.translation.height / max(1, size.height)))
+                            // The shift, held so neither point leaves the picture.
+                            let dx = min(max(to.x - from.x, -min(start.x1, start.x2)), 1 - max(start.x1, start.x2))
+                            let dy = min(max(to.y - from.y, -min(start.y1, start.y2)), 1 - max(start.y1, start.y2))
+                            model.updateShape(shape.id) {
+                                $0.x1 = start.x1 + dx; $0.y1 = start.y1 + dy
+                                $0.x2 = start.x2 + dx; $0.y2 = start.y2 + dy
+                            }
+                        }.onEnded { _ in grabbed = nil })
+                        .instantTooltip("Drag to move the whole \(shape.kind.rawValue)")
+                        .accessibilityLabel("Move \(shape.kind.rawValue)")
+                        .accessibilityValue(Self.spoken((shape.x1 + shape.x2) / 2, (shape.y1 + shape.y2) / 2))
+                        .accessibilityAdjustableAction { direction in
+                            model.nudgeShape(shape.id, dx: direction == .increment ? 0.01 : -0.01, dy: 0)
+                        }
+                        .accessibilityAction(named: "Move Up") { model.nudgeShape(shape.id, dx: 0, dy: -0.01) }
+                        .accessibilityAction(named: "Move Down") { model.nudgeShape(shape.id, dx: 0, dy: 0.01) }
+                }
+            }
+        }
+    }
+}
+
+private struct PlayerLayerView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        let layer = AVPlayerLayer(player: player)
+        layer.videoGravity = .resizeAspect
+        layer.backgroundColor = NSColor.black.cgColor
+        view.layer = layer
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView.layer as? AVPlayerLayer)?.player = player
+    }
+}
+
+private struct TransportBar: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        HStack(spacing: 16) {
+            HStack(spacing: 10) {
+                ClockLabel(clock: model.clock, durationUs: model.durationUs)
+                    .fixedSize()
+                if let part = model.exportPart { PartPill(model: model, part: part) }
+            }
+            .frame(minWidth: 130, maxWidth: 250, alignment: .leading)
+            Spacer(minLength: 8)
+            IconButton(systemName: "backward.end.fill", tooltip: "To the start (Home)", size: 15) { model.seek(0) }
+            IconButton(systemName: model.isPlaying ? "pause.fill" : "play.fill", tooltip: model.isPlaying ? "Pause (Space)" : "Play (Space)", size: 18) {
+                model.togglePlay()
+            }
+            .accessibilityIdentifier("recorder.play")
+            IconButton(systemName: "forward.end.fill", tooltip: "To the end (End)", size: 15) { model.seek(model.durationUs) }
+            Spacer(minLength: 8)
+            MenuButton(items: {
+                EditorModel.laneChoices.map { choice in .action(choice.title, run: { model.addLane(kinds: choice.kinds) }) }
+            }) {
+                Label("Add Lane", systemImage: "rectangle.stack.badge.plus")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(RecorderPalette.text)
+            }
+            .instantTooltip("Add an effect lane under the others: zooms, hidden parts, texts, speed or any effect")
+            .accessibilityIdentifier("recorder.timeline.addLane")
+            .fixedSize()
+            // The scale slider gives way first in a narrow window; −, Fit and + stay.
+            ViewThatFits(in: .horizontal) {
+                scaleControls(slider: true)
+                scaleControls(slider: false)
+            }
+            .frame(minWidth: 90, maxWidth: 250, alignment: .trailing)
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 52)
+        .background(RecorderPalette.panel)
+    }
+
+    private func scaleControls(slider: Bool) -> some View {
+        HStack(spacing: 6) {
+            IconButton(systemName: "minus", tooltip: "Zoom the timeline out (⌘−)", size: 11) { model.zoomTimeline(by: 0.7) }
+            if slider {
+                Slider(value: Binding(get: { model.pointsPerSecond }, set: { model.pointsPerSecond = $0 }), in: 0...400)
+                    .frame(width: 110)
+                    .instantTooltip("Timeline scale")
+                    .accessibilityLabel("Timeline scale")
+            }
+            IconButton(systemName: "plus", tooltip: "Zoom the timeline in (⌘=)", size: 11) { model.zoomTimeline(by: 1.4) }
+            Button("Fit") { model.pointsPerSecond = 0 }
+                .buttonStyle(.genHoverPlain())
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(model.pointsPerSecond == 0 ? RecorderPalette.dim : RecorderPalette.text)
+                .instantTooltip("Fit the whole edit in the timeline (⌘0)")
+                .accessibilityIdentifier("recorder.timeline.fit")
+        }
+        .fixedSize()
+    }
+}
+
+/// The marked part beside the clock: its length (the times in the tooltip), Export Part, and a clear button.
+private struct PartPill: View {
+    @Bindable var model: EditorModel
+    let part: (fromUs: Int64, toUs: Int64)
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(verbatim: "Part \(String(format: "%.1f s", Double(part.toUs - part.fromUs) / 1_000_000))")
+                .font(.system(size: 11.5, weight: .medium).monospacedDigit())
+                .instantTooltip("From \(formatClock(part.fromUs, tenths: true)) to \(formatClock(part.toUs, tenths: true)); drag its edges on the timeline")
+            Button("Export") { model.tab = .export; model.export() }
+                .buttonStyle(.genHoverPlain())
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .instantTooltip("Export only this part")
+                .accessibilityIdentifier("recorder.part.export")
+            IconButton(systemName: "xmark", tooltip: "Clear the part (the export writes everything again)", size: 9) { model.clearPart() }
+                .accessibilityIdentifier("recorder.part.clear")
+        }
+        .padding(.leading, 9).padding(.trailing, 4).padding(.vertical, 3)
+        .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+        .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1))
+        .fixedSize()
+    }
+}
+
+private struct ClockLabel: View {
+    let clock: PlayheadClock
+    let durationUs: Int64
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(verbatim: formatClock(clock.outUs, tenths: true)).foregroundStyle(RecorderPalette.text)
+            Text(verbatim: "/").foregroundStyle(RecorderPalette.dim)
+            Text(verbatim: formatClock(durationUs, tenths: true)).foregroundStyle(RecorderPalette.dim)
+        }
+        .font(.system(size: 13, weight: .medium).monospacedDigit())
+        .accessibilityIdentifier("recorder.clock")
+    }
+}

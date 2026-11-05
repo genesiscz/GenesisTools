@@ -1,6 +1,7 @@
 import XCTest
 @testable import GenesisKitBase
 @testable import GenesisKit
+@testable import GenesisKitCamera
 @testable import GenesisKitPosture
 
 final class CameraLogicTests: XCTestCase {
@@ -112,7 +113,7 @@ final class CameraLogicTests: XCTestCase {
         XCTAssertNil(AVCameraSessionDriver.refusedInput(canAdd: true, deviceName: "FaceTime HD Camera"))
         let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/GenesisKitPosture/Camera/CameraSessionDriver.swift"), encoding: .utf8)
+            .appendingPathComponent("Sources/GenesisKitCamera/CameraSessionDriver.swift"), encoding: .utf8)
         // The protocol declares the same name without a body. The scan starts at the implementation.
         let start = try XCTUnwrap(source.range(of: "func prepare(selection: CameraSelection) -> CameraSourceState? {"))
         let rest = source[start.lowerBound...]

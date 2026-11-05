@@ -3,6 +3,7 @@ import CoreVideo
 import XCTest
 @testable import GenesisKitBase
 @testable import GenesisKit
+@testable import GenesisKitCamera
 @testable import GenesisKitPosture
 
 /// A camera driver with no camera: it records what the source asks for.

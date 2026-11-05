@@ -26,6 +26,8 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
     private let label: String
     private let minSegmentWidth: CGFloat
     private let identifier: String?
+    /// Equal segments over the width it is given (an inspector column), instead of its own width.
+    private let fillsWidth: Bool
     /// Light text on the dark panels it was made for, dark text in a light window (the markdown viewer's light theme).
     @Environment(\.colorScheme) private var scheme
     @GenReduceMotion private var reduceMotion
@@ -34,12 +36,13 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
     /// `identifier` names the group for UI automation; each segment is then `<identifier>.<id>`, the id as
     /// `GenAccessibilityID.suffix` spells it (an enum case's name, a string as it is).
     public init(_ label: String, items: [Item], selection: Binding<ID>, minSegmentWidth: CGFloat = 72,
-                identifier: String? = nil) {
+                identifier: String? = nil, fillsWidth: Bool = false) {
         self.label = label
         self.items = items
         _selection = selection
         self.minSegmentWidth = minSegmentWidth
         self.identifier = identifier
+        self.fillsWidth = fillsWidth
     }
 
     public var body: some View {
@@ -72,7 +75,7 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         }
         .background(ink.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
         .animation(GenMotion.animation(expanding: true, reduceMotion: reduceMotion), value: selection)
-        .fixedSize()
+        .fixedSize(horizontal: !fillsWidth, vertical: true)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(label)
         .chartAccessibilityIdentifier(identifier)
@@ -107,9 +110,10 @@ public struct GenSegmentedTabs<ID: Hashable>: View {
         Text(item.title)
             .font(.system(size: 12, weight: item.id == selection ? .semibold : .medium))
             .lineLimit(1)
+            .minimumScaleFactor(fillsWidth ? 0.85 : 1)
             .foregroundStyle(color)
-            .padding(.horizontal, 10)
-            .frame(minWidth: minSegmentWidth, minHeight: 24)
+            .padding(.horizontal, fillsWidth ? 4 : 10)
+            .frame(minWidth: fillsWidth ? 0 : minSegmentWidth, maxWidth: fillsWidth ? .infinity : nil, minHeight: 24)
     }
 
     /// The pill on the selected segment's frame, in the space of the view it decorates.
