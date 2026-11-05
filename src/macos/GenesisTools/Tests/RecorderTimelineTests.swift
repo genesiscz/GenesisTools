@@ -305,6 +305,52 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertNil(model.project.markers, "one undo takes the marker back")
     }
 
+    /// The stale save of the review (2026-11-05, finding 3): the window and another writer both load revision 1, the
+    /// other writer saves a text as revision 2, and before the window's watcher sees it the window changes the volume.
+    /// The window wrote its whole old copy as revision 2 and the text was gone. Now it never writes the file: the change
+    /// goes as an op that the writer (here `tools recorder apply`, as the CLI does it) applies to the file as it is on
+    /// disk, so both changes stay, the revision moves past the other writer's, and the window draws the text it missed.
+    func testAWindowChangeAfterAnOutsideSaveItHasNotSeenKeepsBothChanges() throws {
+        let url = folder.appendingPathComponent("edit.json")
+        var project = EditProject.whole(video: folder.appendingPathComponent("none.mp4").path, durationUs: 10_000_000,
+                                        width: 1920, height: 1080, cursor: nil, recording: nil)
+        project.revision = 1
+        try project.encoded().write(to: url, options: .atomic)
+        let store = ProjectStore(url: url)
+        let model = EditorModel(project: project, store: store, link: { nil })
+
+        // The other writer: the text, saved as revision 2 while the window still shows revision 1.
+        var outside = project
+        outside.texts = [EditProject.TextNote(id: "t1", startUs: 1_000_000, endUs: 3_000_000, text: "From the service")]
+        outside.revision = 2
+        outside.updatedBy = "agent"
+        try outside.encoded().write(to: url, options: .atomic)
+
+        var writes = 0
+        model.runTools = { argv, done in
+            // `tools recorder apply`: the ops on the edit as the disk holds it, one revision on.
+            guard argv.prefix(2) == ["recorder", "apply"],
+                  let ops = try? JSONSerialization.jsonObject(with: Data(argv[3].utf8)) as? [[String: Any]],
+                  var disk = try? EditProject.decode(Data(contentsOf: url), at: url) else { return done(1, "", "unexpected call\n") }
+            for op in ops where op["op"] as? String == "volume" { disk.audio.volume = op["volume"] as? Double ?? disk.audio.volume }
+            disk.revision += 1
+            disk.updatedBy = "editor"
+            try? disk.encoded().write(to: url, options: .atomic)
+            writes += 1
+            done(0, "{}", "")
+        }
+        model.setAudio { $0.volume = 0.3 }
+        model.finishGesture()
+
+        XCTAssertEqual(writes, 1, "the change went as an op, written by the CLI")
+        let saved = try EditProject.decode(Data(contentsOf: url), at: url)
+        XCTAssertEqual(saved.texts?.map(\.text), ["From the service"], "the other writer's text is still on disk")
+        XCTAssertEqual(saved.audio.volume, 0.3, "and so is the window's volume")
+        XCTAssertEqual(saved.revision, 3, "a revision past the other writer's, never a second revision 2")
+        XCTAssertEqual(model.project.texts?.map(\.text), ["From the service"], "the window draws the text it had missed")
+        XCTAssertEqual(model.project.audio.volume, 0.3)
+    }
+
     /// Without the service the window sends the same op through `tools recorder apply` and reads the file it wrote.
     func testWithoutTheServiceAnOpGoesThroughToolsRecorderApply() throws {
         var project = EditProject.whole(video: folder.appendingPathComponent("none.mp4").path, durationUs: 10_000_000,

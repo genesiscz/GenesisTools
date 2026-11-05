@@ -1,9 +1,11 @@
 import AVFoundation
 import Foundation
 
-/// Finds, reads, writes and watches the `edit.json` of what the editor opens. A path may be a movie, a recording
-/// folder (its `screen.mp4`), or an edit file. A write is atomic and raises `revision`; a change on disk that this
-/// window did not make (an agent's `clip.project()` edit) reaches `onExternalChange`.
+/// Finds, reads and watches the `edit.json` of what the editor opens. A path may be a movie, a recording folder (its
+/// `screen.mp4`), or an edit file. The window never writes it: its changes are ops that the recorder service, or
+/// `tools recorder apply` while no service answers, applies to the edit as it is on disk, so a writer the window has
+/// not seen yet keeps its change (a whole-project save from a stale copy lost it). A change on disk that this window
+/// did not make (an agent's `clip.project()` edit) reaches `onExternalChange`.
 @MainActor
 final class ProjectStore {
     let url: URL
@@ -74,17 +76,6 @@ final class ProjectStore {
             cursor: FileManager.default.fileExists(atPath: cursor.path) ? cursor.path : nil,
             recording: isRecording ? folder.lastPathComponent : nil
         )
-    }
-
-    func save(_ project: EditProject) throws -> EditProject {
-        var saved = project
-        saved.revision = max(project.revision, lastWritten) + 1
-        saved.updatedBy = "editor"
-        try saved.encoded().write(to: url, options: .atomic)
-        lastWritten = saved.revision
-        // An atomic write replaces the file, so the old watch is on a file that is gone.
-        watch()
-        return saved
     }
 
     /// A revision this window's own change wrote through `tools` (offline): its file event is not an outside edit.
