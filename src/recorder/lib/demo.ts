@@ -231,6 +231,7 @@ export async function runDemo(options: {
     const edit = demoEditSchema.parse(options.edit ?? {});
     const { driver } = options;
     const session = await driver.start();
+    const recordingStarted = driver.now();
     const steps: DemoStepTiming[] = [];
     const failed: DemoResult["failed"] = [];
     let folder: string | undefined;
@@ -241,7 +242,7 @@ export async function runDemo(options: {
         for (const step of options.steps) {
             const wallStart = driver.now();
             const atMs = edit.markers ? (await session.mark(step.caption.slice(0, 80))).atMs : undefined;
-            const startMs = atMs ?? 0;
+            const startMs = atMs ?? wallStart - recordingStarted;
 
             try {
                 await step.run?.();
