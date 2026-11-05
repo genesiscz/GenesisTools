@@ -55,16 +55,18 @@ export async function listSimulators(): Promise<SimDevice[]> {
     const stdout = await simctlOrThrow(["list", "devices", "-j"]);
     const parsed = SafeJSON.parse(stdout, { strict: true }) as SimctlDeviceList;
 
-    return Object.entries(parsed.devices).flatMap(([runtime, devices]) =>
-        devices.map((device) => ({
-            udid: device.udid,
-            name: device.name,
-            state: device.state,
-            runtime,
-            osVersion: runtimeVersion(runtime),
-            isAvailable: device.isAvailable !== false,
-        }))
-    );
+    return Object.entries(parsed.devices)
+        .filter(([runtime]) => runtime.includes(".iOS-"))
+        .flatMap(([runtime, devices]) =>
+            devices.map((device) => ({
+                udid: device.udid,
+                name: device.name,
+                state: device.state,
+                runtime,
+                osVersion: runtimeVersion(runtime),
+                isAvailable: device.isAvailable !== false,
+            }))
+        );
 }
 
 export async function installApp(udid: string, appPath: string): Promise<void> {
