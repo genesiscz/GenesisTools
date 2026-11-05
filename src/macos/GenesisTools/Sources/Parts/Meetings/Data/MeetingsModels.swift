@@ -290,12 +290,19 @@ struct MeetingsSettings: Decodable, Equatable {
         }
         struct Suggest: Decodable, Equatable { let applyAbove: Double }
         struct Dictionary: Decodable, Equatable { let entries: [DictionaryEntry] }
+        struct Export: Decodable, Equatable {
+            /// beside, refuse or replace: what an export does with a note someone edited.
+            let ifEdited: String
+            static let defaultIfEdited = "beside"
+        }
 
         let language: String
         let capture: Capture
         let assign: Assign
         let suggest: Suggest
         let dictionary: Dictionary
+        /// Nil from a CLI older than `global.export`.
+        let export: Export?
     }
     struct Source: Decodable, Equatable {
         struct Folders: Decodable, Equatable { let folders: [String] }
@@ -413,8 +420,19 @@ struct ExportResult: Decodable, Equatable {
     let path: String
     let bytes: Int
     let replaced: Bool
+    /// create, replace, beside or refuse; nil from a CLI older than it.
+    let action: String?
+    /// The edited note the export left as it was (`beside`).
+    let kept: String?
     let written: Bool
     let warning: String?
+
+    /// The note's words: "Exported", "Replaced", or the new note beside the edited one.
+    var noticeText: String {
+        let name = (path as NSString).lastPathComponent
+        if action == "beside" { return "Exported \(name) beside your edited note" }
+        return "\(replaced ? "Replaced" : "Exported") \(name)"
+    }
 }
 
 // MARK: - Any JSON value, for the few open-ended fields

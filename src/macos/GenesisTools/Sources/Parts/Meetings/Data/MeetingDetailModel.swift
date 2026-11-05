@@ -285,15 +285,17 @@ final class MeetingDetailModel {
         Task { await runExport(to: nil) }
     }
 
-    private func runExport(to folder: String?) async {
+    /// `ifEdited` overrides the config's choice for an edited note (Settings → Meetings → Projects → Exports).
+    private func runExport(to folder: String?, ifEdited: String? = nil) async {
         busy.insert("export")
         defer { busy.remove("export") }
         do {
-            let result = try await MeetingsCLI.json(ExportResult.self, ["export", id, "--json"] + (folder.map { ["--to", $0] } ?? []),
-                                                    timeoutSeconds: 120)
-            var note = MeetingsNotice(text: "\(result.replaced ? "Replaced" : "Exported") \((result.path as NSString).lastPathComponent)",
-                                      detail: (result.folder as NSString).abbreviatingWithTildeInPath, tone: .success)
-            if let warning = result.warning { note.more = warning }
+            let args = ["export", id, "--json"] + (folder.map { ["--to", $0] } ?? []) + (ifEdited.map { ["--if-edited", $0] } ?? [])
+            let result = try await MeetingsCLI.json(ExportResult.self, args, timeoutSeconds: 120)
+            var note = MeetingsNotice(text: result.noticeText, detail: (result.folder as NSString).abbreviatingWithTildeInPath, tone: .success)
+            let kept = result.kept.map { "\(($0 as NSString).lastPathComponent) holds edits the last export did not write, so it stays as it was." }
+            let more = [kept, result.warning].compactMap { $0 }
+            if !more.isEmpty { note.more = more.joined(separator: "\n") }
             note.actionTitle = "Show"
             note.actionSymbol = "folder"
             note.action = { PathOpener.reveal(result.path) }
@@ -303,8 +305,13 @@ final class MeetingDetailModel {
             case .finder: PathOpener.reveal(result.path)
             case .nothing: break
             }
+        } catch let failure as MeetingsCLI.Failure where failure.code == "export-edited" {
+            notice = MeetingsNotice(text: failure.sentence, more: failure.detail, tone: .error, actionTitle: "Replace",
+                                    actionSymbol: "doc.badge.arrow.up") { [weak model = self] in
+                Task { await model?.runExport(to: folder, ifEdited: "replace") }
+            }
         } catch {
-            notice = .failure(error) { [weak model = self] in Task { await model?.runExport(to: folder) } }
+            notice = .failure(error) { [weak model = self] in Task { await model?.runExport(to: folder, ifEdited: ifEdited) } }
         }
     }
 

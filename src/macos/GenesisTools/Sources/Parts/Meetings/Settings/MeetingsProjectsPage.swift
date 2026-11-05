@@ -60,6 +60,20 @@ struct MeetingsProjectsPage: View {
                     .nativeSettingsAnchor("project-\(name)")
             }
 
+            NativeSettingsCard("Exports", subtitle: "Export writes a meeting's note into its project's folder; Export again writes it anew.") {
+                NativeSettingsPicker("When the note was edited",
+                                     detail: "What Export does when the note holds changes the last export did not write.",
+                                     identifier: "meetings.export.ifEdited",
+                                     options: [
+                                         NativeSettingsOption("beside", "Write the new note beside it", detail: "Your edits stay; the new note gets the date in its name."),
+                                         NativeSettingsOption("refuse", "Write nothing and ask", detail: "The window offers Replace."),
+                                         NativeSettingsOption("replace", "Replace it", detail: "Your edits in the note are lost."),
+                                     ],
+                                     selection: Binding(get: { settings.global.export?.ifEdited ?? MeetingsSettings.Global.Export.defaultIfEdited },
+                                                        set: { model.set(["global", "export", "ifEdited"], $0) }))
+            }
+            .nativeSettingsAnchor("exports")
+
             NativeSettingsCard("Add a project") {
                 HStack {
                     TextField("Project name (letters, digits, . _ -)", text: $newProject)

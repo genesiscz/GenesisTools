@@ -179,4 +179,17 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(MeetingsCLI.sentence(fromStderr: "✗ [config-stale] global.capture changed"), "Global.capture changed.")
         XCTAssertNil(MeetingsCLI.code(fromStderr: "✗ project work has no export folder"))
     }
+
+    func testAnExportBesideAnEditedNoteSaysSo() throws {
+        let beside = try JSONDecoder().decode(ExportResult.self, from: Data("""
+        {"meeting":"m","folder":"/notes","path":"/notes/m.export-2026-11-05T0900.md","bytes":10,"replaced":false,
+         "action":"beside","kept":"/notes/m.md","written":true}
+        """.utf8))
+        XCTAssertEqual(beside.noticeText, "Exported m.export-2026-11-05T0900.md beside your edited note")
+        XCTAssertEqual(beside.kept, "/notes/m.md")
+        let old = try JSONDecoder().decode(ExportResult.self, from: Data("""
+        {"meeting":"m","folder":"/notes","path":"/notes/m.md","bytes":10,"replaced":true,"written":true}
+        """.utf8))
+        XCTAssertEqual(old.noticeText, "Replaced m.md", "a CLI without action still reads")
+    }
 }
