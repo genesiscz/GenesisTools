@@ -1,9 +1,10 @@
 import { infoCell, money, statusCell } from "@app/domains/lib/display";
 import { gatherNames, reportInvalid } from "@app/domains/lib/input";
-import { addWatch, listWatch, refreshWatch, removeWatch } from "@app/domains/lib/watch";
+import { addWatch, listWatch, refreshWatch, removeWatch, watchItems } from "@app/domains/lib/watch";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable } from "@genesiscz/utils/table";
+import { formatItemLines } from "@genesiscz/utils/watch/items";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -82,11 +83,21 @@ export function createWatchCommand(): Command {
         .option("--expiry-days <n>", "warn when a name expires within this many days", "45")
         .option("--changed", "show only names with something to report")
         .option("--json", "print JSON to stdout")
+        .option(
+            "--items",
+            `print the news as Monitor item lines and exit 0 (run it as \`${toolCommand("monitor add")} --kind command --items\`)`
+        )
         .action(async (opts) => {
             const expiryWarnDays = Number(opts.expiryDays);
             if (!/^\d+$/.test(String(opts.expiryDays))) {
                 out.log.error(`--expiry-days needs a whole number of days, got "${opts.expiryDays}"`);
                 process.exitCode = 1;
+                return;
+            }
+
+            if (opts.items) {
+                const items = watchItems(await refreshWatch({ expiryWarnDays }));
+                out.print(items.length > 0 ? `${formatItemLines(items)}\n` : "");
                 return;
             }
 

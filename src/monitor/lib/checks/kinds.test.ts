@@ -161,6 +161,43 @@ describe("checkCommand", () => {
         expect(result.detail).toContain("boom");
     });
 
+    test("with items, its JSON lines are the items, a stray line is skipped and the filter applies", async () => {
+        const lines = [
+            '{"guid":"a:1","title":"price fell to 900","link":"https://shop.example/a"}',
+            "a log line",
+            '{"guid":"b:1","title":"back in stock"}',
+            '{"title":"no guid"}',
+        ];
+        const target = `printf '%s\\n' ${lines.map((line) => `'${line}'`).join(" ")}`;
+        const all = await checkCommand({ ...base, target, config: { items: true } });
+        const filtered = await checkCommand({ ...base, target, config: { items: true, itemFilter: ["stock"] } });
+        const plain = await checkCommand({ ...base, target });
+
+        expect(all.status).toBe("up");
+        expect(all.items?.map((item) => item.guid)).toEqual(["a:1", "b:1"]);
+        expect(all.items?.[0]).toEqual({
+            guid: "a:1",
+            title: "price fell to 900",
+            link: "https://shop.example/a",
+            summary: null,
+            publishedAt: null,
+        });
+        expect(all.detail).toContain("2 items");
+        expect(filtered.items?.map((item) => item.guid)).toEqual(["b:1"]);
+        expect(plain.items).toBeUndefined();
+    });
+
+    test("with items, a failed run carries none, so nothing is primed or delivered", async () => {
+        const result = await checkCommand({
+            ...base,
+            target: `echo '{"guid":"a","title":"t"}'; exit 2`,
+            config: { items: true },
+        });
+
+        expect(result.status).toBe("down");
+        expect(result.items).toBeUndefined();
+    });
+
     test("a hung command is killed at the timeout", async () => {
         const result = await checkCommand({ ...base, timeoutMs: 300, target: "sleep 5" });
 

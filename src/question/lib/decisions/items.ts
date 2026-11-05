@@ -3,7 +3,7 @@ import type { ImageAttachmentInput } from "@genesiscz/utils/image/attachments";
 import { loadConfig } from "../config";
 import type { AskChoice, CreateAskItemInput } from "../pending/types";
 import { decisionTransclusion, type ItemTransclusion } from "../transclude";
-import { notifyPostedDecisions } from "./notify";
+import { postDecisionNotices } from "./notify";
 import { decisionsMarkdown } from "./read";
 import { parseDecisionInput, postDecisionsInputSchema } from "./schema";
 import { type DecisionRecord, type DecisionRef, type PostDecisionDeps, postDecisions } from "./store";
@@ -244,7 +244,7 @@ export function checkDecisionItems(items: QuestionItemInput[], hint: DecisionSes
  * Stores the decision and todo items of a post. Numbers come from the store, never from the caller.
  *
  * The rows that wait for the human raise one banner that opens the hub at the first of them
- * ({@link notifyPostedDecisions}), and one Telegram message with letter buttons each when the project opted in
+ * ({@link postDecisionNotices}, which also pushes one notice per decision to the phone), and one Telegram message with letter buttons each when the project opted in
  * ({@link postDecisionsToTelegram}). Like a pending form's banner it is opt-OUT: `notify` defaults to
  * the question config's `notifyPending`, and a caller that must stay silent passes `notify: false`.
  */
@@ -270,7 +270,7 @@ export async function postDecisionItems({
     const decisions = await postDecisions(file, events, decisionPayload(items, hint), deps);
 
     if (notify ?? loadConfig().sinks.notifyPending !== false) {
-        await notifyPostedDecisions(decisions);
+        await postDecisionNotices(decisions);
         await postDecisionsToTelegram(decisions);
     }
 

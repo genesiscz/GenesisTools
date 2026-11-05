@@ -13,7 +13,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { appendFeedEvent, type JsonlLog, jsonlLog } from "@genesiscz/utils/storage/locked-document";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import type { z } from "zod";
-import { retractDecisionBanners } from "./banners";
+import { closeNoticeItemsLater, noticeItem } from "../notices/notices";
 import { decisionOptionLabels } from "./option-labels";
 import {
     type ANSWERED_VIA,
@@ -30,7 +30,6 @@ import {
     type StoredTransclusion,
     storedDecisionSchema,
 } from "./schema";
-import { retractDecisionTelegram } from "./telegram";
 
 export type DecisionState = (typeof DECISION_STATES)[number];
 export type DecisionKind = (typeof DECISION_KINDS)[number];
@@ -1269,7 +1268,7 @@ function applyUpdates({
     actor?: DecisionActor;
 }): Promise<DecisionRecord[]> {
     signal?.throwIfAborted();
-    // Decisions this write moved out of waiting: their banners go once the write is done (`retractDecisionBanners`).
+    // Decisions this write moved out of waiting: their notices go once the write is done (`closeNoticeItems`).
     let closed: string[] = [];
     const written = withDecisionsLock(file, () => {
         signal?.throwIfAborted();
@@ -1315,8 +1314,7 @@ function applyUpdates({
     });
 
     return written.then((result) => {
-        retractDecisionBanners(closed);
-        retractDecisionTelegram(closed);
+        closeNoticeItemsLater(closed.map((id) => noticeItem("decision", id)));
         return result;
     });
 }

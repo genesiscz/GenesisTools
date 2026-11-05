@@ -33,10 +33,15 @@ export interface WatcherConfig {
     degradedAboveMs?: number;
     /** statuspage: only components whose name contains one of these matter. Empty = all. */
     components?: string[];
-    /** rss: deliver every new item through the watcher's notification targets. Default true. */
+    /** rss, or a command with `items`: deliver every new item through the watcher's targets. Default true. */
     deliverItems?: boolean;
-    /** rss: only items whose title or summary contains one of these (case-insensitive). Empty = all. */
+    /** rss, or a command with `items`: only items whose title or summary contains one of these (case-insensitive). */
     itemFilter?: string[];
+    /**
+     * command: its stdout is JSON lines of items (`ITEM_LINE_SCHEMA` in `checks/items.ts`), and every item not seen
+     * before is stored and delivered like a feed item. Exit 0 still means up.
+     */
+    items?: boolean;
     /** dns: this address must be among the answers. */
     expectIp?: string;
     /** json: dot path into the document (`status.indicator`, `items[0].id`). Empty = whole document. */
@@ -90,6 +95,11 @@ export interface Watcher {
     targetIds: number[];
     /** ISO time until which notifications are silenced (maintenance); null = not muted. */
     mutedUntil: string | null;
+}
+
+/** Whether a watcher's checks carry items: a feed, or a command watcher that prints item lines. */
+export function carriesItems(watcher: Pick<Watcher, "kind" | "config">): boolean {
+    return watcher.kind === "rss" || watcher.config.items === true;
 }
 
 /** True while a maintenance mute is in force. */
@@ -254,6 +264,11 @@ export interface CheckResult {
     httpStatus: number | null;
     detail: string;
     meta?: Record<string, unknown>;
+    /**
+     * The items this check saw: a feed's entries, or a command watcher's JSON lines. Present only on a read that
+     * succeeded (an empty list primes a new watcher); the core keeps those it has not seen and delivers them.
+     */
+    items?: ParsedFeedItem[];
 }
 
 export interface CheckRecord extends CheckResult {

@@ -115,7 +115,7 @@ export function filterItems(items: ParsedFeedItem[], filters: string[] | undefin
 }
 
 /**
- * A feed is "up" when it downloads and parses. The items travel in `meta`;
+ * A feed is "up" when it downloads and parses. The items travel in `items`;
  * the core diffs them against what it has already seen and delivers the new ones.
  */
 export async function checkRss(watcher: Pick<Watcher, "target" | "config" | "timeoutMs">): Promise<CheckResult> {
@@ -198,6 +198,7 @@ export async function checkRss(watcher: Pick<Watcher, "target" | "config" | "tim
         latencyMs,
         httpStatus: response.status,
         detail,
-        meta: { feedTitle: feed.title, items },
+        meta: { feedTitle: feed.title },
+        items,
     };
 }

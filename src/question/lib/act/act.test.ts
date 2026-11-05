@@ -6,7 +6,7 @@ import { AnswerRefusedError } from "../decisions/answers";
 import type { DecisionRecord } from "../decisions/store";
 import type { AnswerDecisionInput, InboxAnswerResult } from "../inbox/answer";
 import { type ActDeps, act } from "./act";
-import { ACT_TOKEN_TTL_MS, fileActTokenStore, issueActTokens, memoryActTokenStore } from "./tokens";
+import { ACT_TOKEN_TTL_MS, fileActTokenStore, issueActTokens, issueReplyToken, memoryActTokenStore } from "./tokens";
 
 const NOW = Date.parse("2026-11-03T10:00:00Z");
 
@@ -183,5 +183,34 @@ describe("act", () => {
             kind: "uncertain",
             detail: "pane went away",
         });
+    });
+});
+
+describe("act with a reply token", () => {
+    it("answers with the text, not a letter, and refuses an empty reply without claiming the key", async () => {
+        const fixture = deps([row()], async () => delivered);
+        const token = await issueReplyToken({
+            row: row(),
+            surface: "phone",
+            store: fixture.store,
+            now: NOW,
+            newToken: () => "tok-reply",
+        });
+
+        const empty = await act({ token, key: "push:1:reply", deps: fixture.deps, text: "  ", now: NOW });
+        expect(empty.outcome).toMatchObject({ kind: "refused", code: "invalid" });
+        expect(fixture.calls).toEqual([]);
+
+        const receipt = await act({
+            token,
+            key: "push:2:reply",
+            deps: fixture.deps,
+            text: "use the disk cache",
+            now: NOW,
+        });
+        expect(receipt.outcome.kind).toBe("delivered");
+        expect(fixture.calls).toHaveLength(1);
+        expect(fixture.calls[0]).toMatchObject({ session: "s-alpha", number: 3, text: "use the disk cache" });
+        expect(fixture.calls[0].option).toBeUndefined();
     });
 });

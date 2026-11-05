@@ -1,6 +1,17 @@
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import type { SourceMessage, TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
-import type { ItemTransclusion } from "../transclude";
+import type { ItemTransclusion } from "../transclusion-types";
+import type { AskChoice, AskFormFields, PendingEventKind } from "./form-types";
+
+export type {
+    AskAnswer,
+    AskChoice,
+    AskFormFields,
+    AskFormStatus,
+    AskImage,
+    AskItem,
+    PendingEventKind,
+} from "./form-types";
 
 /**
  * Wire types for interactive (blocking) ask forms.
@@ -10,8 +21,6 @@ import type { ItemTransclusion } from "../transclude";
  * re-declared rather than imported: `@genesis/qa` lives in another repository and is not
  * a dependency of this one, and a silent drift there must not break this store.
  */
-
-export type AskFormStatus = "pending" | "answered" | "timeout" | "cancelled";
 
 /**
  * Outcome of ONE wait call, deliberately distinct from the form status.
@@ -24,61 +33,9 @@ export type AskFormStatus = "pending" | "answered" | "timeout" | "cancelled";
  */
 export type WaiterStatus = "answered" | "timeout" | "cancelled" | "budget_exhausted" | "not_found";
 
-export interface AskChoice {
-    id: string;
-    label: string;
-}
-
-export interface AskItem {
-    id: string;
-    promptMarkdown: string;
-    choices?: AskChoice[];
-    allowMultiple?: boolean;
-    allowFreeText?: boolean;
-    /** Relative `@file` tags, resolved against the form cwd. */
-    allowFileTags?: boolean;
-    allowImagePaste?: boolean;
-    required?: boolean;
-    /** The prompt and choices as written, and their inline tokens, when any were resolved at post time. */
-    transclusion?: ItemTransclusion;
-}
-
-export interface AskImage {
-    name: string;
-    mime: string;
-    /** base64 payload with no `data:` prefix. */
-    base64: string;
-}
-
-export interface AskAnswer {
-    /** Durable, local media context supplied by the user; it supplements, never replaces, a typed choice. */
-    mediaContext?: string;
-    itemId: string;
-    freeText?: string;
-    selectedChoices?: string[];
-    fileTags?: string[];
-    images?: AskImage[];
-}
-
-export interface AskForm {
+export interface AskForm extends AskFormFields {
     poster?: AgentRuntimeContext;
     transcriptAnchor?: TranscriptAnchor;
-    id: string;
-    createdAt: number;
-    source?: string;
-    sessionHint?: string;
-    /** Project path the agent asked from. */
-    projectPath: string;
-    /** Resolved cwd for `@file` — nearest git root above projectPath, else projectPath. */
-    cwd: string;
-    items: AskItem[];
-    status: AskFormStatus;
-    answers?: Record<string, AskAnswer>;
-    timeoutMs?: number;
-    /** Set when the form left `pending`. */
-    resolvedAt?: number;
-    /** Id of the QaEntry written when the form was answered, so /qa can link the two. */
-    entryId?: string;
 }
 
 export interface CreateAskItemInput {
@@ -104,8 +61,6 @@ export interface CreateAskFormInput {
     source?: string;
     sessionHint?: string;
 }
-
-export type PendingEventKind = "created" | "answered" | "cancelled" | "timeout";
 
 export interface PendingEvent {
     id: string;

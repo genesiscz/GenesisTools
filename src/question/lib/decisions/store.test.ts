@@ -18,6 +18,8 @@ import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { z } from "zod";
 import { stagedSendText } from "../inbox/drafts";
+import { setNoticeDeps } from "../notices/notices";
+import { memoryNoticeStore } from "../notices/store";
 import {
     AnswerRefusedError,
     checkAnswer,
@@ -27,7 +29,6 @@ import {
     refuseUnlessWaiting,
     sendSessionDecisions,
 } from "./answers";
-import { setDecisionBannerRemover } from "./banners";
 import { chatAnswers } from "./chat-answers";
 import { backfillChatAnswers } from "./chat-reading";
 import { DeliveryUnknownError } from "./deliver";
@@ -2447,12 +2448,19 @@ describe("a revision and a staged pick (F12)", () => {
     });
 });
 
-describe("decision banners (F13)", () => {
-    test("a write that moves a decision out of waiting retracts its banner; a write that keeps it waiting does not", async () => {
+describe("decision notices (F13, M7c)", () => {
+    test("a write that moves a decision out of waiting retracts its notice; a write that keeps it waiting does not", async () => {
         const { file, events } = scratch();
         const removed: string[][] = [];
-        setDecisionBannerRemover(async (ids) => {
-            removed.push(ids);
+        const store = memoryNoticeStore();
+        setNoticeDeps({
+            store,
+            dispatch: async () => true,
+            retract: async (_channel, id) => {
+                removed.push([id]);
+                return true;
+            },
+            now: Date.now,
         });
 
         try {
@@ -2463,6 +2471,12 @@ describe("decision banners (F13)", () => {
                     { prompt: "two", options: ["a", "b"] },
                 ],
             });
+            store.notices[`qa-decision-${first.id}`] = {
+                id: `qa-decision-${first.id}`,
+                channels: ["system"],
+                items: [`decision:${first.id}`],
+                postedAt: Date.now(),
+            };
             await updateDecision(file, events, first.id, { state: "drafted", draftOption: "a" });
             await updateDecision(file, events, second.id, { comment: "looked at it" });
             expect(removed).toEqual([]);
@@ -2474,9 +2488,11 @@ describe("decision banners (F13)", () => {
                 undefined,
                 { actor: "agent" }
             );
+            // The retraction runs after the write and is not awaited by it.
+            await Bun.sleep(0);
             expect(removed).toEqual([[`qa-decision-${first.id}`]]);
         } finally {
-            setDecisionBannerRemover(undefined);
+            setNoticeDeps(undefined);
         }
     });
 });

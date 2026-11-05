@@ -27,7 +27,7 @@ Every command accepts `--json` and works without a terminal. `tools monitor <com
 | `dns` | hostname | A/AAAA resolve; `--expect-ip 203.0.113.10` must be among the answers |
 | `tls` | `host[:port]` | verified handshake; days until the certificate expires (`--warn-days 14` degraded, `--min-days 0` down; expired is always down) |
 | `json` | URL | fetch JSON, read `--json-path status.indicator`; with `--expect none` the value must equal it (as text), without it the path only has to exist. `items[0].id` works |
-| `command` | shell command | `sh -c`, exit 0 is up, the last output line is the detail; killed at the timeout |
+| `command` | shell command | `sh -c`, exit 0 is up, the last output line is the detail; killed at the timeout. With `--items` its stdout is JSON lines of items (`{"guid","title","link"?,"summary"?,"publishedAt"?}`, `@genesiscz/utils/watch/items`), and each new one is stored and delivered like a feed item: `tools monitor add "tools domains watch refresh --items" --kind command --items`, or `tools alza watchdog list --items` |
 | `ai-provider` | `acc_…` from `tools ai config account list` | the provider plugin's `health()` probe (`probe: true`, never rotates a refresh token) |
 
 `--kind` is guessed when omitted: `acc_…` is an AI account, `.rss`/`.xml`/`/feed` is a feed, `status.*` hosts are status

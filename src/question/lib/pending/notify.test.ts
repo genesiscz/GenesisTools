@@ -17,7 +17,23 @@ interface DispatchedEvent {
 const dispatched: DispatchedEvent[] = [];
 const removed: { ids?: string[] }[] = [];
 
+async function fakeDispatch(e: DispatchedEvent): Promise<boolean> {
+    if (e.message.includes("BOOM")) {
+        throw new Error("notify channel is down");
+    }
+
+    if (e.message.includes("STUCK")) {
+        // A channel whose child process never exits (or whose grandchild holds its pipe open) never settles.
+        return new Promise<never>(() => {});
+    }
+
+    dispatched.push(e);
+    return true;
+}
+
 mock.module("@genesiscz/utils/notifications", () => ({
+    // One channel, so a retraction is one call per notice.
+    CHANNEL_NAMES: ["system"],
     dispatchNotification: async (e: DispatchedEvent) => {
         if (e.message.includes("BOOM")) {
             throw new Error("notify channel is down");
@@ -54,6 +70,8 @@ mock.module("@app/dev-dashboard/lib/qa-deep-link", () => ({
 }));
 
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
+import { setNoticeDeps } from "../notices/notices";
+import { memoryNoticeStore } from "../notices/store";
 import { type AskDeps, answerAskForm, cancelAskForm, postAskForm } from "./ask";
 import { notifyPendingForm, qaNotificationId } from "./notify";
 import { PENDING_MIGRATIONS } from "./store";
@@ -62,6 +80,16 @@ let deps: AskDeps;
 let db: Database;
 
 beforeEach(() => {
+    // Notices post through the fake dispatch and retract into `removed`, as the system banner did before.
+    setNoticeDeps({
+        store: memoryNoticeStore(),
+        dispatch: (event) => fakeDispatch(event as DispatchedEvent),
+        retract: async (_channel, noticeId) => {
+            removed.push({ ids: [noticeId] });
+            return true;
+        },
+        now: Date.now,
+    });
     dispatched.length = 0;
     removed.length = 0;
     hubInstalled = false;
@@ -75,6 +103,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    setNoticeDeps(undefined);
     db.close();
 });
 

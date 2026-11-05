@@ -3,6 +3,7 @@ import { parseDomain } from "@app/domains/lib/domain";
 import { storage } from "@app/domains/lib/http";
 import type { CheckResult, DomainStatus } from "@app/domains/lib/types";
 import { logger } from "@genesiscz/utils/logger";
+import type { WatchItemLine } from "@genesiscz/utils/watch/items";
 
 export interface WatchEntry {
     domain: string;
@@ -26,6 +27,8 @@ export interface WatchChange {
     previous?: DomainStatus;
     /** Why it is worth a look: "now available", "expires in 12 days", "price changed". */
     reasons: string[];
+    /** The same reasons with their stable keys (the `--items` output). */
+    facts: ChangeFact[];
 }
 
 export async function listWatch(): Promise<WatchEntry[]> {
@@ -71,7 +74,14 @@ export async function removeWatch(domains: string[]): Promise<string[]> {
 
 const DAY_MS = 86_400_000;
 
-export function changeReasons({
+/** One reason a watched name is worth a look, with a key that stays the same while the fact does. */
+export interface ChangeFact {
+    /** Stable across refreshes for the same fact: `status:taken`, `available`, `expires:2026-12-01`, `price:12.5`. */
+    key: string;
+    text: string;
+}
+
+export function changeFacts({
     entry,
     result,
     now,
@@ -81,15 +91,15 @@ export function changeReasons({
     result: CheckResult;
     now: Date;
     expiryWarnDays: number;
-}): string[] {
-    const reasons: string[] = [];
+}): ChangeFact[] {
+    const facts: ChangeFact[] = [];
     // "unknown" means no provider could decide this time; it is not a change of state.
     if (entry.lastStatus && result.status !== "unknown" && entry.lastStatus !== result.status) {
-        reasons.push(`${entry.lastStatus} -> ${result.status}`);
+        facts.push({ key: `status:${result.status}`, text: `${entry.lastStatus} -> ${result.status}` });
     }
 
     if (result.status === "available" && entry.lastStatus !== "available") {
-        reasons.push("now available");
+        facts.push({ key: "available", text: "now available" });
     }
 
     // A check without registration details keeps the saved expiry while the name is still registered.
@@ -99,16 +109,40 @@ export function changeReasons({
     if (expiresAt) {
         const days = Math.floor((Date.parse(expiresAt) - now.getTime()) / DAY_MS);
         if (days <= expiryWarnDays) {
-            reasons.push(days < 0 ? `expired ${-days} days ago` : `expires in ${days} days`);
+            // The text counts down every day; the key is the expiry date, so a watcher hears it once per date.
+            facts.push({
+                key: `expires:${expiresAt.slice(0, 10)}`,
+                text: days < 0 ? `expired ${-days} days ago` : `expires in ${days} days`,
+            });
         }
     }
 
     const price = result.price?.registration;
     if (price !== undefined && entry.price !== undefined && Math.abs(price - entry.price) > 0.01) {
-        reasons.push(`price ${entry.price} -> ${price}`);
+        facts.push({ key: `price:${price}`, text: `price ${entry.price} -> ${price}` });
     }
 
-    return [...new Set(reasons)];
+    const seen = new Set<string>();
+    return facts.filter((fact) => !seen.has(fact.text) && seen.add(fact.text));
+}
+
+export function changeReasons(input: Parameters<typeof changeFacts>[0]): string[] {
+    return changeFacts(input).map((fact) => fact.text);
+}
+
+/**
+ * A refresh's news as Monitor item lines (`tools domains watch refresh --items`, mobile plan M12): one item per
+ * fact, keyed by the domain and the fact's key, so a name that keeps expiring in N days is one item, not one a day.
+ */
+export function watchItems(changes: readonly WatchChange[]): WatchItemLine[] {
+    return changes.flatMap((change) =>
+        change.facts.map((fact) => ({
+            guid: `${change.entry.domain}:${fact.key}`,
+            title: `${change.entry.domain} ${fact.text}`,
+            summary: change.entry.note ?? null,
+            publishedAt: change.result.checkedAt,
+        }))
+    );
 }
 
 /**
@@ -166,12 +200,8 @@ export async function refreshWatch({ expiryWarnDays = 45 }: { expiryWarnDays?: n
             continue;
         }
 
-        changes.push({
-            entry,
-            result,
-            previous: entry.lastStatus,
-            reasons: changeReasons({ entry, result, now, expiryWarnDays }),
-        });
+        const facts = changeFacts({ entry, result, now, expiryWarnDays });
+        changes.push({ entry, result, previous: entry.lastStatus, reasons: facts.map((fact) => fact.text), facts });
     }
 
     // Only what was stored is reported: a refresh that lost to a newer one, or a name removed meanwhile, says nothing.

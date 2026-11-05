@@ -225,6 +225,12 @@ export function parseWatcherConfig(value: unknown): WatcherConfig {
         config.itemFilter = itemFilter;
     }
 
+    const items = optionalBoolean(record, "items");
+
+    if (items !== undefined) {
+        config.items = items;
+    }
+
     const deliverItems = optionalBoolean(record, "deliverItems");
 
     if (deliverItems !== undefined) {
