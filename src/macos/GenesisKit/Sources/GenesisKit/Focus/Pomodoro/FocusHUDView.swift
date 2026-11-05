@@ -140,8 +140,8 @@ public struct FocusHUDView: View {
                 timer
                 cycleRow
                 if isRunning || isPaused {
-                    mixRow
-                    sparkline
+                    mixRow.allowsHitTesting(false)
+                    sparkline.allowsHitTesting(false)
                 }
             }
             Spacer(minLength: GenSpacing.xs)
@@ -275,7 +275,7 @@ public struct FocusHUDView: View {
                       tip: "Back to \(engine.plan.previous(before: engine.phase, completedFlows: engine.completedFlows).label.lowercased())") {
                 engine.goBack()
             }
-            cycleDots
+            cycleDots.allowsHitTesting(false)
             phaseStep("chevron.right", id: "focus-hud-next-phase",
                       tip: "Skip to \(engine.plan.next(after: engine.phase, completedFlows: engine.completedFlows + (engine.phase == .flow ? 1 : 0)).label.lowercased())") {
                 engine.skip()
