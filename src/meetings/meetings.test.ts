@@ -12,6 +12,7 @@ import type { SourceMeeting } from "@genesiscz/utils/meetings/sources";
 import { writePidFile } from "@genesiscz/utils/process/pidfile";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
+import { sameName } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { suggestDictionary } from "./lib/dictionary-suggest";
 import { findingItems, findingProblems, findingsFileSchema } from "./lib/findings";
@@ -1715,6 +1716,13 @@ test("raw evidence uses explicit attendance for both presence and stays", () => 
     });
     expect(raw.lines[0]?.present).toEqual(["New Example"]);
     expect(raw.people.find((person) => person.name === "New Example")?.stays).toEqual([{ fromSec: 0, toSec: 100 }]);
+});
+
+test("identical single-word names match without accepting partial single-word names", () => {
+    expect(sameName("Alice", "Alice")).toBe(true);
+    expect(sameName("Alice", "Alice Example")).toBe(false);
+    expect(sameName("", "")).toBe(false);
+    expect(sameName("Alice Example", "Example Alice (guest)")).toBe(true);
 });
 
 describe("evidence --raw", () => {
