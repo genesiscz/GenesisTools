@@ -201,4 +201,21 @@ final class MeetingsWindowTests: XCTestCase {
                        ["reopen", "m", "i1", "--token", "t-1"])
         XCTAssertEqual(MeetingDetailModel.reopenArgs(meeting: "m", item: "i1", token: nil), ["reopen", "m", "i1"])
     }
+
+    func testEditingADictionaryEntryKeepsItsSpokenFormsAndLetterCase() throws {
+        let entries = try JSONDecoder().decode([DictionaryEntry].self, from: Data("""
+        [{"type":"term","value":"SDK","spoken":["es dee kay"],"meaning":"old","level":"global"},
+         {"type":"fix","value":"ID","substitution":"identity","caseSensitive":true,"level":"global"}]
+        """.utf8))
+        XCTAssertEqual(entries[1].caseSensitive, true)
+        let term = entries[0]
+        XCTAssertEqual(MeetingsSettingsModel.addEntryArgs(type: term.type, value: term.value, substitution: nil,
+                                                          spoken: MeetingsDictionaryRules.spokenForms((term.spoken ?? []).joined(separator: ", ")),
+                                                          meaning: "new meaning", scope: nil),
+                       ["dictionary", "add", "SDK", "--type", "term", "--spoken", "es dee kay", "--meaning", "new meaning"])
+        XCTAssertEqual(MeetingsSettingsModel.addEntryArgs(type: "fix", value: "ID", substitution: "identity",
+                                                          caseSensitive: entries[1].caseSensitive == true, scope: nil),
+                       ["dictionary", "add", "ID", "identity", "--type", "fix", "--case-sensitive"])
+        XCTAssertEqual(MeetingsDictionaryRules.spokenForms(" zus tent, ,zu stand "), ["zus tent", "zu stand"])
+    }
 }

@@ -315,6 +315,8 @@ struct MeetingsDictionaryPage: View {
     @State private var value = ""
     @State private var substitution = ""
     @State private var meaning = ""
+    @State private var spoken = ""
+    @State private var caseSensitive = false
     @State private var editing: DictionaryEntry?
 
     var body: some View {
@@ -364,6 +366,15 @@ struct MeetingsDictionaryPage: View {
                         TextField("Meaning (optional)", text: $meaning).textFieldStyle(.roundedBorder)
                     }
                 }
+                if type == "term" {
+                    TextField("Spoken forms, comma separated (optional): how people say it", text: $spoken)
+                        .textFieldStyle(.roundedBorder)
+                }
+                if type == "fix" {
+                    Toggle("Match only this letter case", isOn: $caseSensitive)
+                        .toggleStyle(.checkbox).nativeSettingsPointer()
+                        .instantTooltip("Off: the fix matches the word in any letter case")
+                }
                 HStack {
                     if editing != nil {
                         Button("Cancel") { clear() }.buttonStyle(.genHoverPlain()).keyboardShortcut(.cancelAction)
@@ -373,8 +384,9 @@ struct MeetingsDictionaryPage: View {
                         let trimmed = value.trimmingCharacters(in: .whitespaces)
                         // An entry is keyed by its value: a renamed one replaces the old one in the same write.
                         model.addEntry(type: type, value: trimmed,
-                                       substitution: substitution.trimmingCharacters(in: .whitespaces), meaning: meaning,
-                                       replacing: editing?.value)
+                                       substitution: substitution.trimmingCharacters(in: .whitespaces),
+                                       spoken: MeetingsDictionaryRules.spokenForms(spoken), meaning: meaning,
+                                       caseSensitive: caseSensitive, replacing: editing?.value)
                         clear()
                     }
                     .buttonStyle(.borderedProminent).nativeSettingsPointer()
@@ -432,6 +444,8 @@ struct MeetingsDictionaryPage: View {
         value = entry.value
         substitution = entry.substitution ?? ""
         meaning = entry.meaning ?? ""
+        spoken = (entry.spoken ?? []).joined(separator: ", ")
+        caseSensitive = entry.caseSensitive == true
     }
 
     private func clear() {
@@ -439,6 +453,8 @@ struct MeetingsDictionaryPage: View {
         value = ""
         substitution = ""
         meaning = ""
+        spoken = ""
+        caseSensitive = false
     }
 }
 
@@ -450,5 +466,10 @@ enum MeetingsDictionaryRules {
         guard !abbreviation.isEmpty else { return false }
         let pattern = "(?<![\\p{L}\\p{N}])\(NSRegularExpression.escapedPattern(for: abbreviation))(?![\\p{L}\\p{N}])"
         return expansion.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// The spoken forms typed as one line: "zus tent, zu stand" is two forms.
+    static func spokenForms(_ text: String) -> [String] {
+        text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 }

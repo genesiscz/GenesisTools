@@ -270,22 +270,27 @@ final class MeetingsSettingsModel {
 
     /// `dictionary add`'s arguments. `replacing` is the value of the entry a rename replaces: the CLI swaps both in one
     /// write, so a refused entry keeps the old one.
+    /// The CLI's add replaces the whole entry, so every field the entry keeps is passed: spoken forms, the meaning, and
+    /// a fix's letter case.
     static func addEntryArgs(type: String, value: String, substitution: String?, spoken: [String] = [], meaning: String? = nil,
-                             scope: String?, replacing: String? = nil) -> [String] {
+                             caseSensitive: Bool = false, scope: String?, replacing: String? = nil) -> [String] {
         var args = ["dictionary", "add", value]
         if let substitution, !substitution.isEmpty { args.append(substitution) }
         args += ["--type", type]
         if let scope { args += ["--project", scope] }
-        for form in spoken { args += ["--spoken", form] }
-        if let meaning, !meaning.isEmpty { args += ["--meaning", meaning] }
+        if type == "term" {
+            for form in spoken { args += ["--spoken", form] }
+            if let meaning, !meaning.isEmpty { args += ["--meaning", meaning] }
+        }
+        if type == "fix", caseSensitive { args.append("--case-sensitive") }
         if let replacing, replacing != value { args += ["--replace", replacing] }
         return args
     }
 
     func addEntry(type: String, value: String, substitution: String?, spoken: [String] = [], meaning: String? = nil,
-                  replacing: String? = nil) {
+                  caseSensitive: Bool = false, replacing: String? = nil) {
         let args = Self.addEntryArgs(type: type, value: value, substitution: substitution, spoken: spoken, meaning: meaning,
-                                     scope: dictionaryScope, replacing: replacing)
+                                     caseSensitive: caseSensitive, scope: dictionaryScope, replacing: replacing)
         run(key: "dictionary.\(replacing ?? value)", args, done: "Saved \(value)") {
             $0.loadDictionary()
             $0.testPhrase($0.phrase)
@@ -299,7 +304,7 @@ final class MeetingsSettingsModel {
         let restore = entry
         run(key: "dictionary.\(entry.value)", args, done: "Removed \(entry.value)", undo: { [weak model = self] in
             model?.addEntry(type: restore.type, value: restore.value, substitution: restore.substitution,
-                           spoken: restore.spoken ?? [], meaning: restore.meaning)
+                           spoken: restore.spoken ?? [], meaning: restore.meaning, caseSensitive: restore.caseSensitive == true)
         }) {
             $0.loadDictionary()
             $0.testPhrase($0.phrase)

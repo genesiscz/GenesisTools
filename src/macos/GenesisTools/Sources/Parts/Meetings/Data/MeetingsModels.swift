@@ -244,6 +244,8 @@ struct DictionaryEntry: Decodable, Equatable, Hashable, Identifiable {
     let substitution: String?
     let spoken: [String]?
     let meaning: String?
+    /// A fix that matches only the exact letter case.
+    let caseSensitive: Bool?
     let level: String?
     var id: String { "\(type):\(value)" }
 }
