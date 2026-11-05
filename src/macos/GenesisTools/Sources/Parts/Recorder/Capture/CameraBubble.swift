@@ -137,9 +137,14 @@ final class CameraBubble {
 
     // MARK: Preview
 
+    private var previewGeneration = 0
+    private var recordingGeneration = 0
+
     private func showPreview() {
+        previewGeneration += 1
+        let generation = previewGeneration
         Task {
-            guard await ensureCameraAccess() else { return }
+            guard await ensureCameraAccess(), generation == previewGeneration else { return }
             startCamera()
             let panel = panel ?? CameraBubblePanel(source: source!)
             self.panel = panel
@@ -153,6 +158,7 @@ final class CameraBubble {
     }
 
     private func hidePreview() {
+        previewGeneration += 1
         panel?.orderOut(nil)
         if writer == nil { source?.stop() }
     }
@@ -199,12 +205,16 @@ final class CameraBubble {
 
     private func begin(entry: LiveRecording, folder: URL, target: [String: Any]?) {
         let fromPicker = consumePickerStart()
+        recordingGeneration += 1
+        let generation = recordingGeneration
         recording = Session(id: entry.id, folder: folder, target: target, fromPicker: fromPicker)
         screenStartedAt = Date()
         let shows = previewPolicy.showsPreview(startedByPicker: fromPicker)
         if !shows { panel?.orderOut(nil) }
         Task {
-            guard await ensureCameraAccess() else {
+            let allowed = await ensureCameraAccess()
+            guard generation == recordingGeneration else { return }
+            guard allowed else {
                 recording = nil
                 return
             }
@@ -264,6 +274,8 @@ final class CameraBubble {
     }
 
     private func finish() {
+        recordingGeneration += 1
+        previewGeneration += 1
         guard let current = recording else { return }
         recording = nil
         source?.onFrame = nil
