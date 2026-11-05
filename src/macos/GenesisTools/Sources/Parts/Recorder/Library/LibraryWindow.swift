@@ -31,6 +31,7 @@ final class LibraryModel {
     /// The last quick action's short notice ("Copied a GIF…"), shown in a pill that fades.
     private(set) var notice: String?
     @ObservationIgnored private var spokenSearch: DispatchWorkItem?
+    @ObservationIgnored let commands = RecorderCommands()
 
     struct SpokenHit: Equatable {
         var at: Double
@@ -53,7 +54,7 @@ final class LibraryModel {
         }
     }
 
-    /// From three letters on, 300 ms after the last key: one `tools recorder search` for the whole library.
+    /// From three letters on, 300 ms after the last key: one service search, with the CLI as fallback.
     private func searchSpoken() {
         spokenSearch?.cancel()
         let query = filter.trimmingCharacters(in: .whitespaces)
@@ -66,13 +67,15 @@ final class LibraryModel {
         searching = true
         let work = DispatchWorkItem { [weak self] in
             let span = HubPerf.begin("recorder.library.search", query)
-            ToolsRunner.run(["recorder", "search", query, "--json"]) { status, stdout, stderr in
+            guard let self else { span.end(); return }
+            self.commands.run("movies.search", params: ["text": query], argv: ["recorder", "search", query, "--json"], json: true) { [weak self] result in
                 span.end()
                 guard let self, self.filter.trimmingCharacters(in: .whitespaces) == query else { return }
                 self.searching = false
-                guard status == 0, let data = stdout.data(using: .utf8),
-                      let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-                    let reason = stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)"
+                guard case let .success(value) = result, let rows = value as? [[String: Any]] else {
+                    let reason: String
+                    if case let .failure(error) = result { reason = error.reason }
+                    else { reason = "the search answer is not an array" }
                     HubPerf.log("recorder.library.search failed: \(reason)")
                     self.searchFailed = reason
                     return

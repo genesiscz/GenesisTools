@@ -16,3 +16,34 @@ protocol RecorderServiceLink: AnyObject {
 }
 
 extension RecorderServiceHost: RecorderServiceLink {}
+
+/// Library commands share the host's hello and connection; tests substitute the link and CLI runner.
+@MainActor
+final class RecorderCommands {
+    var link: () -> RecorderServiceLink? = { RecorderServiceHost.shared }
+    var runTools: (_ argv: [String], _ done: @escaping @MainActor (Int32, String, String) -> Void) -> Void = {
+        ToolsRunner.run($0, done: $1)
+    }
+
+    func run(_ method: String, params: [String: Any], argv: [String], json: Bool = false,
+             timeout: TimeInterval = 120, done: @escaping (Result<Any?, EditorModel.ApplyFailure>) -> Void) {
+        if let service = link(), service.isConnected, service.serviceMethods.contains(method) {
+            service.call(method, params: params, timeout: timeout, onProgress: nil) { result in
+                done(result.mapError { EditorModel.ApplyFailure(reason: EditorSession.reason($0)) })
+            }
+            return
+        }
+        runTools(argv) { status, stdout, stderr in
+            guard status == 0 else {
+                done(.failure(EditorModel.ApplyFailure(reason: stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")))
+                return
+            }
+            if json {
+                do { done(.success(try JSONSerialization.jsonObject(with: Data(stdout.utf8)))) }
+                catch { done(.failure(EditorModel.ApplyFailure(reason: "the answer is not JSON"))) }
+            } else {
+                done(.success(nil))
+            }
+        }
+    }
+}

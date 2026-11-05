@@ -118,6 +118,7 @@ final class FakeServiceLink: RecorderServiceLink {
             marks[gesture] = nil
             drafts[gesture] = nil
             return ["project": try json(project), "revision": revision]
+        case "movies.search": return movieAnswer(method, params)
         case let name where name.hasPrefix("movie."):
             return movieAnswer(String(name.dropFirst("movie.".count)), params)
         default:

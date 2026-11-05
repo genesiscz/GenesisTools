@@ -44,7 +44,7 @@ extension EditorModel {
 
     /// A comment method of the recorder: comments.jsonl changes, and the store's watcher shows it.
     private func commentCall(_ name: String, _ params: [String: Any], argv: [String], failed: String, done: @escaping @MainActor () -> Void) {
-        ask(name, params, recording: recordingTarget, argv: argv) { [weak self] result in
+        movie(name, params, recording: recordingTarget, argv: argv) { [weak self] result, _ in
             guard let self else { return }
             switch result {
             case .success:

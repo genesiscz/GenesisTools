@@ -54,6 +54,7 @@ enum RecordingAction: String, CaseIterable, Identifiable {
 enum RecordingActions {
     /// Where Copy Movie writes; a test swaps in a pasteboard of its own so it never touches the user's clipboard.
     static var pasteboard = NSPasteboard.general
+    static var commands = RecorderCommands()
 
     /// What an action did, for the surface to show: a short notice, a failure, or a move to the Trash (the library
     /// offers Put Back).
@@ -83,11 +84,12 @@ enum RecordingActions {
             report(.notice("Copied \(movie.lastPathComponent) to the clipboard."))
         case .copyGIF:
             report(.working("Making a GIF of “\(item.title)”…"))
-            ToolsRunner.run(["recorder", "copy", item.folder.path, "--gif"]) { status, _, stderr in
-                if status == 0 {
+            commands.run("movie.copy", params: ["recording": item.folder.path, "gif": true],
+                         argv: ["recorder", "copy", item.folder.path, "--gif"], timeout: 10 * 60) { result in
+                if case .success = result {
                     report(.notice("Copied a GIF of “\(item.title)” to the clipboard."))
-                } else {
-                    report(.failed("No GIF of “\(item.title)”: \(stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")"))
+                } else if case let .failure(error) = result {
+                    report(.failed("No GIF of “\(item.title)”: \(error.reason)"))
                 }
             }
         case .reveal:
@@ -122,7 +124,7 @@ enum RecordingActions {
     }
 
     /// Asks for a new title (a panel that leaves the front app in front, or an alert: Settings → Recorder) and writes
-    /// it through `tools recorder rename`, the same command the CLI and REPL use.
+    /// it through the service, falling back to the same command the CLI and REPL use.
     private static func rename(_ item: RecorderMenu.Recent, report: @escaping (Outcome) -> Void) {
         let request = RecorderTitleRequest(heading: "Rename “\(item.title)”",
                                            detail: "The library, the editor window and movies.list() show this title.",
@@ -134,12 +136,13 @@ enum RecordingActions {
     }
 
     private static func write(_ title: String, to item: RecorderMenu.Recent, report: @escaping (Outcome) -> Void) {
-        ToolsRunner.run(["recorder", "rename", item.folder.path, title]) { status, _, stderr in
-            if status == 0 {
+        commands.run("movie.rename", params: ["recording": item.folder.path, "title": title],
+                     argv: ["recorder", "rename", item.folder.path, title]) { result in
+            if case .success = result {
                 report(.renamed)
-            } else {
-                HubPerf.log("recorder.actions: rename \(item.folder.path) failed: \(stderr)")
-                report(.failed("“\(item.title)” was not renamed: \(stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")"))
+            } else if case let .failure(error) = result {
+                HubPerf.log("recorder.actions: rename \(item.folder.path) failed: \(error.reason)")
+                report(.failed("“\(item.title)” was not renamed: \(error.reason)"))
             }
         }
     }

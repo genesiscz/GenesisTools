@@ -613,3 +613,98 @@ private final class ProgressCalls: @unchecked Sendable {
     var fractions: [Double] { lock.withLock { calls.map(\.fraction) } }
     var allOnMain: Bool { lock.withLock { calls.allSatisfy(\.onMain) } }
 }
+
+@MainActor
+final class RecorderLibraryServiceTests: XCTestCase {
+    private func service() -> FakeServiceLink {
+        FakeServiceLink(project: .whole(video: "/fixture/movie.mp4", durationUs: 1_000_000,
+                                        width: 100, height: 100, cursor: nil, recording: nil))
+    }
+
+    func testSearchUsesOfferedServiceAndDecodesHits() async {
+        let link = service()
+        link.serviceMethods.append("movies.search")
+        let model = LibraryModel()
+        model.commands.link = { link }
+        model.commands.runTools = { _, _ in XCTFail("search started tools") }
+        let answered = expectation(description: "service search")
+        link.movieAnswer = { method, params in
+            XCTAssertEqual(method, "movies.search")
+            XCTAssertEqual(params["text"] as? String, "hello")
+            answered.fulfill()
+            return [["folder": "/fixture", "kind": "line", "at": 1.5, "text": "hello world"],
+                    ["folder": "/fixture", "kind": "marker", "at": 2.0, "text": "hello again"]]
+        }
+        model.filter = "hello"
+        await fulfillment(of: [answered], timeout: 2)
+        XCTAssertEqual(link.count("movies.search"), 1)
+        XCTAssertEqual(model.spoken[URL(fileURLWithPath: "/fixture")]?.at, 1.5)
+        XCTAssertEqual(model.spoken[URL(fileURLWithPath: "/fixture")]?.more, [2])
+        XCTAssertFalse(model.searching)
+        XCTAssertNil(model.searchFailed)
+    }
+
+    func testSearchFallsBackWhenMethodMissingOrDisconnected() async {
+        for connected in [true, false] {
+            let link = service()
+            link.isConnected = connected
+            if !connected { link.serviceMethods.append("movies.search") }
+            let model = LibraryModel()
+            model.commands.link = { link }
+            let answered = expectation(description: "CLI search")
+            model.commands.runTools = { argv, done in
+                XCTAssertEqual(argv, ["recorder", "search", "hello", "--json"])
+                done(0, #"[{"folder":"/fixture","kind":"marker","at":3,"text":"hello"}]"#, "")
+                answered.fulfill()
+            }
+            model.filter = "hello"
+            await fulfillment(of: [answered], timeout: 2)
+            XCTAssertTrue(link.calls.isEmpty)
+            XCTAssertEqual(model.spoken[URL(fileURLWithPath: "/fixture")]?.marker, true)
+            XCTAssertNil(model.searchFailed)
+        }
+    }
+
+    func testCopyGIFUsesOfferedService() {
+        let link = service()
+        link.serviceMethods.append("movie.copy")
+        let previous = RecordingActions.commands
+        defer { RecordingActions.commands = previous }
+        RecordingActions.commands = RecorderCommands()
+        RecordingActions.commands.link = { link }
+        RecordingActions.commands.runTools = { _, _ in XCTFail("copy started tools") }
+        let item = RecorderMenu.Recent(folder: URL(fileURLWithPath: "/fixture"), title: "Fixture",
+                                       started: .distantPast, thumbnail: nil, hasMovie: true)
+        var copied = false
+        RecordingActions.run(.copyGIF, item) { if case .notice = $0 { copied = true } }
+        XCTAssertTrue(copied)
+        XCTAssertEqual(link.count("movie.copy"), 1)
+        XCTAssertEqual(link.calls.last?.params["recording"] as? String, item.folder.path)
+        XCTAssertEqual(link.calls.last?.params["gif"] as? Bool, true)
+    }
+
+    func testCopyGIFFallsBackWhenMethodMissingOrDisconnected() {
+        let previous = RecordingActions.commands
+        defer { RecordingActions.commands = previous }
+        for connected in [true, false] {
+            let link = service()
+            link.isConnected = connected
+            if !connected { link.serviceMethods.append("movie.copy") }
+            RecordingActions.commands = RecorderCommands()
+            RecordingActions.commands.link = { link }
+            var runs = 0
+            RecordingActions.commands.runTools = { argv, done in
+                XCTAssertEqual(argv, ["recorder", "copy", "/fixture", "--gif"])
+                runs += 1
+                done(0, "", "")
+            }
+            let item = RecorderMenu.Recent(folder: URL(fileURLWithPath: "/fixture"), title: "Fixture",
+                                           started: .distantPast, thumbnail: nil, hasMovie: true)
+            var copied = false
+            RecordingActions.run(.copyGIF, item) { if case .notice = $0 { copied = true } }
+            XCTAssertEqual(runs, 1)
+            XCTAssertTrue(link.calls.isEmpty)
+            XCTAssertTrue(copied)
+        }
+    }
+}
