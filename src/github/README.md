@@ -124,6 +124,14 @@ GitHub only auto-retargets dependent PRs when a branch is deleted via the **web 
 Exactly one of `--merge`, `--rebase`, `--squash`, or `--ff-only` is required.
 All progress logs go to stdout.
 
+Before a fast-forward, the command checks the PR's recorded GitHub base against
+the base branch tip. If the PR page would include commits already on the base,
+it refuses the merge. Push the head after those commits land, or retarget the PR
+to the branch it sits on before pushing the chain. After a push by this command,
+it waits up to 30 seconds for GitHub to update the PR before refusing. Pass
+`--allow-stale-page` to merge despite the stale page; the merged page cannot be
+repaired afterward.
+
 **`--squash` writes a real commit message by default.** Without `--subject` the
 subject is the PR title, a space, and `(#N)` (not doubled when the title already
 ends with it). Without `--body` the body is every PR commit subject, oldest

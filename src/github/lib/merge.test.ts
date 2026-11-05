@@ -44,6 +44,7 @@ const fakeOctokit = {
                 octokitAnswer("repos.compare", params),
         },
         git: {
+            getRef: async (params: Record<string, unknown>) => octokitAnswer("git.getRef", params),
             updateRef: async (params: Record<string, unknown>) => octokitAnswer("git.updateRef", params),
             deleteRef: async (params: Record<string, unknown>) => octokitAnswer("git.deleteRef", params),
         },
@@ -58,7 +59,8 @@ mock.module("@genesiscz/utils/github/octokit", () => ({
     getOctokitForWrite: () => fakeOctokit,
 }));
 
-const { createOctokitMergeClient, forcePushBeforeTips, resolveMergeMethod, safeMergePull } = await import("./merge");
+const { createOctokitMergeClient, decidePageSafety, forcePushBeforeTips, resolveMergeMethod, safeMergePull } =
+    await import("./merge");
 
 beforeEach(() => {
     octokitCalls = [];
@@ -69,6 +71,7 @@ type CallLog = Array<{ op: string; args: unknown[] }>;
 
 function makeMock(opts: {
     pr: PullRef;
+    prReads?: PullRef[];
     dependents?: DependentPull[];
     /** Dependents returned after merge (defaults to pre-merge list). */
     postMergeDependents?: DependentPull[];
@@ -101,6 +104,7 @@ function makeMock(opts: {
     const dependents = opts.dependents ?? [];
     const postMerge = opts.postMergeDependents ?? dependents;
     let merged = opts.pr.merged;
+    let prRead = 0;
     const unstackedStacks = new Set<number>();
 
     const stackNumberFor = (number: number): number | null => {
@@ -134,7 +138,11 @@ function makeMock(opts: {
                     htmlUrl: dep.htmlUrl,
                 };
             }
-            return { ...opts.pr, number, merged };
+            const current = opts.prReads?.[Math.min(prRead++, (opts.prReads?.length ?? 1) - 1)] ?? opts.pr;
+            return { ...current, number, merged };
+        },
+        async inspectPageRange(_owner, _repo, pr) {
+            return { baseTip: pr.baseSha, pageCommits: [], baseCommits: [] };
         },
         async listPullCommits(_owner, _repo, pr) {
             calls.push({ op: "listPullCommits", args: [pr.number] });
@@ -273,6 +281,26 @@ function makeRestackMock(opts?: {
 
 const HEAD_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
+// Regression test: 2026-11-05 PR #717 froze with earlier PRs in its Files tab.
+test("refuses to fast-forward when the recorded base includes already-landed commits", async () => {
+    const pr = basePr({ number: 717, baseSha: "recorded-base" });
+    const { client, calls } = makeMock({ pr });
+    Object.assign(client, {
+        async inspectPageRange() {
+            return {
+                baseTip: "base-tip",
+                pageCommits: ["foreign-1", "foreign-2", "own"],
+                baseCommits: ["foreign-1", "foreign-2"],
+            };
+        },
+    });
+
+    await expect(safeMergePull({ owner: "o", repo: "r", number: 717, method: "rebase", client })).rejects.toThrow(
+        /#717.*recorded-base.*2 foreign commits/s
+    );
+    expect(calls.map((call) => call.op)).not.toContain("fastForwardBase");
+});
+
 function basePr(over: Partial<PullRef> = {}): PullRef {
     return {
         number: 1,
@@ -302,6 +330,99 @@ function dep(over: Partial<DependentPull> & { number: number }): DependentPull {
         ...over,
     };
 }
+
+describe("PR page safety", () => {
+    const common = { recordedBase: "old", baseTip: "tip", head: "head", observedHead: "head", canWait: false };
+
+    test("accepts a recorded base equal to the tip", () => {
+        expect(decidePageSafety({ ...common, recordedBase: "tip", pageCommits: ["own"], baseCommits: [] })).toEqual({
+            decision: "ok",
+            foreignCount: 0,
+            pageCount: 1,
+        });
+    });
+
+    test("accepts an older recorded base when only its own commits are shown", () => {
+        expect(decidePageSafety({ ...common, pageCommits: ["own"], baseCommits: ["other"] })).toEqual({
+            decision: "ok",
+            foreignCount: 0,
+            pageCount: 1,
+        });
+    });
+
+    test("reports the foreign and total commit counts", () => {
+        expect(
+            decidePageSafety({ ...common, pageCommits: ["one", "two", "own"], baseCommits: ["one", "two"] })
+        ).toEqual({ decision: "refuse", foreignCount: 2, pageCount: 3 });
+    });
+
+    test("waits for a pushed head and rechecks the recorded base", async () => {
+        const before = basePr({ baseSha: "old", headSha: "old-head" });
+        const after = basePr({ baseSha: "tip", headSha: "new-head" });
+        const { client, calls } = makeMock({ pr: before, prReads: [before, { ...after, baseSha: "old" }, after] });
+        let inspections = 0;
+        client.inspectPageRange = async () =>
+            ++inspections === 1
+                ? { baseTip: "tip", pageCommits: ["foreign", "own"], baseCommits: ["foreign"] }
+                : { baseTip: "tip", pageCommits: ["own"], baseCommits: [] };
+        const { restack } = makeRestackMock({ byBranch: { "branch-a": { rebased: true, headSha: "new-head" } } });
+        const sleeps: number[] = [];
+        await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "rebase",
+            client,
+            restack,
+            sleep: async (ms) => {
+                sleeps.push(ms);
+            },
+        });
+        expect(sleeps).toHaveLength(1);
+        expect(sleeps[0]).toBeGreaterThanOrEqual(100);
+        expect(calls.some((call) => call.op === "fastForwardBase")).toBe(true);
+    });
+
+    test("allows an explicitly overridden stale page", async () => {
+        const { client, calls } = makeMock({ pr: basePr({ baseSha: "old" }) });
+        client.inspectPageRange = async () => ({
+            baseTip: "tip",
+            pageCommits: ["foreign", "own"],
+            baseCommits: ["foreign"],
+        });
+        await safeMergePull({ owner: "o", repo: "r", number: 1, method: "rebase", client, allowStalePage: true });
+        expect(calls.some((call) => call.op === "fastForwardBase")).toBe(true);
+    });
+
+    test("refuses a page that remains stale after the 30 second deadline", async () => {
+        const before = basePr({ baseSha: "old", headSha: "old-head" });
+        const after = basePr({ baseSha: "old", headSha: "new-head" });
+        const { client, calls } = makeMock({ pr: before, prReads: [before, after] });
+        client.inspectPageRange = async () => ({
+            baseTip: "tip",
+            pageCommits: ["foreign", "own"],
+            baseCommits: ["foreign"],
+        });
+        const { restack } = makeRestackMock({ byBranch: { "branch-a": { rebased: true, headSha: "new-head" } } });
+        let time = 0;
+        await expect(
+            safeMergePull({
+                owner: "o",
+                repo: "r",
+                number: 1,
+                method: "rebase",
+                client,
+                restack,
+                now: () => time,
+                sleep: async (ms) => {
+                    time += ms;
+                },
+            })
+        ).rejects.toThrow(/1 foreign commits/);
+        expect(time).toBe(30_000);
+        expect(calls.some((call) => call.op === "fastForwardBase")).toBe(false);
+    });
+});
 
 describe("forcePushBeforeTips", () => {
     test("lists each replaced tip once, newest first, skipping events without a commit", () => {
@@ -408,6 +529,7 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         const headSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         const { client, calls } = makeMock({
             pr: basePr({ headSha }),
+            prReads: [basePr({ headSha }), basePr({ headSha: "e".repeat(40) })],
             dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a" })],
             baseForcePushTips: { 1: ["main-before-push"] },
         });
@@ -620,6 +742,7 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         const newSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         const { client, calls } = makeMock({
             pr: basePr({ headSha: oldSha }),
+            prReads: [basePr({ headSha: oldSha }), basePr({ headSha: newSha })],
             dependents: [],
         });
         const { restack, calls: restackCalls } = makeRestackMock({
@@ -1411,7 +1534,7 @@ describe("safeMergePull: edge paths", () => {
 
         const child = restackCalls.find((c) => c.branch === "branch-b");
         expect(child?.expectedHeadSha).toBe("d".repeat(40));
-        expect(calls.filter((c) => c.op === "getPull").map((c) => c.args[0])).toEqual([1, 2]);
+        expect(calls.filter((c) => c.op === "getPull").map((c) => c.args[0])).toEqual([1, 1, 2]);
         expect(result.dependentsRestacked[0]).toMatchObject({ number: 2, ok: true, rebased: false });
     });
 
@@ -1540,6 +1663,34 @@ describe("safeMergePull: edge paths", () => {
 
 describe("createOctokitMergeClient", () => {
     const pullRef: PullRef = basePr({ number: 5, baseSha: "base-sha", headSha: "head-sha", commitCount: 2 });
+
+    test("refuses when the base moved after inspecting the PR page", async () => {
+        octokitAnswers.set("repos.compare", () => ({ data: { status: "ahead", base_commit: { sha: "new-tip" } } }));
+        await expect(createOctokitMergeClient().fastForwardBase("o", "r", "main", "head", "old-tip")).rejects.toThrow(
+            "Base main moved"
+        );
+        expect(octokitCalls.map((call) => call.op)).not.toContain("git.updateRef");
+    });
+
+    test("reads the branch tip and all pages of both commit comparisons", async () => {
+        octokitAnswers.set("git.getRef", () => ({ data: { object: { sha: "tip-sha" } } }));
+        octokitAnswers.set("repos.compare", (params) => {
+            if (params.basehead === "tip-sha...head-sha") {
+                return { data: { status: "ahead" } };
+            }
+            if (params.basehead === "base-sha...tip-sha") {
+                return { data: { total_commits: 1, commits: [{ sha: "foreign" }] } };
+            }
+            return params.page === 1
+                ? { data: { total_commits: 2, commits: [{ sha: "foreign" }] } }
+                : { data: { total_commits: 2, commits: [{ sha: "own" }] } };
+        });
+        expect(await createOctokitMergeClient().inspectPageRange("o", "r", pullRef, "head-sha")).toEqual({
+            baseTip: "tip-sha",
+            pageCommits: ["foreign", "own"],
+            baseCommits: ["foreign"],
+        });
+    });
 
     test("getPull maps the REST payload and reads the native stack number", async () => {
         octokitAnswers.set("pulls.get", () => ({

@@ -101,9 +101,35 @@ export interface MergePullResult {
     message: string;
 }
 
+export interface PageRange {
+    baseTip: string;
+    pageCommits: string[];
+    baseCommits: string[];
+}
+
+export function decidePageSafety(input: {
+    recordedBase: string;
+    baseTip: string;
+    head: string;
+    observedHead: string;
+    pageCommits: string[];
+    baseCommits: string[];
+    canWait: boolean;
+}): { decision: "ok" | "wait" | "refuse"; foreignCount: number; pageCount: number } {
+    const landed = new Set(input.baseCommits);
+    const foreignCount = input.pageCommits.filter((sha) => landed.has(sha)).length;
+    const unsafe = input.head !== input.observedHead || foreignCount > 0;
+    return {
+        decision: unsafe ? (input.canWait ? "wait" : "refuse") : "ok",
+        foreignCount,
+        pageCount: input.pageCommits.length,
+    };
+}
+
 /** Injectable GitHub surface — real octokit wrapper or test mock. */
 export interface MergeGitHubClient {
     getPull(owner: string, repo: string, number: number): Promise<PullRef>;
+    inspectPageRange(owner: string, repo: string, pr: PullRef, headSha: string): Promise<PageRange>;
     listOpenPullsByBase(owner: string, repo: string, base: string): Promise<DependentPull[]>;
     /** Every commit on the PR, oldest first. Throws rather than return a partial list. */
     listPullCommits(
@@ -117,7 +143,13 @@ export interface MergeGitHubClient {
      * True fast-forward: move `baseRef` to `headSha` only if base is an ancestor
      * of head (Git ref update with force=false). Does not rewrite commits.
      */
-    fastForwardBase(owner: string, repo: string, baseRef: string, headSha: string): Promise<MergePullResult>;
+    fastForwardBase(
+        owner: string,
+        repo: string,
+        baseRef: string,
+        headSha: string,
+        expectedBaseSha?: string
+    ): Promise<MergePullResult>;
     updatePullBase(owner: string, repo: string, number: number, base: string): Promise<DependentPull>;
     /**
      * Native stack number for a PR, or null if it is not in a stack.
@@ -185,6 +217,9 @@ export interface SafeMergeOptions {
      * (no merge, no retarget, no branch delete).
      */
     dryRun?: boolean;
+    allowStalePage?: boolean;
+    sleep?: (ms: number) => Promise<void>;
+    now?: () => number;
     /** Progress / decision logs (caller routes to stdout). */
     log?: (message: string) => void;
     client?: MergeGitHubClient;
@@ -345,6 +380,54 @@ export function createOctokitMergeClient(): MergeGitHubClient {
             };
         },
 
+        async inspectPageRange(owner, repo, pr, headSha) {
+            const { data: ref } = await withRetry(
+                () => octokit.rest.git.getRef({ owner, repo, ref: `heads/${pr.baseRef}` }),
+                { label: `GET /repos/${owner}/${repo}/git/ref/heads/${pr.baseRef}` }
+            );
+            const baseTip = ref.object.sha;
+            const { data: linear } = await withRetry(
+                () =>
+                    octokit.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${baseTip}...${headSha}` }),
+                { label: `Compare base tip to PR head` }
+            );
+            if (linear.status !== "ahead" && linear.status !== "identical") {
+                throw new Error(`Cannot fast-forward ${pr.baseRef}: head is ${linear.status} relative to the base tip`);
+            }
+
+            if (pr.baseSha === baseTip) {
+                return { baseTip, pageCommits: [], baseCommits: [] };
+            }
+
+            const collect = async (tip: string): Promise<string[]> => {
+                const commits: string[] = [];
+                let page = 1;
+                while (true) {
+                    const { data } = await withRetry(
+                        () =>
+                            octokit.rest.repos.compareCommitsWithBasehead({
+                                owner,
+                                repo,
+                                basehead: `${pr.baseSha}...${tip}`,
+                                per_page: 100,
+                                page,
+                            }),
+                        { label: `Compare recorded PR base to ${tip.slice(0, 7)} (page ${page})` }
+                    );
+                    commits.push(...data.commits.map((commit) => commit.sha));
+                    if (commits.length >= data.total_commits) {
+                        return commits;
+                    }
+                    if (data.commits.length === 0) {
+                        throw new Error(`Incomplete GitHub commit comparison for PR #${pr.number}`);
+                    }
+                    page++;
+                }
+            };
+            const [pageCommits, baseCommits] = await Promise.all([collect(headSha), collect(baseTip)]);
+            return { baseTip, pageCommits, baseCommits };
+        },
+
         async listOpenPullsByBase(owner, repo, base) {
             const results: DependentPull[] = [];
             let page = 1;
@@ -451,7 +534,7 @@ export function createOctokitMergeClient(): MergeGitHubClient {
             };
         },
 
-        async fastForwardBase(owner, repo, baseRef, headSha) {
+        async fastForwardBase(owner, repo, baseRef, headSha, expectedBaseSha) {
             // Preflight: base must be an ancestor of head (or already identical).
             const { data: cmp } = await withRetry(
                 () =>
@@ -462,6 +545,10 @@ export function createOctokitMergeClient(): MergeGitHubClient {
                     }),
                 { label: `GET /repos/${owner}/${repo}/compare/${baseRef}...${headSha.slice(0, 7)}` }
             );
+
+            if (expectedBaseSha && cmp.base_commit.sha !== expectedBaseSha) {
+                throw new Error(`Base ${baseRef} moved while checking the PR page; retry the merge`);
+            }
 
             // ahead  = head is strictly ahead of base → FF ok
             // identical = already same tip → no-op ok
@@ -567,6 +654,60 @@ export function createOctokitMergeClient(): MergeGitHubClient {
     return client;
 }
 
+async function guardPageBeforeFastForward(input: {
+    client: MergeGitHubClient;
+    owner: string;
+    repo: string;
+    pr: PullRef;
+    head: string;
+    pushed: boolean;
+    allowStalePage: boolean;
+    sleep: (ms: number) => Promise<void>;
+    now: () => number;
+    log?: (message: string) => void;
+}): Promise<string> {
+    const { client, owner, repo, pr, head, pushed, allowStalePage, sleep, now, log } = input;
+    const deadline = now() + 30_000;
+    while (true) {
+        const current = await client.getPull(owner, repo, pr.number);
+        if (
+            current.baseRef !== pr.baseRef ||
+            current.headRef !== pr.headRef ||
+            current.state !== "open" ||
+            current.merged
+        ) {
+            throw new Error(`PR #${pr.number} changed while preparing to fast-forward; retry`);
+        }
+        const range = await client.inspectPageRange(owner, repo, current, head);
+        const canWait = pushed && now() < deadline;
+        const result = decidePageSafety({
+            recordedBase: current.baseSha,
+            baseTip: range.baseTip,
+            head,
+            observedHead: current.headSha,
+            pageCommits: range.pageCommits,
+            baseCommits: range.baseCommits,
+            canWait,
+        });
+        if (result.decision === "ok" || (allowStalePage && current.headSha === head)) {
+            return range.baseTip;
+        }
+        if (result.decision === "wait") {
+            logLine(log, `Waiting for GitHub to update PR #${pr.number} before checking its page again...`);
+            await sleep(Math.min(5_000, Math.max(0, deadline - now())));
+            continue;
+        }
+        if (current.headSha !== head) {
+            throw new Error(`PR #${pr.number} still reports head ${current.headSha}, expected ${head}; retry`);
+        }
+        throw new Error(
+            `PR #${pr.number} recorded base ${current.baseSha} would show ${result.foreignCount} foreign commits ` +
+                `among ${result.pageCount} commits. Push this PR's head only after the base holds everything under it, ` +
+                `or retarget it to the branch it sits on before the chain push. Use --allow-stale-page to merge anyway.`
+        );
+    }
+}
+
 /**
  * Merge a PR, retarget every open PR that based on its head, then optionally
  * delete the head branch. Never deletes before retargeting.
@@ -587,6 +728,9 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         commitTitle,
         commitMessage,
         dryRun = false,
+        allowStalePage = false,
+        sleep = (ms) => Bun.sleep(ms),
+        now = () => Date.now(),
         log,
     } = options;
     const client = options.client ?? createOctokitMergeClient();
@@ -688,12 +832,24 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         if (!pr.headSha) {
             throw new Error(`PR #${number} has no head SHA — cannot fast-forward`);
         }
+        const baseTip = await guardPageBeforeFastForward({
+            client,
+            owner,
+            repo,
+            pr,
+            head: pr.headSha,
+            pushed: false,
+            allowStalePage,
+            sleep,
+            now,
+            log,
+        });
         logLine(
             log,
             `Fast-forwarding origin/${pr.baseRef} → ${pr.headSha.slice(0, 7)} ` +
                 `(head=${pr.headRef}; branch will NOT be deleted by the FF)...`
         );
-        mergeResult = await client.fastForwardBase(owner, repo, pr.baseRef, pr.headSha);
+        mergeResult = await client.fastForwardBase(owner, repo, pr.baseRef, pr.headSha, baseTip);
     } else if (stackSafeRebase) {
         rebaseMode = "stack-safe-ff";
         if (commitTitle || commitMessage) {
@@ -723,12 +879,25 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
             logLine(log, `  head already linear on ${pr.baseRef}`);
         }
 
+        const baseTip = await guardPageBeforeFastForward({
+            client,
+            owner,
+            repo,
+            pr,
+            head: effectiveHeadSha,
+            pushed: headRestack.rebased,
+            allowStalePage,
+            sleep,
+            now,
+            log,
+        });
+
         logLine(
             log,
             `Fast-forwarding origin/${pr.baseRef} → ${effectiveHeadSha.slice(0, 7)} ` +
                 `(preserves SHAs; dependents stay stackable)...`
         );
-        mergeResult = await client.fastForwardBase(owner, repo, pr.baseRef, effectiveHeadSha);
+        mergeResult = await client.fastForwardBase(owner, repo, pr.baseRef, effectiveHeadSha, baseTip);
     } else {
         if (method === "rebase") {
             rebaseMode = "api-rewrite";

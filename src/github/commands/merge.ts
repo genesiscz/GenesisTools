@@ -25,6 +25,7 @@ export interface MergeCommandOptions {
     restack?: boolean;
     /** With --rebase: also rebase and force-push each direct child right away. */
     restackChildren?: boolean;
+    allowStalePage?: boolean;
     deleteBranch?: boolean;
     deleteRemote?: boolean;
     subject?: string;
@@ -177,6 +178,7 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
         deleteBranch,
         noRestack: options.restack === false,
         restackChildren: Boolean(options.restackChildren),
+        allowStalePage: Boolean(options.allowStalePage),
         commitTitle: options.subject,
         commitMessage: options.body,
         dryRun,
@@ -258,6 +260,7 @@ export function createMergeCommand(): Command {
             "True fast-forward: move base ref to head SHA (preserves commits; fails if not FF-able). Auto-retargets stack dependents like other methods."
         )
         .option("--ff", "Alias for --ff-only")
+        .option("--allow-stale-page", "Allow a fast-forward even if the PR page would show already-landed commits")
         .option(
             "--no-restack",
             "With --rebase only: use GitHub merge_method=rebase (rewrites SHAs; breaks cascading child PRs)"
