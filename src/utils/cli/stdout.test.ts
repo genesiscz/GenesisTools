@@ -1,5 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { skip } from "@genesiscz/utils/test/skip";
 import { isBrokenPipe, printLn, writeStdout, writeStdoutStrict } from "./stdout";
 
@@ -130,10 +131,10 @@ describe("writeStdout on a closed pipe", () => {
         ["event-first", "EPIPE"],
     ])("routes the stream error (%s, %s)", async (order, code) => {
         const script = `
-            import { writeStdoutStrict } from ${JSON.stringify(join(import.meta.dir, "stdout.ts"))};
-            const failure = Object.assign(new Error("write failed"), { code: ${JSON.stringify(code)} });
+            import { writeStdoutStrict } from ${SafeJSON.stringify(join(import.meta.dir, "stdout.ts"), { strict: true })};
+            const failure = Object.assign(new Error("write failed"), { code: ${SafeJSON.stringify(code, { strict: true })} });
             process.stdout.write = (_text, callback) => {
-                if (${JSON.stringify(order)} === "callback-first") {
+                if (${SafeJSON.stringify(order, { strict: true })} === "callback-first") {
                     callback(failure);
                     process.nextTick(() => process.stdout.emit("error", failure));
                 } else {
