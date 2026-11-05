@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import { claimPidFile, clearPidFile } from "@genesiscz/utils/process/pidfile";
+import { claimPidFile, clearPidFile, inspectPidFile } from "@genesiscz/utils/process/pidfile";
 
 /**
  * A start gate: a spawner that waits for a detached child to start, and may give up, races that child for one
@@ -58,6 +58,33 @@ export async function closeStartGate(path: string): Promise<StartGateClose> {
     const pid = claim.status === "held" && claim.state.status === "live" ? claim.state.pid : null;
     logger.info({ path, pid }, "[start-gate] the child passed the gate before the close");
     return { status: "passed", pid };
+}
+
+/**
+ * The spawner's stop of a child that passed the gate but never started its work. The gate is read again right
+ * before the signal, so a child that ended (it released its gate) or a recycled pid is never signalled.
+ */
+export function stopPassedChild({
+    gate,
+    pid,
+    signal,
+}: {
+    gate: string;
+    pid: number;
+    signal: (pid: number) => void;
+}): boolean {
+    const state = inspectPidFile(gate);
+
+    if (state.status !== "live" || state.pid !== pid) {
+        logger.info(
+            { gate, pid, state: state.status },
+            "[start-gate] the child left its gate before the stop; not signalling"
+        );
+        return false;
+    }
+
+    signal(pid);
+    return true;
 }
 
 /** The child, when its work ends: the gate goes with it. */

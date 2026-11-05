@@ -19,7 +19,14 @@ import {
     writePidFile,
     writePidFileWhenFree,
 } from "./pidfile";
-import { awaitStart, closeStartGate, passStartGate, releaseStartGate, startGatePath } from "./start-gate";
+import {
+    awaitStart,
+    closeStartGate,
+    passStartGate,
+    releaseStartGate,
+    startGatePath,
+    stopPassedChild,
+} from "./start-gate";
 
 /** A pid the kernel will never have handed out — the "owner is gone" case. */
 const DEAD_PID = 999999999;
@@ -489,6 +496,21 @@ describe("start gate", () => {
         const other = startGatePath(dir);
         expect(await passStartGate(other)).toEqual({ status: "passed" });
         expect(await closeStartGate(other)).toEqual({ status: "passed", pid: process.pid });
+    });
+
+    test("the stop signals only the child that still holds the gate, never another pid or a released gate", async () => {
+        const gate = startGatePath(dir);
+        expect(await passStartGate(gate)).toEqual({ status: "passed" });
+        const signalled: number[] = [];
+        const signal = (pid: number) => {
+            signalled.push(pid);
+        };
+
+        expect(stopPassedChild({ gate, pid: process.pid + 1, signal })).toBe(false);
+        expect(stopPassedChild({ gate, pid: process.pid, signal })).toBe(true);
+        releaseStartGate(gate);
+        expect(stopPassedChild({ gate, pid: process.pid, signal })).toBe(false);
+        expect(signalled).toEqual([process.pid]);
     });
 
     test("a gate path is new each time and lives in the folder given", () => {
