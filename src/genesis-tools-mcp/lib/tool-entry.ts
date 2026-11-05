@@ -1,4 +1,4 @@
-import type { CallToolResult } from "@modelcontextprotocol/server";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/server";
 
 /**
  * What a registry handler answers: its text, or its text with the machine result an MCP client reads as
@@ -10,6 +10,7 @@ export type ToolAnswer = string | { text: string; structuredContent?: CallToolRe
 export interface ToolEntry {
     description: string;
     inputSchema: Record<string, unknown>;
+    annotations?: Tool["annotations"];
     /** Returns the answer. `context.signal` aborts when the client cancels the call. */
     handler: (args: Record<string, unknown>, context?: { signal?: AbortSignal }) => Promise<ToolAnswer>;
 }
@@ -35,6 +36,7 @@ export function toolCallResult(answer: ToolAnswer): CallToolResult {
 export interface McpServerTool {
     description: string;
     inputSchema: Record<string, unknown>;
+    annotations?: Tool["annotations"];
     call(args: unknown): Promise<CallToolResult>;
 }
 
@@ -53,6 +55,7 @@ export function entryFromMcpTool(tool: McpServerTool): ToolEntry {
     return {
         description: tool.description,
         inputSchema: tool.inputSchema,
+        annotations: tool.annotations,
         handler: async (args) => {
             const result = await tool.call(args);
             const text = resultText(result);

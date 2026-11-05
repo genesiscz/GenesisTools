@@ -471,6 +471,7 @@ export async function createGenesisToolsServer(opts: {
                 name,
                 description: t.description,
                 inputSchema: t.inputSchema as ListToolsResult["tools"][number]["inputSchema"],
+                ...(t.annotations ? { annotations: t.annotations } : {}),
             })),
         })
     );

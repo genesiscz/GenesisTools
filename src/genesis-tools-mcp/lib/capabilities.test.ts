@@ -145,8 +145,10 @@ describe("a standalone server's tool in the shared registry", () => {
         const entry = entryFromMcpTool({
             description: "claims",
             inputSchema: { type: "object" },
+            annotations: { readOnlyHint: false, destructiveHint: true },
             call: async () => ({ content: [{ type: "text", text: "1 claim" }], structuredContent: claims }),
         });
+        expect(entry.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
         const answer = await entry.handler({});
 
         expect(answer).toEqual({ text: "1 claim", structuredContent: claims });
