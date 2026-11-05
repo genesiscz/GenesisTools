@@ -1236,7 +1236,7 @@ final class PRsModel: ObservableObject {
         appliedKey = key
         var sorted = list.prs.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
         // The open PR came from `openDirect` and this list does not hold it: it stays, at the end.
-        if let open = selected, directIDs.contains(open.id), !sorted.contains(where: { $0.id == open.id }) {
+        if let open = selected, !sorted.contains(where: { $0.id == open.id }) {
             sorted.append(open)
         }
         let before = Dictionary(prs.map { ($0.id, $0.updatedAt ?? "") }, uniquingKeysWith: { first, _ in first })
