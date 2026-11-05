@@ -126,7 +126,11 @@ function transcriptionFor(
     if (providerId === "xai") {
         return {
             transcription: (modelId: string) =>
-                toTranscriptionModel({ provider: new AIXAITranscriptionProvider({ apiKey, fetch: transport }), providerId, modelId }),
+                toTranscriptionModel({
+                    provider: new AIXAITranscriptionProvider({ apiKey, fetch: transport }),
+                    providerId,
+                    modelId,
+                }),
         };
     }
 

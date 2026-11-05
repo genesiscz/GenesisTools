@@ -28,7 +28,10 @@ export class XAIClient {
     private readonly transport: typeof globalThis.fetch;
 
     /** `deps` is for tests: the account lookup and the clock. */
-    constructor(apiKey?: string, deps: { lookup?: () => Promise<string>; now?: () => number; fetch?: typeof globalThis.fetch } = {}) {
+    constructor(
+        apiKey?: string,
+        deps: { lookup?: () => Promise<string>; now?: () => number; fetch?: typeof globalThis.fetch } = {}
+    ) {
         this.transport = deps.fetch ?? globalThis.fetch;
         this.lookup = deps.lookup ?? (() => providerApiKey(XAI_PROVIDER_ID));
         this.now = deps.now ?? Date.now;
