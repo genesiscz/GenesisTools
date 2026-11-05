@@ -439,6 +439,27 @@ describe("movie chapters", () => {
         await expect(undoEdit(path)).rejects.toThrow("by window");
     });
 
+    test("an edit saved by another writer between this edit's read and its write survives: the ops run again on it", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-rec-race-"));
+        const path = join(root, "talk.edit.json");
+        writeProject(
+            path,
+            wholeProject({ video: join(root, "talk.mp4"), durationUs: 10_000_000, width: 100, height: 100 })
+        );
+
+        // Both read revision 1 before either writes: the second writer finds revision 2 on disk.
+        const [first, second] = await Promise.all([
+            editProject(path, [{ op: "text", from: 1, to: 2, text: "first" }]),
+            editProject(path, [{ op: "volume", volume: 0.4 }]),
+        ]);
+        const saved = readProject(path);
+
+        expect([first.project.revision, second.project.revision]).toEqual([2, 3]);
+        expect(saved.texts?.map((text) => text.text)).toEqual(["first"]);
+        expect(saved.audio.volume).toBe(0.4);
+        expect((await undoEdit(path)).project.texts?.map((text) => text.text)).toEqual(["first"]);
+    });
+
     test("an export is named after the recording's title, made safe, else after the movie", () => {
         const root = mkdtempSync(join(tmpdir(), "gt-rec-name-"));
         const recording = join(root, "rec");

@@ -238,8 +238,20 @@ export async function computeEdit({
  * op that fails leaves the file as it was and names the op.
  */
 export async function editProject(value: string, ops: readonly EditOp[]): Promise<OpenedProject> {
-    const opened = await openProject(value);
-    const edit = await computeEdit({ project: opened.project, ops, fresh: opened.fresh });
+    let opened = await openProject(value);
+    let edit = await computeEdit({ project: opened.project, ops, fresh: opened.fresh });
+
+    // Another writer (the window, a second CLI) may have saved while the ops measured: they run once more on its
+    // file, with the measurements they had, so neither edit is lost. A second save in between still wins this way.
+    if (edit.changed && diskRevision(opened.path) !== (opened.fresh ? null : opened.project.revision)) {
+        const measured = edit.facts;
+        opened = await openProject(value);
+        log.info(
+            { path: opened.path, revision: opened.project.revision, by: opened.project.updatedBy },
+            "the edit changed on disk since it was read; the ops run again on the newer file"
+        );
+        edit = await computeEdit({ project: opened.project, ops, fresh: opened.fresh, facts: measured });
+    }
 
     if (!edit.changed) {
         log.debug({ path: opened.path, ops: ops.map((op) => op.op) }, "edit changed nothing, not saved");
@@ -262,6 +274,11 @@ export async function editProject(value: string, ops: readonly EditOp[]): Promis
         ...(edit.loudness ? { loudness: edit.loudness } : {}),
         ...(edit.warnings.length ? { warnings: edit.warnings } : {}),
     };
+}
+
+/** The revision of the edit file now, or null when it has none. */
+function diskRevision(path: string): number | null {
+    return existsSync(path) ? readProject(path).revision : null;
 }
 
 /** The items of an edit that never show because their whole time is cut (check()'s first kind of issue). */
