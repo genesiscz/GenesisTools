@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -16,7 +16,7 @@ import { collectAndReport } from "../lib/collect";
 import { ensureScreenRecording } from "../lib/grants";
 import { linkSource } from "../lib/link";
 import { resolveProject } from "../lib/project";
-import { readRecorderState, recorderAcknowledged, recorderFiles, runRecorder } from "../lib/recorder";
+import { readRecorderState, recorderAcknowledged, requestRecorderStop, runRecorder } from "../lib/recorder";
 import { errorText, fail, TOOL } from "../lib/shared";
 
 const { log } = logger.scoped("meetings-record-cmd");
@@ -151,17 +151,19 @@ async function start(opts: {
     }
 }
 
-async function stop(): Promise<void> {
+async function stop(opts: { meeting?: string; startedAt?: string }): Promise<void> {
     const store = new MeetingStore();
     const current = readRecorderState(store);
 
     if (!current.running) {
-        ui.info("Nothing is recording.");
+        ui.info(opts.meeting ? "That recording has already ended." : "Nothing is recording.");
         return;
     }
 
-    const files = recorderFiles(store);
-    writeFileSync(files.stop, new Date().toISOString());
+    if (!requestRecorderStop(store, opts)) {
+        ui.info("That recording has already ended.");
+        return;
+    }
     ui.dim("Asked the recorder to stop; it finishes the current piece (up to 30 s) first.");
     const stopped = await waitFor(() => !readRecorderState(store).running, STOP_WAIT_MS);
 
@@ -313,7 +315,12 @@ export function registerRecordCommands(program: Command): void {
         .option("-y, --yes", "never prompt (project, permissions)")
         .action(start);
 
-    record.command("stop").description("Stop the recording and write its summary into the meeting").action(stop);
+    record
+        .command("stop")
+        .description("Stop the recording and write its summary into the meeting")
+        .option("--meeting <id>", "stop only this meeting")
+        .option("--started-at <iso>", "stop only this recorder run")
+        .action(stop);
     record.command("status").description("What is being recorded").option("--json", "print JSON").action(status);
     record
         .command("run", { hidden: true })

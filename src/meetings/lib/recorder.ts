@@ -80,6 +80,20 @@ export function readRecorderState(store: MeetingStore): { running: boolean; stat
     return { running, ...(parsed?.success ? { state: parsed.data } : {}) };
 }
 
+export function requestRecorderStop(store: MeetingStore, owner: { meeting?: string; startedAt?: string }): boolean {
+    const current = readRecorderState(store);
+    if (
+        !current.running ||
+        (owner.meeting !== undefined && current.state?.meetingId !== owner.meeting) ||
+        (owner.startedAt !== undefined && current.state?.startedAt !== owner.startedAt)
+    ) {
+        return false;
+    }
+
+    atomicWriteFileSync(recorderFiles(store).stop, new Date().toISOString());
+    return true;
+}
+
 const liveOutput = z.object({
     success: z.boolean(),
     data: z.object({ frames: z.array(z.object({ timestampMs: z.number(), path: z.string() })).default([]) }).optional(),

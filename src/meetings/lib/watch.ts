@@ -167,7 +167,8 @@ export async function watchOnce(
         return "failed";
     }
 
-    const meetingId = deps.recorder().state?.meetingId;
+    const startedRecorder = deps.recorder().state;
+    const meetingId = startedRecorder?.meetingId;
     atomicWriteFileSync(
         autoPath(store),
         SafeJSON.stringify({
@@ -185,14 +186,25 @@ export async function watchOnce(
             subtitle: title,
             message: `Click to open its folder. ${toolCommand("meetings", "record", "stop")} ends it.`,
             ...(meetingId ? { open: store.folder(meetingId) } : {}),
-            actions: [
-                {
-                    id: "stop",
-                    title: "Stop recording",
-                    execute: toolCommand("meetings", "record", "stop"),
-                    destructive: true,
-                },
-            ],
+            actions:
+                meetingId && startedRecorder
+                    ? [
+                          {
+                              id: "stop",
+                              title: "Stop recording",
+                              execute: toolCommand(
+                                  "meetings",
+                                  "record",
+                                  "stop",
+                                  "--meeting",
+                                  meetingId,
+                                  "--started-at",
+                                  startedRecorder.startedAt
+                              ),
+                              destructive: true,
+                          },
+                      ]
+                    : [],
         });
     }
 
