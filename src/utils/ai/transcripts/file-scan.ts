@@ -110,7 +110,8 @@ interface ScanEntry<S> {
 }
 
 const MARK_CACHE_LIMIT = 4000;
-const marks = new Map<string, { generation: string; hash: Bun.CryptoHasher }>();
+/** Per file and offset: the verified prefix hash, for a file whose generation did not move. */
+const marks = new Map<string, { generation: string } & SavedPrefix>();
 
 function prefixIdentity(fd: number): { key: string; generation: string } {
     const status = fstatSync(fd, { bigint: true });
@@ -127,39 +128,128 @@ export interface PrefixMark {
 }
 
 /**
- * Verify one consumed prefix, then extend the SHA with the exact new bytes the caller commits. A changed
- * generation reads the old prefix once; an unchanged nanosecond stat generation reuses its verified SHA state.
- * Metadata-equal mutations are outside that fast-cache contract. Every retained state is checked after the read.
+ * The bytes of one block of the prefix hash. Small, because a cached hash keeps the bytes after its last whole
+ * block (at most 16 MB at the 4,000-entry cap), and as cheap as large: 19 ms for 208 MB against 17 ms with 64 KB.
+ */
+const BLOCK_BYTES = 4 * 1024;
+
+/** What a cache keeps of a prefix hash: the hash of its whole blocks and a copy of the bytes after them. */
+interface SavedPrefix {
+    chain: bigint;
+    aligned: number;
+    tail: Uint8Array;
+}
+
+/**
+ * A streaming 64-bit xxHash3 of a file prefix, over 4 KB blocks at fixed file offsets: each whole block is hashed
+ * with the hash of the blocks before it as its seed, and the digest hashes the partial last block the same way,
+ * with the length. Any split of the same bytes into updates gives the same digest, which the prefix check needs: a
+ * scan extends the hash with the slices it reads, a later check hashes the same bytes in 4 MB reads.
+ *
+ * It is a change check, not a cryptographic one: a transcript writer does not try to forge a collision. SHA-256 did
+ * the same job at 85 ms for a 207 MB transcript against 18 ms for xxHash3 (11 ms of it the read), measured
+ * 2026-11-05 on Bun 1.4.2; xxHash3 with a bigint seed gives the same values on Bun 1.3.13.
+ */
+class PrefixHash {
+    private readonly tail = Buffer.allocUnsafe(BLOCK_BYTES);
+    private tailLength = 0;
+    private chain = 0n;
+    private aligned = 0;
+
+    constructor(saved?: SavedPrefix) {
+        if (saved) {
+            this.chain = saved.chain;
+            this.aligned = saved.aligned;
+            this.tail.set(saved.tail);
+            this.tailLength = saved.tail.byteLength;
+        }
+    }
+
+    saved(): SavedPrefix {
+        return {
+            chain: this.chain,
+            aligned: this.aligned,
+            tail: new Uint8Array(this.tail.subarray(0, this.tailLength)),
+        };
+    }
+
+    update(bytes: Uint8Array): void {
+        let offset = 0;
+        if (this.tailLength > 0) {
+            const take = Math.min(BLOCK_BYTES - this.tailLength, bytes.byteLength);
+            this.tail.set(bytes.subarray(0, take), this.tailLength);
+            this.tailLength += take;
+            offset = take;
+            if (this.tailLength < BLOCK_BYTES) {
+                return;
+            }
+
+            this.chain = Bun.hash.xxHash3(this.tail, this.chain);
+            this.aligned += BLOCK_BYTES;
+            this.tailLength = 0;
+        }
+
+        while (bytes.byteLength - offset >= BLOCK_BYTES) {
+            this.chain = Bun.hash.xxHash3(bytes.subarray(offset, offset + BLOCK_BYTES), this.chain);
+            this.aligned += BLOCK_BYTES;
+            offset += BLOCK_BYTES;
+        }
+
+        if (offset < bytes.byteLength) {
+            this.tail.set(bytes.subarray(offset), 0);
+            this.tailLength = bytes.byteLength - offset;
+        }
+    }
+
+    digest(): string {
+        const last = Bun.hash.xxHash3(this.tail.subarray(0, this.tailLength), this.chain);
+        return `${this.aligned + this.tailLength}:${last.toString(16)}`;
+    }
+}
+
+/** Feeds the bytes `[from, until)` of the file to the hash, in reads of at most 4 MB. */
+function hashRange(fd: number, hash: PrefixHash, from: number, until: number): void {
+    if (until <= from) {
+        return;
+    }
+
+    const buffer = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, until - from));
+    let position = from;
+    while (position < until) {
+        const read = readSync(fd, buffer, 0, Math.min(buffer.length, until - position), position);
+        if (read === 0) {
+            throw new Error("Transcript shortened while checking its consumed prefix");
+        }
+
+        hash.update(buffer.subarray(0, read));
+        position += read;
+    }
+}
+
+/**
+ * Verify one consumed prefix, then extend the hash with the exact new bytes the caller commits. A changed
+ * generation reads the old prefix once; an unchanged nanosecond stat generation reuses its verified hash and reads
+ * nothing. Metadata-equal mutations are outside that fast-cache contract. Every retained state is checked after the
+ * read.
  *
  * Cost on the live path: every append changes the generation, so each resumed read hashes the whole consumed
- * prefix again, O(file size) of I/O and SHA-256. Measured 2026-10-09 on a page-cached 412 MB Codex rollout: 152 ms
- * per verification (about 0.37 ms per MB), and 0 ms when the generation is unchanged. That is the price of
- * detecting a rewrite anywhere before the kept end; a shorter marker missed edits in the middle. What a resumed
- * read saves is the JSON parse of that prefix, which costs several times more.
+ * prefix again, O(file size). That is the price of detecting a rewrite anywhere before the kept end; a shorter
+ * marker missed edits in the middle. Measured 2026-11-05 on a page-cached 207 MB Claude transcript: 18 ms per
+ * verification with the xxHash3 blocks, 85 ms with the SHA-256 it replaced (152 ms for a 412 MB rollout on
+ * 2026-10-09). What a resumed read saves is the JSON parse of that prefix, which costs several times more.
  */
 export function readPrefixMark(fd: number, offset: number): PrefixMark {
     const identity = prefixIdentity(fd);
     const oldKey = `${identity.key}:${offset}`;
     const cached = marks.get(oldKey);
-    const hash = cached?.generation === identity.generation ? cached.hash.copy() : new Bun.CryptoHasher("sha256");
-    if (cached?.generation !== identity.generation) {
-        const buffer = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, offset));
-        let position = 0;
-        while (position < offset) {
-            const read = readSync(fd, buffer, 0, Math.min(buffer.length, offset - position), position);
-            if (read === 0) {
-                throw new Error("Transcript shortened while checking its consumed prefix");
-            }
-
-            hash.update(buffer.subarray(0, read));
-            position += read;
-        }
-    }
+    const reused = cached?.generation === identity.generation ? cached : undefined;
+    const hash = new PrefixHash(reused);
+    hashRange(fd, hash, reused ? offset : 0, offset);
 
     let consumed = offset;
     const retain = (key: string): void => {
         marks.delete(key);
-        marks.set(key, { generation: identity.generation, hash: hash.copy() });
+        marks.set(key, { generation: identity.generation, ...hash.saved() });
         if (marks.size > MARK_CACHE_LIMIT) {
             const oldest = marks.keys().next().value;
             if (oldest !== undefined) {
@@ -172,7 +262,7 @@ export function readPrefixMark(fd: number, offset: number): PrefixMark {
     }
 
     return {
-        digest: () => hash.copy().digest("hex"),
+        digest: () => hash.digest(),
         update(bytes) {
             hash.update(bytes);
             consumed += bytes.byteLength;
@@ -188,7 +278,7 @@ export function readPrefixMark(fd: number, offset: number): PrefixMark {
                 marks.delete(key);
             }
 
-            return { digest: hash.copy().digest("hex"), stable };
+            return { digest: hash.digest(), stable };
         },
     };
 }

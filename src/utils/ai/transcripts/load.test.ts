@@ -17,6 +17,17 @@ function fixtureRoot(): string {
     return mkdtempSync(join(tmpdir(), "gt-load-"));
 }
 
+/** The prefix mark of a whole file that holds exactly these bytes, read in one pass. */
+function digestOf(file: string, bytes: string | Uint8Array): string {
+    writeFileSync(file, bytes);
+    const fd = fs.openSync(file, "r");
+    try {
+        return readPrefixMark(fd, fs.fstatSync(fd).size).finish().digest;
+    } finally {
+        fs.closeSync(fd);
+    }
+}
+
 describe("transcriptEnvelope", () => {
     test("one native snapshot drains all pages with one read and refreshes on the next drain", async () => {
         const file = join(fixtureRoot(), "native.jsonl");
@@ -410,11 +421,62 @@ describe("verified prefix continuation", () => {
             prefix.update(Buffer.from("new\n"));
             const checkpoint = prefix.finish();
             expect(checkpoint.stable).toBe(false);
-            expect(checkpoint.digest).toBe(new Bun.CryptoHasher("sha256").update("old\nnew\n").digest("hex"));
+            expect(checkpoint.digest).toBe(digestOf(join(fixtureRoot(), "committed.jsonl"), "old\nnew\n"));
             const reader = spyOn(fs, "readSync");
             try {
                 expect(readPrefixMark(fd, 8).finish().stable).toBe(true);
                 expect(reader).toHaveBeenCalled();
+            } finally {
+                reader.mockRestore();
+            }
+        } finally {
+            fs.closeSync(fd);
+        }
+    });
+});
+
+describe("the prefix mark", () => {
+    // Not valid JSON on purpose: the mark hashes bytes. About 300 KB, so it crosses many 4 KB blocks.
+    const content = Buffer.from(Array.from({ length: 6000 }, (_, i) => `line ${i} ${"y".repeat(i % 97)}\n`).join(""));
+
+    test("gives the same digest for any split of the same bytes, across block boundaries", () => {
+        const whole = digestOf(join(fixtureRoot(), "whole.jsonl"), content);
+        const file = join(fixtureRoot(), "split.jsonl");
+        writeFileSync(file, content);
+        const fd = fs.openSync(file, "r");
+        try {
+            for (const start of [0, 1, 65_535, 65_536, 70_001]) {
+                const prefix = readPrefixMark(fd, start);
+                for (let at = start, step = 1; at < content.length; at += step, step = (step * 7 + 3) % 90_001) {
+                    prefix.update(content.subarray(at, Math.min(content.length, at + step)));
+                }
+
+                expect(prefix.finish().digest).toBe(whole);
+            }
+        } finally {
+            fs.closeSync(fd);
+        }
+    });
+
+    test("tells a one-byte edit in the middle and a shorter prefix apart from the original", () => {
+        const whole = digestOf(join(fixtureRoot(), "original.jsonl"), content);
+        const edited = Buffer.from(content);
+        edited[150_000] = edited[150_000] === 0x41 ? 0x42 : 0x41;
+        expect(digestOf(join(fixtureRoot(), "edited.jsonl"), edited)).not.toBe(whole);
+        expect(digestOf(join(fixtureRoot(), "shorter.jsonl"), content.subarray(0, content.length - 1))).not.toBe(whole);
+    });
+
+    test("a file whose generation did not move reuses its verified hash and reads nothing", () => {
+        const file = join(fixtureRoot(), "reused.jsonl");
+        writeFileSync(file, content);
+        const fd = fs.openSync(file, "r");
+        try {
+            const first = readPrefixMark(fd, content.length).finish();
+            expect(first.stable).toBe(true);
+            const reader = spyOn(fs, "readSync");
+            try {
+                expect(readPrefixMark(fd, content.length).finish().digest).toBe(first.digest);
+                expect(reader).not.toHaveBeenCalled();
             } finally {
                 reader.mockRestore();
             }
