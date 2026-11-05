@@ -34,6 +34,11 @@ final class MeetingDetailModel {
     private(set) var busy: Set<String> = []
     var notice: MeetingsNotice?
     private var undoTask: Task<Void, Never>?
+    private var recordGeneration = 0
+    private var transcriptGeneration = 0
+    private var timelineGeneration = 0
+    private var speakersGeneration = 0
+    private var proposalsGeneration = 0
 
     init(id: String, window: MeetingsWindowModel?) {
         self.id = id
@@ -61,57 +66,82 @@ final class MeetingDetailModel {
     }
 
     func reloadRecord() {
+        recordGeneration += 1
+        let generation = recordGeneration
         record = .loading(previous: record.value)
         Task {
             do {
-                record = .loaded(try await MeetingsCLI.json(MeetingRecordView.self, ["show", id, "--json"]))
+                let value = try await MeetingsCLI.json(MeetingRecordView.self, ["show", id, "--json"])
+                guard generation == recordGeneration else { return }
+                record = .loaded(value)
             } catch {
+                guard generation == recordGeneration else { return }
                 record = .failed(asFailure(error), previous: record.value)
             }
         }
     }
 
     func loadTranscript() {
+        transcriptGeneration += 1
+        let generation = transcriptGeneration
         transcript = .loading(previous: transcript.value)
         Task {
             do {
-                transcript = .loaded(try await MeetingsCLI.json(MeetingTranscript.self, ["transcript", id, "--format", "json"], timeoutSeconds: 120))
+                let value = try await MeetingsCLI.json(MeetingTranscript.self, ["transcript", id, "--format", "json"], timeoutSeconds: 120)
+                guard generation == transcriptGeneration else { return }
+                transcript = .loaded(value)
             } catch {
+                guard generation == transcriptGeneration else { return }
                 transcript = .failed(asFailure(error), previous: transcript.value)
             }
         }
     }
 
     func loadTimeline() {
+        timelineGeneration += 1
+        let generation = timelineGeneration
         timeline = .loading(previous: timeline.value)
         let all = MeetingsPreferences.timelineLines() == .all
         Task {
             do {
-                timeline = .loaded(try await MeetingsCLI.json(
-                    ScreenTimeline.self, ["screen", id, "--timeline", "--json"] + (all ? ["--all"] : []), timeoutSeconds: 120))
+                let value = try await MeetingsCLI.json(
+                    ScreenTimeline.self, ["screen", id, "--timeline", "--json"] + (all ? ["--all"] : []), timeoutSeconds: 120)
+                guard generation == timelineGeneration else { return }
+                timeline = .loaded(value)
             } catch {
+                guard generation == timelineGeneration else { return }
                 timeline = .failed(asFailure(error), previous: timeline.value)
             }
         }
     }
 
     func loadSpeakers() {
+        speakersGeneration += 1
+        let generation = speakersGeneration
         speakers = .loading(previous: speakers.value)
         Task {
             do {
-                speakers = .loaded(try await MeetingsCLI.json(SpeakerStats.self, ["speakers", "stats", id, "--json"], timeoutSeconds: 120))
+                let value = try await MeetingsCLI.json(SpeakerStats.self, ["speakers", "stats", id, "--json"], timeoutSeconds: 120)
+                guard generation == speakersGeneration else { return }
+                speakers = .loaded(value)
             } catch {
+                guard generation == speakersGeneration else { return }
                 speakers = .failed(asFailure(error), previous: speakers.value)
             }
         }
     }
 
     func loadProposals() {
+        proposalsGeneration += 1
+        let generation = proposalsGeneration
         proposals = .loading(previous: proposals.value)
         Task {
             do {
-                proposals = .loaded(try await MeetingsCLI.json(AssignProposals.self, ["assign", "proposals", id, "--json"]))
+                let value = try await MeetingsCLI.json(AssignProposals.self, ["assign", "proposals", id, "--json"])
+                guard generation == proposalsGeneration else { return }
+                proposals = .loaded(value)
             } catch {
+                guard generation == proposalsGeneration else { return }
                 proposals = .failed(asFailure(error), previous: proposals.value)
             }
         }
