@@ -227,6 +227,8 @@ describe("the recorder service", () => {
                 "render.still",
                 "camera.start",
                 "movie.split",
+                "movie.marker",
+                "movie.unmarker",
                 "movies.search",
             ])
         );
@@ -446,6 +448,7 @@ describe("the REPL's and the CLI's way to the service", () => {
             { op: "volume", volume: 0.6 },
             { op: "mute", track: 0 },
             { op: "text", from: 1, to: 3, text: "Both ways" },
+            { op: "marker", at: 2, label: "Step one" },
         ] as const;
         const local = editFixture("rs-local-");
         const nobody = mkdtempSync(join(tmpdir(), "rs-none-"));
@@ -457,8 +460,8 @@ describe("the REPL's and the CLI's way to the service", () => {
 
         expect(throughService.project.revision).toBe(inProcess.project.revision);
         expect(comparable(remote)).toEqual(comparable(local));
-        expect((await undoLastEdit(remote, { dir })).undone).toEqual(["volume", "mute", "text"]);
-        expect((await undoLastEdit(local, { dir: nobody })).undone).toEqual(["volume", "mute", "text"]);
+        expect((await undoLastEdit(remote, { dir })).undone).toEqual(["volume", "mute", "text", "marker"]);
+        expect((await undoLastEdit(local, { dir: nobody })).undone).toEqual(["volume", "mute", "text", "marker"]);
         expect(comparable(remote)).toEqual(comparable(local));
     });
 

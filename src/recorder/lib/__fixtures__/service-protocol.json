@@ -88,6 +88,8 @@
             "movie.moveLane",
             "movie.moveToLane",
             "movie.range",
+            "movie.marker",
+            "movie.unmarker",
             "movie.reset",
             "movie.clicks",
             "movie.keys",
@@ -101,6 +103,7 @@
             "movie.removeIdle",
             "movie.polish",
             "movie.cutWords",
+            "movie.lineWords",
             "movie.cutFillers",
             "movie.denoise",
             "movie.normalize",
@@ -130,7 +133,7 @@
             "movies.list",
             "movies.search"
           ],
-          "version": "ff9dfa1c480f"
+          "version": "8bd34b828afb"
         }
       }
     },
@@ -266,6 +269,8 @@
             "movie.moveLane",
             "movie.moveToLane",
             "movie.range",
+            "movie.marker",
+            "movie.unmarker",
             "movie.reset",
             "movie.clicks",
             "movie.keys",
@@ -279,6 +284,7 @@
             "movie.removeIdle",
             "movie.polish",
             "movie.cutWords",
+            "movie.lineWords",
             "movie.cutFillers",
             "movie.denoise",
             "movie.normalize",
@@ -308,7 +314,7 @@
             "movies.list",
             "movies.search"
           ],
-          "version": "ff9dfa1c480f"
+          "version": "8bd34b828afb"
         }
       }
     },
@@ -725,13 +731,13 @@
                 "speed": 1
               },
               {
-                "id": "c041f760a",
+                "id": "c87f05d31",
                 "fromUs": 2000000,
                 "toUs": 4000000,
                 "speed": 2
               },
               {
-                "id": "c0e48a263",
+                "id": "caa84d2ae",
                 "fromUs": 4000000,
                 "toUs": 12000000,
                 "speed": 1
@@ -800,13 +806,13 @@
                 "speed": 1
               },
               {
-                "id": "caac372dd",
+                "id": "c1df5a377",
                 "fromUs": 2000000,
                 "toUs": 4000000,
                 "speed": 2
               },
               {
-                "id": "cf226ca72",
+                "id": "c0c36fd40",
                 "fromUs": 4000000,
                 "toUs": 12000000,
                 "speed": 1
@@ -861,13 +867,13 @@
                 "speed": 1
               },
               {
-                "id": "caac372dd",
+                "id": "c1df5a377",
                 "fromUs": 2000000,
                 "toUs": 4000000,
                 "speed": 2
               },
               {
-                "id": "cf226ca72",
+                "id": "c0c36fd40",
                 "fromUs": 4000000,
                 "toUs": 12000000,
                 "speed": 1
@@ -923,13 +929,13 @@
                 "speed": 1
               },
               {
-                "id": "caac372dd",
+                "id": "c1df5a377",
                 "fromUs": 2000000,
                 "toUs": 4000000,
                 "speed": 2
               },
               {
-                "id": "cf226ca72",
+                "id": "c0c36fd40",
                 "fromUs": 4000000,
                 "toUs": 12000000,
                 "speed": 1
@@ -1262,19 +1268,19 @@
               "speed": 1
             },
             {
-              "id": "caac372dd",
+              "id": "c1df5a377",
               "from": 2,
               "to": 4,
               "speed": 2
             },
             {
-              "id": "cf226ca72",
+              "id": "c0c36fd40",
               "from": 4,
               "to": 6,
               "speed": 1
             },
             {
-              "id": "cf9af5907",
+              "id": "ca52fd322",
               "from": 6,
               "to": 12,
               "speed": 1
