@@ -409,6 +409,26 @@ final class ApprovalVerifierTests: XCTestCase {
         XCTAssertTrue(model.answered)
     }
 
+    func testPendingIntentCannotApproveAnEmptySelection() {
+        let item = ApprovalItem(path: "/tmp/example", name: "example", folder: "/tmp", size: nil,
+                                reason: "test", gone: false, isFolder: false)
+        let model = ApprovalDialogModel(title: "t", purpose: "p", symbol: "trash.fill", facts: [], details: [], warning: nil,
+                                        footnote: "f", rememberChoices: [], rememberNote: nil, allowTitle: "Approve",
+                                        deadline: nil, identifier: "test", items: [item], selectable: true)
+        var answers: [String] = []
+        model.onVerified = { method, _ in answers.append(method) }
+        model.confirmWithin = 1
+        model.shownAt = Date()
+        model.verified(method: "touch-id")
+        model.setSelected(item, false)
+        model.confirmIntent()
+        XCTAssertTrue(answers.isEmpty)
+        XCTAssertFalse(model.answered)
+        model.setSelected(item, true)
+        model.confirmIntent()
+        XCTAssertEqual(answers, ["touch-id"])
+    }
+
     func testATouchAfterTheFirstSecondOrWithTheGuardOffApprovesAtOnce() throws {
         for (shownAgo, confirmWithin) in [(5.0, 1.0), (0.0, 0.0)] {
             let fake = FakeEvaluator()

@@ -253,7 +253,7 @@ public final class ApprovalDialogModel: ObservableObject {
 
     /// "Approve" after an approval that came too soon: it counts now.
     public func confirmIntent() {
-        guard !answered, let method = pendingIntent else { return }
+        guard !answered, !(selectable && selected.isEmpty), let method = pendingIntent else { return }
         pendingIntent = nil
         answer(method: method)
     }
@@ -702,6 +702,7 @@ struct ApprovalVerifyFooter: View {
             // Not on Return either: the point is a deliberate click on this request.
             if model.pendingIntent != nil {
                 Button("Approve", action: model.confirmIntent)
+                    .disabled(nothingSelected)
                     .buttonStyle(.borderedProminent)
                     .pointerCursor()
                     .accessibilityIdentifier("\(model.identifier)-confirm")
