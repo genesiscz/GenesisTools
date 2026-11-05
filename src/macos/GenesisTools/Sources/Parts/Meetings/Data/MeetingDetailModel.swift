@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GenesisToolsHost
 import Observation
 
 /// One meeting in the window: its record, and each tab's data read the first time the tab shows. Every change runs a
@@ -325,6 +326,7 @@ final class MeetingDetailModel {
     }
 
     func openInRecorder() {
+        guard AppParts.isLinked("recorder") else { return }
         busy.insert("recorder")
         Task {
             defer { busy.remove("recorder") }

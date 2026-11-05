@@ -1,4 +1,5 @@
 import SwiftUI
+import GenesisToolsHost
 
 /// One meeting: the header (title, time, project, labels, the editor and the export), the tabs, and the note of the
 /// last action on the pane that ran it.
@@ -38,7 +39,7 @@ struct MeetingDetailView: View {
                 Text(verbatim: record?.displayTitle ?? overview?.displayTitle ?? "")
                     .font(.system(size: 17, weight: .semibold)).lineLimit(2).textSelection(.enabled)
                 Spacer(minLength: 8)
-                if overview?.hasRecording == true {
+                if overview?.hasRecording == true, AppParts.isLinked("recorder") {
                     GhostButton("Open in the recorder editor", symbol: "film", tooltip: "Open the screen recording as an editor project, with the transcript as captions",
                                 identifier: "meetings.detail.recorder") { detail.openInRecorder() }
                         .disabled(detail.isBusy("recorder"))

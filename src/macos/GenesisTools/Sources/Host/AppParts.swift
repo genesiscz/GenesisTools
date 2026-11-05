@@ -23,7 +23,7 @@ package enum AppParts {
         }
     }
 
-    static func isLinked(_ part: String) -> Bool {
+    package static func isLinked(_ part: String) -> Bool {
         linkedParts.contains(part)
     }
 
