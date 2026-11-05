@@ -40,11 +40,16 @@ export function alertPayload({
 
     return {
         aps: {
-            alert: {
-                title: event.title ?? "GenesisTools",
-                ...(event.subtitle ? { subtitle: event.subtitle } : {}),
-                body: config.text === false ? TEXT_OFF_BODY : event.message,
-            },
+            // Text off keeps every line of the event off the lock screen: a decision's title and subtitle name its
+            // topic as much as its body does.
+            alert:
+                config.text === false
+                    ? { title: "GenesisTools", body: TEXT_OFF_BODY }
+                    : {
+                          title: event.title ?? "GenesisTools",
+                          ...(event.subtitle ? { subtitle: event.subtitle } : {}),
+                          body: event.message,
+                      },
             sound: "default",
             ...(event.phone?.thread ? { "thread-id": event.phone.thread } : {}),
             ...(letters ? { category: answerCategoryId(letters.length, answers?.recommended) } : {}),
