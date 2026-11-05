@@ -50,6 +50,7 @@ export interface FrameSet {
     outputDir: string;
 }
 
+/** The clip each FrameSet came from and its steps: a grid takes a FrameSet only from the clip that made it. */
 const stepsOf = new WeakMap<object, { owner: Clip; steps: EditStep[] }>();
 
 const jobDoc =
@@ -155,7 +156,8 @@ export class ReplJob<T> implements PromiseLike<T> {
         map: (result: EditResult) => T | Promise<T>
     ) {
         this.done = edit.done.then(map);
-        void this.done.catch((error) => logger.debug({ error, job: edit.id }, "REPL edit job failed"));
+        // A caller that never awaits a failed job must not see an unhandled rejection; one that awaits still gets it.
+        void this.done.catch((error: unknown) => logger.debug({ error, job: edit.id }, "REPL edit job failed"));
     }
 
     get id(): string {
@@ -216,6 +218,7 @@ export class Clip {
         private readonly ctx: ToolsetContext,
         readonly source: EditSource,
         private readonly prefix: EditStep[] = [],
+        /** The edit that made this clip (a trim or a speed change): its info is the edited result, not the source. */
         private readonly derivedResult?: EditResult
     ) {}
 
@@ -226,6 +229,7 @@ export class Clip {
 
     async info() {
         const derived = this.derivedResult;
+
         if (derived?.video) {
             return {
                 kind: "video",
@@ -235,6 +239,7 @@ export class Clip {
                 height: derived.video.info.displayHeight,
             };
         }
+
         if (derived?.stills) {
             return {
                 kind: "frames",
@@ -248,6 +253,7 @@ export class Clip {
                 ],
             };
         }
+
         const loaded = await loadSource(locateSource(this.source));
         return loaded.kind === "video"
             ? {

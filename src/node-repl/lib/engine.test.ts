@@ -5,13 +5,11 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
+import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 import { jsDescription } from "../mcp/server";
 import { ReplEngine, resultMessage } from "./engine";
-import { parseToolsetList, toolsetCliHelp } from "./toolsets";
+import { createToolsets, parseToolsetList, toolsetCliHelp } from "./toolsets";
 
-// The MCP server renders a js_add_node_module_dir result with this. A timeout or a worker exit
-// reports through `error` with an EMPTY `text`, so reading `text` alone answered those failures
-// with a blank string — an isError response carrying no reason at all.
 it("CLI help renders registered descriptor methods and handles", () => {
     const help = toolsetCliHelp();
     expect(help).toContain("recorder.start(options?:");
@@ -19,6 +17,9 @@ it("CLI help renders registered descriptor methods and handles", () => {
     expect(help).toContain("editor.open(source: string)");
 });
 
+// The MCP server renders a js_add_node_module_dir result with this. A timeout or a worker exit
+// reports through `error` with an EMPTY `text`, so reading `text` alone answered those failures
+// with a blank string — an isError response carrying no reason at all.
 describe("resultMessage", () => {
     it("returns the output on success", () => {
         expect(resultMessage({ ok: true, text: "module directory registered", error: undefined })).toBe(
@@ -323,6 +324,7 @@ it("reset interrupts an active turn and cancels turns queued before it", async (
     const running = engine.run("await new Promise(() => {})", 60000);
     const queued = engine.run("globalThis.shouldNotRun = true");
     let reset: Promise<void> | undefined;
+
     try {
         reset = engine.reset();
         await Promise.race([
@@ -342,8 +344,6 @@ it("reset interrupts an active turn and cancels turns queued before it", async (
 });
 
 it("discovery covers handle names, missing names and ambiguous names", async () => {
-    const { createToolsets } = await import("./toolsets");
-    const { searchMethods, describeMethod } = await import("@genesiscz/utils/repl/discovery");
     const apis = (await createToolsets(["meetings", "browser", "control"])).map((toolset) => toolset.api);
     expect(searchMethods(apis, "items.add")).toContain("meetings.Meeting.items.add");
     expect(describeMethod(apis, "meetings.Meeting.items.add")).toContain("Parameters:");

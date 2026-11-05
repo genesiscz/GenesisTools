@@ -16,19 +16,38 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
     private var menuIsOpen = false
     /// The "meeting · 12:03 · 340 frames" row of each recording in the open menu, updated in place each second.
     private var detailRows: [String: NSMenuItem] = [:]
-    private var controlRows: [String: (toggle: NSMenuItem, stop: NSMenuItem, warning: NSMenuItem, error: NSMenuItem)] = [:]
+    /// The rows of each recording in the open menu whose state changes while it is open, updated in place each second.
+    private var controlRows: [String: (toggle: NSMenuItem, stop: NSMenuItem, marker: NSMenuItem?, warning: NSMenuItem,
+                                       error: NSMenuItem)] = [:]
     private var panels: [String: LiveRecordingPanel] = [:]
     private var sessions: [String: LiveRecordingSession] = [:]
+    /// Recordings whose asked-for floating controls this host opened already (closing them must not reopen them).
+    private var panelsOpened: Set<String> = []
     /// The live files' entries as last read.
     private var entries: [LiveRecording] = []
     /// What the menu shows: the entries whose socket answers, with what it said.
     private var recordings: [LiveRecording] = []
 
+    /// The lock that makes one process the item's host. The hub and the recorder part both start the item; whichever
+    /// takes `<live folder>/.status-item.lock` first shows it, the other tries again at its next refresh (1 s). The
+    /// kernel drops the lock when the host exits, and the host lets it go once no recording is left.
+    private let ownerLock: URL
+    private var ownerDescriptor: Int32 = -1
+    /// `<live folder>/.status-item.preferred.lock`, held for its whole life by the host that should show the item
+    /// (the recorder part). Another host gives the item up while it is held, so the item and its floating controls
+    /// stay in one process instead of moving between the hub and the recorder with each recording (2026-11-04).
+    private let preferredLock: URL
+    private var preferredDescriptor: Int32 = -1
+
     public init(store: LiveRecordingStore = .live) {
         watcher = LiveRecordingsWatcher(store: store)
+        ownerLock = store.folder.appendingPathComponent(".status-item.lock")
+        preferredLock = store.folder.appendingPathComponent(".status-item.preferred.lock")
     }
 
-    public func start() {
+    /// `preferred`: this process should host the item whenever it runs (the recorder part); others defer to it.
+    public func start(preferred: Bool = false) {
+        if preferred { holdPreferredLock() }
         watcher.onRefresh = { [weak self] list in self?.sync(list) }
         watcher.start()
     }
@@ -88,11 +107,26 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
 
         guard !list.isEmpty else {
             removeItem()
+            releaseOwnership()
+            return
+        }
+
+        guard !preferredHostElsewhere(), takeOwnership() else {
+            // The host's floating controls go with the item; the new host opens its own.
+            for panel in panels.values { panel.close() }
+            panels = [:]
+            removeItem()
+            releaseOwnership()
             return
         }
 
         installItem()
         renderIcon(list)
+        for recording in list where recording.panel && !panelsOpened.contains(recording.id) {
+            panelsOpened.insert(recording.id)
+            showControls(for: recording)
+        }
+        panelsOpened.formIntersection(list.map(\.id))
         if menuIsOpen { refreshDetails(list) }
     }
 
@@ -105,12 +139,64 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
         }
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        // Its own name: macOS saves each item's visibility under it ("NSStatusItem VisibleCC <name>"), and an item
+        // without one is "Item-0", shared with the first item of every other GenesisTools face. This one hides
+        // itself between recordings, which then hid the recorder's and Clicky's items too.
+        item.autosaveName = "genesistools.live-recordings"
+        item.isVisible = true
         item.button?.setAccessibilityIdentifier("live-recordings-status-item")
         let menu = NSMenu()
         menu.delegate = self
         menu.autoenablesItems = false
         item.menu = menu
         self.item = item
+    }
+
+    /// True while this process is the item's host; takes the lock when it is free.
+    private func takeOwnership() -> Bool {
+        guard ownerDescriptor < 0 else { return true }
+        try? FileManager.default.createDirectory(at: ownerLock.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let descriptor = open(ownerLock.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+        // Without a lock file the one-host guarantee cannot hold; showing the item beats losing it.
+        guard descriptor >= 0 else { return true }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            close(descriptor)
+            return false
+        }
+        ownerDescriptor = descriptor
+        KitHost.log("live recordings: this process (pid \(getpid())) hosts the status item")
+        return true
+    }
+
+    private func holdPreferredLock() {
+        guard preferredDescriptor < 0 else { return }
+        try? FileManager.default.createDirectory(at: preferredLock.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let descriptor = open(preferredLock.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
+        guard descriptor >= 0 else { return }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            close(descriptor)
+            return
+        }
+        preferredDescriptor = descriptor
+        KitHost.log("live recordings: this process (pid \(getpid())) is the preferred host")
+    }
+
+    /// True while another living process holds the preferred lock (a probe: lock and let go at once).
+    private func preferredHostElsewhere() -> Bool {
+        guard preferredDescriptor < 0 else { return false }
+        let descriptor = open(preferredLock.path, O_RDWR | O_CLOEXEC)
+        guard descriptor >= 0 else { return false }
+        defer { close(descriptor) }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { return true }
+        flock(descriptor, LOCK_UN)
+        return false
+    }
+
+    private func releaseOwnership() {
+        guard ownerDescriptor >= 0 else { return }
+        flock(ownerDescriptor, LOCK_UN)
+        close(ownerDescriptor)
+        ownerDescriptor = -1
     }
 
     private func removeItem() {
@@ -168,11 +254,13 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
                                      symbol: "display"))
             }
 
+            // Always present, hidden while empty, so a warning that appears in an open menu shows in place.
             let warning = infoRow(recording.warning ?? "", font: .menuFont(ofSize: 12), color: .systemOrange,
                                   symbol: "exclamationmark.triangle.fill")
             warning.isHidden = recording.warning == nil
             menu.addItem(warning)
-            let error = infoRow(recording.lastError ?? "", font: .menuFont(ofSize: 12), color: .systemRed, symbol: "xmark.octagon.fill")
+            let error = infoRow(recording.lastError ?? "", font: .menuFont(ofSize: 12), color: .systemRed,
+                                symbol: "xmark.octagon.fill")
             error.isHidden = recording.lastError == nil
             menu.addItem(error)
 
@@ -189,7 +277,14 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
                                  enabled: recording.allows(.stop), id: "live-recording.stop")
             menu.addItem(toggleRow)
             menu.addItem(stopRow)
-            controlRows[recording.id] = (toggleRow, stopRow, warning, error)
+            var markerRow: NSMenuItem?
+            if recording.canControl && recording.controls.contains("marker.add") {
+                let row = action("Add Marker", symbol: "flag.fill", selector: #selector(addMarker(_:)), recording: recording,
+                                 enabled: !recording.isPaused && !recording.isStopping, id: "live-recording.marker")
+                menu.addItem(row)
+                markerRow = row
+            }
+            controlRows[recording.id] = (toggleRow, stopRow, markerRow, warning, error)
             if recording.folder != nil {
                 menu.addItem(action("Open folder", symbol: "folder", selector: #selector(openFolder(_:)),
                                     recording: recording, enabled: true, id: "live-recording.folder"))
@@ -262,7 +357,9 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
     /// "Meeting · 12:03 · 340 frames".
     nonisolated static func detail(_ recording: LiveRecording, now: Date) -> String {
         let kind = recording.kind.replacingOccurrences(of: "-", with: " ").capitalizedFirst
-        var parts = [kind, RecordingClock.format(recording.elapsedMs(now: now)), Plural.count(recording.frames, "frame")]
+        var parts = [kind, RecordingClock.format(recording.elapsedMs(now: now))]
+        // Only a recording that keeps frames counts them; a movie would always read "0 frames".
+        if recording.frames > 0 { parts.append(Plural.count(recording.frames, "frame")) }
         if recording.isPaused { parts.append("paused") }
         if recording.isStopping { parts.append("stopping") }
 
@@ -275,14 +372,20 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
             detailRows[recording.id]?.attributedTitle = Self.attributed(
                 Self.detail(recording, now: now), font: .menuFont(ofSize: 12), color: .secondaryLabelColor)
             guard let rows = controlRows[recording.id] else { continue }
-            rows.toggle.title = recording.isPaused ? "Resume" : "Pause"
-            rows.toggle.image = NSImage(systemSymbolName: recording.isPaused ? "play.fill" : "pause.fill", accessibilityDescription: nil)
-            rows.toggle.identifier = NSUserInterfaceItemIdentifier("live-recording.\(recording.isPaused ? "resume" : "pause")")
+            // A pause, a stop or a new warning while the menu is open changes these rows in place.
+            let toggle = recording.isPaused ? LiveRecordingCommand.resume : .pause
+            rows.toggle.title = toggle == .pause ? "Pause" : "Resume"
+            rows.toggle.image = NSImage(systemSymbolName: toggle == .pause ? "pause.fill" : "play.fill",
+                                        accessibilityDescription: nil)
+            rows.toggle.identifier = NSUserInterfaceItemIdentifier("live-recording.\(toggle.rawValue)")
             rows.toggle.isEnabled = recording.toggleCommand != nil
             rows.stop.isEnabled = recording.allows(.stop)
-            rows.warning.attributedTitle = Self.attributed(recording.warning ?? "", font: .menuFont(ofSize: 12), color: .systemOrange)
+            rows.marker?.isEnabled = !recording.isPaused && !recording.isStopping
+            rows.warning.attributedTitle = Self.attributed(recording.warning ?? "", font: .menuFont(ofSize: 12),
+                                                           color: .systemOrange)
             rows.warning.isHidden = recording.warning == nil
-            rows.error.attributedTitle = Self.attributed(recording.lastError ?? "", font: .menuFont(ofSize: 12), color: .systemRed)
+            rows.error.attributedTitle = Self.attributed(recording.lastError ?? "", font: .menuFont(ofSize: 12),
+                                                         color: .systemRed)
             rows.error.isHidden = recording.lastError == nil
         }
     }
@@ -342,6 +445,17 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
     @objc private func sendToggle(_ sender: NSMenuItem) {
         guard let recording = recording(of: sender), let command = recording.toggleCommand else { return }
         send(command, to: recording.id)
+    }
+
+    /// Markers added from the menu, per recording, so each gets the next number.
+    private var markerCounts: [String: Int] = [:]
+
+    /// A marker at this moment, named "Marker N"; the editor and an agent's movie.markers() show it.
+    @objc private func addMarker(_ sender: NSMenuItem) {
+        guard let recording = recording(of: sender) else { return }
+        let next = (markerCounts[recording.id] ?? 0) + 1
+        markerCounts[recording.id] = next
+        sessions[recording.id]?.call("marker.add", params: ["label": "Marker \(next)"], label: "Marker \(next)")
     }
 
     @objc private func sendStop(_ sender: NSMenuItem) {

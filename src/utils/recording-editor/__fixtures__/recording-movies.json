@@ -1,0 +1,75 @@
+{
+    "about": "Which file is the movie of a recording folder. TypeScript answers with movieOf and shareableMovie (src/recorder/lib/library.ts, quick-actions.ts), the Swift menu, library and editor with RecordingMovie (Parts/Recorder/Project/RecordingMovie.swift); both run these cases. Each file is [name, seconds after a fixed time], so the newest is known. movie is the recording's own movie (the editor opens it, the menu offers Copy Movie when there is one); shareable is what Copy Movie and a drag hand out.",
+    "cases": [
+        {
+            "name": "a screen recording's movie",
+            "files": [
+                ["recording.json", 0],
+                ["screen.mp4", 0]
+            ],
+            "movie": "screen.mp4",
+            "shareable": "screen.mp4"
+        },
+        {
+            "name": "a meeting recording with only its proxy copies the proxy",
+            "files": [
+                ["recording.json", 0],
+                ["meeting.json", 0],
+                ["ocr.jsonl", 0],
+                ["proxy.mp4", 30],
+                ["proxy.json", 30]
+            ],
+            "movie": "proxy.mp4",
+            "shareable": "proxy.mp4"
+        },
+        {
+            "name": "the recorder's movie comes before a proxy",
+            "files": [
+                ["screen.mov", 0],
+                ["proxy.mp4", 10]
+            ],
+            "movie": "screen.mov",
+            "shareable": "screen.mov"
+        },
+        {
+            "name": "the newest finished export is what Copy Movie hands out",
+            "files": [
+                ["screen.mp4", 0],
+                ["screen-edited.mp4", 10],
+                ["screen-edited.gif", 20],
+                ["screen-edited.partial.mp4", 30]
+            ],
+            "movie": "screen.mp4",
+            "shareable": "screen-edited.gif"
+        },
+        {
+            "name": "the camera's movie is not an export",
+            "files": [
+                ["screen.mp4", 0],
+                ["camera.mov", 5],
+                ["camera.json", 5]
+            ],
+            "movie": "screen.mp4",
+            "shareable": "screen.mp4"
+        },
+        {
+            "name": "an export of a proxy",
+            "files": [
+                ["proxy.mp4", 0],
+                ["proxy-edited.mp4", 10]
+            ],
+            "movie": "proxy.mp4",
+            "shareable": "proxy-edited.mp4"
+        },
+        {
+            "name": "a frames recording before its proxy has no movie",
+            "files": [
+                ["recording.json", 0],
+                ["meeting.json", 0],
+                ["ocr.jsonl", 0]
+            ],
+            "movie": null,
+            "shareable": null
+        }
+    ]
+}

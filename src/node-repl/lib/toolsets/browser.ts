@@ -44,13 +44,16 @@ export class BrowserToolset extends ReplToolset {
     private readonly drivers = new Map<number, TabDriver>();
 
     async bootstrap(): Promise<Record<string, unknown>> {
+        // lazy: saves 14.8 ms cold import (tools ts imports lazy, 2026-11-05) — listing the toolsets loads no CDP driver
         const { createTabDriver } = await import("@app/chrome-devtools/lib/tab-driver");
         const driver = (port: number): TabDriver => {
             let current = this.drivers.get(port);
+
             if (!current) {
                 current = createTabDriver(port);
                 this.drivers.set(port, current);
             }
+
             return current;
         };
         return {

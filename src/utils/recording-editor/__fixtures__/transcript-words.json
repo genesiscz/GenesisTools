@@ -1,0 +1,254 @@
+{
+    "about": "What tools recorder words prints (src/recorder/lib/edit.ts transcriptWords) for the segments of transcript-cuts.json, on an edit that cut 25 s to 28 s. toolsets.test.ts checks the door still prints this; the editor's word pick (Tests/RecorderEditTests.swift) decodes it, so the window reads the words the cutWords op matches.",
+    "durationUs": 60000000,
+    "clips": [
+        [
+            0,
+            25000000,
+            1
+        ],
+        [
+            28000000,
+            60000000,
+            1
+        ]
+    ],
+    "lines": [
+        {
+            "start": 10,
+            "end": 13,
+            "text": "Hello, ehm, my name is Ann",
+            "plays": 10,
+            "words": [
+                {
+                    "word": "Hello,",
+                    "start": 10.11111111111111,
+                    "end": 10.777777777777779,
+                    "estimated": true,
+                    "fold": "hello"
+                },
+                {
+                    "word": "ehm,",
+                    "start": 10.88888888888889,
+                    "end": 11.333333333333334,
+                    "estimated": true,
+                    "fold": "ehm"
+                },
+                {
+                    "word": "my",
+                    "start": 11.444444444444445,
+                    "end": 11.666666666666666,
+                    "estimated": true,
+                    "fold": "my"
+                },
+                {
+                    "word": "name",
+                    "start": 11.777777777777779,
+                    "end": 12.222222222222221,
+                    "estimated": true,
+                    "fold": "name"
+                },
+                {
+                    "word": "is",
+                    "start": 12.333333333333334,
+                    "end": 12.555555555555555,
+                    "estimated": true,
+                    "fold": "is"
+                },
+                {
+                    "word": "Ann",
+                    "start": 12.666666666666666,
+                    "end": 13,
+                    "estimated": true,
+                    "fold": "ann"
+                }
+            ]
+        },
+        {
+            "start": 20,
+            "end": 24,
+            "text": "Hmm, hmm. We start jako now, jako always",
+            "plays": 20,
+            "words": [
+                {
+                    "word": "Hmm,",
+                    "start": 20,
+                    "end": 20.4,
+                    "estimated": true,
+                    "fold": "hmm"
+                },
+                {
+                    "word": "hmm.",
+                    "start": 20.5,
+                    "end": 20.9,
+                    "estimated": true,
+                    "fold": "hmm"
+                },
+                {
+                    "word": "We",
+                    "start": 21,
+                    "end": 21.2,
+                    "estimated": true,
+                    "fold": "we"
+                },
+                {
+                    "word": "start",
+                    "start": 21.3,
+                    "end": 21.8,
+                    "estimated": true,
+                    "fold": "start"
+                },
+                {
+                    "word": "jako",
+                    "start": 21.9,
+                    "end": 22.3,
+                    "estimated": true,
+                    "fold": "jako"
+                },
+                {
+                    "word": "now,",
+                    "start": 22.4,
+                    "end": 22.8,
+                    "estimated": true,
+                    "fold": "now"
+                },
+                {
+                    "word": "jako",
+                    "start": 22.9,
+                    "end": 23.3,
+                    "estimated": true,
+                    "fold": "jako"
+                },
+                {
+                    "word": "always",
+                    "start": 23.4,
+                    "end": 24,
+                    "estimated": true,
+                    "fold": "always"
+                }
+            ]
+        },
+        {
+            "start": 30,
+            "end": 33,
+            "text": "you know it, you know",
+            "plays": 27,
+            "words": [
+                {
+                    "word": "you",
+                    "start": 30,
+                    "end": 30.2,
+                    "estimated": false,
+                    "fold": "you"
+                },
+                {
+                    "word": "know",
+                    "start": 30.3,
+                    "end": 30.6,
+                    "estimated": false,
+                    "fold": "know"
+                },
+                {
+                    "word": "it,",
+                    "start": 31.5,
+                    "end": 31.8,
+                    "estimated": false,
+                    "fold": "it"
+                },
+                {
+                    "word": "you",
+                    "start": 32,
+                    "end": 32.2,
+                    "estimated": false,
+                    "fold": "you"
+                },
+                {
+                    "word": "know",
+                    "start": 32.3,
+                    "end": 32.6,
+                    "estimated": false,
+                    "fold": "know"
+                }
+            ]
+        },
+        {
+            "start": 40,
+            "end": 43,
+            "text": "Éé, to je jakože dobré",
+            "plays": 37,
+            "words": [
+                {
+                    "word": "Éé,",
+                    "start": 40,
+                    "end": 40.40909090909091,
+                    "estimated": true,
+                    "fold": "éé"
+                },
+                {
+                    "word": "to",
+                    "start": 40.54545454545455,
+                    "end": 40.81818181818182,
+                    "estimated": true,
+                    "fold": "to"
+                },
+                {
+                    "word": "je",
+                    "start": 40.95454545454545,
+                    "end": 41.22727272727273,
+                    "estimated": true,
+                    "fold": "je"
+                },
+                {
+                    "word": "jakože",
+                    "start": 41.36363636363637,
+                    "end": 42.18181818181818,
+                    "estimated": true,
+                    "fold": "jakože"
+                },
+                {
+                    "word": "dobré",
+                    "start": 42.31818181818182,
+                    "end": 43,
+                    "estimated": true,
+                    "fold": "dobré"
+                }
+            ]
+        },
+        {
+            "start": 50,
+            "end": 52,
+            "text": "Um, like, uh, so",
+            "plays": 47,
+            "words": [
+                {
+                    "word": "Um,",
+                    "start": 50,
+                    "end": 50.375,
+                    "estimated": true,
+                    "fold": "um"
+                },
+                {
+                    "word": "like,",
+                    "start": 50.5,
+                    "end": 51.125,
+                    "estimated": true,
+                    "fold": "like"
+                },
+                {
+                    "word": "uh,",
+                    "start": 51.25,
+                    "end": 51.625,
+                    "estimated": true,
+                    "fold": "uh"
+                },
+                {
+                    "word": "so",
+                    "start": 51.75,
+                    "end": 52,
+                    "estimated": true,
+                    "fold": "so"
+                }
+            ]
+        }
+    ]
+}

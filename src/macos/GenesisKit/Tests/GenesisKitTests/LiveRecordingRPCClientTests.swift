@@ -151,6 +151,7 @@ final class LiveRecordingRPCClientTests: XCTestCase {
         XCTAssertFalse(menu.items.contains { $0.identifier?.rawValue == "live-recording.display.1" })
     }
 
+    /// Waits for the fake server to see the requests, with a deadline, instead of guessing a delay.
     @MainActor
     private func waitUntil(_ condition: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(5)
@@ -222,6 +223,43 @@ final class LiveRecordingRPCClientTests: XCTestCase {
             XCTAssertEqual(failure, .timeout(method: "slow"))
         }
         XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+        client.close()
+    }
+
+    func testAWriteToAPeerThatStoppedReadingGivesUpAndFailsTheCall() async throws {
+        let path = "/tmp/lr-\(UUID().uuidString.prefix(8)).sock"
+        unlink(path)
+        let listener = socket(AF_UNIX, SOCK_STREAM, 0)
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(path.utf8)
+        withUnsafeMutableBytes(of: &address.sun_path) { raw in
+            raw.copyBytes(from: bytes)
+            raw[bytes.count] = 0
+        }
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        XCTAssertEqual(bound, 0)
+        XCTAssertEqual(Darwin.listen(listener, 1), 0)
+        defer {
+            Darwin.close(listener)
+            unlink(path)
+        }
+
+        let client = LiveRecordingRPCClient(path: path, callbackQueue: DispatchQueue(label: "test.callbacks"), sendTimeout: 0.3)
+        try client.connect()
+        // Accepted and never read: the socket buffer fills and the write would wait for ever.
+        let accepted = Darwin.accept(listener, nil, nil)
+        defer { Darwin.close(accepted) }
+
+        let started = Date()
+        do {
+            _ = try await client.call("render.export", params: ["blob": String(repeating: "x", count: 8 * 1024 * 1024)], timeout: 30)
+            XCTFail("the call should fail when the write gives up")
+        } catch {
+            XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+        }
         client.close()
     }
 
@@ -313,5 +351,282 @@ final class LiveRecordingOverlayTests: XCTestCase {
         recording.canControl = false
         XCTAssertFalse(recording.allows(.stop))
         XCTAssertNil(recording.toggleCommand)
+    }
+}
+
+/// The other end of a connection that SENDS requests to the client and reads its answers: what the recorder service
+/// does to the recorder host. Every line the client wrote is kept; `line(where:)` waits for one with a deadline.
+final class FakeRPCPeer: @unchecked Sendable {
+    let path = "/tmp/lp-\(UUID().uuidString.prefix(8)).sock"
+    private var listener: Int32 = -1
+    private var connection: Int32 = -1
+    private let condition = NSCondition()
+    private var lines: [[String: Any]] = []
+    private var accepted = false
+
+    func start() throws {
+        unlink(path)
+        listener = socket(AF_UNIX, SOCK_STREAM, 0)
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(path.utf8)
+        withUnsafeMutableBytes(of: &address.sun_path) { raw in
+            raw.copyBytes(from: bytes)
+            raw[bytes.count] = 0
+        }
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        guard bound == 0, listen(listener, 4) == 0 else { throw POSIXError(.EADDRINUSE) }
+        Thread.detachNewThread { [self] in serve() }
+    }
+
+    func stop() {
+        if connection >= 0 { shutdown(connection, SHUT_RDWR) }
+        close(listener)
+        unlink(path)
+    }
+
+    func send(_ object: [String: Any]) {
+        let deadline = Date().addingTimeInterval(3)
+        condition.lock()
+        while !accepted, condition.wait(until: deadline) {}
+        condition.unlock()
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else { return }
+        let bytes = Array(data) + [10]
+        _ = bytes.withUnsafeBytes { write(connection, $0.baseAddress, $0.count) }
+    }
+
+    func request(_ id: Any, _ method: String, _ params: [String: Any]? = nil) {
+        var message: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method]
+        if let params { message["params"] = params }
+        send(message)
+    }
+
+    /// The first line the client wrote that matches, waiting up to `timeout` for it.
+    func line(timeout: TimeInterval = 3, where match: ([String: Any]) -> Bool) throws -> [String: Any] {
+        let deadline = Date().addingTimeInterval(timeout)
+        condition.lock()
+        defer { condition.unlock() }
+        while true {
+            if let found = lines.first(where: match) { return found }
+            guard condition.wait(until: deadline) else { throw NSError(domain: "fake peer: no matching line", code: 1) }
+        }
+    }
+
+    var received: [[String: Any]] {
+        condition.lock()
+        defer { condition.unlock() }
+        return lines
+    }
+
+    private func serve() {
+        let accepted = accept(listener, nil, nil)
+        condition.lock()
+        connection = accepted
+        self.accepted = accepted >= 0
+        condition.broadcast()
+        condition.unlock()
+        guard accepted >= 0 else { return }
+        var buffer: [UInt8] = []
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = read(accepted, &chunk, chunk.count)
+            guard count > 0 else { return }
+            buffer.append(contentsOf: chunk[0..<count])
+            while let newline = buffer.firstIndex(of: 10) {
+                let line = Array(buffer[..<newline])
+                buffer.removeSubrange(...newline)
+                guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
+                condition.lock()
+                lines.append(object)
+                condition.broadcast()
+                condition.unlock()
+            }
+        }
+    }
+}
+
+/// The client as the side that answers: the peer's requests reach registered handlers, and both directions carry
+/// `$/progress` and `$/cancel`.
+final class LiveRecordingRPCAnswerTests: XCTestCase {
+    private var peer: FakeRPCPeer!
+    private var client: LiveRecordingRPCClient!
+
+    override func setUpWithError() throws {
+        peer = FakeRPCPeer()
+        try peer.start()
+        client = LiveRecordingRPCClient(path: peer.path, callbackQueue: DispatchQueue(label: "test.answers"))
+    }
+
+    override func tearDown() {
+        client.close()
+        peer.stop()
+    }
+
+    private func reply(to id: Int) -> ([String: Any]) -> Bool {
+        { ($0["id"] as? NSNumber)?.intValue == id && $0["method"] == nil }
+    }
+
+    func testARegisteredHandlerAnswersOnTheSameConnectionWithTheRequestsId() throws {
+        client.answer("window.list") { request, reply in
+            reply(.success(["open": [["path": "/r/a", "title": "A"]], "asked": request.object["detail"] as? Bool ?? false]))
+        }
+        try client.connect()
+        XCTAssertEqual(client.answers, ["window.list"])
+        peer.request(7, "window.list", ["detail": true])
+        let answer = try peer.line(where: reply(to: 7))
+        XCTAssertEqual(answer["jsonrpc"] as? String, "2.0")
+        let result = try XCTUnwrap(answer["result"] as? [String: Any])
+        XCTAssertEqual(result["asked"] as? Bool, true)
+        XCTAssertEqual((result["open"] as? [[String: Any]])?.first?["title"] as? String, "A")
+        peer.request("s-1", "window.list")
+        let byString = try peer.line { $0["id"] as? String == "s-1" }
+        XCTAssertNotNil(byString["result"], "a string id is answered with the same string")
+    }
+
+    func testAnUnknownMethodAnswersMethodNotFound() throws {
+        try client.connect()
+        peer.request(3, "render.nothing")
+        let error = try XCTUnwrap(peer.line(where: reply(to: 3))["error"] as? [String: Any])
+        XCTAssertEqual((error["code"] as? NSNumber)?.intValue, -32601)
+        XCTAssertTrue((error["message"] as? String ?? "").contains("render.nothing"))
+    }
+
+    func testAThrownErrorGoesOutWithItsCodeAndAPlainErrorAsInternal() throws {
+        client.answer("camera.start") { _, reply in reply(.failure(LiveRecordingRPCClient.Failure.remote(code: 1014, message: "camera denied"))) }
+        client.answer("render.still") { _, reply in reply(.failure(NSError(domain: "x", code: 2, userInfo: [NSLocalizedDescriptionKey: "no movie"]))) }
+        client.answer("odd") { _, reply in reply(.success(["when": Date()])) }
+        try client.connect()
+        peer.request(1, "camera.start")
+        peer.request(2, "render.still")
+        peer.request(3, "odd")
+        let denied = try XCTUnwrap(peer.line(where: reply(to: 1))["error"] as? [String: Any])
+        XCTAssertEqual((denied["code"] as? NSNumber)?.intValue, 1014)
+        XCTAssertEqual(denied["message"] as? String, "camera denied")
+        let plain = try XCTUnwrap(peer.line(where: reply(to: 2))["error"] as? [String: Any])
+        XCTAssertEqual((plain["code"] as? NSNumber)?.intValue, -32603)
+        XCTAssertEqual(plain["message"] as? String, "no movie")
+        let unencodable = try XCTUnwrap(peer.line(where: reply(to: 3))["error"] as? [String: Any])
+        XCTAssertEqual((unencodable["code"] as? NSNumber)?.intValue, -32603, "an answer that is not JSON is refused, not dropped")
+    }
+
+    func testProgressGoesOutBeforeTheAnswerAndNamesTheRequest() throws {
+        client.answer("render.export") { request, reply in
+            request.progress(fraction: 0.5, label: "export")
+            request.progress(label: "finishing")
+            reply(.success(["ok": true]))
+        }
+        try client.connect()
+        peer.request(9, "render.export")
+        _ = try peer.line(where: reply(to: 9))
+        let lines = peer.received
+        let steps = lines.filter { $0["method"] as? String == "$/progress" }
+        XCTAssertEqual(steps.count, 2)
+        let first = try XCTUnwrap(steps.first?["params"] as? [String: Any])
+        XCTAssertEqual((first["id"] as? NSNumber)?.intValue, 9)
+        XCTAssertEqual((first["fraction"] as? NSNumber)?.doubleValue, 0.5)
+        XCTAssertEqual(first["label"] as? String, "export")
+        XCTAssertNil((steps.last?["params"] as? [String: Any])?["fraction"])
+        XCTAssertNil(steps.first?["id"], "progress is a notification")
+        let answerIndex = try XCTUnwrap(lines.firstIndex(where: reply(to: 9)))
+        XCTAssertTrue(lines.indices.filter { lines[$0]["method"] as? String == "$/progress" }.allSatisfy { $0 < answerIndex })
+    }
+
+    func testACancelAnswers1013AtOnceRunsOnCancelAndDropsTheLateAnswer() throws {
+        let cancelled = expectation(description: "onCancel ran")
+        var held: ((Result<Any?, Error>) -> Void)?
+        var request: LiveRecordingRPCClient.Incoming?
+        client.answer("render.export") { incoming, reply in
+            request = incoming
+            held = reply
+            incoming.onCancel { cancelled.fulfill() }
+        }
+        try client.connect()
+        peer.request(4, "render.export")
+        Thread.sleep(forTimeInterval: 0.2)
+        peer.send(["jsonrpc": "2.0", "method": "$/cancel", "params": ["id": 4]])
+        let error = try XCTUnwrap(peer.line(where: reply(to: 4))["error"] as? [String: Any])
+        XCTAssertEqual((error["code"] as? NSNumber)?.intValue, 1013)
+        wait(for: [cancelled], timeout: 2)
+        XCTAssertEqual(request?.isCancelled, true)
+        held?(.success(["ok": true]))
+        request?.progress(fraction: 0.9)
+        // A request after the cancel proves the late answer and progress would have been written before it.
+        client.answer("ping") { _, reply in reply(.success("pong")) }
+        peer.request(5, "ping")
+        _ = try peer.line(where: reply(to: 5))
+        XCTAssertEqual(peer.received.filter { ($0["id"] as? NSNumber)?.intValue == 4 }.count, 1, "one answer for the cancelled request")
+        XCTAssertFalse(peer.received.contains { $0["method"] as? String == "$/progress" }, "no progress after a cancel")
+    }
+
+    func testOwnCallsTakeTheirProgressAndSendCancel() throws {
+        try client.connect()
+        let stepped = expectation(description: "progress arrived")
+        let ended = expectation(description: "call ended")
+        var notified: [String] = []
+        client.onNotification = { method, _ in notified.append(method) }
+        var step: LiveRecordingRPCClient.CallProgress?
+        var outcome: Result<Any?, Error>?
+        let id = client.request("edit.apply", timeout: 5, onProgress: { step = $0; stepped.fulfill() }) { result in
+            outcome = result
+            ended.fulfill()
+        }
+        let sent = try peer.line { $0["method"] as? String == "edit.apply" }
+        XCTAssertEqual((sent["id"] as? NSNumber)?.intValue, id, "the returned id is the one on the wire")
+        peer.send(["jsonrpc": "2.0", "method": "$/progress", "params": ["id": id, "fraction": 0.25, "label": "apply"]])
+        wait(for: [stepped], timeout: 2)
+        XCTAssertEqual(step, .init(fraction: 0.25, label: "apply"))
+        client.cancel(id)
+        let cancel = try peer.line { $0["method"] as? String == "$/cancel" }
+        XCTAssertEqual(((cancel["params"] as? [String: Any])?["id"] as? NSNumber)?.intValue, id)
+        XCTAssertNil(cancel["id"], "a cancel is a notification")
+        peer.send(["jsonrpc": "2.0", "id": id, "error": ["code": 1013, "message": "cancelled"]])
+        wait(for: [ended], timeout: 2)
+        guard case let .failure(error)? = outcome else { return XCTFail("the cancelled call succeeded") }
+        XCTAssertEqual(error as? LiveRecordingRPCClient.Failure, .remote(code: 1013, message: "cancelled"))
+        XCTAssertTrue(notified.isEmpty, "$/progress never reaches onNotification")
+    }
+
+    // Regression test: 2026-11-05 recorder service review, finding 11 — progress did not extend the call's deadline
+    func testEachProgressStartsTheDeadlineAgainSoALongCallGetsItsAnswer() throws {
+        try client.connect()
+        let ended = expectation(description: "call ended")
+        var outcome: Result<Any?, Error>?
+        // No progress handler: the deadline follows the peer's steps all the same.
+        let id = client.request("render.export", timeout: 0.5) { result in
+            outcome = result
+            ended.fulfill()
+        }
+        _ = try peer.line { $0["method"] as? String == "render.export" }
+        for _ in 0..<3 {
+            Thread.sleep(forTimeInterval: 0.3)
+            peer.send(["jsonrpc": "2.0", "method": "$/progress", "params": ["id": id, "fraction": 0.5]])
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+        peer.send(["jsonrpc": "2.0", "id": id, "result": ["ok": true]])
+        wait(for: [ended], timeout: 2)
+        guard case let .success(value)? = outcome else {
+            return XCTFail("the call failed although each step came within its deadline: \(String(describing: outcome))")
+        }
+        XCTAssertEqual((value as? [String: Any])?["ok"] as? Bool, true)
+    }
+
+    func testNotifySendsAMessageWithNoID() throws {
+        try client.connect()
+        client.notify("window.changed", params: ["open": []])
+        let line = try peer.line { $0["method"] as? String == "window.changed" }
+        XCTAssertNil(line["id"])
+        XCTAssertNotNil((line["params"] as? [String: Any])?["open"])
+    }
+
+    func testAHangUpCancelsTheOpenRequests() throws {
+        let cancelled = expectation(description: "the open request was cancelled")
+        client.answer("render.export") { incoming, _ in incoming.onCancel { cancelled.fulfill() } }
+        try client.connect()
+        peer.request(1, "render.export")
+        Thread.sleep(forTimeInterval: 0.2)
+        peer.stop()
+        wait(for: [cancelled], timeout: 2)
     }
 }

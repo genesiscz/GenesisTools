@@ -104,5 +104,9 @@ final class LiveRecordingStoreTests: XCTestCase {
                                   state: "paused", frames: 1)
         XCTAssertEqual(LiveRecordingsStatusItem.detail(entry, now: start.addingTimeInterval(723)),
                        "Control session · 12:03 · 1 frame · paused")
+        let movie = LiveRecording(id: "m", kind: "control-session", title: "t", pid: 1, startedAt: start,
+                                  state: "recording", frames: 0)
+        XCTAssertEqual(LiveRecordingsStatusItem.detail(movie, now: start.addingTimeInterval(5)),
+                       "Control session · 0:05", "a movie keeps no frames, so it shows no count")
     }
 }

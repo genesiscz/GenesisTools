@@ -1,0 +1,1028 @@
+{
+  "about": "Made from the TypeScript source by scripts/recorder/write-protocol-fixtures.ts. The Swift tests decode every op with EditOp and every project with EditProject, write them back, and compare; the op tags must match EditOp's cases, and every method the editor window calls must be in methods (the service's hello).",
+  "methods": [
+    "hello",
+    "session.open",
+    "session.close",
+    "edit.apply",
+    "edit.undo",
+    "edit.redo",
+    "gesture.begin",
+    "gesture.preview",
+    "gesture.commit",
+    "gesture.cancel",
+    "recordings.register",
+    "recordings.live",
+    "recording.call",
+    "subscribe",
+    "window.open",
+    "window.show",
+    "window.list",
+    "window.close",
+    "render.still",
+    "render.sheet",
+    "render.export",
+    "render.snapshot",
+    "camera.start",
+    "camera.stop",
+    "movie.info",
+    "movie.check",
+    "movie.fix",
+    "movie.split",
+    "movie.cut",
+    "movie.keep",
+    "movie.speed",
+    "movie.zoom",
+    "movie.unzoom",
+    "movie.redact",
+    "movie.unredact",
+    "movie.text",
+    "movie.untext",
+    "movie.retime",
+    "movie.fixLine",
+    "movie.replaceWords",
+    "movie.fixLines",
+    "movie.unfixLine",
+    "movie.autoZoom",
+    "movie.titleMarkers",
+    "movie.annotateClicks",
+    "movie.volume",
+    "movie.mute",
+    "movie.unmute",
+    "movie.apply",
+    "movie.undo",
+    "movie.shape",
+    "movie.arrow",
+    "movie.unshape",
+    "movie.music",
+    "movie.spotlight",
+    "movie.addLane",
+    "movie.removeLane",
+    "movie.moveLane",
+    "movie.moveToLane",
+    "movie.range",
+    "movie.marker",
+    "movie.unmarker",
+    "movie.reset",
+    "movie.clicks",
+    "movie.keys",
+    "movie.captions",
+    "movie.cursor",
+    "movie.motion",
+    "movie.camera",
+    "movie.cameraHide",
+    "movie.cameraShow",
+    "movie.frame",
+    "movie.removeIdle",
+    "movie.polish",
+    "movie.cutWords",
+    "movie.lineWords",
+    "movie.cutFillers",
+    "movie.denoise",
+    "movie.normalize",
+    "movie.export",
+    "movie.subtitles",
+    "movie.transcript",
+    "movie.poster",
+    "movie.sheet",
+    "movie.itemsAt",
+    "movie.still",
+    "movie.find",
+    "movie.switchDisplay",
+    "movie.undoDisplaySwitch",
+    "movie.redoDisplaySwitch",
+    "movie.findOnScreen",
+    "movie.markers",
+    "movie.clickGroups",
+    "movie.comments",
+    "movie.comment",
+    "movie.resolveComment",
+    "movie.uncomment",
+    "movie.importComments",
+    "movie.copy",
+    "movie.reveal",
+    "movie.trash",
+    "movie.rename",
+    "movie.chapters",
+    "movie.shortcuts",
+    "movie.show",
+    "movie.closeEditor",
+    "movies.list",
+    "movies.search"
+  ],
+  "opTags": [
+    "split",
+    "cut",
+    "keep",
+    "speed",
+    "zoom",
+    "unzoom",
+    "redact",
+    "spotlight",
+    "unredact",
+    "text",
+    "untext",
+    "marker",
+    "unmarker",
+    "retime",
+    "shape",
+    "unshape",
+    "fixLine",
+    "unfixLine",
+    "autoZoom",
+    "annotateClicks",
+    "volume",
+    "mute",
+    "audio",
+    "music",
+    "exportSettings",
+    "reset",
+    "clicks",
+    "keys",
+    "captions",
+    "motion",
+    "cursor",
+    "frame",
+    "camera",
+    "cameraHide",
+    "cameraShow",
+    "removeIdle",
+    "cutWords",
+    "cutFillers",
+    "denoise",
+    "normalize",
+    "lanes",
+    "addLane",
+    "removeLane",
+    "moveLane",
+    "moveToLane",
+    "setZoom",
+    "setRedaction",
+    "setText",
+    "setShape",
+    "trim",
+    "deleteClip",
+    "clipSpeed",
+    "duplicate",
+    "removeClickCircles",
+    "renameLane",
+    "range"
+  ],
+  "ops": [
+    {
+      "op": "split",
+      "at": 2
+    },
+    {
+      "op": "cut",
+      "from": 1,
+      "to": 2
+    },
+    {
+      "op": "keep",
+      "from": 1,
+      "to": 8
+    },
+    {
+      "op": "speed",
+      "from": 2,
+      "to": 4,
+      "factor": 2
+    },
+    {
+      "op": "zoom",
+      "from": 1,
+      "to": 3,
+      "scale": 2,
+      "focus": {
+        "x": 0.3,
+        "y": 0.4
+      },
+      "follow": false,
+      "lane": "zooms"
+    },
+    {
+      "op": "unzoom",
+      "id": "z1"
+    },
+    {
+      "op": "redact",
+      "from": 1,
+      "to": 3,
+      "rect": {
+        "x": 0.1,
+        "y": 0.1,
+        "width": 0.2,
+        "height": 0.1
+      },
+      "style": "pixelate",
+      "label": "API token",
+      "follow": false,
+      "lane": "lane2"
+    },
+    {
+      "op": "spotlight",
+      "from": 4,
+      "to": 5,
+      "rect": {
+        "x": 0.4,
+        "y": 0.4,
+        "width": 0.2,
+        "height": 0.2
+      },
+      "dim": 0.6,
+      "cutout": "circle"
+    },
+    {
+      "op": "unredact",
+      "id": "r1"
+    },
+    {
+      "op": "text",
+      "from": 5,
+      "to": 7,
+      "text": "Hello",
+      "x": 0.5,
+      "y": 0.1,
+      "size": 0.05,
+      "style": "plain",
+      "lane": "lane3"
+    },
+    {
+      "op": "untext",
+      "id": "t1"
+    },
+    {
+      "op": "marker",
+      "at": 2,
+      "label": "Login"
+    },
+    {
+      "op": "unmarker",
+      "id": "m1"
+    },
+    {
+      "op": "retime",
+      "id": "t1",
+      "from": 1.5,
+      "to": 2.5
+    },
+    {
+      "op": "retime",
+      "id": "z1",
+      "by": -0.25
+    },
+    {
+      "op": "shape",
+      "from": 6,
+      "to": 8,
+      "kind": "arrow",
+      "start": {
+        "x": 0.2,
+        "y": 0.2
+      },
+      "end": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "color": "#FF3B30",
+      "width": 0.01,
+      "appear": "fade"
+    },
+    {
+      "op": "shape",
+      "from": 6,
+      "to": 8,
+      "kind": "circle",
+      "at": {
+        "x": 0.7,
+        "y": 0.3
+      }
+    },
+    {
+      "op": "unshape",
+      "id": "s1"
+    },
+    {
+      "op": "fixLine",
+      "from": 4.2,
+      "text": "The fixed words"
+    },
+    {
+      "op": "unfixLine",
+      "from": 4.2
+    },
+    {
+      "op": "autoZoom",
+      "scale": 1.8
+    },
+    {
+      "op": "annotateClicks",
+      "from": 0,
+      "to": 5,
+      "kind": "box",
+      "seconds": 2,
+      "color": "#FFCC00",
+      "appear": "none"
+    },
+    {
+      "op": "volume",
+      "volume": 0.8
+    },
+    {
+      "op": "mute",
+      "track": 1,
+      "muted": true
+    },
+    {
+      "op": "audio",
+      "include": false
+    },
+    {
+      "op": "music",
+      "file": "/music/bed.mp3",
+      "volume": 0.2,
+      "duck": 0.5,
+      "fadeMs": 1000,
+      "startMs": 500,
+      "loop": false
+    },
+    {
+      "op": "music",
+      "enabled": false
+    },
+    {
+      "op": "exportSettings",
+      "codec": "hevc",
+      "maxHeight": 1080,
+      "output": "/exports/demo.mp4",
+      "format": "gif",
+      "subtitles": "srt",
+      "chapters": false
+    },
+    {
+      "op": "reset"
+    },
+    {
+      "op": "clicks",
+      "highlight": true,
+      "color": "#FFCC00",
+      "radius": 0.03,
+      "durationMs": 600,
+      "sound": true
+    },
+    {
+      "op": "keys",
+      "show": true,
+      "size": 0.05,
+      "position": "top",
+      "durationMs": 1500
+    },
+    {
+      "op": "captions",
+      "show": true,
+      "size": 0.05,
+      "position": "bottom"
+    },
+    {
+      "op": "motion",
+      "blur": 0.4
+    },
+    {
+      "op": "cursor",
+      "show": true,
+      "size": 1.5,
+      "smoothing": 0.6,
+      "hideAfterMs": 3000
+    },
+    {
+      "op": "frame",
+      "enabled": true,
+      "aspect": "9:16",
+      "fit": "cover",
+      "background": {
+        "kind": "gradient",
+        "colors": [
+          "#4F46E5",
+          "#DB2777"
+        ],
+        "blur": 0.2
+      },
+      "padding": 0.08,
+      "cornerRadius": 0.02,
+      "shadow": false
+    },
+    {
+      "op": "camera",
+      "file": "camera.mov",
+      "show": true,
+      "corner": "topLeft",
+      "size": 0.3,
+      "shape": "rounded",
+      "mirror": false,
+      "offsetMs": 120
+    },
+    {
+      "op": "camera",
+      "x": 0.25,
+      "y": 0.75
+    },
+    {
+      "op": "cameraHide",
+      "from": 1,
+      "to": 2,
+      "lane": "lane4"
+    },
+    {
+      "op": "cameraShow",
+      "id": "k1"
+    },
+    {
+      "op": "cameraShow",
+      "from": 1.5,
+      "to": 2
+    },
+    {
+      "op": "removeIdle",
+      "minSeconds": 2,
+      "keepSeconds": 0.3,
+      "speed": 4
+    },
+    {
+      "op": "cutWords",
+      "at": 3,
+      "words": "ehm",
+      "occurrence": 1,
+      "from": 3.2,
+      "to": 3.5,
+      "padMs": 40
+    },
+    {
+      "op": "cutFillers",
+      "language": "cs",
+      "level": "all",
+      "words": [
+        "ehm"
+      ],
+      "padMs": 30
+    },
+    {
+      "op": "denoise",
+      "enabled": true,
+      "method": "afftdn",
+      "reductionDb": 12,
+      "tracks": [
+        0,
+        1
+      ],
+      "trackReductionDb": {
+        "1": 18
+      }
+    },
+    {
+      "op": "denoise",
+      "track": 1,
+      "on": false,
+      "trackCount": 2
+    },
+    {
+      "op": "normalize",
+      "targetLufs": -16
+    },
+    {
+      "op": "lanes",
+      "lanes": [
+        {
+          "id": "zooms",
+          "kinds": [
+            "zoom"
+          ]
+        },
+        {
+          "id": "lane2",
+          "kinds": [
+            "hide",
+            "spotlight"
+          ],
+          "name": "Secrets"
+        }
+      ]
+    },
+    {
+      "op": "addLane",
+      "kinds": [
+        "text"
+      ],
+      "name": "Titles",
+      "id": "lane3"
+    },
+    {
+      "op": "removeLane",
+      "id": "lane2"
+    },
+    {
+      "op": "moveLane",
+      "id": "lane2",
+      "to": 0
+    },
+    {
+      "op": "moveToLane",
+      "id": "t1",
+      "lane": "lane2"
+    },
+    {
+      "op": "setZoom",
+      "id": "z1",
+      "scale": 2.5,
+      "mode": "manual",
+      "focus": {
+        "x": 0.4,
+        "y": 0.6
+      },
+      "easeInMs": 300,
+      "easeOutMs": 500
+    },
+    {
+      "op": "setRedaction",
+      "id": "r1",
+      "rect": {
+        "x": 0.2,
+        "y": 0.2,
+        "width": 0.3,
+        "height": 0.1
+      },
+      "style": "black",
+      "label": "key",
+      "follow": true,
+      "dim": 0.5,
+      "cutout": "rect"
+    },
+    {
+      "op": "setText",
+      "id": "t1",
+      "text": "Hi",
+      "x": 0.4,
+      "y": 0.2,
+      "size": 0.06,
+      "style": "plate"
+    },
+    {
+      "op": "setShape",
+      "id": "s1",
+      "kind": "box",
+      "start": {
+        "x": 0.1,
+        "y": 0.1
+      },
+      "end": {
+        "x": 0.3,
+        "y": 0.2
+      },
+      "color": "#00FF00",
+      "width": 0.005,
+      "appear": "draw"
+    },
+    {
+      "op": "trim",
+      "clip": "c1",
+      "from": 1,
+      "to": 9
+    },
+    {
+      "op": "deleteClip",
+      "clip": "c2"
+    },
+    {
+      "op": "clipSpeed",
+      "clip": "c1",
+      "factor": 1.5
+    },
+    {
+      "op": "duplicate",
+      "id": "z1"
+    },
+    {
+      "op": "removeClickCircles"
+    },
+    {
+      "op": "renameLane",
+      "id": "lane2",
+      "name": "Hidden"
+    },
+    {
+      "op": "range",
+      "from": 1,
+      "to": 3,
+      "action": "spotlight"
+    },
+    {
+      "op": "range",
+      "from": 2,
+      "to": 4,
+      "action": "speed",
+      "factor": 2
+    },
+    {
+      "op": "range",
+      "from": 2,
+      "to": 3,
+      "action": "text",
+      "text": "Step 1",
+      "lane": "lane3"
+    }
+  ],
+  "projects": [
+    {
+      "name": "every item, a split and a speed-up",
+      "project": {
+        "version": 1,
+        "source": {
+          "video": "/movies/screen.mp4",
+          "durationUs": 10000000,
+          "width": 1920,
+          "height": 1080
+        },
+        "clips": [
+          {
+            "id": "c1",
+            "fromUs": 0,
+            "toUs": 6000000,
+            "speed": 1
+          },
+          {
+            "id": "c2",
+            "fromUs": 6000000,
+            "toUs": 7000000,
+            "speed": 1
+          },
+          {
+            "id": "c3",
+            "fromUs": 7000000,
+            "toUs": 9000000,
+            "speed": 2
+          },
+          {
+            "id": "c4",
+            "fromUs": 9000000,
+            "toUs": 10000000,
+            "speed": 1
+          }
+        ],
+        "zooms": [
+          {
+            "id": "z1",
+            "startUs": 1000000,
+            "endUs": 3000000,
+            "scale": 2,
+            "mode": "manual",
+            "focusX": 0.3,
+            "focusY": 0.4,
+            "easeInMs": 450,
+            "easeOutMs": 450
+          }
+        ],
+        "audio": {
+          "include": true,
+          "volume": 1,
+          "mutedTracks": []
+        },
+        "export": {
+          "codec": "h264",
+          "maxHeight": 0,
+          "output": ""
+        },
+        "revision": 0,
+        "redactions": [
+          {
+            "id": "r1",
+            "startUs": 2000000,
+            "endUs": 4000000,
+            "x": 0.1,
+            "y": 0.1,
+            "width": 0.2,
+            "height": 0.1,
+            "style": "blur",
+            "label": "API token"
+          },
+          {
+            "id": "r2",
+            "startUs": 4000000,
+            "endUs": 5000000,
+            "x": 0.4,
+            "y": 0.4,
+            "width": 0.2,
+            "height": 0.2,
+            "style": "spotlight",
+            "dim": 0.6,
+            "cutout": "circle"
+          }
+        ],
+        "texts": [
+          {
+            "id": "t1",
+            "startUs": 5000000,
+            "endUs": 7000000,
+            "text": "Hello",
+            "x": 0.5,
+            "y": 0.12,
+            "size": 0.055,
+            "style": "plain"
+          }
+        ],
+        "shapes": [
+          {
+            "id": "s1",
+            "startUs": 6000000,
+            "endUs": 8000000,
+            "kind": "arrow",
+            "x1": 0.2,
+            "y1": 0.2,
+            "x2": 0.5,
+            "y2": 0.5,
+            "color": "#FF3B30",
+            "width": 0.006,
+            "appear": "fade"
+          }
+        ],
+        "markers": [
+          {
+            "id": "m1",
+            "atUs": 2000000,
+            "label": "Login"
+          }
+        ],
+        "transcript": {
+          "fixes": {
+            "4200": "The fixed words"
+          }
+        }
+      }
+    },
+    {
+      "name": "the looks, the export and the sound",
+      "project": {
+        "version": 1,
+        "source": {
+          "video": "/movies/screen.mp4",
+          "durationUs": 10000000,
+          "width": 1920,
+          "height": 1080
+        },
+        "clips": [
+          {
+            "id": "c1",
+            "fromUs": 0,
+            "toUs": 10000000,
+            "speed": 1
+          }
+        ],
+        "zooms": [],
+        "audio": {
+          "include": true,
+          "volume": 0.8,
+          "mutedTracks": [
+            1
+          ],
+          "denoise": {
+            "method": "afftdn",
+            "reductionDb": 12,
+            "tracks": [
+              0
+            ],
+            "trackReductionDb": {
+              "0": 18
+            }
+          }
+        },
+        "export": {
+          "codec": "hevc",
+          "maxHeight": 1080,
+          "output": "",
+          "format": "mp4",
+          "chapters": false,
+          "subtitles": "vtt"
+        },
+        "revision": 0,
+        "frame": {
+          "background": {
+            "kind": "gradient",
+            "colors": [
+              "#4F46E5",
+              "#DB2777"
+            ]
+          },
+          "padding": 0.08,
+          "cornerRadius": 0.012,
+          "shadow": true,
+          "aspect": "16:9",
+          "fit": "cover"
+        },
+        "clicks": {
+          "highlight": true,
+          "color": "#FFD60A",
+          "radius": 0.03,
+          "durationMs": 450,
+          "sound": true
+        },
+        "motion": {
+          "blur": 0.4
+        }
+      }
+    },
+    {
+      "name": "the looks a recorded track turns on, and music",
+      "project": {
+        "version": 1,
+        "source": {
+          "video": "/movies/screen.mp4",
+          "durationUs": 10000000,
+          "width": 1920,
+          "height": 1080
+        },
+        "clips": [
+          {
+            "id": "c1",
+            "fromUs": 0,
+            "toUs": 10000000,
+            "speed": 1
+          }
+        ],
+        "zooms": [],
+        "audio": {
+          "include": true,
+          "volume": 0.8,
+          "mutedTracks": [
+            1
+          ],
+          "music": {
+            "file": "/music/bed.mp3",
+            "volume": 0.2,
+            "duck": 0.6,
+            "fadeMs": 1500,
+            "startMs": 500,
+            "loop": false
+          },
+          "denoise": {
+            "method": "afftdn",
+            "reductionDb": 12,
+            "tracks": [
+              0
+            ],
+            "trackReductionDb": {
+              "0": 18
+            }
+          }
+        },
+        "export": {
+          "codec": "hevc",
+          "maxHeight": 1080,
+          "output": "",
+          "format": "mp4",
+          "subtitles": "vtt",
+          "chapters": false
+        },
+        "clicks": {
+          "highlight": true,
+          "color": "#FFD60A",
+          "radius": 0.03,
+          "durationMs": 450,
+          "sound": true
+        },
+        "frame": {
+          "aspect": "16:9",
+          "fit": "cover",
+          "background": {
+            "kind": "gradient",
+            "colors": [
+              "#4F46E5",
+              "#DB2777"
+            ]
+          },
+          "padding": 0.08,
+          "cornerRadius": 0.012,
+          "shadow": true
+        },
+        "cursor": {
+          "show": true,
+          "size": 1.5,
+          "smoothing": 0.6,
+          "hideAfterMs": 3000
+        },
+        "captions": {
+          "show": true,
+          "size": 0.05,
+          "position": "top"
+        },
+        "keys": {
+          "show": true,
+          "size": 0.05,
+          "position": "bottom",
+          "durationMs": 1500
+        },
+        "motion": {
+          "blur": 0.4
+        },
+        "revision": 0
+      }
+    },
+    {
+      "name": "a camera with two hidden parts and lanes",
+      "project": {
+        "version": 1,
+        "source": {
+          "video": "/movies/screen.mp4",
+          "durationUs": 10000000,
+          "width": 1920,
+          "height": 1080
+        },
+        "clips": [
+          {
+            "id": "c1",
+            "fromUs": 0,
+            "toUs": 10000000,
+            "speed": 1
+          }
+        ],
+        "zooms": [],
+        "audio": {
+          "include": true,
+          "volume": 1,
+          "mutedTracks": []
+        },
+        "export": {
+          "codec": "h264",
+          "maxHeight": 0,
+          "output": ""
+        },
+        "camera": {
+          "file": "camera.mov",
+          "offsetMs": 0,
+          "show": true,
+          "corner": "custom",
+          "x": 0.25,
+          "y": 0.75,
+          "size": 0.3,
+          "shape": "rounded",
+          "mirror": true,
+          "margin": 0.035,
+          "hidden": [
+            {
+              "id": "k1",
+              "startUs": 1000000,
+              "endUs": 2000000,
+              "lane": "auto-cameraHide"
+            },
+            {
+              "id": "k2",
+              "startUs": 1500000,
+              "endUs": 3000000,
+              "lane": "auto-cameraHide"
+            }
+          ]
+        },
+        "revision": 0,
+        "lanes": [
+          {
+            "id": "zooms",
+            "kinds": [
+              "zoom"
+            ]
+          },
+          {
+            "id": "auto-cameraHide",
+            "kinds": [
+              "cameraHide"
+            ]
+          },
+          {
+            "id": "lane3",
+            "kinds": [
+              "hide",
+              "spotlight"
+            ],
+            "name": "Secrets"
+          },
+          {
+            "id": "lane4",
+            "kinds": [
+              "cameraHide"
+            ]
+          }
+        ],
+        "redactions": [
+          {
+            "id": "r1",
+            "startUs": 2000000,
+            "endUs": 4000000,
+            "x": 0.1,
+            "y": 0.1,
+            "width": 0.2,
+            "height": 0.1,
+            "style": "blur",
+            "lane": "lane3"
+          }
+        ]
+      }
+    }
+  ]
+}

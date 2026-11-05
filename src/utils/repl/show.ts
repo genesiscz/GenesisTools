@@ -13,6 +13,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !(value instanceof Uint8Array);
 }
 
+const SHOWABLE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
 /** The bytes and MIME type of what `show()` was given; refuses anything that is not a PNG, JPEG, GIF or WebP. */
 export async function readShowable(input: ShowInput): Promise<ShowableImage> {
     let bytes: Uint8Array;
@@ -30,9 +32,10 @@ export async function readShowable(input: ShowInput): Promise<ShowableImage> {
     }
 
     const detected = detectImageFormat(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+    // The bytes decide; a caller's MIME hint cannot make other bytes an image.
     const type = detected?.mime;
 
-    if (!type || !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(type)) {
+    if (!type || !SHOWABLE_TYPES.includes(type)) {
         throw new Error("show() got bytes that are not a PNG, JPEG, GIF or WebP image");
     }
 

@@ -10,6 +10,23 @@ describe("rewriteTurn", () => {
         expect(out).toContain("return (z + 1)");
     });
 
+    it("takes a top-level return as the result, with or without an await before it", () => {
+        expect(rewriteTurn("const s = 1;\nreturn s;")).toContain("return s");
+        const awaited = rewriteTurn("const s = await work(1);\nreturn s;");
+        expect(awaited).toContain("s = await work(1)");
+        expect(awaited).toContain("return s");
+    });
+
+    it("returns the last expression of each branch when the turn ends in try, if or a block", () => {
+        const tried = rewriteTurn("try { await work(); 'ok' } catch (error) { error.message }");
+        expect(tried).toContain('return ("ok")');
+        expect(tried).toContain("return (error.message)");
+        const branched = rewriteTurn("if (flag) { 1 } else 2;");
+        expect(branched).toContain("return (1)");
+        expect(branched).toContain("return (2)");
+        expect(rewriteTurn("try { 1 } finally { 2 }")).not.toContain("return (2)");
+    });
+
     it("gives a declaration without an initialiser an explicit undefined", () => {
         // Dropping the keyword alone leaves the bare expression `keep;`, which reads a binding
         // nothing created and throws ReferenceError instead of declaring anything.
@@ -42,8 +59,8 @@ describe("rewriteTurn", () => {
         expect(out).toContain("return (n * 2)");
     });
 
-    it("leaves a turn whose last statement is not an expression alone", () => {
-        const out = rewriteTurn("if (true) { x = 1 }");
+    it("leaves a turn that ends in a loop alone", () => {
+        const out = rewriteTurn("for (const n of [1]) { x = n }");
         expect(out).not.toContain("return (");
     });
 

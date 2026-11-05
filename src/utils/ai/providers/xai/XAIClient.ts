@@ -25,9 +25,14 @@ export class XAIClient {
     private pendingAt = 0;
     private readonly lookup: () => Promise<string>;
     private readonly now: () => number;
+    private readonly transport: typeof globalThis.fetch;
 
     /** `deps` is for tests: the account lookup and the clock. */
-    constructor(apiKey?: string, deps: { lookup?: () => Promise<string>; now?: () => number } = {}) {
+    constructor(
+        apiKey?: string,
+        deps: { lookup?: () => Promise<string>; now?: () => number; fetch?: typeof globalThis.fetch } = {}
+    ) {
+        this.transport = deps.fetch ?? globalThis.fetch;
         this.lookup = deps.lookup ?? (() => providerApiKey(XAI_PROVIDER_ID));
         this.now = deps.now ?? Date.now;
         const trimmed = apiKey?.trim();
@@ -87,7 +92,7 @@ export class XAIClient {
         const apiKey = await this.requireKey();
         const url = `${BASE_URL}${path}`;
         const headers = { ...authHeader(apiKey), ...(init?.headers ?? {}) };
-        return fetch(url, { ...init, headers });
+        return this.transport(url, { ...init, headers });
     }
 
     async openWebSocket(path: string, params: URLSearchParams): Promise<WebSocket> {

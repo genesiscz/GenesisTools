@@ -8,7 +8,8 @@ import { parseSync } from "oxc-parser";
  * each of those becomes an assignment onto the shared global: a bare assignment for
  * variables, `globalThis.Name = class Name {}` and `globalThis.name = function name() {}` for
  * the others. Redeclaring then just overwrites the property, which is what a REPL means by it.
- * The last expression statement is returned so its value is the turn's result.
+ * The last expression statement is returned so its value is the turn's result; when the turn ends in a `try`, an
+ * `if` or a block, the last expression of each branch is.
  */
 
 interface Edit {
@@ -25,12 +26,54 @@ interface Node {
     id?: { name: string } | null;
     expression?: { start: number; end: number };
     declarations?: Array<{ start: number; end: number; id: { type: string }; init?: unknown }>;
+    body?: Node[] | Node;
+    block?: Node;
+    handler?: { body: Node } | null;
+    consequent?: Node;
+    alternate?: Node | null;
+}
+
+/**
+ * The value a turn ends with when its last statement is a block, a `try` or an `if`: the last expression inside
+ * each branch becomes the return, as a script's completion value would be. `finally` never gives the value.
+ */
+function returnLast(node: Node | null | undefined, code: string, edits: Edit[]): void {
+    if (!node) {
+        return;
+    }
+
+    if (node.type === "ExpressionStatement" && node.expression) {
+        edits.push({ start: node.start, end: node.expression.start, text: "return (" });
+        const end = code[node.end - 1] === ";" ? node.end - 1 : node.end;
+        edits.push({ start: end, end, text: ")" });
+    } else if (node.type === "BlockStatement" && Array.isArray(node.body)) {
+        returnLast(node.body.at(-1), code, edits);
+    } else if (node.type === "TryStatement") {
+        returnLast(node.block, code, edits);
+        returnLast(node.handler?.body, code, edits);
+    } else if (node.type === "IfStatement") {
+        returnLast(node.consequent, code, edits);
+        returnLast(node.alternate, code, edits);
+    }
 }
 
 // Dead-code elimination stays off: the transpiler would drop a side-effect-free last
 // expression such as `typeof marker`, and that expression is the turn's result.
+// A turn runs inside an async function, so a top-level `return` is its result. The transpiler refuses one only
+// when the turn also awaits (it then reads it as a module), so such a turn is stripped inside a function and
+// unwrapped again.
 function stripTypes(source: string): string {
-    return new Bun.Transpiler({ loader: "ts", target: "bun", deadCodeElimination: false }).transformSync(source);
+    const transpiler = new Bun.Transpiler({ loader: "ts", target: "bun", deadCodeElimination: false });
+    try {
+        return transpiler.transformSync(source);
+    } catch (error) {
+        if (!String(error).includes("Top-level return")) {
+            throw error;
+        }
+
+        const wrapped = transpiler.transformSync(`async function __turn__() {\n${source}\n}`);
+        return wrapped.slice(wrapped.indexOf("{") + 1, wrapped.lastIndexOf("}"));
+    }
 }
 
 export function rewriteTurn(source: string): string {
@@ -81,10 +124,8 @@ export function rewriteTurn(source: string): string {
             edits.push({ start: node.end, end: node.end, text: ";" });
         }
 
-        if (isLast && node.type === "ExpressionStatement" && node.expression) {
-            edits.push({ start: node.start, end: node.expression.start, text: "return (" });
-            const end = code[node.end - 1] === ";" ? node.end - 1 : node.end;
-            edits.push({ start: end, end, text: ")" });
+        if (isLast) {
+            returnLast(node, code, edits);
         }
     });
 

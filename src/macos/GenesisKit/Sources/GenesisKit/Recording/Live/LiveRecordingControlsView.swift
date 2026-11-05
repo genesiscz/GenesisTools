@@ -83,9 +83,10 @@ struct LiveRecordingControlsView: View {
     }
 
     private var caption: String {
-        let frames = Plural.count(recording.frames, "frame")
+        // A movie recording counts no kept frames (only the meeting screen recorder does), so it says "Recording".
+        let frames = recording.frames > 0 ? Plural.count(recording.frames, "frame") : "Recording"
         if recording.isStopping { return "Stopping" }
-        if recording.isPaused { return "Paused · \(frames)" }
+        if recording.isPaused { return recording.frames > 0 ? "Paused · \(frames)" : "Paused" }
         if recording.warning != nil { return "\(frames) · warning" }
 
         return frames

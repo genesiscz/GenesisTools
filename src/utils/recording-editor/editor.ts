@@ -183,11 +183,19 @@ function frameLabel(mode: "time" | "sample" | "index" | "none", frame: EditFrame
 }
 
 /** Timestamps at `fps` across the window, as the frame review samples them. */
+/** The most sample times one frames step may ask for: hours of range at a high rate would stall or run out of memory. */
+export const MAX_SAMPLE_TIMES = 1_000_000;
+
 export function sampleTimes(options: { fromUs: number; toUs: number; fps: number }): number[] {
     const count = Math.ceil(((options.toUs - options.fromUs) * options.fps) / 1_000_000);
-    if (!Number.isSafeInteger(count) || count < 0 || count > 1_000_000) {
-        throw new Error("Sampling exceeds the 1,000,000 timestamp budget; select a shorter range or lower FPS");
+
+    // Checked before the array exists: the allocation itself is what stalls, before any cancel check can run.
+    if (!Number.isFinite(count) || count > MAX_SAMPLE_TIMES) {
+        throw new Error(
+            `The range at ${options.fps} fps asks for ${count} frames, and the most is ${MAX_SAMPLE_TIMES}: shorten the range or lower the fps`
+        );
     }
+
     return Array.from({ length: count }, (_, index) => options.fromUs + (index * 1_000_000) / options.fps);
 }
 
@@ -303,6 +311,8 @@ async function stillFrames(
     signal.throwIfAborted();
     const fromUs = state.window.fromUs ?? 0;
     const toUs = state.window.toUs ?? Number.POSITIVE_INFINITY;
+    // A sampled window starts with the frame already on screen at its start, so the frames before it stay candidates;
+    // an unsampled one lists only the frames inside it.
     const inWindow = (state.stills ?? []).filter(
         (frame) =>
             frame.atUs <= toUs &&
@@ -312,7 +322,19 @@ async function stillFrames(
 
     if (step.fps !== undefined && inWindow.length > 0) {
         const end = Number.isFinite(toUs) ? toUs : inWindow[inWindow.length - 1].atUs + 1;
-        const byDisplay = Map.groupBy(inWindow, (frame) => frame.displayId ?? -1);
+        const byDisplay = new Map<number, SourceFrame[]>();
+
+        for (const frame of inWindow) {
+            const key = frame.displayId ?? -1;
+            const group = byDisplay.get(key);
+
+            if (group) {
+                group.push(frame);
+            } else {
+                byDisplay.set(key, [frame]);
+            }
+        }
+
         const times = sampleTimes({ fromUs, toUs: end, fps: step.fps });
         chosen = [];
         for (const frames of byDisplay.values()) {
@@ -403,12 +425,13 @@ async function composeSheets(
                 label: frameLabel(step.labels, frame, offset + position),
             })),
             output: path,
+            // Rows alone set the columns too: { rows: 1 } is one strip, not the square root's 2×2.
             columns:
-                step.cols === undefined
-                    ? step.rows === undefined
-                        ? undefined
-                        : Math.ceil(group.length / step.rows)
-                    : Math.min(step.cols, group.length),
+                step.cols !== undefined
+                    ? Math.min(step.cols, group.length)
+                    : step.rows !== undefined
+                      ? Math.ceil(group.length / Math.min(step.rows, group.length))
+                      : undefined,
             maxWidth: step.maxWidth,
             signal: ctx.signal,
         });
@@ -463,6 +486,7 @@ async function exportStep(
         if (new Set(frames.map((frame) => frame.displayId)).size > 1) {
             throw new Error("Movie export requires one display; select it in a frames step first");
         }
+
         const list = ctx.claim(join(dir, `export-${step.format}.ffconcat`));
         const timeline = frames.map((frame) => ({ path: frame.path, atUs: frame.requestedUs ?? frame.actualUs }));
         const last = timeline[timeline.length - 1].atUs;
@@ -483,7 +507,6 @@ async function exportStep(
     return { path: output, format: step.format };
 }
 
-/** The job steps of a plan: a source step, then one per plan step (a frames step with changeOnly is two). */
 function scaledWindow(window: EditState["window"], factor: number): EditState["window"] {
     return {
         fromUs: window.fromUs === undefined ? undefined : Math.round(window.fromUs / factor),
@@ -491,6 +514,7 @@ function scaledWindow(window: EditState["window"], factor: number): EditState["w
     };
 }
 
+/** The job steps of a plan: a source step, then one per plan step (a frames step with changeOnly is two). */
 function compile(options: {
     plan: EditPlan;
     located: LocatedSource;
@@ -547,7 +571,13 @@ function compile(options: {
                         if (!ctx.state.video) {
                             const fromUs = window.fromUs ?? 0;
                             const toUs = window.toUs ?? ctx.state.window.toUs ?? Number.POSITIVE_INFINITY;
-                            const byDisplay = Map.groupBy(ctx.state.stills ?? [], (frame) => frame.displayId);
+                            // A plain map: the dev-dashboard UI typechecks this file against ES2023, which has no grouping helper on Map.
+                            const byDisplay = new Map<number | undefined, NonNullable<typeof ctx.state.stills>>();
+
+                            for (const frame of ctx.state.stills ?? []) {
+                                byDisplay.set(frame.displayId, [...(byDisplay.get(frame.displayId) ?? []), frame]);
+                            }
+
                             const stills = [...byDisplay.values()]
                                 .flatMap((frames) => {
                                     const predecessor = frames.findLast((frame) => frame.atUs < fromUs);

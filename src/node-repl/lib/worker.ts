@@ -117,7 +117,8 @@ const CORE_HELP = [
 
 function helpText(name?: string): string {
     if (name === undefined) {
-        const loaded = toolsets.map((toolset) => toolset.oneLine());
+        // Each loaded toolset with the call that prints its methods, so a bare help() is never a dead end.
+        const loaded = toolsets.map((toolset) => `${toolset.oneLine()} help("${toolset.id}") lists its methods.`);
         return [...CORE_HELP, ...(loaded.length > 0 ? loaded : ["No toolsets are loaded (--toolset a,b)."])].join("\n");
     }
 
@@ -273,10 +274,37 @@ async function runTurn(code: string): Promise<Response["text"]> {
     const result = await script.runInThisContext();
 
     if (result !== undefined) {
-        output.push(typeof result === "string" ? result : Bun.inspect(result));
+        const text = typeof result === "string" ? result : Bun.inspect(result);
+        output.push(text);
+
+        // A call that returns a Promise inside an object or array prints as `Promise { … }`, which reads as a value.
+        if (typeof result !== "string" && /\bPromise \{/.test(text)) {
+            output.push("note: the result holds a Promise; `await` the call that made it to see its value");
+        }
     }
 
     return output.join("\n");
+}
+
+/** Frames of the kernel itself (this worker, the vm call, the toolset argument check), which say nothing about the turn. */
+const KERNEL_FRAME =
+    /node-repl[/\\]lib[/\\]worker\.ts|utils[/\\]repl[/\\]toolset\.ts|runInThisContext|processTicksAndRejections/;
+/** The script's own top level, which only calls the turn's wrapper. */
+const WRAPPER_FRAME = /^\s+at repl-turn\.js:\d+:\d+$/;
+/** `(async () => {` puts the turn one line below where its author wrote it. */
+const TURN_FRAME = /repl-turn\.js:(\d+)/g;
+
+/** The stack as the turn's author reads it: kernel frames dropped, turn lines numbered as written. */
+export function turnStack(stack: string): string {
+    return stack
+        .split("\n")
+        .filter((line) => !(/^\s+at /.test(line) && KERNEL_FRAME.test(line)) && !WRAPPER_FRAME.test(line))
+        .map((line) =>
+            /^\s+at /.test(line)
+                ? line.replace(TURN_FRAME, (_, row: string) => `turn:${Math.max(1, Number(row) - 1)}`)
+                : line
+        )
+        .join("\n");
 }
 
 /** An error thrown inside the vm context comes from that realm's Error, so instanceof is useless here. */
@@ -284,7 +312,7 @@ function describeError(error: unknown): { message: string; stack?: string } {
     const details: ErrorLike = typeof error === "object" && error !== null ? error : {};
     return {
         message: typeof details.message === "string" ? details.message : String(error),
-        stack: typeof details.stack === "string" ? details.stack : undefined,
+        stack: typeof details.stack === "string" ? turnStack(details.stack) : undefined,
     };
 }
 

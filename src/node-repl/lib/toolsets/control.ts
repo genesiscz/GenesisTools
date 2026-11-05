@@ -3,6 +3,7 @@ import { ComputerToolset } from "@app/control/lib/computer-use/toolset";
 import { ReplToolset, type ToolsetContext } from "@genesiscz/utils/repl/toolset";
 
 export class ControlToolset extends ReplToolset {
+    // The copied notes name the binding this toolset exposes, so an example reads `control.…`, never `computer.…`.
     readonly api = {
         ...computerApi,
         id: "control",

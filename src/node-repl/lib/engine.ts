@@ -85,11 +85,14 @@ export interface ReplEngineOptions {
     toolsets?: readonly string[];
     /** The budget of one preload, apart from every turn's timeout: a toolset may build a native binary first. */
     preloadTimeoutMs?: number;
+    /** The budget of a recording's startup in the parent; `preloadTimeoutMs` when absent. */
+    recordingStartupTimeoutMs?: number;
 }
 
 /** How long `shutdown` and `reset` give the toolsets to release what they started before the worker is killed. */
 const DISPOSE_TIMEOUT_MS = 10_000;
-const FINALIZE_TIMEOUT_MS = 600_000;
+/** How long a shutdown waits for the recordings this engine owns to finish their post-processing. */
+const RECORDING_FINISH_TIMEOUT_MS = 600_000;
 
 export class ReplEngine {
     private worker: ReplWorker | null = null;
@@ -98,19 +101,23 @@ export class ReplEngine {
     private pending = new Map<number, (response: WorkerResponse) => void>();
     private moduleDirs: string[] = [];
     private queue: Promise<unknown> = Promise.resolve();
+    /** Grows on every reset and shutdown: a turn queued before it never runs in the next worker. */
     private generation = 0;
     private shutdownJob?: Promise<void>;
     private scratch?: TemporaryArtifacts;
     private readonly recordings = new Set<LibraryRecording>();
+    /** Post-processing failures of recordings that finished on their own; the next shutdown reports them. */
     private readonly recordingFailures: unknown[] = [];
     private readonly recordingStarts = new Set<Promise<void>>();
     readonly defaultTimeoutMs: number;
     readonly preloadTimeoutMs: number;
+    readonly recordingStartupTimeoutMs: number;
     readonly toolsets: readonly string[];
 
     constructor(private readonly options: ReplEngineOptions = {}) {
         this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
         this.preloadTimeoutMs = options.preloadTimeoutMs ?? 120_000;
+        this.recordingStartupTimeoutMs = options.recordingStartupTimeoutMs ?? this.preloadTimeoutMs;
         this.toolsets = options.toolsets ?? [];
     }
 
@@ -138,9 +145,11 @@ export class ReplEngine {
                 return;
             }
 
+            // A worker that a reset or a shutdown replaced starts nothing: its recording would outlive every owner.
             if (this.worker !== worker) {
                 return;
             }
+
             const requestId = message.id;
             const startup = new AbortController();
             const task = (async () => {
@@ -161,13 +170,14 @@ export class ReplEngine {
                                 recorder,
                             });
                         })(),
-                        this.preloadTimeoutMs,
-                        new Error(`Recording startup exceeded ${this.preloadTimeoutMs} ms`)
+                        this.recordingStartupTimeoutMs,
+                        new Error(`Recording startup exceeded ${this.recordingStartupTimeoutMs} ms`)
                     );
                     this.recordings.add(recording);
+                    // A recording the turn stopped itself leaves the set once its post-processing is done.
                     void recording.finished.then(
                         () => this.recordings.delete(recording),
-                        (error) => {
+                        (error: unknown) => {
                             this.recordings.delete(recording);
                             this.recordingFailures.push(error);
                         }
@@ -437,15 +447,24 @@ export class ReplEngine {
         return { ...response, durationMs: Math.round(performance.now() - started) };
     }
 
-    /** Gives toolsets a bounded disposal attempt, then kills the worker without waiting for the turn deadline. */
+    /**
+     * The whole budget a close may take: a recording's start (the larger of the preload and startup budgets), the
+     * toolset dispose and the bound on finishing the owned recordings, plus a margin.
+     */
     get shutdownTimeoutMs(): number {
-        return DISPOSE_TIMEOUT_MS + this.preloadTimeoutMs + FINALIZE_TIMEOUT_MS + 5_000;
+        const startMs = Math.max(this.preloadTimeoutMs, this.recordingStartupTimeoutMs);
+        return startMs + DISPOSE_TIMEOUT_MS + RECORDING_FINISH_TIMEOUT_MS + 5_000;
     }
 
+    /**
+     * Gives the toolsets a bounded dispose, then kills the worker. It does not wait for a running turn's deadline,
+     * and the turns queued before it are cancelled.
+     */
     async shutdown(reason = "shutdown"): Promise<void> {
         if (this.shutdownJob) {
             return this.shutdownJob;
         }
+
         this.generation += 1;
         const stop = (async () => {
             const worker = this.worker;
@@ -465,29 +484,34 @@ export class ReplEngine {
                 }
             }
 
+            // The worker dies first, so no timer in it can start another recording while the owned ones finish.
             this.killWorker(reason);
             await Promise.all(this.recordingStarts);
             const owned = [...this.recordings];
             const results = await withTimeout(
                 Promise.allSettled(owned.map((recording) => recording.stop())),
-                FINALIZE_TIMEOUT_MS,
-                new Error("Recording finalization exceeded 10 minutes")
+                RECORDING_FINISH_TIMEOUT_MS,
+                new Error(`Recording finalization exceeded ${RECORDING_FINISH_TIMEOUT_MS / 60_000} minutes`)
             );
+
             for (const recording of owned) {
                 this.recordings.delete(recording);
             }
+
             const failures = [
                 ...new Set([
                     ...this.recordingFailures.splice(0),
                     ...results.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])),
                 ]),
             ];
+
             if (failures.length > 0) {
                 throw new AggregateError(failures, "Recording post-processing failed");
             }
         })();
         this.shutdownJob = stop;
         this.queue = stop.catch(() => undefined);
+
         try {
             await stop;
         } finally {

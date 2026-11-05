@@ -1,0 +1,66 @@
+{
+    "about": "An edit.json as tools recorder apply writes it after these ops (src/utils/recording-editor/project.ts): the range popover's Add Marker sends the same range op. recording-editor.test.ts checks the ops still make these markers; the Swift EditProject decodes the file (Tests/RecorderTimelineTests.swift), so a save from the window keeps them.",
+    "ops": [
+        {
+            "op": "range",
+            "from": 0,
+            "to": 1,
+            "action": "cut"
+        },
+        {
+            "op": "range",
+            "from": 1,
+            "to": 3,
+            "action": "marker"
+        },
+        {
+            "op": "range",
+            "from": 0.5,
+            "to": 2,
+            "action": "marker",
+            "text": "Login"
+        }
+    ],
+    "edit": {
+        "version": 1,
+        "source": {
+            "video": "/rec/screen.mp4",
+            "durationUs": 10000000,
+            "width": 1920,
+            "height": 1080
+        },
+        "clips": [
+            {
+                "id": "cd6d10f57",
+                "fromUs": 1000000,
+                "toUs": 10000000,
+                "speed": 1
+            }
+        ],
+        "zooms": [],
+        "audio": {
+            "include": true,
+            "volume": 1,
+            "mutedTracks": []
+        },
+        "export": {
+            "codec": "h264",
+            "maxHeight": 0,
+            "output": ""
+        },
+        "revision": 1,
+        "markers": [
+            {
+                "id": "m3e78d8d8",
+                "atUs": 1500000,
+                "label": "Login"
+            },
+            {
+                "id": "m9bf4d27d",
+                "atUs": 2000000,
+                "label": "Marker 1"
+            }
+        ],
+        "updatedBy": "agent"
+    }
+}

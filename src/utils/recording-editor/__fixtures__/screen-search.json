@@ -1,0 +1,272 @@
+{
+    "about": "A meeting's frames recording (recording.json, ocr.jsonl, proxy.json, frames of two sizes per display in frameSizes) and what tools recorder find-screen prints for query (src/recorder/lib/screen-search.ts findOnScreen): each hit's span and its matching lines' boxes over the proxy movie, whose picture letterboxes the smaller display. library.test.ts builds the folder and checks the door still prints hits; the editor's Find tab decodes hits and turns a box into a hidden part (Tests/RecorderEditTests.swift).",
+    "recording": {
+        "manifest": {
+            "version": 1,
+            "id": "2026-11-04_10-00-standup",
+            "title": "Standup",
+            "startedAt": "2026-11-04T09:00:00.000Z",
+            "displays": [
+                {
+                    "id": 1,
+                    "name": "Built-in Retina Display"
+                },
+                {
+                    "id": 4,
+                    "name": "Studio"
+                }
+            ],
+            "frames": [
+                {
+                    "file": "frames/0001.jpg",
+                    "atMs": 0,
+                    "displayId": 1
+                },
+                {
+                    "file": "frames/0002.jpg",
+                    "atMs": 4000,
+                    "displayId": 4
+                },
+                {
+                    "file": "frames/0003.jpg",
+                    "atMs": 9000,
+                    "displayId": 1
+                },
+                {
+                    "file": "frames/0004.jpg",
+                    "atMs": 12500,
+                    "displayId": 4
+                }
+            ]
+        },
+        "ocr": [
+            {
+                "file": "frames/0001.jpg",
+                "displayId": 1,
+                "text": "Sprint board\nAPI token: sk-123",
+                "blocks": [
+                    {
+                        "text": "Sprint board",
+                        "confidence": 1,
+                        "bounds": {
+                            "x": 0.1,
+                            "y": 0.8,
+                            "width": 0.3,
+                            "height": 0.05
+                        }
+                    },
+                    {
+                        "text": "API token: sk-123",
+                        "confidence": 1,
+                        "bounds": {
+                            "x": 0.1,
+                            "y": 0.6,
+                            "width": 0.4,
+                            "height": 0.05
+                        }
+                    }
+                ]
+            },
+            {
+                "file": "frames/0002.jpg",
+                "displayId": 4,
+                "text": "Settings\nToken rotation",
+                "blocks": [
+                    {
+                        "text": "Settings",
+                        "confidence": 1,
+                        "bounds": {
+                            "x": 0.05,
+                            "y": 0.9,
+                            "width": 0.2,
+                            "height": 0.04
+                        }
+                    },
+                    {
+                        "text": "Token rotation",
+                        "confidence": 1,
+                        "bounds": {
+                            "x": 0.5,
+                            "y": 0.5,
+                            "width": 0.3,
+                            "height": 0.06
+                        }
+                    }
+                ]
+            },
+            {
+                "file": "frames/0003.jpg",
+                "displayId": 1,
+                "text": "Sprint board",
+                "blocks": [
+                    {
+                        "text": "Sprint board",
+                        "confidence": 1,
+                        "bounds": {
+                            "x": 0.1,
+                            "y": 0.8,
+                            "width": 0.3,
+                            "height": 0.05
+                        }
+                    }
+                ]
+            },
+            {
+                "file": "frames/0004.jpg",
+                "displayId": 4,
+                "text": "Tokén list",
+                "blocks": [
+                    {
+                        "text": "Tokén list",
+                        "confidence": 1,
+                        "bounds": {
+                            "x": 0.2,
+                            "y": 0.2,
+                            "width": 0.25,
+                            "height": 0.05
+                        }
+                    }
+                ]
+            }
+        ],
+        "plan": {
+            "version": 1,
+            "policy": "most-change",
+            "windowSec": 10,
+            "ranges": [
+                {
+                    "fromUs": 0,
+                    "toUs": 10000000,
+                    "displayId": 1
+                },
+                {
+                    "fromUs": 10000000,
+                    "toUs": 12500001,
+                    "displayId": 4
+                }
+            ]
+        },
+        "frameSizes": {
+            "1": [
+                2880,
+                1800
+            ],
+            "4": [
+                2560,
+                1440
+            ]
+        }
+    },
+    "query": "token",
+    "hits": [
+        {
+            "sec": 0,
+            "untilSec": 9,
+            "displayId": 1,
+            "file": "frames/0001.jpg",
+            "lines": [
+                "API token: sk-123"
+            ],
+            "shown": true,
+            "boxes": [
+                {
+                    "text": "API token: sk-123",
+                    "x": 0.1,
+                    "y": 0.35,
+                    "width": 0.4,
+                    "height": 0.05
+                }
+            ]
+        },
+        {
+            "sec": 4,
+            "untilSec": 12.5,
+            "displayId": 4,
+            "file": "frames/0002.jpg",
+            "lines": [
+                "Token rotation"
+            ],
+            "shown": false,
+            "boxes": []
+        },
+        {
+            "sec": 12.5,
+            "untilSec": 14.5,
+            "displayId": 4,
+            "file": "frames/0004.jpg",
+            "lines": [
+                "Tokén list"
+            ],
+            "shown": true,
+            "boxes": [
+                {
+                    "text": "Tokén list",
+                    "x": 0.2,
+                    "y": 0.725,
+                    "width": 0.25,
+                    "height": 0.045
+                }
+            ]
+        }
+    ],
+    "proxyHitsAbout": "What findOnScreen prints for query: each hit is a span the proxy movie really shows the frame (framesForPlan), so the display-4 frame captured at 4 s is listed from 10 s, when the plan switches to display 4, with its boxes. hits above is the older per-frame shape that the editor's Swift tests still decode.",
+    "proxyHits": [
+        {
+            "sec": 0,
+            "untilSec": 9,
+            "displayId": 1,
+            "file": "frames/0001.jpg",
+            "lines": [
+                "API token: sk-123"
+            ],
+            "shown": true,
+            "boxes": [
+                {
+                    "text": "API token: sk-123",
+                    "x": 0.1,
+                    "y": 0.35,
+                    "width": 0.4,
+                    "height": 0.05
+                }
+            ]
+        },
+        {
+            "sec": 10,
+            "untilSec": 12.5,
+            "displayId": 4,
+            "file": "frames/0002.jpg",
+            "lines": [
+                "Token rotation"
+            ],
+            "shown": true,
+            "boxes": [
+                {
+                    "text": "Token rotation",
+                    "x": 0.5,
+                    "y": 0.446,
+                    "width": 0.3,
+                    "height": 0.054
+                }
+            ]
+        },
+        {
+            "sec": 12.5,
+            "untilSec": 14.5,
+            "displayId": 4,
+            "file": "frames/0004.jpg",
+            "lines": [
+                "Tokén list"
+            ],
+            "shown": true,
+            "boxes": [
+                {
+                    "text": "Tokén list",
+                    "x": 0.2,
+                    "y": 0.725,
+                    "width": 0.25,
+                    "height": 0.045
+                }
+            ]
+        }
+    ]
+}

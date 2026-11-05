@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 import { ComputerToolset } from "@app/control/lib/computer-use/toolset";
 import { ensureBinaryAsync } from "@app/control/lib/runner";
+import { MoviesToolset } from "@app/recorder/lib/toolset";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { ReplToolset, type ReplToolsetFactory } from "@genesiscz/utils/repl/toolset";
 import { EditorToolset } from "@genesiscz/utils/repl/toolsets/editor";
@@ -11,6 +12,7 @@ import { ControlToolset } from "./toolsets/control";
 import { GithubToolset } from "./toolsets/github";
 import { HubToolset } from "./toolsets/hub";
 import { MeetingsToolset } from "./toolsets/meetings";
+import { PresetsToolset } from "./toolsets/presets";
 
 /**
  * Every toolset `--toolset` can preload by name. The table lives in the tool, not in `@genesiscz/utils/repl`,
@@ -23,11 +25,14 @@ export const REPL_TOOLSETS = {
             FRAME_RECORDERS.native({ axTool: async (options) => [await ensureBinaryAsync(options)] })
         ),
     editor: () => new EditorToolset(),
+    movies: () => new MoviesToolset(),
     meetings: () => new MeetingsToolset(),
     control: () => new ControlToolset(),
     browser: () => new BrowserToolset(),
     hub: () => new HubToolset(),
     github: () => new GithubToolset(),
+    // The store checks a saved preset's toolsets against this table, read when a preset is saved.
+    presets: (): PresetsToolset => new PresetsToolset((): string[] => Object.keys(REPL_TOOLSETS)),
 } satisfies Record<string, ReplToolsetFactory>;
 
 export type ReplToolsetId = keyof typeof REPL_TOOLSETS;
