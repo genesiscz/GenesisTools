@@ -558,6 +558,9 @@ struct PRThreadsList: View {
                     + PRProposedReply.findFields(proposed[thread.id], on: thread))
             }
         }
+        // Threads added to the PR on screen (a fresh answer, a reply in a new thread): built when the reader is within a
+        // screen of the end, even with every earlier card built and no scroll to come.
+        .onChange(of: store.payload?.threads.count) { _, _ in anchor.checkNearEnd() }
         .onChange(of: store.payload?.pr.url, initial: true) { _, _ in
             markSeen()
             mounted = Self.mountBatch
@@ -1920,7 +1923,7 @@ final class PRListAnchor {
     }
 
     /// Once per layout pass, after it: the document's height is final then.
-    private func checkNearEnd() {
+    func checkNearEnd() {
         guard onNearEnd != nil, !nearEndPending else { return }
         nearEndPending = true
         DispatchQueue.main.async { [weak self] in
