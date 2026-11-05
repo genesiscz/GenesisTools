@@ -1,9 +1,10 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rootCertificates } from "node:tls";
-import { verifiedTls, verifiedTlsFor } from "@genesiscz/utils/net/verified-tls";
+import { ApiClient } from "@genesiscz/utils/api/ApiClient";
+import { verifiedFetch, verifiedTls, verifiedTlsFor } from "@genesiscz/utils/net/verified-tls";
 
 describe("verifiedTlsFor", () => {
     const dir = mkdtempSync(join(tmpdir(), "verified-tls-"));
@@ -30,5 +31,40 @@ describe("verifiedTlsFor", () => {
 
     it("ships no private CA, so the default keeps Bun's store and only forces verification", () => {
         expect(verifiedTls()).toEqual({ rejectUnauthorized: true });
+    });
+});
+
+describe("verifiedFetch", () => {
+    const realFetch = globalThis.fetch;
+    const seen: unknown[] = [];
+
+    afterEach(() => {
+        globalThis.fetch = realFetch;
+        seen.length = 0;
+    });
+
+    function recordTls(): void {
+        globalThis.fetch = Object.assign(
+            async (_input: string | URL | Request, init?: RequestInit) => {
+                seen.push((init as { tls?: unknown } | undefined)?.tls);
+
+                return new Response("ok");
+            },
+            { preconnect: realFetch.preconnect }
+        );
+    }
+
+    it("passes verifiedTls() to Bun's fetch", async () => {
+        recordTls();
+        await verifiedFetch("https://invalid/");
+
+        expect(seen).toEqual([verifiedTls()]);
+    });
+
+    it("is what ApiClient sends every request through", async () => {
+        recordTls();
+        await new ApiClient().getText("https://invalid/");
+
+        expect(seen).toEqual([verifiedTls()]);
     });
 });

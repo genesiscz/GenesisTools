@@ -40,3 +40,9 @@ export function verifiedTls(): VerifiedTls {
 
     return processTls;
 }
+
+/** Bun's `fetch` with `verifiedTls()`, for a caller that cannot pass Bun's `tls` option itself (ofetch, a client). */
+export const verifiedFetch: typeof fetch = Object.assign(
+    (input: string | URL | Request, init?: RequestInit) => fetch(input, { ...init, tls: verifiedTls() }),
+    { preconnect: fetch.preconnect }
+);

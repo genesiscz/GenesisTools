@@ -1,5 +1,6 @@
 import { isDateInHalfOpenRange } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { verifiedFetch } from "@genesiscz/utils/net/verified-tls";
 import type {
     ApiDebugInfo,
     CarouselEntry,
@@ -78,10 +79,9 @@ export class ClarityApi {
         const url = `${config.baseUrl}/ppm/rest/v1${path}`;
         const signal = options.signal ?? AbortSignal.timeout(30_000);
 
-        return fetch(url, {
+        return verifiedFetch(url, {
             ...options,
             signal,
-            tls: { rejectUnauthorized: false },
             headers: {
                 Accept: "application/json, text/plain, */*",
                 "Content-Type": "application/json",

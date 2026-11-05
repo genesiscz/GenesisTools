@@ -1,11 +1,12 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { Logger } from "@genesiscz/utils/logger";
 import { getLogger } from "@genesiscz/utils/logger";
-import { verifiedTls } from "@genesiscz/utils/net/verified-tls";
+import { verifiedFetch, verifiedTls } from "@genesiscz/utils/net/verified-tls";
 import { type FetchError, ofetch, type ResponseType } from "ofetch";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_ACCEPT_HEADER = "application/json, text/plain, */*";
+const verifiedOfetch = ofetch.create({}, { fetch: verifiedFetch });
 const DEFAULT_USER_AGENT =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
 
@@ -194,7 +195,7 @@ export class ApiClient {
         this.requestLogger.debug({ method, url }, "api request started");
 
         try {
-            const response = await ofetch.raw<T>(url, {
+            const response = await verifiedOfetch.raw<T>(url, {
                 method,
                 body,
                 headers,
@@ -261,7 +262,7 @@ export class ApiClient {
         this.requestLogger.debug({ method: "GET", url }, "api text request started");
 
         try {
-            return await ofetch<string, "text">(url, {
+            return await verifiedOfetch<string, "text">(url, {
                 method: "GET",
                 headers,
                 timeout: options.timeoutMs ?? this.defaultTimeoutMs,
@@ -306,7 +307,7 @@ export class ApiClient {
         this.requestLogger.debug({ method: "GET", url }, "api binary request started");
 
         try {
-            const response = await ofetch<ArrayBuffer | Uint8Array, "arrayBuffer">(url, {
+            const response = await verifiedOfetch<ArrayBuffer | Uint8Array, "arrayBuffer">(url, {
                 method: "GET",
                 headers,
                 timeout: options.timeoutMs ?? this.defaultTimeoutMs,
