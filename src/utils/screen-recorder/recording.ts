@@ -6,6 +6,9 @@ import {
     type AudioDevices,
     type AudioSource,
     type AudioState,
+    type DisplayEntry,
+    type DisplayMode,
+    type DisplaySelection,
     RecorderControl,
     type RecorderMethod,
     type RecorderSettings,
@@ -18,6 +21,7 @@ import {
     type StopAnswer,
 } from "./control";
 import { DisplayBook, type DisplayInterval } from "./display-book";
+import type { DisplayChoice } from "./display-choice";
 import { type RecordingFinish, runRecordingFinish } from "./finish";
 import { type LiveEntry, type LiveEntryChange, type LiveEvent, LiveRecordingServer } from "./live";
 import {
@@ -192,6 +196,8 @@ export interface RecorderConfig<S> {
     settings: RecorderSettings;
     /** The sound it records; a recorder without sound records none. */
     audio: AudioState;
+    /** Which displays it records, and what the display calls do. */
+    displays: DisplayChoice;
     pieces: {
         dir: string;
         /** The length of one piece; at most `MAX_CAPTURE_SECONDS`. */
@@ -201,8 +207,6 @@ export interface RecorderConfig<S> {
         audioOwnership: AudioOwnership;
         /** The recorder's own keys of a capture that starts now (read at its start). */
         request?: (settings: RecorderSettings) => PieceRequestExtras;
-        /** The captures of the next piece; a throw is the piece's error. */
-        targets: () => Promise<PieceTarget[]> | PieceTarget[];
         failures: PieceFailureRule;
     };
     controls: RecorderControlsConfig;
@@ -312,7 +316,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     }
 
     /** The recorded displays follow the running captures. */
-    syncDisplays(): void {
+    private syncDisplays(): void {
         const before = this.displayBook.recorded?.map((one) => one.id).join(",") ?? "";
 
         if (!this.displayBook.sync(this.captures.running)) {
@@ -330,7 +334,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     }
 
     /** The capture records `displayId` from now (a start, a live switch, a frame of another display). */
-    openDisplay(capture: SessionCapture, displayId: number): void {
+    private openDisplay(capture: SessionCapture, displayId: number): void {
         if (this.displayBook.open(capture, displayId)) {
             this.config.hooks.onDisplays?.();
         }
@@ -363,6 +367,10 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
     get state(): RecorderState {
         return this.phase;
+    }
+
+    get recorder(): FrameRecorder {
+        return this.config.recorder;
     }
 
     /** What the captures and the OCR use now. */
@@ -577,8 +585,66 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         return this.audio;
     }
 
+    override listDisplays(): Promise<DisplayEntry[]> {
+        return this.config.displays.list(this);
+    }
+
+    override addDisplay(displayId: number): Promise<DisplaySelection> {
+        return this.config.displays.add(this, displayId);
+    }
+
+    override removeDisplay(displayId: number): Promise<DisplaySelection> {
+        return this.config.displays.remove(this, displayId);
+    }
+
+    override switchDisplay(displayId: number): Promise<DisplaySelection> {
+        return this.config.displays.switchTo(this, displayId);
+    }
+
+    override setDisplayMode(mode: DisplayMode): Promise<DisplaySelection> {
+        return this.config.displays.mode(this, mode);
+    }
+
+    /**
+     * Moves the running capture onto another display without a restart, when it has a live channel: the other
+     * captures end. `none`: no capture can; `ended`: the capture ended while the switch was in flight.
+     */
+    async switchLive(target: PieceTarget): Promise<"live" | "ended" | "none"> {
+        const [only, ...others] = [...this.captures.running.values()];
+
+        if (!only?.live || only.target.target.kind !== "display") {
+            return "none";
+        }
+
+        try {
+            await only.live.switchDisplay(target.displayId);
+        } catch (error) {
+            throw new RpcError(
+                error instanceof CaptureError && error.kind === "display-missing"
+                    ? RPC_ERRORS.unknownDisplay
+                    : RPC_ERRORS.internal,
+                errorText(error)
+            );
+        }
+
+        if (this.captures.running.get(only.target.displayId) !== only) {
+            return "ended";
+        }
+
+        for (const other of others) {
+            other.controller.abort();
+        }
+
+        this.captures.running.delete(only.target.displayId);
+        only.target = target;
+        this.openDisplay(only, target.displayId);
+        this.captures.running.set(target.displayId, only);
+        this.syncDisplays();
+        return "live";
+    }
+
     /** A change while it stops: refused by a kind that refuses changes then (`controls.whileStopping`). */
-    protected refuseWhileStopping(): void {
+    refuseWhileStopping(): void {
         if (this.config.controls.whileStopping === "refused" && this.stopping) {
             throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is stopping");
         }
@@ -649,7 +715,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     /** One piece, every target at once; undefined when a pause or a stop came while its targets were read. */
     private async capturePiece(): Promise<PieceResult | undefined> {
         try {
-            const targets = await this.config.pieces.targets();
+            const targets = await this.config.displays.targets(this);
 
             if (this.paused || this.stopRequested) {
                 return undefined;

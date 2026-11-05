@@ -13,17 +13,8 @@ import {
     rmCallerFromRuntime,
 } from "@genesiscz/utils/rm";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
-import {
-    type AudioSource,
-    type DisplayEntry,
-    type DisplayMode,
-    type DisplaySelection,
-    type RecorderMethod,
-    type RecorderSettings,
-    RPC_ERRORS,
-    RpcError,
-    type StopAnswer,
-} from "./control";
+import { type AudioSource, type RecorderMethod, type RecorderSettings, RPC_ERRORS, type StopAnswer } from "./control";
+import { ChosenDisplays } from "./display-choice";
 import {
     type FrameNaming,
     FrameOutput,
@@ -36,15 +27,7 @@ import { RECORDING_MANIFEST, type RecordingManifest, recordingsLibraryDir } from
 import { liveRecordingId } from "./live";
 import { FrameRecording } from "./recording";
 import { patchChange, type SessionCapture } from "./session";
-import { displayTarget, type PieceTarget, pickDisplayIds } from "./targets";
-import {
-    type AudioTrack,
-    type CapturedFrame,
-    CaptureError,
-    type CaptureResult,
-    type DisplayInfo,
-    type FrameRecorder,
-} from "./types";
+import { type AudioTrack, type CapturedFrame, CaptureError, type CaptureResult, type FrameRecorder } from "./types";
 
 const { log } = logger.scoped("screen-recorder-start");
 
@@ -133,8 +116,7 @@ function stamp(date: Date): string {
 export class LibraryRecording extends FrameRecording<number> {
     readonly id: string;
     readonly folder: string;
-    private chosen: number[] = [];
-    private known: DisplayInfo[] = [];
+    private readonly choice: ChosenDisplays;
     private readonly pending: PendingFrame[] = [];
     private readonly tracks: Array<AudioTrack & { displayId: number; startedAtMs: number }> = [];
     private readonly warnings: string[] = [];
@@ -148,6 +130,7 @@ export class LibraryRecording extends FrameRecording<number> {
         // Two recordings started in one second must not share an id, a socket or a folder.
         const id = options.id ?? liveRecordingId("library", `${stamp(new Date())}-${randomUUID()}`);
         const folder = options.folder ?? recordingsLibraryDir(id);
+        const choice = new ChosenDisplays();
         const sources: AudioSource[] = [
             ...(options.audio?.mic ? (["mic"] as const) : []),
             ...(options.audio?.system ? (["system"] as const) : []),
@@ -163,7 +146,7 @@ export class LibraryRecording extends FrameRecording<number> {
                 title: options.title ?? id,
                 folder,
                 dir: options.liveDir,
-                displays: () => this.recordedDisplays(),
+                displays: () => choice.recorded(),
             },
             settings: {
                 activeFps: options.fps ?? 2,
@@ -174,6 +157,7 @@ export class LibraryRecording extends FrameRecording<number> {
                 ocr: { enabled: false, languages: ["en-US"], minChars: 20, ...options.ocr },
             },
             audio: { sources, muted: { mic: false, system: false }, micDevice: options.audio?.micDeviceId },
+            displays: choice,
             pieces: {
                 dir: join(folder, ".pieces"),
                 sec: options.pieceSec ?? 60,
@@ -181,10 +165,6 @@ export class LibraryRecording extends FrameRecording<number> {
                 // Every capture records the sound, without the muted sources.
                 audioOwnership: "every",
                 request: (now) => ({ heartbeatSec: now.heartbeatSec || undefined }),
-                targets: () =>
-                    (options.recorder.supports.parallelCaptures ? this.chosen : this.chosen.slice(0, 1)).map(
-                        (displayId) => this.targetOf(displayId)
-                    ),
                 failures: {
                     max: 3,
                     pauseMs: 0,
@@ -253,6 +233,7 @@ export class LibraryRecording extends FrameRecording<number> {
         });
         this.id = id;
         this.folder = folder;
+        this.choice = choice;
         const frames = options.frames ?? {};
         this.flush = frames.flush ?? "finish";
         this.output = new FrameOutput({
@@ -280,9 +261,9 @@ export class LibraryRecording extends FrameRecording<number> {
             throw new CaptureError("unavailable", available.reason);
         }
 
-        this.known = await recorder.displays();
+        this.choice.known = await recorder.displays();
         this.options.signal?.throwIfAborted();
-        this.chosen = this.pick(this.options.displays ?? "main");
+        this.choice.chosen = this.choice.pick(this.options.displays ?? "main");
 
         if (this.audio.sources.length > 0 && !recorder.supports.audio) {
             this.warn(`the ${recorder.id} recorder records no sound; recording frames only`);
@@ -296,36 +277,14 @@ export class LibraryRecording extends FrameRecording<number> {
         this.ownsFolder = true;
         mkdirSync(join(this.folder, "frames"));
         this.open();
-        log.info({ id: this.id, displays: this.chosen, recorder: recorder.id }, "library recording started");
+        log.info({ id: this.id, displays: this.choice.chosen, recorder: recorder.id }, "library recording started");
         return this;
-    }
-
-    private pick(mode: "all" | "main" | number[] | DisplayMode): number[] {
-        return pickDisplayIds(mode, this.known);
-    }
-
-    private recordedDisplays(): Array<{ id: number; name: string }> {
-        return this.chosen.map((id) => ({
-            id,
-            name: this.known.find((one) => one.id === id)?.name ?? `display ${id}`,
-        }));
     }
 
     private warn(message: string): void {
         this.warnings.push(message);
         this.update({ warning: message });
         log.warn({ id: this.id }, message);
-    }
-
-    private restartCaptures(): void {
-        this.captures.abortAll();
-    }
-
-    private targetOf(displayId: number): PieceTarget {
-        const display = this.known.find((one) => one.id === displayId);
-        return display
-            ? displayTarget(display)
-            : { target: { kind: "display", displayId }, displayId, label: `display ${displayId}` };
     }
 
     /** The frames kept so far and those each running capture announced and has not returned yet. */
@@ -452,7 +411,7 @@ export class LibraryRecording extends FrameRecording<number> {
             title: this.options.title ?? this.id,
             startedAt: this.startedAt.toISOString(),
             endedAt: new Date().toISOString(),
-            displays: this.recordedDisplays(),
+            displays: this.choice.recorded(),
             settings: { ...this.settings, audio: this.audio, tracks: this.tracks },
             frames: this.pending.map((item) => ({
                 file: join("frames", basename(item.frame.path)),
@@ -464,72 +423,6 @@ export class LibraryRecording extends FrameRecording<number> {
             warnings: [...this.warnings],
         };
         atomicWriteFileSync(join(this.folder, RECORDING_MANIFEST), SafeJSON.stringify(manifest, null, 2));
-    }
-
-    override async listDisplays(): Promise<DisplayEntry[]> {
-        this.known = await this.options.recorder.displays();
-        return this.known.map((display) => ({ ...display, recorded: this.chosen.includes(display.id) }));
-    }
-
-    private choose(next: number[]): DisplaySelection {
-        this.chosen = next;
-        this.update({ displays: this.recordedDisplays() });
-        this.restartCaptures();
-        return { mode: "all", chosen: next, applied: "restart" };
-    }
-
-    override async addDisplay(displayId: number): Promise<DisplaySelection> {
-        return this.choose(this.pick([...this.chosen, displayId]));
-    }
-
-    override async removeDisplay(displayId: number): Promise<DisplaySelection> {
-        const next = this.chosen.filter((id) => id !== displayId);
-
-        if (next.length === 0) {
-            throw new RpcError(RPC_ERRORS.lastDisplay, "the recording keeps at least one display");
-        }
-
-        return this.choose(next);
-    }
-
-    override async switchDisplay(displayId: number): Promise<DisplaySelection> {
-        const [to] = this.pick([displayId]);
-        const [only, ...others] = [...this.running.values()];
-
-        if (only?.live) {
-            try {
-                await only.live.switchDisplay(to);
-            } catch (error) {
-                throw new RpcError(
-                    error instanceof CaptureError && error.kind === "display-missing"
-                        ? RPC_ERRORS.unknownDisplay
-                        : RPC_ERRORS.internal,
-                    error instanceof Error ? error.message : String(error)
-                );
-            }
-
-            // The capture may have ended while the switch was in flight; the next captures record the display.
-            if (this.running.get(only.target.displayId) !== only) {
-                return this.choose([to]);
-            }
-
-            for (const other of others) {
-                other.controller.abort();
-            }
-
-            this.running.delete(only.target.displayId);
-            only.target = this.targetOf(to);
-            this.running.set(to, only);
-            this.chosen = [to];
-            this.update({ displays: this.recordedDisplays() });
-            return { mode: "all", chosen: [to], applied: "live" };
-        }
-
-        return this.choose([to]);
-    }
-
-    override async setDisplayMode(mode: DisplayMode): Promise<DisplaySelection> {
-        return { ...this.choose(this.pick(mode)), mode };
     }
 }
 
