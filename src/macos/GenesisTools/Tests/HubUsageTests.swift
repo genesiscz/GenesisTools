@@ -212,6 +212,12 @@ final class HubUsageTests: XCTestCase {
         XCTAssertEqual(model.selectedAccounts.count, 1)
         XCTAssertEqual(model.table.rows.first { $0.id == model.selectedAccounts.first }?.account.accountName, "side")
         XCTAssertTrue(model.pendingAccounts.isEmpty)
+        model.selectAccounts(named: ["work", "later"])
+        XCTAssertEqual(model.selectedAccounts.count, 1)
+        XCTAssertEqual(model.pendingAccounts, ["later"])
+        model.selectAccounts(named: ["missing"])
+        XCTAssertTrue(model.selectedAccounts.isEmpty)
+        XCTAssertEqual(model.pendingAccounts, ["missing"])
     }
 
     @MainActor
