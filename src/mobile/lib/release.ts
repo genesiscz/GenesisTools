@@ -32,6 +32,7 @@ export interface ReleaseInput {
 }
 
 export interface ReleaseStep {
+    onlyIfFile?: string;
     title: string;
     command: string[];
     cwd: string;
