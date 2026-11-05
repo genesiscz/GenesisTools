@@ -58,7 +58,14 @@ export function readOcrRows(path: string): OcrRow[] {
             continue;
         }
 
-        const parsed = ocrRowSchema.safeParse(SafeJSON.parse(line, { strict: true }));
+        let value: unknown;
+        try {
+            value = SafeJSON.parse(line, { strict: true });
+        } catch (error) {
+            log.debug({ path, error }, "an ocr.jsonl row is malformed");
+            continue;
+        }
+        const parsed = ocrRowSchema.safeParse(value);
 
         if (parsed.success) {
             rows.push(parsed.data);

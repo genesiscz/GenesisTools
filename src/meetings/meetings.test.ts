@@ -78,7 +78,7 @@ import {
     recorderFiles,
 } from "./lib/recorder-shared";
 import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from "./lib/screen";
-import { framesMatching, ocrRowSchema, renderScreenBoxes } from "./lib/screen-boxes";
+import { framesMatching, ocrRowSchema, readOcrRows, renderScreenBoxes } from "./lib/screen-boxes";
 import { showText } from "./lib/show-text";
 import { suggestItems } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
@@ -4522,4 +4522,12 @@ test("confirmed attribution wins over later overlapping suggestions", () => {
     });
     const corrections = correctionsOf(draft, meetingsConfigSchema.parse({}), { format: "md", withSuggested: true });
     expect(applyCorrections([line("Unknown", 10, "Hello")], corrections).entries[0]?.speaker).toBe("Alice");
+});
+
+test("a truncated final OCR row leaves earlier valid frames readable", () => {
+    const folder = mkdtempSync(join(tmpdir(), "truncated-ocr-"));
+    const file = join(folder, "ocr.jsonl");
+    const row = { file: "frames/one.jpg", atMs: 1000, displayId: 1, text: "visible", lines: [], blocks: [] };
+    writeFileSync(file, `${SafeJSON.stringify(row)}\n{"file":`);
+    expect(readOcrRows(file).map((frame) => frame.text)).toEqual(["visible"]);
 });
