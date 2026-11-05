@@ -1,4 +1,4 @@
-import { agentSessionIds } from "@genesiscz/utils/agent/host";
+import { executingThreadId } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { FriendlyError } from "./errors";
 import type { AgentRecord } from "./types";
@@ -13,12 +13,12 @@ export const OWNER_THREAD_META_KEY = "codexThreadId";
  * commands under the parent's name: its `login --once` shares the parent's cursor and drains the parent's
  * mailbox, and its sends read as the parent's (observed 2026-10-13). Codex puts the executing thread's id in the
  * environment of every shell it starts, the subagent's own id included, so the registering thread is the only one
- * allowed to act as the identity. The id comes from the Codex host part (`agentSessionIds`), even when another host
- * is the outer one. Identities without an owner, and shells outside Codex, pass.
+ * allowed to act as the identity. The id comes from the host part whose session variable names the executing thread
+ * (`executingThreadId`), even when another host is the outer one. Identities without an owner, and shells outside Codex, pass.
  */
 export function assertOwnerThread(record: AgentRecord, processEnv: NodeJS.ProcessEnv = env.getProcessEnv()): void {
     const owner = record.meta[OWNER_THREAD_META_KEY];
-    const current = agentSessionIds(processEnv).find((session) => session.agent === "codex")?.id;
+    const current = executingThreadId(processEnv)?.id;
 
     if (typeof owner !== "string" || !current || current === owner) {
         return;

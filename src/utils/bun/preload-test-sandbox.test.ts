@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { AGENT_SESSION_KEYS, ASSIGNED_SESSION_KEYS } from "@genesiscz/utils/agent/host";
+import { accountEnvVar, embedAccountEnvVar } from "@genesiscz/utils/ai/account-env";
+import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { configCandidates, resolveActiveVault } from "@genesiscz/utils/obsidian/discovery";
@@ -178,6 +180,13 @@ describe("the ambient agent env is removed before the first test", () => {
         for (const key of ["T3CODE_THREAD_ID", "CMUX_SURFACE_ID", "TMUX_PANE", "TOOLS_CODEX_ACCOUNT", "AI_AGENT"]) {
             expect(isAmbientAgentEnvKey(key), key).toBe(true);
         }
+
+        for (const alias of ACCOUNT_PROVIDER_ALIASES) {
+            expect(isAmbientAgentEnvKey(accountEnvVar(alias)), alias).toBe(true);
+            expect(isAmbientAgentEnvKey(embedAccountEnvVar(alias)), alias).toBe(true);
+        }
+
+        expect(isAmbientAgentEnvKey("TOOLS_CLAUDE_AUTH")).toBe(true);
 
         for (const key of ["CODEX_HOME", "GROK_HOME", "CLAUDE_CONFIG_DIR", "TERM", "PATH", "HOME"]) {
             expect(isAmbientAgentEnvKey(key), key).toBe(false);

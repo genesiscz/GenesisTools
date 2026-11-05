@@ -1598,6 +1598,42 @@ test("a multiplexed decision uses the explicitly provided worktree for repositor
     expect(row.transcriptAnchor).toMatchObject({ kind: "receipt-time", sessionId: "known-thread", provider: "codex" });
 });
 
+test("a gateway caller's decision never carries the gateway's own cmux surface; a local one carries its own", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-gateway-surface-"));
+    const files = [join(dir, "decisions.jsonl"), join(dir, "events.jsonl")] as const;
+    const gatewayEnv = { CLAUDE_CODE_SESSION_ID: "gateway-own", CMUX_SURFACE_ID: "gateway-surface" };
+    const [remote] = await runAsCaller({ agent: "codex", sessionId: "remote-thread", cwd: "/fixture/remote" }, () =>
+        postDecisions(...files, { decisions: [{ prompt: "Remote?", options: [] }] }, { env: gatewayEnv })
+    );
+
+    expect(remote).toMatchObject({ sessionId: "remote-thread", provider: "codex" });
+    expect(remote.cmuxSurface).toBeUndefined();
+
+    // Negative control: the same env outside a request scope is the caller's own, so its surface is stamped.
+    const [own] = await postDecisions(
+        ...files,
+        { decisions: [{ prompt: "Local?", options: [] }] },
+        { env: gatewayEnv }
+    );
+    expect(own.cmuxSurface).toBe("gateway-surface");
+});
+
+test("an empty cwd from an unnamed gateway caller is no cwd: neither it nor the gateway's checkout is stamped", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-gateway-blank-"));
+    const [row] = await runAsCaller({ agent: "unknown", sessionId: null, cwd: null }, () =>
+        postDecisions(
+            join(dir, "decisions.jsonl"),
+            join(dir, "events.jsonl"),
+            { cwd: "", decisions: [{ prompt: "Where?", options: [] }] },
+            { env: {} }
+        )
+    );
+
+    expect(row.cwd).toBeUndefined();
+    expect(row.repoRoot).toBeUndefined();
+    expect(row.branch).toBeUndefined();
+});
+
 describe("Widget Tasks use the canonical TODO ledger", () => {
     function fixture() {
         const dir = mkdtempSync(join(tmpdir(), "widget-tasks-"));

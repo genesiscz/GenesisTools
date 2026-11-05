@@ -151,8 +151,10 @@ export const AMBIENT_AGENT_ENV_KEYS = [
     "TERM_SESSION_ID",
     "GENESIS_AGENTS_SESSION",
     "GT_RENDEZVOUS_SESSION",
+    "TOOLS_CLAUDE_AUTH",
 ];
-const ACCOUNT_STAMP = /^TOOLS_[A-Z0-9]+_ACCOUNT$/;
+/** The account stamp a launcher exports (`accountEnvVar`) and the account an embed launcher is asked for (`embedAccountEnvVar`). */
+const ACCOUNT_STAMP = /^TOOLS_[A-Z0-9]+(?:_EMBED)?_ACCOUNT$/;
 
 export function isAmbientAgentEnvKey(name: string): boolean {
     if (name.endsWith("_HOME")) {

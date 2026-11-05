@@ -86,7 +86,7 @@ function request(overrides: Partial<SayCallRequest> = {}): SayCallRequest {
 function agentOfChain(chain: AncestryFrame[]): string {
     const identity = whoIsCalling({ origin: "local", env: {} });
     identity.process = { pid: 1000, ancestry: chain };
-    return callerContextOf(identity, { termProgram: null, callerPid: 1 }).agent;
+    return callerContextOf(identity, { callerPid: 1 }).agent;
 }
 
 describe("process ancestry", () => {
@@ -99,6 +99,22 @@ describe("process ancestry", () => {
             ])
         ).toBe("codex");
         expect(agentOfChain([{ pid: 1, command: "/bin/zsh" }])).toBe("unknown");
+    });
+
+    test("the terminal program comes from the identity's terminal app, trimmed", () => {
+        const identity = whoIsCalling({ origin: "local", env: { TERM_PROGRAM: " WarpTerminal " } });
+        expect(callerContextOf(identity, { callerPid: 1 }).termProgram).toBe("WarpTerminal");
+        expect(callerContextOf(whoIsCalling({ origin: "local", env: {} }), { callerPid: 1 }).termProgram).toBeNull();
+    });
+
+    test("a Copilot parent names copilot when its environment says nothing, and shows in the chain", () => {
+        const chain = [
+            { pid: 2, command: "/bin/zsh" },
+            { pid: 3, command: "/opt/homebrew/bin/copilot" },
+        ];
+
+        expect(agentOfChain(chain)).toBe("copilot");
+        expect(describeAncestry(chain)).toBe("zsh ← copilot[3]");
     });
 
     test("a helper binary of an agent and an agent's own MCP door name no agent", () => {
@@ -563,7 +579,7 @@ test("the on-disk say call row stores caller fields and JSON argv and ancestry",
 // as null. It was recorded as given (an empty string, or the whitespace untrimmed). The label and the terminal program
 // are no facet and keep their old answer.
 describe("characterization: blank labels and terminal ids in say callers", () => {
-    test("empty account and terminal values are recorded as null, an empty label and program as given", async () => {
+    test("empty account, terminal and program values are recorded as null, an empty label as given", async () => {
         const caller = await captureWith({
             CLAUDE_CODE_SESSION_ID: "thread-1",
             AI_AGENT: "",
@@ -583,11 +599,11 @@ describe("characterization: blank labels and terminal ids in say callers", () =>
             workspaceId: null,
             tabId: null,
             tmuxPane: null,
-            termProgram: "",
+            termProgram: null,
         });
     });
 
-    test("whitespace account and terminal values are recorded as null, a whitespace label and program as given", async () => {
+    test("whitespace account, terminal and program values are recorded as null, a whitespace label as given", async () => {
         const value = " \t ";
         const caller = await captureWith({
             GROK_SESSION_ID: " g1 ",
@@ -608,7 +624,7 @@ describe("characterization: blank labels and terminal ids in say callers", () =>
             workspaceId: null,
             tabId: null,
             tmuxPane: null,
-            termProgram: value,
+            termProgram: null,
         });
     });
 

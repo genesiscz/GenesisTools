@@ -68,6 +68,22 @@ export function resolveAgentHost(env: NodeJS.ProcessEnv): Partial<AgentRuntimeCo
 }
 
 /**
+ * The id of the thread that runs this shell, from the first host whose session variable names its executing thread
+ * (`sessionIsExecutingThread`, Codex), even when another host is the outer one; null when no such host is present.
+ */
+export function executingThreadId(env: NodeJS.ProcessEnv): { agent: AgentHostKind; id: string } | null {
+    for (const host of envHosts()) {
+        const id = host.sessionIsExecutingThread ? env[host.sessionEnvKey]?.trim() : undefined;
+
+        if (id) {
+            return { agent: host.agent, id };
+        }
+    }
+
+    return null;
+}
+
+/**
  * Every host session id present in the environment, in precedence order.
  *
  * For consumers that must CHOOSE among them rather than take the first —

@@ -5,10 +5,8 @@ import {
     type CallerProcess,
     whoIsCalling,
 } from "@genesiscz/utils/agent/identity";
-import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 import { env } from "@genesiscz/utils/env";
-import { classifyCommand } from "@genesiscz/utils/process/classify";
-import { readParentPid } from "@genesiscz/utils/process/cwd";
+import { runtimeAgentOfCommand } from "@genesiscz/utils/process/classify";
 import { profiler } from "@genesiscz/utils/profile";
 
 const prof = profiler.scope("agent-context");
@@ -50,28 +48,21 @@ function argv0Basename(command: string): string {
     return basename(argv0);
 }
 
-/** Is this frame an agent CLI running a session (not its own MCP door or a helper binary)? */
+/** Is this frame an agent running a session (a harness or Copilot; not an MCP door or a helper binary)? */
 function isAgentFrame(command: string): boolean {
-    const proc = classifyCommand(command);
-    return proc.kind === "agent" && !proc.service;
+    return runtimeAgentOfCommand(command) !== null;
 }
 
 /**
  * The agent running the frame nearest to the caller, by the shared process classification, when the environment did
- * not say. Only a harness answers: the classification also knows cursor-agent, which has no runtime agent name.
+ * not say: a harness, or Copilot. cursor-agent has no runtime agent name, so it names none.
  */
 function agentOfAncestry(frames: AncestryFrame[]): CallerAgent {
     for (const frame of frames) {
-        const proc = classifyCommand(frame.command);
+        const agent = runtimeAgentOfCommand(frame.command);
 
-        if (proc.kind !== "agent" || proc.service) {
-            continue;
-        }
-
-        const driver = harnessDrivers().find((candidate) => candidate.id === proc.provider);
-
-        if (driver) {
-            return harnessDriver(driver.id).parts.host.agent;
+        if (agent) {
+            return agent;
         }
     }
 
@@ -146,12 +137,8 @@ export function describeAncestry(frames: AncestryFrame[]): string {
  * The call log's caller row from an identity (the process facet filled). The agent is the identity's, or, when the
  * environment named none, the one the process chain names. The terminal and account come from the identity's own
  * facets: a blank value is no value, and an account is the one the caller's harness was launched as.
- * `termProgram` is the one terminal fact the identity does not carry, so the caller reads it.
  */
-export function callerContextOf(
-    identity: AgentIdentity,
-    extra: { termProgram: string | null; callerPid: number }
-): CallerContext {
+export function callerContextOf(identity: AgentIdentity, extra: { callerPid: number }): CallerContext {
     const ancestry = identity.process?.ancestry ?? [];
 
     return {
@@ -163,7 +150,7 @@ export function callerContextOf(
         workspaceId: identity.terminal?.cmux?.workspaceId ?? null,
         tabId: identity.terminal?.cmux?.tabId ?? null,
         tmuxPane: identity.terminal?.tmux?.pane ?? null,
-        termProgram: extra.termProgram,
+        termProgram: identity.terminal?.app?.program ?? null,
         cwd: identity.cwd ?? process.cwd(),
         callerPid: extra.callerPid,
         ancestry,
@@ -176,11 +163,6 @@ export async function captureCallerContext(): Promise<CallerContext> {
 }
 
 async function readCallerContext(): Promise<CallerContext> {
-    const processEnv = env.getProcessEnv();
-    const identity = whoIsCalling({ origin: "local", env: processEnv }, { facets: ["process"] });
-
-    return callerContextOf(identity, {
-        termProgram: processEnv.TERM_PROGRAM ?? null,
-        callerPid: readParentPid(process.pid) ?? 0,
-    });
+    const identity = whoIsCalling({ origin: "local", env: env.getProcessEnv() }, { facets: ["process"] });
+    return callerContextOf(identity, { callerPid: process.ppid });
 }

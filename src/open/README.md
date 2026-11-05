@@ -2,7 +2,7 @@
 
 Opens files, folders and URLs the way macOS `open` does, and logs every open with the agent that asked for it: the
 harness, the session id and title, the project, the branch and the commit. It is the same stamp the question and
-answer log keeps (`gatherHarnessPoster`).
+answer log keeps (`whoIsCallingHere` with `STAMP_FACETS`).
 
 ```bash
 tools open notes.md                      # open with the default app

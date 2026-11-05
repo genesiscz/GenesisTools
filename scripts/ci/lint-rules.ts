@@ -492,6 +492,46 @@ function namesProcess(name: string): boolean {
         .some((word) => PROCESS_NAME_WORDS.has(word.toLowerCase()));
 }
 
+/** Methods of a regex or a list that take the subject as their argument: `TAIL.exec(command)`, `NAMES.has(comm)`. */
+const SUBJECT_ARGUMENT_METHODS = new Set(["exec", "test", "has", "includes", "indexOf"]);
+/** String methods that take the regex as their first argument: `command.replace(WORDS, "")`. */
+const SUBJECT_OBJECT_METHODS = new Set(["match", "matchAll", "replace", "replaceAll", "split", "search"]);
+
+/**
+ * True when a table declared under a neutral name (`TOOLS_RUN_TAIL`) is applied to a command line, argv or process
+ * somewhere in its module: the name alone does not say what it classifies, its use does.
+ */
+function appliedToProcess(declarator: SgNode, name: string): boolean {
+    if (!/^[A-Za-z_$][\w$]*$/.test(name)) {
+        return false;
+    }
+
+    let root = declarator;
+
+    for (let up = root.parent(); up; up = up.parent()) {
+        root = up;
+    }
+
+    return root.findAll({ rule: { kind: "call_expression" } }).some((call) => {
+        const callee = call.field("function");
+
+        if (callee?.kind() !== "member_expression") {
+            return false;
+        }
+
+        const object = callee.field("object")?.text() ?? "";
+        const method = callee.field("property")?.text() ?? "";
+        const args = call.field("arguments");
+
+        if (object === name && SUBJECT_ARGUMENT_METHODS.has(method)) {
+            return AGENT_SUBJECT.test(args?.text() ?? "");
+        }
+
+        const first = args?.children().find((child) => child.isNamed());
+        return SUBJECT_OBJECT_METHODS.has(method) && first?.text() === name && AGENT_SUBJECT.test(object);
+    });
+}
+
 /**
  * True when the table is about processes: it is declared under a name like `AGENT_BINARIES` or keyed by one, or it is
  * the regex or list a call checks a command, argv or process against (`/claude|codex/.test(command)`,
@@ -506,7 +546,8 @@ function isInProcessContext(node: SgNode): boolean {
         const kind = up.kind();
 
         if (kind === "variable_declarator") {
-            return namesProcess(up.field("name")?.text() ?? "");
+            const name = up.field("name")?.text() ?? "";
+            return namesProcess(name) || appliedToProcess(up, name);
         }
 
         if (kind === "pair") {
@@ -532,6 +573,49 @@ function isInProcessContext(node: SgNode): boolean {
 
     return false;
 }
+
+const PARENT_WALK_LOOPS = new Set<string>(["for_statement", "for_in_statement", "while_statement", "do_statement"]);
+const SCOPE_KINDS = new Set<string>([
+    "function_declaration",
+    "function_expression",
+    "arrow_function",
+    "method_definition",
+    "generator_function_declaration",
+    "program",
+]);
+
+/**
+ * True when `process.ppid` starts or steps a walk up the process tree: it sits inside a loop, or it seeds a `let`
+ * that its function reassigns (`let pid = process.ppid; while (…) pid = parentOf(pid)`). One read of our own parent
+ * (`{ ppid: process.ppid }`) is no walk.
+ */
+function startsParentWalk(node: SgNode): boolean {
+    let up = node.parent();
+    let seeded: string | undefined;
+
+    while (up && !SCOPE_KINDS.has(String(up.kind()))) {
+        if (PARENT_WALK_LOOPS.has(String(up.kind()))) {
+            return true;
+        }
+
+        if (up.kind() === "variable_declarator" && up.parent()?.text().startsWith("let ")) {
+            seeded = up.field("name")?.text();
+        }
+
+        up = up.parent();
+    }
+
+    if (!up || !seeded) {
+        return false;
+    }
+
+    return up
+        .findAll({ rule: { kind: "assignment_expression" } })
+        .some((assignment) => assignment.field("left")?.text() === seeded);
+}
+
+/** A `ps` column list or flag that asks for the parent pid (`pid=,ppid=`, `-o ppid=`), not prose that says ppid. */
+const PS_PPID_COLUMN = /(?:^|,)ppid(?:=?(?:,|$)|=\s)|-o\s*ppid\b/;
 
 /**
  * True for a table of agent binary names in a process context: a regex that names two or more of them, an array or
@@ -568,6 +652,13 @@ function isAgentBinaryTable(node: SgNode): boolean {
 const AGENT_CONTEXT_SCOPE = /^(?:src|scripts)\//;
 /** scripts/ci/ holds these lint rules and their guards, which name the keys, binaries and fields on purpose. */
 const AGENT_CONTEXT_OUT_OF_SCOPE = /^scripts\/(?:benchmarks|ci)\//;
+/**
+ * Files that name agent and terminal keys only to REMOVE them from an environment they hand on: the test preloads
+ * (a test must never see the host's session ids), a Claude worker's child env, and the env a new tmux pane starts
+ * with. They read no caller, so the identity module has nothing to give them.
+ */
+const AGENT_ENV_SCRUBBERS =
+    /^src\/(?:utils\/bun\/preload-test-(?:sandbox|tmpdir)\.ts|claude\/lib\/worker\/worker\.ts|utils\/tmux\/sessions\.ts)$/;
 
 const RULES: Rule[] = [
     {
@@ -875,8 +966,9 @@ const RULES: Rule[] = [
             "src/utils/t3code/ and src/utils/env/. Ask the identity module who the caller is. " +
             "scripts/ci/agent-context-ratchet.ts lists the files not migrated yet.",
         onlyIn: AGENT_CONTEXT_SCOPE,
-        allowedIn:
-            /^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/agent\/|src\/utils\/ai\/providers\/plugins\/[\w-]+\/harness\.ts$|src\/utils\/t3code\/|src\/utils\/env\/)/,
+        allowedIn: new RegExp(
+            `${/^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/agent\/|src\/utils\/ai\/providers\/plugins\/[\w-]+\/harness\.ts$|src\/utils\/t3code\/|src\/utils\/env\/)/.source}|${AGENT_ENV_SCRUBBERS.source}`
+        ),
         allowedFiles: RAW_AGENT_ENV_RATCHET,
     },
     {
@@ -888,8 +980,9 @@ const RULES: Rule[] = [
             "src/utils/cmux/, src/utils/tmux/, src/utils/env/ and the agent identity module's terminal part " +
             "(src/utils/agent/identity/). scripts/ci/agent-context-ratchet.ts lists the files not migrated yet.",
         onlyIn: AGENT_CONTEXT_SCOPE,
-        allowedIn:
-            /^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/cmux\/|src\/utils\/tmux\/|src\/utils\/env\/|src\/utils\/agent\/identity\/)/,
+        allowedIn: new RegExp(
+            `${/^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/cmux\/|src\/utils\/tmux\/|src\/utils\/env\/|src\/utils\/agent\/identity\/)/.source}|${AGENT_ENV_SCRUBBERS.source}`
+        ),
         allowedFiles: RAW_TERMINAL_ENV_RATCHET,
     },
     {
@@ -932,13 +1025,16 @@ const RULES: Rule[] = [
             },
         },
         message:
-            "Do not walk to a parent process by hand (process.ppid, `ps -o ppid`). Use the process helpers in " +
+            "Do not walk to a parent process by hand (a loop over process.ppid, `ps -o ppid`). Use the process helpers in " +
             "src/utils/process/. scripts/ci/agent-context-ratchet.ts lists the files not migrated yet.",
         onlyIn: AGENT_CONTEXT_SCOPE,
         allowedIn: /^(?:scripts\/(?:benchmarks|ci)\/|src\/utils\/process\/)/,
         allowedFiles: PARENT_WALK_RATCHET,
-        // A template's own `${row.ppid}` prints a parsed value; only a literal word `ppid` asks `ps` for it.
-        test: (text, node) => node.kind() === "member_expression" || /\bppid\b/.test(text.replace(/\$\{[^}]*\}/g, "")),
+        // A template's own `${row.ppid}` prints a parsed value; only a `ps` column or flag asks `ps` for it.
+        test: (text, node) =>
+            node.kind() === "member_expression"
+                ? startsParentWalk(node)
+                : PS_PPID_COLUMN.test(text.replace(/\$\{[^}]*\}/g, "").replace(/^["'`]|["'`]$/g, "")),
     },
 ];
 

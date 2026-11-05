@@ -319,6 +319,19 @@ export function clearResumeBinding(input: {
     return true;
 }
 
+/** The cmux workspace and surface and the tmux pane this process runs in; a blank value names none. */
+export function terminalPlace(env: NodeJS.ProcessEnv = process.env): {
+    workspaceId: string | null;
+    surfaceId: string | null;
+    tmuxPane: string | null;
+} {
+    return {
+        workspaceId: env.CMUX_WORKSPACE_ID?.trim() || null,
+        surfaceId: env.CMUX_SURFACE_ID?.trim() || null,
+        tmuxPane: env.TMUX_PANE?.trim() || null,
+    };
+}
+
 function main(raw: string): void {
     if (!raw.trim()) {
         return;
@@ -338,9 +351,7 @@ function main(raw: string): void {
         return;
     }
 
-    const workspaceId = process.env.CMUX_WORKSPACE_ID || null;
-    const surfaceId = process.env.CMUX_SURFACE_ID || null;
-    const tmuxPane = process.env.TMUX_PANE || null;
+    const { workspaceId, surfaceId, tmuxPane } = terminalPlace();
 
     // Not in cmux and not in tmux: nothing to record.
     if (!surfaceId && !tmuxPane) {

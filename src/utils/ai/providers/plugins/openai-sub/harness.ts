@@ -1,6 +1,6 @@
 import { isCodex, resolveCodexContext } from "@genesiscz/utils/agent/hosts/codex";
 import { codexTurnState } from "@genesiscz/utils/agent-sessions/readers/codex-turn-state";
-import { deferredLocator } from "@genesiscz/utils/harness/deferred";
+import { deferredLocator, deferredPeerSession } from "@genesiscz/utils/harness/deferred";
 import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { codexHooks } from "./harness-hooks";
@@ -51,9 +51,12 @@ export const codexHarness: HarnessDriver<"codex"> = {
             // Codex sets no label of its own; an AI_AGENT in its env is inherited from an outer host.
             labelEnvKey: null,
             effortEnvKey: null,
+            // Every shell gets the id of the thread that runs it, a native subagent's own thread included.
+            sessionIsExecutingThread: true,
             detects: isCodex,
             resolve: resolveCodexContext,
         },
+        peer: deferredPeerSession("codex-peer", "codexPeerSession"),
         process: {
             runsCli: ({ name, command }) =>
                 /^codex(?:-[\w-]+)?$/.test(name) || /@openai\/codex\/bin\/codex\.m?js\b/.test(command),

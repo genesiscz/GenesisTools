@@ -3,7 +3,6 @@ import { format } from "node:util";
 import { moduleDir, requireSibling } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { readParentPid } from "@genesiscz/utils/process/cwd";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { currentTraceId } from "@genesiscz/utils/trace";
 import { redactSecretsInText } from "@genesiscz/utils/transclude/redact";
@@ -523,8 +522,7 @@ function write(kind: FailureKind, exitCode: number | null, fatal: boolean): void
             fatal,
             durationMs: Math.round(performance.now()),
             pid: process.pid,
-            // 0 where the platform cannot say (the process helpers answer null there).
-            ppid: readParentPid(process.pid) ?? 0,
+            ppid: process.ppid,
             cwd: process.cwd(),
             traceId: currentTraceId() ?? null,
             toolsRoot: TOOLS_ROOT,

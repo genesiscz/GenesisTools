@@ -6,7 +6,11 @@ import { resumeArgv } from "@genesiscz/utils/agent-sessions/resume-argv";
 import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { keptBin } from "@genesiscz/utils/test/kept-executable";
-import { clearResumeBinding, syncResumeBinding } from "../../../../plugins/genesis-tools/hooks/record-session-cmux";
+import {
+    clearResumeBinding,
+    syncResumeBinding,
+    terminalPlace,
+} from "../../../../plugins/genesis-tools/hooks/record-session-cmux";
 import { isHeadlessAgent } from "../../../../plugins/genesis-tools/lib/agent-process";
 import { resumeArgv as pluginResumeArgv } from "../../../../plugins/genesis-tools/lib/resume-argv";
 
@@ -204,6 +208,19 @@ describe("record-session-cmux tty gate", () => {
         await runHook(PAYLOAD, { CMUX_SURFACE_ID: "", CMUX_WORKSPACE_ID: "" });
 
         expect(await readJournal()).toEqual([]);
+    });
+
+    test("a blank cmux surface, workspace or tmux pane names none", () => {
+        expect(terminalPlace({ CMUX_SURFACE_ID: " ", CMUX_WORKSPACE_ID: "\t", TMUX_PANE: " " })).toEqual({
+            workspaceId: null,
+            surfaceId: null,
+            tmuxPane: null,
+        });
+        expect(terminalPlace({ CMUX_SURFACE_ID: " S1 ", CMUX_WORKSPACE_ID: "W1", TMUX_PANE: "%3" })).toEqual({
+            workspaceId: "W1",
+            surfaceId: "S1",
+            tmuxPane: "%3",
+        });
     });
 
     test("a grok payload is tagged grok instead of an untagged claude line", async () => {

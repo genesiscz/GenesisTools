@@ -1,4 +1,6 @@
-import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
+import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+import { copilotHost } from "@genesiscz/utils/agent/hosts/copilot";
+import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { harnessDriver, harnessDrivers } from "@genesiscz/utils/ai/providers/harness-index";
 
 /**
@@ -42,6 +44,15 @@ const WRAPPER_TOOLS: Readonly<Record<string, AgentProvider>> = Object.fromEntrie
     ["cursor-agent", "cursor-agent"],
 ]);
 const WRAPPER_VERBS = new Set(["run", "resume", "start"]);
+
+/**
+ * The harness a `tools <word> run|start` wrapper word names: its id or one of its driver aliases (`cc`), or null.
+ * cursor-agent's words are a wrapper too, but of no harness.
+ */
+export function wrapperHarnessOf(word: string): AccountProviderAlias | null {
+    const provider = Object.hasOwn(WRAPPER_TOOLS, word) ? WRAPPER_TOOLS[word] : undefined;
+    return ACCOUNT_PROVIDER_ALIASES.find((alias) => alias === provider) ?? null;
+}
 /** `tools <agent> run|start|resume …` from any checkout path or off PATH: the launcher that starts the agent. */
 const TOOLS_LAUNCHER = /(?:^|[\s/])tools\s+([\w-]+)\s+(?:run|start|resume)\b/;
 /** A Codex helper binary (`codex-gateway`); a versioned Codex binary has the same shape and tells itself apart by a session. */
@@ -192,6 +203,25 @@ export function classifyCommand(raw: string): ProcClass {
     }
 
     return { kind: "other", provider: null, label: basename(argv0(command)), sessionId: null, service: false };
+}
+
+/**
+ * The runtime agent (`AgentRuntimeContext.agent`) whose session this command line runs, or null: a harness through
+ * its driver's host part, and Copilot, a host that is no harness, by its executable (`copilotHost.binary`).
+ * cursor-agent has no runtime agent name, and a helper binary or an MCP door runs no session, so both are null.
+ */
+export function runtimeAgentOfCommand(command: string): AgentRuntimeContext["agent"] | null {
+    const proc = classifyCommand(command);
+
+    if (proc.kind === "agent" && !proc.service) {
+        const driver = harnessDrivers().find((candidate) => candidate.id === proc.provider);
+
+        if (driver) {
+            return harnessDriver(driver.id).parts.host.agent;
+        }
+    }
+
+    return basename(argv0(command)) === copilotHost.binary ? copilotHost.agent : null;
 }
 
 /** Does this command line run the provider's agent itself, the binary or its script, and not one of its services? */

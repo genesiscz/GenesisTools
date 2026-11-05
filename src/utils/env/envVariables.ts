@@ -311,15 +311,7 @@ export const env = {
         getLogname: () => getTrimmed("LOGNAME"),
         isRoot: () => getRaw("USER") === "root",
         getTermProgram: () => getTrimmed("TERM_PROGRAM"),
-        /** The iTerm2 session this process runs in (`w0t0p0:UUID`). */
-        getItermSessionId: () => getTrimmed("ITERM_SESSION_ID"),
-        /** The macOS Terminal session (Apple Terminal and iTerm2 both set it). */
-        getTermSessionId: () => getTrimmed("TERM_SESSION_ID"),
         getCmuxBundleId: () => getTrimmed("CMUX_BUNDLE_ID"),
-        /** The cmux workspace this process started in. Frozen at start: a moved surface keeps the old id. */
-        getCmuxWorkspaceId: () => getTrimmed("CMUX_WORKSPACE_ID"),
-        /** The cmux surface (tab) this process started in, by UUID. */
-        getCmuxSurfaceId: () => getTrimmed("CMUX_SURFACE_ID"),
         /** Bundle id of the .app that launched this process tree (macOS sets it); the TCC client for CLI children. */
         getHostBundleIdentifier: () => getTrimmed("__CFBundleIdentifier"),
         getDarwinKitTimeoutMs: () => parseIntEnv("DARWINKIT_TIMEOUT_MS", 0),

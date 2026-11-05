@@ -82,7 +82,10 @@ function decodeCString(view: DataView, offset: number): string | null {
     return text.length > 0 ? text : null;
 }
 
-/** Parent pid of `pid`, or null when unknown (gone, unsupported platform). */
+/**
+ * Parent pid of `pid`, or null when unknown (gone, or another process on a platform with no reader here). Our own
+ * parent is always known: node reports it on every platform, Windows included.
+ */
 export function readParentPid(pid: number): number | null {
     if (process.platform === "darwin") {
         // The kernel's process record answers for every user's process. proc_pidinfo answers only for this user's, so
@@ -111,7 +114,7 @@ export function readParentPid(pid: number): number | null {
         }
     }
 
-    return null;
+    return pid === process.pid ? process.ppid : null;
 }
 
 /**

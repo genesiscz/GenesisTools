@@ -99,7 +99,11 @@ function layoutOf(cwd: string): Layout {
     return layout;
 }
 
-/** What git rewrites when the HEAD facts change; see `heads`. */
+/**
+ * What git rewrites when the HEAD facts change; see `heads`. The files ref format writes HEAD, the loose ref and
+ * `packed-refs`. The reftable format keeps HEAD fixed (`ref: refs/heads/.invalid`) and replaces `reftable/tables.list`
+ * on every ref update, in the worktree's own git dir (its HEAD) and in the common dir (the branches).
+ */
 function headKey(gitDir: string, commonDir: string): string {
     const headPath = resolve(gitDir, "HEAD");
     let ref = "";
@@ -112,7 +116,8 @@ function headKey(gitDir: string, commonDir: string): string {
     }
 
     const refKey = ref ? statKey(resolve(commonDir, ref)) : "detached";
-    return `${statKey(headPath)}|${ref}|${refKey}|${statKey(resolve(commonDir, "packed-refs"))}`;
+    const tables = `${statKey(resolve(gitDir, "reftable", "tables.list"))}|${statKey(resolve(commonDir, "reftable", "tables.list"))}`;
+    return `${statKey(headPath)}|${ref}|${refKey}|${statKey(resolve(commonDir, "packed-refs"))}|${tables}`;
 }
 
 function headFactsOf(cwd: string, layout: Layout, given: GivenGitFacts): Omit<HeadFacts, "key"> {

@@ -72,6 +72,7 @@ export const copilotHost: NonHarnessHost = {
     toolUseEnvKey: null,
     labelEnvKey: "AI_AGENT",
     effortEnvKey: null,
+    sessionIsExecutingThread: false,
     detects: isCopilot,
     resolve: resolveCopilotContext,
     payload: {

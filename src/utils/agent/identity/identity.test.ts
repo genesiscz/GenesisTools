@@ -8,7 +8,7 @@ import { harnessHooks } from "@genesiscz/utils/ai/providers/harness-hooks";
 import { harnessDriver } from "@genesiscz/utils/ai/providers/harness-index";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readT3ThreadDetails } from "@genesiscz/utils/t3code/caller-enricher";
-import { type CallerSource, clearGitFactsCache, readPeerCaller, whoIsCalling } from "./index";
+import { type CallerSource, clearGitFactsCache, readPeerCaller, toRuntimeContext, whoIsCalling } from "./index";
 
 const local = (env: NodeJS.ProcessEnv) => ({ origin: "local" as const, env });
 
@@ -156,6 +156,29 @@ describe("whoIsCalling: a remote caller", () => {
             ).cwd
         ).toBe("/a");
         expect(whoIsCalling(local({}), { fallbackCwd: "/fallback", overrides: { cwd: "/given" } }).cwd).toBe("/given");
+    });
+
+    it("a remote caller with no cwd gets no cwd and no git facts, never the gateway's own; a blank fallback is none", () => {
+        const unnamed = {
+            origin: "remote" as const,
+            caller: { agent: "unknown" as const, sessionId: null, cwd: null },
+        };
+        const spawn = spyOn(Bun, "spawnSync");
+
+        try {
+            for (const options of [{}, { fallbackCwd: "" }, { fallbackCwd: "  " }]) {
+                const identity = whoIsCalling(unnamed, { ...options, facets: ["cwd", "git", "title"] });
+
+                expect(identity.cwd).toBeUndefined();
+                expect(identity.branch).toBeUndefined();
+                expect(identity.repoRoot).toBeUndefined();
+                expect(toRuntimeContext(identity)).toMatchObject({ cwd: "", repoRoot: "", branch: null });
+            }
+
+            expect(spawn).not.toHaveBeenCalled();
+        } finally {
+            spawn.mockRestore();
+        }
     });
 
     it("a peer with no owner is an unknown caller", () => {
@@ -352,6 +375,19 @@ describe("the git facet's cache", () => {
         git(["commit", "-q", "--allow-empty", "-m", "third"], repo);
         expect(read()).toMatchObject({ branch: "feat/other", commitMessage: "third" });
     });
+
+    it("a reftable repository: a commit or a branch switch is seen at once", () => {
+        const repo = scratch("identity-reftable-");
+        git(["init", "-q", "--ref-format=reftable", "-b", "main"], repo);
+        git(["commit", "-q", "--allow-empty", "-m", "first"], repo);
+        const read = () => whoIsCalling(local({}), { facets: ["git"], overrides: { cwd: repo } });
+
+        expect(read()).toMatchObject({ branch: "main", commitMessage: "first" });
+        git(["commit", "-q", "--allow-empty", "-m", "second"], repo);
+        expect(read().commitMessage).toBe("second");
+        git(["checkout", "-q", "-b", "feat/other"], repo);
+        expect(read().branch).toBe("feat/other");
+    });
 });
 
 describe("whoIsCalling: overrides and retargeting", () => {
@@ -488,6 +524,27 @@ describe("whoIsCalling: overrides and retargeting", () => {
         } finally {
             lookup.mockRestore();
         }
+    });
+});
+
+describe("the terminal app: its program and its session ids", () => {
+    it("TERM_PROGRAM, ITERM_SESSION_ID and TERM_SESSION_ID, trimmed, beside cmux and tmux, with their own source", () => {
+        const identity = whoIsCalling(
+            local({
+                CLAUDE_CODE_SESSION_ID: "c1",
+                TERM_PROGRAM: " iTerm.app ",
+                ITERM_SESSION_ID: "w0t0p0:ABC",
+                TERM_SESSION_ID: "T-1",
+                TMUX_PANE: "%2",
+            })
+        );
+
+        expect(identity.terminal).toEqual({
+            app: { program: "iTerm.app", itermSessionId: "w0t0p0:ABC", termSessionId: "T-1" },
+            tmux: { pane: "%2" },
+        });
+        expect(identity.sources["terminal.app"]).toBe("terminal");
+        expect(whoIsCalling(local({ TERM_PROGRAM: " " })).terminal).toBeUndefined();
     });
 });
 

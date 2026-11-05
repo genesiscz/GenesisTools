@@ -23,7 +23,7 @@ import type {
 
 export { hostLabel, resolveEnvHost } from "./env";
 export { clearGitFactsCache, gitCommonRoot } from "./git";
-export { callerSessionReadable, codexThreadIdFromOpenFiles, type PeerCaller, readPeerCaller } from "./peer";
+export { callerSessionReadable, type PeerCaller, readPeerCaller } from "./peer";
 export { CALLER_SOURCES } from "./sources";
 export type * from "./types";
 
@@ -138,6 +138,11 @@ export function resolveSessionCwd(): string {
     });
 }
 
+/**
+ * The cwd: an override, then the fallback of a scope whose session is explicitly null (a blank one is none), then a
+ * source's. A remote caller that none of them names has NO cwd: this process's cwd and its parents describe the
+ * server, never the caller it serves, so neither they nor their git facts are stamped on it.
+ */
 function chooseCwd(
     identity: AgentIdentity,
     input: CallerInput,
@@ -146,14 +151,17 @@ function chooseCwd(
 ) {
     const overrides = options.overrides ?? {};
     const scopedNull = input.origin === "remote" && input.caller !== undefined && input.caller.sessionId === null;
+    const fallbackCwd = options.fallbackCwd?.trim() ? options.fallbackCwd : undefined;
 
     if (overrides.cwd !== undefined) {
         setFact(identity, "cwd", overrides.cwd, "override");
-    } else if (options.fallbackCwd !== undefined && scopedNull) {
-        setFact(identity, "cwd", options.fallbackCwd, "fallback-cwd");
-    } else if (identity.cwd === undefined && facets.has("cwd")) {
+    } else if (fallbackCwd !== undefined && scopedNull) {
+        setFact(identity, "cwd", fallbackCwd, "fallback-cwd");
+    } else if (identity.cwd !== undefined || input.origin === "remote") {
+        return;
+    } else if (facets.has("cwd")) {
         setFact(identity, "cwd", resolveSessionCwd(), "session-cwd");
-    } else if (identity.cwd === undefined) {
+    } else {
         setFact(identity, "cwd", process.cwd(), "process-cwd");
     }
 }
@@ -383,8 +391,8 @@ function compose(input: CallerInput, options: WhoIsCallingOptions, sources: read
     const named = { agent: identity.agent, sessionId: identity.sessionId };
     chooseCwd(identity, input, options, facets);
 
-    if (facets.has("git")) {
-        readGit(identity, identity.cwd ?? process.cwd(), options);
+    if (facets.has("git") && identity.cwd !== undefined) {
+        readGit(identity, identity.cwd, options);
     }
 
     applyOverrides(identity, options);
@@ -411,9 +419,12 @@ function compose(input: CallerInput, options: WhoIsCallingOptions, sources: read
     return identity;
 }
 
-/** The identity as today's `AgentRuntimeContext` (the git and cwd facets filled). */
+/**
+ * The identity as today's `AgentRuntimeContext` (the git and cwd facets filled). A remote caller with no cwd keeps an
+ * empty one (and an empty repo root), which every stamp drops, rather than this server's.
+ */
 export function toRuntimeContext(identity: AgentIdentity): AgentRuntimeContext {
-    const cwd = identity.cwd ?? process.cwd();
+    const cwd = identity.cwd ?? "";
     const context: AgentRuntimeContext = {
         agent: identity.agent,
         sessionId: identity.sessionId,

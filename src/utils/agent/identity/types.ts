@@ -1,12 +1,12 @@
-import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+import type { AgentRuntimeContext, CallerAgent, CallerCore, ScopedCaller } from "@genesiscz/utils/agent/context";
 import type { HarnessId } from "@genesiscz/utils/harness/types";
 
-/** Who a caller is: Claude is `claude-code`, the other harnesses keep their id, Copilot is a host but no harness. */
-export type CallerAgent = AgentRuntimeContext["agent"];
+export type { CallerAgent, CallerCore, ScopedCaller };
 
 /**
  * Where one fact came from. A source names the caller (`hook-payload`, `caller-scope`, `mcp-peer`, `env`); a facet
- * or an enricher describes it (`git`, `history`, `process`, `transcript`, `cmux`, `tmux`, `account`, `t3code` for the
+ * or an enricher describes it (`git`, `history`, `process`, `transcript`, `cmux`, `tmux`, `terminal` for the terminal
+ * app, `account`, `t3code` for the
  * host's env thread id and `t3code-store` for the details read from the host's own database); `override` is a value
  * the caller of `whoIsCalling` passed in.
  */
@@ -25,6 +25,7 @@ export type FactSource =
     | "transcript"
     | "cmux"
     | "tmux"
+    | "terminal"
     | "t3code"
     | "t3code-store"
     | "account";
@@ -41,6 +42,13 @@ export interface TmuxTerminal {
     pane: string;
 }
 
+/** The terminal app a caller runs in, as its environment names it: its program and its own session ids. */
+export interface TerminalApp {
+    program: string | null;
+    itermSessionId: string | null;
+    termSessionId: string | null;
+}
+
 /**
  * Every terminal a caller sits in, at once: a tmux pane inside a cmux surface keeps both. Choosing one to type into
  * is the transport's job (send-self, delivery), never the observer's.
@@ -48,6 +56,7 @@ export interface TmuxTerminal {
 export interface CallerTerminals {
     cmux?: CmuxTerminal;
     tmux?: TmuxTerminal;
+    app?: TerminalApp;
 }
 
 /**
@@ -84,9 +93,7 @@ export interface CallerProcess {
  * transcript, the turn, subagent and tool call, the account, the terminals, the host app and the process. Every fact
  * is optional, and `sources` says where each one that is set came from.
  */
-export interface AgentIdentity {
-    agent: CallerAgent;
-    sessionId: string | null;
+export interface AgentIdentity extends CallerCore {
     sourceMessage?: AgentRuntimeContext["sourceMessage"];
     isInAgent: boolean;
     aiAgent: string | null;
@@ -119,7 +126,7 @@ export type IdentityField = Exclude<keyof AgentIdentity, "sources">;
  * `terminal`, and the host's thread id (its env) is a separate observation from the details its database adds. An
  * override of the whole field is recorded under the field itself (`terminal`, `host`).
  */
-export type FactPart = "terminal.cmux" | "terminal.tmux" | "host.threadId" | "host.details";
+export type FactPart = "terminal.cmux" | "terminal.tmux" | "terminal.app" | "host.threadId" | "host.details";
 
 /** What `sources` is keyed by: a whole field, or one independently observed part of it. */
 export type FactPath = IdentityField | FactPart;
@@ -147,20 +154,12 @@ export interface HookCallerFacts {
     cwd?: string;
 }
 
-/** A caller the request already resolved (the gateway's `runAsCaller` scope), in the shape the scope holds. */
-export interface ScopedCaller {
-    agent: CallerAgent;
-    sessionId: string | null;
-    cwd: string | null;
-    sourceMessage?: AgentRuntimeContext["sourceMessage"];
-}
-
 /** The loopback connection of a remote MCP caller, which the peer source resolves to its owning process. */
 export interface PeerQuery {
     clientPort: number;
     serverPort: number;
-    /** Claude Code's session registry (`~/.claude/sessions`); tests pass a fixture folder. */
-    claudeSessionsDir?: string;
+    /** The folder that replaces a harness's own session registry (Claude's `~/.claude/sessions`) in a test. */
+    registryDirOf?: (harness: HarnessId) => string | undefined;
 }
 
 /**
@@ -219,6 +218,7 @@ export type CallerReading = Partial<Omit<AgentIdentity, "sources" | "agent">> & 
 export interface EnricherSlots {
     cmux: CmuxTerminal;
     tmux: TmuxTerminal;
+    terminal: TerminalApp;
     t3code: CallerHost;
     account: CallerAccount;
 }

@@ -198,6 +198,7 @@ export async function runTeamsInteractive(opts: { all?: boolean; account?: strin
                 { label: "TEAM", minWidth: 16 },
                 { label: "LIVE", minWidth: 4, align: "right" },
                 { label: "N", minWidth: 2, align: "right" },
+                // lint-rules-ignore: a column label, not a terminal env read
                 { label: "TMUX", minWidth: 12 },
                 { label: "AGE", minWidth: 4, align: "right" },
             ],

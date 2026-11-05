@@ -189,9 +189,33 @@ export interface HostResolver {
     readonly labelEnvKey: string | null;
     /** The variable that names the reasoning effort the session runs at (Claude's `CLAUDE_EFFORT`), or null. */
     readonly effortEnvKey: string | null;
+    /**
+     * Whether the session variable names the thread that runs THIS shell, a native subagent's own thread included
+     * (Codex sets `CODEX_THREAD_ID` per executing thread), rather than the root session every child inherits. A bus
+     * identity owned by one such thread refuses a shell of another (`src/agents/lib/thread-owner.ts`).
+     */
+    readonly sessionIsExecutingThread: boolean;
     detects(env: NodeJS.ProcessEnv): boolean;
     resolve(env: NodeJS.ProcessEnv): Partial<AgentRuntimeContext>;
 }
+
+/** The process that holds the client end of a caller's loopback connection, as the kernel reports it. */
+export interface PeerProcess {
+    readonly pid: number;
+    /** Process start, seconds since the epoch. */
+    readonly startSec: number;
+}
+
+/**
+ * How the MCP gateway names the session of a calling process of this harness from outside it: Claude by its session
+ * registry, Codex by the one rollout it holds open. A harness whose process leaves no such trace says
+ * `supported: false` with the reason. `registryDir` replaces the harness's own registry folder in a test. The reader
+ * lives in the harness's reader files and loads on its first call (`deferredPeerSession`): it reads a registry or runs
+ * `lsof`, which the hook path must not load.
+ */
+export type PeerSessionPart =
+    | { readonly supported: true; sessionOf(process: PeerProcess, registryDir?: string): string | null }
+    | { readonly supported: false; readonly reason: string };
 
 /** N: how to recognise the harness in a process command line. */
 export interface ProcessSignature {
@@ -310,6 +334,8 @@ export interface EagerPartContracts {
     worker: WorkerCapabilities;
     exit: ExitCommand;
     host: HostResolver;
+    /** The session of a calling process, read from outside it (the MCP gateway's peer lookup). */
+    peer: PeerSessionPart;
     process: ProcessSignature;
     /**
      * E: the turn state is read by synchronous callers (the dialog guard, `wait`, the live tail), so the reader is

@@ -1521,6 +1521,10 @@ describe("the agent-context rules (spec 2026-11-04, section 5)", () => {
                 "const AGENT_PROGRAM = /(?:^|\\/)(?:claude|codex|copilot)(?=\\s|$)/;",
                 'const live = ["claude", "grok"].includes(comm);',
                 'const live = new Set(["codex", "copilot"]).has(command);',
+                // A neutral name, applied to a command line where it is used.
+                "const TAIL = /^\\s+(claude|codex|grok)\\s+run/; export const kind = (command: string) => TAIL.exec(command);",
+                "const WORDS = /(claude|codex)/; export const strip = (command: string) => command.replace(WORDS, '');",
+                'const NAMES = ["claude", "codex"]; export const live = (comm: string) => NAMES.includes(comm);',
             ],
             owners: ["src/utils/process/classify.ts", "src/utils/ai/providers/plugins/openai-sub/harness.ts"],
             misses: [
@@ -1528,18 +1532,29 @@ describe("the agent-context rules (spec 2026-11-04, section 5)", () => {
                 'const LABEL = { claude: "Claude", codex: "Codex" };',
                 'const AGENT_BINARIES = ["claude"];',
                 'const BIN = ["claude", "ls"];',
+                'const AGENTS = ["claude", "codex"]; export const label = (name: string) => AGENTS.includes(name);',
             ],
         },
         {
             rule: "no-parent-walk",
             hit: [
-                "const parent = process.ppid;",
+                "for (let pid = process.ppid; pid > 1; pid = parentOf(pid)) {}",
+                "function up() { let pid = process.ppid; while (pid > 1) { pid = parentOf(pid); } return pid; }",
                 'const out = spawnSync("ps", ["-o", "ppid=", "-p", String(pid)]);',
                 'const columns = "pid,ppid,command";',
                 "const cmd = `ps -o ppid= -p ${pid}`;",
             ],
             owners: ["src/utils/process/tree.ts"],
-            misses: ["const line = `${row.pid} ${row.ppid}`;", 'const word = "shipping";', "const p = other.ppid;"],
+            misses: [
+                "const line = `${row.pid} ${row.ppid}`;",
+                'const word = "shipping";',
+                "const p = other.ppid;",
+                // One read of our own parent is no walk, and prose that says ppid asks `ps` for nothing.
+                "const parent = process.ppid;",
+                "const row = { ppid: process.ppid };",
+                'const note = "the parent ppid is gone";',
+                "function stamp() { const ppid = process.ppid; for (const x of xs) { use(x); } return ppid; }",
+            ],
         },
     ];
     const scratchFile = "src/example/lib/caller.ts";

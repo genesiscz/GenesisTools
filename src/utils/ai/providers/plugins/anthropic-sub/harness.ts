@@ -1,6 +1,6 @@
 import { isClaude, resolveClaudeContext } from "@genesiscz/utils/agent/hosts/claude";
 import { claudeTurnState } from "@genesiscz/utils/agent-sessions/readers/claude-turn-state";
-import { deferredLocator } from "@genesiscz/utils/harness/deferred";
+import { deferredLocator, deferredPeerSession } from "@genesiscz/utils/harness/deferred";
 import { interpreterScriptIndex } from "@genesiscz/utils/harness/interpreter-entry";
 import type { HarnessDriver } from "@genesiscz/utils/harness/types";
 import { claudeDialog } from "./harness-dialog";
@@ -56,9 +56,12 @@ export const claudeHarness: HarnessDriver<"claude"> = {
             toolUseEnvKey: null,
             labelEnvKey: "AI_AGENT",
             effortEnvKey: "CLAUDE_EFFORT",
+            // A Claude subagent runs under its parent's CLAUDE_CODE_SESSION_ID.
+            sessionIsExecutingThread: false,
             detects: isClaude,
             resolve: resolveClaudeContext,
         },
+        peer: deferredPeerSession("claude-peer", "claudePeerSession"),
         process: {
             runsCli: ({ argv0, name, command }) =>
                 name === "claude" ||

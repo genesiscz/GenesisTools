@@ -4,6 +4,7 @@ import { cmuxCallerEnricher } from "@genesiscz/utils/cmux/caller-enricher";
 import { logger } from "@genesiscz/utils/logger";
 import { t3codeCallerEnricher } from "@genesiscz/utils/t3code/caller-enricher";
 import { tmuxCallerEnricher } from "@genesiscz/utils/tmux/caller-enricher";
+import { terminalAppCallerEnricher } from "./terminal";
 import type {
     AgentIdentity,
     CallerHost,
@@ -44,6 +45,7 @@ export const accountCallerEnricher: ContextEnricher<"account"> = {
 const ENRICHERS: { readonly [Id in EnricherId]: ContextEnricher<Id> } = {
     cmux: cmuxCallerEnricher,
     tmux: tmuxCallerEnricher,
+    terminal: terminalAppCallerEnricher,
     t3code: t3codeCallerEnricher,
     account: accountCallerEnricher,
 };
@@ -76,6 +78,13 @@ const PLACE: {
         put: (identity, value) => {
             identity.terminal = { ...identity.terminal, tmux: value };
             identity.sources["terminal.tmux"] = "tmux";
+        },
+    },
+    terminal: {
+        field: "terminal",
+        put: (identity, value) => {
+            identity.terminal = { ...identity.terminal, app: value };
+            identity.sources["terminal.app"] = "terminal";
         },
     },
     t3code: {

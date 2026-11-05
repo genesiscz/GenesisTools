@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+import type { AgentRuntimeContext, ScopedCaller } from "@genesiscz/utils/agent/context";
 import {
     type CallerInput,
     gitCommonRoot as identityGitCommonRoot,
@@ -22,13 +22,7 @@ const prof = profiler.scope("agent-context");
  * this scope. Inside the scope the caller wins over the process env and cwd; outside it
  * nothing changes.
  */
-export interface AgentCaller {
-    sourceMessage?: AgentRuntimeContext["sourceMessage"];
-    agent: AgentRuntimeContext["agent"];
-    sessionId: string | null;
-    /** The caller's live cwd. Null leaves the process's own answer in place. */
-    cwd: string | null;
-}
+export type AgentCaller = ScopedCaller;
 
 const callerScope = new AsyncLocalStorage<AgentCaller>();
 
