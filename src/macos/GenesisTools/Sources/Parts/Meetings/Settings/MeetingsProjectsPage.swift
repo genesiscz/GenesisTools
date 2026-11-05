@@ -26,6 +26,21 @@ struct MeetingsProjectsPage: View {
                         NativeSettingsNumberPicker("Calendar slack (minutes)", range: 0..<121, identifier: "meetings.assign.slack",
                                                    value: Binding(get: { assign.calendarSlackMin }, set: { model.set(["global", "assign", "calendarSlackMin"], $0) }))
                     }
+                    NativeSettingsRow("Calendar look-behind", detail: "Hours before the meeting a calendar entry may start and still be looked up; never less than the slack.") {
+                        NativeSettingsNumberPicker("Calendar look-behind (hours)", range: 0..<49, identifier: "meetings.assign.calendarLookbehind",
+                                                   value: Binding(get: { assign.calendarLookbehindHours ?? MeetingsSettings.Global.Assign.defaultCalendarLookbehindHours },
+                                                                  set: { model.set(["global", "assign", "calendarLookbehindHours"], $0) }))
+                    }
+                    NativeSettingsRow("Wait for a folder", detail: "Days a meeting waits for you to move it into a Wispr folder; then the folder question ends.") {
+                        NativeSettingsNumberPicker("Wait for a folder (days)", range: 1..<366, identifier: "meetings.assign.folderWait",
+                                                   value: Binding(get: { assign.folderWaitDays ?? MeetingsSettings.Global.Assign.defaultFolderWaitDays },
+                                                                  set: { model.set(["global", "assign", "folderWaitDays"], $0) }))
+                    }
+                    NativeSettingsRow("Retry a failed question", detail: "Minutes before a question whose post failed is posted again, so a broken inbox is not hit on every look.") {
+                        NativeSettingsNumberPicker("Retry a failed question (minutes)", range: 1..<1441, identifier: "meetings.assign.retryFailed",
+                                                   value: Binding(get: { assign.retryFailedMin ?? MeetingsSettings.Global.Assign.defaultRetryFailedMin },
+                                                                  set: { model.set(["global", "assign", "retryFailedMin"], $0) }))
+                    }
                 }
                 .disabled(!assign.ask)
                 if !assign.ask {
@@ -259,6 +274,27 @@ private struct FlowChips: View {
 
 // MARK: - Dictionary
 
+/// The words `recorder cut-fillers` cuts out of a transcript in the meeting language, in its two levels.
+private struct FillersCard: View {
+    @Bindable var model: MeetingsSettingsModel
+    let language: String
+    let fillers: MeetingsSettings.Language.Fillers?
+
+    var body: some View {
+        NativeSettingsCard("Filler words", subtitle: "What cutting the fillers of a recording removes, for a meeting held in \(language).") {
+            TokenList(title: "Sounds", detail: "Never real words (ehm, um): cut by default.",
+                      values: fillers?.sounds ?? [], placeholder: "Add a sound") { values in write("sounds", values) }
+            Divider()
+            TokenList(title: "Words", detail: "Fillers that are also real words (jako, like): cut only with the option for all fillers.",
+                      values: fillers?.words ?? [], placeholder: "Add a word") { values in write("words", values) }
+        }
+    }
+
+    private func write(_ level: String, _ values: [String]) {
+        model.set(["languages", language, "fillers", level], values, done: "Filler \(level) for \(language): \(values.joined(separator: ", "))")
+    }
+}
+
 struct MeetingsDictionaryPage: View {
     @Bindable var model: MeetingsSettingsModel
     @State private var type = "fix"
@@ -293,6 +329,9 @@ struct MeetingsDictionaryPage: View {
                     }
                 }
             }
+
+            FillersCard(model: model, language: settings.global.language, fillers: settings.meetingLanguage?.fillers)
+                .nativeSettingsAnchor("fillers")
 
             NativeSettingsCard(editing == nil ? "Add an entry" : "Edit \(editing?.value ?? "")") {
                 NativeSettingsSegmented("Type", identifier: "meetings.dictionary.type", options: [

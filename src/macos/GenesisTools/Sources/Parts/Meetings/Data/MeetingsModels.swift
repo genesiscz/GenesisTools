@@ -277,6 +277,14 @@ struct MeetingsSettings: Decodable, Equatable {
             let lookbackHours: Int
             let maxProposals: Int
             let calendarSlackMin: Int
+            /// Absent in a config written before these keys: the defaults of today.
+            let calendarLookbehindHours: Int?
+            let folderWaitDays: Int?
+            let retryFailedMin: Int?
+
+            static let defaultCalendarLookbehindHours = 3
+            static let defaultFolderWaitDays = 14
+            static let defaultRetryFailedMin = 10
         }
         struct Suggest: Decodable, Equatable { let applyAbove: Double }
         struct Dictionary: Decodable, Equatable { let entries: [DictionaryEntry] }
@@ -297,7 +305,15 @@ struct MeetingsSettings: Decodable, Equatable {
         let match: [String: Folders]
         let autoRecord: AutoRecord
     }
-    struct Language: Decodable, Equatable { let ocr: [String] }
+    struct Language: Decodable, Equatable {
+        struct Fillers: Decodable, Equatable {
+            let sounds: [String]
+            let words: [String]
+        }
+        let ocr: [String]
+        /// Absent in a config written before the key, and for a custom language without a list.
+        let fillers: Fillers?
+    }
 
     let global: Global
     let projects: [String: ProjectSettings]

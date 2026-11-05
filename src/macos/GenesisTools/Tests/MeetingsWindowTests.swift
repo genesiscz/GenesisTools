@@ -60,20 +60,39 @@ final class MeetingsWindowTests: XCTestCase {
         {"path":"/x/config.json","value":{"version":3,"global":{"dictionary":{"entries":[]},"language":"cs",
          "capture":{"backend":"native","displays":2,"activeFps":1,"idleFps":0.1,"threshold":0.02,"jpegQuality":0.75,
          "resolutionCap":2880,"retentionDays":30,"recorders":{}},"assign":{"ask":true,"lookbackHours":48,"maxProposals":5,
-         "calendarSlackMin":15},"suggest":{"applyAbove":0.5,"listenBelow":0.6}},
+         "calendarSlackMin":15,"calendarLookbehindHours":6,"folderWaitDays":30,"retryFailedMin":20},"suggest":{"applyAbove":0.5,"listenBelow":0.6}},
          "projects":{"work":{"labels":["Launch"],"match":{"people":[{"name":"Alice","email":"alice@example.com",
          "pairedBy":[{"kind":"calendar","from":"apple-calendar","entryId":"e1","title":"Sync","at":"2026-11-04T10:00:00.000Z"}]}],
          "title":{"words":["sync"]}},"export":{"folder":"/x/notes"}}},
          "sources":{"wisprflow":{"match":{"work":{"folders":["Work"]}},"suggest":{"ignore":[]},
          "autoRecord":{"enabled":false,"liveWithinSec":30,"stopAfterSilenceSec":120,"notify":true}}},
-         "languages":{"cs":{"ocr":["cs-CZ","en-US"],"render":{}}}}}
+         "languages":{"cs":{"ocr":["cs-CZ","en-US"],"render":{},"fillers":{"sounds":["ehm","ach"],"words":["jako"]}}}}}
         """.utf8)
         let settings = try JSONDecoder().decode(ConfigShow.self, from: json).value
         XCTAssertEqual(settings.global.capture.displays, DisplayPolicy("2"), "a screen index reads as its number")
         XCTAssertEqual(settings.projects["work"]?.match?.people.first?.label, "Alice <alice@example.com>")
         XCTAssertEqual(settings.wispr?.match["work"]?.folders, ["Work"])
         XCTAssertEqual(settings.meetingLanguage?.ocr, ["cs-CZ", "en-US"])
+        XCTAssertEqual(settings.meetingLanguage?.fillers, .init(sounds: ["ehm", "ach"], words: ["jako"]))
+        XCTAssertEqual(settings.global.assign.calendarLookbehindHours, 6)
+        XCTAssertEqual(settings.global.assign.folderWaitDays, 30)
+        XCTAssertEqual(settings.global.assign.retryFailedMin, 20)
         XCTAssertEqual(settings.projects["work"]?.export?.folder, "/x/notes")
+    }
+
+    func testAConfigWithoutTheNewKeysDecodesAndShowsTodaysValues() throws {
+        let json = Data("""
+        {"path":"/x/config.json","value":{"version":3,"global":{"dictionary":{"entries":[]},"language":"cs",
+         "capture":{"backend":"native","displays":"all","activeFps":1,"idleFps":0.1,"threshold":0.02,"retentionDays":30},
+         "assign":{"ask":true,"lookbackHours":48,"maxProposals":5,"calendarSlackMin":15},
+         "suggest":{"applyAbove":0.5}},"projects":{},"sources":{},"languages":{"cs":{"ocr":["cs-CZ"]}}}}
+        """.utf8)
+        let settings = try JSONDecoder().decode(ConfigShow.self, from: json).value
+        XCTAssertNil(settings.global.assign.calendarLookbehindHours)
+        XCTAssertNil(settings.meetingLanguage?.fillers)
+        XCTAssertEqual(MeetingsSettings.Global.Assign.defaultCalendarLookbehindHours, 3)
+        XCTAssertEqual(MeetingsSettings.Global.Assign.defaultFolderWaitDays, 14)
+        XCTAssertEqual(MeetingsSettings.Global.Assign.defaultRetryFailedMin, 10)
     }
 
     func testTheCaptureCostDecodesFrameRatesAndDisplayPolicies() throws {
