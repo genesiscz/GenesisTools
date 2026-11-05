@@ -3406,6 +3406,37 @@ describe("the meetings recorder loop", () => {
         expect(run.recorder.requests[2]?.audio?.micDeviceId).toBe("desk-mic");
     }, 2000);
 
+    test("a subscriber hears when the recorded displays change, so a menu of another client stays right", async () => {
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang", "hang"],
+            liveControl: true,
+            actions: [
+                async (call, live) => {
+                    const seen = Promise.withResolvers<number[]>();
+                    const client = await RecorderClient.connect(live.id, { dir: live.dir });
+                    await client.subscribe(
+                        (event) => {
+                            const recorded = (event.params as { recorded?: number[] }).recorded;
+
+                            if (recorded?.join(",") === "1") {
+                                seen.resolve(recorded);
+                            }
+                        },
+                        ["displays"]
+                    );
+                    await call("displays.remove", { displayId: 4 });
+                    const recorded = await withTimeout(seen.promise, 2_000);
+                    await client.stop();
+                    client.close();
+                    return recorded;
+                },
+            ],
+        });
+
+        expect(run.answers[0]).toEqual([1]);
+    });
+
     test("sound: mute and a microphone switch go to the running capture, its file lands in audio/, and progress reaches a subscriber", async () => {
         const progress: string[] = [];
         const run = await recordWith({

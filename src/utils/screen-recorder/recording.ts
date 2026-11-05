@@ -419,7 +419,11 @@ export class FrameRecording<S = unknown> extends RecorderControl {
                     this.closeDisplay(capture);
                     kind.onError?.(capture, error, outcome);
                 },
-                onSettled: kind.onSettled,
+                onSettled: (capture) => {
+                    // The capture left `running`: the recorded displays drop it now, not at the next frame.
+                    this.syncDisplays();
+                    kind.onSettled?.(capture);
+                },
             },
         });
     }
@@ -439,6 +443,9 @@ export class FrameRecording<S = unknown> extends RecorderControl {
             this.update({ displays: recorded });
         }
 
+        // A client's menu marks the recorded displays: a change made by another client, a follow-focus move or an
+        // unplugged display reaches it this way, and it reads displays.list again.
+        this.emit("displays", { recorded: recorded.map((one) => one.id) });
         this.config.hooks.onDisplays?.();
     }
 
