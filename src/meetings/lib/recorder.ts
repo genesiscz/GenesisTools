@@ -64,8 +64,9 @@ import {
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
 import { mainDisplay } from "@genesiscz/utils/screen-recorder/displays";
-import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
+import { liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
+import { startRecording } from "@genesiscz/utils/screen-recorder/start";
 import {
     CaptureError,
     type CaptureHooks,
@@ -608,6 +609,7 @@ export async function runRecorder(options: {
         let stopRequested = false;
         /** The captures of the running piece, by the display each records. */
         const running = new Map<number, RunningCapture>();
+        const pendingCaptures = new Set<RunningCapture>();
         let inPiece = false;
         let wake: (() => void) | undefined;
         const abortAll = () => {
@@ -693,257 +695,266 @@ export async function runRecorder(options: {
                 ...(entry.folder ? { folder: entry.folder } : {}),
             };
         };
-        const live = new LiveRecordingServer({
-            id: meetingLiveId(meetingId),
-            kind: "meeting",
-            title: record?.title || meetingId,
-            folder,
-            dir: deps.liveDir,
-            control: new MeetingRecorderControl({
-                status: async () => liveStatus(),
-                stop: async (options) => {
-                    if (stopRequested) {
-                        throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is already stopping");
-                    }
+        const session = startRecording({
+            recorder: deps.recorder,
+            session: {
+                id: meetingLiveId(meetingId),
+                kind: "meeting",
+                title: record?.title || meetingId,
+                folder,
+                dir: deps.liveDir,
+                control: new MeetingRecorderControl({
+                    status: async () => liveStatus(),
+                    stop: async (options) => {
+                        if (stopRequested) {
+                            throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is already stopping");
+                        }
 
-                    requestStop();
-                    return options.wait === false ? { state: "stopping", job: finishJobId } : await stopped.promise;
-                },
-                listJobs: async () => jobs.list(),
-                getSettings: async () => ({ settings, audio: { ...audio, muted: { ...audio.muted } } }),
-                setSettings: async (patch) => {
-                    refuseWhenStopping();
-                    const before = settings;
-                    settings = recorderSettingsSchema.parse({
-                        ...settings,
-                        ...patch,
-                        ocr: { ...settings.ocr, ...patch.ocr },
-                    });
-                    const applied = await applyLive([
-                        settings.activeFps !== before.activeFps || settings.idleFps !== before.idleFps
-                            ? (one) => one.setRates?.(settings.activeFps, settings.idleFps)
-                            : undefined,
-                        settings.threshold !== before.threshold
-                            ? (one) => one.setThreshold?.(settings.threshold)
-                            : undefined,
-                        settings.maxLongSide !== before.maxLongSide
-                            ? (one) => one.setMaxLongSide?.(settings.maxLongSide)
-                            : undefined,
-                        // ax-tool has no live heartbeat command, so a change of it restarts the capture.
-                        settings.heartbeatSec !== before.heartbeatSec ? () => undefined : undefined,
-                    ]).catch((error: unknown) => {
-                        settings = before;
-                        abortAll();
-                        throw error;
-                    });
-                    log.info({ settings, applied }, "recorder settings changed over the socket");
-                    return { settings, audio, applied };
-                },
-                listAudioDevices: async () => {
-                    try {
-                        return await deps.recorder.audioDevices();
-                    } catch (error) {
-                        throw new RpcError(RPC_ERRORS.unsupported, errorText(error));
-                    }
-                },
-                muteAudio: async (source, muted) => {
-                    refuseWhenStopping();
-
-                    if (!audio.sources.includes(source)) {
-                        throw new RpcError(RPC_ERRORS.invalidParams, `this recording records no ${source} sound`);
-                    }
-
-                    const capture = [...running.values()].find((one) => one.audio);
-
-                    if (capture && !capture.live?.mute) {
-                        throw new RpcError(RPC_ERRORS.unsupported, "this recorder cannot mute while it records");
-                    }
-
-                    if (!muted && audio.muted[source]) {
-                        restart(() => {
-                            audio.muted[source] = false;
+                        requestStop();
+                        return options.wait === false ? { state: "stopping", job: finishJobId } : await stopped.promise;
+                    },
+                    listJobs: async () => jobs.list(),
+                    getSettings: async () => ({ settings, audio: { ...audio, muted: { ...audio.muted } } }),
+                    setSettings: async (patch) => {
+                        refuseWhenStopping();
+                        const before = settings;
+                        settings = recorderSettingsSchema.parse({
+                            ...settings,
+                            ...patch,
+                            ocr: { ...settings.ocr, ...patch.ocr },
                         });
-                        return { ...audio, muted: { ...audio.muted } };
-                    }
+                        const applied = await applyLive([
+                            settings.activeFps !== before.activeFps || settings.idleFps !== before.idleFps
+                                ? (one) => one.setRates?.(settings.activeFps, settings.idleFps)
+                                : undefined,
+                            settings.threshold !== before.threshold
+                                ? (one) => one.setThreshold?.(settings.threshold)
+                                : undefined,
+                            settings.maxLongSide !== before.maxLongSide
+                                ? (one) => one.setMaxLongSide?.(settings.maxLongSide)
+                                : undefined,
+                            // ax-tool has no live heartbeat command, so a change of it restarts the capture.
+                            settings.heartbeatSec !== before.heartbeatSec ? () => undefined : undefined,
+                        ]).catch((error: unknown) => {
+                            settings = before;
+                            abortAll();
+                            throw error;
+                        });
+                        log.info({ settings, applied }, "recorder settings changed over the socket");
+                        return { settings, audio, applied };
+                    },
+                    listAudioDevices: async () => {
+                        try {
+                            return await deps.recorder.audioDevices();
+                        } catch (error) {
+                            throw new RpcError(RPC_ERRORS.unsupported, errorText(error));
+                        }
+                    },
+                    muteAudio: async (source, muted) => {
+                        refuseWhenStopping();
 
-                    await capture?.live?.mute?.(source, muted).catch((error: unknown) => {
-                        throw new RpcError(RPC_ERRORS.internal, errorText(error));
-                    });
-                    audio.muted[source] = muted;
-                    log.info({ source, muted }, "audio muted over the socket");
-                    return { ...audio, muted: { ...audio.muted } };
-                },
-                setAudioInput: async (deviceId) => {
-                    refuseWhenStopping();
+                        if (!audio.sources.includes(source)) {
+                            throw new RpcError(RPC_ERRORS.invalidParams, `this recording records no ${source} sound`);
+                        }
 
-                    if (!audio.sources.includes("mic")) {
-                        throw new RpcError(RPC_ERRORS.invalidParams, "this recording records no microphone");
-                    }
+                        const capture = [...running.values()].find((one) => one.audio);
 
-                    const devices = await deps.recorder.audioDevices().catch((error: unknown) => {
-                        throw new RpcError(RPC_ERRORS.unsupported, errorText(error));
-                    });
+                        if (capture && !capture.live?.mute) {
+                            throw new RpcError(RPC_ERRORS.unsupported, "this recorder cannot mute while it records");
+                        }
 
-                    if (!devices.inputs.some((device) => device.id === deviceId)) {
-                        throw new RpcError(RPC_ERRORS.unknownDevice, `no input device ${deviceId}; see audio.list`);
-                    }
-
-                    const capture = [...running.values()].find((one) => one.audio);
-
-                    if (audio.muted.mic) {
-                        audio.micDevice = deviceId;
-                    } else if (capture?.live?.setMic) {
-                        await capture.live.setMic(deviceId).catch((error: unknown) => {
+                        if (!muted && audio.muted[source]) {
+                            restart(() => {
+                                audio.muted[source] = false;
+                            });
+                            return { ...audio, muted: { ...audio.muted } };
+                        }
+                        await capture?.live?.mute?.(source, muted).catch((error: unknown) => {
                             throw new RpcError(RPC_ERRORS.internal, errorText(error));
                         });
-                        audio.micDevice = deviceId;
-                    } else {
-                        restart(() => {
-                            audio.micDevice = deviceId;
-                        });
-                    }
+                        audio.muted[source] = muted;
+                        log.info({ source, muted }, "audio muted over the socket");
+                        return { ...audio, muted: { ...audio.muted } };
+                    },
+                    setAudioInput: async (deviceId) => {
+                        refuseWhenStopping();
 
-                    return { ...audio, muted: { ...audio.muted } };
-                },
-                pause: async () => {
-                    if (stopRequested) {
-                        throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is stopping");
-                    }
-
-                    if (paused) {
-                        throw new RpcError(RPC_ERRORS.alreadyPaused, "the recording is already paused");
-                    }
-
-                    paused = true;
-                    pausedAt = new Date().toISOString();
-                    const captures = [...running.values()];
-
-                    // A capture with a live channel pauses in place; any other ends its piece.
-                    if (captures.length > 0 && captures.every((one) => one.live)) {
-                        for (const one of captures) {
-                            one.live?.pause();
+                        if (!audio.sources.includes("mic")) {
+                            throw new RpcError(RPC_ERRORS.invalidParams, "this recording records no microphone");
                         }
-                    } else {
-                        abortAll();
-                    }
 
-                    markPaused();
-                    return { state: "paused" };
-                },
-                resume: async () => {
-                    if (!paused || stopRequested) {
-                        throw new RpcError(RPC_ERRORS.notPaused, "the recording is not paused");
-                    }
+                        const devices = await deps.recorder.audioDevices().catch((error: unknown) => {
+                            throw new RpcError(RPC_ERRORS.unsupported, errorText(error));
+                        });
 
-                    paused = false;
+                        if (!devices.inputs.some((device) => device.id === deviceId)) {
+                            throw new RpcError(RPC_ERRORS.unknownDevice, `no input device ${deviceId}; see audio.list`);
+                        }
 
-                    for (const one of running.values()) {
-                        one.live?.resume();
-                    }
+                        const capture = [...running.values()].find((one) => one.audio);
 
-                    markResumed();
-                    wake?.();
-                    return { state: "recording" };
-                },
-                listDisplays: async () => {
-                    const recordedIds = new Set(state.displays?.map((display) => display.id) ?? []);
-                    return (await deps.recorder.displays()).map((display) => ({
-                        ...display,
-                        recorded: recordedIds.has(display.id),
-                    }));
-                },
-                addDisplay: async (displayId) => {
-                    const display = await connected(displayId);
-                    refuseWhenStopping();
+                        if (audio.muted.mic) {
+                            audio.micDevice = deviceId;
+                        } else if (capture?.live?.setMic) {
+                            await capture.live.setMic(deviceId).catch((error: unknown) => {
+                                throw new RpcError(RPC_ERRORS.internal, errorText(error));
+                            });
+                            audio.micDevice = deviceId;
+                        } else {
+                            restart(() => {
+                                audio.micDevice = deviceId;
+                            });
+                        }
 
-                    if (!deps.recorder.supports.parallelCaptures) {
-                        throw new RpcError(
-                            RPC_ERRORS.invalidParams,
-                            `the ${deps.recorder.id} recorder records one display at a time; use displays.switch`
-                        );
-                    }
+                        return { ...audio, muted: { ...audio.muted } };
+                    },
+                    pause: async () => {
+                        if (stopRequested) {
+                            throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is stopping");
+                        }
 
-                    chosen = [...new Set([...currentIds(), display.id])];
+                        if (paused) {
+                            throw new RpcError(RPC_ERRORS.alreadyPaused, "the recording is already paused");
+                        }
 
-                    if (!inPiece || paused || running.has(display.id)) {
-                        return answer("next-piece");
-                    }
+                        paused = true;
+                        pausedAt = new Date().toISOString();
+                        const captures = [...running.values()];
 
-                    startCapture(targetOf(display));
-                    return answer("started");
-                },
-                removeDisplay: async (displayId) => {
-                    const current = currentIds();
+                        // A capture with a live channel pauses in place; any other ends its piece.
+                        if (captures.length > 0 && captures.every((one) => one.live)) {
+                            for (const one of captures) {
+                                one.live?.pause();
+                            }
+                        } else {
+                            abortAll();
+                        }
 
-                    if (!current.includes(displayId)) {
-                        throw new RpcError(RPC_ERRORS.unknownDisplay, `display ${displayId} is not being recorded`);
-                    }
+                        markPaused();
+                        return { state: "paused" };
+                    },
+                    resume: async () => {
+                        if (!paused || stopRequested) {
+                            throw new RpcError(RPC_ERRORS.notPaused, "the recording is not paused");
+                        }
 
-                    if (current.length === 1) {
-                        throw new RpcError(
-                            RPC_ERRORS.lastDisplay,
-                            "the last recorded display cannot be removed; pause or stop instead"
-                        );
-                    }
+                        paused = false;
 
-                    refuseWhenStopping();
-                    chosen = current.filter((id) => id !== displayId);
-                    const capture = running.get(displayId);
+                        for (const one of running.values()) {
+                            one.live?.resume();
+                        }
 
-                    if (!capture) {
-                        return answer("next-piece");
-                    }
+                        markResumed();
+                        wake?.();
+                        return { state: "recording" };
+                    },
+                    listDisplays: async () => {
+                        const recordedIds = new Set(state.displays?.map((display) => display.id) ?? []);
+                        return (await deps.recorder.displays()).map((display) => ({
+                            ...display,
+                            recorded: recordedIds.has(display.id),
+                        }));
+                    },
+                    addDisplay: async (displayId) => {
+                        const display = await connected(displayId);
+                        refuseWhenStopping();
 
-                    if (capture.audio) {
-                        return restart(() => undefined);
-                    }
-
-                    capture.controller.abort();
-                    return answer("stopped");
-                },
-                switchDisplay: async (displayId) => {
-                    const display = await connected(displayId);
-                    refuseWhenStopping();
-                    const [only, ...others] = [...running.values()];
-
-                    // One capture with a live channel moves its stream to the display without a restart.
-                    if (only?.live && others.length === 0 && only.target.target.kind === "display") {
-                        try {
-                            await only.live.switchDisplay(display.id);
-                        } catch (error) {
+                        if (!deps.recorder.supports.parallelCaptures) {
                             throw new RpcError(
-                                error instanceof CaptureError && error.kind === "display-missing"
-                                    ? RPC_ERRORS.unknownDisplay
-                                    : RPC_ERRORS.internal,
-                                errorText(error)
+                                RPC_ERRORS.invalidParams,
+                                `the ${deps.recorder.id} recorder records one display at a time; use displays.switch`
                             );
                         }
 
-                        if (running.get(only.target.displayId) !== only) {
-                            chosen = [display.id];
+                        chosen = [...new Set([...currentIds(), display.id])];
+
+                        if (!inPiece || paused || running.has(display.id)) {
                             return answer("next-piece");
                         }
-                        running.delete(only.target.displayId);
-                        only.target = targetOf(display);
-                        openDisplay(only, display.id);
-                        running.set(display.id, only);
-                        chosen = [display.id];
-                        syncDisplays();
-                        return answer("live");
-                    }
 
-                    return restart(() => {
-                        chosen = [display.id];
-                    });
-                },
-                setDisplayMode: async (mode) =>
-                    restart(() => {
-                        policy = mode;
-                        chosen = undefined;
-                        state.display = policy;
-                    }),
-            }),
+                        startCapture(targetOf(display));
+                        return answer("started");
+                    },
+                    removeDisplay: async (displayId) => {
+                        const current = currentIds();
+
+                        if (!current.includes(displayId)) {
+                            throw new RpcError(RPC_ERRORS.unknownDisplay, `display ${displayId} is not being recorded`);
+                        }
+
+                        if (current.length === 1) {
+                            throw new RpcError(
+                                RPC_ERRORS.lastDisplay,
+                                "the last recorded display cannot be removed; pause or stop instead"
+                            );
+                        }
+
+                        refuseWhenStopping();
+                        chosen = current.filter((id) => id !== displayId);
+                        const capture = running.get(displayId);
+
+                        if (!capture) {
+                            return answer("next-piece");
+                        }
+
+                        if (capture.audio) {
+                            return restart(() => undefined);
+                        }
+
+                        capture.controller.abort();
+                        return answer("stopped");
+                    },
+                    switchDisplay: async (displayId) => {
+                        const display = await connected(displayId);
+                        refuseWhenStopping();
+                        // The capture that records the sound moves: stopping it would leave the piece silent.
+                        const captures = [...running.values()];
+                        const only = captures.find((one) => one.audio) ?? captures[0];
+                        const others = captures.filter((one) => one !== only);
+
+                        if (only?.live && only.target.target.kind === "display") {
+                            try {
+                                await only.live.switchDisplay(display.id);
+                            } catch (error) {
+                                throw new RpcError(
+                                    error instanceof CaptureError && error.kind === "display-missing"
+                                        ? RPC_ERRORS.unknownDisplay
+                                        : RPC_ERRORS.internal,
+                                    errorText(error)
+                                );
+                            }
+
+                            if (running.get(only.target.displayId) !== only) {
+                                chosen = [display.id];
+                                return answer("next-piece");
+                            }
+                            for (const other of others) {
+                                other.controller.abort();
+                            }
+
+                            running.delete(only.target.displayId);
+                            only.target = targetOf(display);
+                            openDisplay(only, display.id);
+                            running.set(display.id, only);
+                            chosen = [display.id];
+                            syncDisplays();
+                            return answer("live");
+                        }
+
+                        return restart(() => {
+                            chosen = [display.id];
+                        });
+                    },
+                    setDisplayMode: async (mode) =>
+                        restart(() => {
+                            policy = mode;
+                            chosen = undefined;
+                            state.display = policy;
+                        }),
+                }),
+            },
         });
+        const live = session.live;
         const requestStop = () => {
             stopRequested = true;
             live.update({ state: "stopping" });
@@ -1042,6 +1053,7 @@ export async function runRecorder(options: {
             running.set(target.displayId, entry);
             openDisplay(entry, target.displayId);
             entry.controller.signal.addEventListener("abort", () => closeDisplay(entry), { once: true });
+            pendingCaptures.add(entry);
             pieceOutcome.count += 1;
             syncDisplays();
             const hooks: CaptureHooks = {
@@ -1066,7 +1078,7 @@ export async function runRecorder(options: {
                     }
                 },
             };
-            entry.done = deps.recorder
+            entry.done = session
                 .capture(
                     {
                         target: target.target,
@@ -1144,6 +1156,7 @@ export async function runRecorder(options: {
                         running.delete(entry.target.displayId);
                     }
 
+                    pendingCaptures.delete(entry);
                     rmSync(outDir, { recursive: true, force: true });
                 });
         };
@@ -1288,12 +1301,12 @@ export async function runRecorder(options: {
                 }
 
                 // A display added over the socket joins this piece, so wait until every capture has ended.
-                while (running.size > 0) {
-                    await Promise.race([...running.values()].map((one) => one.done));
+                while (pendingCaptures.size > 0) {
+                    await Promise.race([...pendingCaptures].map((one) => one.done));
                 }
             } catch (err) {
                 abortAll();
-                await Promise.allSettled([...running.values()].map((one) => one.done));
+                await Promise.allSettled([...pendingCaptures].map((one) => one.done));
                 throw err;
             } finally {
                 inPiece = false;
@@ -1331,14 +1344,7 @@ export async function runRecorder(options: {
                     delete current.recording.warning;
                 }
             );
-            const ready = await deps.recorder.available();
-
-            if (!ready.ok) {
-                throw new CaptureError(
-                    "unavailable",
-                    `the ${deps.recorder.id} recorder is not available: ${ready.reason}`
-                );
-            }
+            await session.ready();
 
             while (!stopRequested) {
                 if (paused) {
