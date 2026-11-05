@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
+import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import {
     applyOp,
     type EditOp,
@@ -335,16 +336,18 @@ export class EditSession {
             return;
         }
 
-        this.syncWithDisk();
+        withPathArbitrationSync(this.path, () => {
+            this.syncWithDisk();
 
-        if (this.unsaved.length === 0) {
-            return;
-        }
+            if (this.unsaved.length === 0) {
+                return;
+            }
 
-        this.diskText = saveAt(this.path, this.project);
-        writeUndoSteps(this.path, this.undoSteps);
-        this.unsaved = [];
-        log.debug({ path: this.path, revision: this.project.revision }, "edit session saved");
+            this.diskText = saveAt(this.path, this.project);
+            writeUndoSteps(this.path, this.undoSteps);
+            this.unsaved = [];
+            log.debug({ path: this.path, revision: this.project.revision }, "edit session saved");
+        });
     }
 
     /** Saves what waits and ends the session; later calls are refused, and so is work it accepted and did not finish. */
