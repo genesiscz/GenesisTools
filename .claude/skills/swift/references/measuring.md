@@ -79,8 +79,10 @@ its window starts at 1440×900, not the live hub's saved frame: pass `--width/--
 frames there. On 2026-11-05 a one-row slide of the 693-row Agents list (`hub.agents.publish 693 rows, 1 moved,
 animated`) cost 10 ms of main thread in eight bench steps, the same as the move landed in place. In the live hub the
 render after an animated publish cost 178 to 487 ms (40 refreshes), and after a plain publish of more than eight
-moved rows about 60 ms (60 refreshes). For an animation, read the live log: each `hub.agents.publish` line names the
-kind of refresh (`animated` or `plain`), and the `main busy` line after it is what that refresh cost on screen.
+moved rows about 60 ms (60 refreshes). For an animation, match the refresh's `hub.agents.publish` marker
+(`animated` or `plain`) to its `main busy` measurement named `agents.refresh.render`. A publish from `reorder()`
+has no refresh measurement; the next busy line may belong to another operation. The 600 ms measurement window
+can include unrelated work, so check overlapping spans before attributing its entire cost to the refresh.
 
 Two traps when reading a hub stall or a `main busy` line:
 - **Whose process?** Several processes write `app-perf.log` and none of its lines had a pid. A hang
