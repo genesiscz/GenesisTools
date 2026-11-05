@@ -721,7 +721,6 @@ async function advanceFolder(
     return "folder asked";
 }
 
-/** Meeting ids carry their local start (`2026-11-04_15-08-…`): the folders that started after `since`. */
 /** Whether a question or a folder step still waits on some meeting: the watcher must run to read it back. */
 export function hasOpenAssignSteps(store: MeetingStore): boolean {
     return Object.keys(readState(store).open).length > 0;
@@ -784,6 +783,7 @@ export async function askAtMeetingEnd(
     }
 }
 
+/** Meeting ids carry their local start (`2026-11-04_15-08-…`): the folders that started after `since`. */
 export function recentMeetingIds(store: MeetingStore, since: number): string[] {
     if (!existsSync(store.root)) {
         return [];
