@@ -464,56 +464,23 @@ private func jsonLine(_ object: [String: Any]) -> String {
 /// `--still <edit> --at <seconds> --out <png>`: one frame of the edited movie as it exports (zoom, clicks, frame
 /// style), for an agent to look at without a window.
 private func runHeadlessStill(source: String, atSeconds: Double, out: String?, full: Bool) -> Never {
-    MainActor.assumeIsolated {
-        _ = NSApplication.shared
-        NSApp.setActivationPolicy(.prohibited)
-        Task {
-            do {
-                let (_, project) = try await ProjectStore.open(path: source)
-                let zoom = ZoomState(project: project, cursor: CursorTrack.load(project.source.cursor))
-                let at = Int64((atSeconds * 1_000_000).rounded())
-                let image = try await stillFrame(project: project, atOutput: at, zoom: zoom, maxHeight: full ? project.export.maxHeight : 1080)
-                let url = URL(fileURLWithPath: out ?? NSTemporaryDirectory() + "recorder-still-\(UUID().uuidString.prefix(8)).png")
-                let rep = NSBitmapImageRep(cgImage: image)
-                guard let png = rep.representation(using: .png, properties: [:]) else {
-                    throw NSError(domain: "recorder", code: 70, userInfo: [NSLocalizedDescriptionKey: "the frame could not be encoded"])
-                }
-                try png.write(to: url)
-                FileHandle.standardOutput.write(Data(jsonLine(["ok": true, "path": url.path, "width": image.width, "height": image.height,
-                                                               "atSeconds": atSeconds]).utf8))
-                exit(0)
-            } catch {
-                FileHandle.standardOutput.write(Data(jsonLine(["ok": false, "error": explained(error)]).utf8))
-                exit(1)
-            }
-        }
-        NSApp.run()
-    }
-    exit(0)
+    runHeadlessJSON { try await RecorderRenders.still(source: source, atSeconds: atSeconds, out: out, full: full) }
 }
 
 /// Frames of the edit as it exports, on one picture in rows of three, each labelled with its output time: one look
 /// at a whole edit for an agent. The movie is built once and every frame comes from the same generator.
 private func runHeadlessSheet(source: String, times: [Double], out: String?) -> Never {
+    runHeadlessJSON { try await RecorderRenders.sheet(source: source, times: times, out: out) }
+}
+
+/// Runs one render with no window, prints its answer (or `{ ok: false, error }`) as one JSON line, and exits.
+private func runHeadlessJSON(_ render: @escaping () async throws -> [String: Any]) -> Never {
     MainActor.assumeIsolated {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
         Task {
             do {
-                guard !times.isEmpty else {
-                    throw NSError(domain: "recorder", code: 64, userInfo: [NSLocalizedDescriptionKey: "--sheet needs --times with at least one time"])
-                }
-                let (_, project) = try await ProjectStore.open(path: source)
-                let zoom = ZoomState(project: project, cursor: CursorTrack.load(project.source.cursor))
-                let frames = try await stillFrames(project: project, atOutput: times.map { Int64(($0 * 1_000_000).rounded()) }, zoom: zoom)
-                let sheet = ContactSheet.draw(frames: zip(times, frames).map { ($0, $1) })
-                let url = URL(fileURLWithPath: out ?? NSTemporaryDirectory() + "recorder-sheet-\(UUID().uuidString.prefix(8)).png")
-                guard let png = NSBitmapImageRep(cgImage: sheet).representation(using: .png, properties: [:]) else {
-                    throw NSError(domain: "recorder", code: 70, userInfo: [NSLocalizedDescriptionKey: "the sheet could not be encoded"])
-                }
-                try png.write(to: url)
-                FileHandle.standardOutput.write(Data(jsonLine(["ok": true, "path": url.path, "width": sheet.width, "height": sheet.height,
-                                                               "times": times]).utf8))
+                FileHandle.standardOutput.write(Data(jsonLine(try await render()).utf8))
                 exit(0)
             } catch {
                 FileHandle.standardOutput.write(Data(jsonLine(["ok": false, "error": explained(error)]).utf8))
@@ -575,11 +542,8 @@ private func runHeadlessExport(source: String, out: String?, json: Bool) -> Neve
         NSApp.setActivationPolicy(.prohibited)
         Task {
             do {
-                var (_, project) = try await ProjectStore.open(path: source)
-                if let out { project.export.output = out }
-                let url = EditExporter.outputURL(for: project)
                 var lastTenth = -1
-                let result = try await EditExporter.export(project: project, to: url) { progress in
+                let result = try await RecorderRenders.export(source: source, out: out) { progress in
                     let tenth = Int(progress * 10)
                     if tenth != lastTenth, !json {
                         lastTenth = tenth
@@ -587,7 +551,7 @@ private func runHeadlessExport(source: String, out: String?, json: Bool) -> Neve
                     }
                 }
                 let line = json
-                    ? jsonLine(["ok": true, "path": result.url.path, "bytes": result.bytes, "seconds": (result.seconds * 100).rounded() / 100])
+                    ? jsonLine(RecorderRenders.exportAnswer(result))
                     : "\(result.url.path) (\(ByteFormat.file(result.bytes)), \(String(format: "%.1f", result.seconds)) s)\n"
                 FileHandle.standardOutput.write(Data(line.utf8))
                 exit(0)
@@ -603,86 +567,15 @@ private func runHeadlessExport(source: String, out: String?, json: Bool) -> Neve
     exit(0)
 }
 
-@MainActor
-private func snapshotLibrary(_ request: RecorderRequest, to path: String) async throws {
-    let model = LibraryModel()
-    model.load()
-    for _ in 0..<100 where !model.loaded {
-        try await Task.sleep(for: .milliseconds(100))
-    }
-    if let filter = request.filter {
-        model.filter = filter
-        // The spoken search waits 300 ms after the last key, then runs `tools recorder search` (about 0.4 s).
-        for _ in 0..<40 where model.spoken.isEmpty {
-            try await Task.sleep(for: .milliseconds(100))
-        }
-    }
-    let window = LibraryWindow.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
-    window.orderInForSnapshot()
-    try await Task.sleep(for: .milliseconds(600))
-    guard let capture = await WindowSnapshot.capture(window),
-          let png = capture.image.representation(using: .png, properties: [:]) else {
-        throw NSError(domain: "recorder", code: 70, userInfo: [NSLocalizedDescriptionKey: "the window could not be drawn"])
-    }
-    try png.write(to: URL(fileURLWithPath: path))
-    FileHandle.standardError.write(Data("recorder snapshot: \(path) by \(capture.method) (\(model.items.count) recordings)\n".utf8))
-}
-
 private func runSnapshot(_ request: RecorderRequest, to path: String) -> Never {
     MainActor.assumeIsolated {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
         Task {
             do {
-                if request.library {
-                    try await snapshotLibrary(request, to: path)
-                    exit(0)
-                }
-                if request.picker {
-                    try await CapturePicker.snapshot(to: path, shortcutsOpen: request.shortcuts)
-                    exit(0)
-                }
-                guard let edit = request.edit else { throw NSError(domain: "recorder", code: 64, userInfo: [NSLocalizedDescriptionKey: "--snapshot needs --edit <path> or --library"]) }
-                let (store, project) = try await ProjectStore.open(path: edit)
-                let model = EditorModel(project: project, store: store)
-                if let tab = request.tab { model.tab = tab }
-                if let n = request.selectZoom, project.zooms.indices.contains(n) { model.selection = .zoom(project.zooms[n].id); model.tab = .zoom }
-                if let n = request.selectClip, project.clips.indices.contains(n) { model.selection = .clip(project.clips[n].id); model.tab = .clip }
-                if let part = request.part {
-                    model.partInUs = Int64(part.from * 1_000_000)
-                    model.partOutUs = Int64(part.to * 1_000_000)
-                }
-                if let range = request.range {
-                    model.timelineRange = TimelineRange(fromUs: Int64(range.from * 1_000_000), toUs: Int64(range.to * 1_000_000))
-                }
-                if let n = request.comment, model.reviewComments.indices.contains(n) { model.openComment = model.reviewComments[n].id }
-                let at = Int64(((request.atSeconds ?? 0) * 1_000_000).rounded())
-                // The filmstrip and the waveform load in the background; give them up to 8 s.
-                for _ in 0..<80 where model.filmstrip.tiles.isEmpty {
-                    try await Task.sleep(for: .milliseconds(100))
-                }
-                try await Task.sleep(for: .milliseconds(300))
-                // The Export tab lists what `tools recorder check` finds; wait up to 4 s for its answer.
-                if model.tab == .export {
-                    model.refreshIssues()
-                    for _ in 0..<40 where model.issuesRevision != model.project.revision {
-                        try await Task.sleep(for: .milliseconds(100))
-                    }
-                }
-                // After the player item landed, which resets the clock to its own start.
-                model.seek(at)
-                let still = try await stillFrame(project: project, atOutput: at, zoom: model.zoom)
-                let window = EditorWindows.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
-                window.contentView = NSHostingView(rootView: EditorView(model: model, stillPreview: still))
-                window.orderInForSnapshot()
-                try await Task.sleep(for: .milliseconds(500))
-                guard let capture = await WindowSnapshot.capture(window),
-                      let png = capture.image.representation(using: .png, properties: [:]) else {
-                    throw NSError(domain: "recorder", code: 70, userInfo: [NSLocalizedDescriptionKey: "the window could not be drawn"])
-                }
-                try png.write(to: URL(fileURLWithPath: path))
-                model.close()
-                FileHandle.standardError.write(Data("recorder snapshot: \(path) by \(capture.method)\n".utf8))
+                let method = try await RecorderRenders.snapshot(request, to: path)
+                // The picker's own snapshot prints its line.
+                if !request.picker { FileHandle.standardError.write(Data("recorder snapshot: \(path) by \(method)\n".utf8)) }
                 exit(0)
             } catch {
                 FileHandle.standardError.write(Data("recorder snapshot failed: \(error.localizedDescription)\n".utf8))
@@ -694,8 +587,8 @@ private func runSnapshot(_ request: RecorderRequest, to path: String) -> Never {
     exit(0)
 }
 
-/// Several frames of the edit as the export draws them, from one build of the movie.
-@MainActor
+/// Several frames of the edit as the export draws them, from one build of the movie. Nonisolated: the build and the
+/// decode run off the main actor (`RecorderRenders`).
 func stillFrames(project: EditProject, atOutput times: [Int64], zoom: ZoomState) async throws -> [CGImage] {
     let asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
     let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: 1080)
@@ -710,8 +603,7 @@ func stillFrames(project: EditProject, atOutput times: [Int64], zoom: ZoomState)
     return images
 }
 
-/// One frame of the edit as the export draws it, for the snapshot's preview.
-@MainActor
+/// One frame of the edit as the export draws it, for the snapshot's preview. Nonisolated, as `stillFrames`.
 func stillFrame(project: EditProject, atOutput outUs: Int64, zoom: ZoomState, maxHeight: Int = 1080) async throws -> CGImage {
     let asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
     let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: maxHeight)
