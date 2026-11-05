@@ -30,8 +30,9 @@ export function inQuietHours(quiet: { from: string; to: string }, now: Date): bo
 }
 
 /**
- * Why the phone holds this alert, or null to send it. Quiet hours hold it unless it is time-sensitive; desk mode
- * `away` holds it while the Mac is in use. The presence is read only when desk mode needs it.
+ * Why the phone skips this alert, or null to send it. Quiet hours skip it unless it is time-sensitive; desk mode
+ * `away` skips it while the Mac is in use. A skipped alert is not queued for later. The presence is read only when
+ * desk mode needs it.
  */
 export async function phoneHold({
     event,
