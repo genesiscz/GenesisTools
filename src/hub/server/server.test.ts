@@ -737,6 +737,18 @@ describe("SessionRowsRunner", () => {
         }
     });
 
+    it("a stale read only answer starts no discarded background rebuild", async () => {
+        const { workers, createWorker } = fakeWorkers();
+        const runner = new SessionRowsRunner({ createWorker, cached: async () => ({ text: "cached\n", stale: true }) });
+        try {
+            expect(await runner.run({ ...job, cacheWrite: false })).toBe("cached\n");
+            await settle();
+            expect(workers).toHaveLength(0);
+        } finally {
+            runner.stop();
+        }
+    });
+
     it("NEGATIVE CONTROL: a fresh ask never takes the cache, and a miss rebuilds in the request", async () => {
         const { workers, createWorker } = fakeWorkers();
         const asked: SessionRowsJob[] = [];
