@@ -87,7 +87,8 @@ final class ProjectStore {
     /// Watches the edit file; an atomic replace ends the watch, so each event starts a new one.
     func watch() {
         source?.cancel()
-        let descriptor = Darwin.open(url.path, O_EVTONLY)
+        let watched = FileManager.default.fileExists(atPath: url.path) ? url : url.deletingLastPathComponent()
+        let descriptor = Darwin.open(watched.path, O_EVTONLY)
         guard descriptor >= 0 else { return }
         let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .rename, .delete], queue: .main)
         source.setEventHandler { [weak self] in
