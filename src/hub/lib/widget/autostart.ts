@@ -18,7 +18,7 @@ export interface WidgetAutostartDeps {
     /** The installed build links the widget part (a build can leave it out: `--parts`). */
     widgetBuilt: () => boolean;
     widgetRunning: () => boolean;
-    launch: (argv: string[]) => void;
+    launch: (argv: string[]) => unknown;
 }
 
 export type WidgetAutostartResult = "started" | "running" | "hidden" | "no-app" | "not-built" | "not-macos";
@@ -32,8 +32,11 @@ const defaultDeps: WidgetAutostartDeps = {
     },
     widgetBuilt: () => installedParts(readManifest()).includes("widget"),
     widgetRunning: () => findProcesses({ command: WIDGET_PROCESS }).length > 0,
-    launch: (argv) => {
-        Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
+    launch: async (argv) => {
+        const code = await Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exited;
+        if (code !== 0) {
+            throw new Error(`Widget launch failed with exit ${code}`);
+        }
     },
 };
 
@@ -68,7 +71,7 @@ export async function ensureWidgetRunning(deps: Partial<WidgetAutostartDeps> = {
         return "running";
     }
 
-    d.launch(["open", "-n", "-g", bundle, "--args", "--widget", "--ensure-running", "--no-activate"]);
+    await d.launch(["open", "-n", "-g", bundle, "--args", "--widget", "--ensure-running", "--no-activate"]);
     log.info({ bundle }, "widget was not running though shown: started it");
 
     return "started";
