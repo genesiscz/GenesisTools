@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { foldText, imageSize } from "@genesiscz/utils/macos/ocr-boxes";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
