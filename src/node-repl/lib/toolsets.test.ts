@@ -880,6 +880,42 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         );
     });
 
+    test("movies: a MovieRecording reads and changes the settings of a real library recording's control over its socket", async () => {
+        const { MovieRecording } = await import("@app/recorder/lib/toolset");
+        const root = mkdtempSync(join(tmpdir(), "gt-movie-settings-"));
+        const recorder = new FakeRecorder();
+        const recording = await startRecording({
+            recorder,
+            folder: join(root, "rec"),
+            ocr: { enabled: true, minChars: 4 },
+            pieceSec: 30,
+        });
+
+        try {
+            const movie = new MovieRecording(readLiveRecording(recording.id)!);
+            expect(await movie.settings()).toMatchObject({
+                settings: { activeFps: 2, threshold: 1, ocr: { enabled: true, minChars: 4 } },
+                audio: { sources: [] },
+            });
+            // The fake capture changes its rates live but has no live threshold, so every capture restarts.
+            expect(await movie.setSettings({ threshold: 7.5, fps: 6, ocr: { enabled: false } })).toMatchObject({
+                applied: "restart",
+                settings: { activeFps: 6, threshold: 7.5, ocr: { enabled: false, minChars: 4 } },
+            });
+            const deadline = Date.now() + 3_000;
+
+            while (!recorder.calls.includes("capture 1 fps 6") && Date.now() < deadline) {
+                await Bun.sleep(20);
+            }
+
+            expect(recorder.calls).toContain("capture 1 fps 6");
+            expect(await movie.settings()).toMatchObject({ settings: { activeFps: 6, threshold: 7.5 } });
+            await expect(movie.setSettings({ threshold: 120 })).rejects.toThrow();
+        } finally {
+            await recording.stop();
+        }
+    });
+
     test("meetings: an opened meeting reads and changes the settings of its live recording, and says so when it is not recording", async () => {
         const store = new MeetingStore();
         const record = await store.create(
