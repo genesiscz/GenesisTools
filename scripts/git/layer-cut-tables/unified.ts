@@ -20,11 +20,14 @@ function partRegistration(drop: "recorder" | "meetings"): DerivedFile[] {
         // does not link it.
         { file: `${APP}/Sources/GenesisTools/Parts.swift`, edits: [] },
         // Unified's AppParts.swift reads the AppFaces table, a refactor of the leftovers branch: start from the base
-        // and add this branch's face.
+        // and add this branch's face. `isLinked` is package-visible, as on unified: the meetings window asks it.
         {
             file: `${APP}/Sources/Host/AppParts.swift`,
             from: "base",
-            edits: [[/\n( {8})"--markdown": "markdown",/, `\n$1"--markdown": "markdown",\n$1"--${keep}": "${keep}",`]],
+            edits: [
+                [/\n( {8})"--markdown": "markdown",/, `\n$1"--markdown": "markdown",\n$1"--${keep}": "${keep}",`],
+                [/\n {4}static func isLinked\(/, "\n    package static func isLinked("],
+            ],
         },
         {
             file: "src/macos/lib/permissions/parts.ts",
@@ -66,6 +69,39 @@ const CUT: readonly CutBranch[] = [
             "src/json2md/**",
             "src/chrome-devtools/lib/recorder*",
             "plugins/genesis-tools/skills/macos-control/**",
+        ],
+        // The descriptor's RPC table and the pid claim are `(api-descriptor)` and `(process)` commits, outside the
+        // selection, and this layer's own files import them.
+        // The OCR region reads need darwinkit 0.8.1 (a `(tools)` commit), so the manifest is swept here and the lock,
+        // which selected commits of later layers also touch, stays with it.
+        // The network recorder claims its pid through this layer's claimPidFile (a `(chrome-devtools)` commit).
+        sweep: [
+            "src/utils/api-descriptor/**",
+            "src/utils/process/pidfile.ts",
+            "package.json",
+            "src/chrome-devtools/lib/recorder.ts",
+        ],
+        // The cut's own test runs need the wrapper's isolated install policy (the same change as the layer-cut PR);
+        // a meetings commit also touched the wrapper, so without this it would land in the last layer.
+        stays: ["bun.lock", "scripts/test.ts"],
+        // The api-descriptor of this layer checks REPL arguments by their schema, so the base's toolsets test (an
+        // object passed to meetings.open, the old speed message) fails from here on. It takes the two assertions
+        // unified has; the full unified test lands with the service layer.
+        derived: [
+            {
+                file: "src/node-repl/lib/toolsets.test.ts",
+                from: "base",
+                edits: [
+                    [
+                        /toThrow\("editor\.Clip\.speed\(factor: number\)"\)/g,
+                        'toThrow("editor.Clip.speed(factor: number")',
+                    ],
+                    [
+                        /meetings\.open\(\{ ref: \$\{SafeJSON\.stringify\(created\.id\)\} \}\)/,
+                        "meetings.open(${SafeJSON.stringify(created.id)})",
+                    ],
+                ],
+            },
         ],
     },
     {
@@ -109,6 +145,10 @@ const CUT: readonly CutBranch[] = [
         ],
         // GLOSSARY.md's new entries are the recorder's words.
         stays: ["GLOSSARY.md"],
+        // Derived in capture-core as the base test plus two assertions; here it is unified's whole.
+        derived: [{ file: "src/node-repl/lib/toolsets.test.ts", edits: [] }],
+        // The tracer moves XAIClient.ts here (the transcription provider needs it); its test comes with it.
+        sweep: ["src/utils/ai/providers/xai/XAIClient.test.ts"],
     },
     {
         name: "feat/2026-11-05-recorder-editor-swift",
@@ -186,6 +226,10 @@ const CUT: readonly CutBranch[] = [
             `${KIT}/Tests/GenesisKitTests/GateAuditTests.swift`,
             "src/macos/lib/permissions/**",
             "scripts/native/**",
+            // The test of verified-tls.ts, which the tracer moves into this layer, and the writer the recording
+            // sandbox (in this layer) starts.
+            "src/utils/net/verified-tls.test.ts",
+            "scripts/fixtures/recording-sandbox-writer.ts",
         ],
         // This branch merges after both app parts, so its registration is unified's, meetings part included
         // (relaunch.test.ts knows the meetings face). Package.swift stays the recorder branch's: an unlinked part's face
@@ -194,6 +238,18 @@ const CUT: readonly CutBranch[] = [
             { file: `${APP}/Sources/Host/AppParts.swift`, edits: [] },
             { file: `${APP}/Sources/Host/AppFaces+Declared.swift`, edits: [] },
             { file: "src/macos/lib/permissions/parts.ts", edits: [] },
+            // verified-tls.ts (ApiClient's and Clarity's verified fetch) reads one getter; the rest of unified's env
+            // file belongs to open PRs, so the base form gains only that getter.
+            {
+                file: "src/utils/env/envVariables.ts",
+                from: "base",
+                edits: [
+                    [
+                        /(\n {4}node: \{\n {8}\.\.\.envClient\.node,\n)/,
+                        '$1        /** `NODE_EXTRA_CA_CERTS`: a PEM file that Bun and Node trust on top of their bundled roots. */\n        getExtraCaCerts: () => getTrimmed("NODE_EXTRA_CA_CERTS"),\n',
+                    ],
+                ],
+            },
         ],
         swift: true,
     },
@@ -203,7 +259,12 @@ const CUT: readonly CutBranch[] = [
  * Files the cut leaves at their base form on purpose, with the reason. For a dependency the import tracer cannot see
  * (Swift) on code another open PR holds. A TypeScript file never needs an entry: the tracer keeps it at base itself.
  */
-const KEEP_AT_BASE: Record<string, string> = {};
+const KEEP_AT_BASE: Record<string, string> = {
+    "src/question/lib/decisions/store.test.ts":
+        "it tests store.ts, which stays at the base: its unified form needs the agent identity module of PR #724",
+    "src/question/lib/decisions/option-labels.ts":
+        "another session's question feature (prompt options, 2026-11-05 18:42); its test is in store.test.ts",
+};
 
 export default {
     branches: CUT,
