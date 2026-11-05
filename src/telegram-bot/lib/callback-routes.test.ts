@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ActDeps } from "@app/question/lib/act/act";
 import { memoryActTokenStore } from "@app/question/lib/act/tokens";
 import type { DecisionRecord } from "@app/question/lib/decisions/store";
@@ -8,6 +8,8 @@ import {
     retractDecisionTelegramMessages,
 } from "@app/question/lib/decisions/telegram";
 import type { AnswerDecisionInput } from "@app/question/lib/inbox/answer";
+import { setNoticeDeps } from "@app/question/lib/notices/notices";
+import { memoryNoticeStore } from "@app/question/lib/notices/store";
 import { FakeTelegramMessagesApi } from "@genesiscz/utils/telegram-bot/lib/fake-messages-api";
 import type { TelegramBotConfig } from "@genesiscz/utils/telegram-bot/lib/types";
 import { decisionPressHandler } from "./callback-routes";
@@ -15,6 +17,17 @@ import { answerPress, createCallbackRouter } from "./callbacks";
 
 const CHAT = 7001;
 const NOW = Date.parse("2026-11-03T10:00:00Z");
+
+// Telegram delivery goes through postNotice, which posts nothing in a test process without notice deps.
+beforeEach(() => {
+    setNoticeDeps({
+        store: memoryNoticeStore(),
+        dispatch: async () => true,
+        retract: async () => true,
+        now: () => NOW,
+    });
+});
+afterEach(() => setNoticeDeps(undefined));
 
 const bot: TelegramBotConfig = {
     botToken: "100:fake-token-for-tests",
