@@ -322,6 +322,31 @@ describe("writes", () => {
 });
 
 describe("search", () => {
+    test("the limit applies separately to suite and case hits", async () => {
+        const transport = new FakeTransport([
+            ["GET /testplan/plans/10", () => PLAN],
+            [
+                "GET /testplan/Plans/10/suites",
+                () => ({
+                    value: [
+                        { id: 12, name: "Cart one", plan: PLAN },
+                        { id: 13, name: "Cart two", plan: PLAN },
+                    ],
+                }),
+            ],
+            ["POST /wit/wiql", () => ({ workItems: [{ id: 20 }] })],
+            ["GET /wit/workitems?", () => ({ value: [{ id: 20, fields: { "System.Title": "Cart case" } }] })],
+        ]);
+        const hits = await new TestPlans(transport, CONFIG).search("cart", {
+            kinds: ["suite", "case"],
+            planId: 10,
+            top: 1,
+        });
+        expect(hits.map((hit) => [hit.kind, hit.id])).toEqual([
+            ["suite", 12],
+            ["case", 20],
+        ]);
+    });
     test("finds suites by name with their path below the root, and skips the root suite", async () => {
         const transport = new FakeTransport([
             ["GET /testplan/plans/10", () => PLAN],

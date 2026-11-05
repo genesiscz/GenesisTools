@@ -398,7 +398,8 @@ export class TestPlans {
             }
         }
 
-        return hits.slice(0, Math.max(top, 1) * kinds.size);
+        const counts: Record<SearchKind, number> = { plan: 0, suite: 0, case: 0 };
+        return hits.filter((hit) => ++counts[hit.kind] <= Math.max(top, 1));
     }
 
     // ============= Writes (dry run unless confirm) =============
