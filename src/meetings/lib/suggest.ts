@@ -1024,6 +1024,33 @@ function evidenceItems(options: {
         byLabel.set(line.label, [...(byLabel.get(line.label) ?? []), line]);
     }
 
+    const platformLines = lines
+        .filter((line) => platformLabels.has(line.label))
+        .sort((a, b) => a.startSec - b.startSec);
+    const nearbyLabels = (line: LineEvidence): string[] => {
+        let low = 0;
+        let high = platformLines.length;
+        while (low < high) {
+            const mid = Math.floor((low + high) / 2);
+            if (platformLines[mid].startSec < line.startSec - OWN_LABEL_SEC) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        const labels = new Set<string>();
+        for (let index = low; index < platformLines.length; index += 1) {
+            const near = platformLines[index];
+            if (near.startSec > line.startSec + OWN_LABEL_SEC) {
+                break;
+            }
+            if (near.label !== line.label) {
+                labels.add(near.label);
+            }
+        }
+        return [...labels];
+    };
+
     for (const [label, labelLines] of byLabel) {
         const isSelfLabel = sameName(label, selfName);
 
@@ -1033,18 +1060,7 @@ function evidenceItems(options: {
                 selfName,
                 isSelfLabel,
                 platformLabel: platformLabels.has(label),
-                ownLabelNearby: [
-                    ...new Set(
-                        lines
-                            .filter(
-                                (near) =>
-                                    near.label !== label &&
-                                    platformLabels.has(near.label) &&
-                                    Math.abs(near.startSec - line.startSec) <= OWN_LABEL_SEC
-                            )
-                            .map((near) => near.label)
-                    ),
-                ],
+                ownLabelNearby: nearbyLabels(line),
             });
             const finding = localVoiceFinding({
                 line,
