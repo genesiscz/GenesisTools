@@ -3,12 +3,18 @@ import { abortableSleep } from "@genesiscz/utils/async";
 import { type JobInfo, JobRegistry, type JobStep } from "@genesiscz/utils/jobs";
 import { logger } from "@genesiscz/utils/logger";
 import {
+    type AudioDevices,
+    type AudioSource,
+    type AudioState,
     RecorderControl,
     type RecorderMethod,
+    type RecorderSettings,
+    type RecorderSettingsPatch,
     type RecorderState,
     type RecorderStatus,
     RPC_ERRORS,
     RpcError,
+    type SettingsAnswer,
     type StopAnswer,
 } from "./control";
 import { DisplayBook, type DisplayInterval } from "./display-book";
@@ -20,11 +26,17 @@ import {
     type PieceCapturesOptions,
     type PieceOutcome,
     type SessionCapture,
+    type SettingsChange,
+    type SettingsScope,
 } from "./session";
 import type { PieceTarget } from "./targets";
 import { CaptureError, type CaptureRequest, type FrameRecorder, MAX_CAPTURE_SECONDS } from "./types";
 
 const { log } = logger.scoped("screen-recorder-recording");
+
+function errorText(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
 
 /**
  * One recording of a frame recorder, run the same way for every kind (the meetings recorder, the library recording):
@@ -93,8 +105,24 @@ export interface PieceFailureRule {
     recorded?(): Promise<void>;
 }
 
-/** The settings of a capture that starts now, all but its length (the core gives each piece its length). */
-export type PieceRequest = Omit<CaptureRequest, "target" | "outDir" | "hooks" | "audio" | "durationSec">;
+/** The keys of a capture request a kind adds beside the shared settings (its recorder's own). */
+export type PieceRequestExtras = Partial<Omit<CaptureRequest, "target" | "outDir" | "hooks" | "audio" | "durationSec">>;
+
+/** How the live calls of a kind answer where the recorders differ. */
+export interface RecorderControlsConfig {
+    /**
+     * `refused`: once it stops, a second stop and every change are refused. `answered`: a second stop answers with the
+     * same finish, and a change still applies.
+     */
+    whileStopping: "refused" | "answered";
+    /** The error code a sound call answers for a source (or the microphone) this recording does not record. */
+    unrecordedSource: number;
+    settings: {
+        scope: SettingsScope;
+        /** Which live commands a change needs: `settingsChange` (by value) or `patchChange` (by the keys given). */
+        change: (before: RecorderSettings, after: RecorderSettings, patch: RecorderSettingsPatch) => SettingsChange;
+    };
+}
 
 export interface RecorderHooks {
     /** Before the first piece, once the socket listens; a throw ends the recording (`onError`). */
@@ -160,6 +188,10 @@ export interface RecorderConfig<S> {
     };
     /** What an earlier run of the same recording saw: its display intervals and the names of its displays. */
     history?: { intervals?: readonly DisplayInterval[]; names?: Iterable<[number, string]> };
+    /** What the captures and the OCR use at the start; `settings.set` changes it while the recording runs. */
+    settings: RecorderSettings;
+    /** The sound it records; a recorder without sound records none. */
+    audio: AudioState;
     pieces: {
         dir: string;
         /** The length of one piece; at most `MAX_CAPTURE_SECONDS`. */
@@ -167,17 +199,13 @@ export interface RecorderConfig<S> {
         /** The recording ends by itself this long after its start; without it, it runs until a stop. */
         maxMs?: number;
         audioOwnership: AudioOwnership;
-        request: (target: PieceTarget) => PieceRequest;
-        audio: PieceCapturesOptions["audio"];
+        /** The recorder's own keys of a capture that starts now (read at its start). */
+        request?: (settings: RecorderSettings) => PieceRequestExtras;
         /** The captures of the next piece; a throw is the piece's error. */
         targets: () => Promise<PieceTarget[]> | PieceTarget[];
         failures: PieceFailureRule;
     };
-    /**
-     * `refused`: once it stops, a second stop and every change are refused. `answered`: a second stop answers with the
-     * same finish.
-     */
-    whileStopping: "refused" | "answered";
+    controls: RecorderControlsConfig;
     hooks: RecorderHooks;
     finish: RecorderFinishConfig<S>;
 }
@@ -207,6 +235,8 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     private readonly finishJob: string;
     private readonly answered = Promise.withResolvers<StopAnswer>();
     private readonly completed = Promise.withResolvers<StopAnswer>();
+    private current: RecorderSettings;
+    private sound: AudioState;
 
     constructor(protected readonly config: RecorderConfig<S>) {
         super();
@@ -220,13 +250,29 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         );
         void this.answered.promise.catch(() => undefined);
         this.pieceSec = this.pieceLength();
+        this.current = config.settings;
+        this.sound = config.audio;
         this.displayBook = new DisplayBook(config.history);
         const kind = config.hooks.captures;
         this.captures = new PieceCaptures({
             capture: (request, signal) => this.managed().capture(request, signal),
             pieceDir: config.pieces.dir,
-            request: (target) => ({ ...config.pieces.request(target), durationSec: this.pieceSec }),
-            audio: config.pieces.audio,
+            request: () => ({
+                activeFps: this.current.activeFps,
+                idleFps: this.current.idleFps,
+                thresholdPercent: this.current.threshold,
+                maxLongSidePx: this.current.maxLongSide,
+                ...config.pieces.request?.(this.current),
+                durationSec: this.pieceSec,
+            }),
+            // A muted source is left out of a new capture, so its start-up buffers never reach the file; unmuting
+            // restarts the captures with it.
+            audio: () => {
+                const sources = this.sound.sources.filter((source) => !this.sound.muted[source]);
+                return config.recorder.supports.audio && sources.length > 0
+                    ? { sources, ...(this.sound.micDevice ? { micDeviceId: this.sound.micDevice } : {}) }
+                    : undefined;
+            },
             audioOwnership: config.pieces.audioOwnership,
             hooks: {
                 // The displays first: opening the interval saves the kind's state, which then names every display.
@@ -319,6 +365,21 @@ export class FrameRecording<S = unknown> extends RecorderControl {
         return this.phase;
     }
 
+    /** What the captures and the OCR use now. */
+    get settings(): RecorderSettings {
+        return this.current;
+    }
+
+    /** The sound it records now (a copy). */
+    get audio(): AudioState {
+        return { ...this.sound, muted: { ...this.sound.muted } };
+    }
+
+    /** A recorder that turned out to have no sound: the recording records frames only. */
+    protected recordNoSound(): void {
+        this.sound = { ...this.sound, sources: [] };
+    }
+
     /** The running captures, by the display each records. */
     get running(): Map<number, SessionCapture> {
         return this.captures.running;
@@ -397,7 +458,7 @@ export class FrameRecording<S = unknown> extends RecorderControl {
     }
 
     async stop(options: { wait?: boolean } = {}): Promise<StopAnswer> {
-        if (this.stopRequested && this.config.whileStopping === "refused") {
+        if (this.stopRequested && this.config.controls.whileStopping === "refused") {
             throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is already stopping");
         }
 
@@ -426,6 +487,101 @@ export class FrameRecording<S = unknown> extends RecorderControl {
 
     override async listJobs(): Promise<JobInfo[]> {
         return this.jobs.list();
+    }
+
+    override async getSettings(): Promise<SettingsAnswer> {
+        return { settings: this.current, audio: this.audio };
+    }
+
+    override async setSettings(patch: RecorderSettingsPatch): Promise<SettingsAnswer> {
+        this.refuseWhileStopping();
+        const before = this.current;
+        this.current = { ...before, ...patch, ocr: { ...before.ocr, ...patch.ocr } };
+        // Each capture takes the change live or restarts (the scope says which); ax-tool has no live heartbeat
+        // command, so a change of it restarts. No capture running: the next piece takes it.
+        const applied = await this.captures.applySettings({
+            change: this.config.controls.settings.change(before, this.current, patch),
+            settings: this.current,
+            scope: this.config.controls.settings.scope,
+        });
+        log.info({ id: this.config.live.id, settings: this.current, applied }, "recorder settings changed");
+        return { settings: this.current, audio: this.audio, applied };
+    }
+
+    override async listAudioDevices(): Promise<AudioDevices> {
+        try {
+            return await this.config.recorder.audioDevices();
+        } catch (error) {
+            throw new RpcError(RPC_ERRORS.unsupported, errorText(error));
+        }
+    }
+
+    override async muteAudio(source: AudioSource, muted: boolean): Promise<AudioState> {
+        this.refuseWhileStopping();
+
+        if (!this.sound.sources.includes(source)) {
+            throw new RpcError(this.config.controls.unrecordedSource, `this recording records no ${source} sound`);
+        }
+
+        if (this.sound.muted[source] === muted) {
+            return this.audio;
+        }
+
+        // The running captures were started without the muted source: only new captures can add it.
+        if (!muted) {
+            this.sound = { ...this.sound, muted: { ...this.sound.muted, [source]: false } };
+            log.info({ id: this.config.live.id, source }, "audio unmuted; the piece restarts");
+            this.captures.abortAll();
+            return this.audio;
+        }
+
+        const owners = [...this.captures.running.values()].filter((one) => one.audio);
+
+        if (owners.some((one) => !one.live?.mute)) {
+            throw new RpcError(RPC_ERRORS.unsupported, `the running capture cannot mute ${source}`);
+        }
+
+        await Promise.all(owners.map((one) => one.live?.mute?.(source, true))).catch((error: unknown) => {
+            throw new RpcError(RPC_ERRORS.internal, errorText(error));
+        });
+        this.sound = { ...this.sound, muted: { ...this.sound.muted, [source]: true } };
+        log.info({ id: this.config.live.id, source }, "audio muted");
+        return this.audio;
+    }
+
+    override async setAudioInput(deviceId: string): Promise<AudioState> {
+        this.refuseWhileStopping();
+
+        if (!this.sound.sources.includes("mic")) {
+            throw new RpcError(this.config.controls.unrecordedSource, "this recording records no microphone");
+        }
+
+        const devices = await this.listAudioDevices();
+
+        if (!devices.inputs.some((device) => device.id === deviceId)) {
+            throw new RpcError(RPC_ERRORS.unknownDevice, `no input device ${deviceId}; see audio.list`);
+        }
+
+        this.sound = { ...this.sound, micDevice: deviceId };
+        const owners = [...this.captures.running.values()].filter((one) => one.audio);
+
+        if (owners.length > 0 && owners.every((one) => one.live?.setMic)) {
+            await Promise.all(owners.map((one) => one.live?.setMic?.(deviceId))).catch((error: unknown) => {
+                throw new RpcError(RPC_ERRORS.internal, errorText(error));
+            });
+        } else {
+            // The captures restart, so those that record the sound again use the new microphone.
+            this.captures.abortAll();
+        }
+
+        return this.audio;
+    }
+
+    /** A change while it stops: refused by a kind that refuses changes then (`controls.whileStopping`). */
+    protected refuseWhileStopping(): void {
+        if (this.config.controls.whileStopping === "refused" && this.stopping) {
+            throw new RpcError(RPC_ERRORS.alreadyStopped, "the recording is stopping");
+        }
     }
 
     private managed(): ManagedRecording {

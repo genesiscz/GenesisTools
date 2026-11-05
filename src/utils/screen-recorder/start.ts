@@ -14,19 +14,14 @@ import {
 } from "@genesiscz/utils/rm";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import {
-    type AudioDevices,
     type AudioSource,
-    type AudioState,
     type DisplayEntry,
     type DisplayMode,
     type DisplaySelection,
     type RecorderMethod,
     type RecorderSettings,
-    type RecorderSettingsPatch,
-    type RecorderStatus,
     RPC_ERRORS,
     RpcError,
-    type SettingsAnswer,
     type StopAnswer,
 } from "./control";
 import {
@@ -138,8 +133,6 @@ function stamp(date: Date): string {
 export class LibraryRecording extends FrameRecording<number> {
     readonly id: string;
     readonly folder: string;
-    private settings: RecorderSettings;
-    private audio: AudioState;
     private chosen: number[] = [];
     private known: DisplayInfo[] = [];
     private readonly pending: PendingFrame[] = [];
@@ -155,6 +148,10 @@ export class LibraryRecording extends FrameRecording<number> {
         // Two recordings started in one second must not share an id, a socket or a folder.
         const id = options.id ?? liveRecordingId("library", `${stamp(new Date())}-${randomUUID()}`);
         const folder = options.folder ?? recordingsLibraryDir(id);
+        const sources: AudioSource[] = [
+            ...(options.audio?.mic ? (["mic"] as const) : []),
+            ...(options.audio?.system ? (["system"] as const) : []),
+        ];
         super({
             kind: "library",
             methods: METHODS,
@@ -168,23 +165,22 @@ export class LibraryRecording extends FrameRecording<number> {
                 dir: options.liveDir,
                 displays: () => this.recordedDisplays(),
             },
+            settings: {
+                activeFps: options.fps ?? 2,
+                idleFps: options.idleFps ?? 0.5,
+                threshold: options.threshold ?? 1,
+                maxLongSide: options.maxLongSide ?? 2560,
+                heartbeatSec: options.heartbeatSec ?? 0,
+                ocr: { enabled: false, languages: ["en-US"], minChars: 20, ...options.ocr },
+            },
+            audio: { sources, muted: { mic: false, system: false }, micDevice: options.audio?.micDeviceId },
             pieces: {
                 dir: join(folder, ".pieces"),
                 sec: options.pieceSec ?? 60,
                 maxMs: (options.maxDurationSec ?? 600) * 1000,
                 // Every capture records the sound, without the muted sources.
                 audioOwnership: "every",
-                request: () => ({
-                    activeFps: this.settings.activeFps,
-                    idleFps: this.settings.idleFps,
-                    thresholdPercent: this.settings.threshold,
-                    maxLongSidePx: this.settings.maxLongSide,
-                    heartbeatSec: this.settings.heartbeatSec || undefined,
-                }),
-                audio: () => {
-                    const sources = this.audio.sources.filter((source) => !this.audio.muted[source]);
-                    return sources.length > 0 ? { sources, micDeviceId: this.audio.micDevice } : undefined;
-                },
+                request: (now) => ({ heartbeatSec: now.heartbeatSec || undefined }),
                 targets: () =>
                     (options.recorder.supports.parallelCaptures ? this.chosen : this.chosen.slice(0, 1)).map(
                         (displayId) => this.targetOf(displayId)
@@ -202,7 +198,12 @@ export class LibraryRecording extends FrameRecording<number> {
                     gaveUp: () => this.warn("three captures in a row recorded nothing; the recording ends"),
                 },
             },
-            whileStopping: "answered",
+            controls: {
+                whileStopping: "answered",
+                unrecordedSource: RPC_ERRORS.unsupported,
+                // Live only when every capture takes every change; otherwise every capture restarts.
+                settings: { scope: "all", change: (_before, _after, patch) => patchChange(patch) },
+            },
             hooks: {
                 // Anything a piece throws ends the recording; the finish still keeps what it recorded.
                 onError: (error) => {
@@ -252,19 +253,6 @@ export class LibraryRecording extends FrameRecording<number> {
         });
         this.id = id;
         this.folder = folder;
-        this.settings = {
-            activeFps: options.fps ?? 2,
-            idleFps: options.idleFps ?? 0.5,
-            threshold: options.threshold ?? 1,
-            maxLongSide: options.maxLongSide ?? 2560,
-            heartbeatSec: options.heartbeatSec ?? 0,
-            ocr: { enabled: false, languages: ["en-US"], minChars: 20, ...options.ocr },
-        };
-        const sources: AudioSource[] = [
-            ...(options.audio?.mic ? (["mic"] as const) : []),
-            ...(options.audio?.system ? (["system"] as const) : []),
-        ];
-        this.audio = { sources, muted: { mic: false, system: false }, micDevice: options.audio?.micDeviceId };
         const frames = options.frames ?? {};
         this.flush = frames.flush ?? "finish";
         this.output = new FrameOutput({
@@ -298,7 +286,7 @@ export class LibraryRecording extends FrameRecording<number> {
 
         if (this.audio.sources.length > 0 && !recorder.supports.audio) {
             this.warn(`the ${recorder.id} recorder records no sound; recording frames only`);
-            this.audio = { ...this.audio, sources: [] };
+            this.recordNoSound();
         }
 
         this.startedAt.setTime(Date.now());
@@ -383,20 +371,6 @@ export class LibraryRecording extends FrameRecording<number> {
             this.warn(`display ${displayId}: ${error instanceof Error ? error.message : String(error)}`);
             return false;
         }
-    }
-
-    override async status(): Promise<RecorderStatus> {
-        const entry = this.entry;
-        return {
-            kind: this.kind,
-            title: this.options.title ?? this.id,
-            state: this.state,
-            displays: this.recordedDisplays(),
-            frames: this.liveFrames(),
-            ...(entry?.lastFrameAt ? { lastFrameAt: entry.lastFrameAt } : {}),
-            warning: this.warnings.at(-1),
-            folder: this.folder,
-        };
     }
 
     override async discard(): Promise<StopAnswer> {
@@ -556,84 +530,6 @@ export class LibraryRecording extends FrameRecording<number> {
 
     override async setDisplayMode(mode: DisplayMode): Promise<DisplaySelection> {
         return { ...this.choose(this.pick(mode)), mode };
-    }
-
-    override async listAudioDevices(): Promise<AudioDevices> {
-        try {
-            return await this.options.recorder.audioDevices();
-        } catch (error) {
-            throw new RpcError(RPC_ERRORS.unsupported, error instanceof Error ? error.message : String(error));
-        }
-    }
-
-    override async muteAudio(source: AudioSource, muted: boolean): Promise<AudioState> {
-        if (!this.audio.sources.includes(source)) {
-            throw new RpcError(RPC_ERRORS.unsupported, `this recording records no ${source} sound`);
-        }
-
-        if (this.audio.muted[source] === muted) {
-            return this.audio;
-        }
-
-        // The running captures were started without the muted source: only new captures can add it.
-        if (!muted) {
-            this.audio = { ...this.audio, muted: { ...this.audio.muted, [source]: false } };
-            this.restartCaptures();
-            return this.audio;
-        }
-
-        const owners = [...this.running.values()].filter((one) => one.audio);
-
-        if (owners.some((one) => !one.live?.mute)) {
-            throw new RpcError(RPC_ERRORS.unsupported, `the running capture cannot mute ${source}`);
-        }
-
-        await Promise.all(owners.map((one) => one.live?.mute?.(source, true))).catch((error: unknown) => {
-            throw new RpcError(RPC_ERRORS.internal, error instanceof Error ? error.message : String(error));
-        });
-        this.audio = { ...this.audio, muted: { ...this.audio.muted, [source]: true } };
-        return this.audio;
-    }
-
-    override async setAudioInput(deviceId: string): Promise<AudioState> {
-        if (!this.audio.sources.includes("mic")) {
-            throw new RpcError(RPC_ERRORS.unsupported, "this recording records no microphone");
-        }
-
-        const devices = await this.listAudioDevices();
-
-        if (!devices.inputs.some((device) => device.id === deviceId)) {
-            throw new RpcError(RPC_ERRORS.unknownDevice, `no input device ${deviceId}; see audio.list`);
-        }
-
-        this.audio = { ...this.audio, micDevice: deviceId };
-        const owners = [...this.running.values()].filter((one) => one.audio);
-
-        if (owners.length > 0 && owners.every((one) => one.live?.setMic)) {
-            await Promise.all(owners.map((one) => one.live?.setMic?.(deviceId))).catch((error: unknown) => {
-                throw new RpcError(RPC_ERRORS.internal, error instanceof Error ? error.message : String(error));
-            });
-        } else {
-            this.restartCaptures();
-        }
-
-        return this.audio;
-    }
-
-    override async getSettings(): Promise<SettingsAnswer> {
-        return { settings: this.settings, audio: this.audio };
-    }
-
-    override async setSettings(patch: RecorderSettingsPatch): Promise<SettingsAnswer> {
-        const before = this.settings;
-        this.settings = { ...before, ...patch, ocr: { ...before.ocr, ...patch.ocr } };
-        // Live only when every capture takes every change; otherwise every capture restarts with the new settings.
-        const applied = await this.captures.applySettings({
-            change: patchChange(patch),
-            settings: this.settings,
-            scope: "all",
-        });
-        return { settings: this.settings, audio: this.audio, applied };
     }
 }
 

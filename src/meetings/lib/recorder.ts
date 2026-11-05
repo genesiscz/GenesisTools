@@ -32,7 +32,6 @@ import {
 } from "@genesiscz/utils/meetings/record";
 import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import {
-    type AudioDevices,
     type AudioSource,
     type AudioState,
     type DisplayEntry,
@@ -40,11 +39,8 @@ import {
     type DisplaySelection,
     type RecorderMethod,
     type RecorderSettings,
-    type RecorderSettingsPatch,
     RPC_ERRORS,
     RpcError,
-    recorderSettingsSchema,
-    type SettingsAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
 import {
     FrameOutput,
@@ -177,11 +173,6 @@ interface MeetingControlOps {
     removeDisplay(displayId: number): Promise<DisplaySelection>;
     switchDisplay(displayId: number): Promise<DisplaySelection>;
     setDisplayMode(mode: DisplayMode): Promise<DisplaySelection>;
-    getSettings(): Promise<SettingsAnswer>;
-    setSettings(patch: RecorderSettingsPatch): Promise<SettingsAnswer>;
-    listAudioDevices(): Promise<AudioDevices>;
-    muteAudio(source: AudioSource, muted: boolean): Promise<AudioState>;
-    setAudioInput(deviceId: string): Promise<AudioState>;
 }
 
 /** The meetings recorder: the shared run, displays by id, no discard, restart or target switch. */
@@ -211,26 +202,6 @@ class MeetingRecording extends FrameRecording<string[]> {
 
     override setDisplayMode(mode: DisplayMode): Promise<DisplaySelection> {
         return this.ops.setDisplayMode(mode);
-    }
-
-    override getSettings(): Promise<SettingsAnswer> {
-        return this.ops.getSettings();
-    }
-
-    override setSettings(patch: RecorderSettingsPatch): Promise<SettingsAnswer> {
-        return this.ops.setSettings(patch);
-    }
-
-    override listAudioDevices(): Promise<AudioDevices> {
-        return this.ops.listAudioDevices();
-    }
-
-    override muteAudio(source: AudioSource, muted: boolean): Promise<AudioState> {
-        return this.ops.muteAudio(source, muted);
-    }
-
-    override setAudioInput(deviceId: string): Promise<AudioState> {
-        return this.ops.setAudioInput(deviceId);
     }
 }
 
@@ -295,8 +266,7 @@ export async function runRecorder(options: {
     const { store, meetingId, capture } = options;
     const deps: RecorderDeps = { ...defaultDeps(capture), ...options.deps };
     const { audio: audioConfig, ...nativeKeys } = recorderSettings(capture, deps.recorder.id);
-    /** What the captures and the OCR use now; `settings.set` changes it while the recording runs. */
-    let settings: RecorderSettings = {
+    const settings: RecorderSettings = {
         activeFps: capture.activeFps,
         idleFps: capture.idleFps,
         threshold: capture.threshold * 100,
@@ -407,7 +377,7 @@ export async function runRecorder(options: {
             format: { kind: "jpeg", quality: capture.jpegQuality },
             convert: deps.toJpeg,
             ocr: {
-                settings: () => settings.ocr,
+                settings: () => recording.settings.ocr,
                 sink: new JsonlOcrSink(ocrPath),
                 recognize: deps.ocr,
                 onError: (err, jpg) => log.warn({ err, jpg }, "OCR failed for a frame"),
@@ -491,94 +461,6 @@ export async function runRecorder(options: {
         };
 
         const ops: MeetingControlOps = {
-            getSettings: async () => ({ settings, audio: { ...audio, muted: { ...audio.muted } } }),
-            setSettings: async (patch) => {
-                refuseWhenStopping();
-                const before = settings;
-                settings = recorderSettingsSchema.parse({
-                    ...settings,
-                    ...patch,
-                    ocr: { ...settings.ocr, ...patch.ocr },
-                });
-                // Each capture takes the change live or restarts on its own; ax-tool has no live heartbeat
-                // command, so a change of it restarts the capture. No capture running: the next piece takes it.
-                const applied = await recording.captures.applySettings({
-                    change: settingsChange(before, settings),
-                    settings,
-                    scope: "each",
-                });
-                log.info({ settings, applied }, "recorder settings changed over the socket");
-                return { settings, audio, applied };
-            },
-            listAudioDevices: async () => {
-                try {
-                    return await deps.recorder.audioDevices();
-                } catch (error) {
-                    throw new RpcError(RPC_ERRORS.unsupported, errorText(error));
-                }
-            },
-            muteAudio: async (source, muted) => {
-                refuseWhenStopping();
-
-                if (!audio.sources.includes(source)) {
-                    throw new RpcError(RPC_ERRORS.invalidParams, `this recording records no ${source} sound`);
-                }
-
-                if (audio.muted[source] === muted) {
-                    return { ...audio, muted: { ...audio.muted } };
-                }
-
-                // The running captures were started without the muted source: only new captures can add it.
-                if (!muted) {
-                    restart(() => {
-                        audio.muted[source] = false;
-                    });
-                    log.info({ source }, "audio unmuted over the socket; the piece restarts");
-                    return { ...audio, muted: { ...audio.muted } };
-                }
-
-                const owners = [...running().values()].filter((one) => one.audio);
-
-                if (owners.some((one) => !one.live?.mute)) {
-                    throw new RpcError(RPC_ERRORS.unsupported, `the running capture cannot mute ${source}`);
-                }
-
-                await Promise.all(owners.map((one) => one.live?.mute?.(source, true))).catch((error: unknown) => {
-                    throw new RpcError(RPC_ERRORS.internal, errorText(error));
-                });
-                audio.muted[source] = true;
-                log.info({ source, muted }, "audio muted over the socket");
-                return { ...audio, muted: { ...audio.muted } };
-            },
-            setAudioInput: async (deviceId) => {
-                refuseWhenStopping();
-
-                if (!audio.sources.includes("mic")) {
-                    throw new RpcError(RPC_ERRORS.invalidParams, "this recording records no microphone");
-                }
-
-                const devices = await deps.recorder.audioDevices().catch((error: unknown) => {
-                    throw new RpcError(RPC_ERRORS.unsupported, errorText(error));
-                });
-
-                if (!devices.inputs.some((device) => device.id === deviceId)) {
-                    throw new RpcError(RPC_ERRORS.unknownDevice, `no input device ${deviceId}; see audio.list`);
-                }
-
-                audio.micDevice = deviceId;
-                const capture = [...running().values()].find((one) => one.audio);
-
-                if (capture?.live?.setMic) {
-                    await capture.live.setMic(deviceId).catch((error: unknown) => {
-                        throw new RpcError(RPC_ERRORS.internal, errorText(error));
-                    });
-                } else {
-                    // Every capture restarts, so the one that takes the sound again uses the new microphone.
-                    restart(() => undefined);
-                }
-
-                return { ...audio, muted: { ...audio.muted } };
-            },
             listDisplays: async () => {
                 const recordedIds = new Set(state.displays?.map((display) => display.id) ?? []);
                 return (await deps.recorder.displays()).map((display) => ({
@@ -693,26 +575,14 @@ export async function runRecorder(options: {
                     intervals: record?.recording?.displaySpans ?? [],
                     names: (record?.recording?.displays ?? []).map((display) => [display.id, display.name]),
                 },
+                settings,
+                audio,
                 pieces: {
                     dir: pieceDir,
                     sec: deps.pieceSec,
+                    // One capture records the sound: two would write the same microphone twice.
                     audioOwnership: "single",
-                    request: () => ({
-                        activeFps: settings.activeFps,
-                        idleFps: settings.idleFps,
-                        thresholdPercent: settings.threshold,
-                        maxLongSidePx: settings.maxLongSide,
-                        ...nativeKeys,
-                        heartbeatSec: settings.heartbeatSec,
-                    }),
-                    // One capture records the sound: two would write the same microphone twice. A muted source is left
-                    // out of a new capture, so its start-up buffers never reach the file; unmuting restarts the capture.
-                    audio: () => {
-                        const sources = audio.sources.filter((source) => !audio.muted[source]);
-                        return deps.recorder.supports.audio && sources.length > 0
-                            ? { sources, ...(audio.micDevice ? { micDeviceId: audio.micDevice } : {}) }
-                            : undefined;
-                    },
+                    request: (now) => ({ ...nativeKeys, heartbeatSec: now.heartbeatSec }),
                     targets: pieceTargetsNow,
                     failures: {
                         max: MAX_FAILURES,
@@ -750,7 +620,12 @@ export async function runRecorder(options: {
                         },
                     },
                 },
-                whileStopping: "refused",
+                controls: {
+                    whileStopping: "refused",
+                    unrecordedSource: RPC_ERRORS.invalidParams,
+                    // Each capture takes a change live or restarts on its own.
+                    settings: { scope: "each", change: settingsChange },
+                },
                 hooks: {
                     beforeLoop: async () => {
                         process.on("SIGTERM", onSignal);
@@ -959,7 +834,9 @@ export async function runRecorder(options: {
                         status: "stopped",
                         stopReason: state.stopReason,
                         displayPolicy: policy,
-                        ...(audio.sources.length > 0 ? { audio: { sources: audio.sources, files: audioFiles } } : {}),
+                        ...(audio.sources.length > 0
+                            ? { audio: { sources: recording.audio.sources, files: audioFiles } }
+                            : {}),
                         spans,
                         displaySpans: recording.displayBook.intervals,
                         displays: [...recording.displayBook.names].map(([id, name]) => ({
