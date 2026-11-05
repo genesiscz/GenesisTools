@@ -430,6 +430,9 @@ public enum HangWatch {
             process.arguments = ["-Ao", "pid=,pcpu=,comm=", "-r"]
             do {
                 let capture = try process.runCapturing(timeout: timeout)
+                guard capture.status == 0 else {
+                    return String(format: "load-top load=%.1f: ps failed: exit %d", load, capture.status)
+                }
                 let top = summary(psOutput: String(decoding: capture.stdout, as: UTF8.self), limit: count)
                 return String(format: "load-top load=%.1f: ", load) + (top.isEmpty ? "ps listed nothing" : top)
             } catch {
