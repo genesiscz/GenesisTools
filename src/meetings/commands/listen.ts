@@ -2,6 +2,7 @@ import { join } from "node:path";
 import * as clack from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { out } from "@genesiscz/utils/logger";
 import {
     LISTEN_PLAYERS,
     type MeetingsConfig,
@@ -266,7 +267,7 @@ async function subscribe(meeting: MeetingRecord, store: MeetingStore, opts: List
         path,
         fromStart: opts.fromStart === true,
         timeoutMs: minutes * 60_000,
-        write: (line) => process.stdout.write(`${line}\n`),
+        write: (line) => out.print(`${line}\n`),
     });
 }
 
