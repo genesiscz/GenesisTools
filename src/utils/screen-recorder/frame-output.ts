@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -19,6 +19,10 @@ const { log } = logger.scoped("frame-output");
  * own file, or a JPEG), and an OCR read into a sink. Both recorders use it: the library recording (`start.ts`) and
  * the meetings recorder, each with its own options.
  */
+
+/** A recording's folders and files hold screen captures and their text, so only the owner may read them. */
+export const CAPTURE_DIR_MODE = 0o700;
+export const CAPTURE_FILE_MODE = 0o600;
 
 /** How a kept frame is named under `frames/`. */
 export const FRAME_NAMINGS = ["elapsed", "wall-clock"] as const;
@@ -167,7 +171,7 @@ export class JsonlOcrSink implements OcrSink {
     constructor(readonly path: string) {}
 
     write(row: OcrRow): void {
-        appendFileSync(this.path, `${SafeJSON.stringify(row)}\n`);
+        appendFileSync(this.path, `${SafeJSON.stringify(row)}\n`, { mode: CAPTURE_FILE_MODE });
     }
 }
 
@@ -178,7 +182,9 @@ export class SidecarOcrSink implements OcrSink {
             return;
         }
 
-        atomicWriteFileSync(`${framePath}.ocr.json`, SafeJSON.stringify({ text: row.text, blocks: row.blocks }));
+        atomicWriteFileSync(`${framePath}.ocr.json`, SafeJSON.stringify({ text: row.text, blocks: row.blocks }), {
+            mode: CAPTURE_FILE_MODE,
+        });
     }
 }
 
@@ -242,6 +248,8 @@ export class FrameOutput {
     /** The last read of each display, before the `minChars` cut: what a skipped frame keeps. */
     private readonly lastRead = new Map<number, OcrResult>();
     private crops = 0;
+    /** An older frames folder is made owner-only at the first frame, once. */
+    private dirTightened = false;
 
     constructor(private readonly options: FrameOutputOptions) {
         this.framesDir = join(options.folder, "frames");
@@ -265,12 +273,21 @@ export class FrameOutput {
             })
         );
         const path = join(this.framesDir, name);
-        mkdirSync(this.framesDir, { recursive: true });
+        mkdirSync(this.framesDir, { recursive: true, mode: CAPTURE_DIR_MODE });
+
+        if (!this.dirTightened) {
+            chmodSync(this.framesDir, CAPTURE_DIR_MODE);
+            this.dirTightened = true;
+        }
 
         if (format.kind === "jpeg") {
             await (this.options.convert ?? sipsJpeg)(frame.path, path, format.quality);
         } else if (existsSync(frame.path)) {
             renameSync(frame.path, path);
+        }
+
+        if (existsSync(path)) {
+            chmodSync(path, CAPTURE_FILE_MODE);
         }
 
         const kept: KeptFrame = {

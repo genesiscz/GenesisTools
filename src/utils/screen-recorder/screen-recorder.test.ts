@@ -914,6 +914,27 @@ describe("frame output", () => {
         });
     });
 
+    test("kept frames, their frames folder and the OCR file are owner-only, an older 0755 folder included", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-frame-out-"));
+        mkdirSync(join(dir, "frames"), { mode: 0o755 });
+        chmodSync(join(dir, "frames"), 0o755);
+        const output = new FrameOutput({
+            folder: dir,
+            naming: "elapsed",
+            format: { kind: "original" },
+            ocr: {
+                settings: () => ({ enabled: true, languages: ["en-US"], minChars: 0, ...OCR_READ_DEFAULTS }),
+                sink: ocrSinkFor("jsonl", dir),
+                recognize: async () => ({ text: "abc", blocks: [] }),
+            },
+        });
+        const kept = await output.keep(frameIn(dir), { atMs: 5_000, originMs: 1_000, displayId: 2 });
+
+        expect(statSync(join(dir, "frames")).mode & 0o777).toBe(0o700);
+        expect(statSync(kept.path).mode & 0o777).toBe(0o600);
+        expect(statSync(join(dir, "ocr.jsonl")).mode & 0o777).toBe(0o600);
+    });
+
     test("two frames of one display in the same millisecond keep two files, the second named a millisecond later", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-frame-out-"));
         const rows: string[] = [];

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -558,11 +558,13 @@ export class MeetingStore {
         });
 
         // The folder is the reservation: a plain mkdir fails with EEXIST when another process took the id first.
-        mkdirSync(this.root, { recursive: true });
+        // Meetings hold screen captures and transcripts, so only the owner may read them.
+        mkdirSync(this.root, { recursive: true, mode: 0o700 });
+        chmodSync(this.root, 0o700);
 
         for (let n = 2; ; n += 1) {
             try {
-                mkdirSync(this.folder(id));
+                mkdirSync(this.folder(id), { mode: 0o700 });
                 break;
             } catch (err) {
                 if (!(err instanceof Error) || !("code" in err) || err.code !== "EEXIST") {
@@ -621,7 +623,10 @@ export class MeetingStore {
     }
 
     private write(record: MeetingRecord): void {
-        atomicWriteFileSync(this.path(record.id), `${SafeJSON.stringify(record, null, 4)}\n`);
+        // A store made before the owner-only rule is tightened at its next write.
+        chmodSync(this.root, 0o700);
+        chmodSync(this.folder(record.id), 0o700);
+        atomicWriteFileSync(this.path(record.id), `${SafeJSON.stringify(record, null, 4)}\n`, { mode: 0o600 });
     }
 }
 

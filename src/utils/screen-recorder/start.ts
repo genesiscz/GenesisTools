@@ -23,6 +23,7 @@ import {
 } from "./control";
 import { ChosenDisplays } from "./display-choice";
 import {
+    CAPTURE_DIR_MODE,
     type FrameNaming,
     FrameOutput,
     type JpegConverter,
@@ -263,9 +264,9 @@ export class LibraryRecording extends FrameRecording<number> {
         this.startedAt.setTime(Date.now());
         // The folder is reserved exclusively: an existing one (another recording, or a user's folder) is refused.
         mkdirSync(dirname(this.folder), { recursive: true });
-        mkdirSync(this.folder);
+        mkdirSync(this.folder, { mode: CAPTURE_DIR_MODE });
         this.ownsFolder = true;
-        mkdirSync(join(this.folder, "frames"));
+        mkdirSync(join(this.folder, "frames"), { mode: CAPTURE_DIR_MODE });
         this.open();
         log.info({ id: this.id, displays: this.choice.chosen, recorder: recorder.id }, "library recording started");
         return this;

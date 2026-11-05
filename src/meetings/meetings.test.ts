@@ -1,5 +1,14 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -3951,6 +3960,10 @@ test("recorder failure persists a terminal state before releasing ownership", as
     );
     expect(failed).toBeInstanceOf(RecorderFailedError);
     expect(failed).toMatchObject({ state: { stopReason: "error" } });
+    // A meeting's captures stay with their owner: the store, the meeting folder and its record.
+    expect(statSync(store.root).mode & 0o777).toBe(0o700);
+    expect(statSync(store.folder(record.id)).mode & 0o777).toBe(0o700);
+    expect(statSync(store.path(record.id)).mode & 0o777).toBe(0o600);
     expect(store.read(record.id)?.recording).toMatchObject({
         status: "stopped",
         stopReason: "error",
