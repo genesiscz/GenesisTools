@@ -183,8 +183,19 @@ function frameLabel(mode: "time" | "sample" | "index" | "none", frame: EditFrame
 }
 
 /** Timestamps at `fps` across the window, as the frame review samples them. */
+/** The most sample times one frames step may ask for: hours of range at a high rate would stall or run out of memory. */
+export const MAX_SAMPLE_TIMES = 1_000_000;
+
 export function sampleTimes(options: { fromUs: number; toUs: number; fps: number }): number[] {
     const count = Math.ceil(((options.toUs - options.fromUs) * options.fps) / 1_000_000);
+
+    // Checked before the array exists: the allocation itself is what stalls, before any cancel check can run.
+    if (!Number.isFinite(count) || count > MAX_SAMPLE_TIMES) {
+        throw new Error(
+            `The range at ${options.fps} fps asks for ${count} frames, and the most is ${MAX_SAMPLE_TIMES}: shorten the range or lower the fps`
+        );
+    }
+
     return Array.from({ length: count }, (_, index) => options.fromUs + (index * 1_000_000) / options.fps);
 }
 
@@ -414,7 +425,13 @@ async function composeSheets(
                 label: frameLabel(step.labels, frame, offset + position),
             })),
             output: path,
-            columns: step.cols === undefined ? undefined : Math.min(step.cols, group.length),
+            // Rows alone set the columns too: { rows: 1 } is one strip, not the square root's 2×2.
+            columns:
+                step.cols !== undefined
+                    ? Math.min(step.cols, group.length)
+                    : step.rows !== undefined
+                      ? Math.ceil(group.length / Math.min(step.rows, group.length))
+                      : undefined,
             maxWidth: step.maxWidth,
             signal: ctx.signal,
         });

@@ -58,7 +58,7 @@ import editMarkers from "./__fixtures__/edit-markers.json";
 import legacyEvidence from "./__fixtures__/legacy-evidence.json";
 import transcriptCuts from "./__fixtures__/transcript-cuts.json";
 import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema } from "./denoise";
-import { RecordingEditor } from "./editor";
+import { MAX_SAMPLE_TIMES, RecordingEditor, sampleTimes } from "./editor";
 import { atempoChain, concatList, exportVideoArgv, speedArgv, trimArgv } from "./ffmpeg";
 import { parseEditPlan, timeToUs } from "./plan";
 import * as projectOps from "./project";
@@ -156,6 +156,42 @@ describe("edit plans", () => {
 });
 
 describe("the editor on a recording folder", () => {
+    test("a still range at a rate that asks for too many frames is refused before any array is made", async () => {
+        expect(sampleTimes({ fromUs: 0, toUs: 2_000_000, fps: 2 })).toEqual([0, 500_000, 1_000_000, 1_500_000]);
+        expect(() => sampleTimes({ fromUs: 0, toUs: 100_000_000 * 1_000_000, fps: 30 })).toThrow(
+            `the most is ${MAX_SAMPLE_TIMES}`
+        );
+
+        const started = performance.now();
+        const run = new RecordingEditor().run({
+            source: { file: recordingFolder() },
+            output: join(workspace(), "edit"),
+            steps: [
+                { kind: "range" as const, from: 0, to: 100_000_000 },
+                { kind: "frames" as const, fps: 30 },
+            ],
+        });
+        await expect(run.done).rejects.toThrow("shorten the range or lower the fps");
+        expect(performance.now() - started).toBeLessThan(2_000);
+    });
+
+    test("a grid with rows alone keeps that many rows", async () => {
+        const result = await new RecordingEditor().run({
+            source: { file: recordingFolder() },
+            output: join(workspace(), "edit"),
+            steps: [
+                { kind: "range" as const, from: 0, to: "00:03" },
+                { kind: "frames" as const, changeOnly: true, threshold: 1 },
+                { kind: "grid" as const, rows: 1, labels: "none" as const },
+            ],
+        }).done;
+
+        expect(result.sheets.map((sheet) => [sheet.columns, sheet.rows])).toEqual([
+            [3, 1],
+            [1, 1],
+        ]);
+    });
+
     test("change-only frames per display, a grid, progress events, and a rerun that skips every finished step", async () => {
         const source = recordingFolder();
         const output = join(workspace(), "edit");
