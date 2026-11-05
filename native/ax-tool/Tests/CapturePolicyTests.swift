@@ -347,3 +347,36 @@ final class AudioCommandTests: XCTestCase {
         XCTAssertTrue(policy.consider(half).keep)
     }
 }
+
+final class CaptureFailureTests: XCTestCase {
+    func testSidecarFailureSurvivesAnEarlierMovieWarningAndIsDeduplicated() {
+        var failures = ["the movie refused audio"]
+        appendCaptureFailure("the mic sidecar refused audio: disk full", category: "the mic sidecar refused audio:", to: &failures)
+        appendCaptureFailure("the mic sidecar refused audio: disk full", category: "the mic sidecar refused audio:", to: &failures)
+        XCTAssertEqual(failures.count, 2)
+        XCTAssertTrue(failures.last!.contains("sidecar"))
+    }
+
+    @MainActor
+    func testRejectedConfigurationRestoresItsPreviousValue() async {
+        var value = 100
+        do {
+            try await updateCaptureConfiguration(from: value, to: 200, set: { value = $0 }, apply: {
+                XCTAssertEqual(value, 200)
+                throw NSError(domain: "capture", code: 1)
+            })
+            XCTFail("the update must fail")
+        } catch {
+            XCTAssertEqual(value, 100)
+        }
+    }
+
+    func testDisplayRestartCannotRepeatThePreviousDisplayHeartbeat() {
+        let old = signature(width: 16, height: 16) { _, _ in 0 }
+        var policy = KeepPolicy(thresholdPercent: 1)
+        XCTAssertTrue(policy.consider(old).keep)
+        policy.restart(reason: "display")
+        XCTAssertNil(policy.heartbeat(old))
+        XCTAssertTrue(policy.consider(old).keep)
+    }
+}

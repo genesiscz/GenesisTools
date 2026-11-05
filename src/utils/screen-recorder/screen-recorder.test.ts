@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { withTimeout } from "@genesiscz/utils/async";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -210,25 +211,31 @@ describe("native capture over --control-stdin (a fake ax-tool)", () => {
 
         const outDir = mkdtempSync(join(tmpdir(), "fake-capture-"));
         const streamed: Array<number | undefined> = [];
+        const firstFrame = Promise.withResolvers<void>();
+        const liveReady = Promise.withResolvers<void>();
         let channel: LiveCapture | undefined;
         const controller = new AbortController();
         const capture = recorder.capture(
             {
                 ...request({ outDir, durationSec: 30 }),
                 hooks: {
-                    onFrame: (frame) => streamed.push(frame.displayId),
+                    onFrame: (frame) => {
+                        streamed.push(frame.displayId);
+                        firstFrame.resolve();
+                    },
                     onLive: (live) => {
                         channel = live;
+                        liveReady.resolve();
                     },
                 },
             },
             controller.signal
         );
-        const deadline = Date.now() + 5_000;
-
-        while ((streamed.length === 0 || !channel) && Date.now() < deadline) {
-            await Bun.sleep(20);
-        }
+        await withTimeout(
+            Promise.all([firstFrame.promise, liveReady.promise]),
+            5_000,
+            new Error("capture readiness timed out")
+        );
 
         await channel?.switchDisplay(1);
         await channel?.setRates?.(2, 0.5);
@@ -418,7 +425,17 @@ describe("live recordings", () => {
 
         const client = await RecorderClient.connect("meeting-m1", { dir });
         const events: LiveNotification[] = [];
-        await client.subscribe((event) => events.push(event), ["state", "ended"]);
+        const ended = Promise.withResolvers<void>();
+        await client.subscribe(
+            (event) => {
+                events.push(event);
+
+                if (event.event === "ended") {
+                    ended.resolve();
+                }
+            },
+            ["state", "ended"]
+        );
 
         expect(client.kind).toBe("meeting");
         expect(client.methods).toEqual(control.methods);
@@ -438,11 +455,7 @@ describe("live recordings", () => {
         expect(saved).not.toHaveProperty("warning");
 
         server.close("requested");
-        const deadline = Date.now() + 2_000;
-
-        while (!events.some((event) => event.event === "ended") && Date.now() < deadline) {
-            await Bun.sleep(20);
-        }
+        await withTimeout(ended.promise, 2_000, new Error("ended event timed out"));
 
         expect(events.map((event) => event.event)).toEqual(["state", "ended"]);
         expect(existsSync(join(dir, "meeting-m1.json"))).toBe(false);
@@ -460,22 +473,23 @@ describe("live recordings", () => {
             control: new TestControl(),
         });
         let received = "";
+        const answered = Promise.withResolvers<void>();
         const socket = await Bun.connect({
             unix: server.current.socket,
             socket: {
                 data: (_socket, chunk) => {
                     received += new TextDecoder().decode(chunk);
+
+                    if (received.split("\n").filter(Boolean).length >= 3) {
+                        answered.resolve();
+                    }
                 },
             },
         });
         socket.write(
             '{"jsonrpc":"2.0","id":1,"method":"subscribe"}\n{"jsonrpc":"2.0","id":2,"method":"displays.list"}\r\n{"jsonrpc":"2.0","id":3,"method":"status"}\n'
         );
-        const deadline = Date.now() + 2_000;
-
-        while (received.split("\n").filter(Boolean).length < 3 && Date.now() < deadline) {
-            await Bun.sleep(10);
-        }
+        await withTimeout(answered.promise, 2_000, new Error("batch replies timed out"));
 
         const ids = received
             .split("\n")

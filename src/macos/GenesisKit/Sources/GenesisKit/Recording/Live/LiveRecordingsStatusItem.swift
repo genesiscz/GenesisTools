@@ -16,6 +16,9 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
     private var menuIsOpen = false
     /// The "meeting · 12:03 · 340 frames" row of each recording in the open menu, updated in place each second.
     private var detailRows: [String: NSMenuItem] = [:]
+    /// The rows of each recording in the open menu whose state changes while it is open, updated in place each second.
+    private var controlRows: [String: (toggle: NSMenuItem, stop: NSMenuItem, marker: NSMenuItem?, warning: NSMenuItem,
+                                       error: NSMenuItem)] = [:]
     private var panels: [String: LiveRecordingPanel] = [:]
     private var sessions: [String: LiveRecordingSession] = [:]
     /// Recordings whose asked-for floating controls this host opened already (closing them must not reopen them).
@@ -235,8 +238,9 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
 
     public func menuDidClose(_ menu: NSMenu) { menuIsOpen = false }
 
-    private func build(_ menu: NSMenu, list: [LiveRecording]) {
+    func build(_ menu: NSMenu, list: [LiveRecording]) {
         menu.removeAllItems()
+        controlRows = [:]
         detailRows = [:]
         let now = Date()
         for (index, recording) in list.enumerated() {
@@ -250,14 +254,15 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
                                      symbol: "display"))
             }
 
-            if let warning = recording.warning {
-                menu.addItem(infoRow(warning, font: .menuFont(ofSize: 12), color: .systemOrange,
-                                     symbol: "exclamationmark.triangle.fill"))
-            }
-
-            if let error = recording.lastError {
-                menu.addItem(infoRow(error, font: .menuFont(ofSize: 12), color: .systemRed, symbol: "xmark.octagon.fill"))
-            }
+            // Always present, hidden while empty, so a warning that appears in an open menu shows in place.
+            let warning = infoRow(recording.warning ?? "", font: .menuFont(ofSize: 12), color: .systemOrange,
+                                  symbol: "exclamationmark.triangle.fill")
+            warning.isHidden = recording.warning == nil
+            menu.addItem(warning)
+            let error = infoRow(recording.lastError ?? "", font: .menuFont(ofSize: 12), color: .systemRed,
+                                symbol: "xmark.octagon.fill")
+            error.isHidden = recording.lastError == nil
+            menu.addItem(error)
 
             if !recording.canControl {
                 menu.addItem(infoRow("No control socket: this recorder cannot be controlled from here",
@@ -265,15 +270,21 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
             }
 
             let toggle = recording.isPaused ? LiveRecordingCommand.resume : .pause
-            menu.addItem(action(toggle == .pause ? "Pause" : "Resume", symbol: toggle == .pause ? "pause.fill" : "play.fill",
-                                selector: #selector(sendToggle(_:)), recording: recording,
-                                enabled: recording.toggleCommand != nil, id: "live-recording.\(toggle.rawValue)"))
-            menu.addItem(action("Stop", symbol: "stop.fill", selector: #selector(sendStop(_:)), recording: recording,
-                                enabled: recording.allows(.stop), id: "live-recording.stop"))
+            let toggleRow = action(toggle == .pause ? "Pause" : "Resume", symbol: toggle == .pause ? "pause.fill" : "play.fill",
+                                   selector: #selector(sendToggle(_:)), recording: recording,
+                                   enabled: recording.toggleCommand != nil, id: "live-recording.\(toggle.rawValue)")
+            let stopRow = action("Stop", symbol: "stop.fill", selector: #selector(sendStop(_:)), recording: recording,
+                                 enabled: recording.allows(.stop), id: "live-recording.stop")
+            menu.addItem(toggleRow)
+            menu.addItem(stopRow)
+            var markerRow: NSMenuItem?
             if recording.canControl && recording.controls.contains("marker.add") {
-                menu.addItem(action("Add Marker", symbol: "flag.fill", selector: #selector(addMarker(_:)), recording: recording,
-                                    enabled: !recording.isPaused && !recording.isStopping, id: "live-recording.marker"))
+                let row = action("Add Marker", symbol: "flag.fill", selector: #selector(addMarker(_:)), recording: recording,
+                                 enabled: !recording.isPaused && !recording.isStopping, id: "live-recording.marker")
+                menu.addItem(row)
+                markerRow = row
             }
+            controlRows[recording.id] = (toggleRow, stopRow, markerRow, warning, error)
             if recording.folder != nil {
                 menu.addItem(action("Open folder", symbol: "folder", selector: #selector(openFolder(_:)),
                                     recording: recording, enabled: true, id: "live-recording.folder"))
@@ -355,11 +366,27 @@ public final class LiveRecordingsStatusItem: NSObject, NSMenuDelegate {
         return parts.joined(separator: " · ")
     }
 
-    private func refreshDetails(_ list: [LiveRecording]) {
+    func refreshDetails(_ list: [LiveRecording]) {
         let now = Date()
         for recording in list {
             detailRows[recording.id]?.attributedTitle = Self.attributed(
                 Self.detail(recording, now: now), font: .menuFont(ofSize: 12), color: .secondaryLabelColor)
+            guard let rows = controlRows[recording.id] else { continue }
+            // A pause, a stop or a new warning while the menu is open changes these rows in place.
+            let toggle = recording.isPaused ? LiveRecordingCommand.resume : .pause
+            rows.toggle.title = toggle == .pause ? "Pause" : "Resume"
+            rows.toggle.image = NSImage(systemSymbolName: toggle == .pause ? "pause.fill" : "play.fill",
+                                        accessibilityDescription: nil)
+            rows.toggle.identifier = NSUserInterfaceItemIdentifier("live-recording.\(toggle.rawValue)")
+            rows.toggle.isEnabled = recording.toggleCommand != nil
+            rows.stop.isEnabled = recording.allows(.stop)
+            rows.marker?.isEnabled = !recording.isPaused && !recording.isStopping
+            rows.warning.attributedTitle = Self.attributed(recording.warning ?? "", font: .menuFont(ofSize: 12),
+                                                           color: .systemOrange)
+            rows.warning.isHidden = recording.warning == nil
+            rows.error.attributedTitle = Self.attributed(recording.lastError ?? "", font: .menuFont(ofSize: 12),
+                                                         color: .systemRed)
+            rows.error.isHidden = recording.lastError == nil
         }
     }
 

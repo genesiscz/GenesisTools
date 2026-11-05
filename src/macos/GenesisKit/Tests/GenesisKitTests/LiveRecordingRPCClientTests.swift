@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import XCTest
 
@@ -100,18 +101,46 @@ private final class FakeRecorderServer: @unchecked Sendable {
 
 final class LiveRecordingRPCClientTests: XCTestCase {
     @MainActor
+    func testOpenMenuRefreshesControlsAndWarningsInPlace() throws {
+        let controller = LiveRecordingsStatusItem()
+        let menu = NSMenu()
+        var entry = LiveRecording(id: "menu", kind: "screen", title: "Test", pid: 1, startedAt: Date(), state: "recording", frames: 0, socket: "/tmp/menu.sock")
+        entry.controls = ["pause", "resume", "stop"]
+        controller.build(menu, list: [entry])
+        let toggle = try XCTUnwrap(menu.items.first { $0.title == "Pause" })
+        let stop = try XCTUnwrap(menu.items.first { $0.title == "Stop" })
+        entry.state = "paused"
+        entry.warning = "low disk"
+        entry.lastError = "save refused"
+        controller.refreshDetails([entry])
+        XCTAssertTrue(menu.items.contains { $0 === toggle })
+        XCTAssertEqual(toggle.title, "Resume")
+        XCTAssertTrue(menu.items.contains { !$0.isHidden && $0.attributedTitle?.string == "low disk" })
+        XCTAssertTrue(menu.items.contains { !$0.isHidden && $0.attributedTitle?.string == "save refused" })
+        entry.state = "stopping"
+        controller.refreshDetails([entry])
+        XCTAssertFalse(toggle.isEnabled)
+        XCTAssertFalse(stop.isEnabled)
+    }
+
+    @MainActor
     func testSessionStopDoesNotWaitAndHotplugReloadsDisplays() async throws {
         let entry = LiveRecording(id: "test", kind: "screen", title: "Test", pid: 1, startedAt: Date(), state: "recording", frames: 0, socket: server.path)
         let session = LiveRecordingSession(entry: entry)
         session.connectIfNeeded()
         defer { session.close() }
         session.call("stop", label: "Stop")
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitUntil {
+            self.server.requests.contains { $0["method"] as? String == "stop" }
+                && self.server.requests.contains { $0["method"] as? String == "displays.list" }
+        }
         let stop = try XCTUnwrap(server.requests.first { $0["method"] as? String == "stop" })
         XCTAssertEqual((stop["params"] as? [String: Any])?["wait"] as? Bool, false)
         let before = server.requests.filter { $0["method"] as? String == "displays.list" }.count
         server.notifyDisplays()
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitUntil {
+            self.server.requests.filter { $0["method"] as? String == "displays.list" }.count > before
+        }
         XCTAssertEqual(server.requests.filter { $0["method"] as? String == "displays.list" }.count, before + 1)
         var single = entry
         single.controls = ["displays.list", "displays.switch"]
@@ -120,6 +149,16 @@ final class LiveRecordingRPCClientTests: XCTestCase {
         XCTAssertTrue(menu.items.contains { $0.identifier?.rawValue == "live-recording.only.1" })
         XCTAssertFalse(menu.items.contains { $0.identifier?.rawValue.hasPrefix("live-recording.mode.") == true })
         XCTAssertFalse(menu.items.contains { $0.identifier?.rawValue == "live-recording.display.1" })
+    }
+
+    /// Waits for the fake server to see the requests, with a deadline, instead of guessing a delay.
+    @MainActor
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while !condition() {
+            guard Date() < deadline else { throw NSError(domain: "recorder test deadline", code: 1) }
+            try await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     private var server: FakeRecorderServer!

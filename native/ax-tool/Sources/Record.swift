@@ -1411,15 +1411,17 @@ private final class ScreenStreamHost {
             CaptureEvents.error("unsupported", "microphone capture needs macOS 15 or newer")
             return
         }
-        let configuration = recorder.changeConfiguration { $0.microphoneCaptureDeviceID = deviceId }
         let stream = self.stream
-        Task {
+        // A refused update restores the shared configuration, so the next update does not carry the rejected device.
+        Task { @MainActor in
+            let configuration = recorder.changeConfiguration { _ in }
+            let previous = configuration.microphoneCaptureDeviceID
             do {
-                try await stream.updateConfiguration(configuration)
-                DispatchQueue.main.async {
-                    self.micDevice = deviceId
-                    self.emitSettings()
-                }
+                try await updateCaptureConfiguration(from: previous, to: deviceId, set: { value in
+                    _ = self.recorder.changeConfiguration { $0.microphoneCaptureDeviceID = value }
+                }, apply: { try await stream.updateConfiguration(configuration) })
+                self.micDevice = deviceId
+                self.emitSettings()
             } catch {
                 CaptureEvents.error("failed", "the stream refused the microphone \(deviceId): \(error.localizedDescription)")
             }
@@ -1431,18 +1433,19 @@ private final class ScreenStreamHost {
             CaptureEvents.error("unsupported", "a movie keeps one size; set-max-long-side works only without --video-out")
             return
         }
-        maxLongSide = px
         let size = recordOutputSize(options, points: pointSize, scale: display.scale, maxLongSide: px)
-        let configuration = recorder.changeConfiguration {
-            $0.width = Int(size.width)
-            $0.height = Int(size.height)
-        }
-        recorder.noteResize()
         let stream = self.stream
-        Task {
+        // The reported size and the resize marker change only after the stream took the new size.
+        Task { @MainActor in
+            let configuration = recorder.changeConfiguration { _ in }
+            let previous = (configuration.width, configuration.height)
             do {
-                try await stream.updateConfiguration(configuration)
-                DispatchQueue.main.async { self.emitSettings() }
+                try await updateCaptureConfiguration(from: previous, to: (Int(size.width), Int(size.height)), set: { value in
+                    _ = self.recorder.changeConfiguration { $0.width = value.0; $0.height = value.1 }
+                }, apply: { try await stream.updateConfiguration(configuration) })
+                self.maxLongSide = px
+                self.recorder.noteResize()
+                self.emitSettings()
             } catch {
                 CaptureEvents.error("failed", "the stream refused the new size: \(error.localizedDescription)")
             }

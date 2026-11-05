@@ -4,7 +4,19 @@
 import AppKit
 
 let interval = Double(CommandLine.arguments.dropFirst().first ?? "2") ?? 2
-let size = NSSize(width: 360, height: 180)
+
+func sceneSize(_ screen: NSSize) -> NSSize {
+    // Four percent of the full display stays well above the one percent sampling threshold.
+    NSSize(width: screen.width * 0.2, height: screen.height * 0.2)
+}
+
+if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--geometry",
+   let width = Double(CommandLine.arguments[2]), let height = Double(CommandLine.arguments[3]) {
+    let size = sceneSize(NSSize(width: width, height: height))
+    print("\(size.width) \(size.height)")
+    exit(0)
+}
+
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 
@@ -15,6 +27,7 @@ final class Scene {
     init() {
         for screen in NSScreen.screens {
             let frame = screen.visibleFrame
+            let size = sceneSize(screen.frame.size)
             let rect = NSRect(x: frame.maxX - size.width - 8, y: frame.minY + 8, width: size.width, height: size.height)
             let panel = NSPanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.level = .floating

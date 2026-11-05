@@ -87,7 +87,12 @@ export class RecordingRecord {
     }
 
     /** The `record start` entry: the block starts over (status recording, no stop yet) with the spans so far. */
-    async start(options: { startedAt: string; backend: string; displayPolicy: RecordingBlock["displayPolicy"] }) {
+    async start(options: {
+        startedAt: string;
+        backend: string;
+        displayPolicy: RecordingBlock["displayPolicy"];
+        displaySpans?: RecordingBlock["displaySpans"];
+    }) {
         await this.store.update(
             this.meetingId,
             { command: "record start", change: `display ${options.displayPolicy} (${options.backend})` },
@@ -101,6 +106,7 @@ export class RecordingRecord {
                     ocr: "ocr.jsonl",
                     status: "recording",
                     spans: this.spans,
+                    ...(options.displaySpans ? { displaySpans: options.displaySpans } : {}),
                 };
                 delete current.recording.stoppedAt;
                 delete current.recording.stopReason;

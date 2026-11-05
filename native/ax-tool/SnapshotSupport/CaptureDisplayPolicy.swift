@@ -301,3 +301,23 @@ public func peakDbfs(_ peak: Float) -> Double? {
 
     return (20 * log10(Double(peak)) * 10).rounded() / 10
 }
+
+/// Keeps independent capture failures visible while it drops repeats of one failure category.
+public func appendCaptureFailure(_ message: String, category: String, to failures: inout [String]) {
+    if !failures.contains(where: { $0.hasPrefix(category) }) {
+        failures.append(message)
+    }
+}
+
+/// Sets a shared configuration value for an asynchronous platform update, and restores the old value when the update fails.
+@MainActor
+public func updateCaptureConfiguration<Value>(from previous: Value, to next: Value,
+                                               set: (Value) -> Void, apply: () async throws -> Void) async throws {
+    set(next)
+    do {
+        try await apply()
+    } catch {
+        set(previous)
+        throw error
+    }
+}

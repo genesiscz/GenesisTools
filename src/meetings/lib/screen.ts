@@ -1,5 +1,5 @@
 import { formatBytes } from "@genesiscz/utils/format";
-import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, RecordingDisplaySpan } from "@genesiscz/utils/meetings/record";
 import { localTime } from "@genesiscz/utils/transcribe/render";
 import { z } from "zod";
 
@@ -33,6 +33,22 @@ export function recordedSpans(record: MeetingRecord, now = Date.now()): Recorded
     });
     const firstKept = kept[0]?.fromMs ?? Number.POSITIVE_INFINITY;
     return [...historySpans(record, now).filter((span) => span.toMs <= firstKept), ...kept];
+}
+
+/**
+ * When each display was captured, on the wall clock: the running recorder's own list when it records this meeting
+ * (`live`), else the record's. Undefined for a recording from before display intervals were kept.
+ */
+export function recordedDisplaySpans(
+    record: MeetingRecord,
+    options: { live?: RecordingDisplaySpan[]; now?: number } = {}
+): Array<RecordedSpan & { displayId: number }> | undefined {
+    const now = options.now ?? Date.now();
+    return (options.live ?? record.recording?.displaySpans)?.map((span) => ({
+        displayId: span.displayId,
+        fromMs: Date.parse(span.from),
+        toMs: span.to ? Date.parse(span.to) : now,
+    }));
 }
 
 function historySpans(record: MeetingRecord, now: number): RecordedSpan[] {
@@ -94,6 +110,8 @@ export interface DisplayFrames {
 export function framesAtPerDisplay(options: {
     lines: OcrLine[];
     spans: RecordedSpan[];
+    /** When each display was captured; absent for a recording made before display intervals were kept. */
+    displaySpans?: Array<RecordedSpan & { displayId: number }>;
     targetMs: number;
     windowMs: number;
 }): {
@@ -117,7 +135,20 @@ export function framesAtPerDisplay(options: {
     const displays: DisplayFrames[] = [];
 
     for (const [displayId, lines] of [...groups].sort(([a], [b]) => (a ?? -1) - (b ?? -1))) {
-        const one = framesAt({ ...options, lines });
+        const displaySpans = options.displaySpans?.filter((span) => span.displayId === displayId);
+        // A display interval and the session's unpaused interval must both cover the moment.
+        const spans =
+            displaySpans === undefined
+                ? options.spans
+                : displaySpans.flatMap((display) =>
+                      options.spans
+                          .map((session) => ({
+                              fromMs: Math.max(display.fromMs, session.fromMs),
+                              toMs: Math.min(display.toMs, session.toMs),
+                          }))
+                          .filter((span) => span.fromMs <= span.toMs)
+                  );
+        const one = framesAt({ ...options, lines, spans });
         recorded ||= one.recorded;
 
         if (one.frames.length > 0) {

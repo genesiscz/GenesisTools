@@ -199,8 +199,11 @@ private final class AudioTrack {
                 fileTimeline.append(sampleCount: CMSampleBufferGetNumSamples(buffer), sampleRate: description.mSampleRate,
                                     muted: muted)
             }
-        } else if failures.isEmpty {
-            failures.append("the \(source.rawValue) sidecar refused audio: \(sidecar?.error?.localizedDescription ?? "no error reported")")
+        } else {
+            // An earlier movie warning must not hide the sidecar's own failure; repeats of it are dropped.
+            let category = "the \(source.rawValue) sidecar refused audio:"
+            appendCaptureFailure("\(category) \(sidecar?.error?.localizedDescription ?? "no error reported")",
+                                 category: category, to: &failures)
         }
     }
 

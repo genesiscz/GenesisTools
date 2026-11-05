@@ -29,7 +29,9 @@ import {
     type MeetingStore,
     RECORDING_STOP_REASONS,
     type RecordingBlock,
+    type RecordingDisplaySpan,
     type RecordingStopReason,
+    recordingDisplaySpanSchema,
 } from "@genesiscz/utils/meetings/record";
 import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 import {
@@ -63,7 +65,12 @@ import {
 } from "@genesiscz/utils/screen-recorder/frame-output";
 import { liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
-import { PieceCaptures, type PieceCapturesOptions, settingsChange } from "@genesiscz/utils/screen-recorder/session";
+import {
+    PieceCaptures,
+    type PieceCapturesOptions,
+    type SessionCapture,
+    settingsChange,
+} from "@genesiscz/utils/screen-recorder/session";
 import { startRecording } from "@genesiscz/utils/screen-recorder/start";
 import { displayTarget, type PieceTarget, pieceTargets } from "@genesiscz/utils/screen-recorder/targets";
 import {
@@ -110,6 +117,8 @@ const recorderStateSchema = z.object({
     display: displayPolicySchema,
     backend: z.string().optional(),
     displays: z.array(z.object({ id: z.number(), name: z.string() })).optional(),
+    /** When each display was captured so far, for `meetings screen` while the recording runs. */
+    displaySpans: z.array(recordingDisplaySpanSchema).optional(),
     paused: z.boolean().optional(),
     frames: z.number(),
     bytes: z.number(),
@@ -375,6 +384,8 @@ export async function runRecorder(options: {
         );
         const recordingRecord = new RecordingRecord(store, meetingId, record?.recording?.spans ?? []);
         const spans = recordingRecord.spans;
+        const displaySpans: RecordingDisplaySpan[] = [...(record?.recording?.displaySpans ?? [])];
+        state.displaySpans = displaySpans;
         let paused = false;
         let pausedAt: string | undefined;
         let stopRequested = false;
@@ -669,6 +680,7 @@ export async function runRecorder(options: {
 
                             running.delete(only.target.displayId);
                             only.target = targetOf(display);
+                            openDisplay(only, display.id);
                             running.set(display.id, only);
                             chosen = [display.id];
                             syncDisplays();
@@ -737,8 +749,40 @@ export async function runRecorder(options: {
             }));
             live.update({ displays: state.displays });
         };
-        pieceHooks.onStart = () => syncDisplays();
+        /** The interval each running capture records now; a switch or a frame from another display opens the next. */
+        const displayIntervals = new WeakMap<SessionCapture, RecordingDisplaySpan>();
+        const closeDisplay = (entry: SessionCapture) => {
+            const span = displayIntervals.get(entry);
+
+            if (span && !span.to) {
+                span.to = new Date().toISOString();
+            }
+
+            saveState();
+        };
+        const openDisplay = (entry: SessionCapture, displayId: number) => {
+            const previous = displayIntervals.get(entry);
+
+            if (previous?.displayId === displayId && !previous.to) {
+                return;
+            }
+
+            if (previous && !previous.to) {
+                previous.to = new Date().toISOString();
+            }
+
+            const span = { displayId, from: new Date().toISOString() };
+            displaySpans.push(span);
+            displayIntervals.set(entry, span);
+            saveState();
+        };
+        // The displays first: opening the interval saves the state file, which then names every running display.
+        pieceHooks.onStart = (entry) => {
+            syncDisplays();
+            openDisplay(entry, entry.target.displayId);
+        };
         pieceHooks.onFrame = (entry, frame) => {
+            openDisplay(entry, frame.displayId ?? entry.target.displayId);
             entry.streamed += 1;
             live.update({ frames: liveFrames(), lastFrameAt: new Date().toISOString() });
             live.emit("frame", {
@@ -753,6 +797,7 @@ export async function runRecorder(options: {
             }
         };
         pieceHooks.onResult = async (entry, result) => {
+            closeDisplay(entry);
             keepTracks(result, entry.target);
             await jobs.task("ocr", (ctx) =>
                 keepFrames({
@@ -771,6 +816,8 @@ export async function runRecorder(options: {
             return undefined;
         };
         pieceHooks.onError = (entry, err, outcome) => {
+            closeDisplay(entry);
+
             if (err instanceof CaptureError && err.kind === "display-missing") {
                 log.info({ display: entry.target.label }, "a display left before its capture");
                 return;
@@ -922,6 +969,7 @@ export async function runRecorder(options: {
                 startedAt: state.startedAt,
                 backend: deps.recorder.id,
                 displayPolicy: policy,
+                displaySpans,
             });
             await session.ready();
 
@@ -1091,6 +1139,7 @@ export async function runRecorder(options: {
                         displayPolicy: policy,
                         ...(audio.sources.length > 0 ? { audio: { sources: audio.sources, files: audioFiles } } : {}),
                         spans,
+                        displaySpans,
                         displays: [...seenDisplays].map(([id, name]) => ({
                             id,
                             name,

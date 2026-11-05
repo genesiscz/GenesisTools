@@ -17,12 +17,14 @@ import {
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { z } from "zod";
 import { CallTimeline } from "./call-timeline";
+import { readRecorderState } from "./recorder";
 import {
     type DisplayFrames,
     framesAtPerDisplay,
     type OcrLine,
     ocrLineSchema,
     type RecordedSpan,
+    recordedDisplaySpans,
     recordedSpans,
     type ScreenFrame,
 } from "./screen";
@@ -215,6 +217,12 @@ export interface MeetingScreen {
     boxes?: ScreenBoxFrame[];
 }
 
+/** The running recorder's display intervals when it records this meeting; they are newer than the record's. */
+function liveDisplaySpans(store: MeetingStore, meetingId: string) {
+    const live = readRecorderState(store);
+    return live.running && live.state?.meetingId === meetingId ? live.state.displaySpans : undefined;
+}
+
 /** The frames of a meeting at a transcript moment or for a search text, with their boxes when asked. */
 export async function meetingScreen(request: MeetingScreenRequest): Promise<MeetingScreen> {
     const { store, record } = request;
@@ -248,6 +256,7 @@ export async function meetingScreen(request: MeetingScreenRequest): Promise<Meet
             : framesAtPerDisplay({
                   lines,
                   spans,
+                  displaySpans: recordedDisplaySpans(record, { live: liveDisplaySpans(store, record.id) }),
                   targetMs: zeroMs + request.atSec * 1000,
                   windowMs: (request.windowSec ?? 30) * 1000,
               });

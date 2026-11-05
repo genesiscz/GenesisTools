@@ -11,7 +11,15 @@ import { linkSource } from "./link";
 import { readRecorderState } from "./recorder";
 import { pruneCapturesDaily } from "./retention";
 import { meetingSource } from "./sources";
-import { type AutoRecording, clearAuto, RETRY_AFTER_MS, readAuto, writeAuto } from "./watch-auto";
+import {
+    type AutoRecording,
+    clearAuto,
+    RETRY_AFTER_MS,
+    readAuto,
+    readPendingRefreshes,
+    writeAuto,
+    writePendingRefreshes,
+} from "./watch-auto";
 
 const { log } = logger.scoped("meetings-watch");
 
@@ -143,11 +151,11 @@ async function refreshEnded(options: {
     sourceId: MeetingSourceId;
     auto: AutoRecording;
     now: number;
-}): Promise<void> {
+}): Promise<boolean> {
     const { store, deps, auto, now } = options;
 
     if (!auto.refreshUntil || !auto.meetingId) {
-        return;
+        return true;
     }
 
     const record = await deps
@@ -159,8 +167,17 @@ async function refreshEnded(options: {
     log.info({ meeting: auto.meetingId, title: record?.title, end: record?.end }, "meeting refreshed from its source");
 
     if (record?.end || now >= Date.parse(auto.refreshUntil)) {
-        clearAuto(store);
+        const active = readAuto(store);
+
+        // A pending refresh that finished leaves the active recording alone.
+        if (active?.sourceMeetingId === auto.sourceMeetingId && active.meetingId === auto.meetingId) {
+            clearAuto(store);
+        }
+
+        return true;
     }
+
+    return false;
 }
 
 /**
@@ -195,6 +212,20 @@ export async function watchOnce(
     }
 
     const source = await deps.source();
+    const pendingRefreshes = readPendingRefreshes(store);
+    const remaining: AutoRecording[] = [];
+
+    for (const pending of pendingRefreshes) {
+        const done = await refreshEnded({ store, deps, sourceId: pending.sourceId ?? source.id, auto: pending, now });
+
+        if (!done) {
+            remaining.push(pending);
+        }
+    }
+
+    if (remaining.length !== pendingRefreshes.length) {
+        writePendingRefreshes(store, remaining);
+    }
 
     const live = await deps.liveRecording();
     const recorder = deps.recorder();
@@ -227,7 +258,11 @@ export async function watchOnce(
         }
 
         if (ended && auto.meetingId) {
-            const pending = { ...auto, refreshUntil: new Date(now + REFRESH_FOR_MS).toISOString() };
+            const pending = {
+                ...auto,
+                sourceId: source.id,
+                refreshUntil: new Date(now + REFRESH_FOR_MS).toISOString(),
+            };
             writeAuto(store, pending);
             await refreshEnded({ store, deps, sourceId: source.id, auto: pending, now });
         } else {
@@ -238,7 +273,7 @@ export async function watchOnce(
     }
 
     if (auto?.meetingId && !auto.refreshUntil && live?.sourceMeetingId !== auto.sourceMeetingId) {
-        const pending = { ...auto, refreshUntil: new Date(now + REFRESH_FOR_MS).toISOString() };
+        const pending = { ...auto, sourceId: source.id, refreshUntil: new Date(now + REFRESH_FOR_MS).toISOString() };
         writeAuto(store, pending);
         await refreshEnded({ store, deps, sourceId: source.id, auto: pending, now });
     }

@@ -14,12 +14,13 @@ import { join } from "node:path";
 import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { tmpdir } from "@genesiscz/utils/paths";
 import { descendantPids, readProcessUsages } from "@genesiscz/utils/process/processes";
 import { FRAME_RECORDERS } from "@genesiscz/utils/screen-recorder/recorders";
 import type { CaptureResult, DisplayInfo, FrameRecorderId } from "@genesiscz/utils/screen-recorder/types";
 import { z } from "zod";
+import { captureDiagnostics, validateBenchmark } from "./recorder-benchmark-policy";
 
 const { log } = logger.scoped("recorder-benchmark");
 
@@ -36,6 +37,7 @@ function flag(name: string): string | undefined {
 const runs = Number(flag("--runs") ?? 3);
 const seconds = Number(flag("--seconds") ?? 60);
 const only = flag("--only");
+validateBenchmark(runs, seconds, only);
 const outDir = flag("--out") ?? mkdtempSync(join(tmpdir({ preferRoot: false }), "recorder-benchmark-"));
 mkdirSync(outDir, { recursive: true });
 
@@ -215,6 +217,10 @@ async function oneRun(options: {
             continue;
         }
 
+        errors.push(
+            ...captureDiagnostics(outcome.value).map((message) => `display ${displays[index]?.id}: ${message}`)
+        );
+
         const landed = landedTimes(outcome.value);
         frames += landed.length;
 
@@ -298,4 +304,4 @@ try {
 const frontAfter = frontmostApp();
 const summary = { runs, seconds, thresholdPercent: THRESHOLD_PERCENT, frontBefore, frontAfter, outDir, results };
 writeFileSync(join(outDir, "results.json"), SafeJSON.stringify(summary, null, 2));
-process.stdout.write(`${SafeJSON.stringify(summary, null, 2)}\n`);
+out.result(SafeJSON.stringify(summary, null, 2));

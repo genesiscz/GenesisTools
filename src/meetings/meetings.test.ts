@@ -52,6 +52,7 @@ import { suggestItems } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
 import { transcriptDocument } from "./lib/transcript-document";
 import { type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
+import { readAuto } from "./lib/watch-auto";
 
 function line(speaker: string, startSec: number, text: string, speakerId?: number): TranscriptEntry {
     return { speaker, startSec, text, speakerId };
@@ -944,6 +945,23 @@ describe("watchOnce", () => {
         expect(await watchOnce(h.store, { deps: h.deps, now: now + 30_000 })).toBe("idle");
         expect(h.refreshed).toHaveLength(2);
         expect(existsSync(join(h.store.root, "watch-auto.json"))).toBe(false);
+    });
+
+    test("the next meeting does not discard the previous meeting's pending refresh", async () => {
+        const h = harness();
+        await watchOnce(h.store, { deps: h.deps, now });
+        h.deps.liveRecording = async () => null;
+        await watchOnce(h.store, { deps: h.deps, now: now + 15_000 });
+        h.deps.liveRecording = async () => ({
+            ...live,
+            sourceMeetingId: "w2",
+            liveChangedAt: new Date(now + 30_000).toISOString(),
+        });
+        await watchOnce(h.store, { deps: h.deps, now: now + 30_000 });
+        const before = h.refreshed.filter((one) => one.endsWith("wisprflow:w1")).length;
+        await watchOnce(h.store, { deps: h.deps, now: now + 45_000 });
+        expect(h.refreshed.filter((one) => one.endsWith("wisprflow:w1"))).toHaveLength(before + 1);
+        expect(readAuto(h.store)?.sourceMeetingId).toBe("w2");
     });
 
     test("a start that failed (no grant) is not retried for the same meeting", async () => {
@@ -2364,6 +2382,10 @@ describe("the meetings recorder loop", () => {
                 { id: 1, name: "Built-in" },
                 { id: 4, name: "External" },
             ],
+            displaySpans: expect.arrayContaining([
+                expect.objectContaining({ displayId: 1 }),
+                expect.objectContaining({ displayId: 4 }),
+            ]),
         });
         expect(existsSync(files.pid)).toBe(false);
         expect(existsSync(files.state)).toBe(false);
@@ -2842,6 +2864,20 @@ describe("the screen at a moment, per display", () => {
         { file: "frames/c-d1.jpg", at: at("35:00"), displayId: 1, text: "Cursor" },
     ];
     const spans = [{ fromMs: Date.parse(at("30:00")), toMs: Date.parse(at("40:00")) }];
+
+    test("a removed display is not carried forward through another display's capture", () => {
+        const result = framesAtPerDisplay({
+            lines,
+            spans,
+            targetMs: Date.parse(at("36:00")),
+            windowMs: 10_000,
+            displaySpans: [
+                { displayId: 1, fromMs: Date.parse(at("30:00")), toMs: Date.parse(at("40:00")) },
+                { displayId: 4, fromMs: Date.parse(at("30:00")), toMs: Date.parse(at("32:00")) },
+            ],
+        });
+        expect(result.displays.map((one) => one.displayId)).toEqual([1]);
+    });
 
     test("each display shows the frame still on its own screen", () => {
         const { displays, recorded } = framesAtPerDisplay({

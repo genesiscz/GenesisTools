@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { RPC_ERRORS } from "@genesiscz/utils/screen-recorder/control";
 import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import * as videoProbe from "@genesiscz/utils/video/probe";
+import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
 import * as captureRunner from "./capture-runner";
 import { nativeSegmentRecorder, segmentCaptureSpec } from "./recording-native";
 import {
@@ -34,6 +35,38 @@ import {
     parseWindowIdList,
     type RecordingTarget,
 } from "./recording-targets";
+
+it("the benchmark scene exceeds its one percent threshold on a 4K display", async () => {
+    const proc = Bun.spawn(
+        ["swift", "src/control/scripts/recorder-benchmark-scene.swift", "--geometry", "3840", "2160"],
+        { stdout: "pipe", stderr: "pipe" }
+    );
+    const [output, error, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+    ]);
+    expect(error).toBe("");
+    expect(code).toBe(0);
+    const [width, height] = output.trim().split(" ").map(Number);
+    expect((width! * height!) / (3840 * 2160)).toBeGreaterThan(0.01);
+}, 60_000);
+
+it("rejects benchmark durations beyond the backend cap and invalid plans", () => {
+    for (const seconds of [0, -1, NaN, Infinity, 181]) {
+        expect(() => validateBenchmark(1, seconds)).toThrow();
+    }
+
+    expect(() => validateBenchmark(0, 60)).toThrow();
+    expect(() => validateBenchmark(1, 60, "unknown")).toThrow();
+    expect(() => validateBenchmark(1, 180, "native")).not.toThrow();
+});
+
+it("reports fulfilled captures that terminated early as benchmark errors", () => {
+    expect(captureDiagnostics({ startedAtMs: 0, frames: [], endedEarly: "stream-error" })).toEqual([
+        "capture ended early: stream-error",
+    ]);
+});
 
 const finder: RecordingTarget = { kind: "app", app: "4242", name: "Finder" };
 const display: RecordingTarget = { kind: "display", screenIndex: 0, name: "Built-in" };
