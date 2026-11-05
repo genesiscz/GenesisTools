@@ -1919,6 +1919,19 @@ describe("evidence --raw", () => {
     });
 });
 
+/** The structure of a JSON value: each leaf is its type name, an array is the shape of its first item. */
+function shapeOf(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.length > 0 ? [shapeOf(value[0])] : [];
+    }
+
+    if (value !== null && typeof value === "object") {
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, shapeOf(item)]));
+    }
+
+    return value === null ? "null" : typeof value;
+}
+
 describe("the meetings recorder loop", () => {
     const capture = meetingsConfigSchema.parse({}).global.capture;
     const builtIn: DisplayInfo = {
@@ -1947,6 +1960,8 @@ describe("the meetings recorder loop", () => {
     class ScriptedRecorder extends FrameRecorder {
         readonly id = "native" as const;
         readonly requests: CaptureRequest[] = [];
+        /** When each request reached the recorder (ms since the epoch). */
+        readonly requestedAt: number[] = [];
         /** What the live channel of a running capture was told (`liveControl` scripts only). */
         readonly commands: string[] = [];
         private piece = 0;
@@ -1969,6 +1984,8 @@ describe("the meetings recorder loop", () => {
                 /** A live switch's first frame reaches the hook 100 ms after it was captured. */
                 delayedFrame?: boolean;
                 audio?: boolean;
+                /** Called as a `fail` or `timeout` step throws. */
+                onFail?: () => void;
             },
             private readonly whenDone: () => void
         ) {
@@ -2010,6 +2027,7 @@ describe("the meetings recorder loop", () => {
 
         async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
             this.requests.push(request);
+            this.requestedAt.push(Date.now());
 
             if (this.requests.length > 1) {
                 this.switchWait?.();
@@ -2118,10 +2136,12 @@ describe("the meetings recorder loop", () => {
             }
 
             if (step === "fail") {
+                this.script.onFail?.();
                 throw new CaptureError("failed", "ax-tool capture exited 1: recording never started");
             }
 
             if (step === "timeout") {
+                this.script.onFail?.();
                 throw new CaptureError("timeout", "ax-tool capture did not end within 1 s + 30 s");
             }
 
@@ -2153,11 +2173,23 @@ describe("the meetings recorder loop", () => {
         lateSwitch?: boolean;
         delayedFrame?: boolean;
         audio?: boolean;
+        /** False: the recorder records one display at a time. */
+        parallel?: boolean;
+        /** The wait after a failed piece (0 by default). */
+        failurePauseMs?: number;
+        /** What the test does over the socket as a capture fails. */
+        onFail?: (call: (method: string, params?: unknown) => Promise<unknown>) => void;
         /** What the test does over the socket at each hanging piece; after the last, it stops the recording. */
         actions?: Array<
             (
                 call: (method: string, params?: unknown) => Promise<unknown>,
-                live: { id: string; dir: string; folder: string; files: { pid: string; state: string } }
+                live: {
+                    id: string;
+                    dir: string;
+                    folder: string;
+                    files: { pid: string; state: string };
+                    requests: CaptureRequest[];
+                }
             ) => Promise<unknown>
         >;
     }) {
@@ -2184,6 +2216,8 @@ describe("the meetings recorder loop", () => {
                 lateSwitch: options.lateSwitch,
                 delayedFrame: options.delayedFrame,
                 audio: options.audio,
+                parallel: options.parallel,
+                onFail: options.onFail ? () => options.onFail?.(call) : undefined,
             },
             () => {
                 seenLive.push(...listLiveRecordings(liveDir).map((entry) => `${entry.kind} ${entry.state}`));
@@ -2195,6 +2229,7 @@ describe("the meetings recorder loop", () => {
                     dir: liveDir,
                     folder: store.folder(created.id),
                     files: recorderFiles(store),
+                    requests: recorder.requests,
                 }).then((answer) => {
                     answers[index] = answer;
                 });
@@ -2225,7 +2260,7 @@ describe("the meetings recorder loop", () => {
                 },
                 liveDir,
                 pieceSec: 1,
-                failurePauseMs: 0,
+                failurePauseMs: options.failurePauseMs ?? 0,
             },
         });
         const folder = store.folder(created.id);
@@ -2910,6 +2945,211 @@ describe("the meetings recorder loop", () => {
         expect(readFileSync(join(run.folder, "audio.jsonl"), "utf8")).toContain('"source":"mic"');
         expect(run.saved?.recording).toMatchObject({ audio: { sources: ["mic"], files: 1 } });
         expect(progress).toEqual(expect.arrayContaining(["summary 1/1", "collect 3/3"]));
+    });
+
+    test("characterization (loop): a failed piece waits failurePauseMs before the next, and a stop cuts that wait short", async () => {
+        const paced = await recordWith({
+            displays: [[builtIn]],
+            steps: ["fail", "frames", "hang"],
+            failurePauseMs: 150,
+        });
+
+        expect(paced.recorder.requests).toHaveLength(3);
+        expect(paced.recorder.requestedAt[1]! - paced.recorder.requestedAt[0]!).toBeGreaterThanOrEqual(140);
+        expect(paced.state.stopReason).toBe("requested");
+
+        const startedAt = Date.now();
+        const cut = await recordWith({
+            displays: [[builtIn]],
+            steps: ["fail"],
+            failurePauseMs: 60_000,
+            onFail: (call) => void call("stop"),
+        });
+
+        expect(Date.now() - startedAt).toBeLessThan(3_000);
+        expect(cut.recorder.requests).toHaveLength(1);
+        expect(cut.state.stopReason).toBe("requested");
+    });
+
+    test("characterization (displays): the intervals of a restart switch, a live switch and a removed display, in order and closed", async () => {
+        const intervals = (spans: Array<{ displayId: number; from: string; to?: string }> | undefined) =>
+            (spans ?? []).map((span) => ({
+                displayId: span.displayId,
+                closed: span.to !== undefined && Date.parse(span.to) >= Date.parse(span.from),
+            }));
+        const restarted = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang", "hang", "hang"],
+            actions: [async (call) => call("displays.switch", { displayId: 4 }), async (call) => call("stop")],
+        });
+        const restartSpans = restarted.saved?.recording?.displaySpans ?? [];
+
+        expect(intervals(restartSpans)).toEqual([
+            { displayId: 1, closed: true },
+            { displayId: 4, closed: true },
+            { displayId: 4, closed: true },
+        ]);
+        expect(Date.parse(restartSpans[2]!.from)).toBeGreaterThanOrEqual(Date.parse(restartSpans[0]!.to!));
+        expect(restarted.recorder.requests.map((request) => request.target)).toEqual([
+            { kind: "display", displayId: 1 },
+            { kind: "display", displayId: 4 },
+            { kind: "display", displayId: 4 },
+        ]);
+
+        const live = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang", "hang"],
+            liveControl: true,
+            actions: [async (call) => [await call("displays.switch", { displayId: 4 }), await call("stop")]],
+        });
+        const liveSpans = live.saved?.recording?.displaySpans ?? [];
+
+        expect((live.answers[0] as unknown[])[0]).toEqual({ mode: "all", chosen: [4], applied: "live" });
+        expect(intervals(liveSpans)).toEqual([
+            { displayId: 1, closed: true },
+            { displayId: 4, closed: true },
+            { displayId: 4, closed: true },
+        ]);
+        expect(Date.parse(liveSpans[2]!.from)).toBeGreaterThanOrEqual(Date.parse(liveSpans[0]!.to!));
+        expect(live.recorder.requests).toHaveLength(2);
+
+        const removed = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang", "hang"],
+            actions: [async (call) => [await call("displays.remove", { displayId: 4 }), await call("stop")]],
+        });
+        const removedSpans = removed.saved?.recording?.displaySpans ?? [];
+
+        expect(intervals(removedSpans)).toEqual([
+            { displayId: 1, closed: true },
+            { displayId: 4, closed: true },
+        ]);
+        expect(Date.parse(removedSpans[1]!.to!)).toBeLessThanOrEqual(Date.parse(removedSpans[0]!.to!));
+        expect(removed.saved?.recording?.displays).toEqual([
+            { id: 1, name: "Built-in", frames: 0 },
+            { id: 4, name: "External", frames: 0 },
+        ]);
+    });
+
+    test("characterization (controls): what the display calls refuse, and every change refused once the recording stops", async () => {
+        const release = Promise.withResolvers<void>();
+        let block = false;
+        const run = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang", "hang", "hang", "hang"],
+            liveControl: true,
+            beforeJpeg: () => (block ? release.promise : Promise.resolve()),
+            actions: [
+                async (call) => [
+                    await call("displays.remove", { displayId: 9 }),
+                    await call("displays.remove", { displayId: 4 }),
+                    await call("displays.remove", { displayId: 1 }),
+                    await call("displays.mode", { mode: "main" }),
+                ],
+                async (call) => {
+                    // The stopped capture's frame waits in its conversion, so the recording stays stopping.
+                    block = true;
+                    const answers = [
+                        await call("stop", { wait: false }),
+                        await call("settings.set", { activeFps: 2 }),
+                        await call("displays.mode", { mode: "all" }),
+                        await call("audio.mute", { source: "mic", muted: true }),
+                        await call("pause"),
+                        await call("resume"),
+                        await call("stop"),
+                    ];
+                    release.resolve();
+                    return answers;
+                },
+            ],
+        });
+        const [unknown, removed, last, mode] = run.answers[0] as unknown[];
+        const [stopping, settings, display, mute, pause, resume, again] = run.answers[1] as unknown[];
+
+        expect(unknown).toMatchObject({ code: RPC_ERRORS.unknownDisplay });
+        expect(removed).toEqual({ mode: "all", chosen: [1], applied: "stopped" });
+        expect(last).toMatchObject({ code: RPC_ERRORS.lastDisplay });
+        expect(mode).toEqual({ mode: "main", chosen: null, applied: "restart" });
+        expect(stopping).toEqual({ state: "stopping", job: expect.stringMatching(/^finish-/) });
+        expect(settings).toMatchObject({ code: RPC_ERRORS.alreadyStopped });
+        expect(display).toMatchObject({ code: RPC_ERRORS.alreadyStopped });
+        expect(mute).toMatchObject({ code: RPC_ERRORS.alreadyStopped });
+        expect(pause).toMatchObject({ code: RPC_ERRORS.alreadyStopped });
+        expect(resume).toMatchObject({ code: RPC_ERRORS.notPaused });
+        expect(again).toMatchObject({ code: RPC_ERRORS.alreadyStopped });
+        expect(run.recorder.requests.map((request) => request.target)).toEqual([
+            { kind: "display", displayId: 1 },
+            { kind: "display", displayId: 4 },
+            { kind: "display", displayId: 1 },
+        ]);
+
+        const serial = await recordWith({
+            displays: [[builtIn, external]],
+            steps: ["hang"],
+            parallel: false,
+            actions: [async (call) => [await call("displays.add", { displayId: 4 }), await call("stop")]],
+        });
+
+        expect((serial.answers[0] as unknown[])[0]).toMatchObject({ code: RPC_ERRORS.invalidParams });
+        expect(serial.recorder.requests.map((request) => request.target)).toEqual([{ kind: "display", displayId: 1 }]);
+        expect(serial.saved?.recording?.warning).toContain("this recorder records one display at a time");
+    });
+
+    test("characterization (pause): a pause without a live channel ends the piece, no capture starts while paused, and resume starts the next", async () => {
+        const run = await recordWith({
+            displays: [[builtIn]],
+            steps: ["hang", "hang"],
+            actions: [
+                async (call, live) => {
+                    const paused = await call("pause");
+                    await Bun.sleep(80);
+                    const whilePaused = live.requests.length;
+                    return { paused, whilePaused, resumed: await call("resume") };
+                },
+            ],
+        });
+
+        expect(run.answers[0]).toEqual({
+            paused: { state: "paused" },
+            whilePaused: 1,
+            resumed: { state: "recording" },
+        });
+        expect(run.recorder.requests).toHaveLength(2);
+        expect(run.saved?.recording?.spans?.map((span) => span.stopReason)).toEqual(["paused", "requested"]);
+    });
+
+    test("characterization (shapes): recording.json and recorder-last.json after a recording", async () => {
+        const run = await recordWith({ displays: [[builtIn, external]], steps: ["frames", "frames", "hang", "hang"] });
+        const manifest = SafeJSON.parse(readFileSync(join(run.folder, "recording.json"), "utf8"), { strict: true });
+        const last = SafeJSON.parse(readFileSync(join(run.folder, "recorder-last.json"), "utf8"), { strict: true });
+
+        expect(shapeOf(manifest)).toEqual({
+            version: "number",
+            id: "string",
+            title: "string",
+            startedAt: "string",
+            endedAt: "string",
+            displays: [{ id: "number", name: "string" }],
+            settings: { meetingId: "string", source: "string" },
+            frames: [
+                { file: "string", atMs: "number", displayId: "number", changePercent: "number", reason: "string" },
+            ],
+            warnings: [],
+        });
+        expect(manifest.frames).toHaveLength(2);
+        expect(shapeOf(last)).toEqual({
+            meetingId: "string",
+            pid: "number",
+            startedAt: "string",
+            display: "string",
+            backend: "string",
+            frames: "number",
+            bytes: "number",
+            displaySpans: [{ displayId: "number", from: "string", to: "string" }],
+            displays: [{ id: "number", name: "string" }],
+            lastFrameAt: "string",
+            stopReason: "string",
+        });
     });
 });
 

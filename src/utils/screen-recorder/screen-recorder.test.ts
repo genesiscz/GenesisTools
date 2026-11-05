@@ -817,6 +817,19 @@ describe("frame output", () => {
     });
 });
 
+/** The structure of a JSON value: each leaf is its type name, an array is the shape of its first item. */
+function shapeOf(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.length > 0 ? [shapeOf(value[0])] : [];
+    }
+
+    if (value !== null && typeof value === "object") {
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, shapeOf(item)]));
+    }
+
+    return value === null ? "null" : typeof value;
+}
+
 describe("characterization: what a library recording asks its recorder for", () => {
     const left: DisplayInfo = { id: 1, index: 0, name: "left", main: true, widthPt: 64, heightPt: 40, scale: 1 };
     const right: DisplayInfo = { id: 4, index: 1, name: "right", main: false, widthPt: 64, heightPt: 40, scale: 1 };
@@ -827,11 +840,41 @@ describe("characterization: what a library recording asks its recorder for", () 
         readonly requests: CaptureRequest[] = [];
         readonly commands: string[] = [];
         started = Promise.withResolvers<void>();
+        private readonly waiters: Array<{ count: number; resolve: () => void }> = [];
 
         constructor(
-            private readonly script: { step?: "frames" | "empty"; audio?: boolean; liveSettings?: boolean } = {}
+            private readonly script: {
+                step?: "frames" | "empty";
+                audio?: boolean;
+                liveSettings?: boolean;
+                /** The live channel also mutes and switches the microphone. */
+                liveAudio?: boolean;
+                /** False: the capture offers no live channel. */
+                live?: boolean;
+            } = {}
         ) {
             super();
+        }
+
+        /** Resolves once `count` captures have started (and offered their live channel). */
+        waitFor(count: number): Promise<void> {
+            if (this.requests.length >= count) {
+                return Promise.resolve();
+            }
+
+            const waiter = Promise.withResolvers<void>();
+            this.waiters.push({ count, resolve: waiter.resolve });
+            return withTimeout(waiter.promise, 3_000);
+        }
+
+        override async audioDevices() {
+            return {
+                inputs: [
+                    { id: "built-in-mic", name: "Built-in Microphone", channels: 1, default: true },
+                    { id: "desk-mic", name: "Desk Mic", channels: 1, default: false },
+                ],
+                outputs: [],
+            };
         }
 
         get supports(): FrameRecorderSupport {
@@ -858,27 +901,46 @@ describe("characterization: what a library recording asks its recorder for", () 
             this.requests.push(request);
             const startedAtMs = Date.now();
             const displayId = request.target.kind === "display" ? request.target.displayId : 0;
-            request.hooks?.onLive?.({
-                switchDisplay: async (id) => {
-                    this.commands.push(`switch ${id}`);
-                },
-                pause: () => this.commands.push(`pause ${displayId}`),
-                resume: () => this.commands.push(`resume ${displayId}`),
-                ...(this.script.liveSettings
-                    ? {
-                          setRates: async (active: number, idle: number) => {
-                              this.commands.push(`rates ${displayId} ${active} ${idle}`);
-                          },
-                          setThreshold: async (percent: number) => {
-                              this.commands.push(`threshold ${displayId} ${percent}`);
-                          },
-                          setMaxLongSide: async (px: number) => {
-                              this.commands.push(`long side ${displayId} ${px}`);
-                          },
-                      }
-                    : {}),
-            });
+
+            if (this.script.live !== false) {
+                request.hooks?.onLive?.({
+                    switchDisplay: async (id) => {
+                        this.commands.push(`switch ${id}`);
+                    },
+                    pause: () => this.commands.push(`pause ${displayId}`),
+                    resume: () => this.commands.push(`resume ${displayId}`),
+                    ...(this.script.liveSettings
+                        ? {
+                              setRates: async (active: number, idle: number) => {
+                                  this.commands.push(`rates ${displayId} ${active} ${idle}`);
+                              },
+                              setThreshold: async (percent: number) => {
+                                  this.commands.push(`threshold ${displayId} ${percent}`);
+                              },
+                              setMaxLongSide: async (px: number) => {
+                                  this.commands.push(`long side ${displayId} ${px}`);
+                              },
+                          }
+                        : {}),
+                    ...(this.script.liveAudio
+                        ? {
+                              mute: async (source: string, muted: boolean) => {
+                                  this.commands.push(`${muted ? "mute" : "unmute"} ${displayId} ${source}`);
+                              },
+                              setMic: async (deviceId: string) => {
+                                  this.commands.push(`mic ${displayId} ${deviceId}`);
+                              },
+                          }
+                        : {}),
+                });
+            }
+
             this.started.resolve();
+
+            for (const waiter of this.waiters.filter((one) => one.count <= this.requests.length)) {
+                this.waiters.splice(this.waiters.indexOf(waiter), 1);
+                waiter.resolve();
+            }
             mkdirSync(request.outDir, { recursive: true });
             const frames: CaptureResult["frames"] = [];
 
@@ -1012,6 +1074,142 @@ describe("characterization: what a library recording asks its recorder for", () 
         await plain.started.promise;
         await restarted.stop();
         expect(plain.requests.map((request) => request.activeFps)).toEqual([2, 3]);
+    });
+
+    test("stage 5 (displays): add, remove and mode restart over the chosen ids, the last display stays, and a live switch moves the running capture", async () => {
+        const recorder = new ScriptRecorder();
+        const recording = await start(recorder, { displays: "main" });
+        await recorder.waitFor(1);
+
+        expect(await recording.listDisplays()).toEqual([
+            { ...left, recorded: true },
+            { ...right, recorded: false },
+        ]);
+        expect(await recording.addDisplay(4)).toEqual({ mode: "all", chosen: [1, 4], applied: "restart" });
+        await recorder.waitFor(3);
+        expect((await recording.status()).displays).toEqual([
+            { id: 1, name: "left" },
+            { id: 4, name: "right" },
+        ]);
+        expect(await recording.removeDisplay(1)).toEqual({ mode: "all", chosen: [4], applied: "restart" });
+        await recorder.waitFor(4);
+        await expect(recording.removeDisplay(4)).rejects.toMatchObject({ code: RPC_ERRORS.lastDisplay });
+        await expect(recording.addDisplay(99)).rejects.toMatchObject({ code: RPC_ERRORS.unknownDisplay });
+        expect(await recording.switchDisplay(1)).toEqual({ mode: "all", chosen: [1], applied: "live" });
+        expect((await recording.status()).displays).toEqual([{ id: 1, name: "left" }]);
+        expect(await recording.listDisplays()).toEqual([
+            { ...left, recorded: true },
+            { ...right, recorded: false },
+        ]);
+        await recording.stop();
+
+        expect(recorder.commands).toEqual(["switch 1"]);
+        expect(recorder.requests.map((request) => request.target)).toEqual([
+            { kind: "display", displayId: 1 },
+            { kind: "display", displayId: 1 },
+            { kind: "display", displayId: 4 },
+            { kind: "display", displayId: 4 },
+        ]);
+    });
+
+    test("stage 6 (sound): a mute goes live to every capture and an unmute restarts them, an unrecorded source is refused as unsupported, and a microphone switch goes live or restarts", async () => {
+        const recorder = new ScriptRecorder({ audio: true, liveAudio: true });
+        const recording = await start(recorder, { displays: "all", audio: { mic: true } });
+        await recorder.waitFor(2);
+
+        expect(await recording.muteAudio("mic", true)).toMatchObject({
+            sources: ["mic"],
+            muted: { mic: true, system: false },
+        });
+        await expect(recording.muteAudio("system", true)).rejects.toMatchObject({ code: RPC_ERRORS.unsupported });
+        expect(await recording.setAudioInput("desk-mic")).toMatchObject({ micDevice: "desk-mic" });
+        expect(recorder.commands.sort()).toEqual(["mic 1 desk-mic", "mic 4 desk-mic", "mute 1 mic", "mute 4 mic"]);
+        expect(await recording.muteAudio("mic", false)).toMatchObject({ muted: { mic: false, system: false } });
+        await recorder.waitFor(4);
+        await recording.stop();
+
+        expect(recorder.requests.map((request) => request.audio)).toEqual([
+            { sources: ["mic"] },
+            { sources: ["mic"] },
+            { sources: ["mic"], micDeviceId: "desk-mic" },
+            { sources: ["mic"], micDeviceId: "desk-mic" },
+        ]);
+
+        const plain = new ScriptRecorder({ audio: true });
+        const restarted = await start(plain, { displays: "main", audio: { mic: true } });
+        await plain.waitFor(1);
+        expect(await restarted.setAudioInput("desk-mic")).toMatchObject({ micDevice: "desk-mic" });
+        await plain.waitFor(2);
+        await restarted.stop();
+        expect(plain.requests.map((request) => request.audio?.micDeviceId)).toEqual([undefined, "desk-mic"]);
+    });
+
+    test("stage 7 (pause): a pause without a live channel ends the piece, no capture starts while paused, and resume starts the next", async () => {
+        const recorder = new ScriptRecorder({ live: false });
+        const recording = await start(recorder);
+        await recorder.waitFor(1);
+
+        expect(await recording.pause()).toEqual({ state: "paused" });
+        await Bun.sleep(80);
+        expect(recorder.requests).toHaveLength(1);
+        expect((await recording.status()).state).toBe("paused");
+        await expect(recording.pause()).rejects.toMatchObject({ code: RPC_ERRORS.alreadyPaused });
+        expect(await recording.resume()).toEqual({ state: "recording" });
+        await recorder.waitFor(2);
+        await expect(recording.resume()).rejects.toMatchObject({ code: RPC_ERRORS.notPaused });
+        const answer = await recording.stop();
+
+        expect(answer).toMatchObject({ state: "stopped", outcome: "done", frames: 2 });
+        await expect(recording.pause()).rejects.toMatchObject({ code: RPC_ERRORS.alreadyStopped });
+    });
+
+    test("stage 8 (shapes): the status while it records, and recording.json after", async () => {
+        const recorder = new ScriptRecorder();
+        const recording = await start(recorder, { displays: "all", title: "Demo" });
+        await recorder.waitFor(2);
+
+        expect(await recording.status()).toEqual({
+            kind: "library",
+            title: "Demo",
+            state: "recording",
+            displays: [
+                { id: 1, name: "left" },
+                { id: 4, name: "right" },
+            ],
+            frames: 0,
+            folder: recording.folder,
+        });
+        await recording.stop();
+        const manifest = SafeJSON.parse(readFileSync(join(recording.folder, "recording.json"), "utf8"), {
+            strict: true,
+        });
+
+        expect(shapeOf(manifest)).toEqual({
+            version: "number",
+            id: "string",
+            title: "string",
+            startedAt: "string",
+            endedAt: "string",
+            displays: [{ id: "number", name: "string" }],
+            settings: {
+                activeFps: "number",
+                idleFps: "number",
+                threshold: "number",
+                maxLongSide: "number",
+                heartbeatSec: "number",
+                ocr: { enabled: "boolean", languages: ["string"], minChars: "number" },
+                audio: { sources: [], muted: { mic: "boolean", system: "boolean" } },
+                tracks: [],
+            },
+            frames: [
+                { file: "string", atMs: "number", displayId: "number", changePercent: "number", reason: "string" },
+            ],
+            warnings: [],
+        });
+        expect(manifest.displays).toEqual([
+            { id: 1, name: "left" },
+            { id: 4, name: "right" },
+        ]);
     });
 });
 
