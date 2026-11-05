@@ -6,7 +6,7 @@ import { type MobileProject, type MobileRoute, projectRoutes } from "@genesiscz/
  * keeps the route's root id), or a whole URL (`shop://cart`, opened with no root to wait for).
  */
 export function resolveRoute(routes: MobileRoute[], target: string): MobileRoute {
-    if (target.includes("://")) {
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(target)) {
         return { name: "link", url: target };
     }
 
