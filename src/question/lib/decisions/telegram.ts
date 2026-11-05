@@ -10,7 +10,7 @@ import {
 } from "@genesiscz/utils/telegram-bot/lib/messages";
 import type { TelegramBotConfig, TelegramDecisionProject } from "@genesiscz/utils/telegram-bot/lib/types";
 import { type ActTokenStore, issueActTokens } from "../act/tokens";
-import { NOTICE_IDS, noticeItem, recordNotice } from "../notices/notices";
+import { NOTICE_IDS, type NoticeDeps, noticeItem, postNotice } from "../notices/notices";
 import { needsHuman } from "./notify";
 import { shownDecisionText } from "./option-labels";
 import { type DecisionRecord, kindOf } from "./store";
@@ -77,6 +77,7 @@ function keyboard(letters: { letter: string; token: string }[], recommended?: st
 }
 
 export interface DecisionTelegramDeps {
+    notices?: NoticeDeps;
     bot?: TelegramBotConfig | null;
     api?: TelegramMessagesApi;
     store?: ActTokenStore;
@@ -125,21 +126,32 @@ export async function postDecisionsToTelegram(
                     ...(deps.store ? { store: deps.store } : {}),
                     ...(deps.now === undefined ? {} : { now: deps.now }),
                 });
-                await postTelegramMessage({
-                    api,
-                    chatId,
-                    text: decisionTelegramText(row, project),
-                    buttons: keyboard(letters, row.recommended),
-                    noticeId: NOTICE_IDS.decision(row.id),
-                    ...(deps.now === undefined ? {} : { now: deps.now }),
-                });
-                // Remembered with its decision, so the write that closes it edits the message (`closeNoticeItems`).
-                await recordNotice({
-                    id: NOTICE_IDS.decision(row.id),
-                    channels: ["telegram"],
-                    items: [noticeItem("decision", row.id)],
-                });
-                posted++;
+                const delivered = await postNotice(
+                    {
+                        event: {
+                            app: "question",
+                            id: NOTICE_IDS.decision(row.id),
+                            only: ["telegram"],
+                            message: decisionTelegramText(row, project),
+                        },
+                        items: [noticeItem("decision", row.id)],
+                        send: async () => {
+                            await postTelegramMessage({
+                                api,
+                                chatId,
+                                text: decisionTelegramText(row, project),
+                                buttons: keyboard(letters, row.recommended),
+                                noticeId: NOTICE_IDS.decision(row.id),
+                                ...(deps.now === undefined ? {} : { now: deps.now }),
+                            });
+                            return true;
+                        },
+                    },
+                    deps.notices
+                );
+                if (delivered) {
+                    posted++;
+                }
             } catch (err) {
                 log.warn({ err, id: row.id }, "could not post a decision to Telegram; it is stored");
             }
