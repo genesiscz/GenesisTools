@@ -16,7 +16,7 @@ import { type InboxCommandDeps, registerInboxCommand } from "../../commands/inbo
 import { paneMiss } from "../decisions/deliver";
 import { livePaneTargets, noNativeReceivers } from "../decisions/deliver.fixtures";
 import { RELAYED_ANSWER_HEAD } from "../decisions/delivery-text";
-import { decisionOptionLabels, shownDecisionText } from "../decisions/option-labels";
+import { decisionOptionLabels, recommendedLetters, shownDecisionText } from "../decisions/option-labels";
 import { decisionFiles } from "../decisions/paths";
 import { decisionLine, parseDecisionBlocks } from "../decisions/read";
 import {
@@ -219,6 +219,42 @@ describe("decision option labels", () => {
         // fence closes it, and the option after it still counts.
         const indented = "Pick:\na) Run it\n   ```sh\n   b) not an option\n   ````\nb) Skip";
         expect(decisionOptionLabels(indented, ["a", "b"])).toEqual(["Run it\n```sh\nb) not an option\n````", "Skip"]);
+    });
+
+    test("a decision posted with no options takes its prompt's list; a to-do item and a broken list do not (decision 12)", () => {
+        const prompt = [
+            "Sharing build output does not work. Pick any set of letters.",
+            "- a) Step 1: an LRU limit in build-purge",
+            "- b) Step 2: smaller app builds",
+            "- c) Step 2 extra: one scratch tree",
+            "- d) Step 3: a spike on the compile cache",
+            "Proposal: a + b + d.",
+        ].join("\n");
+        const words = [
+            "Step 1: an LRU limit in build-purge",
+            "Step 2: smaller app builds",
+            "Step 2 extra: one scratch tree",
+            "Step 3: a spike on the compile cache",
+        ];
+
+        expect(decisionOptionLabels(prompt, [])).toEqual(words);
+        expect(shownDecisionText({ prompt, options: [] })).toEqual({
+            prompt: "Sharing build output does not work. Pick any set of letters.\nProposal: a + b + d.",
+            options: words,
+        });
+        // A row saved before the fix reads the same in the hub's Inbox: four buttons, three of them recommended.
+        const item = fromRecord(storedRow({ prompt, options: [], recommended: "abd" }));
+        expect(item.choices.map((choice) => choice.label)).toEqual(words);
+        expect(item.choices.map((choice) => choice.recommended)).toEqual([true, true, false, true]);
+        // Several letters in any written form name a set; a word's letters do not rise, so it never does.
+        expect([...recommendedLetters("a + b + d")]).toEqual(["a", "b", "d"]);
+        expect([...recommendedLetters(" A, C ")]).toEqual(["a", "c"]);
+        expect(recommendedLetters("keep it").size).toBe(0);
+        // One line alone, or a list that does not start at a), is no set of options.
+        expect(decisionOptionLabels("Which one?\na) the only line", [])).toEqual([]);
+        expect(decisionOptionLabels("Which one?\nb) only b\nc) and c", [])).toEqual([]);
+        // A to-do item's "a) …" lines are steps of the work, never answer buttons.
+        expect(shownDecisionText({ prompt, options: [], type: "todo" })).toEqual({ prompt, options: [] });
     });
 
     test("a line that differs from its button only in case stays in the prompt", () => {

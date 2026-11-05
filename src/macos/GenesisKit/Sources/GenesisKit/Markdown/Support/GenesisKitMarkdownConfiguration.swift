@@ -185,6 +185,11 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
     /// How a checked task's text looks.
     @Published public var taskDoneStyle: MarkdownTaskDoneStyle { didSet { store(taskDoneStyle.rawValue, "taskDoneStyle") } }
 
+    /// Folders a picture may come from besides the vault and the note's own folder (absolute paths, `~/` allowed).
+    /// Empty by default: the viewer shows only pictures it can trust to be part of the notes. A picture outside
+    /// them says so on the page, with a button to this setting.
+    @Published public var pictureFolders: [String] { didSet { store(pictureFolders, "pictureFolders") } }
+
     // MARK: Editor
 
     /// The source editor opens the list of notes after `[[` and of tags after `#word` by itself. Off: Esc opens it.
@@ -271,6 +276,7 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
         scrollbarMatchMarks = bool("scrollbarMatchMarks", true)
         taskClicks = string("taskClicks").flatMap(MarkdownTaskClicks.init(rawValue:)) ?? .saveAtOnce
         taskDoneStyle = string("taskDoneStyle").flatMap(MarkdownTaskDoneStyle.init(rawValue:)) ?? .dim
+        pictureFolders = defaults.stringArray(forKey: Self.prefix + "pictureFolders") ?? []
         completeWhileTyping = bool("completeWhileTyping", true)
         goToFiles = string("goToFiles").flatMap(MarkdownGoToFiles.init(rawValue:)) ?? .notes
         goToShowsHidden = bool("goToShowsHidden", false)

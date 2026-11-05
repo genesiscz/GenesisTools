@@ -100,11 +100,46 @@ public enum NativeSettingsSearch {
 @MainActor
 final class NativeSettingsSearchIndex: ObservableObject {
     @Published private(set) var entries: [String: [NativeSettingsSearchEntry]] = [:]
+    /// Whether the hidden copy of the pages is drawn; its own object, so its host redraws only when it starts or ends.
+    let indexing = NativeSettingsIndexing()
 
     func set(_ page: String, _ list: [NativeSettingsSearchEntry]) {
         if entries[page] != list { entries[page] = list }
     }
 
+}
+
+/// The hidden copy of the pages is drawn only while it learns their cards and rows. While it was drawn for the whole
+/// search, every keystroke laid every page out again: about 0.9 s of main thread per key press (five hang stacks while
+/// typing, 2026-11-05 17:22; Martin: "it lags pretty hard"). Now it is drawn for `window` from the moment the field takes
+/// the keyboard or a search starts, outside the views a keystroke redraws, and again only after `reindexAfter`.
+@MainActor
+final class NativeSettingsIndexing: ObservableObject {
+    @Published private(set) var active = false
+    private var startedAt: Date?
+    static let window: Duration = .seconds(2)
+    static let reindexAfter: TimeInterval = 60
+
+    func start(now: Date = Date()) {
+        guard !active, startedAt.map({ now.timeIntervalSince($0) > Self.reindexAfter }) ?? true else { return }
+        startedAt = now
+        active = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.window)
+            self?.active = false
+        }
+    }
+}
+
+/// Draws the hidden copy while the index learns, at the window's root: a keystroke redraws the sidebar, never this.
+struct NativeSettingsSearchIndexerHost: View {
+    let store: NativeSettingsStore
+    let search: NativeSettingsSearchIndex
+    @ObservedObject var indexing: NativeSettingsIndexing
+
+    var body: some View {
+        if indexing.active { NativeSettingsSearchIndexer(store: store, search: search) }
+    }
 }
 
 struct NativeSettingsSearchKey: PreferenceKey {

@@ -44,7 +44,8 @@ enum HubDefaults {
 /// - `activity`: Activity mode (`--mode timeline`) only, the rail's kind and project filters clicked;
 /// - `inbox`, `inbox.back`: the mode switch to the Inbox and back (by default in Activity mode only);
 /// - `open` (opt-in): sessions opened one after another, with how far the transcript sits from its latest turn;
-/// - `follow` (opt-in): the Files list following a fast diff scroll file by file, then a quiet settle window.
+/// - `follow` (opt-in): the Files list following a fast diff scroll file by file, then a quiet settle window;
+/// - `threads` (opt-in, PRs mode): a large PR's threads list landing from the disk cache, then the host's answer.
 ///
 /// `GENESIS_HUB_BENCH_AX=1` adds an accessibility client (`HubBenchAccessibilityClient`), which the
 /// live hub always has; the click scenarios measured 2 to 18 times higher with it (2026-09-25).
@@ -194,6 +195,7 @@ enum HubBench {
             if only.contains("wheel"), model.mode == .sessions, model.panes.contains(.transcript) { addWheelUp() }
             if only.contains("follow") { addFileFollow() }
             if only.contains("reveal"), model.mode == .worktrees { addSidebarReveal() }
+            if only.contains("threads"), model.mode == .prs { addThreadsLanding() }
             PerfLog.mark("hub.bench start: \(steps.count) steps, panes \(model.panes.map(\.rawValue).joined(separator: ","))")
             guard ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_AX"] == "1" else {
                 tick()
@@ -329,6 +331,91 @@ enum HubBench {
                 }, delay: delay))
             }
             steps.append(Step(scenario: "reveal.settle", action: {}, delay: 2.0))
+        }
+
+        /// The PR's threads as the host answered them, kept by `threads.wait` for every later step.
+        private var threadsFull: PRThreadsPayload?
+        private var threadsProbe: [String: Int] = [:]
+
+        /// `threads` (opt-in, PRs mode with a PR open): the PR threads list of a large PR, the way it froze the hub for
+        /// 12 s at 2026-11-05 03:17 (PR #507: 219 threads from the disk cache, then 237 from the host). It waits until the
+        /// PR's threads settle (`threads.wait`, not reported). Then each round empties the store (`threads.empty`, not
+        /// reported), lands the threads without the newest `GENESIS_HUB_BENCH_THREADS_NEW` (default 18) as the disk
+        /// cache paints them (`threads.mount`: stale, every card built), then all of them as the host's answer
+        /// (`threads.fresh`: the stale flag off, the new threads in). `threads.idle` is five quiet seconds at the end.
+        /// A step's `busy` is the main thread's whole awake time in its window: `GENESIS_HUB_BENCH_THREADS_WAIT` seconds
+        /// for the mount (default 20), 6 s for the answer. Each step logs the bodies it ran (`hub.bench threads.<step>
+        /// bodies:` in app-perf.log). `GENESIS_HUB_BENCH_THREADS_ROUNDS` (default 2). Run it with `GENESIS_HUB_BENCH_AX=1`:
+        /// without an accessibility client the focus walk that owned the 03:17 stall never runs.
+        private func addThreadsLanding() {
+            let env = ProcessInfo.processInfo.environment
+            let prs = model.prs
+            let rounds = env["GENESIS_HUB_BENCH_THREADS_ROUNDS"].flatMap(Int.init) ?? 2
+            let newCount = env["GENESIS_HUB_BENCH_THREADS_NEW"].flatMap(Int.init) ?? 18
+            let mountWait = env["GENESIS_HUB_BENCH_THREADS_WAIT"].flatMap(Double.init) ?? 20
+            order += ["threads.mount", "threads.fresh", "threads.idle"]
+            RenderProbe.enabled = true
+            var waits = 0
+            func wait() -> Step {
+                Step(scenario: "threads.wait", action: { [weak self] in
+                    guard let self else { return }
+                    let store = prs.review?.pr
+                    if let store, store.settled, let payload = store.payload, !payload.threads.isEmpty {
+                        threadsFull = payload
+                        PerfLog.mark("hub.bench threads: \(payload.threads.count) threads of \(payload.pr.identity.label), \(newCount) land as new")
+                        return
+                    }
+                    waits += 1
+                    guard waits < 240 else { return }
+                    steps.insert(wait(), at: index)
+                }, delay: 0.5)
+            }
+            steps.append(wait())
+            for round in 0..<rounds {
+                steps.append(Step(scenario: "threads.empty", action: { [weak self] in
+                    self?.logThreadsBodies("threads.empty")
+                    prs.review?.pr?.benchLand(nil, stale: false)
+                }, delay: 2.0))
+                steps.append(Step(scenario: "threads.mount", action: { [weak self] in
+                    guard let self, let full = threadsFull else { return }
+                    logThreadsBodies("threads.mount")
+                    let newest = Set(full.threads.sorted { ($0.comments.first?.createdAt ?? "") > ($1.comments.first?.createdAt ?? "") }
+                        .prefix(newCount).map(\.id))
+                    let cached = PRThreadsPayload(pr: full.pr, threads: full.threads.filter { !newest.contains($0.id) },
+                                                  draftCount: full.draftCount, viewer: full.viewer, cached: true, fetchedAt: full.fetchedAt)
+                    prs.review?.pr?.benchLand(cached, stale: true)
+                }, delay: mountWait))
+                steps.append(Step(scenario: "threads.fresh", action: { [weak self] in
+                    guard let self, let full = threadsFull else { return }
+                    logThreadsBodies("threads.fresh")
+                    // A fresh answer always differs from the last one: its fetch time moved.
+                    let fresh = PRThreadsPayload(pr: full.pr, threads: full.threads, draftCount: full.draftCount, viewer: full.viewer,
+                                                 cached: false, fetchedAt: "bench round \(round)")
+                    prs.review?.pr?.benchLand(fresh, stale: false)
+                }, delay: 6.0))
+            }
+            steps.append(Step(scenario: "threads.idle", action: { [weak self] in self?.logThreadsBodies("threads.idle") }, delay: 5.0))
+            // The reader scrolls to the end, again and again: each time the list must build its next cards.
+            order.append("threads.scroll")
+            for step in 0..<8 {
+                steps.append(Step(scenario: "threads.scroll", action: { [weak self] in
+                    if step == 0 { self?.logThreadsBodies("threads.scroll") }
+                    guard let anchor = PRListAnchor.current else { return }
+                    PerfLog.mark("hub.bench threads.scroll \(step): \(anchor.rowCount) rows and headers built")
+                    anchor.scroll(to: 1_000_000)
+                }, delay: 0.8))
+            }
+            steps.append(Step(scenario: "threads.end", action: { [weak self] in self?.logThreadsBodies("threads.end") }))
+        }
+
+        /// The bodies the previous threads step ran, in app-perf.log, labelled with that step.
+        private var threadsStep: String?
+        private func logThreadsBodies(_ next: String) {
+            if let threadsStep {
+                PerfLog.mark("hub.bench \(threadsStep) bodies:" + RenderProbe.summary(since: threadsProbe))
+            }
+            threadsStep = next
+            threadsProbe = RenderProbe.snapshot()
         }
 
         private func jitter() -> CGFloat {

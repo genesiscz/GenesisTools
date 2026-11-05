@@ -44,7 +44,7 @@ package enum AppDock {
     /// The hub, wherever it runs: this window, the running hub, or a new one. False when none runs and
     /// no new one could be started, so a caller that would quit can show something else instead.
     @discardableResult
-    static func showHub(_ hubWindow: NSWindow?, onFailure: @escaping @MainActor () -> Void = {}) -> Bool {
+    static func showHub(_ hubWindow: NSWindow?, onFailure: @escaping @MainActor () -> Void = {}, onSuccess: @escaping @MainActor () -> Void = {}) -> Bool {
         // A build without the hub part (Host/AppParts.swift): the caller shows its own window instead.
         guard AppParts.has(face: "--hub") else {
             HubPerf.log("dock: this build has no hub part")
@@ -53,7 +53,8 @@ package enum AppDock {
         if let hubWindow {
             _ = reopenHub(hubWindow)
         } else if HubSingleInstance.isRunningElsewhere {
-            DispatchQueue.main.async { HubSingleInstance.handOff([]) }
+            DispatchQueue.main.async { HubSingleInstance.handOff([]); onSuccess() }
+            return true
         } else if Bundle.main.bundlePath.hasSuffix(".app") {
             HubPerf.log("dock: no hub runs, starting one")
             // Through Launch Services, then the focus handed over: since macOS 14 an app the user is not in comes
@@ -75,8 +76,10 @@ package enum AppDock {
                     NSApp.yieldActivation(to: app)
                     app.activate()
                     HubPerf.log("dock: the hub started as pid \(app.processIdentifier), focus handed to it")
+                    onSuccess()
                 }
             }
+            return true
         } else if let executable = Bundle.main.executablePath {
             // A build run outside its bundle (`.build/debug/GenesisTools`): Launch Services cannot start it.
             HubPerf.log("dock: no hub runs, starting one outside a bundle")
@@ -93,6 +96,7 @@ package enum AppDock {
             HubPerf.log("dock: the hub did not start: no executable path")
             return false
         }
+        onSuccess()
         return true
     }
 }

@@ -46,6 +46,7 @@ import {
     unpackClickyLibrary,
 } from "../clicky-library";
 import { type ShareBundleResourcesReport, shareBundleResources } from "./bundle-resources";
+import { SWIFT_FACE_TABLE_PATH, syncSwiftFaceTable } from "./face-table";
 import {
     ALL_PART_IDS,
     APP_PARTS,
@@ -682,6 +683,12 @@ async function buildAppSteps(
     // The parts already installed, plus what the caller adds (parts.ts). Each set builds in its own scratch folder,
     // and Package.swift links the part targets `GENESIS_APP_PARTS` names. `--manifest-cache local` keeps the
     // evaluated manifest inside that folder, so a manifest read for one set never answers for another.
+    // The host reads its faces from a Swift file generated from the declarations in parts.ts (face-table.ts): a face
+    // added there reaches this binary without a hand-written Swift copy.
+    if (syncSwiftFaceTable()) {
+        step(`wrote ${SWIFT_FACE_TABLE_PATH} from the face declarations in parts.ts`);
+    }
+
     const parts = partsForBuild({ installed: installedParts(readManifest()), ...options?.parts });
     const scratchPath = appScratchPath(parts);
     const partsLabel = parts.length > 0 ? `parts ${parts.join(", ")}` : "host only";
@@ -1992,7 +1999,7 @@ async function reapStaleAppFaces({
     }
 
     // The long-lived faces among them, with their exact argv, recorded before anything is killed.
-    let reopen: RelaunchCapture = { steps: [], relay: false };
+    let reopen: RelaunchCapture = { steps: [], relay: false, unrestorable: [], recordDirs: [] };
 
     if (relaunch) {
         // A failed capture only costs the reopen; the reap below must still run.
@@ -2005,7 +2012,7 @@ async function reapStaleAppFaces({
                 launcherPath: launcher,
                 stalePids: new Set(stale),
             });
-            reopen = { steps: [], relay };
+            reopen = { steps: [], relay, unrestorable: [], recordDirs: [] };
             logger.warn({ err, relay }, "relaunch: faces could not be recorded; they stay closed after the reap");
         }
     } else {
@@ -2016,11 +2023,14 @@ async function reapStaleAppFaces({
         await killStaleFaces(stale, launcher, step);
     } finally {
         if (relaunch) {
-            const steps = reopen.steps.filter((face) => {
+            const linked = (face: { argv: string[] }) => {
                 const part = partForFace(face.argv[0] ?? "");
                 return part === undefined || parts.includes(part);
-            });
-            runRelaunch({ ...reopen, steps }, step);
+            };
+            runRelaunch(
+                { ...reopen, steps: reopen.steps.filter(linked), unrestorable: reopen.unrestorable.filter(linked) },
+                step
+            );
         }
     }
 }

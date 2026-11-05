@@ -63,11 +63,12 @@ export class JobCancelledError extends Error {
 }
 
 interface Receipt {
-    inputs?: string[];
     version: 1;
     key: string;
     state: unknown;
     at: string;
+    /** The inputs the steps up to this one protected with `addInput`; a receipt written before this field has none. */
+    inputs?: string[];
 }
 
 function receiptPath({ dir, index, name }: { dir: string; index: number; name: string }): string {
@@ -209,6 +210,7 @@ export class Job<S> {
             const guard = new InputGuard(this.options.inputs);
             const keys = chainKeys(steps, this.options.fingerprint);
             if (receipts) {
+                // The receipt cache only saves work later; a cache that cannot be written never fails the job.
                 try {
                     mkdirSync(receipts, { recursive: true });
                 } catch (error) {
@@ -226,11 +228,16 @@ export class Job<S> {
                         const missing = (steps[index].outputs?.(restored) ?? []).filter((path) => !existsSync(path));
 
                         if (missing.length === 0) {
-                            for (const input of receipt.inputs ?? []) {
-                                guard.add(input);
-                            }
                             state = restored;
                             start = index + 1;
+
+                            // The skipped steps' addInput calls do not run again: their inputs come from the receipt.
+                            for (const input of Array.isArray(receipt.inputs) ? receipt.inputs : []) {
+                                if (typeof input === "string") {
+                                    guard.add(input);
+                                }
+                            }
+
                             break;
                         }
 
@@ -274,10 +281,11 @@ export class Job<S> {
                         version: 1,
                         key,
                         state,
-                        inputs: guard.list(),
                         at: new Date().toISOString(),
+                        inputs: guard.list(),
                     };
                     const path = guard.claim(receiptPath({ dir: receipts, index, name: step.name }));
+
                     try {
                         atomicWriteFileSync(path, SafeJSON.stringify(receipt, null, 2));
                     } catch (error) {

@@ -568,6 +568,14 @@ final class PRThreadsTests: XCTestCase {
         XCTAssertEqual(PRThreadFileGroup.prefix(groups, threads: 50), groups, "the last batch holds every thread")
     }
 
+    func testFoldedGroupsDoNotSpendTheCardMountBudget() throws {
+        let first = PRThreadFileGroup(path: "first.ts", threads: try (0..<50).map { try thread("a\($0)", path: "first.ts", line: $0) })
+        let later = PRThreadFileGroup(path: "later.ts", threads: [try thread("b", path: "later.ts", line: 1)])
+        let built = PRThreadFileGroup.prefix([first, later], threads: 12, folded: ["first.ts"])
+        XCTAssertEqual(built.map(\.path), ["first.ts", "later.ts"])
+        XCTAssertEqual(built.last?.threads.map(\.id), ["b"])
+    }
+
     // MARK: references, head files, card clicks
 
     private let gitlab = ForgeWeb(kind: "gitlab", web: "https://gitlab.example.com/group/shop")
@@ -646,6 +654,16 @@ final class PRThreadsTests: XCTestCase {
         await renamed.load(repo: "/r", head: "head", shown: "older", paths: ["a"])?.value
         XCTAssertEqual(renamed.status(repo: "/r", head: "head", shown: "old", paths: ["a"]), ["a": .renamed(to: "old-name")])
         XCTAssertEqual(renamed.status(repo: "/r", head: "head", shown: "older", paths: ["a"]), ["a": .renamed(to: "older-name")])
+    }
+
+    @MainActor
+    func testANewFileKeepsTheOtherFilesHeadAnswerWhileItLoads() async {
+        let files = PRHeadFiles(readGit: { _, args in args.first == "ls-tree" ? "a\n" : "" })
+        await files.load(repo: "/r", head: "head", shown: "old", paths: ["a", "gone"])?.value
+        XCTAssertEqual(files.status(repo: "/r", head: "head", shown: "old", paths: ["a", "gone", "new"]), ["a": .present, "gone": .removed],
+                       "a thread on a new file must not blank every other card's badge until its load answers")
+        XCTAssertNil(files.status(repo: "/r", head: "head", shown: "older", paths: ["a"]), "another shown commit may see other renames")
+        XCTAssertNil(files.status(repo: "/r", head: "other", shown: "old", paths: ["a"]))
     }
 
     func testOnlyAPlainSingleClickOnACardJumps() {

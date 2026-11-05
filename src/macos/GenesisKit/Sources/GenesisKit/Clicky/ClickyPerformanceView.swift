@@ -288,9 +288,9 @@ public struct ClickyPerformanceView: View {
             }
             NativeSettingsRow("Hours", detail: "Start included, end excluded. A later start spans midnight; the same hour twice means all day.") {
                 HStack(spacing: 8) {
-                    NativeSettingsNumberPicker("From hour", range: 0..<24, identifier: "clicky.performance.fromHour", value: $fromHour)
+                    NativeSettingsNumberPicker("From hour", range: 0..<24, identifier: "clicky.performance.fromHour", style: .clock, value: $fromHour)
                     Text("to").foregroundStyle(.secondary)
-                    NativeSettingsNumberPicker("Until hour", range: 1..<25, identifier: "clicky.performance.untilHour", value: $untilHour)
+                    NativeSettingsNumberPicker("Until hour", range: 1..<25, identifier: "clicky.performance.untilHour", style: .clock, value: $untilHour)
                 }
             }
             HStack(spacing: 8) {

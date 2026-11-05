@@ -30,6 +30,9 @@ enum MarkdownMedia {
         "gif": "image/gif", "avif": "image/avif", "svg": "image/svg+xml",
     ]
 
+    /// Picture types the viewer does not show. A note that embeds one is told so, instead of "not found".
+    static let otherPictureTypes: Set<String> = ["bmp", "tif", "tiff", "heic", "heif", "ico", "jp2", "jxl", "psd", "raw"]
+
     static let maxImageBytes = 64 * 1024 * 1024
     static let maxJSONBytes = 2 * 1024 * 1024
 
@@ -77,14 +80,26 @@ enum MarkdownMedia {
     /// Every image or JSON reference in the body: `![[x.webp|600]]`,
     /// `![](a/x.png)`, `[data](x.json)`, `[[x.json]]`, `[ref]: x.png`, and
     /// `<img src="x.png">`. A remote URL is not a reference (the page loads it).
-    static func references(in markdown: String) -> [Reference] {
+    ///
+    /// `includingUnsupported` also lists a picture the viewer cannot show (`![](shot.heic)`, `![[scan.tiff]]`), so the
+    /// page can say why instead of "not found": any extension counts for the `![]()` and `<img>` forms, and the types
+    /// in `otherPictureTypes` for `![[…]]`.
+    static func references(in markdown: String, includingUnsupported: Bool = false) -> [Reference] {
         let ns = markdown as NSString
         let range = NSRange(location: 0, length: ns.length)
         var out: [Reference] = []
         var seen = Set<Reference>()
-        func add(_ raw: String, embed: Bool) {
+        func add(_ raw: String, embed: Bool, anyPicture: Bool = true) {
             let k = key(raw)
-            guard !k.isEmpty, !isRemote(k), let kind = kind(ofExtension: (k as NSString).pathExtension) else { return }
+            guard !k.isEmpty, !isRemote(k) else { return }
+            let ext = (k as NSString).pathExtension.lowercased()
+            guard let kind = kind(ofExtension: ext) else {
+                if includingUnsupported, embed, anyPicture || otherPictureTypes.contains(ext) {
+                    let ref = Reference(key: k, embed: true)
+                    if seen.insert(ref).inserted { out.append(ref) }
+                }
+                return
+            }
             // A plain link to an image stays a link; only its embed is a picture.
             guard embed || kind == .json else { return }
             let ref = Reference(key: k, embed: embed)
@@ -95,7 +110,7 @@ enum MarkdownMedia {
             return r.location == NSNotFound ? nil : ns.substring(with: r)
         }
         for m in wikilinkPattern.matches(in: markdown, range: range) {
-            if let target = group(m, 2) { add(target, embed: group(m, 1) == "!") }
+            if let target = group(m, 2) { add(target, embed: group(m, 1) == "!", anyPicture: false) }
         }
         for m in imagePattern.matches(in: markdown, range: range) {
             if let target = group(m, 1) { add(target, embed: true) }
@@ -144,6 +159,9 @@ enum MarkdownMedia {
     struct Context: Equatable {
         var folder: URL
         var vaultRoot: URL?
+        /// Folders the reader allowed in Settings (`GenesisKitMarkdownConfiguration.pictureFolders`): pictures under
+        /// them show like those in the vault. Empty by default.
+        var extraRoots: [URL] = []
     }
 
     /// The file a reference points at, or nil when it does not exist, is not an
@@ -196,18 +214,92 @@ enum MarkdownMedia {
     }
 
     /// The real path of `url` when it is a regular file of an allowed type
-    /// inside the vault or under the document's folder.
+    /// inside the vault, the document's folder or a folder the reader allowed.
     static func admitted(_ url: URL, in context: Context) -> URL? {
-        guard let real = realPath(url), kind(ofExtension: real.pathExtension) != nil,
-              let values = try? real.resourceValues(forKeys: [.isRegularFileKey]),
-              values.isRegularFile == true else { return nil }
-        let roots = [context.vaultRoot, context.folder].compactMap { $0 }
+        guard let real = allowedFile(url), isInsideRoots(real, in: context) else { return nil }
+        return real
+    }
+
+    private static func isInsideRoots(_ real: URL, in context: Context) -> Bool {
+        let pictureRoots = kind(ofExtension: real.pathExtension) == .image ? context.extraRoots : []
+        let roots = [context.vaultRoot, context.folder].compactMap { $0 } + pictureRoots
         let path = real.path
         for root in roots {
             guard let base = realPath(root)?.path else { continue }
-            if path.hasPrefix(base.hasSuffix("/") ? base : base + "/") { return real }
+            if path.hasPrefix(base.hasSuffix("/") ? base : base + "/") { return true }
         }
-        return nil
+        return false
+    }
+
+    /// Why a reference shows no picture: the first candidate file that exists decides. Only the reason, the path the
+    /// page may print and (for a big file) its size reach the page, never the file.
+    struct Refusal: Equatable {
+        enum Reason: String {
+            /// No candidate exists.
+            case missing
+            /// It exists, outside the vault, the note's folder and the folders the reader allowed.
+            case outsideRoots
+            /// It exists but is no regular file, or the process may not read it (permissions, a privacy block).
+            case notReadable
+            /// It exists with an extension the viewer does not show (`.heic`, `.tiff`).
+            case notAPicture
+            /// It is over `maxImageBytes`.
+            case tooLarge
+        }
+        var reason: Reason
+        /// The file as the page prints it: the absolute path when a file was found, the reference as written when not.
+        var path: String
+        var size: Int?
+
+        var entry: [String: String] {
+            var item = ["kind": "refused", "reason": reason.rawValue, "path": path,
+                        "name": (path as NSString).lastPathComponent]
+            if reason == .tooLarge, let size {
+                item["size"] = MarkdownMedia.megabytes(size)
+                item["limit"] = MarkdownMedia.megabytes(MarkdownMedia.maxImageBytes)
+            }
+            return item
+        }
+    }
+
+    /// A picture the process cannot read or that is over the limit is refused when the page is built, so the page
+    /// says why instead of a picture that fails to load.
+    static func isServable(_ url: URL) -> Bool {
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        return size <= maxImageBytes && FileManager.default.isReadableFile(atPath: url.path)
+    }
+
+    static func megabytes(_ bytes: Int) -> String {
+        let value = Double(bytes) / 1_048_576
+        return value >= 10 ? "\(Int(value.rounded(.up))) MB" : String(format: "%.1f MB", value)
+    }
+
+    static func refusal(of key: String, in context: Context, index: VaultFileIndex? = nil) -> Refusal {
+        var candidates = candidates(key, in: context, attachmentFolder: index?.attachmentFolder)
+        if let index, let vault = context.vaultRoot, !key.hasPrefix("/"), !key.hasPrefix("~"), !key.lowercased().hasPrefix("file:") {
+            candidates += index.lookup(key).map { vault.appendingPathComponent($0) }
+        }
+        for candidate in candidates {
+            guard let real = realPath(candidate) else { continue }
+            let path = candidate.standardizedFileURL.path
+            let values = try? real.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            if kind(ofExtension: real.pathExtension) == nil { return Refusal(reason: .notAPicture, path: path) }
+            if values?.isRegularFile != true || !FileManager.default.isReadableFile(atPath: real.path) {
+                return Refusal(reason: .notReadable, path: path)
+            }
+            if !isInsideRoots(real, in: context) { return Refusal(reason: .outsideRoots, path: path) }
+            if let size = values?.fileSize, size > maxImageBytes { return Refusal(reason: .tooLarge, path: path, size: size) }
+            // Admitted and small: it resolves, so the caller never asks. Keep looking at the others.
+        }
+        return Refusal(reason: .missing, path: key)
+    }
+
+    /// The real path of `url` when it is a regular file of an allowed type, wherever it is.
+    private static func allowedFile(_ url: URL) -> URL? {
+        guard let real = realPath(url), kind(ofExtension: real.pathExtension) != nil,
+              let values = try? real.resourceValues(forKeys: [.isRegularFileKey]),
+              values.isRegularFile == true else { return nil }
+        return real
     }
 
     /// realpath(3): every symlink and `..` resolved, nil when the path does not exist.
@@ -401,7 +493,7 @@ final class MarkdownMediaRegistry {
             tokenByPath = [:]
             return [:]
         }
-        let references = MarkdownMedia.references(in: markdown)
+        let references = MarkdownMedia.references(in: markdown, includingUnsupported: true)
         let fileNames = MarkdownMedia.bareFileNames(in: markdown)
         let index = context.vaultRoot.map(indexForVault)
         // A link written as a bare note name (`[[Plan#Heading]]`) is found through the same scan: start it now, so
@@ -418,16 +510,7 @@ final class MarkdownMediaRegistry {
         var next: [String: Entry] = [:]
         var nextTokens: [String: String] = [:]
         var map: [String: [String: String]] = [:]
-        for ref in references where map[ref.key] == nil {
-            guard let url = MarkdownMedia.resolve(ref.key, in: context, index: index),
-                  let kind = MarkdownMedia.kind(ofExtension: url.pathExtension) else {
-                // The vault scan is still running and will render again: a miss now is no answer yet, so the page
-                // draws a quiet placeholder instead of "not found" (a pending lookup never shows its negative answer).
-                if let index, !index.isReady, onIndexReady != nil {
-                    map[ref.key] = ["kind": "pending", "name": (ref.key as NSString).lastPathComponent]
-                }
-                continue
-            }
+        func register(_ url: URL, _ kind: MarkdownMedia.Kind, _ ref: MarkdownMedia.Reference) {
             let token = nextTokens[url.path] ?? tokenByPath[url.path] ?? UUID().uuidString.lowercased()
             nextTokens[url.path] = token
             next[token] = Entry(url: url, kind: kind, context: context)
@@ -436,6 +519,26 @@ final class MarkdownMediaRegistry {
                 item["src"] = "\(MarkdownMedia.scheme)://m/\(token)"
             }
             map[ref.key] = item
+        }
+        for ref in references where map[ref.key] == nil {
+            let resolved = MarkdownMedia.resolve(ref.key, in: context, index: index).flatMap { url in
+                MarkdownMedia.kind(ofExtension: url.pathExtension).map { (url: url, kind: $0) }
+            }
+            if let found = resolved, !(found.kind == .image && !MarkdownMedia.isServable(found.url)) {
+                register(found.url, found.kind, ref)
+                continue
+            }
+            // The vault scan is still running and will render again: a miss now is no answer yet, so the page
+            // draws a quiet placeholder instead of "not found" (a pending lookup never shows its negative answer).
+            if resolved == nil, let index, !index.isReady, onIndexReady != nil {
+                map[ref.key] = ["kind": "pending", "name": (ref.key as NSString).lastPathComponent]
+                continue
+            }
+            // A picture that shows nothing says why: missing, outside the folders it may come from, unreadable, a type
+            // the viewer does not show, or too big. A link to a JSON file keeps being a plain link.
+            if ref.embed, MarkdownMedia.kind(ofExtension: (ref.key as NSString).pathExtension) != .json {
+                map[ref.key] = MarkdownMedia.refusal(of: ref.key, in: context, index: index).entry
+            }
         }
         // A bare `Plan.md` links only when a click on it would open something: the same resolver as the click
         // (the note's folder, the vault root, then the vault's notes by name once the scan is ready).

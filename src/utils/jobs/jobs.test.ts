@@ -95,6 +95,35 @@ describe("job runner", () => {
         expect(runs).toEqual(["a", "a"]);
     });
 
+    test("a rerun that skips a step through its receipt still protects the inputs that step added", async () => {
+        const dir = workspace();
+        const source = join(dir, "source.mp4");
+        writeFileSync(source, "x");
+        const steps: JobStep<{ source?: string }>[] = [
+            {
+                name: "discover",
+                key: "source",
+                run: async (ctx) => {
+                    ctx.addInput(source);
+                    return { source };
+                },
+            },
+            {
+                name: "export",
+                run: async (ctx) => {
+                    ctx.claim(ctx.state.source ?? "");
+                    return ctx.state;
+                },
+            },
+        ];
+        const receipts = join(dir, "r");
+
+        await expect(runJob({ kind: "test", initial: {}, steps, receipts }).done).rejects.toThrow(OverwriteInputError);
+        const again = runJob({ kind: "test", initial: {}, steps, receipts });
+        await expect(again.done).rejects.toThrow(OverwriteInputError);
+        expect(again.steps[0]).toMatchObject({ name: "discover", skipped: true });
+    });
+
     test("a step never writes an input, and the guard sees through a relative or symlinked spelling", async () => {
         const dir = workspace();
         const input = join(dir, "input.mp4");
@@ -187,36 +216,4 @@ test("an unwritable receipt cache cannot turn successful work into a failed job"
     });
     expect((await job.done).state).toBe(1n);
     expect(job.info().state).toBe("done");
-});
-
-test("resumed receipts retain dynamically protected inputs", async () => {
-    const dir = workspace();
-    const source = join(dir, "source.txt");
-    writeFileSync(source, "original");
-    let discovered = 0;
-    const steps: JobStep<string>[] = [
-        {
-            name: "discover",
-            key: 1,
-            run: async (ctx) => {
-                discovered++;
-                ctx.addInput(source);
-                return source;
-            },
-        },
-        {
-            name: "export",
-            run: async (ctx) => {
-                writeFileSync(ctx.claim(ctx.state), "overwritten");
-                return ctx.state;
-            },
-        },
-    ];
-    for (let run = 0; run < 2; run++) {
-        await expect(
-            runJob({ kind: "test", initial: "", steps, receipts: join(dir, "receipts") }).done
-        ).rejects.toBeInstanceOf(OverwriteInputError);
-    }
-    expect(discovered).toBe(1);
-    expect(await Bun.file(source).text()).toBe("original");
 });

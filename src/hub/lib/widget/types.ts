@@ -54,6 +54,8 @@ export const widgetPreferencesSchema = z.object({
     sideStyle: z.enum(["modular", "classic"]).default("modular"),
     joinedEdges: z.boolean().default(true),
     sidePosition: z.number().min(0).max(1).default(0.5),
+    /** The top bar's horizontal center: 0 is the left edge and 1 the right edge of the room the display leaves it. */
+    topPosition: z.number().min(0).max(1).default(0.5),
     hoverPreviews: z.boolean().default(true),
     glassEffect: z.boolean().default(true),
     /** The widget panel's own background: "dark" (solid near-black), "glass", or "theme" (the app-wide theme). */

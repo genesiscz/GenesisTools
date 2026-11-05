@@ -538,10 +538,13 @@ extension View {
     }
 
     /// The panel's find: searches `rows()`, highlights, scrolls to the current match, and takes ⌘F
-    /// while the keyboard is in this panel. `revision` changes when the rows' content changes.
+    /// while the keyboard is in this panel. `revision` changes when the rows' content changes. `prepare` builds a
+    /// match's row in a panel that builds rows as the reader nears them, and answers true when it did, so the scroll
+    /// waits for the layout that draws the row.
     func panelFind<Revision: Equatable>(_ find: PanelFindModel, revision: Revision, onReveal: ((PanelFindMatch) -> Void)? = nil,
+                                        prepare: ((PanelFindMatch) -> Bool)? = nil,
                                         rows: @escaping () -> [PanelFindRow]) -> some View {
-        modifier(PanelFindHost(find: find, revision: revision, onReveal: onReveal, rows: rows))
+        modifier(PanelFindHost(find: find, revision: revision, onReveal: onReveal, prepare: prepare, rows: rows))
     }
 
     /// A panel with a find of its own (the transcript's search, the diff's page find). A click in it
@@ -582,6 +585,7 @@ private struct PanelFindHost<Revision: Equatable>: ViewModifier {
     @ObservedObject var find: PanelFindModel
     let revision: Revision
     let onReveal: ((PanelFindMatch) -> Void)?
+    let prepare: ((PanelFindMatch) -> Bool)?
     let rows: () -> [PanelFindRow]
     @State private var revealed: PanelFindMatch?
 
@@ -605,6 +609,13 @@ private struct PanelFindHost<Revision: Equatable>: ViewModifier {
     /// is already in view does not scroll.
     private func reveal(_ proxy: ScrollViewProxy) {
         guard let match = find.current else { return }
+        if prepare?(match) == true {
+            // The row did not exist: scroll once the layout that builds it has run.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                MainActor.assumeIsolated { reveal(proxy) }
+            }
+            return
+        }
         onReveal?(match)
         let previous = revealed
         revealed = match

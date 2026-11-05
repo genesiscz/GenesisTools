@@ -339,6 +339,8 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var sideGroups: [[String]]?
     public var sideLayout: String?
     public var sidePosition: Double?
+    /// The top bar's horizontal center, 0 (left) to 1 (right); nil reads as 0.5, centered.
+    public var topPosition: Double?
     public var hoverPreviews: Bool?
     public var sideStyle: String?
     public var joinedEdges: Bool?
@@ -445,7 +447,7 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
             topModules: topModules ?? ["agents"],
             sideGroups: sideGroups ?? [["agents"], ["capture", "shelf"], ["focus", "voice", "tasks"]],
             separated: sideLayout == "separated", sidePosition: sidePosition ?? 0.5,
-            hoverPreviews: hoverPreviews ?? true)
+            topPosition: topPosition ?? 0.5, hoverPreviews: hoverPreviews ?? true)
     }
     public var quietSeconds: Int
     public var voiceProvider: String

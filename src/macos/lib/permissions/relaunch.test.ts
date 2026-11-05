@@ -6,19 +6,25 @@ function processRows(text: string): Array<{ pid: number; command: string }> {
 }
 
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     argvFromPs,
+    faceHome,
     linkRelayOpenArgs,
+    openEnvironment,
     parseFrontmostPid,
     planRelaunch,
     readFaceFrontWindows,
     readFaceRecords,
     readFaceWindows,
+    readStoppedFaceRecords,
     relaunchCommands,
     relaunchPlan,
+    restoredEnvironment,
+    unrestorableMessage,
     type WindowFace,
     windowFaceKind,
     windowFacesFromPs,
@@ -38,11 +44,37 @@ describe("windowFaceKind", () => {
         expect(windowFaceKind(["--features", "--page", "general"])).toBe("features");
         // The face's old name, as a face started by an older build carries it.
         expect(windowFaceKind(["--clicky", "--page", "general"])).toBe("features");
+        expect(windowFaceKind(["--recorder", "--edit", "/x/screen.mp4"])).toBe("recorder");
+        expect(windowFaceKind(["--recorder", "--edit", "/x/screen.mp4", "--snapshot", "/tmp/r.png"])).toBeNull();
+        expect(windowFaceKind(["--meetings", "--meeting", "2026-11-05_10-00-sync"])).toBe("meetings");
+        expect(windowFaceKind(["--meetings", "--snapshot", "/tmp/m.png"])).toBeNull();
+    });
+
+    it("brings the Meetings window back on the meeting it showed, behind the front window", () => {
+        const face = { pid: 8, kind: "meetings" as const, argv: ["--meetings", "--meeting", "m1"], lossless: true };
+        expect(relaunchPlan([face], null).map((step) => step.argv)).toEqual([
+            ["--meetings", "--meeting", "m1", "--no-activate"],
+        ]);
+    });
+
+    it("brings the recorder back as its menu bar item, behind the front window", () => {
+        const face = {
+            pid: 7,
+            kind: "recorder" as const,
+            argv: ["--recorder", "--edit", "/x/screen.mp4"],
+            lossless: true,
+        };
+        const plan = relaunchPlan([face], null);
+        expect(plan.map((step) => step.argv)).toEqual([["--recorder", "--no-activate"]]);
     });
 
     it("skips short-lived faces, link routers and scripted runs", () => {
         expect(windowFaceKind(["--rpc", "{}"])).toBeNull();
         expect(windowFaceKind(["--notify"])).toBeNull();
+        // The markdown viewer records its argv and keeps a link relay, but a rebuild leaves it closed.
+        expect(windowFaceKind(["--markdown", "/x/notes.md"])).toBeNull();
+        expect(windowFaceKind(["--mic"])).toBeNull();
+        expect(windowFaceKind(["--capsule"])).toBeNull();
         expect(windowFaceKind(["https://example.org/"])).toBeNull();
         expect(windowFaceKind(["--review", "--repo", "/x", "--snapshot", "/tmp/a.png"])).toBeNull();
         expect(windowFaceKind(["--hub", "--bench", "/tmp/b.json"])).toBeNull();
@@ -289,6 +321,7 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
                 stalePids: new Set(options.stalePids),
                 records: new Map(),
                 frontPid: () => options.frontPid ?? null,
+                environment: () => ({ HOME: "/Users/alice" }),
             }),
             BUNDLE
         ).map((command) => command.args);
@@ -302,8 +335,32 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
 
         expect(plan({ psStdout: listing, stalePids: ["301", "302", "303"], frontPid: 999 })).toEqual([
             ["open", "-n", "-g", BUNDLE, "--args", "--link-relay"],
-            ["open", "-n", "-g", BUNDLE, "--args", "--widget", "--ensure-running", "--no-activate"],
-            ["open", "-n", "-g", BUNDLE, "--args", "--hub", "--mode", "sessions", "--resume", "--no-activate"],
+            [
+                "open",
+                "-n",
+                "-g",
+                "--env",
+                "HOME=/Users/alice",
+                BUNDLE,
+                "--args",
+                "--widget",
+                "--ensure-running",
+                "--no-activate",
+            ],
+            [
+                "open",
+                "-n",
+                "-g",
+                "--env",
+                "HOME=/Users/alice",
+                BUNDLE,
+                "--args",
+                "--hub",
+                "--mode",
+                "sessions",
+                "--resume",
+                "--no-activate",
+            ],
         ]);
     });
 
@@ -312,7 +369,7 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
 
         expect(plan({ psStdout: listing, stalePids: ["311"] })).toEqual([
             ["open", "-n", "-g", BUNDLE, "--args", "--link-relay"],
-            ["open", "-n", "-g", BUNDLE, "--args", "--features", "--no-activate"],
+            ["open", "-n", "-g", "--env", "HOME=/Users/alice", BUNDLE, "--args", "--features", "--no-activate"],
         ]);
     });
 
@@ -342,10 +399,151 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
         expect(plan({ psStdout: listing, stalePids: ["351"], frontPid: 351 }).at(-1)).toEqual([
             "open",
             "-n",
+            "--env",
+            "HOME=/Users/alice",
             BUNDLE,
             "--args",
             "--widget",
             "--ensure-running",
         ]);
+    });
+});
+
+describe("a rebuild reopens each face on the environment it started with", () => {
+    const BUNDLE = "/Users/alice/Applications/GenesisTools.app";
+    const SANDBOX = "/tmp/meetings-sandbox";
+    const listing = processRows(
+        [`  401 ${LAUNCHER} --meetings --meeting m1`, `  402 ${LAUNCHER} --hub --mode sessions`].join("\n")
+    );
+    const capture = (environment: (pid: number) => Record<string, string> | null) =>
+        planRelaunch({
+            processes: listing,
+            launcherPath: LAUNCHER,
+            stalePids: new Set(["401", "402"]),
+            records: new Map([[401, ["--meetings", "--meeting", "m1"]]]),
+            frontPid: () => null,
+            environment,
+        });
+    const environments: Record<number, Record<string, string>> = {
+        401: { HOME: "/Users/alice", GENESIS_TOOLS_HOME: SANDBOX, PATH: "/usr/bin", GENESIS_TOOLS_BIN: "" },
+        402: { HOME: "/Users/alice", PATH: "/usr/bin" },
+    };
+
+    it("gives a sandbox face its GENESIS_TOOLS_HOME back, and a face without one none", () => {
+        const commands = relaunchCommands(
+            capture((pid) => environments[pid] ?? null),
+            BUNDLE
+        ).map((command) => command.args);
+
+        expect(commands).toEqual([
+            ["open", "-n", "-g", BUNDLE, "--args", "--link-relay"],
+            [
+                "open",
+                "-n",
+                "-g",
+                "--env",
+                `GENESIS_TOOLS_HOME=${SANDBOX}`,
+                "--env",
+                "HOME=/Users/alice",
+                BUNDLE,
+                "--args",
+                "--meetings",
+                "--meeting",
+                "m1",
+                "--no-activate",
+            ],
+            [
+                "open",
+                "-n",
+                "-g",
+                "--env",
+                "HOME=/Users/alice",
+                BUNDLE,
+                "--args",
+                "--hub",
+                "--mode",
+                "sessions",
+                "--resume",
+                "--no-activate",
+            ],
+        ]);
+    });
+
+    it("leaves a face closed and names it when its environment cannot be read", () => {
+        const result = capture((pid) => (pid === 401 ? null : (environments[pid] ?? null)));
+
+        expect(result.steps.map((step) => step.kind)).toEqual(["hub"]);
+        expect(result.unrestorable).toEqual([
+            { pid: 401, kind: "meetings", argv: ["--meetings", "--meeting", "m1"], lossless: true },
+        ]);
+        expect(unrestorableMessage(result.unrestorable[0])).toBe(
+            "did not reopen the meetings face (was pid 401): its environment could not be read, so it could come back " +
+                "on another GENESIS_TOOLS_HOME; start it again yourself: --meetings --meeting m1"
+        );
+    });
+
+    it("reopens one window per environment: the same settings window on two homes is two windows", () => {
+        const settings = (pid: number, environment?: Record<string, string>): WindowFace => ({
+            pid,
+            kind: "settings",
+            argv: [],
+            lossless: false,
+            ...(environment ? { environment } : {}),
+        });
+        const plan = relaunchPlan([settings(1), settings(2, { GENESIS_TOOLS_HOME: SANDBOX }), settings(3)], null);
+
+        expect(plan.map((step) => step.pid)).toEqual([1, 2]);
+        expect(plan[1].environment).toEqual({ GENESIS_TOOLS_HOME: SANDBOX });
+    });
+
+    it("keeps only the restored variables that are set", () => {
+        expect(restoredEnvironment(environments[401])).toEqual({ GENESIS_TOOLS_HOME: SANDBOX, HOME: "/Users/alice" });
+        expect(restoredEnvironment({ HOME: "/Users/alice", PATH: "/usr/bin" })).toEqual({ HOME: "/Users/alice" });
+        expect(restoredEnvironment(environments[402])).toEqual({ HOME: "/Users/alice" });
+        expect(faceHome(environments[401])).toBe(SANDBOX);
+        expect(faceHome(environments[402])).toBe("/Users/alice");
+    });
+
+    it("never hands the build's own sandbox to a face through open", () => {
+        const build = {
+            PATH: "/usr/bin",
+            HOME: "/tmp/build-home",
+            GENESIS_TOOLS_HOME: "/tmp/build-sandbox",
+            GENESIS_HUB_SERVER: "0",
+        };
+        expect(openEnvironment(build)).toEqual({ PATH: "/usr/bin" });
+    });
+
+    it("reads each stopped face's record from its own home, never a reused pid's record in another folder", () => {
+        const root = mkdtempSync(join(tmpdir(), "faces-homes-"));
+        const sandbox = join(root, "sandbox");
+        const home = join(root, "home");
+        const build = join(root, "build", ".genesis-tools", "app", "faces");
+        const write = (dir: string, pid: number, argv: string[]) => {
+            mkdirSync(dir, { recursive: true });
+            writeFileSync(join(dir, `${pid}.json`), SafeJSON.stringify({ pid, argv }));
+        };
+        const sandboxFaces = join(sandbox, ".genesis-tools", "app", "faces");
+        const homeFaces = join(home, ".genesis-tools", "app", "faces");
+        write(sandboxFaces, 11, ["--meetings", "--meeting", "a b"]);
+        write(sandboxFaces, 12, ["--hub", "--session", "decoy"]);
+        write(homeFaces, 12, ["--hub", "--session", "s1"]);
+        write(build, 13, ["--widget"]);
+
+        const read = readStoppedFaceRecords(
+            new Map<number, Record<string, string> | null>([
+                [11, { GENESIS_TOOLS_HOME: sandbox, HOME: home }],
+                [12, { HOME: home }],
+                [13, null],
+            ]),
+            build
+        );
+
+        expect([...read.records]).toEqual([
+            [11, ["--meetings", "--meeting", "a b"]],
+            [12, ["--hub", "--session", "s1"]],
+            [13, ["--widget"]],
+        ]);
+        expect(read.recordDirs).toEqual([sandboxFaces, homeFaces, build]);
     });
 });

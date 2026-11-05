@@ -9,20 +9,26 @@ public enum EdgePanelPlacement: String, CaseIterable, Identifiable, Sendable {
 public enum EdgePanelGeometry {
     public static func frame(
         placement: EdgePanelPlacement, size: CGSize, screen: CGRect, visible: CGRect,
-        sideCenterY: CGFloat
+        sideCenterY: CGFloat, topCenterX: CGFloat? = nil
     ) -> CGRect {
         let width = min(max(1, size.width), screen.width)
         let height = min(max(1, size.height), placement == .top ? screen.height : visible.height)
         switch placement {
         case .top:
             return CGRect(
-                x: screen.midX - width / 2, y: screen.maxY - height, width: width, height: height)
+                x: topMinX(centerX: topCenterX ?? screen.midX, width: width, screen: screen),
+                y: screen.maxY - height, width: width, height: height)
         case .right, .left:
             let y = min(max(sideCenterY - height / 2, visible.minY), visible.maxY - height)
             return CGRect(
                 x: placement == .right ? screen.maxX - width : screen.minX, y: y, width: width,
                 height: height)
         }
+    }
+
+    /// The left edge of a top panel `width` wide centered on `centerX`, kept on the screen.
+    public static func topMinX(centerX: CGFloat, width: CGFloat, screen: CGRect) -> CGFloat {
+        min(max(centerX - width / 2, screen.minX), screen.maxX - width)
     }
 
     public static func mediaFrame(anchor: CGRect, visible: CGRect) -> CGRect {

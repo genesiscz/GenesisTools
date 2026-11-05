@@ -53,6 +53,60 @@ final class GrowingTextEditorTests: XCTestCase {
         try XCTUnwrap(views(NSTextView.self, in: try XCTUnwrap(window.contentView)).first)
     }
 
+    /// The widget's panel: borderless and non-activating, key once something in it needs the keyboard.
+    private final class FieldPanel: EditingPanel {
+        override var canBecomeKey: Bool { true }
+    }
+
+    private final class Focused: ObservableObject {
+        @Published var text = ""
+        @Published var request = 0
+    }
+
+    /// The field as the widget's answer box holds it: its focus set from code, as the box's `activate` does.
+    private struct ActivatedField: View {
+        @ObservedObject var box: Focused
+        @FocusState private var focused: Bool
+
+        var body: some View {
+            GrowingTextEditor("Write my own answer…", text: $box.text, focus: $focused)
+                .onChange(of: box.request) { _, _ in focused = true }
+        }
+    }
+
+    /// In the widget's non-activating panel, the field its box focuses takes the keyboard and the typing. Martin,
+    /// 2026-11-05: "i can't even fill in the input - it just pings the system sound when i click it".
+    func testTheFieldFocusedFromCodeTakesTypingInANonActivatingPanel() throws {
+        let box = Focused()
+        let panel = FieldPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 120),
+                               styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.alphaValue = 0
+        panel.level = NSWindow.Level(rawValue: -1000)
+        panel.contentView = NSHostingView(rootView: ActivatedField(box: box).frame(width: 340).padding(20))
+        panel.orderFrontRegardless()
+        panel.makeKey()
+        defer { panel.orderOut(nil) }
+        pump()
+        box.request += 1
+        pump(0.3)
+        XCTAssertTrue(panel.firstResponder is NSTextView, "the field took the keyboard")
+        panel.sendEvent(try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber,
+            context: nil, characters: "x", charactersIgnoringModifiers: "x", isARepeat: false, keyCode: 7)))
+        pump(0.2)
+        XCTAssertEqual(box.text, "x", "the typing reached it")
+    }
+
+    /// A one-line field draws no scroll bar: with scroll bars always shown, its 15 pt track was a grey square beside
+    /// the send button (Martin, 2026-11-05). A long answer still scrolls with the wheel and the keys.
+    func testTheFieldDrawsNoScrollBar() throws {
+        let window = host(Box("one line"))
+        defer { window.orderOut(nil) }
+        let scroll = try XCTUnwrap(try editor(in: window).enclosingScrollView)
+        XCTAssertFalse(scroll.hasVerticalScroller && scroll.verticalScroller?.isHidden == false,
+                       "the field's scroll view shows its vertical scroller")
+    }
+
     func testTheFieldIsAsTallAsItsLinesUpToFourThenItsTextScrolls() throws {
         for (lines, height) in [(1, 15.0), (2, 30.0), (4, 60.0), (12, 60.0)] {
             let box = Box((1...lines).map { "Line \($0)" }.joined(separator: "\n"))

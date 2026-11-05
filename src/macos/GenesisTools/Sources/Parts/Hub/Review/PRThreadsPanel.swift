@@ -352,10 +352,11 @@ struct PRThreadFileGroup: Identifiable, Equatable {
     }
 
     /// The first groups holding `threads` threads in all; the last one is cut to fit.
-    static func prefix(_ groups: [PRThreadFileGroup], threads limit: Int) -> [PRThreadFileGroup] {
+    static func prefix(_ groups: [PRThreadFileGroup], threads limit: Int, folded: Set<String> = []) -> [PRThreadFileGroup] {
         var left = limit
         var kept: [PRThreadFileGroup] = []
         for group in groups where left > 0 {
+            if folded.contains(group.path) { kept.append(group); continue }
             kept.append(group.threads.count <= left ? group : PRThreadFileGroup(path: group.path, threads: Array(group.threads.prefix(left))))
             left -= group.threads.count
         }
@@ -396,9 +397,13 @@ struct PRThreadsList: View {
     @State private var clicks = PRCardClicks()
     @State private var anchor = PRListAnchor()
     @State private var editors = PRThreadEditors()
-    /// Cards built so far. A PR's threads arrive in batches of `mountBatch`, one batch per frame: built at once, 116
-    /// cards held the main thread 4.8 s (`prs.threads.show`, 2026-11-02 20:30). Later batches only append below, so
-    /// the reader's place and `PRListAnchor` hold.
+    /// Cards built so far. The list builds what fills its height plus one screen below, `mountBatch` at a time, one
+    /// batch per frame, and the next batch when the reader scrolls within a screen of the end (`PRListAnchor.onNearEnd`)
+    /// or a find goes to a later thread (`mountThrough`). Built at once, 116 cards held the main thread 4.8 s
+    /// (2026-11-02 20:30). Built batch by batch down to the last one, PR #507's 219 cards spun it for 12 s
+    /// (2026-11-05 03:17): with an accessibility client every batch walks every focusable view of the window again, and
+    /// the walk grows with the cards built. Later batches only append below, so the reader's place and `PRListAnchor`
+    /// hold.
     @State private var mounted = PRThreadsList.mountBatch
     static let mountBatch = 12
     /// Whether each thread's file is still there at the PR's head (one `git ls-tree` per head).
@@ -473,7 +478,7 @@ struct PRThreadsList: View {
         let placed = placements(all)
         let threads = visible(all, placed)
         let groups = PRThreadFileGroup.groups(threads, order: fileOrder)
-        let built = PRThreadFileGroup.prefix(groups, threads: mounted)
+        let built = PRThreadFileGroup.prefix(groups, threads: mounted, folded: folded)
         // A file's header counts all its threads, also while its cards are still being built.
         let whole = Dictionary(groups.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         let fresh = newNotes(all)
@@ -533,6 +538,8 @@ struct PRThreadsList: View {
                         .padding(.horizontal, compact ? 8 : 12)
                         .padding(.top, 4)
                         .padding(.bottom, 12)
+                        // Read by the leaves that draw it, never by a card as a whole (`PRThreadsWrite`).
+                        .environment(\.prThreadsWrite, PRThreadsWrite(stale: store.stale, busy: store.busy != nil))
                     }
                     // The whole scrolled content, drafts included: the anchor's row frames are document offsets.
                     .coordinateSpace(name: PRListAnchor.space)
@@ -542,7 +549,7 @@ struct PRThreadsList: View {
             }
         }
         .panelFind(find, revision: threads.map(\.id) + threads.flatMap { $0.comments.map(\.bodyMarkdown) } + folded.sorted()
-            + threads.compactMap { proposed[$0.id]?.reply }) {
+            + threads.compactMap { proposed[$0.id]?.reply }, prepare: { mountThrough($0.row, groups: groups) }) {
             threads.filter { !folded.contains($0.path) }.map { thread in
                 PanelFindRow(id: thread.id, fields: [PanelFindField("path", "\(thread.path):\(thread.line)")]
                     + thread.comments.flatMap { comment in
@@ -552,14 +559,19 @@ struct PRThreadsList: View {
                     + PRProposedReply.findFields(proposed[thread.id], on: thread))
             }
         }
-        .onChange(of: store.payload?.pr.url, initial: true) { _, _ in markSeen() }
-        .onChange(of: store.payload?.pr.url) { _, _ in mounted = Self.mountBatch }
-        .task(id: "\(store.payload?.pr.url ?? ""):\(store.payload?.threads.count ?? 0)") {
-            mounted = max(mounted, Self.mountBatch)
-            while !Task.isCancelled, mounted < (store.payload?.threads.count ?? 0) {
-                // One frame: the batch built so far lays out and draws, and clicks are answered, before the next one.
-                try? await Task.sleep(for: .milliseconds(16))
-                mounted += Self.mountBatch
+        // Threads added to the PR on screen (a fresh answer, a reply in a new thread): built when the reader is within a
+        // screen of the end, even with every earlier card built and no scroll to come.
+        .onChange(of: store.payload?.threads.count) { _, _ in anchor.checkNearEnd() }
+        .onChange(of: store.payload?.pr.url, initial: true) { _, _ in
+            markSeen()
+            mounted = Self.mountBatch
+            // The next batch once the cards built so far leave less than a screen below the viewport: after each
+            // batch's layout, and on every scroll. Set again for each PR, so it counts the store on screen.
+            let store = store
+            anchor.onNearEnd = {
+                if mounted < (store.payload?.threads.count ?? 0) {
+                    mounted += Self.mountBatch
+                }
             }
         }
         .onAppear {
@@ -582,6 +594,14 @@ struct PRThreadsList: View {
             guard !model.loading, let query else { return }
             await headFiles.load(repo: query.repo, head: query.head, shown: query.shown, paths: query.paths)?.value
         }
+    }
+
+    /// Builds the cards down to the thread `id` and one batch below it, before the find scrolls there: the list builds
+    /// only the cards the reader nears. True when it had to build more, so the find scrolls after that layout.
+    private func mountThrough(_ id: String, groups: [PRThreadFileGroup]) -> Bool {
+        guard let index = groups.flatMap(\.threads).firstIndex(where: { $0.id == id }), index >= mounted else { return false }
+        mounted = index + 1 + Self.mountBatch
+        return true
     }
 
     /// The file "This file" filters by: the topmost one on screen, or the selected one before the diff reports it.
@@ -723,7 +743,7 @@ struct PRThreadsList: View {
         return PRThreadRow(model: model, thread: thread, selected: model.selectedThreads.contains(id),
                            placement: placement, fresh: fresh.intersection(thread.comments.map(\.id)), atHead: atHead, headSha: headSha, compact: compact,
                            proposed: proposed, folded: foldedThreads.contains(id), changed: store.changed.contains(id),
-                           stale: store.stale, busy: store.busy != nil, forge: store.pr?.forge, label: store.label,
+                           forge: store.pr?.forge, label: store.label,
                            isGitLab: store.pr?.identity.isGitLab == true, clicks: clicks, editors: editors,
                            toggleFold: { toggle(thread: id) },
                            resolve: { store.resolve(thread: id, resolved: $0) },
@@ -1110,12 +1130,9 @@ private struct PRThreadRow: View, Equatable {
     let proposed: ProposalDocument.Thread?
     /// Folded: the header, the first note's first line and the count; the chevron on the right opens it.
     let folded: Bool
-    /// Changed by the last refresh (`PRThreadsStore.changed`): the card is tinted.
+    /// Changed by the last refresh (`PRThreadsStore.changed`): the card is tinted. Cached threads and a running
+    /// write are not fields: they come down the environment (`PRThreadsWrite`) to the leaves that draw them.
     let changed: Bool
-    /// Cached threads (`PRThreadsStore.stale`): Resolve, Reply, the Fix pick and the draft writes wait.
-    let stale: Bool
-    /// A write runs (`PRThreadsStore.busy`): every control of the card waits.
-    let busy: Bool
     /// The host's web pages, for the authors' profiles and the commit and PR links in the notes.
     let forge: ForgeWeb?
     /// "#12" / "!34", for the confirmations.
@@ -1142,8 +1159,7 @@ private struct PRThreadRow: View, Equatable {
     static func == (a: PRThreadRow, b: PRThreadRow) -> Bool {
         let shown = a.thread == b.thread && a.selected == b.selected && a.placement == b.placement && a.folded == b.folded
         let marks = a.fresh == b.fresh && a.atHead == b.atHead && a.headSha == b.headSha && a.changed == b.changed
-        let store = a.stale == b.stale && a.busy == b.busy && a.forge == b.forge && a.label == b.label
-            && a.isGitLab == b.isGitLab
+        let store = a.forge == b.forge && a.label == b.label && a.isGitLab == b.isGitLab
         return shown && marks && store && a.compact == b.compact && a.proposed == b.proposed
     }
 
@@ -1198,12 +1214,12 @@ private struct PRThreadRow: View, Equatable {
                     threadActions
                 }
                 .font(.system(size: 11.5))
-                .disabled(stale)
+                .modifier(PRWriteDisabled(when: \.stale))
             }
         }
         .font(.system(size: 12))
         .buttonStyle(.genHoverPlain())
-        .disabled(busy)
+        .modifier(PRWriteDisabled(when: \.busy))
         .padding(.vertical, 9)
         .padding(.leading, 12)
         .padding(.trailing, 10)
@@ -1304,9 +1320,6 @@ private struct PRThreadRow: View, Equatable {
         }
     }
 
-    /// The header's controls take writes, so they wait for a running write and for cached threads (the header's
-    /// `.disabled(stale)` and the card's `.disabled(busy)`); at rest their labels dim the same way.
-    private var writable: Bool { !busy && !stale }
 
     private func showLine() {
         if placement.onDiff {
@@ -1316,33 +1329,39 @@ private struct PRThreadRow: View, Equatable {
         }
     }
 
+    /// The header's controls take writes, so they wait for a running write and for cached threads (the header's
+    /// `PRWriteDisabled(\.stale)` and the card's `PRWriteDisabled(\.busy)`); at rest their labels dim the same way.
+    /// Each reads the write state in its own `PRWriteReader`, so a change of it re-runs those buttons, not the card.
     private var header: some View {
-        let writable = writable
-        return HStack(spacing: 6) {
+        HStack(spacing: 6) {
             if !thread.isMyDraft {
-                // A drawn checkbox, not a Toggle: an AppKit checkbox was a responder on every card at rest.
-                LiveButton(tooltip: "Select this thread for Fix threads: the selected threads go as one task to the agent"
-                               + " that owns the branch",
-                           enabled: writable, pressable: true, action: { model.toggleThreadSelection(thread.id) }) {
-                    Image(systemName: selected ? "checkmark.square.fill" : "square")
-                        .font(.system(size: 13))
-                        .foregroundColor(selected ? ReviewPalette.renamed : ReviewPalette.dim)
-                        .frame(width: 16, height: 16)
+                PRWriteReader { write in
+                    // A drawn checkbox, not a Toggle: an AppKit checkbox was a responder on every card at rest.
+                    LiveButton(tooltip: "Select this thread for Fix threads: the selected threads go as one task to the agent"
+                                   + " that owns the branch",
+                               enabled: write.writable, pressable: true, action: { model.toggleThreadSelection(thread.id) }) {
+                        Image(systemName: selected ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 13))
+                            .foregroundColor(selected ? ReviewPalette.renamed : ReviewPalette.dim)
+                            .frame(width: 16, height: 16)
+                    }
                 }
                 .accessibilityLabel(Text("Select for Fix threads"))
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
-            LiveButton(tooltip: placement.onDiff
-                           ? "Show this thread on its line in the diff"
-                           : "Open \((thread.path as NSString).lastPathComponent) in the diff; this thread has no line there",
-                       enabled: writable, pressable: true, action: showLine) {
-                Text(verbatim: PRThreadFileGroup.lineLabel(thread))
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(ReviewPalette.renamed)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(ReviewPalette.renamed.opacity(0.14)))
-                    .fixedSize()
+            PRWriteReader { write in
+                LiveButton(tooltip: placement.onDiff
+                               ? "Show this thread on its line in the diff"
+                               : "Open \((thread.path as NSString).lastPathComponent) in the diff; this thread has no line there",
+                           enabled: write.writable, pressable: true, action: showLine) {
+                    Text(verbatim: PRThreadFileGroup.lineLabel(thread))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(ReviewPalette.renamed)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(ReviewPalette.renamed.opacity(0.14)))
+                        .fixedSize()
+                }
             }
             if thread.isMyDraft {
                 Badge("Your draft", color: ReviewPalette.modified, look: .tone,
@@ -1371,7 +1390,7 @@ private struct PRThreadRow: View, Equatable {
         .font(.system(size: 11.5))
         .lineLimit(1)
         // Cached threads: Resolve, Reply and the Fix pick wait for the host's fresh answer.
-        .disabled(stale)
+        .modifier(PRWriteDisabled(when: \.stale))
     }
 
     @ViewBuilder
@@ -1380,9 +1399,11 @@ private struct PRThreadRow: View, Equatable {
             let title = thread.resolved ? "Unresolve" : "Resolve"
             Group {
                 if thread.resolvable {
-                    LiveButton(tooltip: thread.resolved ? "Reopen this thread on the PR" : "Mark this thread resolved on the PR",
-                               enabled: writable, pressable: true, action: { resolve(!thread.resolved) }) {
-                        Text(verbatim: title)
+                    PRWriteReader { write in
+                        LiveButton(tooltip: thread.resolved ? "Reopen this thread on the PR" : "Mark this thread resolved on the PR",
+                                   enabled: write.writable, pressable: true, action: { resolve(!thread.resolved) }) {
+                            Text(verbatim: title)
+                        }
                     }
                 } else {
                     // Said, not hidden: a missing button read as a feature the hub lacks.
@@ -1392,9 +1413,11 @@ private struct PRThreadRow: View, Equatable {
                         Text(verbatim: title)
                     }
                 }
-                LiveButton(tooltip: "Write a reply: save it as a draft in your pending review, or post it now",
-                           enabled: writable && !replying, pressable: true, action: { replying = true }) {
-                    Text("Reply")
+                PRWriteReader { write in
+                    LiveButton(tooltip: "Write a reply: save it as a draft in your pending review, or post it now",
+                               enabled: write.writable && !replying, pressable: true, action: { replying = true }) {
+                        Text("Reply")
+                    }
                 }
             }
             .fixedSize()
@@ -1455,12 +1478,12 @@ private struct PRThreadRow: View, Equatable {
                     ExternalLink(text: comment.author.name, url: profile,
                                  font: .system(size: 12, weight: .semibold), color: Color.white.opacity(0.92), glyph: .onHover,
                                  tooltip: "@\(comment.author.username) on the host", findField: "author:\(comment.id)")
-                        .modifier(PRRestingDim(dimmed: busy && profile != nil))
+                        .modifier(PRRestingDim(linked: profile != nil))
                         .layoutPriority(1)
                     if !compact, comment.author.name != comment.author.username {
                         Text(verbatim: "@\(comment.author.username)").foregroundColor(ReviewPalette.dim).lineLimit(1)
                     }
-                    PRNoteTime(createdAt: comment.createdAt, url: comment.url.flatMap(URL.init(string:)), busy: busy)
+                    PRNoteTime(createdAt: comment.createdAt, url: comment.url.flatMap(URL.init(string:)))
                     if comment.editedAt != nil {
                         Text("edited").foregroundColor(ReviewPalette.dim).fixedSize()
                     }
@@ -1494,7 +1517,8 @@ private struct PRThreadRow: View, Equatable {
                                 }
                             }
                         }
-                        .disabled(editText.trimmed.isEmpty || stale)
+                        .disabled(editText.trimmed.isEmpty)
+                        .modifier(PRWriteDisabled(when: \.stale))
                         .instantTooltip("Replace the draft's text; it stays a draft")
                     }
                 } else {
@@ -1533,22 +1557,26 @@ private struct PRThreadRow: View, Equatable {
     @ViewBuilder
     private func draftActions(_ comment: PRThreadComment) -> some View {
         if comment.isDraft, editingID != comment.id {
-            LiveButton(tooltip: "Change the text of this draft", enabled: !busy, pressable: true, action: {
-                editText = comment.bodyMarkdown
-                editingID = comment.id
-            }) {
-                Text("Edit")
-            }
-            .fixedSize()
-            LiveButton(tooltip: "Delete this draft from your pending review (asks first)",
-                       enabled: !busy && !stale, pressable: true, action: {
-                if confirmDelete() {
-                    deleteDraft(comment.id)
+            PRWriteReader { write in
+                LiveButton(tooltip: "Change the text of this draft", enabled: !write.busy, pressable: true, action: {
+                    editText = comment.bodyMarkdown
+                    editingID = comment.id
+                }) {
+                    Text("Edit")
                 }
-            }) {
-                Text("Delete")
+                .fixedSize()
             }
-            .fixedSize()
+            PRWriteReader { write in
+                LiveButton(tooltip: "Delete this draft from your pending review (asks first)",
+                           enabled: write.writable, pressable: true, action: {
+                    if confirmDelete() {
+                        deleteDraft(comment.id)
+                    }
+                }) {
+                    Text("Delete")
+                }
+                .fixedSize()
+            }
         }
     }
 
@@ -1643,8 +1671,8 @@ private struct PRCardBorder: View {
 private struct PRNoteTime: View {
     let createdAt: String
     let url: URL?
-    let busy: Bool
     @Environment(\.rowLive) private var live
+    @Environment(\.prThreadsWrite) private var write
 
     var body: some View {
         let ago = LiveAgo(date: HubFormat.date(createdAt), fallback: createdAt, style: .brief)
@@ -1664,7 +1692,7 @@ private struct PRNoteTime: View {
             } else {
                 ago
                     .fixedSize()
-                    .opacity(busy ? 0.4 : 1)
+                    .opacity(write.busy ? 0.4 : 1)
             }
         } else {
             ago
@@ -1675,12 +1703,56 @@ private struct PRNoteTime: View {
 }
 
 /// A link's label at rest dims as the disabled link does while a write runs (`ExternalLink` draws it bare then).
+/// `linked`: the label is a link at all.
 private struct PRRestingDim: ViewModifier {
-    let dimmed: Bool
+    let linked: Bool
     @Environment(\.rowLive) private var live
+    @Environment(\.prThreadsWrite) private var write
 
     func body(content: Content) -> some View {
-        content.opacity(!live && dimmed ? 0.4 : 1)
+        content.opacity(!live && linked && write.busy ? 0.4 : 1)
+    }
+}
+
+/// What every card of the threads list shares about writes: the threads came from the disk cache (`stale`, every
+/// write waits for the host's answer) or a write runs (`busy`). The list hands it down the environment and only the
+/// leaves that draw it read it (`PRWriteReader`, `PRWriteDisabled`, `PRNoteTime`, `PRRestingDim`). As two fields
+/// of every card it made the cache-to-host flip fail every card's `==`: 212 card bodies on PR #507 (2026-11-05 03:17).
+struct PRThreadsWrite: Equatable {
+    var stale = false
+    var busy = false
+
+    var writable: Bool { !stale && !busy }
+}
+
+private struct PRThreadsWriteKey: EnvironmentKey {
+    static let defaultValue = PRThreadsWrite()
+}
+
+extension EnvironmentValues {
+    var prThreadsWrite: PRThreadsWrite {
+        get { self[PRThreadsWriteKey.self] }
+        set { self[PRThreadsWriteKey.self] = newValue }
+    }
+}
+
+/// A leaf that reads the list's write state; the card around it does not, so a change of it re-runs this leaf only.
+private struct PRWriteReader<Content: View>: View {
+    @Environment(\.prThreadsWrite) private var write
+    @ViewBuilder let content: (PRThreadsWrite) -> Content
+
+    var body: some View {
+        content(write)
+    }
+}
+
+/// `.disabled` from the list's write state, read here and not in the card that holds it.
+private struct PRWriteDisabled: ViewModifier {
+    let when: KeyPath<PRThreadsWrite, Bool>
+    @Environment(\.prThreadsWrite) private var write
+
+    func body(content: Content) -> some View {
+        content.disabled(write[keyPath: when])
     }
 }
 
@@ -1818,10 +1890,16 @@ final class PRListAnchor {
     private weak var scrollView: NSScrollView?
     private var frames: [String: CGRect] = [:]
     func rowFrame(_ id: String) -> CGRect? { frames[id] }
+    /// Rows and file headers built so far (HubBench `threads.scroll`).
+    var rowCount: Int { frames.count }
     /// The row at the viewport's top and its y in the content, with the scroll offset it was read at.
     private(set) var held: (id: String, contentY: CGFloat, offset: CGFloat)?
     private var restorePending = false
     private var observer: NSObjectProtocol?
+    /// Called when less than one screen of content is left below the viewport (a scroll, or a batch of cards that did
+    /// not fill it): the list builds its next cards.
+    var onNearEnd: (() -> Void)?
+    private var nearEndPending = false
 
     var offset: CGFloat { scrollView?.contentView.bounds.origin.y ?? 0 }
 
@@ -1836,8 +1914,28 @@ final class PRListAnchor {
         observer = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scrollView.contentView,
                                                           queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, !self.restorePending else { return }
+                guard let self else { return }
+                self.checkNearEnd()
+                guard !self.restorePending else { return }
                 self.capture()
+            }
+        }
+        checkNearEnd()
+    }
+
+    /// Once per layout pass, after it: the document's height is final then.
+    func checkNearEnd() {
+        guard onNearEnd != nil, !nearEndPending else { return }
+        nearEndPending = true
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.nearEndPending = false
+                guard let scrollView = self.scrollView, let document = scrollView.documentView else { return }
+                let clip = scrollView.contentView.bounds
+                if PRListAnchorMath.nearEnd(viewportBottom: clip.maxY, viewportHeight: clip.height, contentHeight: document.frame.height) {
+                    self.onNearEnd?()
+                }
             }
         }
     }
@@ -1852,6 +1950,9 @@ final class PRListAnchor {
     func update(_ id: String, _ frame: CGRect) {
         let old = frames[id]
         frames[id] = frame
+        if old == nil {
+            checkNearEnd()
+        }
         if let old, abs(old.width - frame.width) > 0.5 {
             scheduleRestore()
             return
@@ -1917,6 +2018,11 @@ enum PRListAnchorMath {
         frames.filter { $0.value.maxY > viewportTop + 1 }
             .min { ($0.value.minY, $0.key) < ($1.value.minY, $1.key) }
             .map { ($0.key, $0.value) }
+    }
+
+    /// Less than one viewport of content left below the viewport's bottom, a content shorter than the viewport too.
+    static func nearEnd(viewportBottom: CGFloat, viewportHeight: CGFloat, contentHeight: CGFloat) -> Bool {
+        viewportBottom + viewportHeight >= contentHeight
     }
 
     /// The scroll offset that puts the held row at the distance from the viewport's top it had, clamped

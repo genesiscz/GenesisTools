@@ -546,9 +546,29 @@ final class PRThreadsStore: ObservableObject {
     /// More changed threads than this appear without the spring (see `show`).
     static let animatedChangeLimit = 8
 
+    /// HubBench `threads` only: lands `next` with no host call, the way `load` lands it. Into an empty store it is the
+    /// disk cache's paint (`stale`, no `show`); onto threads already shown it is an answer (`show` when it differs).
+    /// Nil empties the store, as a PR opened for the first time starts.
+    func benchLand(_ next: PRThreadsPayload?, stale: Bool) {
+        guard let next else {
+            payload = nil
+            changed = []
+            return
+        }
+        self.stale = stale
+        if payload == nil {
+            payload = next
+        } else if next != payload {
+            show(next)
+        }
+        onChange?()
+    }
+
     /// The app became active again: load only when the last answer is older than the CLI's cache.
     func reloadIfStale() {
-        guard let lastLoad, Date().timeIntervalSince(lastLoad) >= Self.staleAfter else { return }
+        // A load in flight already brings the current threads. Another call here queued a second full fetch
+        // (17 to 21 s for #507's 303 threads) to start the moment the first one ended.
+        guard !loading, let lastLoad, Date().timeIntervalSince(lastLoad) >= Self.staleAfter else { return }
         load()
     }
 

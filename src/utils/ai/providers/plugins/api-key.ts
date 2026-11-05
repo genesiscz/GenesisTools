@@ -4,11 +4,13 @@ import { createGroq } from "@ai-sdk/groq";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { AiSdkProvider } from "@genesiscz/utils/ask/types/provider";
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
-import type { SpeechModel } from "ai";
+import type { SpeechModel, TranscriptionModel } from "ai";
 import { resolveCredential } from "../credentials";
 import type { BindContext, Capability, ProviderBinding, ProviderPlugin } from "../plugin-types";
 import { toSpeechModel } from "../speech-adapter";
 import { speechEngineFor } from "../speech-engines";
+import { toTranscriptionModel } from "../transcription-adapter";
+import { AIXAITranscriptionProvider } from "../xai/AIXAITranscriptionProvider";
 
 /**
  * Metered API-key providers.
@@ -110,6 +112,31 @@ function speechFor(
     return sdkSpeechModel ? { speech: (modelId: string) => sdkSpeechModel(modelId) } : {};
 }
 
+/**
+ * The same story for transcripts: the SDK's `transcriptionModel` for xAI POSTs to `/v1/audio/transcriptions`, which
+ * xAI answers with 404 "Not Found". Its batch endpoint is `/v1/stt` with its own fields, which
+ * `AIXAITranscriptionProvider` speaks, so xAI's `transcription()` goes through that client with the account's key.
+ */
+function transcriptionFor(
+    providerId: string,
+    apiKey: string,
+    sdkTranscriptionModel?: (id: string) => never,
+    transport?: BindContext["fetch"]
+): { transcription?: (modelId: string) => TranscriptionModel } {
+    if (providerId === "xai") {
+        return {
+            transcription: (modelId: string) =>
+                toTranscriptionModel({
+                    provider: new AIXAITranscriptionProvider({ apiKey, fetch: transport }),
+                    providerId,
+                    modelId,
+                }),
+        };
+    }
+
+    return sdkTranscriptionModel ? { transcription: (modelId: string) => sdkTranscriptionModel(modelId) } : {};
+}
+
 function buildPlugin(spec: ApiKeyProviderSpec): ProviderPlugin {
     return {
         id: spec.id,
@@ -151,9 +178,7 @@ function buildPlugin(spec: ApiKeyProviderSpec): ProviderPlugin {
                 ...(provider.textEmbeddingModel
                     ? { embedding: (modelId: string) => provider.textEmbeddingModel?.(modelId) }
                     : {}),
-                ...(provider.transcriptionModel
-                    ? { transcription: (modelId: string) => provider.transcriptionModel?.(modelId) }
-                    : {}),
+                ...transcriptionFor(spec.id, apiKey, provider.transcriptionModel, ctx.fetch),
                 ...speechFor(spec.id, provider.speechModel),
                 ...(provider.imageModel ? { image: (modelId: string) => provider.imageModel?.(modelId) } : {}),
             } as ProviderBinding;

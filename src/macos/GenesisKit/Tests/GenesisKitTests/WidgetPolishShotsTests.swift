@@ -222,6 +222,15 @@ final class WidgetPolishShotsTests: XCTestCase {
         }.map(\.element), ["Drop"], "wire options have no letter prefix")
         XCTAssertFalse(WidgetOptionText.isRecommended("Drop", at: 1, nil))
         XCTAssertFalse(WidgetOptionText.isRecommended("Drop", at: 1, " "))
+        // A pick of several letters (decision 12 of 2026-11-05 recommended "abd") marks each of them.
+        let steps = ["Step 1", "Step 2", "Step 2 extra", "Step 3"]
+        for recommended in ["abd", "a, b, d", " A + B + D "] {
+            XCTAssertEqual(steps.indices.filter { WidgetOptionText.isRecommended(steps[$0], at: $0, recommended) },
+                           [0, 1, 3], recommended)
+        }
+        // A word's letters do not rise, so free text never reads as a set of letters.
+        XCTAssertEqual(WidgetOptionText.recommendedLetters("keep it"), [])
+        XCTAssertFalse(WidgetOptionText.isRecommended("Step 2 extra", at: 2, "keep it"))
     }
 
     /// The alert's option stages in place, and its Send now sends a pick the snapshot does not list yet.

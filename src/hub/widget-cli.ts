@@ -89,18 +89,42 @@ widget
             await widgetSnapshot({ root, selectedKey: options.selected, sources: await oneShotWidgetSources(root) })
         );
     });
+/**
+ * How long `hub widget call` may stay alive after its action settled. GenesisTools.app reads the answer only once the
+ * process exits, and a decision write starts best-effort work it does not await (the banner and Telegram retraction of
+ * `closeNoticeItemsLater`): one Telegram edit that got no answer held a call for 120 s after its decisions were
+ * delivered, and the widget reported them as not sent (2026-11-05). Longer than `TELEGRAM_REQUEST_TIMEOUT_SECONDS`, so a
+ * bounded retraction still ends by itself; the action itself, and so every delivery, has finished before this starts.
+ */
+const WIDGET_CALL_SETTLE_MS = 15_000;
+
+function endWidgetCallWithin(ms: number): void {
+    setTimeout(() => {
+        logger.warn({ ms }, "hub widget call: background work still running after the answer; ending the process");
+        process.exit();
+    }, ms).unref();
+}
+
 widget
     .command("call")
     .requiredOption("--input <file>", "JSON action request")
     .action(async (options, command) => {
-        const input: unknown = SafeJSON.parse(await Bun.file(options.input).text());
-        await withInterrupt(
-            async (signal) => {
-                const result = await performWidgetAction({ root: command.optsWithGlobals().stateRoot, input, signal });
-                out.result(result ?? { ok: true });
-            },
-            { handleTermination: true }
-        );
+        try {
+            const input: unknown = SafeJSON.parse(await Bun.file(options.input).text());
+            await withInterrupt(
+                async (signal) => {
+                    const result = await performWidgetAction({
+                        root: command.optsWithGlobals().stateRoot,
+                        input,
+                        signal,
+                    });
+                    out.result(result ?? { ok: true });
+                },
+                { handleTermination: true }
+            );
+        } finally {
+            endWidgetCallWithin(WIDGET_CALL_SETTLE_MS);
+        }
     });
 widget
     .command("context <id>")

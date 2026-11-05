@@ -43,6 +43,14 @@ path gets it; it is proven to catch by planting a `--window` instance and rebuil
 `GenesisTools <program> [args...]`, which is the launcher running the user's real work — dev servers,
 editor sessions, long builds all run under it.
 
+The faces it reopens come back with their own `GENESIS_TOOLS_HOME`, `GENESIS_TOOLS_BIN` and `GENESIS_HUB_SERVER`
+(`RESTORED_ENVIRONMENT` in `src/macos/lib/permissions/relaunch.ts`), read from each stopped process through the kernel,
+and with the argv record from that face's own home. `open` hands its caller's environment to the app (a recorder face
+reopened by a worktree build carried that build's `node_modules/.bin` PATH and its Claude session variables), so before
+2026-11-05 a Meetings window started on a sandbox came back on the real data, and a build run on a sandbox would have
+moved every face onto it. A face whose environment the kernel withholds stays closed, and the build output says so
+("did not reopen the … face").
+
 **Which commit is installed? One command: `bun run app:status`.** Its `source` line reads
 `<branch> @ <12-char sha>[+dirty] (<checkout>)`, written into `~/.genesis-tools/app/manifest.json` by every build
 (`sourceRoot`, `sourceBranch`, `sourceCommit`, `sourceDirty`). `+dirty` means the Swift sources had uncommitted changes,
@@ -50,6 +58,16 @@ so the sha alone does not name the code. A build from before 2026-10-06 shows "u
 `sourceHash`, `signedWith` and `teamId`, so it records no checkout and no commit; `builtAt` against the `git log` of the
 checkouts you build from is the only lead. `built … (stale: sources
 changed)` compares file contents of THIS checkout with the install, so a stale flag from another worktree's build is expected.
+
+**How did a face end? Read `~/.genesis-tools/app/lifecycle.jsonl`** (since 2026-11-04,
+`Sources/Host/App/FaceLifecycle.swift`). Every long-lived face (the window faces, every part face, the link relay)
+writes one JSON line per `start`, `exit`, `terminate` (with the quit Apple Event's sender), `signal`, `crash`,
+`exception`, `window-close` and `quit-request` ("Quit All" names the pid that sent it). A face that left no line at all
+(SIGKILL, a jetsam kill, a power loss) is reported as `vanished` by the next face that starts, from its marker in
+`app/lifecycle-alive/<pid>`. `t` is epoch seconds: `jq -r '"\(.t | strftime("%m-%d %H:%M:%S")) \(.pid) \(.face) \(.event) \(.detail // "")"'`
+prints it in UTC. The widget stayed off for two days from 2026-11-02 with no trace of how it ended; this log is why
+the next stop has one. Every window face other than the widget also starts the widget while "Show the widget" is on
+(`WidgetLaunch.ensureRunningIfShown`), so quitting the hub with "Quit All" and opening it again brings the widget back.
 
 **Before believing an app-face bug report, check what is actually running:**
 `ps -Ao pid,lstart,command | rg "MacOS/GenesisTools" | rg -v "gt-cc|gt-claude|bun "`. A bare entry

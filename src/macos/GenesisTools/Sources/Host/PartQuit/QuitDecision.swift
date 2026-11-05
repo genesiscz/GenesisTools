@@ -52,21 +52,19 @@ enum QuitPlan: Equatable, Sendable {
     case ask(QuitQuestion)
 }
 
-/// ⌘Q in a face that may have other GenesisTools parts running beside it. The tables here name every face the
-/// question can list; a new face adds one row to `faceNames` and one to `faceOrder`, plus one row to `presences` for
-/// each part it shows only while that part is up.
+/// ⌘Q in a face that may have other GenesisTools parts running beside it. A face the question names declares its
+/// `quit` name and order (AppFaces, from parts.ts); a face that shows a part only while that part is up adds one row to
+/// `presences` for it.
 package enum PartQuit {
     /// The name each face has in the question. The bare launch is the permissions window (`--window`).
-    static let faceNames: [String: String] = [
-        "--widget": "Widget",
-        "--features": "Settings",
-        "--hub": "Hub",
-        "--review": "Review",
-        "--markdown": "Markdown viewer",
-        "--window": "Permissions",
-    ]
+    static let faceNames: [String: String] = Dictionary(
+        AppFaces.declared.compactMap { face in face.quit.map { (face.flag, $0.name) } },
+        uniquingKeysWith: { first, _ in first })
     /// The order the question lists the faces in.
-    static let faceOrder = ["--widget", "--features", "--hub", "--review", "--markdown", "--window"]
+    static let faceOrder: [String] = AppFaces.declared
+        .compactMap { face in face.quit.map { (flag: face.flag, order: $0.order) } }
+        .sorted { $0.order < $1.order }
+        .map(\.flag)
 
     /// A part a face shows only while it is up (PartPresence). A face with rows here is named by its rows that are up,
     /// in this order ("Clicky and Settings"), because its quit ends all of them. With none up it is a background
@@ -95,12 +93,11 @@ package enum PartQuit {
         let first = arguments.first ?? ""
         // A Preview bundle's bare launch is the widget (HostMain).
         if first.isEmpty, preview { return "--widget" }
-        if first.isEmpty || first.hasPrefix("-psn_") { return "--window" }
-        // The settings face's old name.
-        if first == "--clicky" { return "--features" }
         // A hub link click that found no hub runs the hub in that process (HostMain).
         if HubLink.arguments(fromLink: first) != nil { return "--hub" }
-        return faceNames[first] == nil ? nil : first
+        // A bare launch is the permissions window, and an old name (`--clicky`) is its face's flag.
+        guard let face = AppFaces.face(firstArgument: first), face.quit != nil else { return nil }
+        return face.flag
     }
 
     /// The name of another face in the question: the parts it shows that are up, its own name when it is a window, or

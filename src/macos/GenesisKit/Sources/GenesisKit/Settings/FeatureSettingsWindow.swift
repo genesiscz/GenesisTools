@@ -11,13 +11,14 @@ public final class FeatureSettingsWindowController {
     public init(
         title: String = "Settings", sections: [NativeSettingsSection], defaults: UserDefaults = .standard,
         selectionKey: String = "featureSettings.selectedPage", initialPageID: String? = nil,
-        appearance: NativeSettingsAppearance? = nil, frameAutosaveName: String = "FeatureSettings.window"
+        appearance: NativeSettingsAppearance? = nil, frameAutosaveName: String = "FeatureSettings.window",
+        remembersSelection: Bool = true
     ) {
         self.title = title
         self.frameAutosaveName = frameAutosaveName
         store = NativeSettingsStore(
             sections: sections, defaults: defaults, selectionKey: selectionKey,
-            initialPageID: initialPageID, appearance: appearance)
+            initialPageID: initialPageID, appearance: appearance, remembersSelection: remembersSelection)
     }
 
     @discardableResult

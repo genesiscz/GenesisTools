@@ -88,9 +88,9 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
 
             if AppMainWindow.current == .hub {
                 logClick("no click within \(notificationClickGraceSeconds)s, opening the hub (main window setting)")
-                if MainActor.assumeIsolated({ AppDock.showHub(nil) }) {
-                    // The hub runs in its own process; this one only had to start or wake it.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { NSApp.terminate(nil) }
+                if MainActor.assumeIsolated({ AppDock.showHub(nil, onFailure: { [weak self] in
+                    self?.showWindow()
+                }, onSuccess: { NSApp.terminate(nil) }) }) {
                     return
                 }
                 logClick("the hub did not start, opening the settings window instead")

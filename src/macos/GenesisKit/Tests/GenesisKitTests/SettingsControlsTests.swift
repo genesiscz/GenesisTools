@@ -536,4 +536,19 @@ final class SettingsControlsTests: XCTestCase {
         XCTAssertEqual(NativeSettingsSearch.results("Pr", pages: pages, entries: entries).first?.title, "PR activity")
         XCTAssertTrue(NativeSettingsSearch.results("   ", pages: pages, entries: entries).isEmpty)
     }
+
+    /// The hidden copy of the pages is drawn only while it learns them, not for the whole search: drawn, every
+    /// keystroke laid every page out again, about 0.9 s per key (Martin, 2026-11-05: "it lags pretty hard").
+    func testTheSearchDrawsTheHiddenPagesBrieflyAndAgainOnlyAfterAMinute() async throws {
+        let indexing = NativeSettingsIndexing()
+        let now = Date()
+        indexing.start(now: now)
+        XCTAssertTrue(indexing.active, "the field took the keyboard: the pages are drawn to be read")
+        try await Task.sleep(for: NativeSettingsIndexing.window + .milliseconds(400))
+        XCTAssertFalse(indexing.active, "the hidden pages go once they had time to report")
+        indexing.start(now: now.addingTimeInterval(30))
+        XCTAssertFalse(indexing.active, "a search within a minute uses what the index learned")
+        indexing.start(now: now.addingTimeInterval(NativeSettingsIndexing.reindexAfter + 1))
+        XCTAssertTrue(indexing.active, "after a minute the pages are read again")
+    }
 }

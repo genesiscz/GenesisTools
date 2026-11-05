@@ -296,9 +296,14 @@ struct WidgetPreviewRosterRow: View, Equatable {
                 }
             }
             Spacer(minLength: 2)
-            if let inbox, inbox.unread + inbox.needsAnswer > 0 {
-                WidgetInboxCount(count: inbox.unread + inbox.needsAnswer, needsAnswer: inbox.needsAnswer > 0,
-                    pulse: pulse, reduceMotion: reduceMotion, complete: complete)
+            let count = inbox.map { $0.unread + $0.needsAnswer } ?? 0
+            if count > 0 || session.visualStatus == .working {
+                // The rail's badge: a working session's count sits in its turning ring, or the ring alone, so the list
+                // says which of its sessions work as the rail does (Martin, 2026-11-05: "make sure their numbers (or no
+                // number in the Active too) are also circling").
+                WidgetSessionActivity(status: session.visualStatus, count: count,
+                    needsAnswer: (inbox?.needsAnswer ?? 0) > 0, animate: !reduceMotion, complete: complete,
+                    pulse: pulse)
             } else {
                 WidgetActivityIndicator(status: session.visualStatus, animate: !reduceMotion)
                     .frame(width: 12, height: 12)

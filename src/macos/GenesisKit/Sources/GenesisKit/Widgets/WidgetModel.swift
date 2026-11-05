@@ -182,6 +182,10 @@ public final class WidgetModel: ObservableObject {
     @Published public var moduleSelections: [String: String] = [:]
     @Published public var draggedSidePosition: Double?
     @Published public var draggingSide = false
+    @Published public var draggedTopPosition: Double?
+    @Published public var draggingTop = false
+    /// The side rail or the top bar is being dragged: no hover opens a preview and no popup appears meanwhile.
+    public var dragging: Bool { draggingSide || draggingTop }
     public var sideClusterHeight: CGFloat = 300
     private var followedTranscript: String?
     private var receiptContextCache: [String: (at: Date, value: WidgetReceiptContext)] = [:]
@@ -924,6 +928,11 @@ public final class WidgetModel: ObservableObject {
             {
                 draggedSidePosition = nil
             }
+            if !draggingTop, let position = draggedTopPosition,
+                abs((next.state.preferences.topPosition ?? 0.5) - position) < 0.0001
+            {
+                draggedTopPosition = nil
+            }
             for message in next.state.outgoing where ["failed", "cancelled"].contains(message.state) {
                 if case .object(let fields) = message.payload,
                     case .string(let kind) = fields["kind"], case .string(let id) = fields["id"]
@@ -966,6 +975,7 @@ public final class WidgetModel: ObservableObject {
     }
 
     public var sidePosition: Double { draggedSidePosition ?? layout.sidePosition }
+    public var topPosition: Double { draggedTopPosition ?? layout.topPosition }
     public var activeModuleID: String {
         let surface = WidgetSurfaceID(edge: expanded ?? side, group: expanded == .top ? 0 : activeSideGroup)
         return moduleSelections[surface.key] ?? "agents"
@@ -1016,7 +1026,7 @@ public final class WidgetModel: ObservableObject {
             // until the pointer leaves the whole surface, or reaches a different agent.
             return
         }
-        guard layout.hoverPreviews, !dialogOpen, !draggingSide, expanded == nil else { return }
+        guard layout.hoverPreviews, !dialogOpen, !dragging, expanded == nil else { return }
         // The panel's own hover fires only when the pointer crosses its edge. After a click collapsed the panel
         // under a resting pointer it never fired again, so the next bubble showed its tooltip and no preview
         // (Martin, 2026-10-23). A bubble the pointer reaches starts the panel's hover itself.
@@ -1039,7 +1049,7 @@ public final class WidgetModel: ObservableObject {
 
     /// Whether `showPeek` would pop an item up in `surface` now: never while the user is in a panel, a window or a drag.
     func canPeek(on surface: WidgetSurfaceID) -> Bool {
-        !stopping && expanded == nil && !dialogOpen && !draggingSide && pointerInside.isEmpty
+        !stopping && expanded == nil && !dialogOpen && !dragging && pointerInside.isEmpty
             && (hoveredSurface == nil || hoveredSurface == surface)
     }
 
@@ -1322,7 +1332,7 @@ public final class WidgetModel: ObservableObject {
             return
         }
         guard layout.hoverPreviews, !dialogOpen else { return }
-        if draggingSide {
+        if dragging {
             exitedDuringDrag = inside ? nil : surface
             return
         }
@@ -1353,14 +1363,7 @@ public final class WidgetModel: ObservableObject {
         let bounded = min(1, max(0, position))
         draggedSidePosition = bounded
         draggingSide = !finished
-        cancelHoverPrewarm()
-        // Keep the current rail height while dragging; shrinking a hovered panel changes its travel.
-        hoverTask?.cancel()
-        presentationChanged?()
-        if finished, let exited = exitedDuringDrag {
-            exitedDuringDrag = nil
-            hover(exited, inside: false)
-        }
+        dragStep(finished: finished)
         if finished {
             action(
                 ["action": "preferences", "patch": ["sidePosition": .number(bounded)]],
@@ -1369,6 +1372,35 @@ public final class WidgetModel: ObservableObject {
                     self.draggedSidePosition = nil
                     self.presentationChanged?()
                 })
+        }
+    }
+
+    /// Moves the top bar along the top edge: live while dragging, stored as `topPosition` by the final call, and
+    /// back where it was when the store refuses it.
+    public func moveTop(position: Double, finished: Bool) {
+        let bounded = min(1, max(0, position))
+        draggedTopPosition = bounded
+        draggingTop = !finished
+        dragStep(finished: finished)
+        if finished {
+            action(
+                ["action": "preferences", "patch": ["topPosition": .number(bounded)]],
+                failed: { [weak self] in
+                    guard let self, self.draggedTopPosition == bounded, !self.draggingTop else { return }
+                    self.draggedTopPosition = nil
+                    self.presentationChanged?()
+                })
+        }
+    }
+
+    private func dragStep(finished: Bool) {
+        cancelHoverPrewarm()
+        // Keep the current panel size while dragging; shrinking a hovered panel changes its travel.
+        hoverTask?.cancel()
+        presentationChanged?()
+        if finished, let exited = exitedDuringDrag {
+            exitedDuringDrag = nil
+            hover(exited, inside: false)
         }
     }
 

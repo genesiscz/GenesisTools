@@ -1,8 +1,17 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    realpathSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
     GENESIS_TOOLS_LAUNCHER_SUFFIX,
     isGenesisToolsBinary,
@@ -27,6 +36,7 @@ import {
     stampInfoPlist,
     timedSteps,
 } from "./app";
+import { renderSwiftFaceTable, SWIFT_FACE_TABLE_PATH, swiftFaceTableIsCurrent, syncSwiftFaceTable } from "./face-table";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "./kinds";
 import {
     type AppProcess,
@@ -41,6 +51,8 @@ import {
 } from "./local-network";
 import {
     ALL_PART_IDS,
+    APP_FACES,
+    APP_PARTS,
     bundleStepsFor,
     installedParts,
     parsePartsFlag,
@@ -972,5 +984,86 @@ describe("app parts", () => {
         expect(bundleStepsFor(["clicky"]).has("clicky-library")).toBe(true);
         expect(partForFace("--review")).toBe("hub");
         expect(partForFace("--rpc")).toBeUndefined();
+    });
+
+    it("names the part of every face flag, and none for a host face", () => {
+        const parts = Object.fromEntries(
+            [
+                "--hub",
+                "--review",
+                "--widget",
+                "--features",
+                "--clicky",
+                "--markdown",
+                "--recorder",
+                "--meetings",
+                "--window",
+                "",
+                "--link-relay",
+                "--rpc",
+            ].map((flag) => [flag, partForFace(flag)])
+        );
+        expect(parts).toEqual({
+            "--hub": "hub",
+            "--review": "hub",
+            "--widget": "widget",
+            "--features": "features",
+            "--clicky": "features",
+            "--markdown": "markdown",
+            "--recorder": "recorder",
+            "--meetings": "meetings",
+            "--window": undefined,
+            "": undefined,
+            "--link-relay": undefined,
+            "--rpc": undefined,
+        });
+    });
+});
+
+describe("the face declarations", () => {
+    it("are what the host's generated Swift face table holds", () => {
+        // On a failure run: bun scripts/native/app-faces.ts --write
+        expect(readFileSync(SWIFT_FACE_TABLE_PATH, "utf8")).toBe(renderSwiftFaceTable());
+    });
+
+    it("name the same faces each part registers in Sources/GenesisTools/Parts.swift", () => {
+        const source = readFileSync(join(dirname(SWIFT_FACE_TABLE_PATH), "../GenesisTools/Parts.swift"), "utf8");
+        const registered = Object.fromEntries(
+            [...source.matchAll(/AppParts\.register\(part: "([^"]+)", faces: \[(.*)\]\)/g)].map((match) => [
+                match[1],
+                [...match[2].matchAll(/"(--[a-z-]+)":/g)].map((flag) => flag[1]).sort(),
+            ])
+        );
+        const declared = Object.fromEntries(
+            APP_PARTS.map((part) => [
+                part.id,
+                part.faces.flatMap((face) => [face.flag, ...(face.aliases ?? [])]).sort(),
+            ])
+        );
+
+        expect(registered).toEqual(declared);
+    });
+
+    it("give every flag one face, and the quit question one place per named face", () => {
+        const flags = APP_FACES.flatMap((face) => [face.flag, ...(face.aliases ?? [])]);
+        const orders = APP_FACES.flatMap((face) => (face.quit ? [face.quit.order] : []));
+
+        expect(new Set(flags).size).toBe(flags.length);
+        expect(new Set(orders).size).toBe(orders.length);
+    });
+
+    it("writes the Swift table only when it differs, and escapes what Swift would read as code", () => {
+        const path = join(mkdtempSync(join(tmpdir(), "faces-swift-")), "AppFaces+Declared.swift");
+
+        expect(syncSwiftFaceTable(path)).toBe(true);
+        expect(swiftFaceTableIsCurrent(path)).toBe(true);
+        expect(syncSwiftFaceTable(path)).toBe(false);
+        expect(
+            renderSwiftFaceTable([
+                { flag: "--x", window: false, quit: { name: 'A "q" \\ b', order: 1 }, part: undefined },
+            ])
+        ).toContain(
+            'AppFace(flag: "--x", aliases: [], part: nil, window: false, quit: .init(name: "A \\"q\\" \\\\ b", order: 1)),'
+        );
     });
 });

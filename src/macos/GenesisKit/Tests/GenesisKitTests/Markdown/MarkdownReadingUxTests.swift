@@ -259,7 +259,8 @@ final class MarkdownReadingUxTests: XCTestCase {
         XCTAssertEqual(before["photo.png"]?["kind"], "pending")
         await fulfillment(of: [ready], timeout: 5)
         let after = registry.update(markdown: "![[photo.png]]", context: context) {}
-        XCTAssertNil(after["photo.png"], "after the scan a miss is a miss, and the page says not found")
+        XCTAssertEqual(after["photo.png"]?["kind"], "refused", "after the scan a miss is a miss, and the page says why")
+        XCTAssertEqual(after["photo.png"]?["reason"], "missing")
     }
 
     func testAnEmptyNoteSaysSo() async throws {

@@ -43,6 +43,9 @@ public struct GrowingTextEditor: View {
                 TextEditor(text: $text)
                     .font(font)
                     .scrollContentBackground(.hidden)
+                    // With scroll bars always shown (a mouse attached), the track of a one-line field was a 15 pt grey
+                    // square beside the send button. The wheel and the keys still scroll a long answer.
+                    .scrollIndicators(.never)
                     .modifier(GrowingTextEditorFocus(focus: focus))
                     .onKeyPress(keys: [.return, .escape], phases: .down, action: onKey)
                     .accessibilityLabel(accessibilityText)

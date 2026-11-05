@@ -14,13 +14,28 @@ public enum WidgetOptionText {
         return index < count ? index : nil
     }
 
-    /// The hub names the recommended option by its letter ("b") or its whole text.
+    /// The hub names the recommended option by its letter ("b"), by several letters in order when a decision takes any
+    /// set of them ("abd", "a, b, d"), or by its whole text.
     public static func isRecommended(_ option: String, at index: Int, _ recommended: String?) -> Bool {
         guard let recommended = recommended?.trimmingCharacters(in: .whitespaces).lowercased(), !recommended.isEmpty
         else { return false }
         let lower = option.lowercased()
-        return recommended == letter(index) || lower == recommended
+        return recommendedLetters(recommended).contains(letter(index)) || lower == recommended
             || lower.hasPrefix(recommended + ")") || lower.hasPrefix(recommended + ".")
+    }
+
+    /// The letters a recommendation names: one, or several that rise ("abd", "a + b + d"). Text names none, and a
+    /// word's letters do not rise ("keep it"), so it is never read as a set. The hub's `recommendedLetters`
+    /// (src/question/lib/decisions/option-labels.ts) is the same rule.
+    static func recommendedLetters(_ recommended: String) -> Set<String> {
+        let separators: Set<Character> = [" ", ",", "+", "&", "/"]
+        var letters: [Character] = []
+        for character in recommended.lowercased() where !separators.contains(character) {
+            guard character >= "a", character <= "z", character.isASCII else { return [] }
+            letters.append(character)
+        }
+        guard !letters.isEmpty, zip(letters, letters.dropFirst()).allSatisfy({ $0 < $1 }) else { return [] }
+        return Set(letters.map(String.init))
     }
 
     /// The option text without a letter the agent already wrote ("a) Record…"); the row draws the letter itself. 176

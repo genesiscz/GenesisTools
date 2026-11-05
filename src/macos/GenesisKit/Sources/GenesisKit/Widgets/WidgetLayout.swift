@@ -5,21 +5,38 @@ import SwiftUI
 /// Measures both wings before placing them, keeping a hardware cutout at the screen's center.
 struct WidgetTopBarLayout: Layout {
     var cutout: CGFloat
+    var notch: CGFloat = 0
     var intrinsicSizeChanged: (CGSize) -> Void = { _ in }
-    func makeCache(subviews: Subviews) -> CGSize { .zero }
+    var placementsMeasured: (CGSize, CGSize) -> Void = { _, _ in }
+    struct Cache {
+        var intrinsic: CGSize = .zero
+        var plain: CGSize = .zero
+        var split: CGSize = .zero
+    }
+    func makeCache(subviews: Subviews) -> Cache { Cache() }
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout CGSize) -> CGSize {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
         guard sizes.count == 2 else { return .zero }
         let width = cutout > 0
             ? max(sizes[0].width, sizes[1].width) * 2 + cutout + 16
             : sizes[0].width + sizes[1].width + 16
         let intrinsic = CGSize(width: width, height: max(sizes[0].height, sizes[1].height))
-        if cache != intrinsic { cache = intrinsic; intrinsicSizeChanged(intrinsic) }
+        let plain = CGSize(width: sizes[0].width + sizes[1].width + 16, height: intrinsic.height)
+        let split = CGSize(width: max(sizes[0].width, sizes[1].width) * 2 + notch + 16, height: intrinsic.height)
+        if cache.intrinsic != intrinsic {
+            cache.intrinsic = intrinsic
+            intrinsicSizeChanged(intrinsic)
+        }
+        if cache.plain != plain || cache.split != split {
+            cache.plain = plain
+            cache.split = split
+            placementsMeasured(plain, split)
+        }
         return CGSize(width: min(proposal.width ?? width, width), height: intrinsic.height)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout CGSize) {
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
         guard subviews.count == 2 else { return }
         let left = subviews[0].sizeThatFits(.unspecified)
         let right = subviews[1].sizeThatFits(.unspecified)
@@ -34,18 +51,21 @@ public struct WidgetLayoutConfiguration: Codable, Equatable, Sendable {
     public var sideGroups: [[String]]
     public var separated: Bool
     public var sidePosition: Double
+    /// The top bar's horizontal center, 0 (left) to 1 (right) of its travel; 0.5 is centered (split around a notch).
+    public var topPosition: Double
     public var hoverPreviews: Bool
 
     public init(
         topModules: [String] = ["agents"],
         sideGroups: [[String]] = [["agents"], ["capture", "shelf"], ["focus", "voice", "tasks"]],
-        separated: Bool = false, sidePosition: Double = 0.5, hoverPreviews: Bool = true
+        separated: Bool = false, sidePosition: Double = 0.5, topPosition: Double = 0.5, hoverPreviews: Bool = true
     ) {
         self.topModules = Self.unique(topModules)
         self.sideGroups = Array(sideGroups.prefix(3)).map(Self.unique)
         while self.sideGroups.count < 3 { self.sideGroups.append([]) }
         self.separated = separated
         self.sidePosition = sidePosition.isFinite ? min(1, max(0, sidePosition)) : 0.5
+        self.topPosition = topPosition.isFinite ? min(1, max(0, topPosition)) : 0.5
         self.hoverPreviews = hoverPreviews
     }
 
@@ -236,5 +256,84 @@ public enum WidgetClusterGeometry {
     ) -> Double {
         let travel = max(1, visibleHeight - clusterHeight)
         return min(1, max(0, starting + translationDown / travel))
+    }
+}
+
+/// Where the top bar sits on its display: the `topPosition` preference turned into a horizontal span and the notch
+/// gap the bar is drawn around. Pure geometry, so it is tested without windows.
+public struct WidgetTopPlacement: Equatable, Sendable {
+    /// The bar's horizontal center, in screen coordinates.
+    public var centerX: CGFloat
+    public var width: CGFloat
+    /// The notch gap the bar is split around; 0 draws it in one piece.
+    public var cutout: CGFloat
+
+    public var minX: CGFloat { centerX - width / 2 }
+    public var maxX: CGFloat { centerX + width / 2 }
+
+    /// `position` 0...1 spreads the bar's center over the room `screen` leaves a bar `width` wide (the bar in one
+    /// piece), so 0 and 1 put it flush with an edge. On a display whose notch is `notch` wide (0: no notch) at the
+    /// screen's center, a bar that would cover the notch snaps: with its center within the notch's half-width of the
+    /// screen's center it is centered and split around the notch (the default layout, `splitWidth` wide); further out
+    /// it is pushed to that side until it clears the notch, in one piece. Position 0.5 is always the centered layout.
+    public static func place(
+        position: Double, screen: CGRect, notch: CGFloat, width: CGFloat, splitWidth: CGFloat
+    ) -> WidgetTopPlacement {
+        let fraction = position.isFinite ? min(1, max(0, position)) : 0.5
+        let plain = min(max(1, width), screen.width)
+        let gap = max(0, notch)
+        let center = screen.minX + plain / 2 + (screen.width - plain) * CGFloat(fraction)
+        guard gap > 0 else { return WidgetTopPlacement(centerX: center, width: plain, cutout: 0) }
+        let split = WidgetTopPlacement(centerX: screen.midX, width: min(max(1, splitWidth), screen.width), cutout: gap)
+        let offset = center - screen.midX
+        if abs(offset) >= (plain + gap) / 2 { return WidgetTopPlacement(centerX: center, width: plain, cutout: 0) }
+        if abs(offset) <= gap / 2 { return split }
+        let pushed = offset < 0 ? screen.midX - (gap + plain) / 2 : screen.midX + (gap + plain) / 2
+        // A display too narrow to hold the bar beside its notch keeps the split layout.
+        guard pushed - plain / 2 >= screen.minX - 0.5, pushed + plain / 2 <= screen.maxX + 0.5 else { return split }
+        return WidgetTopPlacement(centerX: pushed, width: plain, cutout: 0)
+    }
+
+    /// The position after a horizontal drag of `translationRight` points that started at `starting`, for a bar
+    /// `width` wide on a screen `screenWidth` wide.
+    public static func position(
+        starting: Double, translationRight: CGFloat, width: CGFloat, screenWidth: CGFloat
+    ) -> Double {
+        // A bar as wide as its screen has no room to travel: the drag keeps the stored position, so a wider display
+        // later still shows the bar where it was.
+        guard screenWidth > width else { return starting }
+        return WidgetClusterGeometry.position(
+            starting: starting, translationDown: translationRight, clusterHeight: width, visibleHeight: screenWidth)
+    }
+
+    /// How far right of a top panel's middle the bar sits. A panel wider than the bar (the preview, the expanded
+    /// pane) is centered on the bar but kept on the screen (`EdgePanelGeometry.frame`), so near an edge the bar sits
+    /// off the panel's middle and stays where it is in the compact panel.
+    public static func stripOffset(barCenterX: CGFloat, panelWidth: CGFloat, screen: CGRect) -> CGFloat {
+        let width = min(max(1, panelWidth), screen.width)
+        return barCenterX - (EdgePanelGeometry.topMinX(centerX: barCenterX, width: width, screen: screen) + width / 2)
+    }
+}
+
+/// Places the top strip at the top of its panel, moved off the middle so it stays over the bar's place on the screen
+/// whatever the panel's width (`WidgetTopPlacement.stripOffset`). Without a center it stays in the middle.
+struct WidgetTopStripPlacement: Layout {
+    var barCenterX: CGFloat?
+    var screen: CGRect
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let strip = subviews.first else { return .zero }
+        let size = strip.sizeThatFits(proposal)
+        return CGSize(width: proposal.width ?? size.width, height: proposal.height ?? size.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let strip = subviews.first else { return }
+        let offset = barCenterX.map {
+            WidgetTopPlacement.stripOffset(barCenterX: $0, panelWidth: bounds.width, screen: screen)
+        } ?? 0
+        strip.place(
+            at: CGPoint(x: bounds.midX + offset, y: bounds.minY), anchor: .top,
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }

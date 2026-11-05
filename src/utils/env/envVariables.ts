@@ -500,6 +500,8 @@ export const env = {
 
     node: {
         ...envClient.node,
+        /** `NODE_EXTRA_CA_CERTS`: a PEM file that Bun and Node trust on top of their bundled roots. */
+        getExtraCaCerts: () => getTrimmed("NODE_EXTRA_CA_CERTS"),
         /**
          * Sets NODE_ENV to `value` only when it is not already set. Ink CLI entries call
          * this before importing ink/react so those packages' own `process.env.NODE_ENV

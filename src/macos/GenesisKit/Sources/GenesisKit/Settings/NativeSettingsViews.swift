@@ -131,6 +131,9 @@ public struct FeatureSettingsView: View {
     public var body: some View {
         HStack(spacing: 0) {
             NativeSettingsSidebar(store: store, appearance: appearance, search: search, title: title)
+                .background(alignment: .topLeading) {
+                    NativeSettingsSearchIndexerHost(store: store, search: search, indexing: search.indexing)
+                }
             Rectangle().fill(.white.opacity(0.075)).frame(width: 1)
             VStack(alignment: .leading, spacing: 0) {
                 if let page = store.selectedPage {
@@ -199,6 +202,8 @@ private struct NativeSettingsPageScroll: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .task(id: center.token) { await reveal(proxy) }
+            // A requested card drawn late (its page waited for its settings) scrolls into view when it appears.
+            .onChange(of: center.cardArrival) { _, _ in Task { await scrollToRequested(proxy) } }
         }
         .id(id)
     }
@@ -211,6 +216,10 @@ private struct NativeSettingsPageScroll: View {
     /// Only a fresh request scrolls: a page visited again later stays where its reader left it.
     private func reveal(_ proxy: ScrollViewProxy) async {
         guard center.anchor != nil, let at = center.requestedAt, Date().timeIntervalSince(at) < 2 else { return }
+        await scrollToRequested(proxy)
+    }
+
+    private func scrollToRequested(_ proxy: ScrollViewProxy) async {
         try? await Task.sleep(for: .milliseconds(80))
         guard let anchor = center.anchor else { return }
         let place = UnitPoint(x: 0.5, y: 0.15)
@@ -233,9 +242,6 @@ private struct NativeSettingsSidebar: View {
     @Namespace private var navigation
     @State private var query = ""
     @FocusState private var searchFocused: Bool
-    /// The hidden copy of the other pages is drawn: from a search that starts while a page is still unknown, until the
-    /// field is empty again. Later searches use what it learned.
-    @State private var indexing = false
 
     private var searching: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
@@ -279,13 +285,15 @@ private struct NativeSettingsSidebar: View {
             .scrollIndicators(.automatic)
         }.frame(width: 238)
             .titlebarBackground(Color.white.opacity(0.025))
-            .background(alignment: .topLeading) {
-                if indexing { NativeSettingsSearchIndexer(store: store, search: search) }
+            // The hidden pages are drawn for a moment when the field takes the keyboard or a search starts, usually
+            // before the first key, and again after a minute: a page's rows can arrive after its own load (the Daemon
+            // page lists its tasks once its status is read). The index keeps what each page reported.
+            .onChange(of: searchFocused) { _, now in
+                if now { search.indexing.start() }
             }
-            // Every search draws the hidden pages again. A page's rows can arrive after its own load (the Daemon page
-            // lists its tasks once its status is read), and a search cleared before that would otherwise leave them
-            // out of every later search. The index keeps what each page reported, so results show at once.
-            .onChange(of: searching) { _, now in indexing = now }
+            .onChange(of: searching) { _, now in
+                if now { search.indexing.start() }
+            }
     }
 
     /// A page, or a card or row on it: the page opens, scrolls there, and flashes it.

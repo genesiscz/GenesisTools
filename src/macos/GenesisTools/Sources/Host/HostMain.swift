@@ -69,6 +69,22 @@ package func runHost() -> Never {
         if !NativePreview.enabled { FaceMarker.install() }
         // A rebuild reopens the settings, hub, review, widget and feature settings faces with these exact arguments (App/FaceRecord.swift).
         if !NativePreview.enabled { FaceRecord.write(arguments) }
+        // Every long-lived face logs how it starts and ends, so the next unexplained stop names its cause (App/FaceLifecycle.swift).
+        FaceLifecycle.install(arguments: arguments)
+        // Quitting the hub with "Quit All" quits the widget too: the next hub or settings window starts it again while
+        // "Show the widget" is on (WidgetLaunch.swift).
+        if !NativePreview.enabled, windowFace, WidgetLaunch.bootsWidget(arguments: arguments) {
+            if arguments.contains("--no-activate") {
+                // A rebuild reopens the faces in the background, the widget among them, and its lock is not taken yet
+                // at this moment: an immediate check would start a second copy that exits at once.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    MainActor.assumeIsolated { WidgetLaunch.ensureRunningIfShown() }
+                }
+            } else {
+                WidgetLaunch.ensureRunningIfShown()
+            }
+            WidgetLaunch.bootOnActivation()
+        }
         // Another face's "Quit All" (⌘Q) reaches this face through its own terminate path (PartQuit/QuitFlow.swift).
         if PartQuit.face(ofArguments: arguments) != nil { FaceQuitSignal.listen() }
     }

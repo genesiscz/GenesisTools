@@ -268,6 +268,10 @@ final class ReviewQueueTests: XCTestCase {
         XCTAssertEqual(PRListAnchorMath.offset(heldY: 900, heldOffset: 1000, newY: 600, contentHeight: 5000, viewportHeight: 800), 700)
         XCTAssertEqual(PRListAnchorMath.offset(heldY: 46, heldOffset: 10, newY: 0, contentHeight: 5000, viewportHeight: 800), 0, "never above the content")
         XCTAssertEqual(PRListAnchorMath.offset(heldY: 46, heldOffset: 4000, newY: 900, contentHeight: 4500, viewportHeight: 800), 3700, "never past its end")
+        XCTAssertTrue(PRListAnchorMath.nearEnd(viewportBottom: 800, viewportHeight: 800, contentHeight: 600), "cards that do not fill the list")
+        XCTAssertTrue(PRListAnchorMath.nearEnd(viewportBottom: 800, viewportHeight: 800, contentHeight: 1600), "one screen left below")
+        XCTAssertFalse(PRListAnchorMath.nearEnd(viewportBottom: 800, viewportHeight: 800, contentHeight: 1601), "more than a screen left")
+        XCTAssertTrue(PRListAnchorMath.nearEnd(viewportBottom: 4000, viewportHeight: 800, contentHeight: 4500), "scrolled near the end")
     }
 
     func testTheDiffScrollsByAsMuchAsItsTopMovedOutsideAWindowResize() {

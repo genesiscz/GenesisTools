@@ -12,14 +12,13 @@ package enum FaceRecord {
         URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/app/faces", isDirectory: true)
     }
 
-    /// The faces a rebuild reopens (and that keep a link relay in front of them): the settings window, the hub,
-    /// a review, the widget and the feature settings, never a scripted run.
+    /// The faces that record their argv for a rebuild and keep a link relay in front of them: every face declared a
+    /// `window` (AppFaces), never a scripted run.
     static func isWindowFace(_ argv: [String]) -> Bool {
         if argv.contains("--snapshot") || argv.contains("--bench") {
             return false
         }
-        let first = argv.first ?? ""
-        return first.isEmpty || first == "--window" || first.hasPrefix("-psn_") || first == "--hub" || first == "--review" || first == "--widget" || first == "--features" || first == "--clicky" || first == "--markdown"
+        return AppFaces.face(firstArgument: argv.first ?? "")?.window == true
     }
 
     static func encode(pid: Int32, argv: [String], windows: [[String]]? = nil, front: Int? = nil) -> Data? {
