@@ -1,5 +1,5 @@
 import { createWriteStream, existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { type IosApp, type IosConfiguration, iosApp, type MobileProject } from "@genesiscz/utils/mobile/project";
 import { installApp } from "@genesiscz/utils/mobile/simulator";
@@ -41,7 +41,7 @@ export async function buildAndInstall(options: {
     const { appDir } = project;
     const ios = iosApp(project);
     const configuration = options.configuration ?? ios.build.configuration;
-    const derivedData = options.derivedData ?? defaultDerivedData(appDir);
+    const derivedData = resolve(options.derivedData ?? defaultDerivedData(appDir));
     // Taken before the build: a file saved while xcodebuild runs must make the next `up` build again.
     const fingerprint = fingerprintBuild({ inputs: ios.buildInputs, appDir, configuration });
     const settings = Object.entries(ios.build.buildSettings ?? {}).map(([key, value]) => `${key}=${value}`);
