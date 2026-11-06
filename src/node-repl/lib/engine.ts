@@ -335,8 +335,17 @@ export class ReplEngine {
     }
 
     private async preload(worker: ReplWorker): Promise<WorkerResponse> {
+        // One round trip even without toolsets: a turn's clock that starts before the worker has booted spends 100 to
+        // 300 ms of its budget on bun's start (NR30).
         if (this.toolsets.length === 0) {
-            return { id: 0, ok: true, text: "", images: [] };
+            return this.request(
+                worker,
+                { op: "ready" },
+                {
+                    timeoutMs: this.preloadTimeoutMs,
+                    onTimeout: `the worker did not start within ${this.preloadTimeoutMs} ms; it was killed`,
+                }
+            );
         }
 
         this.scratch = new TemporaryArtifacts({ prefix: "node-repl-toolsets", maxFiles: 1 });
@@ -567,7 +576,11 @@ export class ReplEngine {
                 ok: false,
                 text: ready.text,
                 images: ready.images,
-                error: `toolset preload failed: ${ready.error ?? "the worker exited"}`,
+                // Without toolsets the round trip only waits for the start, so its failure is the worker's own.
+                error:
+                    this.toolsets.length > 0
+                        ? `toolset preload failed: ${ready.error ?? "the worker exited"}`
+                        : (ready.error ?? "the worker exited before it started"),
                 stack: ready.stack,
                 durationMs: Math.round(performance.now() - started),
             };

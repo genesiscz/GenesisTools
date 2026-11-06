@@ -156,6 +156,18 @@ describe("ReplEngine", () => {
         expect(stuck.error).toContain("compiling the native helper");
     });
 
+    // NR30: `run '1' --timeout 50` failed, because the turn's clock ran while bun booted the worker (100 to 300 ms).
+    it("the first turn's budget starts when the worker has started, not before", async () => {
+        const fresh = new ReplEngine();
+        try {
+            const first = await fresh.run("1", 100);
+            expect(first.error).toBeUndefined();
+            expect(first.text).toBe("1");
+        } finally {
+            fresh.dispose();
+        }
+    });
+
     // NR29: process.exit(3) answered "code unknown" and did not say that the bindings were gone.
     it("a turn that exits the worker names the code and says every binding is gone", async () => {
         await engine.run("globalThis.beforeExit = 1");

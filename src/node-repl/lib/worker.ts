@@ -44,7 +44,13 @@ interface DisposeRequest {
     op: "dispose";
 }
 
-type Request = RunRequest | AddDirRequest | PreloadRequest | DisposeRequest;
+/** Answered as soon as the worker reads it: the parent starts a turn's clock only after the worker has booted. */
+interface ReadyRequest {
+    id: number;
+    op: "ready";
+}
+
+type Request = RunRequest | AddDirRequest | PreloadRequest | DisposeRequest | ReadyRequest;
 
 interface EmittedImage {
     mimeType: string;
@@ -412,6 +418,10 @@ async function handle(request: Request): Promise<Response> {
         }
     }
 
+    if (request.op === "ready") {
+        return { id: request.id, ok: true, text: "", images: [] };
+    }
+
     if (request.op === "dispose") {
         const failures = await disposeToolsets();
         return failures.length > 0
@@ -473,6 +483,10 @@ function readRequest(line: string): { request: Request } | { failure: Response }
 
     if (fields.op === "dispose") {
         return { request: { id, op: "dispose" } };
+    }
+
+    if (fields.op === "ready") {
+        return { request: { id, op: "ready" } };
     }
 
     return { failure: { id, ok: false, text: "", images: [], error: `unsupported request: ${line.slice(0, 200)}` } };
