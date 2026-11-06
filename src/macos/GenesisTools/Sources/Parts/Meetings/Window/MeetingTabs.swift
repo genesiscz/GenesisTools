@@ -501,6 +501,10 @@ private struct ItemRow: View, Equatable {
         }
     }
 
+    /// "Type a name…" in the speaker menu: the popover and what was typed in it.
+    @State private var naming = false
+    @State private var typedName = ""
+
     private var needsSpeaker: Bool { item.kind == "speaker-range" && item.speaker == nil }
     private var needsSpelling: Bool { item.needsSpelling }
 
@@ -534,12 +538,21 @@ private struct ItemRow: View, Equatable {
                 HStack(spacing: 6) {
                     if needsSpeaker {
                         MenuButton(items: {
-                            (item.candidates ?? []).map { name in .action(name) { decide(true, name) } }
-                                + ((item.candidates ?? []).isEmpty ? [.note("No candidate: answer it in a terminal with --speaker")] : [])
+                            let candidates = item.candidates ?? []
+                            var items: [MenuButtonItem] = candidates.map { name in .action(name) { decide(true, name) } }
+                            if !candidates.isEmpty { items.append(.divider) }
+                            items.append(.action("Type a name…") { naming = true })
+                            return items
                         }) {
                             Text("Confirm as…").font(.system(size: 12))
                         }
                         .instantTooltip("Whose voice this range is; confirming needs a name")
+                        .popover(isPresented: $naming, arrowEdge: .bottom) {
+                            SpeakerNamePopover(name: $typedName) { name in
+                                naming = false
+                                decide(true, name)
+                            }
+                        }
                     } else {
                         LiveButton(tooltip: needsSpelling ? "It has no spelling yet: answer it by ear" : "Confirm: transcripts apply it",
                                    enabled: !needsSpelling, action: { decide(true, nil) }) {
@@ -571,8 +584,37 @@ private struct ItemRow: View, Equatable {
                 ForEach(item.candidates ?? [], id: \.self) { name in
                     Button("Confirm as \(name)") { decide(true, name) }
                 }
+                Button("Confirm as a typed name…") { naming = true }
             }
         }
+    }
+}
+
+/// The voice of a speaker range that no candidate names: a typed name confirms the range as that voice. The name stays
+/// in the row until the confirm lands (the range then leaves the suggestions), so a refused name is not lost.
+private struct SpeakerNamePopover: View {
+    @Binding var name: String
+    let confirm: (String) -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            TextField("Speaker name", text: $name)
+                .textFieldStyle(.roundedBorder).frame(width: 200)
+                .focused($focused)
+                .onSubmit(submit)
+            GhostButton("Confirm", symbol: "return", tooltip: "Confirm this range as the typed voice") { submit() }
+                .disabled(trimmed.isEmpty)
+        }
+        .padding(10)
+        .onAppear { focused = true }
+    }
+
+    private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
+
+    private func submit() {
+        guard !trimmed.isEmpty else { return }
+        confirm(trimmed)
     }
 }
 
