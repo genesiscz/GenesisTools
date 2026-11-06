@@ -3,21 +3,26 @@ import SwiftUI
 
 /// A one-line text field with a rounded border whose text an accessibility client can set (`tools control set`,
 /// an agent, a VoiceOver value write). SwiftUI's `TextField` takes such a write into its field but never into its
-/// binding, so a button that reads the binding stays disabled. Return runs `onSubmit`. The accessibility label is
-/// `label`, or the placeholder; `identifier` lands on the AppKit field itself, where an agent looks for it.
+/// binding, so a button that reads the binding stays disabled. Return runs `onSubmit`, Esc runs `onCancel` (when one is
+/// given). The accessibility label is `label`, or the placeholder; `identifier` lands on the AppKit field itself, where
+/// an agent looks for it. `focusOnAppear` gives the field the keyboard when it comes on screen.
 public struct AgentTextField: NSViewRepresentable {
     @Binding private var text: String
     private let placeholder: String
     private let label: String
     private let identifier: String?
+    private let focusOnAppear: Bool
+    private let onCancel: (() -> Void)?
     private let onSubmit: () -> Void
 
     public init(_ placeholder: String, text: Binding<String>, label: String? = nil, identifier: String? = nil,
-                onSubmit: @escaping () -> Void = {}) {
+                focusOnAppear: Bool = false, onCancel: (() -> Void)? = nil, onSubmit: @escaping () -> Void = {}) {
         _text = text
         self.placeholder = placeholder
         self.label = label ?? placeholder
         self.identifier = identifier
+        self.focusOnAppear = focusOnAppear
+        self.onCancel = onCancel
         self.onSubmit = onSubmit
     }
 
@@ -37,6 +42,7 @@ public struct AgentTextField: NSViewRepresentable {
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.delegate = context.coordinator
+        field.focusOnAppear = focusOnAppear
         let coordinator = context.coordinator
         field.onAccessibilityWrite = { [weak coordinator] value in coordinator?.parent.text = value }
         return field
@@ -51,6 +57,17 @@ public struct AgentTextField: NSViewRepresentable {
 
     public final class Field: NSTextField {
         var onAccessibilityWrite: (String) -> Void = { _ in }
+        var focusOnAppear = false
+
+        override public func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard focusOnAppear, window != nil else { return }
+            // After the layout pass that added the field: a first responder set inside it is lost again.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let window = self.window else { return }
+                window.makeFirstResponder(self)
+            }
+        }
 
         override public func setAccessibilityValue(_ value: Any?) {
             super.setAccessibilityValue(value)
@@ -73,9 +90,17 @@ public struct AgentTextField: NSViewRepresentable {
         }
 
         public func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
-            parent.onSubmit()
-            return true
+            switch selector {
+            case #selector(NSResponder.insertNewline(_:)):
+                parent.onSubmit()
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                guard let onCancel = parent.onCancel else { return false }
+                onCancel()
+                return true
+            default:
+                return false
+            }
         }
     }
 }

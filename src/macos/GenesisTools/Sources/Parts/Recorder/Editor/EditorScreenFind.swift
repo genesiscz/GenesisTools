@@ -160,7 +160,6 @@ extension EditorModel {
 /// The Find tab's content.
 struct ScreenFindInspector: View {
     @Bindable var model: EditorModel
-    @FocusState private var focused: Bool
     @State private var pending: Task<Void, Never>?
 
     var body: some View {
@@ -172,19 +171,18 @@ struct ScreenFindInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 6) {
-                TextField("A name, an error, a link…", text: $model.screenQuery)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($focused)
-                    .onSubmit { model.goToScreenHit(0) }
-                    .onExitCommand { model.screenQuery = "" }
-                    .accessibilityIdentifier("recorder.find.query")
+                // An AppKit field: an agent's accessibility write reaches the query and searches, as typing does.
+                AgentTextField("A name, an error, a link…", text: $model.screenQuery, identifier: "recorder.find.query",
+                               focusOnAppear: true, onCancel: { model.screenQuery = "" }) {
+                    model.goToScreenHit(0)
+                }
+                .frame(height: 22)
                 if !model.screenQuery.isEmpty {
                     IconButton(systemName: "xmark.circle.fill", tooltip: "Clear the search (Esc)", size: 11) { model.screenQuery = "" }
                 }
             }
             results
         }
-        .onAppear { focused = true }
         // Searches as you type, once the typing rests: each search is one tools process. Opening the tab again keeps
         // the last answer instead of searching again.
         .onChange(of: model.screenQuery) { _, query in

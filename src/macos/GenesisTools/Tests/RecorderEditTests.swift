@@ -1048,6 +1048,33 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(found.accessibilityLabel(), "Find words", "VoiceOver reads its placeholder as its name")
     }
 
+    // Regression test: deep test 2026-11-07 R2-RE4 — an agent's write into Find on Screen never searched, because the
+    // SwiftUI field's binding never saw it. Its AgentTextField also has to take the keyboard when the tab opens and clear
+    // on Esc, as the SwiftUI field did.
+    func testAnAgentTextFieldTakesTheKeyboardWhenAskedAndRunsItsCancelOnEsc() throws {
+        var text = "old"
+        var cancelled = 0
+        let host = NSHostingView(rootView: AgentTextField("A name", text: Binding(get: { text }, set: { text = $0 }),
+                                                          focusOnAppear: true, onCancel: { cancelled += 1 }))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 30), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        func field(in view: NSView) -> NSTextField? {
+            if let field = view as? NSTextField { return field }
+            return view.subviews.lazy.compactMap { field(in: $0) }.first
+        }
+        let found = try XCTUnwrap(field(in: host))
+        let editor = window.firstResponder as? NSTextView
+        XCTAssertTrue(window.firstResponder === found || editor?.delegate === found, "the field has the keyboard")
+
+        let delegate = try XCTUnwrap(found.delegate)
+        let handled = delegate.control?(found, textView: NSTextView(), doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+        XCTAssertEqual(handled, true, "Esc is the field's")
+        XCTAssertEqual(cancelled, 1)
+    }
+
     func testAnOutsideEditIsSaidInWordsWithWhatToFlashAndWhere() throws {
         let before = project([.init(id: "c", fromUs: 0, toUs: 10_000_000)])
         var after = before
