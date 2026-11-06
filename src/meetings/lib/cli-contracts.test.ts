@@ -7,6 +7,7 @@ import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/rec
 import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { meetingAudioPath } from "./audio";
+import { meetingListRow, selectMeetings } from "./list-rows";
 import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
 import { enumHint, errorText, formatFlag } from "./shared";
 import { linkedSource } from "./sources";
@@ -252,5 +253,50 @@ describe("play --at past the meeting's end (R2-MC5)", () => {
         expect(pastTheEnd(356_400, 2772)).toBe("--at 99:00:00 is after the meeting's last speech (46:12).");
         expect(pastTheEnd(2800, 2772)).toBeUndefined();
         expect(pastTheEnd(356_400, undefined)).toBeUndefined();
+    });
+});
+
+describe("list --json prints one summary row per meeting, and --limit keeps the newest (R2-NR-X3)", () => {
+    const at = "2026-11-05T10:00:00.000Z";
+    const meeting = (id: string, start: string, project?: string) =>
+        meetingRecordSchema.parse({
+            id,
+            title: "Planning",
+            start,
+            createdAt: start,
+            createdBy: "new",
+            ...(project ? { project } : {}),
+            sources: { wisprflow: { meetingId: "w1" } },
+            items: [
+                { id: "i1", kind: "term", status: "suggested", atSec: 1, heard: "x", suggestedAt: at, rules: [] },
+                { id: "i2", kind: "term", status: "confirmed", atSec: 2, heard: "y", suggestedAt: at, rules: [] },
+            ],
+            recording: { status: "stopped", frames: 12, bytes: 2048 },
+        });
+
+    test("a row holds the facts a list needs, not the items, history or recording spans", () => {
+        expect(meetingListRow(meeting("a", at, "work"))).toEqual({
+            id: "a",
+            title: "Planning",
+            start: at,
+            project: "work",
+            labels: [],
+            sources: ["wisprflow"],
+            context: 0,
+            items: { suggested: 1, confirmed: 1, rejected: 0 },
+            recording: { status: "stopped", frames: 12, bytes: 2048 },
+        });
+    });
+
+    test("--project filters before --limit, so the limit counts that project's meetings", () => {
+        const records = [
+            meeting("c", "2026-11-05T12:00:00.000Z"),
+            meeting("b", "2026-11-05T11:00:00.000Z", "work"),
+            meeting("a", "2026-11-05T10:00:00.000Z", "work"),
+        ];
+
+        expect(selectMeetings(records, { limit: 2 }).map((one) => one.id)).toEqual(["c", "b"]);
+        expect(selectMeetings(records, { project: "work", limit: 1 }).map((one) => one.id)).toEqual(["b"]);
+        expect(selectMeetings(records, {}).map((one) => one.id)).toEqual(["c", "b", "a"]);
     });
 });

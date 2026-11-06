@@ -13,6 +13,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { collectAndReport } from "../lib/collect";
 import { linkSource } from "../lib/link";
+import { meetingListRow, selectMeetings } from "../lib/list-rows";
 import { setMeetingFields } from "../lib/meeting-fields";
 import { mergeMeetings } from "../lib/merge";
 import { resolveProject } from "../lib/project";
@@ -102,11 +103,18 @@ async function create(
     }
 }
 
-async function list(opts: { project?: string; json?: boolean }): Promise<void> {
-    const records = new MeetingStore().list().filter((record) => !opts.project || record.project === opts.project);
+async function list(opts: { project?: string; json?: boolean; full?: boolean; limit?: string }): Promise<void> {
+    const limit = opts.limit === undefined ? undefined : Number(opts.limit);
+
+    if (limit !== undefined && !(Number.isInteger(limit) && limit > 0)) {
+        fail(`--limit ${opts.limit} is not a count of meetings (try 5).`);
+        return;
+    }
+
+    const records = selectMeetings(new MeetingStore().list(), { project: opts.project, limit });
 
     if (opts.json) {
-        out.result(SafeJSON.stringify(records, null, 2));
+        out.result(SafeJSON.stringify(opts.full ? records : records.map(meetingListRow), null, 2));
         return;
     }
 
@@ -406,7 +414,12 @@ export function registerMeetingCommands(program: Command): void {
         .alias("ls")
         .description("The meeting records, newest first")
         .option("--project <name>", "only this project's")
-        .option("--json", "print JSON")
+        .option("--limit <n>", "only the newest n (after --project)")
+        .option(
+            "--json",
+            "print one row per meeting: id, title, start, end, project, labels, sources, context, items, recording"
+        )
+        .option("--full", "with --json: the whole records, as show --json prints each")
         .action(list);
 
     program
