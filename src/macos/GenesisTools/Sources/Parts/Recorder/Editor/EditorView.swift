@@ -58,10 +58,30 @@ struct EditorView: View {
 
 // MARK: - Rail
 
-private struct IconRail: View {
+/// The tab icons. In a window too short for all of them the rail scrolls (it never makes the row above the timeline
+/// taller than its room), keeps the selected tab in view, and fades at an edge that hides tabs.
+struct IconRail: View {
     @Bindable var model: EditorModel
+    @State private var cutEdges: Edge.Set = []
 
     var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                tabs
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
+            }
+            .scrollIndicators(.never)
+            .scrollBounceBehavior(.basedOnSize)
+            .modifier(RailCutEdges(edges: $cutEdges))
+            .mask(RailFade(edges: cutEdges))
+            .onChange(of: model.tab) { _, tab in proxy.scrollTo(tab) }
+        }
+        .frame(width: 54)
+        .background(RecorderPalette.panel)
+    }
+
+    private var tabs: some View {
         VStack(spacing: 10) {
             ForEach(InspectorTab.allCases) { tab in
                 Button {
@@ -79,12 +99,47 @@ private struct IconRail: View {
                 .accessibilityLabel(tab.title)
                 .accessibilityAddTraits(model.tab == tab ? .isSelected : [])
                 .accessibilityIdentifier("recorder.tab.\(tab.rawValue)")
+                .id(tab)
             }
-            Spacer()
         }
-        .padding(.top, 12)
-        .frame(width: 54)
-        .background(RecorderPalette.panel)
+    }
+}
+
+/// The rail's edges that hide tabs. macOS 15 reports the scroll geometry; on macOS 14 the rail shows no fade.
+private struct RailCutEdges: ViewModifier {
+    @Binding var edges: Edge.Set
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.onScrollGeometryChange(for: Edge.Set.self) { geometry in
+                var cut: Edge.Set = []
+                if geometry.contentOffset.y > 1 { cut.insert(.top) }
+                if geometry.contentSize.height - geometry.contentOffset.y - geometry.containerSize.height > 1 {
+                    cut.insert(.bottom)
+                }
+                return cut
+            } action: { _, cut in
+                edges = cut
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// A fade at each edge that hides tabs, so the tabs past it read as more to scroll to.
+private struct RailFade: View {
+    let edges: Edge.Set
+    private let depth: CGFloat = 24
+
+    var body: some View {
+        VStack(spacing: 0) {
+            LinearGradient(colors: [.black.opacity(edges.contains(.top) ? 0 : 1), .black], startPoint: .top, endPoint: .bottom)
+                .frame(height: depth)
+            Rectangle().fill(.black)
+            LinearGradient(colors: [.black, .black.opacity(edges.contains(.bottom) ? 0 : 1)], startPoint: .top, endPoint: .bottom)
+                .frame(height: depth)
+        }
     }
 }
 

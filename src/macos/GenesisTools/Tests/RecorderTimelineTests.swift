@@ -699,6 +699,14 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(reopened.project.zooms.count, 1, "redo brings it back")
     }
 
+    // Regression test: deep test 2026-11-06 RE11 — at the window's minimum height the rail's ten tabs asked for 442 pt,
+    // more than the row above the timeline had: the selected tab was cut off above, and the timeline below.
+    func testTheTabRailFitsARowShorterThanItsTabs() {
+        let rail = NSHostingController(rootView: IconRail(model: model()))
+        let size = rail.sizeThatFits(in: CGSize(width: 54, height: 200))
+        XCTAssertLessThanOrEqual(size.height, 200, "the rail scrolls instead of asking for every tab's height")
+    }
+
     // Regression test: deep test 2026-11-06 RE10 (live re-check) — an agent's undo saves the file at once, and the
     // window's file watcher took that version before the notification's refetch answered: the banner said "agent" and
     // "⌘Z puts it back", and ⇧⌘Z could not make the step again.
