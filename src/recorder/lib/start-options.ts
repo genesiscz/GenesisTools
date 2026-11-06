@@ -257,9 +257,16 @@ export function startAudioOf(flags: StartFlags): StartAudioSource[] | undefined 
 
 export function parseStartFlags(flags: StartFlags): StartRequest {
     const audio = startAudioOf(flags);
+    const target = namedTarget(flags);
+
+    if (audio?.length && (target?.kind === "window" || target?.kind === "app")) {
+        throw new Error(
+            "--audio needs a display or an area (--display, --region): a window or app movie is made from those windows alone and has no audio track"
+        );
+    }
 
     return {
-        target: namedTarget(flags),
+        target,
         title: flags.title,
         fps: bounded(flags.fps ?? String(DEFAULT_MOVIE_FPS), "--fps", START_LIMITS.fps),
         idleFps: bounded(flags.idleFps, "--idle-fps", START_LIMITS.idleFps),

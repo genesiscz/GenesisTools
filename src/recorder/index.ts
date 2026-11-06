@@ -62,7 +62,7 @@ import {
     withStartOptions,
 } from "./lib/start-options";
 import { Movie, movieDemoDriver } from "./lib/toolset";
-import { recordVideo } from "./lib/video-recording";
+import { recordVideo, tracksPointer } from "./lib/video-recording";
 
 const { log } = logger.scoped("recorder");
 
@@ -284,9 +284,17 @@ withStartOptions(
 
         refuseOtherKindFlags(flags);
         const request = parseStartFlags(flags);
+        const target = request.target ?? (await defaultStartTarget());
+
+        if (!tracksPointer(target)) {
+            out.printlnErr(
+                "note: a window or app movie has no cursor track, so the editor draws no pointer, clicks or shortcuts; record --display or --region for those"
+            );
+        }
+
         const result = await recordVideo({
             ...request,
-            target: request.target ?? (await defaultStartTarget()),
+            target,
             emit: (event) => {
                 if (flags.json) {
                     out.print(`${SafeJSON.stringify(event)}\n`);

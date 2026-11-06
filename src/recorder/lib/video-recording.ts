@@ -6,6 +6,7 @@ import { runCountdown } from "@app/control/lib/peekaboo";
 import {
     cursorTrackPath,
     ffmpegSegmentJoiner,
+    type NativeRecorderOptions,
     nativeSegmentRecorder,
     SESSION_MOTION_THRESHOLD,
 } from "@app/control/lib/recording-native";
@@ -70,6 +71,35 @@ export interface VideoRecordingOptions {
     countdownSeconds?: number;
     /** Shows the countdown; default an overlay near the pointer and a line a second on stderr. */
     countdown?: (seconds: number) => Promise<void>;
+}
+
+/**
+ * A display or an area records the pointer beside the movie (the drawn cursor, clicks and the ⌘/⌃ shortcut rows). A
+ * window or app movie is composed from those windows alone (ScreenCaptureKit's isolated capture), which has no pointer
+ * and no audio to record.
+ */
+export function tracksPointer(target: RecordingTarget): boolean {
+    return target.kind === "display" || target.kind === "region";
+}
+
+/** What each segment's native recorder records for this movie. */
+export function segmentRecorderOptions(
+    options: Omit<VideoRecordingOptions, "emit">,
+    folder: string
+): NativeRecorderOptions {
+    const pointer = tracksPointer(options.target);
+    return {
+        fps: options.fps,
+        idleFps: options.idleFps,
+        threshold: options.threshold,
+        excludeWindowIds: options.excludeWindowIds,
+        indicator: options.indicator,
+        audio: options.audio,
+        micDevice: options.micDevice,
+        cursorTrack: pointer,
+        cursorShapes: pointer && !options.systemCursor ? join(folder, "cursor-shapes") : undefined,
+        shortcuts: pointer && options.shortcuts !== false,
+    };
 }
 
 /** The recorder's countdown: an overlay near the pointer and a line a second on stderr. */
@@ -185,8 +215,9 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
             ...(options.threshold === undefined ? {} : { threshold: options.threshold }),
             ...(options.camera ? { camera: { requested: true, file: CAMERA_MOVIE } } : {}),
             audio: { sources: options.audio ?? [], micDevice: options.micDevice },
-            cursor: options.systemCursor ? "system" : "drawn",
-            shortcuts: options.shortcuts !== false,
+            // "none": a window or app movie has no cursor track, so the editor draws no pointer and no shortcuts.
+            cursor: tracksPointer(options.target) ? (options.systemCursor ? "system" : "drawn") : "none",
+            shortcuts: tracksPointer(options.target) && options.shortcuts !== false,
         },
         frames: [],
         warnings: [],
@@ -230,18 +261,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         target: options.target,
         directory: join(folder, `segments-${randomUUID().slice(0, 8)}`),
         output: movie,
-        recorder: nativeSegmentRecorder({
-            fps: options.fps,
-            idleFps: options.idleFps,
-            threshold: options.threshold,
-            excludeWindowIds: options.excludeWindowIds,
-            indicator: options.indicator,
-            audio: options.audio,
-            micDevice: options.micDevice,
-            cursorTrack: true,
-            cursorShapes: options.systemCursor ? undefined : join(folder, "cursor-shapes"),
-            shortcuts: options.shortcuts !== false,
-        }),
+        recorder: nativeSegmentRecorder(segmentRecorderOptions(options, folder)),
         join: ffmpegSegmentJoiner,
         emit,
         maxSeconds: options.maxSeconds ?? VIDEO_RECORDING_MAX_SECONDS,
