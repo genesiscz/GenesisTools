@@ -1728,6 +1728,10 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         const meeting = meetings.open(record.id);
         expect(meeting.id).toBe(record.id);
         expect(meeting.title).toBe("Undo");
+        // R2-NR5: it printed every getter and function (about 1,000 chars) and no title.
+        expect(Bun.inspect(meeting)).toBe(
+            `Meeting ${record.id} "Undo" (info() reads it; describe("meetings.Meeting") lists its methods)`
+        );
 
         // A question is answered by ear, so the fixture is a term with its spelling, which a confirm takes as it is.
         await meeting.items.add({

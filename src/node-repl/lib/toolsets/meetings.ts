@@ -17,6 +17,7 @@ import { runSuggest } from "@app/meetings/lib/suggest-run";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
 import { assertReach, defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { OCR_BOX_LEVELS } from "@genesiscz/utils/macos/ocr-boxes";
 import { EXPORT_IF_EDITED, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
@@ -665,6 +666,9 @@ export class MeetingsToolset extends ReplToolset {
             get title() {
                 return current().title;
             },
+            // One line, as a Movie prints: the handle printed every getter and function, and no title (R2-NR5).
+            [Symbol.for("nodejs.util.inspect.custom")]: () =>
+                `Meeting ${id} ${SafeJSON.stringify(current().title)} (info() reads it; describe("meetings.Meeting") lists its methods)`,
             // Read again on each access, so the findings items.add stores show at once.
             get record() {
                 return current();
