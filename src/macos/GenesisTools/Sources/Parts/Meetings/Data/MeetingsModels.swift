@@ -174,12 +174,33 @@ struct SpeakerStats: Decodable, Equatable {
     let hints: [SpeakerHint]?
 }
 
-/// A sign about one label from `speakers stats`, with how strong it is ("weak", "normal", "strong").
+/// A sign about one label from `speakers stats`, with how strong it is ("weak", "normal", "strong"). The fields after
+/// `strength` belong to some kinds only (`SpeakerHint` in src/utils/transcribe/speakers.ts).
 struct SpeakerHint: Decodable, Equatable, Hashable {
+    /// Lines in a row that break an attendance rule (`absent-speaker`, `sole-attendee`).
+    struct Range: Decodable, Equatable, Hashable { let lines: Int }
+    /// A goodbye after which the label speaks again (`leave-then-continues`).
+    struct Leave: Decodable, Equatable, Hashable { let atSec: Double }
+
     let kind: String
     let label: String?
     let share: Double?
     let strength: String?
+    /// The person a `label-drift` or `sole-attendee` hint names, and whether that person is the recording user.
+    let person: String?
+    let isSelf: Bool?
+    /// Where a `label-drift` label stayed silent while its person was in the call.
+    let fromSec: Double?
+    let toSec: Double?
+    let ranges: [Range]?
+    let leaves: [Leave]?
+    /// The label beside a `split-voice` turn.
+    let neighbour: String?
+
+    enum CodingKeys: String, CodingKey {
+        case kind, label, share, strength, person, fromSec, toSec, ranges, leaves, neighbour
+        case isSelf = "self"
+    }
 }
 
 // MARK: - Screen timeline (`tools meetings screen <id> --timeline --json`)

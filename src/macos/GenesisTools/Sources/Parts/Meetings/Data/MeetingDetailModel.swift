@@ -727,12 +727,33 @@ extension MeetingsWords {
     /// The signs about one label, as sentences under it.
     static func speakerHints(_ hints: [SpeakerHint], for label: String) -> [String] {
         hints.filter { $0.label == label }.map { hint in
-            let strength = hint.strength.map { " (\($0) sign)" } ?? ""
-            switch hint.kind {
-            case "several-people": return "May hold several people\(strength)"
-            case "label-drift": return "May switch to another person partway\(strength)"
-            default: return hint.kind.replacingOccurrences(of: "-", with: " ").capitalized + strength
-            }
+            hintSentence(hint) + (hint.strength.map { " (\($0) sign)" } ?? "")
+        }
+    }
+
+    /// What one sign means for the label it sits under. A kind this build does not know shows its name.
+    private static func hintSentence(_ hint: SpeakerHint) -> String {
+        let lines = hint.ranges?.reduce(0) { $0 + $1.lines } ?? 0
+        let linesAre = "\(Plural.count(lines, "line")) \(lines == 1 ? "is" : "are")"
+        switch hint.kind {
+        case "several-people":
+            return "May hold several people"
+        case "label-drift":
+            let span = hint.fromSec.flatMap { from in hint.toSec.map { " from \(MeetingsFormat.clock(from)) to \(MeetingsFormat.clock($0))" } }
+            return "Silent\(span ?? "") while in the call, so the voice is under other labels"
+        case "absent-speaker":
+            return "Speaks while not in the call, so \(linesAre) someone else"
+        case "sole-attendee":
+            let you = hint.isSelf == true
+            let who = you ? "you" : hint.person ?? "one person"
+            return "Only \(who) \(you ? "were" : "was") in the call, so its \(linesAre) \(who)"
+        case "leave-then-continues":
+            return "Says goodbye and speaks again \(Plural.count(hint.leaves?.count ?? 1, "time")), so another voice may follow"
+        case "split-voice":
+            return "One turn next to \(hint.neighbour ?? "another label"), maybe one voice split in two"
+        default:
+            let words = hint.kind.replacingOccurrences(of: "-", with: " ")
+            return words.prefix(1).uppercased() + words.dropFirst()
         }
     }
 

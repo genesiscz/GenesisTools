@@ -338,7 +338,7 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(MeetingsWords.speakerSpan(stats.speakers[0]), "0:12 to 25:40", "MU8")
         XCTAssertNil(MeetingsWords.speakerSpan(stats.speakers[1]))
         XCTAssertEqual(MeetingsWords.speakerHints(stats.hints ?? [], for: "Speaker 2"),
-                       ["May hold several people (weak sign)", "May switch to another person partway"])
+                       ["May hold several people (weak sign)", "Silent while in the call, so the voice is under other labels"])
         XCTAssertEqual(MeetingsWords.speakerHints(stats.hints ?? [], for: "Speaker 1"), [])
     }
 
@@ -453,6 +453,33 @@ final class MeetingsUXTests: XCTestCase {
         let stacked = try probe("meetings.frame.text", width: 330, FrameRow(frame: frame, displayName: "Display 2", showAll: false,
                                                                             stacked: true, open: {}))
         XCTAssertGreaterThan(stacked.width, 280, "R2-MU5: stacked, the time and the lines have the row's width: \(stacked)")
+    }
+
+    func testEverySpeakerHintKindReadsAsASentence() throws {
+        let hints = try JSONDecoder().decode([SpeakerHint].self, from: Data("""
+        [{"kind":"label-drift","label":"Alice","strength":"weak","person":"Alice","fromSec":375,"toSec":1800},
+         {"kind":"absent-speaker","label":"Bob","strength":"strong","ranges":[{"fromSec":10,"toSec":20,"lines":2},
+          {"fromSec":30,"toSec":40,"lines":1}]},
+         {"kind":"sole-attendee","label":"Speaker 1","strength":"strong","person":"Alice","self":true,
+          "ranges":[{"fromSec":0,"toSec":60,"lines":12}]},
+         {"kind":"sole-attendee","label":"Speaker 2","strength":"normal","person":"Bob","self":false,
+          "ranges":[{"fromSec":0,"toSec":60,"lines":1}]},
+         {"kind":"leave-then-continues","label":"Carol","strength":"normal","leaves":[{"atSec":100,"text":"bye","continuesAtSec":110},
+          {"atSec":200,"text":"bye","continuesAtSec":210}]},
+         {"kind":"split-voice","label":"Speaker 3","strength":"weak","neighbour":"Speaker 4","turns":1,"spokenSec":4},
+         {"kind":"several-people","label":"Speaker 5","strength":"normal","spans":3,"share":0.4},
+         {"kind":"a-future-kind","label":"Dan"}]
+        """.utf8))
+        func words(_ label: String) -> [String] { MeetingsWords.speakerHints(hints, for: label) }
+        XCTAssertEqual(words("Alice"), ["Silent from 6:15 to 30:00 while in the call, so the voice is under other labels (weak sign)"],
+                       "R2-MU7: label-drift is the person's own label staying silent, not a switch partway")
+        XCTAssertEqual(words("Bob"), ["Speaks while not in the call, so 3 lines are someone else (strong sign)"])
+        XCTAssertEqual(words("Speaker 1"), ["Only you were in the call, so its 12 lines are you (strong sign)"])
+        XCTAssertEqual(words("Speaker 2"), ["Only Bob was in the call, so its 1 line is Bob (normal sign)"])
+        XCTAssertEqual(words("Carol"), ["Says goodbye and speaks again 2 times, so another voice may follow (normal sign)"])
+        XCTAssertEqual(words("Speaker 3"), ["One turn next to Speaker 4, maybe one voice split in two (weak sign)"])
+        XCTAssertEqual(words("Speaker 5"), ["May hold several people (normal sign)"])
+        XCTAssertEqual(words("Dan"), ["A future kind"], "a kind this build does not know still shows its name")
     }
 
     func testATitledNoteShowsItsText() throws {
