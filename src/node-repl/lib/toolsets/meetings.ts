@@ -3,7 +3,7 @@ import { captureCost } from "@app/meetings/lib/capture-cost";
 import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/lib/config-edit";
 import { decideItems, reopenItems } from "@app/meetings/lib/decide";
 import { testPhrase } from "@app/meetings/lib/dictionary-test";
-import { findingSchema } from "@app/meetings/lib/findings";
+import { FINDING_KINDS, findingSchema } from "@app/meetings/lib/findings";
 import { itemWhat } from "@app/meetings/lib/item-text";
 import { matchDraftSchema, matchPreview } from "@app/meetings/lib/match-preview";
 import { projectLabels, setMeetingFields } from "@app/meetings/lib/meeting-fields";
@@ -91,7 +91,8 @@ const lines = defineMethod({
 });
 const itemsList = defineMethod({
     name: "items.list",
-    params: z.object({ status: z.enum(ITEM_STATUSES).optional(), kind: z.string().optional() }).strict(),
+    // An enum, as the CLI's --kind: a misspelt kind answered no rows (R2-MC11).
+    params: z.object({ status: z.enum(ITEM_STATUSES).optional(), kind: z.enum(FINDING_KINDS).optional() }).strict(),
     result: z.unknown(),
     resultName: "{ id, question?, kind, status, confidence, what, rules }[]",
     effect: "read",

@@ -1776,6 +1776,22 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(await meetings.projects.labels({ project: "r2-mc10-new" })).toEqual(["Kickoff"]);
     });
 
+    // R2-MC11: kind was any string, so a misspelt kind answered no rows, which reads as "the meeting has none".
+    test("meetings: items.list refuses a kind that does not exist and names the kinds", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Kinds", start: "2026-11-02T13:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: { open(ref: string): { items: { list(input?: unknown): unknown[] } } };
+        };
+        const meeting = meetings.open(record.id);
+        expect(() => meeting.items.list({ kind: "bogus" })).toThrow(
+            'expected one of "speaker-range"|"label"|"join"|"term"|"question"'
+        );
+        expect(meeting.items.list({ kind: "term" })).toEqual([]);
+    });
+
     test("meetings: an opened meeting reads and changes the settings of its live recording, and says so when it is not recording", async () => {
         const store = new MeetingStore();
         const record = await store.create(
