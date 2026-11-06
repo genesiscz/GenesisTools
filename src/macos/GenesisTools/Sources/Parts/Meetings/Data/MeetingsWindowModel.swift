@@ -210,6 +210,7 @@ final class MeetingsWindowModel {
             detail?.cancelReads()
             let next = MeetingDetailModel(id: id, window: self)
             next.tab = tab ?? MeetingDetailModel.firstTab(for: meeting(id))
+            next.tabIsDefault = tab == nil
             detail = next
             HubMainBusy.measure("meetings.detail.open")
             loadDetail(next)

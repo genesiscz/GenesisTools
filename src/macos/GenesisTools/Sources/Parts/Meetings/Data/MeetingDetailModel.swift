@@ -25,6 +25,8 @@ final class MeetingDetailModel {
     let id: String
     weak var window: MeetingsWindowModel?
     var tab: Tab = .transcript
+    /// The tab is the one the meeting opened on by itself, not one a request named or the reader picked.
+    var tabIsDefault = false
     private(set) var record: Loadable<MeetingRecordView> = .idle
     private(set) var transcript: Loadable<MeetingTranscript> = .idle
     private(set) var timeline: Loadable<ScreenTimeline> = .idle
@@ -79,6 +81,7 @@ final class MeetingDetailModel {
 
     func show(_ tab: Tab) {
         self.tab = tab
+        tabIsDefault = false
         HubMainBusy.measure("meetings.tab.\(tab.rawValue)")
         loadTab(tab)
     }
@@ -695,5 +698,15 @@ extension MeetingsWords {
     static func speakerSpan(_ speaker: SpeakerStat) -> String? {
         guard let first = speaker.firstSec, let last = speaker.lastSec else { return nil }
         return "\(MeetingsFormat.clock(first)) to \(MeetingsFormat.clock(last))"
+    }
+}
+
+extension MeetingDetailModel {
+    /// The meeting's list row arrived after it opened (a launch by its id): a meeting with only a screen recording
+    /// moves to Screen, unless a request named a tab or the reader picked one.
+    func listLanded(_ meeting: OverviewMeeting?) {
+        guard tabIsDefault, meeting != nil else { return }
+        let first = Self.firstTab(for: meeting)
+        if first != tab { show(first) }
     }
 }

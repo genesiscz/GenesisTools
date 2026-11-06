@@ -31,6 +31,7 @@ struct MeetingDetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.narrowWidth }) { narrow = $0 }
+        .onChange(of: window.meeting(detail.id)?.id) { _, _ in detail.listLanded(window.meeting(detail.id)) }
         .navigationTitle(detail.record.value?.displayTitle ?? window.meeting(detail.id)?.displayTitle ?? "Meeting")
     }
 

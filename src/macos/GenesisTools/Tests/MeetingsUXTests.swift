@@ -361,4 +361,21 @@ final class MeetingsUXTests: XCTestCase {
         """.utf8))
         XCTAssertEqual(recording.stopReason, "failed", "MU19: the header shows Recording failed")
     }
+
+    func testAScreenOnlyMeetingOpenedBeforeItsListMovesToScreenWhenTheListLands() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
+        model.select("b")
+        XCTAssertEqual(model.detail?.tab, .transcript, "no list row yet")
+        model.receive(try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON()))
+        model.detail?.listLanded(model.meeting("b"))
+        XCTAssertEqual(model.detail?.tab, .screen, "the row says it has only a screen recording")
+
+        let asked = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
+        asked.select("b", tab: .transcript)
+        asked.receive(try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON()))
+        asked.detail?.listLanded(asked.meeting("b"))
+        XCTAssertEqual(asked.detail?.tab, .transcript, "a tab a request named stays")
+    }
 }
