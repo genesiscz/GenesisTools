@@ -22,7 +22,9 @@ job with progress). A toolset is a `ReplToolset` subclass (`@genesiscz/utils/rep
 effect of `read`, `reversible` or `destructive`). The kernel builds the toolsets once per worker with a `preload`
 request that has its own budget (120 s), not the turn's; after a timeout kill or `js_reset` the new worker
 preloads them again, and reset, exit and the end of a `run` dispose them. Each worker gets a private scratch
-folder for its toolsets, removed when the worker stops.
+folder for its toolsets (a browser screenshot, a still), removed when the worker stops. The `editor` toolset's
+frames, grids, trims and speed changes are not scratch: they stay under `~/.genesis-tools/recordings/edits/<source>/`
+at full size, also for a scratch source, until removed (`tools rm`); `export` writes where its `output` says.
 
 `movies` (`src/recorder/lib/toolset.ts`) records the screen as a movie (`record` returns a handle with status, pause,
 resume and stop) and edits a recording's `edit.json`: `open(id)` returns a Movie with split, cut, keep, speed, zoom,

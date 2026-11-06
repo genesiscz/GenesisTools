@@ -72,7 +72,7 @@ const clipMethods = [
         params: framesOptionsSchema,
         result: z.unknown(),
         resultName: "Job<FrameSet>",
-        doc: `Frames at fps, or change-only frames above threshold percent; ${jobDoc}.`,
+        doc: `Frames at fps (2 by default), or change-only frames above threshold percent; ${jobDoc}. Each sampled frame is decoded at full size first, and more than 1 GiB of them is refused before decoding ends: a 4K source fits about 25 frames, so fps 1 for 20 s (NR13).`,
         effect: "reversible",
     }),
     defineMethod({
@@ -115,7 +115,7 @@ export const editorApi = defineApi({
     global: "editor",
     title: "Recording editor",
     summary:
-        "Cut recordings and videos into frames, change-only frames, image grids, trims, speed changes and exports; a movie made with movies.record is edited with movies.open.",
+        "Cut recordings and videos into frames, change-only frames, image grids, trims, speed changes and exports; a movie made with movies.record is edited with movies.open. Frames, grids, trims and speed changes stay under ~/.genesis-tools/recordings/edits/<source>/ after the worker stops; export takes an output path.",
     methods: [
         defineMethod({
             name: "open",
