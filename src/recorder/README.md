@@ -28,8 +28,10 @@ tools recorder start --frames [original|jpeg] [--jpeg-quality Q] [--naming elaps
                      [--audio …] [--mic-device UID] [--title T] [--max-seconds N] [--countdown [S]] [--json]
                                                  # frames instead of a movie: the REPL's recorder.start()
 tools recorder demo <script.json | -> [--no-export]  # a finished demo from a JSON script of steps (below)
-tools recorder stop|pause|resume|status [id]     # the newest live recording, or the id given; each answers with the
-                                                 # live id, the library id and the folder (stop also with the movie);
+tools recorder stop|pause|resume|status [id]     # the newest live recording, or the id given (its live id, or the
+                                                 # library id start and list print, short or whole); each answers in
+                                                 # JSON (--json is accepted) with the live id, the library id and the
+                                                 # folder (stop also with the movie);
                                                  # pause on a paused one and resume on a running one say "already …"
                                                  # and exit 0
 tools recorder mark <label> [id]                 # a marker at this moment (a movie, frames or meeting recording); the editor and movie.markers() show it

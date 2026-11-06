@@ -97,6 +97,33 @@ export interface LiveRecordingRef {
     movie?: string;
 }
 
+/** The shortest prefix of a library id that names one recording (a short id is far longer). */
+const SHORT_ID_MIN_LENGTH = 12;
+
+/**
+ * The running recording an id names: its live id or the end of it (`list --live`), or its library id, whole or a
+ * prefix such as the short id (`start`'s started event and `list` print those).
+ */
+export function findLiveEntry<T extends { id: string; folder?: string }>(entries: T[], id: string): T | undefined {
+    return entries.find((entry) => {
+        if (entry.id === id || entry.id.endsWith(id)) {
+            return true;
+        }
+
+        const library = entry.folder ? basename(entry.folder) : undefined;
+        return (
+            library !== undefined && (library === id || (id.length >= SHORT_ID_MIN_LENGTH && library.startsWith(id)))
+        );
+    });
+}
+
+/** The running recordings for an error: each live id, with its short library id when it has one. */
+export function describeLiveEntries(entries: Array<{ id: string; folder?: string }>): string {
+    return entries
+        .map((entry) => (entry.folder ? `${entry.id} (${shortRecordingId(basename(entry.folder))})` : entry.id))
+        .join(", ");
+}
+
 export function liveRecordingRef(
     entry: { id: string; folder?: string },
     { stopped = false }: { stopped?: boolean } = {}
@@ -240,7 +267,9 @@ export function resolveRecording(value: string, { alive }: { alive?: (pid: numbe
     // A short id, as `tools recorder list` shows it: the one library folder whose name starts with it.
     const library = recordingsLibraryDir();
     const matches =
-        value.length >= 12 && existsSync(library) ? readdirSync(library).filter((name) => name.startsWith(value)) : [];
+        value.length >= SHORT_ID_MIN_LENGTH && existsSync(library)
+            ? readdirSync(library).filter((name) => name.startsWith(value))
+            : [];
 
     if (matches.length === 1) {
         return join(library, matches[0]);

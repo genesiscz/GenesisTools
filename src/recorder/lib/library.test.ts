@@ -14,7 +14,9 @@ import { withEditCancel } from "./edit";
 import { EditSessions } from "./edit-session";
 import { displaySwitchDepth, keepingSwitchStep, keptPlan, stepDisplaySwitch } from "./frames-movie";
 import {
+    describeLiveEntries,
     editorOpenStatePath,
+    findLiveEntry,
     listLibrary,
     movieOf,
     readEditorOpenState,
@@ -644,6 +646,24 @@ it("a short id is the stamp and the uuid's first block, and it opens the recordi
         rmSync(folder, { recursive: true, force: true });
         rmSync(twin, { recursive: true, force: true });
     }
+});
+
+it("a live command finds the running recording by its live id, the end of it, or the library id that start and list print", () => {
+    const library = "video-2026-11-07_00-20-20-da0341a9-5f4e-483e-9ad1-04b4681dfcf2";
+    const entries = [
+        { id: "meeting-2026-11-07_09-00-planning" },
+        { id: "recorder-14429-faa72b4a", folder: join("/lib", library) },
+    ];
+    expect(findLiveEntry(entries, "recorder-14429-faa72b4a")).toBe(entries[1]);
+    expect(findLiveEntry(entries, "faa72b4a")).toBe(entries[1]);
+    expect(findLiveEntry(entries, library)).toBe(entries[1]);
+    expect(findLiveEntry(entries, shortRecordingId(library))).toBe(entries[1]);
+    expect(findLiveEntry(entries, "video-2026-11-07_00-20-20")).toBe(entries[1]);
+    expect(findLiveEntry(entries, "video")).toBeUndefined();
+    expect(findLiveEntry(entries, "video-2026-11-07_00-20-21")).toBeUndefined();
+    expect(describeLiveEntries(entries)).toBe(
+        "meeting-2026-11-07_09-00-planning, recorder-14429-faa72b4a (video-2026-11-07_00-20-20-da0341a9)"
+    );
 });
 
 it("replays created text and its subsequent ID edit without changing the returned ID", async () => {

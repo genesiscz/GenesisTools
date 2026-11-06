@@ -38,9 +38,11 @@ import {
 import { framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "./lib/frames-recording";
 import {
     alreadyInState,
+    describeLiveEntries,
     EDITOR_TABS,
     type EditorTab,
     ensureRecorderPart,
+    findLiveEntry,
     listLibrary,
     liveRecordingRef,
     markerLabelProblem,
@@ -134,6 +136,9 @@ function editorTab(raw: string | boolean): EditorTab | null {
     return found ?? null;
 }
 
+const LIVE_ID_HELP = `a live recording id or its end (${toolCommand("recorder list --live")}), or the recording's library id as start and list print it`;
+const JSON_ANSWER_HELP = "the answer is JSON either way; the flag is accepted for scripts";
+
 /** The live recording a control command means: the one named, else the only one, else the newest. */
 function liveId(id: string | undefined): string {
     return liveEntry(id).id;
@@ -143,12 +148,10 @@ function liveEntry(id: string | undefined): LiveEntry {
     const entries = listLiveRecordings();
 
     if (id) {
-        const found = entries.find((entry) => entry.id === id || entry.id.endsWith(id));
+        const found = findLiveEntry(entries, id);
 
         if (!found) {
-            throw new Error(
-                `No live recording "${id}". Running: ${entries.map((entry) => entry.id).join(", ") || "none"}`
-            );
+            throw new Error(`No live recording "${id}". Running: ${describeLiveEntries(entries) || "none"}`);
         }
 
         return found;
@@ -390,7 +393,8 @@ for (const method of ["stop", "pause", "resume", "status"] as const) {
                 ? "Print the live recording's state (the newest one, or the id given)"
                 : `${method[0].toUpperCase()}${method.slice(1)} the live recording (the newest one, or the id given)`
         )
-        .argument("[id]", `a live recording id, or its end (${toolCommand("recorder list --live")})`)
+        .argument("[id]", LIVE_ID_HELP)
+        .option("--json", JSON_ANSWER_HELP)
         .action(async (id: string | undefined) => {
             try {
                 const entry = liveEntry(id);
@@ -427,7 +431,8 @@ program
     .command("mark")
     .description("Mark this moment of the live recording with a label; the editor and movie.markers() show it")
     .argument("<label>", "what happened (1 to 80 characters)")
-    .argument("[id]", `a live recording id, or its end (${toolCommand("recorder list --live")})`)
+    .argument("[id]", LIVE_ID_HELP)
+    .option("--json", JSON_ANSWER_HELP)
     .action(async (label: string, id: string | undefined) => {
         const problem = markerLabelProblem(label);
 
