@@ -412,3 +412,65 @@ final class MeetingsSettingsModel {
         }
     }
 }
+
+// MARK: - Rename and remove a project
+
+/// What `tools meetings projects remove --json` prints.
+struct ProjectRemoval: Decodable, Equatable {
+    let name: String
+    /// The meetings that had the project and now have none (`--unassign`).
+    let unassigned: [String]
+    /// The removed settings, kept as JSON.
+    let backup: String
+}
+
+extension MeetingsSettingsModel {
+    static func renameArgs(_ from: String, to: String) -> [String] { ["projects", "rename", from, to] }
+
+    static func removeArgs(_ name: String, unassign: Bool) -> [String] {
+        ["projects", "remove", name, "--json"] + (unassign ? ["--unassign"] : [])
+    }
+
+    /// The CLI refuses to remove a project meetings still have, and names `--unassign` as the way to go on.
+    static func offersUnassign(_ failure: MeetingsCLI.Failure) -> Bool { failure.sentence.contains("--unassign") }
+
+    static func removalNote(_ removal: ProjectRemoval) -> String {
+        removal.unassigned.isEmpty
+            ? "Removed the project \(removal.name)"
+            : "Removed the project \(removal.name); \(Plural.count(removal.unassigned.count, "meeting")) now \(removal.unassigned.count == 1 ? "has" : "have") no project"
+    }
+
+    /// Renames a project everywhere it is named (`projects rename`): its settings, its pairings and its meetings. Undo
+    /// renames it back; `renamed` runs once the CLI saved it.
+    func renameProject(_ from: String, to typed: String, renamed: (() -> Void)? = nil) {
+        let to = typed.trimmingCharacters(in: .whitespaces)
+        guard !to.isEmpty, to != from else { return }
+        run(key: "project.rename.\(from)", Self.renameArgs(from, to: to), done: "Renamed \(from) to \(to)",
+            undo: { [weak self] in self?.renameProject(to, to: from) }, saved: { _ in renamed?() }) { $0.loadSettings() }
+    }
+
+    /// Removes a project (`projects remove`); its settings go into a backup first. While meetings have it the CLI
+    /// refuses, and the note offers the removal that leaves those meetings without a project.
+    func removeProject(_ name: String, unassign: Bool = false) {
+        let key = "project.remove.\(name)"
+        guard writes, !writing.contains(key) else { return }
+        writing.insert(key)
+        Task {
+            defer { writing.remove(key) }
+            do {
+                let removal = try await MeetingsCLI.json(ProjectRemoval.self, Self.removeArgs(name, unassign: unassign))
+                notice = MeetingsNotice(text: Self.removalNote(removal),
+                                        detail: "Its settings are kept in \((removal.backup as NSString).abbreviatingWithTildeInPath)",
+                                        tone: .success)
+            } catch let failure as MeetingsCLI.Failure where !unassign && Self.offersUnassign(failure) {
+                notice = MeetingsNotice(text: failure.sentence, more: failure.detail, tone: .error,
+                                        actionTitle: "Remove and leave them without a project", actionSymbol: "trash",
+                                        action: { [weak self] in self?.removeProject(name, unassign: true) })
+            } catch {
+                notice = .failure(error) { [weak self] in self?.removeProject(name, unassign: unassign) }
+            }
+            loadSettings()
+        }
+    }
+}
+

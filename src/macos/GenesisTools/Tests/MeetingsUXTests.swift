@@ -386,4 +386,15 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertNotEqual(sandbox, real, "a sandbox window listens to its own requests only")
         XCTAssertEqual(meetingsNotificationPrefix(home: "/tmp/sandbox", realHome: "/Users/alice"), sandbox, "one home, one name")
     }
+
+    func testAProjectRenamesAndRemovesWithItsMeetingsInMind() throws {
+        XCTAssertEqual(MeetingsSettingsModel.renameArgs("wrok", to: "work"), ["projects", "rename", "wrok", "work"], "MU11")
+        XCTAssertEqual(MeetingsSettingsModel.removeArgs("wrok", unassign: false), ["projects", "remove", "wrok", "--json"])
+        XCTAssertEqual(MeetingsSettingsModel.removeArgs("wrok", unassign: true), ["projects", "remove", "wrok", "--json", "--unassign"])
+        let refused = MeetingsCLI.Failure(sentence: "2 meetings have the project wrok: a, b. Rename it instead, or remove it with --unassign to leave them without a project.", detail: "")
+        XCTAssertTrue(MeetingsSettingsModel.offersUnassign(refused), "the note then offers the removal that unassigns")
+        XCTAssertFalse(MeetingsSettingsModel.offersUnassign(MeetingsCLI.Failure(sentence: "No project wrok. The known ones: work", detail: "")))
+        let removal = try JSONDecoder().decode(ProjectRemoval.self, from: Data(#"{"name":"wrok","unassigned":["a","b"],"backup":"/tmp/b.json"}"#.utf8))
+        XCTAssertEqual(MeetingsSettingsModel.removalNote(removal), "Removed the project wrok; 2 meetings now have no project")
+    }
 }

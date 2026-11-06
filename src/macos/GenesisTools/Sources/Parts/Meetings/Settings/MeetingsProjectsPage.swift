@@ -145,7 +145,71 @@ private struct ProjectCard: View {
                     Button("Choose…") { model.chooseExportFolder(name) }.buttonStyle(.bordered).nativeSettingsPointer()
                 }
             }
+            Divider()
+            NativeSettingsRow("The project", detail: "Rename it everywhere it is named, or remove it; its settings go into a backup first.") {
+                HStack(spacing: 8) {
+                    RenameProjectButton(model: model, name: name)
+                    RemoveProjectButton(model: model, name: name)
+                }
+            }
         }
+    }
+}
+
+/// "Rename…": a popover with the new name. The field keeps what was typed until the CLI saved the rename.
+private struct RenameProjectButton: View {
+    @Bindable var model: MeetingsSettingsModel
+    let name: String
+    @State private var open = false
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Button("Rename…") { text = name; open = true }
+            .buttonStyle(.bordered).nativeSettingsPointer()
+            .disabled(model.isWriting("project.rename.\(name)"))
+            .instantTooltip("Rename \(name) in its settings, its pairings and its meetings")
+            .popover(isPresented: $open, arrowEdge: .bottom) {
+                HStack {
+                    TextField("New name (letters, digits, . _ -)", text: $text)
+                        .textFieldStyle(.roundedBorder).frame(width: 220)
+                        .focused($focused)
+                        .onSubmit(rename)
+                    Button("Rename", action: rename).keyboardShortcut(.defaultAction).disabled(!changed)
+                }
+                .padding(12)
+                .onAppear { focused = true }
+            }
+    }
+
+    private var changed: Bool {
+        let typed = text.trimmingCharacters(in: .whitespaces)
+        return !typed.isEmpty && typed != name
+    }
+
+    private func rename() {
+        guard changed else { return }
+        model.renameProject(name, to: text) { open = false }
+    }
+}
+
+/// "Remove…" with a confirmation that says where the settings go and what happens to the project's meetings.
+private struct RemoveProjectButton: View {
+    @Bindable var model: MeetingsSettingsModel
+    let name: String
+    @State private var asking = false
+
+    var body: some View {
+        Button("Remove…", role: .destructive) { asking = true }
+            .buttonStyle(.bordered).nativeSettingsPointer()
+            .disabled(model.isWriting("project.remove.\(name)"))
+            .instantTooltip("Remove \(name); its settings go into a backup first")
+            .confirmationDialog("Remove the project \(name)?", isPresented: $asking) {
+                Button("Remove", role: .destructive) { model.removeProject(name) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Its rules, labels, dictionary and pairings go into a backup first. While meetings have it, it stays, and you can then leave them without a project.")
+            }
     }
 }
 
