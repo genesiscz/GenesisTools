@@ -60,8 +60,21 @@ final class MeetingDetailModel {
 
     func load() {
         reloadRecord()
-        loadProposals()
+        if Self.readsProposalsAtOpen(window?.meeting(id)) { loadProposals() }
         loadTab(tab)
+    }
+
+    /// The proposals feed only the project picker. A meeting with no project (or one the list does not show yet)
+    /// reads them at once, since choosing a project is its next step; any other reads them when the pointer reaches
+    /// the picker or the picker opens (`ensureProposals`). That is one `assign proposals` process, about 600 ms of CPU
+    /// and a Calendar read, less per open of a meeting with a project.
+    static func readsProposalsAtOpen(_ meeting: OverviewMeeting?) -> Bool {
+        meeting?.project == nil
+    }
+
+    /// The project picker is about to be used: its proposals read now if nothing read them yet.
+    func ensureProposals() {
+        if proposals == .idle { loadProposals() }
     }
 
     func show(_ tab: Tab) {
@@ -202,9 +215,9 @@ final class MeetingDetailModel {
     }
 
     /// The window came back: a part already read reads again only when `meetings revisions` says what it reads changed
-    /// (a correction or a confirm in the terminal, a new frame), and quietly. The proposals read again each time: they
-    /// depend on the Calendar, which has no revision. Without revisions (an older CLI, a failed read) every part read
-    /// before reads again, as before.
+    /// (a correction or a confirm in the terminal, a new frame), and quietly. Proposals already read read again each
+    /// time: they depend on the Calendar, which has no revision. Without revisions (an older CLI, a failed read) every
+    /// part read before reads again, as before.
     func refreshLoaded() {
         guard !isDropped else { return }
         refreshGeneration += 1
@@ -219,7 +232,7 @@ final class MeetingDetailModel {
             if self.transcript != .idle, self.mustRead(.transcript, revisions?.transcript) { self.readTranscript(quiet: true) }
             if self.speakers != .idle, self.mustRead(.speakers, revisions?.speakers) { self.readSpeakers(quiet: true) }
             if self.timeline != .idle, self.mustRead(.timeline, revisions?.timeline) { self.readTimeline(quiet: true) }
-            self.readProposals(quiet: true)
+            if self.proposals != .idle { self.readProposals(quiet: true) }
         }
     }
 

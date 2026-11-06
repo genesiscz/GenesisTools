@@ -128,6 +128,12 @@ struct MeetingDetailView: View {
         let known = window.settings.value?.projectNames ?? []
         return MenuButton(items: {
             var items: [MenuButtonItem] = []
+            // A meeting with a project reads its proposals only now (or on the hover before): say so in the menu.
+            detail.ensureProposals()
+            if proposed.isEmpty, detail.proposals.isLoading {
+                items.append(.note("Reading the proposed projects…"))
+                items.append(.divider)
+            }
             if !proposed.isEmpty {
                 items.append(.note("Proposed"))
                 items += proposed.map { proposal in
@@ -147,6 +153,7 @@ struct MeetingDetailView: View {
             pickerLabel(symbol: "folder", text: current ?? "No project", warn: current == nil)
         }
         .disabled(record == nil || detail.isBusy("project"))
+        .onHover { if $0 { detail.ensureProposals() } }
         .instantTooltip("The meeting's project: its dictionary, labels and export folder apply")
         .accessibilityLabel("Project: \(current ?? "none")")
     }
