@@ -647,7 +647,16 @@ export async function applyAnswer(options: {
     }
 
     setOpen(store, record.id, applied.waitsForFolder ? "folder-wait" : undefined);
-    log.info({ meeting: record.id, project, labels: answer.labels, paired: applied.paired.length }, "answer applied");
+
+    // An answer from the CLI or the window settles the inbox question too: only the sweep withdrew it before, and the
+    // sweep looks back 48 hours only, so an older question stayed "needs your answer" (MC17).
+    if (options.formId === undefined && ask?.outcome === "pending") {
+        await deps.inbox.cancel(ask.formId).catch((err: unknown) => {
+            log.warn({ err, meeting: record.id, formId: ask.formId }, "the inbox question could not be withdrawn");
+        });
+    }
+
+    log.debug({ meeting: record.id, project, labels: answer.labels, paired: applied.paired.length }, "answer applied");
     return applied;
 }
 

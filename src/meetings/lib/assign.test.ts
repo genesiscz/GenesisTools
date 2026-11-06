@@ -700,6 +700,21 @@ test("folder questions persist before posting and recover the same choices and i
 });
 
 describe("assign apply", () => {
+    test("an answer given without the inbox withdraws the open inbox question (MC17)", async () => {
+        const { store, deps, inbox, create } = setup();
+        const record = await create("Standup", "2026-11-04T09:00:00.000Z", {
+            assign: {
+                ask: { formId: "form-open", askedAt: "2026-11-04T09:31:00.000Z", outcome: "pending", proposals: [] },
+            },
+        });
+        inbox.forms.set("form-open", { status: "pending", answers: {} });
+
+        await applyAnswer({ store, record, deps, answer: { project: "work", labels: [] } });
+
+        expect(inbox.forms.get("form-open")?.status).toBe("cancelled");
+        expect(store.read(record.id)?.assign?.ask?.outcome).toBe("applied");
+    });
+
     test("an explicit no project removes the project the meeting already has", async () => {
         const { store, deps, create } = setup();
         const record = await create("Standup", "2026-11-04T09:00:00.000Z", { project: "work" });

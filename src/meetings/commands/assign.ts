@@ -140,6 +140,11 @@ async function apply(
             return;
         }
 
+        if (opts.project && opts.none) {
+            fail("Give --project <name> or --none, not both.");
+            return;
+        }
+
         const deps = defaultAssignDeps();
         const entries =
             record.assign?.ask?.calendars ??

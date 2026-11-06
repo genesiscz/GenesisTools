@@ -217,6 +217,18 @@ async function set(
             unlabel.length > 0 ? `labels - ${unlabel.join(", ")}` : "",
         ].filter(Boolean);
         const removed = new Set(unlabel.map((label) => label.toLowerCase()));
+        const absent = unlabel.filter(
+            (label) => !record.labels.some((has) => has.toLowerCase() === label.toLowerCase())
+        );
+
+        // A label the meeting does not carry changes nothing, so it writes no history line saying it did (MC13).
+        if (absent.length > 0) {
+            fail(
+                `${record.id} has no label ${absent.map((one) => `"${one}"`).join(", ")}. Its labels: ${record.labels.join(", ") || "none"}`
+            );
+            return;
+        }
+
         const updated = await store.update(record.id, { command: "set", change: changes.join(", ") }, (current) => {
             current.project = project ?? current.project;
             current.title = opts.title ?? current.title;

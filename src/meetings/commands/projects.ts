@@ -68,6 +68,10 @@ async function addProject(name: string): Promise<void> {
     }
 }
 
+function plural(count: number, noun: string): string {
+    return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 async function rename(name: string, to: string, opts: { json?: boolean }): Promise<void> {
     try {
         const result = await renameProject({
@@ -82,7 +86,7 @@ async function rename(name: string, to: string, opts: { json?: boolean }): Promi
             return;
         }
 
-        ui.ok(`Renamed the project ${name} to ${to}, with ${result.meetings.length} meetings.`);
+        ui.ok(`Renamed the project ${name} to ${to}, with ${plural(result.meetings.length, "meeting")}.`);
     } catch (err) {
         fail(errorText(err));
     }
@@ -103,7 +107,7 @@ async function remove(name: string, opts: { unassign?: boolean; json?: boolean }
         }
 
         ui.ok(
-            `Removed the project ${name}${result.unassigned.length ? `; ${result.unassigned.length} meetings have no project now` : ""}.`
+            `Removed the project ${name}${result.unassigned.length ? `; ${plural(result.unassigned.length, "meeting")} without a project now` : ""}.`
         );
         ui.dim(`  its settings, dictionary and pairings: ${result.backup}`);
     } catch (err) {
@@ -115,6 +119,14 @@ async function labels(name: string, opts: { add?: string[]; remove?: string[] })
     try {
         const store = new MeetingsConfigStore();
         const changes = (opts.add?.length ?? 0) + (opts.remove?.length ?? 0) > 0;
+        const projects = (await store.read()).projects;
+
+        // Adding labels may add the project (as "projects add" would); reading or removing needs a known one.
+        if (!projects[name] && !opts.add?.length) {
+            fail(`No project ${name}. The known ones: ${Object.keys(projects).join(", ") || "none"}`);
+            return;
+        }
+
         // Without a change this only reads, so a typo never adds a project.
         const known = changes
             ? await store.setProjectLabels(name, opts)
