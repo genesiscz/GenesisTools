@@ -5,6 +5,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfigStore, projectNameSchema } from "@genesiscz/utils/meetings/config";
 import type { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { localStamp } from "./shared";
 
 const { log } = logger.scoped("meetings-projects");
 
@@ -113,7 +114,7 @@ export async function removeProject(options: {
         );
     }
 
-    const stamp = (options.now ?? new Date()).toISOString().replace(/[:.]/g, "-");
+    const stamp = localStamp(options.now ?? new Date());
     const folder = options.backupRoot ?? genesisToolsDir("backups", "meetings");
     const backup = join(folder, `${stamp}-project-${name}.json`);
     let removed: unknown;

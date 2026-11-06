@@ -11,7 +11,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { suggestDictionary } from "../lib/dictionary-suggest";
 import { testPhrase } from "../lib/dictionary-test";
-import { errorText, fail, resolveEnum } from "../lib/shared";
+import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { isMeetingSourceId, meetingSource } from "../lib/sources";
 import { dictionaryShowRead, windowJson } from "../lib/window-reads";
 
@@ -133,6 +133,16 @@ async function remove(value: string, opts: { project?: string }): Promise<void> 
 }
 
 async function expansion(mode: string | undefined, opts: { project?: string }): Promise<void> {
+    // Without a mode it answers what applies now, as `expansion [mode]` promises (MC24).
+    if (mode === undefined) {
+        const config = await new MeetingsConfigStore().read();
+        const shown = resolveDictionary(config, { project: opts.project }).abbrExpansion;
+        ui.info(
+            `Abbreviations${opts.project ? ` in the project ${opts.project}` : ""} expand: ${shown}. Change it: ${TOOL} dictionary expansion every|first|off`
+        );
+        return;
+    }
+
     const picked = await resolveEnum({
         value: mode,
         values: ABBR_EXPANSIONS,

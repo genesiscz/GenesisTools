@@ -23,6 +23,7 @@ import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 import { type AssignInbox, decisionInbox } from "./assign-inbox";
 import { readRecorderState } from "./recorder-shared";
+import { localStamp } from "./shared";
 import { sourceRefOf } from "./sources";
 
 const { log } = logger.scoped("meetings-merge");
@@ -133,12 +134,6 @@ function cloneTree(source: string, destination: string): void {
             log.warn({ path: from }, "not a file or folder; left out of the merge backup");
         }
     }
-}
-
-/** `YYYY-MM-DD-HHMM` in local time, for a backup folder's name. */
-function localStamp(at: Date): string {
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}`;
 }
 
 function earliest(times: Array<string | undefined>): string | undefined {

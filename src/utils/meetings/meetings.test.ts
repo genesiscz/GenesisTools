@@ -316,6 +316,9 @@ describe("meetings config", () => {
         await expect(
             config.putDictionaryEntry({ kind: "global" }, { type: "abbr", value: "MOO", substitution: "Moje Oddělení" })
         ).rejects.toThrow('the substitution must contain "MOO" itself');
+        await expect(
+            config.putDictionaryEntry({ kind: "global" }, { type: "abbr", value: "MOO", substitution: "Moje Oddělení" })
+        ).rejects.toThrow("The change would make the meetings config invalid, so nothing was written");
         expect((await config.read()).global.dictionary.entries).toEqual([
             { type: "fix", value: "UVČ", substitution: "UIčko" },
         ]);

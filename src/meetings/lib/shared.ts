@@ -64,6 +64,12 @@ export function enumHint(options: {
     return formatMissingEnumHelp({ flag, values, given, suggestion });
 }
 
+/** `YYYY-MM-DD-HHMM` in local time, for the name of a backup a person finds by its time. */
+export function localStamp(at: Date): string {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}`;
+}
+
 export function fail(message: string): void {
     ui.err(message);
     process.exitCode = 1;

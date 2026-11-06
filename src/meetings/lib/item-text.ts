@@ -1,10 +1,17 @@
 import type { MeetingItem } from "@genesiscz/utils/meetings/record";
 import { formatClock } from "@genesiscz/utils/transcribe/render";
 
+/** One time for a range of one line ("04:39", not "04:39–04:39"), else the range. */
+function span(fromSec: number, toSec: number): string {
+    return Math.round(fromSec) === Math.round(toSec)
+        ? formatClock(fromSec)
+        : `${formatClock(fromSec)}–${formatClock(toSec)}`;
+}
+
 export function itemWhat(item: MeetingItem): string {
     if (item.kind === "speaker-range") {
         const who = item.speaker ?? `? (${item.candidates?.join(", ") || "unknown"})`;
-        return `${item.label} ${formatClock(item.fromSec)}–${formatClock(item.toSec)} → ${who}`;
+        return `${item.label} ${span(item.fromSec, item.toSec)} → ${who}`;
     }
 
     if (item.kind === "join") {
@@ -18,7 +25,7 @@ export function itemWhat(item: MeetingItem): string {
     }
 
     if (item.kind === "label") {
-        return `${item.label} ${formatClock(item.fromSec)}–${formatClock(item.toSec)} tracks no one person`;
+        return `${item.label} ${span(item.fromSec, item.toSec)} tracks no one person`;
     }
 
     const occurrences = typeof item.evidence?.occurrences === "number" ? ` ×${item.evidence.occurrences}` : "";

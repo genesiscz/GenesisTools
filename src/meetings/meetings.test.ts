@@ -57,6 +57,7 @@ import { CallTimeline } from "./lib/call-timeline";
 import { suggestDictionary } from "./lib/dictionary-suggest";
 import { captionSegments } from "./lib/editor-project";
 import { findingItems, findingProblems, findingsFileSchema } from "./lib/findings";
+import { itemWhat } from "./lib/item-text";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { selectQuestions } from "./lib/question-select";
@@ -672,6 +673,27 @@ describe("own label (R17)", () => {
 
         expect(at(4)).toMatchObject({ speaker: "Rob Example", rules: ["E1", "E3", "R17"], confidence: 0.65 });
         expect(at(60)).toMatchObject({ speaker: "Bob Example", rules: ["E1", "E3", "E4"] });
+    });
+});
+
+describe("itemWhat", () => {
+    test("a range of one line shows one time, a longer range shows both (MC24)", () => {
+        const range = (fromSec: number, toSec: number) =>
+            meetingItemSchema.parse({
+                id: "i1",
+                kind: "speaker-range",
+                status: "suggested",
+                suggestedAt: "2026-11-02T15:00:00.000Z",
+                label: "Speaker 1",
+                fromSec,
+                toSec,
+                speaker: "Alice Example",
+                confidence: 0.9,
+                rules: [],
+            });
+
+        expect(itemWhat(range(279, 279))).toBe("Speaker 1 04:39 → Alice Example");
+        expect(itemWhat(range(279, 301))).toBe("Speaker 1 04:39–05:01 → Alice Example");
     });
 });
 
@@ -4483,6 +4505,14 @@ describe("showText", () => {
         const labelled = meetingRecordSchema.parse({ ...record, project: "shop", labels: ["Checkout", "Q4 plan"] });
 
         expect(showText(labelled).split("\n").slice(4, 6)).toEqual(["- project: shop", "- labels: Checkout, Q4 plan"]);
+    });
+
+    test("a linked source reads as its meeting and folders, not as raw JSON (MC24)", () => {
+        const linked = (folders: string[]) =>
+            meetingRecordSchema.parse({ ...record, sources: { wisprflow: { meetingId: "m-1", folders } } });
+
+        expect(showText(linked([]))).toContain("- wisprflow: meeting m-1, in no folder");
+        expect(showText(linked(["Work", "Side"]))).toContain("- wisprflow: meeting m-1, folders Work, Side");
     });
 });
 

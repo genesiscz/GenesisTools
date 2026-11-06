@@ -238,7 +238,7 @@ async function preview(opts: { draft?: string; limit?: string; json?: boolean })
 
         for (const row of rows) {
             table.push([
-                row.title,
+                row.title || pc.dim(row.id),
                 row.project ?? pc.dim("—"),
                 row.now.join(", ") || pc.dim("—"),
                 ...(draft ? [(row.changed ? pc.yellow : pc.dim)(row.draft.join(", ") || "—")] : []),
