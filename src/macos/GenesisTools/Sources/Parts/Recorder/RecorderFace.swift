@@ -188,7 +188,10 @@ final class EditorWindows: NSObject, NSWindowDelegate {
                 let (store, project) = try await ProjectStore.open(path: path)
                 span.end()
                 let model = EditorModel(project: project, store: store)
-                opened?(.success(show(model, focus: wanted)))
+                // Not inside `opened?(…)`: with no `opened` (the library's Open in Editor) Swift skips the arguments,
+                // so the window was never made.
+                let window = show(model, focus: wanted)
+                opened?(.success(window))
                 // The player item lands in the background; seek after it, as the snapshot face does.
                 if let place = pendingPlacement.removeValue(forKey: path) {
                     try? await Task.sleep(for: .milliseconds(400))

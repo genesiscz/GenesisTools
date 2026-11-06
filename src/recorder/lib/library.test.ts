@@ -77,6 +77,23 @@ describe("the recording open in the editor", () => {
     });
 });
 
+describe("a recording named by an edit file the editor has not written yet", () => {
+    // Regression test: deep test 2026-11-06 RC9 — the service refused session.open of a recording never edited, as
+    // "not a path and not a library id", because its edit.json did not exist yet.
+    it("names the recording folder, or the plain movie beside it", () => {
+        const recording = mkdtempSync(join(tmpdir(), "rc9-recording-"));
+        writeFileSync(join(recording, "recording.json"), "{}");
+        writeFileSync(join(recording, "screen.mp4"), "");
+        const movies = mkdtempSync(join(tmpdir(), "rc9-movies-"));
+        writeFileSync(join(movies, "talk.mov"), "");
+
+        expect(resolveRecording(join(recording, "edit.json"))).toBe(recording);
+        expect(resolveRecording(join(movies, "talk.edit.json"))).toBe(join(movies, "talk.mov"));
+        expect(() => resolveRecording(join(movies, "other.edit.json"))).toThrow("not a path and not a library id");
+        expect(() => resolveRecording(join(movies, "edit.json"))).toThrow("not a path and not a library id");
+    });
+});
+
 describe("which display a proxy of several displays shows", () => {
     const frame = (displayId: number, sec: number, changePercent = 0) => ({
         path: `/f/${displayId}-${sec}.jpg`,

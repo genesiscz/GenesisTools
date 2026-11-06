@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -139,6 +139,30 @@ export function listLibrary(options: string | { root?: string; limit?: number } 
  * What a recording argument names: a library id (`library-…`), `last` (the newest), a meeting id (its folder), or a
  * path to a movie, a recording folder or an edit file. Throws with the ids it knows when nothing matches.
  */
+/**
+ * The recording an edit file names before anything wrote it (projectPathFor): a recording folder's `edit.json`, or
+ * `<name>.edit.json` beside a plain movie. The editor holds that path from its first open, so the service's
+ * session.open gets it for a recording that was never edited.
+ */
+function recordingOfUnwrittenEdit(path: string): string | undefined {
+    const folder = dirname(path);
+    const file = basename(path);
+
+    if (file === "edit.json") {
+        return existsSync(join(folder, "recording.json")) ? folder : undefined;
+    }
+
+    if (!file.endsWith(".edit.json") || !existsSync(folder)) {
+        return undefined;
+    }
+
+    const name = file.slice(0, -".edit.json".length);
+    const movie = readdirSync(folder).find(
+        (entry) => !entry.endsWith(".json") && basename(entry, extname(entry)) === name
+    );
+    return movie ? join(folder, movie) : undefined;
+}
+
 export function resolveRecording(value: string, { alive }: { alive?: (pid: number) => boolean } = {}): string {
     if (value === "open") {
         const state = readEditorOpenState({ alive });
@@ -170,6 +194,12 @@ export function resolveRecording(value: string, { alive }: { alive?: (pid: numbe
 
     if (existsSync(path)) {
         return path;
+    }
+
+    const unwritten = recordingOfUnwrittenEdit(path);
+
+    if (unwritten) {
+        return unwritten;
     }
 
     // A store's id, the library first; a meeting's folder holds its frames (and, once the editor opened it,
