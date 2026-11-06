@@ -137,6 +137,43 @@ export function unknownConfigPath(segments: string[]): { reason: string; setting
     return undefined;
 }
 
+/**
+ * For `config show`: a key of a map (`projects.<name>`, `sources.<id>`) that the config does not hold. The schema
+ * takes any name there, so the path is valid, but its `null` read like an unset value of a project that exists (R2-MC6).
+ */
+export function missingMapKey(
+    config: MeetingsConfig,
+    segments: string[]
+): { reason: string; settings: string } | undefined {
+    let node = shapeOfConfig();
+    let current: unknown = config;
+
+    for (const [index, segment] of segments.entries()) {
+        const named = isObject(node) && isObject(node.properties) && Object.hasOwn(node.properties, segment);
+        const map = isObject(node) && isObject(node.additionalProperties);
+
+        if (!named && map && isObject(current) && !Object.hasOwn(current, segment)) {
+            const parent = segments.slice(0, index).join(".");
+            const held = Object.keys(current);
+            return {
+                reason: `${parent} has no "${segment}"; it holds ${held.length > 0 ? held.join(", ") : "nothing"}.`,
+                settings: toolCommand("meetings", "config", "show", parent),
+            };
+        }
+
+        const next = childNode(node, segment);
+
+        if (next === undefined) {
+            return undefined;
+        }
+
+        node = next;
+        current = isObject(current) ? current[segment] : undefined;
+    }
+
+    return undefined;
+}
+
 /** The value at a path of the config with its defaults filled in, or undefined. */
 export function configValueAt(config: MeetingsConfig, segments: string[]): unknown {
     let current: unknown = config;
@@ -154,6 +191,39 @@ export function configValueAt(config: MeetingsConfig, segments: string[]): unkno
 
 /** One change of a config edit: a value to write, or `unset` to remove the key so its default applies again. */
 export type ConfigEdit = { path: string; expect?: unknown } & ({ value: unknown; unset?: never } | { unset: true });
+
+const configEditSchema = z.union([
+    z.object({ path: z.string().min(1), value: z.unknown(), expect: z.unknown().optional() }).strict(),
+    z.object({ path: z.string().min(1), unset: z.literal(true), expect: z.unknown().optional() }).strict(),
+]);
+
+const EDITS_SHAPE =
+    "config edit takes a JSON array of { path, value, expect? } or { path, unset: true, expect? } (expect: the value the change replaces)";
+
+/** `config edit`'s argument as edits, or the shape it takes; text that is not JSON gets the shape too, with the reason (R2-MC6). */
+export function parseConfigEdits(text: string): { edits: ConfigEdit[] } | { error: string } {
+    let json: unknown;
+
+    try {
+        json = SafeJSON.parse(text, { strict: true });
+    } catch (err) {
+        return { error: `${EDITS_SHAPE}; this text is not JSON: ${err instanceof Error ? err.message : String(err)}` };
+    }
+
+    const parsed = z.array(configEditSchema).min(1).safeParse(json);
+
+    if (!parsed.success) {
+        return { error: EDITS_SHAPE };
+    }
+
+    return {
+        edits: parsed.data.map((one) =>
+            "unset" in one
+                ? { path: one.path, unset: true, ...("expect" in one ? { expect: one.expect } : {}) }
+                : { path: one.path, value: one.value, ...("expect" in one ? { expect: one.expect } : {}) }
+        ),
+    };
+}
 
 function same(left: unknown, right: unknown): boolean {
     return Bun.deepEquals(left ?? null, right ?? null, true);

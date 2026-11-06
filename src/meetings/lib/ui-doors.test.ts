@@ -12,6 +12,8 @@ import { captureCost } from "./capture-cost";
 import {
     applyConfigEdits,
     configValueAt,
+    missingMapKey,
+    parseConfigEdits,
     parseConfigPath,
     setConfigValue,
     unknownConfigPath,
@@ -51,6 +53,26 @@ function record(fields: RecordInput): MeetingRecord {
 const suggestedAt = "2026-11-04T10:00:00.000Z";
 
 describe("config set and unset", () => {
+    test("show names the projects the config holds when a path names one it does not (R2-MC6)", () => {
+        const config = meetingsConfigSchema.parse({ projects: { work: {} } });
+
+        expect(missingMapKey(config, parseConfigPath("projects.side"))).toEqual({
+            reason: 'projects has no "side"; it holds work.',
+            settings: "tools meetings config show projects",
+        });
+        expect(missingMapKey(config, parseConfigPath("projects.work.labels"))).toBeUndefined();
+        expect(missingMapKey(config, parseConfigPath("global.capture.activeFps"))).toBeUndefined();
+    });
+
+    test("edits that are not JSON get the shape the command takes, with the parser's reason (R2-MC6)", () => {
+        expect(parseConfigEdits("not json")).toEqual({
+            error: 'config edit takes a JSON array of { path, value, expect? } or { path, unset: true, expect? } (expect: the value the change replaces); this text is not JSON: JSON Parse error: Unexpected identifier "not"',
+        });
+        expect(parseConfigEdits('[{"path":"global.language","value":"cs"}]')).toEqual({
+            edits: [{ path: "global.language", value: "cs" }],
+        });
+    });
+
     test("a misspelled key is refused with the closest setting, and an unset may still remove it (MC6)", async () => {
         const { config } = stores();
 
