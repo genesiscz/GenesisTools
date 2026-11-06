@@ -1745,6 +1745,25 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         );
     });
 
+    // R2-MC9: the toolset had its own copy of set, which took a label the meeting does not carry and wrote a history
+    // line for it, while the CLI refused.
+    test("meetings: set refuses to remove a label the meeting does not carry, and writes no history line", async () => {
+        const store = new MeetingStore();
+        const record = await store.create(
+            { title: "Labels", start: "2026-11-02T14:00:00.000Z", createdBy: "new", labels: ["kickoff"] },
+            { command: "new", change: "test" }
+        );
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: { open(ref: string): { set(input: unknown): Promise<{ labels: string[] }> } };
+        };
+        const meeting = meetings.open(record.id);
+        await expect(meeting.set({ unlabel: ["nosuch"] })).rejects.toThrow(
+            `${record.id} has no label "nosuch". Its labels: kickoff`
+        );
+        expect(store.read(record.id)?.history).toHaveLength(record.history.length);
+        expect((await meeting.set({ unlabel: ["Kickoff"] })).labels).toEqual([]);
+    });
+
     test("meetings: an opened meeting reads and changes the settings of its live recording, and says so when it is not recording", async () => {
         const store = new MeetingStore();
         const record = await store.create(

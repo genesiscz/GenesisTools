@@ -6,9 +6,9 @@ import { testPhrase } from "@app/meetings/lib/dictionary-test";
 import { findingSchema } from "@app/meetings/lib/findings";
 import { itemWhat } from "@app/meetings/lib/item-text";
 import { matchDraftSchema, matchPreview } from "@app/meetings/lib/match-preview";
+import { setMeetingFields } from "@app/meetings/lib/meeting-fields";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingsOverview } from "@app/meetings/lib/overview";
-import { resolveProject } from "@app/meetings/lib/project";
 import { questionLabel } from "@app/meetings/lib/questions";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 
@@ -19,7 +19,7 @@ import { assertReach, defineApi, defineMethod } from "@genesiscz/utils/api-descr
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { OCR_BOX_LEVELS } from "@genesiscz/utils/macos/ocr-boxes";
-import { EXPORT_IF_EDITED, MeetingsConfigStore, mergeLabels } from "@genesiscz/utils/meetings/config";
+import { EXPORT_IF_EDITED, MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { ITEM_STATUSES, type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import {
@@ -861,44 +861,14 @@ export class MeetingsToolset extends ReplToolset {
                 callLive("settings.set", settingsPatchOf(input)),
             mark: async (label: string) => callLive("marker.add", recordingMark.params.parse({ label })),
             set: async (input: z.input<typeof set.params>) => {
-                const { title, project, labels = [], unlabel = [] } = set.params.parse(input);
-
-                if (!title && !project && labels.length === 0 && unlabel.length === 0) {
-                    throw new Error("Nothing to set: give title, project, labels and/or unlabel");
-                }
-
-                const config = new MeetingsConfigStore();
-                const resolved = project
-                    ? (await resolveProject({ config, flag: project, quiet: true })).project
-                    : undefined;
-                const target = resolved ?? current().project;
-
-                if (target && labels.length > 0) {
-                    await config.setProjectLabels(target, { add: labels });
-                }
-
-                const removed = new Set(unlabel.map((label) => label.toLowerCase()));
-                const record = await store.update(
-                    id,
-                    {
-                        command: "set",
-                        change: [
-                            resolved && `project ${resolved}`,
-                            title && `title "${title}"`,
-                            labels.length > 0 && `labels + ${labels.join(", ")}`,
-                            unlabel.length > 0 && `labels - ${unlabel.join(", ")}`,
-                        ]
-                            .filter(Boolean)
-                            .join(", "),
-                    },
-                    (saved) => {
-                        saved.project = resolved ?? saved.project;
-                        saved.title = title ?? saved.title;
-                        saved.labels = mergeLabels(saved.labels, labels).filter(
-                            (label) => !removed.has(label.toLowerCase())
-                        );
-                    }
-                );
+                // The CLI's set: it refuses a label to remove that the meeting does not carry, before any write (R2-MC9).
+                const { record } = await setMeetingFields({
+                    store,
+                    config: new MeetingsConfigStore(),
+                    record: current(),
+                    change: set.params.parse(input),
+                    quiet: true,
+                });
                 return describe(record);
             },
             editorProject: async (input: z.input<typeof editorProject.params> = {}) => {
