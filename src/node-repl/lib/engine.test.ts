@@ -714,6 +714,7 @@ it("run refuses a turn with no code, from stdin or an empty --file, and runs cod
     const cli = join(import.meta.dir, "..", "index.ts");
     const run = async (args: string[], stdin: string) => {
         const child = Bun.spawn([process.execPath, cli, "run", ...args], {
+            env: process.env,
             stdin: new Blob([stdin]),
             stdout: "pipe",
             stderr: "pipe",
