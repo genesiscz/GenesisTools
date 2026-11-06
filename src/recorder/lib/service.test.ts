@@ -686,6 +686,18 @@ describe("the recorder service", () => {
     });
 });
 
+describe("finishing an export", () => {
+    // Regression test: deep test 2026-11-06 RC16 — `tools recorder finish` with a movie that does not exist exited 0.
+    test("refuses a movie that does not exist, and says so", async () => {
+        const path = editFixture("rs-finish-");
+        const movie = join(path.slice(0, path.lastIndexOf("/")), "never-exported.mp4");
+
+        await expect(edits.finishExport({ value: path, answer: { ok: true, path: movie } })).rejects.toThrow(
+            `${movie} does not exist`
+        );
+    });
+});
+
 describe("the REPL's and the CLI's way to the service", () => {
     /** A saved edit as text, with its folder and its random ids out, so two copies compare. */
     function comparable(path: string): unknown {

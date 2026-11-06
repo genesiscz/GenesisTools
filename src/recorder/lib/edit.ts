@@ -907,6 +907,12 @@ export async function finishExport({
     }
 
     const movie = answer.path;
+
+    // Nothing to add subtitles or chapters to: said as an error, not as warnings under a success.
+    if (!existsSync(movie)) {
+        throw new Error(`${movie} does not exist; export the movie first (${toolCommand("recorder export", value)})`);
+    }
+
     const { project } = await openProject(value);
     const format = subtitles ?? project.export.subtitles;
     const warnings: string[] = [];
