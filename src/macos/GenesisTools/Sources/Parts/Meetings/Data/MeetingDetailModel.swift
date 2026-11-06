@@ -625,3 +625,12 @@ extension MeetingDetailModel {
         return .screen
     }
 }
+
+// MARK: - Suggest
+
+extension MeetingDetailModel {
+    /// Runs the rules on the transcript (`tools meetings suggest`), from the Items tab's empty state.
+    func suggest() {
+        change("suggest", ["suggest", id], done: "The rules ran on the transcript")
+    }
+}

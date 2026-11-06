@@ -143,7 +143,8 @@ struct ScreenTab: View {
     var body: some View {
         if detail.record.value?.recording?.frames ?? 0 == 0, detail.record.value != nil {
             EmptyState(symbol: "rectangle.on.rectangle.slash", text: "This meeting has no screen recording",
-                       detail: "Record the screen with the meeting: Settings → Meetings → Recording, or tools meetings record start.")
+                       detail: "A recording started with the meeting takes a frame when the screen changes.",
+                       actionTitle: "Recording settings…") { FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.recordingPage) }
         } else {
             LoadablePane(state: detail.timeline, reading: "Reading the screen timeline…", retry: detail.loadTimeline) { timeline in
                 VStack(spacing: 0) {
@@ -328,8 +329,10 @@ struct ItemsTab: View {
                 .sorted { ($0.seconds ?? 0) < ($1.seconds ?? 0) }
             let decided = record.items.filter { $0.status != "suggested" }
             if record.items.isEmpty {
+                let hasTranscript = detail.window?.meeting(record.id)?.hasTranscript ?? true
                 EmptyState(symbol: "checklist", text: "No items yet",
-                           detail: "The rules suggest items from the transcript: tools meetings suggest \(record.id).")
+                           detail: hasTranscript ? "The rules suggest items from the transcript." : "The rules need a transcript, and this meeting has none.",
+                           actionTitle: !hasTranscript ? nil : detail.isBusy("suggest") ? "Suggesting…" : "Suggest items") { detail.suggest() }
             } else {
                 List(selection: $selected) {
                     if !questions.isEmpty {
