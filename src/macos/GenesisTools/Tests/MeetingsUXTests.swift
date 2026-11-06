@@ -440,4 +440,15 @@ final class MeetingsUXTests: XCTestCase {
                                                                            play: {}, commit: { _ in }))
         XCTAssertGreaterThan(stacked.width, 280, "R2-MU1: stacked, the numbers have the row's width: \(stacked)")
     }
+
+    func testATitledNoteShowsItsText() throws {
+        let refs = try JSONDecoder().decode([MeetingContextRef].self, from: Data("""
+        [{"id":"c1","kind":"note","ref":"Budget is fixed","title":"Budget","addedAt":"2026-11-05T12:00:00.000Z"},
+         {"id":"c2","kind":"note","ref":"Budget is fixed","addedAt":"2026-11-05T12:00:00.000Z"},
+         {"id":"c3","kind":"url","ref":"https://example.com","note":"the spec","addedAt":"2026-11-05T12:00:00.000Z"}]
+        """.utf8))
+        XCTAssertEqual(MeetingsWords.contextNote(refs[0]), "Budget is fixed", "R2-MU2: the title alone hid the note")
+        XCTAssertNil(MeetingsWords.contextNote(refs[1]), "an untitled note's text is already its title")
+        XCTAssertEqual(MeetingsWords.contextNote(refs[2]), "the spec")
+    }
 }

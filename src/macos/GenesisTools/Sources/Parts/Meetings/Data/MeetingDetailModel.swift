@@ -728,3 +728,12 @@ extension MeetingDetailModel {
         if first != tab { show(first) }
     }
 }
+
+extension MeetingsWords {
+    /// The line under a context entry: a titled note's own text (its title alone hid it), or the note kept with a file
+    /// or a link.
+    static func contextNote(_ ref: MeetingContextRef) -> String? {
+        if ref.kind == "note" { return ref.title?.isEmpty == false ? ref.ref : nil }
+        return ref.note
+    }
+}
