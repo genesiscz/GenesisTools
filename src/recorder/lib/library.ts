@@ -64,6 +64,31 @@ export function movieOf(folder: string): string | undefined {
     return RECORDING_MOVIES.map((name) => join(folder, name)).find((path) => existsSync(path));
 }
 
+/**
+ * Pause on a paused recording and resume on a running one have nothing to do: an agent that repeats them gets this
+ * answer and exit 0, not "the recording is paused" and exit 1. Undefined when the call has work to do.
+ */
+export function alreadyInState(
+    method: "stop" | "pause" | "resume" | "status",
+    state: string | undefined
+): string | undefined {
+    if (method === "pause" && state === "paused") {
+        return "already paused";
+    }
+
+    if (method === "resume" && state === "recording") {
+        return "already recording";
+    }
+
+    return undefined;
+}
+
+/** Why a marker label is refused, as the live recording's own rule has it (1 to 80 characters after trimming). */
+export function markerLabelProblem(label: string): string | undefined {
+    const length = label.trim().length;
+    return length >= 1 && length <= 80 ? undefined : "A marker label is 1 to 80 characters.";
+}
+
 /** What a live recording is for an agent: its live id (stop, mark), its library id and folder, after a stop its movie. */
 export interface LiveRecordingRef {
     liveId: string;

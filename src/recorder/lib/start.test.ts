@@ -8,7 +8,7 @@ import type { RecordingTarget } from "@app/control/lib/recording-targets";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { RpcError } from "@genesiscz/utils/screen-recorder/control";
 import { type CameraHost, startRecordingCamera, stopRecordingCamera } from "./camera-recorder";
-import { liveRecordingRef } from "./library";
+import { alreadyInState, liveRecordingRef, markerLabelProblem } from "./library";
 import { parseStartFlags, refuseTargetOffScreen } from "./start-options";
 import { recordedNothing, segmentRecorderOptions } from "./video-recording";
 
@@ -61,6 +61,23 @@ async function appRecorderCalls(): Promise<{ file: string; command: string }[]> 
 
     return calls;
 }
+
+describe("live control words for an agent", () => {
+    it("pause on a paused recording and resume on a running one are answered, not refused", () => {
+        expect(alreadyInState("pause", "paused")).toBe("already paused");
+        expect(alreadyInState("resume", "recording")).toBe("already recording");
+        expect(alreadyInState("pause", "recording")).toBeUndefined();
+        expect(alreadyInState("resume", "paused")).toBeUndefined();
+        expect(alreadyInState("stop", "paused")).toBeUndefined();
+    });
+
+    it("a marker label is 1 to 80 characters, said as a sentence", () => {
+        expect(markerLabelProblem("")).toBe("A marker label is 1 to 80 characters.");
+        expect(markerLabelProblem("   ")).toBe("A marker label is 1 to 80 characters.");
+        expect(markerLabelProblem("x".repeat(81))).toBe("A marker label is 1 to 80 characters.");
+        expect(markerLabelProblem("the login fails")).toBeUndefined();
+    });
+});
 
 describe("the commands GenesisTools.app runs", () => {
     it("every tools recorder command the app runs exists in the CLI", async () => {

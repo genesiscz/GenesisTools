@@ -37,11 +37,13 @@ import {
 } from "./lib/frames-movie";
 import { framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "./lib/frames-recording";
 import {
+    alreadyInState,
     EDITOR_TABS,
     type EditorTab,
     ensureRecorderPart,
     listLibrary,
     liveRecordingRef,
+    markerLabelProblem,
     movieOf,
     openEditor,
     openLibraryWindow,
@@ -377,6 +379,20 @@ for (const method of ["stop", "pause", "resume", "status"] as const) {
         .action(async (id: string | undefined) => {
             try {
                 const entry = liveEntry(id);
+
+                if (method === "pause" || method === "resume") {
+                    const status = await callRecorder({ id: entry.id, method: "status" });
+                    const state =
+                        status !== null && typeof status === "object" ? Reflect.get(status, "state") : undefined;
+                    const already = alreadyInState(method, typeof state === "string" ? state : undefined);
+
+                    if (already) {
+                        out.printlnErr(already);
+                        out.result({ already: true, state, ...liveRecordingRef(entry) });
+                        return;
+                    }
+                }
+
                 const answer = await callRecorder({
                     id: entry.id,
                     method,
@@ -398,6 +414,14 @@ program
     .argument("<label>", "what happened (1 to 80 characters)")
     .argument("[id]", `a live recording id, or its end (${toolCommand("recorder list --live")})`)
     .action(async (label: string, id: string | undefined) => {
+        const problem = markerLabelProblem(label);
+
+        if (problem) {
+            out.printlnErr(problem);
+            process.exitCode = 1;
+            return;
+        }
+
         try {
             out.result(await callRecorder({ id: liveId(id), method: "marker.add", params: { label } }));
         } catch (error) {
