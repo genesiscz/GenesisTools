@@ -77,8 +77,9 @@ public enum MainBusy {
     /// window instead of logging a line per keystroke.
     private static var open = Set<String>()
 
-    /// `<label> main busy <ms> of <window> ms` in the perf file, `window` seconds after now. The label is
-    /// written as given (GenesisTools passes `hub.<area>`).
+    /// `<label> main busy <ms> of <window> ms pid=<pid>` in the perf file, `window` seconds after now. The label is
+    /// written as given (GenesisTools passes `hub.<area>`). The pid tells two processes of one app apart: a snapshot
+    /// run writes to the same file as the live window.
     public static func measure(_ label: String, window: TimeInterval = 0.6) {
         guard open.insert(label).inserted else { return }
         // Counted from here: the bodies this render evaluated (`GENESIS_RENDER_PROBE=1`). A snapshot, not
@@ -90,7 +91,7 @@ public enum MainBusy {
             MainActor.assumeIsolated {
                 let reading = meter.stop()
                 open.remove(label)
-                PerfLog.mark(String(format: "%@ main busy %.1f ms of %.0f ms", label, reading.busyMs, window * 1000) + RenderProbe.summary(since: bodies))
+                PerfLog.mark(String(format: "%@ main busy %.1f ms of %.0f ms pid=%d", label, reading.busyMs, window * 1000, getpid()) + RenderProbe.summary(since: bodies))
             }
         }
     }
@@ -98,7 +99,7 @@ public enum MainBusy {
     /// The main thread's busy time from now until it settles, for work whose cost runs past any fixed
     /// window (a transcript's first page drew for 600 ms and more, and `measure` cut it off there). Settled:
     /// under `quietMs` of busy time in each of three 100 ms checks in a row; at most `cap` seconds. One line:
-    /// `<label> main busy <ms>, settled after <ms>: <detail()>`, `detail` read at the end.
+    /// `<label> main busy <ms>, settled after <ms> pid=<pid>: <detail()>`, `detail` read at the end.
     public static func measureUntilSettled(_ label: String, cap: TimeInterval = 10, quietMs: Double = 8, detail: @escaping () -> String) {
         guard PerfLog.enabled, open.insert(label).inserted else { return }
         let bodies = RenderProbe.snapshot()
@@ -128,7 +129,7 @@ public enum MainBusy {
             meter.stop()
             open.remove(label)
             let capped = quiet < 3 ? " (cap)" : ""
-            PerfLog.mark(String(format: "%@ main busy %.1f ms, settled after %.0f ms%@: %@", label, total, (lastBusyAt - start) * 1000, capped, detail()) + RenderProbe.summary(since: bodies))
+            PerfLog.mark(String(format: "%@ main busy %.1f ms, settled after %.0f ms%@ pid=%d: %@", label, total, (lastBusyAt - start) * 1000, capped, getpid(), detail()) + RenderProbe.summary(since: bodies))
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { MainActor.assumeIsolated { check() } }
     }
