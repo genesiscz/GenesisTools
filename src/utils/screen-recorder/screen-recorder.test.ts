@@ -762,6 +762,35 @@ describe("library recording frames", () => {
         );
     });
 
+    test("frames whose OCR failed are counted in the stop answer, not only noted", async () => {
+        // The defect: a frame's OCR timed out after 60 s and the recording still said only "done" (review 2026-11-06).
+        const root = mkdtempSync(join(tmpdir(), "gt-lib-ocr-fail-"));
+        const recorder = new PieceRecorder();
+        recorder.folder = join(root, "rec");
+        const recording = await startRecording({
+            recorder,
+            folder: recorder.folder,
+            liveDir: join(root, "live"),
+            maxDurationSec: 0.5,
+            pieceSec: 0.2,
+            ocr: { enabled: true, minChars: 5 },
+            ocrSink: "jsonl",
+            frames: { flush: "piece" },
+            deps: {
+                recognize: async () => {
+                    throw new Error("Request vision.ocr timed out after 60000ms");
+                },
+            },
+        });
+        expect(await waitForPath(join(recording.folder, "recording.json"), { timeoutMs: 3_000 })).toBe(true);
+        const answer = await recording.stop();
+        const frames = readdirSync(join(recording.folder, "frames")).length;
+
+        expect(frames).toBeGreaterThan(0);
+        expect(answer.ocrFailed).toBe(frames);
+        expect(answer.notes?.some((note) => note.startsWith("OCR failed for "))).toBe(true);
+    });
+
     /** Each `running` and `done` of a finalize step, as a subscriber of the recording's socket sees them. */
     async function finalizeSteps(id: string, dir: string) {
         const steps: string[] = [];

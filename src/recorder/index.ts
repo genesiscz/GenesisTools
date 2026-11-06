@@ -269,7 +269,8 @@ async function startFrames(flags: StartFlags): Promise<void> {
     if (flags.json) {
         out.print(`${SafeJSON.stringify({ event: "result", ...result })}\n`);
     } else {
-        out.println(`${result.outcome ?? result.state}: ${result.folder} (${result.frames ?? 0} frames)`);
+        const unread = result.ocrFailed ? `, ${result.ocrFailed} without their text: OCR failed` : "";
+        out.println(`${result.outcome ?? result.state}: ${result.folder} (${result.frames ?? 0} frames${unread})`);
 
         for (const note of result.notes ?? []) {
             out.printlnErr(`note: ${note}`);

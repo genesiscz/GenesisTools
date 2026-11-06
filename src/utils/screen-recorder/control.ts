@@ -184,6 +184,8 @@ export interface StopAnswer {
     frames?: number;
     /** What post-processing reported, one line each. */
     notes?: string[];
+    /** Kept frames whose text was not read (OCR failed or timed out); absent when every one was read. */
+    ocrFailed?: number;
 }
 
 function unsupported(kind: string, method: RecorderMethod): never {

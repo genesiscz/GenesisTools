@@ -139,6 +139,8 @@ export class LibraryRecording extends FrameRecording<number> {
     private readonly pending: PendingFrame[] = [];
     private readonly tracks: Array<AudioTrack & { displayId: number; startedAtMs: number }> = [];
     private readonly warnings: string[] = [];
+    /** Kept frames whose OCR failed (a timeout under load): counted in the stop answer, not only a note. */
+    private ocrFailed = 0;
     private discarded = false;
     /** The folder was made by this recording's start; only then may discard move it to the trash. */
     private ownsFolder = false;
@@ -245,6 +247,7 @@ export class LibraryRecording extends FrameRecording<number> {
                         job,
                         frames,
                         notes: [...this.warnings],
+                        ...(this.ocrFailed > 0 ? { ocrFailed: this.ocrFailed } : {}),
                     };
                 },
                 closeReason: () => "stopped",
@@ -265,7 +268,10 @@ export class LibraryRecording extends FrameRecording<number> {
                 settings: () => this.settings.ocr,
                 sink: ocrSinkFor(options.ocrSink ?? "sidecar", folder),
                 recognize: options.deps?.recognize,
-                onError: (error, path) => this.warn(`OCR failed for ${basename(path)}: ${String(error)}`),
+                onError: (error, path) => {
+                    this.ocrFailed += 1;
+                    this.warn(`OCR failed for ${basename(path)}: ${String(error)}`);
+                },
             },
         });
     }
