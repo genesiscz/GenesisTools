@@ -505,9 +505,9 @@ export class MeetingStore {
      * nothing fits and the records sit one level off.
      */
     resolve(ref: string): MeetingRecord | undefined {
-        // An exact id is one folder: read it alone before listing the store, which read every record (11 to 19 ms a
-        // call with 80 meetings, 2026-11-06). A ref that could name another folder (a separator, a leading dot)
-        // never reaches the disk this way.
+        // An exact id is one folder: read it alone before listing the store, which read every record (3.6 against
+        // 0.25 ms of CPU a call with 10 meetings, warm, 2026-11-06; it grows with the store). A ref that could name
+        // another folder (a separator, a leading dot) never reaches the disk this way.
         if (ref !== "last" && FOLDER_NAME.test(ref)) {
             const direct = this.read(ref);
 
