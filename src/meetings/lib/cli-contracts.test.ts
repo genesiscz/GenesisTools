@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
+import { Command } from "commander";
+import { MEETINGS_REGISTRARS } from "../registrars";
 import { enumHint } from "./shared";
 
 /**
@@ -52,5 +55,42 @@ describe("enum refusals print a command that runs", () => {
         });
 
         expect(hint.split("\n")[1]).toBe("tools meetings dictionary expansion --project work every");
+    });
+});
+
+/**
+ * A command loads only its own module (startup). A registrar whose command is renamed, or an alias added without a
+ * table entry, would silently fall back to loading every tree: the old 320 ms, with nothing to see.
+ */
+describe("MEETINGS_REGISTRARS", () => {
+    test("every entry names exactly the commands its registrar adds", async () => {
+        for (const entry of MEETINGS_REGISTRARS) {
+            const program = new Command();
+            (await entry.load())(program);
+            const added = program.commands.flatMap((command) => [command.name(), ...command.aliases()]);
+
+            expect(added.sort()).toEqual([...entry.names].sort());
+        }
+    });
+
+    test("no name is claimed twice", () => {
+        const names = MEETINGS_REGISTRARS.flatMap((entry) => entry.names);
+
+        expect(names.length).toBe(new Set(names).size);
+    });
+
+    test("config registers config alone", async () => {
+        const program = new Command();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "config" });
+
+        expect(program.commands.map((command) => command.name())).toEqual(["config"]);
+    });
+
+    test("help and an unknown command register every tree, in the help order", async () => {
+        const program = new Command();
+        await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: undefined });
+        const registered = program.commands.flatMap((command) => [command.name(), ...command.aliases()]);
+
+        expect(registered).toEqual(MEETINGS_REGISTRARS.flatMap((entry) => entry.names));
     });
 });
