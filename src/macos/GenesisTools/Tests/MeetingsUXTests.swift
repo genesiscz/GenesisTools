@@ -306,6 +306,14 @@ final class MeetingsUXTests: XCTestCase {
 
     // MARK: Minor findings
 
+    func testTheOpenMeetingHasItsRowInNeedsYou() throws {
+        let needs = try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON()).needsYou
+        XCTAssertEqual(needs.row(for: "a"), "q:a", "a meeting opened by its id selects its first row (MU6)")
+        XCTAssertEqual(needs.row(for: "s:a"), "s:a")
+        XCTAssertEqual(needs.row(for: "b"), "b")
+        XCTAssertNil(needs.row(for: "c"), "a meeting outside Needs you has no row, and the list says so")
+    }
+
     func testARangeReadsFromAndToWithNoDash() throws {
         let items = try JSONDecoder().decode([MeetingItem].self, from: Data("""
         [{"id":"r1","kind":"speaker-range","status":"suggested","fromSec":20,"toSec":30,"label":"Speaker 1","speaker":"Alice"},

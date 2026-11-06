@@ -277,7 +277,8 @@ private struct NeedsYouList: View {
         if needs.total == 0 {
             EmptyState(symbol: "checkmark.circle", text: "Nothing needs you", detail: "Every meeting of the last \(Plural.count(model.days, "day")) has a project, and no question waits.")
         } else {
-            List(selection: Binding(get: { model.needsSelection }, set: { tag in Task { @MainActor in model.select(needsTag: tag) } })) {
+            List(selection: Binding(get: { needs.row(for: model.needsSelection) },
+                                    set: { tag in Task { @MainActor in model.select(needsTag: tag) } })) {
                 if !needs.noProject.isEmpty {
                     Section("Without a project") {
                         ForEach(needs.noProject, id: \.self) { id in
@@ -307,7 +308,47 @@ private struct NeedsYouList: View {
                 }
             }
             .listStyle(.inset)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let id = model.selectedMeetingID, needs.row(for: id) == nil, let meeting = model.meeting(id) {
+                    NotInPlaceNote(title: meeting.displayTitle, place: "Needs you") { model.go(.all) }
+                }
+            }
         }
+    }
+}
+
+extension MeetingsOverview.NeedsYou {
+    /// The row of the open meeting. A meeting with questions or suggestions has rows tagged "q:<id>" and "s:<id>", and
+    /// a meeting opened by its id (a link, a launch from a terminal) named none of them, so no row was selected.
+    func row(for selection: String?) -> String? {
+        guard let selection else { return nil }
+        let tags = noProject + questions.map { "q:" + $0.id } + suggestions.map { "s:" + $0.id }
+        if tags.contains(selection) { return selection }
+        let id = selection.hasPrefix("q:") || selection.hasPrefix("s:") ? String(selection.dropFirst(2)) : selection
+        return tags.first { $0 == id || $0 == "q:" + id || $0 == "s:" + id }
+    }
+}
+
+/// Above a list that does not hold the open meeting: which meeting is open, and the way to the list that has it.
+private struct NotInPlaceNote: View {
+    let title: String
+    let place: String
+    let showAll: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "info.circle").foregroundStyle(.secondary).accessibilityHidden(true)
+                Text("\(title) is open; it is not in \(place).").font(.system(size: 12)).foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Spacer(minLength: 6)
+                Button("Show in All meetings", action: showAll).buttonStyle(.genHoverPlain()).font(.system(size: 12))
+                    .instantTooltip("Every meeting of the chosen days, with this one selected")
+            }
+            .padding(.horizontal, 14).padding(.vertical, 6)
+            Divider()
+        }
+        .background(.background)
     }
 }
 
