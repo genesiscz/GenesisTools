@@ -266,7 +266,8 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     let live: LiveRecordingServer | undefined;
     let control: SessionRecorderControl | undefined;
     const emit = (event: RecordingSessionEvent) => {
-        log.info({ event }, "recording event");
+        // One per second while it records: the day log keeps them, the terminal shows the CLI's own state lines.
+        log.debug({ event }, "recording event");
         control?.observe(event);
 
         if (event.event === "state" || event.event === "error") {

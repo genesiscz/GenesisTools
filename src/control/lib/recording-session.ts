@@ -313,7 +313,7 @@ export class RecordingSession {
     }
 
     private async apply(command: RecordingCommand): Promise<void> {
-        log.info({ command: command.cmd, state: this.state, segments: this.segments.length }, "recording command");
+        log.debug({ command: command.cmd, state: this.state, segments: this.segments.length }, "recording command");
         if (this.state === "finishing") {
             this.options.emit({ event: "error", message: "The recording is already being saved.", fatal: false });
             return;
@@ -397,7 +397,7 @@ export class RecordingSession {
             result: Promise.resolve({ ok: false, endedBy: "failure" }),
         };
         this.current = run;
-        log.info({ index, target, maxSeconds }, "recording segment requested");
+        log.debug({ index, target, maxSeconds }, "recording segment requested");
         this.setState("starting", reason);
         run.result = this.options.recorder
             .record({
@@ -438,7 +438,7 @@ export class RecordingSession {
 
         run.startedAt = this.now();
         clearTimeout(run.slowStart);
-        log.info({ index: run.index }, "recording segment started");
+        log.debug({ index: run.index }, "recording segment started");
         this.setState("recording", run.reason);
     }
 

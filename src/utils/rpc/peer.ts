@@ -488,7 +488,12 @@ export class RpcPeer {
             }
         } catch (error) {
             const code = error instanceof RpcError ? error.code : JSON_RPC_ERRORS.internal;
-            log.info({ ...logFields, method, error }, `${label} call refused`);
+            // A refusal (an RpcError) is the caller's answer, which it gets; only an unexpected throw is this side's.
+            if (error instanceof RpcError) {
+                log.debug({ ...logFields, method, error }, `${label} call refused`);
+            } else {
+                log.warn({ ...logFields, method, error }, `${label} call failed`);
+            }
 
             if (id !== undefined) {
                 const data = error instanceof RpcError ? error.data : undefined;

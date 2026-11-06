@@ -288,7 +288,7 @@ export const ffmpegSegmentJoiner: SegmentJoiner = async ({ segments, output }) =
         await runVideoCommand({ command: argv, timeoutMs });
     }
 
-    log.info(
+    log.debug(
         { segments: segments.length, output, copied: sameShape, audioTracks: audioCounts[0] ?? 0 },
         sameShape ? "segments joined by stream copy" : "segments joined by re-encoding"
     );
