@@ -6,6 +6,7 @@ import { env } from "@genesiscz/utils/env";
 import { TemporaryArtifacts } from "@genesiscz/utils/fs/temporary-artifacts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { descendantPids } from "@genesiscz/utils/process/processes";
 import { displayRefusal, recorderStartSchema } from "@genesiscz/utils/repl/toolsets/recorder";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { type LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
@@ -57,6 +58,32 @@ function spawnWorker(ipc: (message: unknown) => void) {
     });
 }
 type ReplWorker = ReturnType<typeof spawnWorker>;
+
+/**
+ * Ends what a turn started (a `Bun.spawn`, an app build): nothing holds those handles once the worker dies, and a swift
+ * build went on after a timeout kill, holding the app build lock (R2-NR7). Returns the pids it signalled.
+ */
+function stopDescendants(pid: number): number[] {
+    let pids: number[];
+
+    try {
+        pids = descendantPids(pid);
+    } catch (error) {
+        logger.debug({ pid, error }, "node-repl could not list the worker's child processes");
+        return [];
+    }
+
+    for (const child of pids.reverse()) {
+        try {
+            // pid-verified: read from the kernel in this call, below our own worker.
+            process.kill(child, "SIGTERM");
+        } catch (error) {
+            logger.debug({ pid: child, error }, "node-repl worker child already ended");
+        }
+    }
+
+    return pids;
+}
 
 async function* streamChunks(stream: ReadableStream<Uint8Array>): AsyncGenerator<Uint8Array> {
     const reader = stream.getReader();
@@ -524,7 +551,9 @@ export class ReplEngine {
             return;
         }
 
-        logger.debug({ pid: worker.pid, reason }, "node-repl worker killed");
+        // Read before the kill: once the worker is gone its children belong to launchd and are no descendants any more.
+        const orphans = stopDescendants(worker.pid);
+        logger.debug({ pid: worker.pid, reason, orphans }, "node-repl worker killed");
         worker.kill();
         this.workerStopped();
         this.settlePending(reason);

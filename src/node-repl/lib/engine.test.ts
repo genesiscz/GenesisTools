@@ -158,6 +158,31 @@ describe("ReplEngine", () => {
         expect(after.text).toBe("undefined");
     });
 
+    // R2-NR7: a swift build a turn started kept running after the timeout killed the worker, holding the build lock.
+    it("a turn that overruns takes the processes it started with it", async () => {
+        const started = await engine.run('globalThis.child = Bun.spawn(["sleep", "30"]);\nchild.pid');
+        const pid = Number(started.text);
+        expect(pid).toBeGreaterThan(0);
+        const stuck = await engine.run("await new Promise(() => {})", 400);
+        expect(stuck.ok).toBe(false);
+        expect(stuck.error).toContain("exceeded 400 ms");
+        const alive = () => {
+            try {
+                process.kill(pid, 0);
+                return true;
+            } catch {
+                return false;
+            }
+        };
+        const deadline = Date.now() + 3000;
+
+        while (alive() && Date.now() < deadline) {
+            await Bun.sleep(100);
+        }
+
+        expect(alive()).toBe(false);
+    });
+
     // NR6: a native helper compiling on first use logs that line to stderr and nowhere the caller sees.
     it("a turn that overruns quotes what the worker wrote to stderr while it ran", async () => {
         const stuck = await engine.run(

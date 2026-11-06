@@ -132,7 +132,8 @@ TypeScript is stripped first with `Bun.Transpiler`.
 starves the event loop with microtasks and defeats every in-process timer, including a
 `setTimeout` race in the same process. So the REPL scope is the global scope of
 `lib/worker.ts`, a child of the MCP server, and `lib/engine.ts` enforces `timeout_ms` from the
-parent by killing and respawning it. A killed turn reports that every binding is gone.
+parent by killing and respawning it. A killed turn reports that every binding is gone, and the processes it
+started (a `Bun.spawn`, a build) get SIGTERM with the worker, because nothing holds their handles any more.
 `js_reset` is the same operation on purpose. There is no separate `vm` context: the process is
 the sandbox, and a second realm only makes `Bun.inspect` print every object with its prototype.
 
