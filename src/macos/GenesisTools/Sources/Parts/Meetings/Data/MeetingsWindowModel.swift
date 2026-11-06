@@ -163,6 +163,7 @@ final class MeetingsWindowModel {
         if overview != .loaded(value) {
             overview = .loaded(value)
             overviewSets += 1
+            HubMainBusy.measure("meetings.overview.render")
         }
         if selectedMeetingID == nil {
             select(visibleMeetings.first?.id)
@@ -210,6 +211,7 @@ final class MeetingsWindowModel {
             let next = MeetingDetailModel(id: id, window: self)
             next.tab = tab ?? MeetingDetailModel.firstTab(for: meeting(id))
             detail = next
+            HubMainBusy.measure("meetings.detail.open")
             loadDetail(next)
         } else if let tab {
             detail?.show(tab)
@@ -241,6 +243,7 @@ final class MeetingsWindowModel {
     /// The window became key again: what changed outside it (a confirm in a terminal, a new meeting) shows. The reads
     /// are quiet: what is on screen stays until an answer differs.
     func refreshAfterReturn() {
+        HubMainBusy.measure("meetings.refresh", window: 1.5)
         loadOverview(quiet: true)
         loadSettings(quiet: true)
         detail?.refreshLoaded()

@@ -79,6 +79,7 @@ final class MeetingDetailModel {
 
     func show(_ tab: Tab) {
         self.tab = tab
+        HubMainBusy.measure("meetings.tab.\(tab.rawValue)")
         loadTab(tab)
     }
 
