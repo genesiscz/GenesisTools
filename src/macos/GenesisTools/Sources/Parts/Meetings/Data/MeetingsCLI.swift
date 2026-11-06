@@ -3,8 +3,20 @@ import Foundation
 /// The one way this part reads and changes meetings: `tools meetings …` through GenesisKit's `ToolsBridge` (the
 /// resident server when it has the door, else a process). No Swift copy of any meetings rule lives here.
 enum MeetingsCLI {
+    /// The resident hub server answers the window's reads (src/hub/server/doors/meetings.ts) without a `tools` process
+    /// each: about 330 ms of CPU per read went to starting the process (2026-11-06). Every other argv, and a read the
+    /// door declines, still runs the process. The server reads the real home's store with the main checkout's code, so
+    /// a window on a sandbox home (`GENESIS_TOOLS_HOME`), on a worktree's `tools` (`GENESIS_TOOLS_BIN`), the preview
+    /// build and `GENESIS_HUB_SERVER=0` keep processes only.
+    static let server: ToolsServerClient? = {
+        let environment = ProcessInfo.processInfo.environment
+        guard !NativePreview.enabled, environment["GENESIS_HUB_SERVER"] != "0",
+              environment["GENESIS_TOOLS_HOME"] == nil, environment["GENESIS_TOOLS_BIN"] == nil else { return nil }
+        return ToolsServerClient(startServer: { ToolsServerClient.startHubServer(binaryPath: ToolsBridge.defaultBinaryPath()) })
+    }()
+
     /// Resolved at each call, so `GENESIS_TOOLS_BIN` (a worktree's `tools`) and a moved checkout apply at once.
-    static let bridge = ToolsBridge(resolveBinaryPath: { ToolsBridge.defaultBinaryPath() })
+    static let bridge = ToolsBridge(resolveBinaryPath: { ToolsBridge.defaultBinaryPath() }, server: server)
 
     /// A failed command: one sentence for the pane, the CLI's own text for Details, and the conflict code a refused
     /// write names (`✗ [config-stale] …`, src/utils/meetings/conflict.ts), so the pane can answer it.
