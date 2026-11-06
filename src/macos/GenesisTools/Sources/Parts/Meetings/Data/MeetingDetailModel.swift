@@ -356,7 +356,8 @@ final class MeetingDetailModel {
     }
 
     func removeContext(_ ref: MeetingContextRef) {
-        change("context.remove.\(ref.id)", ["context", "remove", id, ref.id], done: "Removed \(MeetingsWords.contextTitle(ref))")
+        change("context.remove.\(ref.id)", ["context", "remove", id, ref.id], done: "Removed \(MeetingsWords.contextTitle(ref))",
+               undo: (title: "Undo", args: Self.readdArgs(meeting: id, ref)))
     }
 
     /// Plays the meeting's audio from a transcript time in the player that Settings → Meetings → Window picks; the bar
@@ -632,5 +633,47 @@ extension MeetingDetailModel {
     /// Runs the rules on the transcript (`tools meetings suggest`), from the Items tab's empty state.
     func suggest() {
         change("suggest", ["suggest", id], done: "The rules ran on the transcript")
+    }
+}
+
+// MARK: - Context: links and notes
+
+extension MeetingDetailModel {
+    enum ContextAddition: Equatable {
+        case link(String)
+        case note(String)
+    }
+
+    static func contextAddArgs(meeting: String, _ addition: ContextAddition, title: String?) -> [String] {
+        var args = ["context", "add", meeting]
+        switch addition {
+        case .link(let url): args.append(url)
+        case .note(let text): args += ["--note", text]
+        }
+        if let title { args += ["--title", title] }
+        return args
+    }
+
+    /// Adds a link or a note; `added` runs once the CLI saved it, so a composer clears its fields only then.
+    func addContext(_ addition: ContextAddition, title: String?, added: @escaping () -> Void) {
+        let (key, name): (String, String)
+        switch addition {
+        case .link(let url): (key, name) = ("context.add.link", title ?? url)
+        case .note: (key, name) = ("context.add.note", title ?? "the note")
+        }
+        change(key, Self.contextAddArgs(meeting: id, addition, title: title), done: "Added \(name)", applied: added)
+    }
+
+    /// What adds a removed entry back, for the Undo of a remove: a note is its text, a file or a link its reference.
+    static func readdArgs(meeting: String, _ ref: MeetingContextRef) -> [String] {
+        var args = ["context", "add", meeting]
+        if ref.kind == "note" {
+            args += ["--note", ref.ref]
+        } else {
+            args.append(ref.ref)
+            if let note = ref.note { args += ["--note", note] }
+        }
+        if let title = ref.title { args += ["--title", title] }
+        return args
     }
 }

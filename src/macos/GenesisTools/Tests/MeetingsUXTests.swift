@@ -327,4 +327,17 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(MeetingsLanguage.name("cs"), "Czech", "MU14")
         XCTAssertEqual(MeetingsLanguage.name("en"), "English")
     }
+
+    func testContextTakesLinksAndNotesAndARemoveCanBeUndone() throws {
+        XCTAssertEqual(MeetingDetailModel.contextAddArgs(meeting: "a", .link("https://example.com/spec"), title: "Spec"),
+                       ["context", "add", "a", "https://example.com/spec", "--title", "Spec"], "MU12")
+        XCTAssertEqual(MeetingDetailModel.contextAddArgs(meeting: "a", .note("Budget is fixed"), title: nil),
+                       ["context", "add", "a", "--note", "Budget is fixed"])
+        let refs = try JSONDecoder().decode([MeetingContextRef].self, from: Data("""
+        [{"id":"c1","kind":"note","ref":"Budget is fixed","title":"Budget","addedAt":"2026-11-05T12:00:00.000Z"},
+         {"id":"c2","kind":"file","ref":"/tmp/spec.md","note":"the second part","addedAt":"2026-11-05T12:00:00.000Z"}]
+        """.utf8))
+        XCTAssertEqual(MeetingDetailModel.readdArgs(meeting: "a", refs[0]), ["context", "add", "a", "--note", "Budget is fixed", "--title", "Budget"])
+        XCTAssertEqual(MeetingDetailModel.readdArgs(meeting: "a", refs[1]), ["context", "add", "a", "/tmp/spec.md", "--note", "the second part"])
+    }
 }
