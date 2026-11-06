@@ -12,7 +12,7 @@ import { awaitStart, startGatePath, stopPassedChild, sweepStartGates } from "@ge
 import { checkProject, type EditFacts, type EditIssue, fixOps } from "@genesiscz/utils/recording-editor/check";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { placedShape } from "@genesiscz/utils/recording-editor/item-ops";
-import { EFFECT_KINDS } from "@genesiscz/utils/recording-editor/lanes";
+import { DEFAULT_LANES, EFFECT_KINDS, type EffectLane } from "@genesiscz/utils/recording-editor/lanes";
 import {
     outputTimeSchema,
     sourceTimeSchema,
@@ -440,7 +440,7 @@ const movieMethods = [
     edit(
         "removeLane",
         z.object({ id: z.string() }).strict(),
-        "Removes an effect lane; its items move to the next lane that holds their kind.",
+        "Removes an effect lane; its items move to the next lane that holds their kind. The last lane that holds zooms is refused.",
         ["id"]
     ),
     edit(
@@ -861,7 +861,7 @@ const movieMethods = [
         doc:
             "Imports a vitrinka board's annotations as review comments (" +
             toolCommand("recorder comment import") +
-            " does the same): board is its link (a ?card= link picks that card), <workspace>/<slug> or its slug; card: only that card. Each annotation on a shot, movie or step card lands at the OUTPUT time its text starts with (0:42, 1:02:03, 42s), else at 0:00 with a note that says so; a resolved one is resolved. A second import adds nothing (each comment keeps the annotation's link). dryRun: true reads the board and writes nothing.",
+            " does the same): board is its link (a ?card= link picks that card), <workspace>/<slug>, or a bare slug, which is looked up in the vitrinka CLI's default workspace (name the workspace for a board elsewhere); card: only that card. Each annotation on a shot, movie or step card lands at the OUTPUT time its text starts with (0:42, 1:02:03, 42s), else at 0:00 with a note that says so; a resolved one is resolved. A second import adds nothing (each comment keeps the annotation's link). dryRun: true reads the board and writes nothing.",
         effect: "reversible",
     }),
     defineMethod({
@@ -1111,6 +1111,21 @@ export function silentMovieReason(facts: MediaFacts | undefined, action: string)
     }
 
     return `this movie has no sound to ${action}: its video ${basename(facts.path)} has no audio track`;
+}
+
+/**
+ * Why a lane cannot go, or undefined: the movie keeps one lane that holds zooms, as an edit that never saved its lanes
+ * has. removeLane('zooms') removed it without a word, and the movie had no lane for zooms after it (NR37).
+ */
+export function laneRemovalReason(lanes: readonly EffectLane[], id: string): string | undefined {
+    const holdsZooms = (lane: EffectLane) => !lane.kinds || lane.kinds.includes("zoom");
+    const lane = lanes.find((candidate) => candidate.id === id);
+
+    if (!lane || !holdsZooms(lane) || lanes.some((other) => other.id !== id && holdsZooms(other))) {
+        return undefined;
+    }
+
+    return `the ${id} lane is the only lane that holds zooms, and a movie keeps one; addLane({ kinds: ["zoom"] }) first, then remove this one`;
 }
 
 /**
@@ -1556,6 +1571,13 @@ export class Movie {
     }
 
     async removeLane(id: string) {
+        const opened = await openProject(this.recording);
+        const reason = laneRemovalReason(opened.project.lanes ?? DEFAULT_LANES, id);
+
+        if (reason) {
+            throw new Error(reason);
+        }
+
         return this.change([{ op: "removeLane", id }]);
     }
 
@@ -1846,12 +1868,7 @@ export class Movie {
     }
 
     async switchDisplay(input: { from: z.infer<typeof timeSchema>; to: z.infer<typeof timeSchema>; display: number }) {
-        const opened = await openProject(this.recording);
-        const folder = recordingFolderOf(opened);
-
-        if (!folder) {
-            throw new Error(`${opened.project.source.video} is a plain movie: it shows one picture, not displays`);
-        }
+        const folder = await this.framesFolder("switch between");
 
         return switchDisplay(folder, {
             fromUs: timeToUs(input.from),
@@ -1876,6 +1893,13 @@ export class Movie {
         if (!folder) {
             throw new Error(
                 `${opened.project.source.video} is a plain movie: it has no displays, so nothing to ${doing}`
+            );
+        }
+
+        // A video recording has a folder but no frames, and the error was "has no frames to make a movie of" (NR35).
+        if (readRecordingManifest(folder)?.settings?.kind === "video") {
+            throw new Error(
+                `this is a video recording: it has no display frames to ${doing}; only a frames recording (a meeting or a library frames recording) has them`
             );
         }
 

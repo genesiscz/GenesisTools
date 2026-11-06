@@ -37,6 +37,7 @@ import {
 } from "@app/recorder/lib/start-options";
 import {
     fixOutcome,
+    laneRemovalReason,
     Movie,
     type MovieRecorderDeps,
     MoviesToolset,
@@ -415,6 +416,49 @@ describe("the clicks of a movie, grouped", () => {
         );
         await expect(new Movie(bare).clickGroups()).rejects.toThrow("no cursor track");
     });
+});
+
+// NR37: removeLane('zooms') removed the built-in zoom lane, and the movie had no lane for zooms after it.
+test("the last lane that holds zooms cannot be removed; another lane for zooms lets it go", () => {
+    expect(laneRemovalReason([{ id: "zooms", kinds: ["zoom"] }], "zooms")).toContain(
+        "the zooms lane is the only lane that holds zooms"
+    );
+    expect(laneRemovalReason([{ id: "zooms", kinds: ["zoom"] }, { id: "all" }], "zooms")).toBeUndefined();
+    expect(
+        laneRemovalReason(
+            [
+                { id: "zooms", kinds: ["zoom"] },
+                { id: "texts", kinds: ["text"] },
+            ],
+            "texts"
+        )
+    ).toBeUndefined();
+    expect(laneRemovalReason([{ id: "zooms", kinds: ["zoom"] }], "nope")).toBeUndefined();
+});
+
+// NR35: switchDisplay on a video recording said "has no frames to make a movie of".
+test("switchDisplay on a video recording says it needs a frames recording", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "gt-video-switch-"));
+    writeFileSync(
+        join(folder, "recording.json"),
+        SafeJSON.stringify({
+            version: 1,
+            id: "rec",
+            title: "Rec",
+            startedAt: "2026-11-05T10:00:00.000Z",
+            displays: [],
+            frames: [],
+            settings: { kind: "video" },
+        })
+    );
+    const path = join(folder, "screen.edit.json");
+    writeProject(
+        path,
+        wholeProject({ video: join(folder, "screen.mp4"), durationUs: 2_000_000, width: 10, height: 10 })
+    );
+    await expect(new Movie(path).switchDisplay({ from: 0, to: 1, display: 2 })).rejects.toThrow(
+        "this is a video recording: it has no display frames to switch between"
+    );
 });
 
 // NR43: fix() counted an action that changed nothing as fixed.
