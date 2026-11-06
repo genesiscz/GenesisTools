@@ -1439,6 +1439,24 @@ describe("the editor window's item ops", () => {
         expect(() => applyOp(project, { op: "cameraShow", id: part.id, from: 1, to: 2 })).toThrow("not both");
     });
 
+    // Regression test: deep test 2026-11-06 RE6 — fixLine at a time inside a line saved a fix no line starts at.
+    test("fixLine at any time inside a line fixes that line, and a time between lines is refused", () => {
+        const transcript = [
+            { text: "Hello.", start: 0.4, end: 2.0 },
+            { text: "What are you doing?", start: 2.281, end: 4.6 },
+        ];
+        const fixed = applyOp(
+            wholeProject(source),
+            { op: "fixLine", from: 2.5, text: "What are you doing now?" },
+            { transcript }
+        );
+
+        expect(fixed.transcript?.fixes).toEqual({ "2281": "What are you doing now?" });
+        expect(() => applyOp(wholeProject(source), { op: "fixLine", from: 9, text: "x" }, { transcript })).toThrow(
+            "no line is spoken at 9 s, nothing was saved; the nearest lines start at 2.281, 0.4 s"
+        );
+    });
+
     // Regression test: deep test 2026-11-06 NR36 — denoise on a movie with no sound saved, and every export then failed.
     test("denoise refuses a movie with no audio track, as normalize does, and turning it off still works", () => {
         const project = wholeProject(source);

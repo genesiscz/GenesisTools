@@ -1617,6 +1617,24 @@ function retimeItem(project: EditProject, op: Extract<EditOp, { op: "retime" }>)
     throw new Error(`no zoom, hidden part, text, shape or camera part ${op.id}; ids: ${ids.join(", ") || "none"}`);
 }
 
+/** The start of the transcript line spoken at `atUs` (source time); a time between lines is refused. */
+function lineStartUs(segments: readonly TranscriptSegment[], atUs: number): number {
+    const seconds = atUs / 1_000_000;
+    const line = segments.find((segment) => segment.start <= seconds + 0.0005 && seconds < segment.end);
+
+    if (!line) {
+        const near = segments
+            .map((segment) => segment.start)
+            .sort((a, b) => Math.abs(a - seconds) - Math.abs(b - seconds))
+            .slice(0, 3);
+        throw new Error(
+            `no line is spoken at ${seconds} s, nothing was saved; the nearest lines start at ${near.join(", ")} s`
+        );
+    }
+
+    return Math.round(line.start * 1_000_000);
+}
+
 export function applyOp(project: EditProject, op: EditOp, facts: OpFacts = {}): EditProject {
     facts.generatedIds ??= [];
     const next = withItemIds(facts.generatedIds, () => applyOpItself(project, op, facts));
@@ -1836,7 +1854,9 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             return rest.length ? { ...project, shapes: rest } : without;
         }
         case "fixLine": {
-            const key = String(Math.round(timeToUs(op.from) / 1000));
+            // A time copied from find() or the subtitles lies inside a line; a fix is keyed by the line's start.
+            const fromUs = facts.transcript ? lineStartUs(facts.transcript, timeToUs(op.from)) : timeToUs(op.from);
+            const key = String(Math.round(fromUs / 1000));
             const fixes = { ...(project.transcript?.fixes ?? {}), [key]: op.text.trim() };
             return { ...project, transcript: { fixes } };
         }

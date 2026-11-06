@@ -587,6 +587,11 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
         return { transcript: readTranscriptSegments(project), ...(fillerLists ? { fillerLists } : {}) };
     }
 
+    // A fix is keyed by its line's start; without a transcript the time is taken as that start.
+    if (op.op === "fixLine" && existsSync(transcriptCachePath(project.source.video))) {
+        return { transcript: readTranscriptSegments(project) };
+    }
+
     return {};
 }
 
