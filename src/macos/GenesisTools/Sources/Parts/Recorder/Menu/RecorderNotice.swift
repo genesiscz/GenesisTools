@@ -381,10 +381,11 @@ private struct RecorderTitlePromptView: View {
                     .accessibilityIdentifier("recorder.rename.confirm")
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 30)
-        .padding(.bottom, 16)
+        // The title bar is empty (no title, no buttons), so the content uses its height: one 18 pt inset all round,
+        // not a 30 pt band under an invisible bar (review 2026-11-06).
+        .padding(18)
         .frame(width: 360)
+        .ignoresSafeArea(.container, edges: .top)
         .onAppear { DispatchQueue.main.async { focused = true } }
     }
 }

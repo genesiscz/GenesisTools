@@ -127,7 +127,7 @@ enum RecordingActions {
     /// it through the service, falling back to the same command the CLI and REPL use.
     private static func rename(_ item: RecorderMenu.Recent, report: @escaping (Outcome) -> Void) {
         let request = RecorderTitleRequest(heading: "Rename “\(item.title)”",
-                                           detail: "The library, the editor window and movies.list() show this title.",
+                                           detail: "The library and the editor show this title.",
                                            current: item.title)
         RecorderNotice.askTitle(request) { title in
             guard let title else { return }
