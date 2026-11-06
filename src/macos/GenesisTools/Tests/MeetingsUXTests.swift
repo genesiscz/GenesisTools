@@ -322,4 +322,9 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(MeetingsWords.itemTitle(items[0]), "Speaker 1 from 0:20 to 0:30 is Alice", "MU17")
         XCTAssertEqual(MeetingsWords.itemTitle(items[1]), "Speaker 1 at 0:20 is someone else")
     }
+
+    func testTheMeetingLanguageReadsAsItsName() {
+        XCTAssertEqual(MeetingsLanguage.name("cs"), "Czech", "MU14")
+        XCTAssertEqual(MeetingsLanguage.name("en"), "English")
+    }
 }

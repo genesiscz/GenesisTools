@@ -28,6 +28,13 @@ package final class MeetingsSettingsPlugin: FeatureSettingsPlugin {
     }
 }
 
+/// A language code as its English name ("cs" is "Czech"), for the sentences that name the meeting language.
+enum MeetingsLanguage {
+    static func name(_ code: String) -> String {
+        Locale(identifier: "en").localizedString(forLanguageCode: code) ?? code
+    }
+}
+
 @MainActor
 enum MeetingsSettingsPages {
     static let recordingPage = "meetings.recording"
@@ -207,7 +214,7 @@ private struct OcrLanguagesCard: View {
     private static let known = ["cs-CZ", "sk-SK", "en-US", "en-GB", "de-DE", "pl-PL", "fr-FR", "es-ES", "it-IT", "uk-UA"]
 
     var body: some View {
-        NativeSettingsCard("OCR languages", subtitle: "What Vision reads on the screen frames of a meeting held in \(language), first one first.") {
+        NativeSettingsCard("OCR languages", subtitle: "What Vision reads on the screen frames of a meeting held in \(MeetingsLanguage.name(language)), first one first.") {
             ForEach(Array(languages.enumerated()), id: \.element) { index, code in
                 HStack {
                     Text(verbatim: "\(index + 1). \(code)").font(.system(size: 12.5).monospacedDigit())

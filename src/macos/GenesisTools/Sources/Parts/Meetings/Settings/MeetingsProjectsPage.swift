@@ -295,7 +295,7 @@ private struct FillersCard: View {
     let fillers: MeetingsSettings.Language.Fillers?
 
     var body: some View {
-        NativeSettingsCard("Filler words", subtitle: "What cutting the fillers of a recording removes, for a meeting held in \(language).") {
+        NativeSettingsCard("Filler words", subtitle: "What cutting the fillers of a recording removes, for a meeting held in \(MeetingsLanguage.name(language)).") {
             TokenList(title: "Sounds", detail: "Never real words (ehm, um): cut by default.",
                       values: fillers?.sounds ?? [], placeholder: "Add a sound") { values in write("sounds", values) }
             Divider()
