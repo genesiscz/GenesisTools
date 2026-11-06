@@ -15,6 +15,13 @@ handleReadmeFlag(import.meta.url);
 
 const MAX_OUTPUT_HELP = `the most characters a turn returns; longer output is cut with a note naming the file that holds all of it (0: no limit)`;
 
+/** A turn's text on stdout, ended with a newline so the shell prompt starts on its own line (NR21). */
+function printTurnText(text: string): void {
+    if (text) {
+        out.print(text.endsWith("\n") ? text : `${text}\n`);
+    }
+}
+
 /** `--max-output`, or undefined after an error line for a value that is not a whole number of characters. */
 function maxOutputOption(value: string): number | undefined {
     const chars = Number(value);
@@ -155,7 +162,7 @@ program
 
             try {
                 const result = await engine.run(source, timeout);
-                out.print(result.text);
+                printTurnText(result.text);
 
                 for (const image of result.images) {
                     out.log.info(`image written to ${image.path}`);
@@ -310,7 +317,7 @@ preset
                 `await presets.run(${SafeJSON.stringify(name)}, ${SafeJSON.stringify(values)})`,
                 timeout
             );
-            out.print(result.text);
+            printTurnText(result.text);
 
             if (!result.ok) {
                 logger.error(result.stack ?? result.error ?? "unknown error");
