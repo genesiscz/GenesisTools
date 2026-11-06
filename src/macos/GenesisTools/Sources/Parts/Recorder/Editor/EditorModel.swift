@@ -1446,16 +1446,31 @@ final class EditorModel {
                     ?? stdout.split(separator: "\n").last.flatMap { line in
                         (try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])?["fixed"] as? [Any]
                     }?.count
-                self.show(fixed.map { "Fixed \(Plural.count($0, "thing")). ⌘Z undoes them all." } ?? "Fixed. ⌘Z undoes it.", error: false)
+                self.show(Self.fixAllNotice(fixed: fixed), error: false)
             case let .failure(failure): self.show("Fix All did not work: \(failure.reason)", error: true)
             }
         }
+    }
+
+    /// What Fix All says: the count it fixed, or that no fix changed the edit (nothing was saved, so ⌘Z has nothing).
+    nonisolated static func fixAllNotice(fixed: Int?) -> String {
+        switch fixed {
+        case 0?: "Nothing to fix: no fix the check offers changes the edit."
+        case let count?: "Fixed \(Plural.count(count, "thing")). ⌘Z undoes them all."
+        case nil: "Fixed. ⌘Z undoes it."
+        }
+    }
+
+    /// What an issue's action says once it ran: done, or that the edit stayed the same (no new undo step).
+    nonisolated static func actionNotice(label: String, changed: Bool) -> String {
+        changed ? "\(label): done. ⌘Z undoes it." : "\(label) changed nothing."
     }
 
     /// Runs the edit ops the check gave an issue (`tools recorder apply`, the REPL's fix), then takes the saved edit,
     /// so ⌘Z undoes it as one step.
     func runAction(_ issue: EditIssue) {
         guard let ops = issue.actionOps, let label = issue.action?.label else { return }
+        let revision = project.revision
         applyOps(ops) { [weak self] result in
             guard let self else { return }
             if case let .failure(failure) = result {
@@ -1463,7 +1478,7 @@ final class EditorModel {
                 return
             }
             if let selection = issue.selection { self.selection = selection }
-            self.show("\(label): done. ⌘Z undoes it.", error: false)
+            self.show(Self.actionNotice(label: label, changed: self.project.revision != revision), error: false)
         }
     }
 

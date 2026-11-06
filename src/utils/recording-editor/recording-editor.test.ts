@@ -784,6 +784,23 @@ describe("edit project (edit.json)", () => {
         expect(checkProject(wholeProject(source), facts)).toEqual([]);
     });
 
+    // Regression test: deep test 2026-11-06 RE5 — Lengthen on a circle that ends at the movie's end changed nothing.
+    test("a too-short item at the movie's end is lengthened by starting earlier", () => {
+        const project = applyOp(wholeProject(source), { op: "shape", kind: "circle", from: 9.83, to: 10 });
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const [issue] = checkProject(project, facts);
+        const lengthened = (issue?.action?.ops ?? []).reduce((next, op) => applyOp(next, op), project);
+        expect([lengthened.shapes?.[0]?.startUs, lengthened.shapes?.[0]?.endUs]).toEqual([8_500_000, 10_000_000]);
+    });
+
+    // Regression test: deep test 2026-11-06 RE5 — `tools recorder fix` printed "fixed" four times for an op that changed nothing.
+    test("fix reports nothing fixed for an item that already spans the whole movie", () => {
+        const short = { ...source, durationUs: 300_000 };
+        const project = applyOp(wholeProject(short), { op: "text", from: 0, to: 0.3, text: "Hi" });
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        expect(fixOps(project, facts).fixed).toEqual([]);
+    });
+
     test("check names a marker a cut hides (with a move to the nearest kept moment) and a text a cut shortens", () => {
         let project = applyOp(wholeProject(source), { op: "text", from: 1, to: 4, text: "Title" });
         project = applyOp(project, { op: "marker", at: 6.2, label: "Step two" });

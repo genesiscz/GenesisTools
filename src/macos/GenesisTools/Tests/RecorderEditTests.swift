@@ -1005,6 +1005,15 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(EditorModel.issues(fromCheck: Data("not json".utf8)))
     }
 
+    // Regression test: deep test 2026-11-06 RE5 — Fix All said "Fixed" and Lengthen said "done" for edits that changed nothing.
+    func testFixAndLengthenSayNothingChangedWhenTheEditStayedTheSame() {
+        XCTAssertEqual(EditorModel.fixAllNotice(fixed: 0), "Nothing to fix: no fix the check offers changes the edit.")
+        XCTAssertEqual(EditorModel.fixAllNotice(fixed: 2), "Fixed 2 things. ⌘Z undoes them all.")
+        XCTAssertEqual(EditorModel.fixAllNotice(fixed: nil), "Fixed. ⌘Z undoes it.")
+        XCTAssertEqual(EditorModel.actionNotice(label: "Lengthen", changed: false), "Lengthen changed nothing.")
+        XCTAssertEqual(EditorModel.actionNotice(label: "Lengthen", changed: true), "Lengthen: done. ⌘Z undoes it.")
+    }
+
     func testAnOutsideEditIsSaidInWordsWithWhatToFlashAndWhere() throws {
         let before = project([.init(id: "c", fromUs: 0, toUs: 10_000_000)])
         var after = before

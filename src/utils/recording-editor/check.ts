@@ -57,24 +57,20 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
         const shortest = entry.kind === "zoom" ? SHORTEST_ZOOM_US : SHORTEST_READABLE_US;
 
         if (entry.kind !== "hidden part" && entry.endUs - entry.startUs < shortest) {
+            const longer = lengthened(entry, shortest, project.source.durationUs);
             issues.push({
                 severity: "check",
                 item: name,
                 message: `The ${entry.said} shows for ${seconds(entry.endUs - entry.startUs)} s, too short to ${entry.kind === "zoom" ? "follow" : "read"}`,
-                // Long enough to read (1.5 s), unless the movie ends first.
-                fix: `movie.retime({ id: "${entry.id}", to: ${seconds(Math.min(project.source.durationUs, entry.startUs + 1_500_000))} })`,
                 at: seconds(entry.startUs),
                 target,
-                action: {
-                    label: "Lengthen",
-                    ops: [
-                        {
-                            op: "retime",
-                            id: entry.id,
-                            to: seconds(Math.min(project.source.durationUs, entry.startUs + 1_500_000)),
-                        },
-                    ],
-                },
+                // No fix when the movie itself is too short to show it longer.
+                ...(longer && {
+                    fix: `movie.retime({ id: "${entry.id}", ${Object.entries(longer)
+                        .map(([key, value]) => `${key}: ${value}`)
+                        .join(", ")} })`,
+                    action: { label: "Lengthen", ops: [{ op: "retime", id: entry.id, ...longer }] },
+                }),
             });
         }
     }
@@ -161,6 +157,29 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
 const tenths = (us: number) => Math.round(us / 100_000) / 10;
 
 /** The kinds the check looks at, each with how to remove it and how to name it for a person. */
+/** How long a lengthened item lasts: long enough to read. */
+const LENGTHENED_US = 1_500_000;
+
+/**
+ * The retime that makes a too-short item 1.5 s long: a later end, or an earlier start when the movie ends first. Times
+ * in milliseconds, the end rounded down so it never passes the source's end. Undefined when the movie has no room.
+ */
+function lengthened(
+    item: { startUs: number; endUs: number },
+    shortest: number,
+    sourceUs: number
+): { from?: number; to: number } | undefined {
+    const toUs = Math.min(sourceUs, item.startUs + LENGTHENED_US);
+    const fromUs = toUs - item.startUs < shortest ? Math.max(0, toUs - LENGTHENED_US) : item.startUs;
+
+    if (toUs - fromUs <= item.endUs - item.startUs) {
+        return undefined;
+    }
+
+    const to = Math.floor(toUs / 1000) / 1000;
+    return fromUs === item.startUs ? { to } : { from: Math.round(fromUs / 1000) / 1000, to };
+}
+
 function checkedItems(project: EditProject) {
     // Only what every kind has, so a shape's own `kind` field is not mixed in.
     // `said` names it for a person: a text by its words, a part by its label, else its kind and start.
@@ -315,13 +334,25 @@ export function fixOps(project: EditProject, facts: EditFacts, passes = 4): { op
             break;
         }
 
+        let changed = false;
+
         for (const issue of fixable) {
-            for (const op of issue.action?.ops ?? []) {
-                current = applyOp(current, op);
-                ops.push(op);
+            const issueOps = issue.action?.ops ?? [];
+            const next = issueOps.reduce((edit, op) => applyOp(edit, op), current);
+
+            // An op that changes nothing fixes nothing: it is neither saved nor counted.
+            if (SafeJSON.stringify(next) === SafeJSON.stringify(current)) {
+                continue;
             }
 
+            current = next;
+            ops.push(...issueOps);
             fixed.push(issue.message);
+            changed = true;
+        }
+
+        if (!changed) {
+            break;
         }
     }
 
