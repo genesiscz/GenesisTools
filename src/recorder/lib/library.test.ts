@@ -17,6 +17,7 @@ import {
     describeLiveEntries,
     editorOpenStatePath,
     findLiveEntry,
+    framesCell,
     listLibrary,
     movieOf,
     readEditorOpenState,
@@ -618,6 +619,32 @@ it("a library row says how the recording ended, how long its movie is, and why a
     expect(failed).toMatchObject({ outcome: "failed", reason: "cannot record the window" });
     expect(frames.outcome).toBeUndefined();
     expect(frames.durationMs).toBeUndefined();
+});
+
+it("a movie's row counts the movie's frames, and the table says — for a movie whose count was never written", () => {
+    const root = mkdtempSync(join(tmpdir(), "library-frames-"));
+    const manifest = (id: string, extra: Record<string, unknown>) => {
+        mkdirSync(join(root, id));
+        writeFileSync(
+            join(root, id, "recording.json"),
+            SafeJSON.stringify({ version: 1, id, title: id, displays: [], frames: [], ...extra })
+        );
+    };
+    manifest("video-2026-11-07_00-45-59-counted", {
+        startedAt: "2026-11-06T23:45:59Z",
+        settings: { outcome: "done", video: { file: "screen.mp4", durationMs: 3054, frames: 127, averageFps: 41.6 } },
+    });
+    manifest("video-2026-11-06_20-50-38-older", {
+        startedAt: "2026-11-06T19:50:38Z",
+        settings: { outcome: "done", video: { file: "screen.mp4", durationMs: 10_310 } },
+    });
+    manifest("library-2026-11-06_20-50-36-frames", { startedAt: "2026-11-06T19:50:36Z" });
+    const [counted, older, stills] = listLibrary({ root });
+    expect(counted.movieFrames).toBe(127);
+    expect(framesCell(counted)).toBe("127");
+    expect(older.movieFrames).toBeUndefined();
+    expect(framesCell(older)).toBe("—");
+    expect(framesCell(stills)).toBe("0");
 });
 
 it("a short id is the stamp and the uuid's first block, and it opens the recording like the full id", () => {

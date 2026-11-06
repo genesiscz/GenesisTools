@@ -43,6 +43,7 @@ import {
     type EditorTab,
     ensureRecorderPart,
     findLiveEntry,
+    framesCell,
     listLibrary,
     liveRecordingRef,
     markerLabelProblem,
@@ -981,7 +982,7 @@ program
                 formatLocalDateTimeStamp(row.startedAt),
                 row.durationMs === undefined ? (row.movie ? "movie" : "—") : clock(row.durationMs),
                 row.outcome ?? "—",
-                String(row.frames),
+                framesCell(row),
                 row.edited ? "yes" : "",
             ]);
         }

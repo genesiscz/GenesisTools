@@ -13,10 +13,13 @@ import { z } from "zod";
 
 const { log } = logger.scoped("recorder-library");
 
-/** What a recorder writes into a manifest's `settings` when its recording ends: the outcome and the movie's length. */
+/**
+ * What a recorder writes into a manifest's `settings` when its recording ends: the outcome, the movie's length and
+ * its frame count.
+ */
 const recordingEndSchema = z.object({
     outcome: z.string().optional(),
-    video: z.object({ durationMs: z.number().optional() }).optional(),
+    video: z.object({ durationMs: z.number().optional(), frames: z.number().optional() }).optional(),
 });
 
 /** A library id with its whole uuid: `video-2026-11-06_20-50-38-0eb8dd5f-7cec-4561-9379-63bc9cbfa33b`. */
@@ -49,7 +52,10 @@ export interface LibraryRow {
     endedAt?: string;
     /** The movie the editor opens, when the recording has one. */
     movie?: string;
+    /** The stills a frames recording kept (0 for a movie: see `movieFrames`). */
     frames: number;
+    /** The frames a movie holds, when the recorder wrote the count. */
+    movieFrames?: number;
     /** `edit.json` exists: the recording was edited. */
     edited: boolean;
     /** How the recording ended (`done`, `failed`, `discarded`), when its recorder wrote it. */
@@ -136,6 +142,18 @@ export function liveRecordingRef(
     return { liveId: entry.id, id: basename(entry.folder), folder: entry.folder, ...(movie ? { movie } : {}) };
 }
 
+/**
+ * The FRAMES cell of `tools recorder list`: a movie's frame count, a frames recording's stills, or "—" for a movie
+ * whose count was never written (it read 0 for every movie, review 2026-11-07).
+ */
+export function framesCell(row: LibraryRow): string {
+    if (row.movieFrames !== undefined) {
+        return String(row.movieFrames);
+    }
+
+    return row.durationMs === undefined ? String(row.frames) : "—";
+}
+
 /** Every library recording, newest first. */
 export function listLibrary(options: string | { root?: string; limit?: number } = {}): LibraryRow[] {
     const { root = recordingsLibraryDir(), limit = Infinity } =
@@ -180,6 +198,7 @@ export function listLibrary(options: string | { root?: string; limit?: number } 
             edited: existsSync(join(folder, "edit.json")),
             ...(end.outcome ? { outcome: end.outcome } : {}),
             ...(end.video?.durationMs === undefined ? {} : { durationMs: end.video.durationMs }),
+            ...(end.video?.frames === undefined ? {} : { movieFrames: end.video.frames }),
             ...(end.outcome === "failed" && manifest.warnings[0] ? { reason: manifest.warnings[0] } : {}),
         });
     }
