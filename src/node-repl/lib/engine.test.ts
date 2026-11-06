@@ -595,7 +595,7 @@ it("reset interrupts an active turn and cancels turns queued before it", async (
     await engine.run("1");
     const running = engine.run("await new Promise(() => {})", 60000);
     const queued = engine.run("globalThis.shouldNotRun = true");
-    let reset: Promise<void> | undefined;
+    let reset: Promise<string[]> | undefined;
     // The worker is warm, so a few microtasks send the turn; one timer tick later it runs, and the reset meets it there.
     await Bun.sleep(20);
 

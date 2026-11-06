@@ -1050,6 +1050,34 @@ describe("recorder and editor toolsets", () => {
         }
     }, 30_000);
 
+    // NR41: js_reset right after recorder.start left an empty recording in the library without a word.
+    test("reset names an owned recording that stopped with no frames", async () => {
+        class EmptyRecorder extends FakeRecorder {
+            override async capture(request: CaptureRequest, signal?: AbortSignal): Promise<CaptureResult> {
+                mkdirSync(request.outDir, { recursive: true });
+                await new Promise<void>((resolve) =>
+                    signal?.addEventListener("abort", () => resolve(), { once: true })
+                );
+                return { startedAtMs: Date.now(), frames: [] };
+            }
+        }
+        const engine = new ReplEngine({
+            toolsets: ["recorder"],
+            recorder: { create: async () => new EmptyRecorder() },
+        });
+        try {
+            const started = await engine.run('const rec = await recorder.start({ displays: "all" }); rec.id', 10_000);
+            expect(started.error).toBeUndefined();
+            const notes = await engine.reset();
+            expect(notes).toHaveLength(1);
+            expect(notes[0]).toStartWith(
+                `the recording ${started.text} stopped with no frames; its folder stays in the library: `
+            );
+        } finally {
+            await engine.shutdown();
+        }
+    }, 30_000);
+
     // NR42: "Error: RpcError: no display 99999" and "no display -5" named neither the class once nor the real displays.
     test("an unknown display is refused once, naming the displays that are there", async () => {
         const engine = new ReplEngine({ toolsets: ["recorder"], recorder: { create: async () => new FakeRecorder() } });

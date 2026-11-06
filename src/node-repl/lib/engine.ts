@@ -7,6 +7,7 @@ import { TemporaryArtifacts } from "@genesiscz/utils/fs/temporary-artifacts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { displayRefusal, recorderStartSchema } from "@genesiscz/utils/repl/toolsets/recorder";
+import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { type LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
 import type { FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
 import { stripAnsi } from "@genesiscz/utils/string";
@@ -222,6 +223,8 @@ export class ReplEngine {
     private outputDir?: string;
     private cutTurns = 0;
     private readonly stderrTails = new WeakMap<ReplWorker, StderrTail>();
+    /** What the last stop of the owned recordings left behind; reset() answers it. */
+    private readonly stopNotes: string[] = [];
 
     constructor(private readonly options: ReplEngineOptions = {}) {
         this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
@@ -702,6 +705,15 @@ export class ReplEngine {
                 this.recordings.delete(recording);
             }
 
+            // A reset right after recorder.start left an empty recording in the library without a word (NR41).
+            for (const recording of owned) {
+                if ((readRecordingManifest(recording.folder)?.frames.length ?? 0) === 0) {
+                    const note = `the recording ${recording.id} stopped with no frames; its folder stays in the library: ${recording.folder}`;
+                    logger.warn({ recording: recording.id, folder: recording.folder }, note);
+                    this.stopNotes.push(note);
+                }
+            }
+
             const failures = [
                 ...new Set([
                     ...this.recordingFailures.splice(0),
@@ -723,9 +735,13 @@ export class ReplEngine {
         }
     }
 
-    /** A fresh worker on the next turn: every binding is gone, the toolsets are disposed and preloaded again. */
-    reset(): Promise<void> {
-        return this.shutdown("cancelled by js_reset; every binding is gone");
+    /**
+     * A fresh worker on the next turn: every binding is gone, the toolsets are disposed and preloaded again. Answers
+     * what the reset left behind that the caller should know (an owned recording that stopped with no frames).
+     */
+    async reset(): Promise<string[]> {
+        await this.shutdown("cancelled by js_reset; every binding is gone");
+        return this.stopNotes.splice(0);
     }
 
     /** Synchronous last resort (process exit): kills the worker without asking its toolsets. */

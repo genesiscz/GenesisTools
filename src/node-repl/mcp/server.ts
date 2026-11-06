@@ -189,9 +189,10 @@ export function createServer(engine: ReplEngine, options: { toolsetLines?: reado
                 const result = await engine.addModuleDir(path);
                 return { content: [{ type: "text", text: resultMessage(result) }], isError: !result.ok };
             }
-            case "js_reset":
-                await engine.reset();
-                return { content: [{ type: "text", text: "REPL reset; bindings cleared" }] };
+            case "js_reset": {
+                const notes = await engine.reset();
+                return { content: [{ type: "text", text: ["REPL reset; bindings cleared", ...notes].join("\n") }] };
+            }
             case "turn_ended":
                 return { content: [] };
             default:
