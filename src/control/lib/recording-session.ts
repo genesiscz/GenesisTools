@@ -683,7 +683,26 @@ export function cursorTrackPath(movie: string): string {
  * copies every stream (the audio tracks included), so a long recording joins in seconds at the recorder's quality.
  * `list` is a concat list file (`file '<path>'` per line).
  */
-export function concatCopyArgv({ list, output }: { list: string; output: string }): string[] {
+/** `-metadata` for each audio track: its title and handler name, so a player lists "Microphone", not "Track 2". */
+function audioTitleArgs(titles: string[] = []): string[] {
+    return titles.flatMap((title, index) => [
+        `-metadata:s:a:${index}`,
+        `title=${title}`,
+        `-metadata:s:a:${index}`,
+        `handler_name=${title}`,
+    ]);
+}
+
+export function concatCopyArgv({
+    list,
+    output,
+    audioTitles,
+}: {
+    list: string;
+    output: string;
+    /** One per audio track, in track order. */
+    audioTitles?: string[];
+}): string[] {
     return [
         "ffmpeg",
         "-hide_banner",
@@ -701,6 +720,7 @@ export function concatCopyArgv({ list, output }: { list: string; output: string 
         "0",
         "-c",
         "copy",
+        ...audioTitleArgs(audioTitles),
         "-movflags",
         "+faststart",
         output,
@@ -744,6 +764,7 @@ export function joinSegmentsArgv({
     output,
     audio = false,
     audioTracks = audio ? 1 : 0,
+    audioTitles,
 }: {
     inputs: string[];
     width: number;
@@ -752,6 +773,8 @@ export function joinSegmentsArgv({
     /** Every input has one audio track: it is joined too (resampled across the cuts), as AAC. */
     audio?: boolean;
     audioTracks?: number;
+    /** One per audio track, in track order. */
+    audioTitles?: string[];
 }): string[] {
     const w = Math.max(2, Math.floor(width / 2) * 2);
     const h = Math.max(2, Math.floor(height / 2) * 2);
@@ -798,6 +821,7 @@ export function joinSegmentsArgv({
             "aac",
             "-b:a",
             "192k",
+            ...audioTitleArgs(audioTitles?.slice(0, audioTracks)),
             "-fps_mode",
             "vfr",
             "-movflags",

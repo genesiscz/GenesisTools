@@ -4,11 +4,12 @@ import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runCountdown } from "@app/control/lib/peekaboo";
 import {
+    audioTrackTitles,
     cursorTrackPath,
-    ffmpegSegmentJoiner,
     type NativeRecorderOptions,
     nativeSegmentRecorder,
     SESSION_MOTION_THRESHOLD,
+    segmentJoiner,
 } from "@app/control/lib/recording-native";
 import { RecordingSession, type RecordingSessionEvent } from "@app/control/lib/recording-session";
 import { SessionRecorderControl } from "@app/control/lib/recording-session-control";
@@ -296,7 +297,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         directory: join(folder, `segments-${randomUUID().slice(0, 8)}`),
         output: movie,
         recorder: nativeSegmentRecorder(segmentRecorderOptions(options, folder)),
-        join: ffmpegSegmentJoiner,
+        join: segmentJoiner(audioTrackTitles(options.audio)),
         emit,
         maxSeconds: options.maxSeconds ?? VIDEO_RECORDING_MAX_SECONDS,
         // The rates `settings.set` changes while it records; a movie without an idle rate keeps its fps when still.

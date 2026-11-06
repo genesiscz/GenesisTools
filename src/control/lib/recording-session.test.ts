@@ -12,7 +12,12 @@ import { LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-rec
 import * as videoProbe from "@genesiscz/utils/video/probe";
 import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
 import * as captureRunner from "./capture-runner";
-import { type NativeRecorderOptions, nativeSegmentRecorder, segmentCaptureSpec } from "./recording-native";
+import {
+    audioTrackTitles,
+    type NativeRecorderOptions,
+    nativeSegmentRecorder,
+    segmentCaptureSpec,
+} from "./recording-native";
 import {
     concatCopyArgv,
     concatListLine,
@@ -915,6 +920,33 @@ describe("joining segments with their audio and cursor tracks", () => {
         expect(graph).toEndWith("[v0][a0_0][v1][a1_0]concat=n=2:v=1:a=1[out][aout0]");
         expect(argv).toContain("[aout0]");
         expect(argv[argv.indexOf("-c:a") + 1]).toBe("aac");
+    });
+
+    it("names each audio track as its source, in the order --audio gave them", () => {
+        // The defect: both tracks read "Core Media Audio", so a player showed Track 1 and Track 2 (review 2026-11-06).
+        const titles = audioTrackTitles(["mic", "system"]);
+        expect(titles).toEqual(["Microphone", "System audio"]);
+        const copied = concatCopyArgv({ list: "/s/list.txt", output: "/o.mp4", audioTitles: titles });
+        expect(copied.slice(copied.indexOf("-metadata:s:a:0"), copied.indexOf("-metadata:s:a:0") + 4)).toEqual([
+            "-metadata:s:a:0",
+            "title=Microphone",
+            "-metadata:s:a:0",
+            "handler_name=Microphone",
+        ]);
+        expect(copied).toContain("title=System audio");
+        expect(copied.at(-1)).toBe("/o.mp4");
+        const joined = joinSegmentsArgv({
+            inputs: ["/a.mp4", "/b.mp4"],
+            width: 1280,
+            height: 720,
+            output: "/o.mp4",
+            audioTracks: 2,
+            audioTitles: titles,
+        });
+        expect(joined[joined.indexOf("-metadata:s:a:1") + 1]).toBe("title=System audio");
+        expect(
+            concatCopyArgv({ list: "/s/list.txt", output: "/o.mp4" }).some((arg) => arg.startsWith("-metadata"))
+        ).toBe(false);
     });
 
     it("moves each segment's cursor samples by the length of the segments before it", () => {

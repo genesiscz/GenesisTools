@@ -250,7 +250,25 @@ async function playable(path: string): Promise<boolean> {
  * else is re-encoded at the first segment's size, keeping the audio when every segment has a track. The segments'
  * cursor tracks become `<output>.cursor.jsonl`.
  */
-export const ffmpegSegmentJoiner: SegmentJoiner = async ({ segments, output }) => {
+const AUDIO_TRACK_TITLES: Record<"system" | "mic", string> = { system: "System audio", mic: "Microphone" };
+
+/** The title of each audio track: ax-tool writes one track per `--audio` source, in the order given. */
+export function audioTrackTitles(sources: ("system" | "mic")[] = []): string[] {
+    return sources.map((source) => AUDIO_TRACK_TITLES[source]);
+}
+
+/** The joiner of a recording whose tracks are `audioTitles` (`audioTrackTitles(options.audio)`). */
+export function segmentJoiner(audioTitles: string[] = []): SegmentJoiner {
+    return (input) => joinSegments({ ...input, audioTitles });
+}
+
+export const ffmpegSegmentJoiner: SegmentJoiner = (input) => joinSegments({ ...input, audioTitles: [] });
+
+const joinSegments = async ({
+    segments,
+    output,
+    audioTitles,
+}: Parameters<SegmentJoiner>[0] & { audioTitles: string[] }): Promise<{ durationMs: number }> => {
     const facts = await Promise.all(segments.map((segment) => readMediaFacts({ input: segment.path })));
     const videos = facts.map(primaryVideo);
     const first = videos[0];
@@ -272,7 +290,8 @@ export const ffmpegSegmentJoiner: SegmentJoiner = async ({ segments, output }) =
         const list = `${output}.concat.txt`;
         await writeFile(list, `${segments.map((segment) => concatListLine(segment.path)).join("\n")}\n`);
         try {
-            await runVideoCommand({ command: concatCopyArgv({ list, output }), timeoutMs });
+            const titles = audioTitles.length === audioCounts[0] ? audioTitles : [];
+            await runVideoCommand({ command: concatCopyArgv({ list, output, audioTitles: titles }), timeoutMs });
         } finally {
             await rm(list, { force: true });
         }
@@ -284,6 +303,7 @@ export const ffmpegSegmentJoiner: SegmentJoiner = async ({ segments, output }) =
             height: probe.displayHeight,
             output,
             audioTracks: audioCounts[0] ?? 0,
+            audioTitles: audioTitles.length === audioCounts[0] ? audioTitles : [],
         });
         await runVideoCommand({ command: argv, timeoutMs });
     }
