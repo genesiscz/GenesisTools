@@ -76,7 +76,8 @@ export async function withMcp<T>(fn: (kit: Kit) => Promise<T>): Promise<T> {
         return await withKit(fn, { servers: [SERVER], timeoutMs: 60_000 });
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        log.warn({ err }, "wisprflow MCP call failed");
+        // The error goes up to the caller, which says it in one line; the stack belongs in the day log only.
+        log.debug({ err }, "wisprflow MCP call failed");
 
         if (/ECONNREFUSED|fetch failed|No enabled MCP server|401|403|Unauthorized|timed out/i.test(message)) {
             throw new McpUnavailableError(message);

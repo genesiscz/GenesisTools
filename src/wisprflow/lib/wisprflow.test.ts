@@ -9,9 +9,12 @@ import { applyFixes, buildVocabulary, findSuspectTerms, selectFixes } from "@gen
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { parseObservations, participantName } from "./evidence";
 import { completeTranscript, parseLive } from "./live";
+import * as local from "./local";
+import * as mcp from "./mcp";
 import { pageText, parseMcpTranscript } from "./mcp";
 import { mergeFrontmatter, writeGuarded } from "./output";
 import { renderMarkdown, renderSrt, showMarkdown } from "./render";
+import { loadMeeting } from "./source";
 import { fillSpeakerMentions, resolveSpeakers } from "./speakers";
 import type { Meeting } from "./types";
 
@@ -642,5 +645,27 @@ describe("Wispr Flow markdown", () => {
                 "",
             ].join("\n")
         );
+    });
+});
+
+describe("a meeting that is not on this Mac", () => {
+    test("the refusal says the local database lacks it before the MCP reason, with one period (R2-MC4)", async () => {
+        const available = spyOn(local, "localAvailable").mockReturnValue(true);
+        const missing = spyOn(local, "getLocalMeeting").mockReturnValue(undefined);
+        const remote = spyOn(mcp, "getMcpMeeting").mockRejectedValue(
+            new mcp.McpUnavailableError(
+                "No enabled MCP server matched: wisprflow. Run 'tools scripts servers' to see what exists."
+            )
+        );
+
+        try {
+            await expect(loadMeeting("nosuch", { source: "auto", transcript: true })).rejects.toThrow(
+                "meeting nosuch is not in the local Wispr Flow database, and Wispr Flow MCP is not reachable: No enabled MCP server matched: wisprflow. Run 'tools scripts servers' to see what exists. Check 'tools mcp-manager gateway status'."
+            );
+        } finally {
+            available.mockRestore();
+            missing.mockRestore();
+            remote.mockRestore();
+        }
     });
 });
