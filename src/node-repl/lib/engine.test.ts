@@ -211,6 +211,17 @@ describe("ReplEngine", () => {
         expect(imported.ok).toBe(true);
         expect(imported.text).toBe("7");
     });
+
+    // NR17: a folder that does not exist was answered "module directory registered".
+    it("refuses a module directory without a node_modules folder, and keeps the worker", async () => {
+        await engine.run("globalThis.keptAcrossRefusal = 1");
+        const missing = await engine.addModuleDir("/nonexistent/dir");
+        expect(missing.ok).toBe(false);
+        expect(missing.error).toBe(
+            "/nonexistent/dir holds no node_modules folder; pass the project folder whose node_modules has the package"
+        );
+        expect((await engine.run("globalThis.keptAcrossRefusal")).text).toBe("1");
+    });
 });
 
 it("JSON-line transport reuses its worker and cancels without replay", async () => {

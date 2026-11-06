@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -601,6 +601,17 @@ export class ReplEngine {
 
     /** Same wall clock as a turn: a registration nobody answers must not hang the caller forever. */
     async addModuleDir(dir: string): Promise<ReplResult> {
+        // A folder that does not exist was "registered" and stayed in every later worker (NR17).
+        if (!existsSync(join(dir, "node_modules"))) {
+            return {
+                ok: false,
+                text: "",
+                images: [],
+                error: `${dir} holds no node_modules folder; pass the project folder whose node_modules has the package`,
+                durationMs: 0,
+            };
+        }
+
         this.moduleDirs.push(dir);
         const started = performance.now();
         const ready = await this.ensureWorker();
