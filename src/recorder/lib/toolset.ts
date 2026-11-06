@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { RecordingTarget } from "@app/control/lib/recording-targets";
@@ -73,7 +73,7 @@ import {
     writeSubtitles,
 } from "./edit";
 import { stepDisplaySwitch, switchDisplay } from "./frames-movie";
-import { EDITOR_TABS, type EditorTab, ensureRecorderPart, listLibrary } from "./library";
+import { EDITOR_TABS, type EditorTab, ensureRecorderPart, type LibraryRow, listLibrary } from "./library";
 import {
     chaptersOf,
     clickGroupsOf,
@@ -997,8 +997,8 @@ export const moviesApi = defineApi({
             name: "list",
             params: z.object({ limit: z.number().int().positive().optional() }).strict(),
             result: z.unknown(),
-            resultName: "{ id, title, folder, startedAt, movie?, edited }[]",
-            doc: "The recordings library, newest first.",
+            resultName: "{ id, title, folder, startedAt, seconds, bytes, movie?, edited }[]",
+            doc: "The recordings library, newest first. `seconds` is the recording's length (null while it runs); `bytes` is its movie's size (null without a movie).",
             effect: "read",
         }),
         defineMethod({
@@ -1111,6 +1111,13 @@ export function silentMovieReason(facts: MediaFacts | undefined, action: string)
     }
 
     return `this movie has no sound to ${action}: its video ${basename(facts.path)} has no audio track`;
+}
+
+/** A library row with its length and its movie's size: an agent that wants a short recording had to open each one (NR33). */
+export function withLength(row: LibraryRow): LibraryRow & { seconds: number | null; bytes: number | null } {
+    const seconds = row.endedAt ? Math.round((Date.parse(row.endedAt) - Date.parse(row.startedAt)) / 1000) : null;
+    const bytes = row.movie && existsSync(row.movie) ? statSync(row.movie).size : null;
+    return { ...row, seconds, bytes };
 }
 
 /**
@@ -2299,7 +2306,7 @@ export class MoviesToolset extends ReplToolset {
     async bootstrap(ctx: ToolsetContext): Promise<Record<string, unknown>> {
         return {
             movies: {
-                list: (options: { limit?: number } = {}) => listLibrary({ limit: options.limit ?? 20 }),
+                list: (options: { limit?: number } = {}) => listLibrary({ limit: options.limit ?? 20 }).map(withLength),
                 open: (recording: string) => serviceRoutedMovie(new Movie(recording, ctx), movieMethods),
                 record: (options: RecordOptions = {}) => record({ options, ctx, deps: { ...REAL_DEPS, ...this.deps } }),
                 demo: (options: z.input<typeof demoParamsSchema> & { steps: DemoStep[] }) => recordDemo(options, ctx),

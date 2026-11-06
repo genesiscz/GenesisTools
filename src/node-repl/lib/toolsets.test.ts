@@ -43,6 +43,7 @@ import {
     MoviesToolset,
     moviesApi,
     silentMovieReason,
+    withLength,
 } from "@app/recorder/lib/toolset";
 import { RecordingStartCancelled, recordVideo } from "@app/recorder/lib/video-recording";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
@@ -416,6 +417,25 @@ describe("the clicks of a movie, grouped", () => {
         );
         await expect(new Movie(bare).clickGroups()).rejects.toThrow("no cursor track");
     });
+});
+
+// NR33: movies.list() gave no length and no size, so an agent that wanted a short recording opened each one.
+test("a library row carries its length and its movie's size", () => {
+    const folder = mkdtempSync(join(tmpdir(), "gt-library-length-"));
+    const movie = join(folder, "screen.mp4");
+    writeFileSync(movie, "x".repeat(1234));
+    const row = {
+        id: "rec",
+        title: "Rec",
+        folder,
+        startedAt: "2026-11-05T10:00:00.000Z",
+        endedAt: "2026-11-05T10:01:30.400Z",
+        movie,
+        frames: 0,
+        edited: false,
+    };
+    expect(withLength(row)).toMatchObject({ seconds: 90, bytes: 1234 });
+    expect(withLength({ ...row, endedAt: undefined, movie: undefined })).toMatchObject({ seconds: null, bytes: null });
 });
 
 // NR37: removeLane('zooms') removed the built-in zoom lane, and the movie had no lane for zooms after it.
@@ -1528,6 +1548,25 @@ describe("live recording settings from the movies and meetings toolsets", () => 
     });
 
     // NR20: the handle had no id, a confirm's token had no door back, and an unknown config path printed nothing.
+    // NR33: meetings.list() gave the start only, so an agent that wanted a short meeting opened each one.
+    test("meetings: list gives each meeting's length in seconds, null while it has no end", async () => {
+        const store = new MeetingStore();
+        const ended = await store.create(
+            { title: "Short", start: "2026-11-02T18:00:00.000Z", end: "2026-11-02T18:25:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const running = await store.create(
+            { title: "Running", start: "2026-11-02T19:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: { list(): Array<{ id: string; seconds: number | null }> };
+        };
+        const rows = meetings.list();
+        expect(rows.find((row) => row.id === ended.id)?.seconds).toBe(1500);
+        expect(rows.find((row) => row.id === running.id)?.seconds).toBeNull();
+    });
+
     test("meetings: a handle names its meeting, a confirm is undone with its token, and an unknown config path is refused", async () => {
         const record = await new MeetingStore().create(
             { title: "Undo", start: "2026-11-02T17:00:00.000Z", createdBy: "new" },

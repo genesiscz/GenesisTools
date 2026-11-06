@@ -46,9 +46,9 @@ const list = defineMethod({
     name: "list",
     params: z.object({ project: z.string().optional() }).strict(),
     result: z.unknown(),
-    resultName: "{ id, title, start, project, items, open }[]",
+    resultName: "{ id, title, start, seconds, project, items, open }[]",
     effect: "read",
-    doc: "The stored meetings, newest first, optionally of one project. `open` counts the suggested items nobody decided yet.",
+    doc: "The stored meetings, newest first, optionally of one project. `seconds` is the meeting's length (null while it has no end); `open` counts the suggested items nobody decided yet.",
 });
 const open = defineMethod({
     name: "open",
@@ -510,6 +510,10 @@ export class MeetingsToolset extends ReplToolset {
                             id: record.id,
                             title: record.title,
                             start: record.start,
+                            // An agent that wants a short meeting had to open each one (NR33).
+                            seconds: record.end
+                                ? Math.round((Date.parse(record.end) - Date.parse(record.start)) / 1000)
+                                : null,
                             project: record.project ?? null,
                             items: record.items.length,
                             open: record.items.filter((item) => item.status === "suggested").length,
