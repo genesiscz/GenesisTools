@@ -134,6 +134,9 @@ export interface VideoRecordingResult {
     movie?: string;
     cursorTrack?: string;
     durationMs?: number;
+    /** Frames the movie holds and its average rate (ax-tool's capturedFrames over the movie's length). */
+    frames?: number;
+    averageFps?: number;
     warnings: string[];
     /** The start failed before it recorded anything, so its folder went to the GenesisTools trash. */
     removed?: boolean;
@@ -266,6 +269,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     const warnings: string[] = [];
     let durationMs: number | undefined;
     let segments = 0;
+    let frameStats: { frames?: number; averageFps?: number } = {};
     let live: LiveRecordingServer | undefined;
     let control: SessionRecorderControl | undefined;
     const emit = (event: RecordingSessionEvent) => {
@@ -284,6 +288,10 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         if (event.event === "done") {
             durationMs = event.durationMs;
             segments = event.segments;
+            frameStats = {
+                ...(event.frames === undefined ? {} : { frames: event.frames }),
+                ...(event.averageFps === undefined ? {} : { averageFps: event.averageFps }),
+            };
         }
 
         // A session pauses at its limit and waits for its host to decide; this recording's limit is the stop.
@@ -400,7 +408,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         endedAt: new Date().toISOString(),
         settings: {
             ...manifest.settings,
-            video: existsSync(movie) ? { file: "screen.mp4", durationMs } : undefined,
+            video: existsSync(movie) ? { file: "screen.mp4", durationMs, ...frameStats } : undefined,
             outcome,
             markers: activeControl.markers,
         },
@@ -425,6 +433,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         movie: existsSync(movie) ? movie : undefined,
         cursorTrack: existsSync(cursorTrack) ? cursorTrack : undefined,
         durationMs,
+        ...frameStats,
         warnings,
         ...(removed ? { removed } : {}),
         ...(cameraWarning ? { cameraMissing: true } : {}),

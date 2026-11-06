@@ -191,10 +191,14 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 sessionDir = result.sessionDir;
                 const envelope = result.capture as {
                     error?: unknown;
-                    data?: { stats?: { durationMs?: unknown } };
+                    data?: { stats?: { durationMs?: unknown; capturedFrames?: unknown } };
                 } | null;
                 const reported = envelope?.data?.stats?.durationMs;
                 const durationMs = typeof reported === "number" && reported > 0 ? reported : undefined;
+                // A movie holds every frame ax-tool captured (capturedFrames: 152 frames in a 5 s movie, checked with
+                // ffprobe); its keptFrames and droppedFrames are the stills of a frames recording, not the movie's.
+                const captured = envelope?.data?.stats?.capturedFrames;
+                const frameStats = typeof captured === "number" ? { frames: captured } : {};
                 const endedBy = signal.aborted ? "stop" : result.captureFailed ? "failure" : "deadline";
                 const error =
                     typeof envelope?.error === "string" ? envelope.error : result.warnings.at(-1) || undefined;
@@ -202,7 +206,7 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 // time, so a failed run's movie is probed whatever ended it: an unfinished one would break every save.
                 const ok = existsSync(output) && (!result.captureFailed || (await playable(output)));
                 if (!result.captureFailed) {
-                    return { ok, endedBy, durationMs };
+                    return { ok, endedBy, durationMs, ...frameStats };
                 }
 
                 const code = error ? refusalCode(error) : undefined;

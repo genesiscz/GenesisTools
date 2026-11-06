@@ -73,8 +73,24 @@ export type RecordingSessionEvent =
           limitMs: number;
       }
     | { event: "elapsed"; elapsedMs: number; limitMs: number }
-    | { event: "segment"; index: number; path: string; durationMs: number; target: RecordingTarget }
-    | { event: "done"; path: string; durationMs: number; segments: number }
+    | {
+          event: "segment";
+          index: number;
+          path: string;
+          durationMs: number;
+          target: RecordingTarget;
+          frames?: number;
+      }
+    | {
+          event: "done";
+          path: string;
+          durationMs: number;
+          segments: number;
+          /** Frames the movie holds, when every run reported them. */
+          frames?: number;
+          /** Frames per second over the movie: under the asked rate when frames were dropped or the screen was still. */
+          averageFps?: number;
+      }
     | { event: "discarded" }
     /** The recorder is not running yet for a known slow reason (it compiles after an update); `starting` stays. */
     | { event: "preparing"; message: string }
@@ -99,6 +115,8 @@ export interface SegmentResult {
     endedBy: SegmentEnd;
     /** The recorder's own measure of the movie, when it reported one. */
     durationMs?: number;
+    /** Frames written into the movie, when the recorder reported them. */
+    frames?: number;
     error?: string;
     /** A stable code for a refusal a host handles itself (`screen-recording-denied`). */
     code?: string;
@@ -128,6 +146,21 @@ export interface FinishedSegment {
     path: string;
     durationMs: number;
     target: RecordingTarget;
+    frames?: number;
+}
+
+/** The frames of the whole movie and its average rate: undefined unless every segment reported its frames. */
+export function movieFrameStats(
+    segments: FinishedSegment[],
+    durationMs: number
+): { frames: number; averageFps: number } | undefined {
+    if (segments.length === 0 || segments.some((segment) => segment.frames === undefined)) {
+        return undefined;
+    }
+
+    const frames = segments.reduce((sum, segment) => sum + (segment.frames ?? 0), 0);
+    const averageFps = durationMs > 0 ? Math.round((frames / (durationMs / 1000)) * 10) / 10 : 0;
+    return { frames, averageFps };
 }
 
 /** Joins finished segments into `output`, one H.264 MP4, and returns the joined movie's length. */
@@ -479,6 +512,7 @@ export class RecordingSession {
             path: run.path,
             durationMs: result.durationMs ?? wallMs,
             target: run.target,
+            ...(result.frames === undefined ? {} : { frames: result.frames }),
         };
         this.segments.push(segment);
         // The longer of the movie and the wall time this session saw: the recorder's deadline runs from its own launch,
@@ -549,7 +583,13 @@ export class RecordingSession {
 
         await this.removeDirectory();
         log.info({ output: this.options.output, segments: ordered.length, durationMs }, "recording saved");
-        this.options.emit({ event: "done", path: this.options.output, durationMs, segments: ordered.length });
+        this.options.emit({
+            event: "done",
+            path: this.options.output,
+            durationMs,
+            segments: ordered.length,
+            ...movieFrameStats(ordered, durationMs),
+        });
         this.end("done");
     }
 

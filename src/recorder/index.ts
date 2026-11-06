@@ -357,9 +357,10 @@ withStartOptions(
         if (flags.json) {
             out.print(`${SafeJSON.stringify({ event: "result", ...result })}\n`);
         } else {
+            const rate = result.averageFps === undefined ? "" : ` (${result.frames} frames, ${result.averageFps} fps)`;
             out.println(
                 result.movie
-                    ? `${result.outcome}: ${result.movie}`
+                    ? `${result.outcome}: ${result.movie}${rate}`
                     : result.removed
                       ? `failed, nothing was recorded: ${result.warnings[0] ?? "the capture did not start"}`
                       : `${result.outcome}: ${result.folder}`

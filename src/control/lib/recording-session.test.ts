@@ -103,7 +103,15 @@ interface FakeRun {
  * A recorder that writes a small file per run and finishes it when the session aborts the run. A run aborted before
  * it armed writes no movie, as the real recorder cancelled while arming does.
  */
-function fakeRecorder(options: { failFirst?: boolean; armLater?: boolean; prepares?: boolean } = {}) {
+function fakeRecorder(
+    options: {
+        failFirst?: boolean;
+        armLater?: boolean;
+        prepares?: boolean;
+        /** What each run reports when a stop or pause ends it (ax-tool's capturedFrames). */
+        frames?: { frames: number };
+    } = {}
+) {
     const runs: FakeRun[] = [];
     const recorder: SegmentRecorder = {
         record({ target, rates, output, maxSeconds, signal, onRecording, onPreparing }) {
@@ -135,7 +143,7 @@ function fakeRecorder(options: { failFirst?: boolean; armLater?: boolean; prepar
                     "abort",
                     () =>
                         void (armed
-                            ? end({ ok: true, endedBy: "stop", durationMs: 1000 })
+                            ? end({ ok: true, endedBy: "stop", durationMs: 1000, ...options.frames })
                             : end({ ok: false, endedBy: "stop", error: "cancelled while arming" }, false)),
                     { once: true }
                 );
@@ -705,6 +713,21 @@ describe("RecordingSession", () => {
         await Bun.sleep(0);
         expect(shorter.runs).toHaveLength(1);
         expect(states()).toEqual(["recording:user:app", "paused:limit:app"]);
+    });
+
+    it("the done event says how many frames the movie holds and its average rate", async () => {
+        // The defect: a 60 fps movie that got 42 fps said nothing of it (review 2026-11-06).
+        const { recorder } = fakeRecorder({ frames: { frames: 50 } });
+        const recording = session(recorder, { maxSeconds: 60 });
+        await recording.start();
+        clock += 1000;
+        await recording.command({ cmd: "pause" });
+        await recording.command({ cmd: "resume" });
+        clock += 1000;
+        await recording.command({ cmd: "stop" });
+        expect(await recording.finished).toBe("done");
+        // Two runs of 1000 ms with 50 frames each: 100 frames over 2 s.
+        expect(events.find((event) => event.event === "done")).toMatchObject({ frames: 100, averageFps: 50 });
     });
 
     it("a first run that fails without a movie ends the session with the refusal code", async () => {
