@@ -9,7 +9,7 @@ import type { FlockState } from "@genesiscz/utils/fs/flock";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { awaitStart, startGatePath, stopPassedChild, sweepStartGates } from "@genesiscz/utils/process/start-gate";
-import { checkProject, type EditFacts, fixOps } from "@genesiscz/utils/recording-editor/check";
+import { checkProject, type EditFacts, type EditIssue, fixOps } from "@genesiscz/utils/recording-editor/check";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { placedShape } from "@genesiscz/utils/recording-editor/item-ops";
 import { EFFECT_KINDS } from "@genesiscz/utils/recording-editor/lanes";
@@ -190,8 +190,9 @@ const movieMethods = [
         name: "fix",
         params: z.object({}),
         result: z.unknown(),
-        resultName: "Edit (the fields info() lists) plus fixed: the messages of the issues it fixed",
-        doc: "Runs every fix check() offers (each issue's action.ops: remove what never shows, move an edit marker a cut hides to the nearest kept moment, lengthen what is too short to read, move a text off another) in one save and one undo() step. Issues with no fix (a missing transcript or music file) stay; check() again lists them.",
+        resultName:
+            "Edit (the fields info() lists) plus fixed (the issues check() no longer finds) and unchanged (the issues whose action changed nothing)",
+        doc: "Runs every fix check() offers (each issue's action.ops: remove what never shows, move an edit marker a cut hides to the nearest kept moment, lengthen what is too short to read, move a text off another) in one save and one undo() step. Issues with no fix (a missing transcript or music file) stay; check() again lists them. An issue its action did not remove is reported as no change, never as fixed.",
         effect: "reversible",
     }),
     edit("split", z.object({ at: sourceTimeSchema }), "Splits the clip at a source time.", ["at"]),
@@ -1112,6 +1113,22 @@ export function silentMovieReason(facts: MediaFacts | undefined, action: string)
     return `this movie has no sound to ${action}: its video ${basename(facts.path)} has no audio track`;
 }
 
+/**
+ * Which fixable issues an edit fixed: those check() no longer finds after it. An action that changed nothing used to be
+ * counted as fixed (NR43); those are `unchanged`, reported as "no change".
+ */
+export function fixOutcome(
+    before: readonly EditIssue[],
+    after: readonly EditIssue[]
+): { fixed: string[]; unchanged: string[] } {
+    const remaining = new Set(after.map((issue) => issue.message));
+    const fixable = before.filter((issue) => issue.action).map((issue) => issue.message);
+    return {
+        fixed: fixable.filter((message) => !remaining.has(message)),
+        unchanged: fixable.filter((message) => remaining.has(message)),
+    };
+}
+
 export class Movie {
     /** `ctx`: the worker's scratch folder and `show`, for still(); absent outside a REPL. */
     constructor(
@@ -1141,15 +1158,24 @@ export class Movie {
 
     async fix() {
         const opened = await openProject(this.recording);
-        const { ops, fixed } = fixOps(opened.project, facts(opened));
+        const before = checkProject(opened.project, facts(opened));
+        const { ops } = fixOps(opened.project, facts(opened));
 
         if (ops.length === 0) {
             return { ...(await this.info()), fixed: [], warnings: ["check() found nothing that fix() can fix"] };
         }
 
-        log.debug({ recording: this.recording, ops: ops.length, fixed: fixed.length }, "fixing what check found");
+        log.debug({ recording: this.recording, ops: ops.length }, "fixing what check found");
         const edited = await this.change(ops);
-        return { ...edited, fixed };
+        const after = await openProject(this.recording);
+        const outcome = fixOutcome(before, checkProject(after.project, facts(after)));
+        const warnings = [
+            ...(edited.warnings ?? []),
+            ...(outcome.unchanged.length > 0
+                ? [`no change: fix() ran the action of ${outcome.unchanged.join("; ")}, and check() still finds it`]
+                : []),
+        ];
+        return { ...edited, ...outcome, ...(warnings.length > 0 ? { warnings } : {}) };
     }
 
     private async change(ops: EditOp[]) {

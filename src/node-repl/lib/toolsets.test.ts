@@ -35,7 +35,14 @@ import {
     refuseTargetOffScreen,
     type StartRequest,
 } from "@app/recorder/lib/start-options";
-import { Movie, type MovieRecorderDeps, MoviesToolset, moviesApi, silentMovieReason } from "@app/recorder/lib/toolset";
+import {
+    fixOutcome,
+    Movie,
+    type MovieRecorderDeps,
+    MoviesToolset,
+    moviesApi,
+    silentMovieReason,
+} from "@app/recorder/lib/toolset";
 import { RecordingStartCancelled, recordVideo } from "@app/recorder/lib/video-recording";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -407,6 +414,22 @@ describe("the clicks of a movie, grouped", () => {
             wholeProject({ video: join(folder, "bare.mp4"), durationUs: 1_000_000, width: 1, height: 1 })
         );
         await expect(new Movie(bare).clickGroups()).rejects.toThrow("no cursor track");
+    });
+});
+
+// NR43: fix() counted an action that changed nothing as fixed.
+test("fix() reports an issue check() still finds after its action as unchanged, never as fixed", () => {
+    const issue = (message: string, fixable = true) => ({
+        severity: "fix" as const,
+        item: "text",
+        message,
+        ...(fixable ? { action: { label: "fix it", ops: [] } } : {}),
+    });
+    const before = [issue("text t1 is too short to read"), issue("zoom z1 never shows"), issue("no transcript", false)];
+    const after = [issue("text t1 is too short to read"), issue("no transcript", false)];
+    expect(fixOutcome(before, after)).toEqual({
+        fixed: ["zoom z1 never shows"],
+        unchanged: ["text t1 is too short to read"],
     });
 });
 
