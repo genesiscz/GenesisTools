@@ -73,7 +73,7 @@ import {
     withStartOptions,
 } from "./lib/start-options";
 import { Movie, movieDemoDriver } from "./lib/toolset";
-import { recordVideo, tracksPointer, videoDoneLine } from "./lib/video-recording";
+import { announcedCountdown, recordVideo, tracksPointer, videoDoneLine } from "./lib/video-recording";
 
 const { log } = logger.scoped("recorder");
 
@@ -251,6 +251,11 @@ async function settleFramesEnumFlags(flags: StartFlags): Promise<boolean> {
     return true;
 }
 
+/** `start --json`: the countdown's length before it runs, so nothing on stdout for those seconds is explained. */
+function printCountdownEvent(seconds: number): void {
+    out.print(`${SafeJSON.stringify({ event: "countdown", seconds })}\n`);
+}
+
 /** `tools recorder start --frames`: the REPL's `recorder.start()` from the command line. */
 async function startFrames(flags: StartFlags): Promise<void> {
     if (!(await settleFramesEnumFlags(flags))) {
@@ -261,6 +266,7 @@ async function startFrames(flags: StartFlags): Promise<void> {
     const result = await recordFrames({
         start,
         countdownSeconds: countdownSecondsOf(flags.countdown),
+        ...(flags.json ? { countdown: announcedCountdown(printCountdownEvent) } : {}),
         onStart: (recording) => {
             if (flags.json) {
                 out.print(`${SafeJSON.stringify({ event: "started", id: recording.id, folder: recording.folder })}\n`);
@@ -339,6 +345,7 @@ withStartOptions(
         const result = await recordVideo({
             ...request,
             target,
+            ...(flags.json ? { countdown: announcedCountdown(printCountdownEvent) } : {}),
             onStarted: (recording) => {
                 if (flags.json) {
                     out.print(`${SafeJSON.stringify({ event: "started", ...recording })}\n`);

@@ -16,7 +16,7 @@ import {
     refuseMissingWindowOrApp,
     refuseTargetOffScreen,
 } from "./start-options";
-import { recordedNothing, segmentRecorderOptions, videoDoneLine } from "./video-recording";
+import { announcedCountdown, recordedNothing, segmentRecorderOptions, videoDoneLine } from "./video-recording";
 
 const folder = "/tmp/recording";
 const repo = join(moduleDir(import.meta), "..", "..", "..");
@@ -229,6 +229,18 @@ describe("a window or app movie", () => {
         );
         expect(() => refuseTargetOffScreen({ kind: "display", screenIndex: 0 }, screens)).not.toThrow();
         expect(() => refuseTargetOffScreen(window, screens)).not.toThrow();
+    });
+
+    it("a countdown is announced before it runs, so a --json reader knows why nothing records yet", async () => {
+        const calls: string[] = [];
+        const countdown = announcedCountdown(
+            (seconds) => calls.push(`announce ${seconds}`),
+            async (seconds) => {
+                calls.push(`show ${seconds}`);
+            }
+        );
+        await countdown(2);
+        expect(calls).toEqual(["announce 2", "show 2"]);
     });
 
     it("the done lines count one frame as one frame", () => {

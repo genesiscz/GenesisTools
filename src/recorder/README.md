@@ -16,8 +16,9 @@ tools recorder start [--audio system,mic] [--mic-device UID] [--title T] [--max-
                                                  # area off every display is refused, naming the displays. A window
                                                  # or app movie has no audio and no cursor track (--audio is refused
                                                  # with them). --json prints events: preparing (the one-time ax-tool
-                                                 # build), started (id, folder, liveId), warning (another recording
-                                                 # runs), state, result. --camera asks the recorder face for the
+                                                 # build), countdown (its seconds, before it runs), started (id,
+                                                 # folder, liveId), warning (another recording runs), state, result.
+                                                 # --camera asks the recorder face for the
                                                  # camera: a refusal fails the start, a missing camera movie exits 1.
                                                  # A start that records nothing leaves no folder (it goes to the
                                                  # GenesisTools trash) and prints why

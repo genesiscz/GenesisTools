@@ -120,6 +120,20 @@ export const showRecorderCountdown = (seconds: number) =>
         text: { who: "recorder", line: "switch to what you record", overlay: "switch to what you record" },
     });
 
+/**
+ * A countdown that first tells `announce` how long it runs: `start --json` prints it as a `countdown` event, so a
+ * reader knows why nothing records yet (it saw nothing for those seconds, review 2026-11-07).
+ */
+export function announcedCountdown(
+    announce: (seconds: number) => void,
+    show: (seconds: number) => Promise<void> = showRecorderCountdown
+): (seconds: number) => Promise<void> {
+    return async (seconds) => {
+        announce(seconds);
+        await show(seconds);
+    };
+}
+
 /** The caller that started this recording gave up waiting before it could start (its start gate was closed). */
 export class RecordingStartCancelled extends Error {
     constructor() {
