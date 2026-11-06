@@ -137,8 +137,10 @@ export const teamsPlatform: MeetingPlatform = {
         log.debug({ title: target.title, exitCode: result.exitCode }, "ms-teams attendance");
 
         if (!result.success) {
+            // ms-teams says why on stdout ("Could not resolve a single meeting chat. Pass --id."), not on stderr.
+            const reason = (result.stderr.trim() || result.stdout.trim()).split("\n")[0];
             throw new Error(
-                `${toolCommand("ms-teams", "meetings", "attendance")} failed: ${result.stderr || `exit ${result.exitCode}`}`
+                `${toolCommand("ms-teams", "meetings", "attendance")} "${target.title}" failed: ${reason || `exit ${result.exitCode}`}`
             );
         }
 
