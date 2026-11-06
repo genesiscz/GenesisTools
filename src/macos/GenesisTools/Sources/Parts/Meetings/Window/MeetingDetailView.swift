@@ -270,6 +270,7 @@ struct NoTranscriptSource {
     static let code = "no-transcript-source"
 }
 
+/// A pane's read state in one place: the content, a spinner with what is being read, or the error with Retry.
 struct LoadablePane<Value: Equatable, Content: View>: View {
     let state: Loadable<Value>
     let reading: String
