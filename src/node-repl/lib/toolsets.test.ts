@@ -35,7 +35,7 @@ import {
     refuseTargetOffScreen,
     type StartRequest,
 } from "@app/recorder/lib/start-options";
-import { Movie, type MovieRecorderDeps, MoviesToolset, moviesApi } from "@app/recorder/lib/toolset";
+import { Movie, type MovieRecorderDeps, MoviesToolset, moviesApi, silentMovieReason } from "@app/recorder/lib/toolset";
 import { RecordingStartCancelled, recordVideo } from "@app/recorder/lib/video-recording";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
@@ -407,6 +407,24 @@ describe("the clicks of a movie, grouped", () => {
             wholeProject({ video: join(folder, "bare.mp4"), durationUs: 1_000_000, width: 1, height: 1 })
         );
         await expect(new Movie(bare).clickGroups()).rejects.toThrow("no cursor track");
+    });
+});
+
+// NR36 and NR34: denoise() on a movie without sound saved, check() said ok and every export failed; mute(0) did nothing.
+describe("an edit of the sound on a movie without sound", () => {
+    const video = (types: string[]) => ({
+        path: "/movies/demo/screen.mp4",
+        bytes: 1,
+        durationSec: 2,
+        streams: types.map((type) => ({ type, codec: "x", attachedPicture: false })),
+    });
+
+    test("is refused with the reason when the video has no audio track, and allowed when it has one or is unknown", () => {
+        expect(silentMovieReason(video(["video"]), "clean")).toBe(
+            "this movie has no sound to clean: its video screen.mp4 has no audio track"
+        );
+        expect(silentMovieReason(video(["video", "audio"]), "clean")).toBeUndefined();
+        expect(silentMovieReason(undefined, "mute")).toBeUndefined();
     });
 });
 

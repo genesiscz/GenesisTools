@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { RecordingTarget } from "@app/control/lib/recording-targets";
 import { assertReach, defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
@@ -53,6 +53,7 @@ import { recorderSetSchema, settingsPatchOf } from "@genesiscz/utils/repl/toolse
 import { readRecordingManifest, renameRecording } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { hasAudio, type MediaFacts, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
 import { cameraRefusal, recorderFaceState } from "./camera-recorder";
@@ -330,9 +331,12 @@ const movieMethods = [
         'Marks every recorded click from `from` to `to` (source seconds; the whole recording by default) with a shape for `seconds` (1.2): kind "circle" (default) round the point, "box", or "arrow" pointing at it. A double click is one mark; a click that already has a mark of that kind is left alone, so running it again adds nothing. One undo takes them all back. Throws when the range has no clicks.'
     ),
     edit("volume", z.object({ volume: z.number().min(0).max(2) }), "Sets the volume, 0 to 2.", ["volume"]),
-    edit("mute", z.object({ track: z.number().int().nonnegative() }), "Mutes an audio track (0 is the first).", [
-        "track",
-    ]),
+    edit(
+        "mute",
+        z.object({ track: z.number().int().nonnegative() }),
+        "Mutes an audio track (0 is the first); a movie whose video has no audio track is refused.",
+        ["track"]
+    ),
     edit("unmute", z.object({ track: z.number().int().nonnegative() }), "Unmutes an audio track.", ["track"]),
     edit("apply", z.object({ ops: z.array(editOpSchema).min(1) }), "Several ops at once, saved once.", ["ops"]),
     edit(
@@ -647,7 +651,7 @@ const movieMethods = [
                 trackReductionDb: z.record(z.string().regex(/^\d+$/), z.number().min(1).max(40)).optional(),
             })
             .strict(),
-        "Turns the room and fan noise of the sound down on export (ffmpeg afftdn): reductionDb 12 by default (8 is gentle, 20+ starts to blur words), on every audio track or only tracks (0 is the first; a screen recording's microphone is its last); trackReductionDb { 1: 20 } gives a track (here the second) its own strength (merged with earlier ones). The export renders from a cleaned copy of the movie, made once per setting under .denoise/ beside it. enabled: false takes it away."
+        "Turns the room and fan noise of the sound down on export (ffmpeg afftdn): reductionDb 12 by default (8 is gentle, 20+ starts to blur words), on every audio track or only tracks (0 is the first; a screen recording's microphone is its last); trackReductionDb { 1: 20 } gives a track (here the second) its own strength (merged with earlier ones). The export renders from a cleaned copy of the movie, made once per setting under .denoise/ beside it. enabled: false takes it away. A movie whose video has no audio track is refused."
     ),
     edit(
         "normalize",
@@ -1095,6 +1099,19 @@ function recordedWithoutSound(opened: { path: string; project: EditProject }): b
     return Array.isArray(audio.sources) && audio.sources.length === 0;
 }
 
+/**
+ * Why an edit of the sound cannot work on a movie whose video has no audio track, or undefined. denoise() saved such an
+ * edit, check() said ok and every export then failed (NR36); mute(0) saved an edit with no effect (NR34). Unknown facts
+ * (a probe that failed) refuse nothing.
+ */
+export function silentMovieReason(facts: MediaFacts | undefined, action: string): string | undefined {
+    if (!facts || hasAudio(facts)) {
+        return undefined;
+    }
+
+    return `this movie has no sound to ${action}: its video ${basename(facts.path)} has no audio track`;
+}
+
 export class Movie {
     /** `ctx`: the worker's scratch folder and `show`, for still(); absent outside a REPL. */
     constructor(
@@ -1290,7 +1307,22 @@ export class Movie {
     }
 
     async mute(track: number) {
+        await this.requireSound("mute");
         return this.change([{ op: "mute", track, muted: true }]);
+    }
+
+    /** Throws `silentMovieReason` for a movie whose video has no audio track; a probe that fails refuses nothing. */
+    private async requireSound(action: string): Promise<void> {
+        const opened = await openProject(this.recording);
+        const facts = await readMediaFacts({ input: opened.project.source.video }).catch((error: unknown) => {
+            log.debug({ error, recording: this.recording }, "no media facts to check the movie's sound against");
+            return undefined;
+        });
+        const reason = silentMovieReason(facts, action);
+
+        if (reason) {
+            throw new Error(reason);
+        }
     }
 
     async unmute(track: number) {
@@ -1431,6 +1463,10 @@ export class Movie {
             trackReductionDb?: Record<string, number>;
         } = {}
     ) {
+        if (options.enabled !== false) {
+            await this.requireSound("clean");
+        }
+
         return this.change([{ op: "denoise", ...options }]);
     }
 
