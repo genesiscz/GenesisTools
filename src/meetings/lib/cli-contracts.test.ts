@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { out } from "@genesiscz/utils/logger";
 import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
@@ -298,5 +299,26 @@ describe("list --json prints one summary row per meeting, and --limit keeps the 
         expect(selectMeetings(records, { limit: 2 }).map((one) => one.id)).toEqual(["c", "b"]);
         expect(selectMeetings(records, { project: "work", limit: 1 }).map((one) => one.id)).toEqual(["b"]);
         expect(selectMeetings(records, {}).map((one) => one.id)).toEqual(["c", "b", "a"]);
+    });
+});
+
+describe("config get is config show (R2-NR-X4)", () => {
+    test("config get <path> prints the value, as show does, instead of suggesting set", async () => {
+        const printed: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((text: string) => {
+            printed.push(text);
+        });
+        const dim = spyOn(ui, "dim").mockImplementation(() => undefined);
+
+        try {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "config" });
+            await program.parseAsync(["config", "get", "global.capture.activeFps"], { from: "user" });
+        } finally {
+            println.mockRestore();
+            dim.mockRestore();
+        }
+
+        expect(printed).toEqual(["1"]);
     });
 });

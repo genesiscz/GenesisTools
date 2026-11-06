@@ -133,6 +133,7 @@ export function registerConfigCommand(program: Command): void {
         .description("Read and change the meetings settings: every write is checked against the whole schema first");
     config
         .command("show")
+        .alias("get")
         .argument("[path]", PATH_HELP)
         .description("The settings with their defaults, or the value at one path")
         .option("--json", "print { path, value } as JSON")
