@@ -12,7 +12,6 @@ import pc from "picocolors";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { rawMeeting } from "../lib/raw";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
-import { sourceRefOf } from "../lib/sources";
 import { rawTerms } from "../lib/suggest";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
@@ -50,11 +49,7 @@ async function evidence(
             return;
         }
 
-        if (!sourceRefOf(record)) {
-            fail(`${record.id} has no linked source. Link one: ${TOOL} link ${record.id} wisprflow:<id>`);
-            return;
-        }
-
+        // A meeting without a transcript source fails in linked() with [no-transcript-source], as every command does.
         const opened = OpenedMeeting.of(store, record);
         const { source } = await opened.linked();
         const meeting = await opened.meeting();

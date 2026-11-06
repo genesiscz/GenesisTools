@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { join } from "node:path";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
+import { ui } from "@genesiscz/utils/cli/ui";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
-import { meetingRecordSchema } from "@genesiscz/utils/meetings/record";
+import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { meetingAudioPath } from "./audio";
@@ -198,5 +199,31 @@ describe("a meeting without a transcript source", () => {
         );
 
         expect(failure).toBe("[no-transcript-source] 2026-11-06_10-00-screen-only has no linked source with audio.");
+    });
+
+    test("evidence leads with the same code", async () => {
+        // The command reads the default store, which the test preload keeps in a sandbox.
+        const store = new MeetingStore();
+        const created = await store.create(
+            { title: "Screen only", start: "2026-11-06T09:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "create" }
+        );
+        const errors: string[] = [];
+        const err = spyOn(ui, "err").mockImplementation((line: string) => {
+            errors.push(line);
+        });
+
+        try {
+            const program = new Command().exitOverride();
+            await registerRequestedTrees({ program, registrars: MEETINGS_REGISTRARS, requested: "evidence" });
+            await program.parseAsync(["evidence", created.id], { from: "user" });
+        } finally {
+            err.mockRestore();
+            process.exitCode = 0;
+        }
+
+        expect(errors).toEqual([
+            `[no-transcript-source] ${created.id} has no source with a transcript. Link one: tools meetings link ${created.id} 'wisprflow:<id>'`,
+        ]);
     });
 });
