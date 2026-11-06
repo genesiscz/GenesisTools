@@ -428,4 +428,16 @@ final class MeetingsUXTests: XCTestCase {
         let picker = try probe("meetings.screen.display", width: 400, DisplayPicker(displays: displays, selection: .constant(-1)))
         XCTAssertLessThanOrEqual(picker.width, 401, "R2-MU4: the picker fits the column: \(picker)")
     }
+
+    func testANarrowSpeakerRowKeepsItsNumbersReadable() throws {
+        let speaker = try JSONDecoder().decode(SpeakerStat.self, from: Data("""
+        {"label":"Speaker 2","turns":42,"lines":42,"words":3779,"spokenSec":1440,"firstSec":375,"lastSec":3152}
+        """.utf8))
+        let beside = try probe("meetings.speaker.labels", width: 330, SpeakerRow(speaker: speaker, rename: nil, stacked: false, hints: [],
+                                                                          play: {}, commit: { _ in }))
+        XCTAssertLessThan(beside.width, 100, "the cause: beside the field and Play the numbers get almost nothing")
+        let stacked = try probe("meetings.speaker.labels", width: 330, SpeakerRow(speaker: speaker, rename: nil, stacked: true, hints: [],
+                                                                           play: {}, commit: { _ in }))
+        XCTAssertGreaterThan(stacked.width, 280, "R2-MU1: stacked, the numbers have the row's width: \(stacked)")
+    }
 }

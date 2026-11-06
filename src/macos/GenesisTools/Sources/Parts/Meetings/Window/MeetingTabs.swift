@@ -719,6 +719,10 @@ struct DisplayPicker: View {
 
 struct SpeakersTab: View {
     @Bindable var detail: MeetingDetailModel
+    /// Below this width a speaker's rename field goes under its numbers: beside them, at the window's smallest size the
+    /// field and the Play button left the numbers about 20 pt, one letter per line.
+    static let stackWidth: CGFloat = 560
+    @State private var stacked = false
 
     var body: some View {
         LoadablePane(state: detail.speakers, reading: "Reading the speakers…", retry: detail.loadSpeakers,
@@ -729,21 +733,24 @@ struct SpeakersTab: View {
                 let renames = detail.record.value?.speakers.labels ?? [:]
                 // The most spoken first: in the CLI's order a label with 7 turns stood above one with 427.
                 List(stats.speakers.sorted { $0.spokenSec > $1.spokenSec }) { speaker in
-                    SpeakerRow(speaker: speaker, rename: renames[speaker.label],
+                    SpeakerRow(speaker: speaker, rename: renames[speaker.label], stacked: stacked,
                                hints: MeetingsWords.speakerHints(stats.hints ?? [], for: speaker.label),
                                play: speaker.firstSec.map { first in { detail.play(at: first) } }) {
                         detail.rename(label: speaker.label, to: $0)
                     }
                 }
                 .listStyle(.inset)
+                .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.stackWidth }) { stacked = $0 }
             }
         }
     }
 }
 
-private struct SpeakerRow: View {
+struct SpeakerRow: View {
     let speaker: SpeakerStat
     let rename: String?
+    /// The rename field under the numbers (a narrow column) instead of beside them.
+    var stacked = false
     /// Signs about the label ("May hold several people"), each a line under it.
     let hints: [String]
     /// Plays the label from its first line, to hear whose voice it is.
@@ -753,33 +760,59 @@ private struct SpeakerRow: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: speaker.label).font(.system(size: 13, weight: .medium))
-                Text(verbatim: [Plural.count(speaker.turns, "turn"), MeetingsFormat.length(speaker.spokenSec).map { "\($0) spoken" },
-                                speaker.words.map { Plural.count($0, "word") }, MeetingsWords.speakerSpan(speaker),
-                                MeetingsWords.origin(speaker.origin)].compactMap { $0 }.joined(separator: " · "))
-                    .font(.system(size: 11.5)).foregroundStyle(.secondary)
-                ForEach(hints, id: \.self) { hint in
-                    Label(hint, systemImage: "exclamationmark.triangle").font(.system(size: 11.5)).foregroundStyle(KitPalette.modified)
+        Group {
+            if stacked {
+                VStack(alignment: .leading, spacing: 6) {
+                    labels.frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 8) {
+                        playButton
+                        field.frame(maxWidth: 260)
+                    }
+                }
+            } else {
+                HStack(spacing: 12) {
+                    labels
+                    Spacer()
+                    playButton
+                    field.frame(width: 220)
                 }
             }
-            Spacer()
-            if let play, let first = speaker.firstSec {
-                IconButton(systemName: "play.fill", tooltip: "Play \(speaker.label) from the first line, at \(MeetingsFormat.clock(first))", action: play)
-            }
-            TextField("Rename", text: $name, prompt: Text(rename ?? "Rename for this meeting"))
-                .textFieldStyle(.roundedBorder).frame(width: 220)
-                .focused($focused)
-                .onSubmit { commit(name) }
-                .onExitCommand { name = rename ?? ""; focused = false }
-                // A name typed and left saves too; it looked saved and was lost (Esc puts the saved name back first).
-                .onChange(of: focused) { _, now in if !now { commit(name) } }
-                .accessibilityLabel("Rename \(speaker.label)")
         }
         .padding(.vertical, 3)
         .onAppear { name = rename ?? "" }
         .onChange(of: rename) { _, value in if !focused { name = value ?? "" } }
+    }
+
+    private var labels: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(verbatim: speaker.label).font(.system(size: 13, weight: .medium))
+            Text(verbatim: [Plural.count(speaker.turns, "turn"), MeetingsFormat.length(speaker.spokenSec).map { "\($0) spoken" },
+                            speaker.words.map { Plural.count($0, "word") }, MeetingsWords.speakerSpan(speaker),
+                            MeetingsWords.origin(speaker.origin)].compactMap { $0 }.joined(separator: " · "))
+                .font(.system(size: 11.5)).foregroundStyle(.secondary)
+            ForEach(hints, id: \.self) { hint in
+                Label(hint, systemImage: "exclamationmark.triangle").font(.system(size: 11.5)).foregroundStyle(KitPalette.modified)
+            }
+        }
+        .frameProbe("meetings.speaker.labels")
+    }
+
+    @ViewBuilder
+    private var playButton: some View {
+        if let play, let first = speaker.firstSec {
+            IconButton(systemName: "play.fill", tooltip: "Play \(speaker.label) from the first line, at \(MeetingsFormat.clock(first))", action: play)
+        }
+    }
+
+    private var field: some View {
+        TextField("Rename", text: $name, prompt: Text(rename ?? "Rename for this meeting"))
+            .textFieldStyle(.roundedBorder)
+            .focused($focused)
+            .onSubmit { commit(name) }
+            .onExitCommand { name = rename ?? ""; focused = false }
+            // A name typed and left saves too; it looked saved and was lost (Esc puts the saved name back first).
+            .onChange(of: focused) { _, now in if !now { commit(name) } }
+            .accessibilityLabel("Rename \(speaker.label)")
     }
 }
 
