@@ -101,8 +101,9 @@ const add = defineMethod({
     name: "items.add",
     params: z.object({ findings: z.array(findingSchema).min(1) }),
     result: z.unknown(),
+    resultName: "{ added: items.list rows, warnings }",
     effect: "reversible",
-    doc: "Add validated findings under the meeting store lock.",
+    doc: "Add validated findings under the meeting store lock; answers the items it added (as items.list rows) and the warnings, never the whole meeting.",
 });
 const suggest = defineMethod({
     name: "items.suggest",
@@ -690,13 +691,16 @@ export class MeetingsToolset extends ReplToolset {
                             log.debug({ error, meeting: id }, "no transcript to check the finding anchors against");
                             return undefined;
                         });
-                    return store.update(
+                    // NR5 (2026-11-06): this answered the whole meeting record, 88 KB with the calendar attendees.
+                    let added: MeetingItem[] = [];
+                    let warnings: string[] = [];
+                    const record = await store.update(
                         id,
                         { command: "items add", change: `${findings.length} findings` },
-                        (record) => {
+                        (current) => {
                             const prepared = prepareFindings({
                                 findings,
-                                items: record.items,
+                                items: current.items,
                                 transcript: source?.transcript,
                             });
 
@@ -704,9 +708,12 @@ export class MeetingsToolset extends ReplToolset {
                                 log.warn({ meeting: id }, warning);
                             }
 
-                            record.items.push(...prepared.added);
+                            current.items.push(...prepared.added);
+                            added = prepared.added;
+                            warnings = prepared.warnings;
                         }
                     );
+                    return { added: added.map((item) => itemRow(record, item)), warnings };
                 },
                 suggest: async (input: z.input<typeof suggest.params> = {}) => {
                     const asked = suggest.params.parse(input).rules ?? [...SUGGEST_RULES];

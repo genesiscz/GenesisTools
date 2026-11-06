@@ -1417,8 +1417,13 @@ describe("live recording settings from the movies and meetings toolsets", () => 
             };
         };
         const meeting = meetings.open(record.id);
-        await meeting.items.add({ findings: [{ kind: "question", from: 0, to: 5, question: "Who spoke first?" }] });
+        const answer = await meeting.items.add({
+            findings: [{ kind: "question", from: 0, to: 5, question: "Who spoke first?" }],
+        });
         expect(meeting.record.items).toHaveLength(1);
+        // The answer is the added item, not the meeting record (NR5).
+        expect(answer).toMatchObject({ added: [{ kind: "question", status: "suggested" }], warnings: [] });
+        expect(Object.keys(answer as object).sort()).toEqual(["added", "warnings"]);
     });
 
     test("meetings: an opened meeting reads and changes the settings of its live recording, and says so when it is not recording", async () => {
