@@ -259,10 +259,12 @@ struct RecorderNoticeContent: View {
 
     var body: some View {
         // The pill's own translucent fill sits on an opaque backing of the same shape, so it reads over any window.
+        // The backing goes under the pill, at the pill's width: on the panel's full width it showed past a short pill.
         NoticePill(text: text, more: more, tone: .error, dismiss: dismiss)
-            .frame(width: RecorderNoticePanel.width, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
             .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color(white: 0.11)))
+            .frame(width: RecorderNoticePanel.width, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 

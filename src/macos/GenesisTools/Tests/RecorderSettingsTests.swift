@@ -58,6 +58,20 @@ final class RecorderSettingsTests: XCTestCase {
         XCTAssertEqual(calls.first, "notice: “Demo” did not open (exit 1): unknown command 'open'. | \(dump)")
     }
 
+    /// The defect: the pill takes its text's width, but its dark backing filled all 340 pt, so a short note showed a
+    /// second, darker shape at its right end (review 2026-11-06). The backing follows the pill now.
+    @MainActor
+    func testAShortNoteHasNoBackingBeyondItsPill() throws {
+        let renderer = ImageRenderer(content: RecorderNoticeContent(text: "Short.", more: nil, dismiss: {})
+            .environment(\.colorScheme, .dark))
+        renderer.scale = 1
+        let image = try XCTUnwrap(renderer.cgImage)
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        let middle = image.height / 2
+        XCTAssertGreaterThan(bitmap.colorAt(x: 4, y: middle)?.alphaComponent ?? 0, 0.5, "the pill's own left end")
+        XCTAssertLessThan(bitmap.colorAt(x: image.width - 3, y: middle)?.alphaComponent ?? 1, 0.05, "clear past the pill")
+    }
+
     /// The defect: the note measured its own host with no sizing options (0 x 0), so every failure note opened as an
     /// invisible 0 x 0 window (review 2026-11-06).
     @MainActor
