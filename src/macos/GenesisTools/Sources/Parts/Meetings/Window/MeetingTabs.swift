@@ -139,6 +139,10 @@ struct ScreenTab: View {
     @State private var display: Int = -1
     @State private var opened: TimelineFrame?
     @State private var hideQuiet = true
+    /// Below this width a frame's text goes under its thumbnail: beside a 220 pt thumbnail at the window's smallest
+    /// size the time, the display and the lines had about 60 pt and wrapped one or two letters per line.
+    static let stackWidth: CGFloat = 520
+    @State private var stacked = false
 
     var body: some View {
         if detail.record.value?.recording?.frames ?? 0 == 0, detail.record.value != nil {
@@ -169,12 +173,13 @@ struct ScreenTab: View {
                         LazyVStack(alignment: .leading, spacing: 10) {
                             ForEach(frames(timeline)) { frame in
                                 FrameRow(frame: frame, displayName: name(of: frame, in: timeline),
-                                         showAll: MeetingsPreferences.timelineLines() == .all) { opened = frame }
+                                         showAll: MeetingsPreferences.timelineLines() == .all, stacked: stacked) { opened = frame }
                                     .equatable()
                             }
                         }
                         .padding(14)
                     }
+                    .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.stackWidth }) { stacked = $0 }
                 }
                 .sheet(item: $opened) { frame in
                     FrameViewer(frame: frame) { opened = nil }
@@ -193,18 +198,22 @@ struct ScreenTab: View {
     }
 }
 
-private struct FrameRow: View, Equatable {
+struct FrameRow: View, Equatable {
     let frame: TimelineFrame
     let displayName: String
     let showAll: Bool
+    /// The text under the thumbnail instead of beside it (a narrow Screen tab).
+    var stacked = false
     let open: () -> Void
 
     nonisolated static func == (a: FrameRow, b: FrameRow) -> Bool {
-        a.frame == b.frame && a.displayName == b.displayName && a.showAll == b.showAll
+        a.frame == b.frame && a.displayName == b.displayName && a.showAll == b.showAll && a.stacked == b.stacked
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                             : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+        layout {
             // A resting row has no responder; a click on the thumbnail still opens it (`pressable`).
             LiveButton(tooltip: "Show this frame large, with the changed lines boxed", pressable: true, action: open) {
                 FrameThumbnail(path: frame.path, width: 220)
@@ -213,9 +222,10 @@ private struct FrameRow: View, Equatable {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(verbatim: MeetingsFormat.clock(frame.meetingSec)).font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    Text(verbatim: displayName).font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize()
+                    Text(verbatim: displayName).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                     Text(verbatim: frame.changed.isEmpty ? "no new text" : Plural.count(frame.changed.count, "changed line"))
-                        .font(.system(size: 11)).foregroundStyle(.tertiary)
+                        .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1).layoutPriority(1)
                 }
                 let lines = showAll ? (frame.lines ?? frame.changed) : frame.changed
                 ForEach(Array(lines.prefix(14).enumerated()), id: \.offset) { _, line in
@@ -227,8 +237,10 @@ private struct FrameRow: View, Equatable {
                     }
                 }
             }
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frameProbe("meetings.frame.text")
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.bottom, 6)
         .contentShape(Rectangle())
         .liveRow()

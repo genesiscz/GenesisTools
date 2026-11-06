@@ -441,6 +441,20 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertGreaterThan(stacked.width, 280, "R2-MU1: stacked, the numbers have the row's width: \(stacked)")
     }
 
+    func testANarrowFrameRowKeepsItsTextReadable() throws {
+        let frame = try JSONDecoder().decode(TimelineFrame.self, from: Data("""
+        {"file":"f1.png","path":"/tmp/none/f1.png","at":"2026-11-05T12:00:00.000Z","meetingSec":1609,"displayId":2,
+         "width":1920,"height":1080,"lineCount":2,"lines":null,
+         "changed":[{"x":0,"y":0,"width":100,"height":20,"text":"Invented changed line","confidence":0.9}]}
+        """.utf8))
+        let beside = try probe("meetings.frame.text", width: 330, FrameRow(frame: frame, displayName: "Display 2", showAll: false,
+                                                                           stacked: false, open: {}))
+        XCTAssertLessThan(beside.width, 100, "the cause: beside a 220 pt thumbnail the text gets almost nothing")
+        let stacked = try probe("meetings.frame.text", width: 330, FrameRow(frame: frame, displayName: "Display 2", showAll: false,
+                                                                            stacked: true, open: {}))
+        XCTAssertGreaterThan(stacked.width, 280, "R2-MU5: stacked, the time and the lines have the row's width: \(stacked)")
+    }
+
     func testATitledNoteShowsItsText() throws {
         let refs = try JSONDecoder().decode([MeetingContextRef].self, from: Data("""
         [{"id":"c1","kind":"note","ref":"Budget is fixed","title":"Budget","addedAt":"2026-11-05T12:00:00.000Z"},
