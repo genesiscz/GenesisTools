@@ -185,6 +185,25 @@ globalThis.describe = (name) =>
 globalThis.show = showImages;
 globalThis.sleep = (ms: number) => Bun.sleep(ms);
 
+/**
+ * Errors no turn caught: a timer that threw after its turn answered, a promise nobody awaited. The worker keeps running,
+ * and the next turn's output starts with them, so they are not lost without a word (NR18). The last few are kept.
+ */
+const LATE_ERRORS_KEPT = 5;
+const lateErrors: string[] = [];
+
+function noteLateError(error: unknown): void {
+    const { message, stack } = describeError(error);
+    lateErrors.push(stack ?? message);
+
+    if (lateErrors.length > LATE_ERRORS_KEPT) {
+        lateErrors.shift();
+    }
+}
+
+process.on("uncaughtException", noteLateError);
+process.on("unhandledRejection", noteLateError);
+
 let recordingRequestId = 0;
 const recordingRequests = new Map<number, { resolve(id: string): void; reject(error: Error): void }>();
 process.on("message", (message: unknown) => {
@@ -456,6 +475,12 @@ async function handle(request: Request): Promise<Response> {
         }
 
         return { id: request.id, ok: true, text: `module directory registered: ${request.dir}`, images: [] };
+    }
+
+    if (lateErrors.length > 0) {
+        output.push(
+            `note: an error no turn caught (a timer, a callback or a promise nobody awaited):\n${lateErrors.splice(0).join("\n")}`
+        );
     }
 
     try {

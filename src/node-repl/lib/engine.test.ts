@@ -232,6 +232,23 @@ describe("ReplEngine", () => {
         expect(imported.text).toBe("7");
     });
 
+    // NR18: a timer that threw after its turn answered, and a rejection nobody awaited, were lost without a word.
+    it("the next turn starts with the errors no turn caught, once", async () => {
+        await engine.run(
+            "setTimeout(() => { throw new Error('late nr18') }, 5); Promise.reject(new Error('unawaited nr18')); 'scheduled'"
+        );
+        // The timer fires 5 ms after the turn answered; the next turn must come after it.
+        await Bun.sleep(100);
+        const next = await engine.run("1");
+        expect(next.text).toStartWith(
+            "note: an error no turn caught (a timer, a callback or a promise nobody awaited):"
+        );
+        expect(next.text).toContain("late nr18");
+        expect(next.text).toContain("unawaited nr18");
+        expect(next.text.endsWith("\n1")).toBe(true);
+        expect((await engine.run("2")).text).toBe("2");
+    });
+
     // NR31: a missing package named the kernel's file ("imported from …/worker.ts") and gave no way forward.
     it("a missing package says how to make it importable, without the kernel's path", async () => {
         const missing = await engine.run("await import('nr31-no-such-package')");
