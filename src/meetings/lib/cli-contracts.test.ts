@@ -114,6 +114,7 @@ describe("startup imports", () => {
         ].join("\n");
         const child = Bun.spawn(["bun", "-e", probe], {
             cwd: join(moduleDir(import.meta), "..", "..", ".."),
+            env: process.env,
             stdout: "pipe",
         });
         const output = await new Response(child.stdout).text();
