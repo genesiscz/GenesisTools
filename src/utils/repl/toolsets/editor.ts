@@ -113,7 +113,7 @@ export const editorApi = defineApi({
     global: "editor",
     title: "Recording editor",
     summary:
-        "Cut recordings and videos into frames, change-only frames, image grids, trims, speed changes and exports.",
+        "Cut recordings and videos into frames, change-only frames, image grids, trims, speed changes and exports; a movie made with movies.record is edited with movies.open.",
     methods: [
         defineMethod({
             name: "open",

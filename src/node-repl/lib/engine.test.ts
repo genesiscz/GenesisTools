@@ -11,7 +11,15 @@ import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { jsDescription } from "../mcp/server";
 import { capOutput, DEFAULT_MAX_OUTPUT_CHARS, ReplEngine, resultMessage } from "./engine";
-import { createToolsets, parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp } from "./toolsets";
+import {
+    createToolsets,
+    parseToolsetList,
+    REPL_TOOLSET_IDS,
+    REPL_TOOLSETS,
+    type ReplToolsetId,
+    toolsetCliHelp,
+    toolsetOverlap,
+} from "./toolsets";
 
 // NR24: --help used to render every method of all ten toolsets, 535 lines. It now lists each toolset's one line and
 // says how to print one toolset's API.
@@ -458,6 +466,17 @@ describe("toolsets", () => {
     it("the registry refuses an unknown toolset and names the known ones", () => {
         expect(() => parseToolsetList("computer,nope")).toThrow("Unknown toolset nope; known: computer");
         expect(parseToolsetList(" computer , computer ")).toEqual(["computer"]);
+    });
+
+    // NR14: control is computer's API under another name, and with both loaded every search hit came twice.
+    it("toolsets that overlap say which to use, and computer with control is refused", () => {
+        const summary = (id: ReplToolsetId) => REPL_TOOLSETS[id]().api.summary;
+        expect(summary("control")).toContain("The computer toolset's API under the name control");
+        expect(summary("recorder")).toContain("movies.record");
+        expect(summary("editor")).toContain("movies.open");
+        expect(summary("movies")).toContain("recorder and editor");
+        expect(toolsetOverlap(parseToolsetList("computer,control"))).toContain("load one of them");
+        expect(toolsetOverlap(["computer", "movies"])).toBeUndefined();
     });
 
     it("the js description lists each preloaded toolset's one line", () => {

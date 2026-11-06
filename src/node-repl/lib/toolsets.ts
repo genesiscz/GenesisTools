@@ -78,6 +78,18 @@ export function parseToolsetList(text: string | readonly string[]): string[] {
     return [...new Set(parts)];
 }
 
+/**
+ * Why a `--toolset` list loads one API twice, or undefined. computer and control are one API under two names, and with
+ * both every search() hit came back twice (NR14). The CLI refuses such a list; the table itself may hold both.
+ */
+export function toolsetOverlap(ids: readonly string[]): string | undefined {
+    if (ids.includes("computer") && ids.includes("control")) {
+        return "computer and control are one API under two names; load one of them";
+    }
+
+    return undefined;
+}
+
 export async function createToolsets(entries: readonly string[]): Promise<ReplToolset[]> {
     const toolsets: ReplToolset[] = [];
 

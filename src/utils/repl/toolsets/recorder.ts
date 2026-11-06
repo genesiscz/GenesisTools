@@ -272,7 +272,8 @@ export const recorderApi = defineApi({
     id: "recorder",
     global: "recorder",
     title: "Screen recorder",
-    summary: "Start, attach to and control screen recordings over the live recording socket.",
+    summary:
+        "Start, attach to and control frames recordings (PNG frames for editor) over the live recording socket; for a movie to cut and export, use movies.record.",
     methods: [
         defineMethod({
             name: "start",

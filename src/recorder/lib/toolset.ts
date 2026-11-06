@@ -986,7 +986,7 @@ export const moviesApi = defineApi({
     global: "movies",
     title: "Movie recorder and editor",
     summary:
-        "Record the screen as a movie, then cut, speed up, zoom and export it; the recorder window shows each edit.",
+        "Record the screen as a movie, then cut, speed up, zoom and export it; the recorder window shows each edit. Use it for a demo video; recorder and editor are the lower-level frames tools.",
     methods: [
         defineMethod({
             name: "list",

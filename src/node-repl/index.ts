@@ -9,7 +9,7 @@ import { createBoxTable } from "@genesiscz/utils/table";
 import { Command } from "commander";
 import { DEFAULT_MAX_OUTPUT_CHARS, ReplEngine } from "./lib/engine";
 import { coerceParam, listPresets, readPreset, removePreset, resolveParams, savePreset } from "./lib/presets";
-import { parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp } from "./lib/toolsets";
+import { parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp, toolsetOverlap } from "./lib/toolsets";
 
 handleReadmeFlag(import.meta.url);
 
@@ -56,12 +56,14 @@ function toolsetsOption(value: string | boolean | undefined, subcommand: string)
         return [];
     }
 
+    let ids: string[];
+
     try {
         if (typeof value !== "string" || value.trim() === "") {
             throw new Error("--toolset needs a value");
         }
 
-        return parseToolsetList(value);
+        ids = parseToolsetList(value);
     } catch (error) {
         // One message on stderr: the suggestion already names the bad value and the known ones. The subcommand belongs
         // in the tool name, because `subcommand` strips those words from argv and expects them there (NR10).
@@ -76,6 +78,16 @@ function toolsetsOption(value: string | boolean | undefined, subcommand: string)
         process.exitCode = 1;
         return undefined;
     }
+
+    const overlap = toolsetOverlap(ids);
+
+    if (overlap) {
+        logger.error(`--toolset ${value}: ${overlap}`);
+        process.exitCode = 1;
+        return undefined;
+    }
+
+    return ids;
 }
 
 const program = new Command();

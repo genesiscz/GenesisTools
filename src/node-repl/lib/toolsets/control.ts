@@ -9,6 +9,8 @@ export class ControlToolset extends ReplToolset {
         id: "control",
         global: "control",
         title: "Native control",
+        summary:
+            "The computer toolset's API under the name control (the same methods and docs); load computer or control, not both.",
         notes: computerApi.notes?.map((note) => note.replaceAll("computer.", "control.")),
     };
     private readonly delegate = new ComputerToolset();
