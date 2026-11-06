@@ -115,21 +115,16 @@ const suggest = defineMethod({
     doc: `Run the rules on the transcript and add what they find as suggested items, in one save. rules: any of ${SUGGEST_RULES.join(", ")} (default all). A word check that cannot run is a warning.`,
 });
 const decide = {
-    params: z
-        .object({
-            ids: ids.optional(),
-            minConfidence: z.number().min(0).max(1).optional(),
-            speaker: z.string().optional(),
-            proposed: z.string().optional(),
-        })
-        .strict(),
     result: z.unknown(),
     resultName: "{ decided: string[], skipped: { id, reason, needs }[], token }",
     effect: "reversible" as const,
 };
+const rejectParams = z.object({ ids: ids.optional(), minConfidence: z.number().min(0).max(1).optional() }).strict();
 const confirm = defineMethod({
     name: "items.confirm",
     ...decide,
+    // Only a confirm keeps a value; reject has its own schema, as in the CLI, so it refuses them (R2-MC12).
+    params: rejectParams.extend({ speaker: z.string().optional(), proposed: z.string().optional() }).strict(),
     doc:
         'Confirm items (ids "i3", or a question\'s number "Q2"), or every suggested item at or above minConfidence (0..1). Transcripts apply confirmed items. A range nobody named needs `speaker`, a term with no spelling needs `proposed`; a question is answered by ear (' +
         toolCommand("meetings listen") +
@@ -138,6 +133,7 @@ const confirm = defineMethod({
 const reject = defineMethod({
     name: "items.reject",
     ...decide,
+    params: rejectParams,
     doc: "Reject items by id, or every suggested item at or above minConfidence: they are never suggested again. `token` undoes it with items.reopen.",
 });
 const reopen = defineMethod({
@@ -654,8 +650,8 @@ export class MeetingsToolset extends ReplToolset {
 
             return callRecorder({ id: liveId, method, params });
         };
-        const decideWith = (status: "confirmed" | "rejected") => async (input: z.input<typeof decide.params>) => {
-            const options = decide.params.parse(input);
+        const decideWith = (status: "confirmed" | "rejected") => async (input: z.input<typeof confirm.params>) => {
+            const options = (status === "confirmed" ? confirm : reject).params.parse(input);
             const result = await decideItems({ store, record: current(), status, ids: options.ids ?? [], ...options });
             log.info(
                 { meeting: id, status, decided: result.decided.length, skipped: result.skipped.length },

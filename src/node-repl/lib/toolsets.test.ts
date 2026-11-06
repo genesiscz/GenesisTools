@@ -1792,6 +1792,34 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(meeting.items.list({ kind: "term" })).toEqual([]);
     });
 
+    // R2-MC12: confirm and reject shared one schema, so a reject took speaker and proposed and kept nothing of them.
+    test("meetings: items.reject refuses the values only a confirm takes, and rejects by id", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Reject", start: "2026-11-02T12:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: {
+                open(ref: string): {
+                    readonly record: { items: Array<{ id: string; status: string }> };
+                    items: {
+                        add(input: unknown): Promise<unknown>;
+                        reject(input: unknown): Promise<{ decided: string[] }>;
+                    };
+                };
+            };
+        };
+        const meeting = meetings.open(record.id);
+        await meeting.items.add({
+            findings: [{ kind: "term", at: 1, heard: "jason", proposed: "JSON", confidence: 0.9, reason: "a fixture" }],
+        });
+        const [item] = meeting.record.items;
+        await expect(meeting.items.reject({ ids: [item.id], proposed: "Jason" })).rejects.toThrow('"proposed"');
+        await expect(meeting.items.reject({ ids: [item.id], speaker: "Alice" })).rejects.toThrow('"speaker"');
+        expect(meeting.record.items[0].status).toBe("suggested");
+        expect((await meeting.items.reject({ ids: [item.id] })).decided).toEqual([item.id]);
+    });
+
     test("meetings: an opened meeting reads and changes the settings of its live recording, and says so when it is not recording", async () => {
         const store = new MeetingStore();
         const record = await store.create(
