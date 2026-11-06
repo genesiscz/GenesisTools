@@ -19,6 +19,11 @@ import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 const FORMATS = ["table", "json"] as const;
 /** The user's microphone recognized this many times more words than their own label holds: they are spread over others. */
 const VOLUME_RATIO = 2;
+/** A line this sure on the microphone is the user's (the energy rule). */
+const SURE_MIC = 0.9;
+/** With the energy: the user is spread when this share of their label's words, and this many at least, sit elsewhere. */
+const SPREAD_SHARE = 0.25;
+const SPREAD_MIN_WORDS = 30;
 
 async function evidence(
     ref: string,
@@ -113,11 +118,26 @@ async function evidence(
         const selfLabelWords = meeting.transcript
             .filter((entry) => found.selfName && sameName(entry.speaker, found.selfName))
             .reduce((sum, entry) => sum + entry.text.split(/\s+/).filter(Boolean).length, 0);
+        // With a calibrated channel layout the energy says where the user is: the microphone channel's own word count
+        // also holds the call heard through the room, so it called a label right on 52 of 55 clear lines "spread" (MC12).
+        const calibrated = energy.calibration !== undefined && energy.calibration.layout !== "unknown";
+        const sureMicElsewhere = calibrated
+            ? lines
+                  .filter(
+                      (line) =>
+                          !(found.selfName && sameName(line.label, found.selfName)) && (line.energyMic ?? 0) >= SURE_MIC
+                  )
+                  .reduce((sum, line) => sum + line.text.split(/\s+/).filter(Boolean).length, 0)
+            : undefined;
         const volume = found.tokens
             ? {
                   micTokens: found.tokens.mic,
                   selfLabelWords,
-                  spread: found.tokens.mic >= VOLUME_RATIO * Math.max(1, selfLabelWords),
+                  ...(sureMicElsewhere !== undefined ? { sureMicWordsElsewhere: sureMicElsewhere } : {}),
+                  spread:
+                      sureMicElsewhere !== undefined
+                          ? sureMicElsewhere >= Math.max(SPREAD_MIN_WORDS, SPREAD_SHARE * selfLabelWords)
+                          : found.tokens.mic >= VOLUME_RATIO * Math.max(1, selfLabelWords),
               }
             : undefined;
 
@@ -171,7 +191,10 @@ async function evidence(
         }
 
         if (volume) {
-            const say = `your microphone recognized ${volume.micTokens} words; your label "${found.selfName}" holds ${volume.selfLabelWords}`;
+            const say =
+                volume.sureMicWordsElsewhere !== undefined
+                    ? `${volume.sureMicWordsElsewhere} words are sure on your microphone under other labels; your label "${found.selfName}" holds ${volume.selfLabelWords}`
+                    : `your microphone recognized ${volume.micTokens} words; your label "${found.selfName}" holds ${volume.selfLabelWords}`;
             volume.spread
                 ? ui.warn(
                       `${say}: you are spread over other labels (${toolCommand("meetings", "suggest", record.id, "--rules", "evidence")})`

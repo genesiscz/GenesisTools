@@ -7,7 +7,7 @@ import type { PresenceRange, SpeakerHint, SpeakerStats } from "@genesiscz/utils/
 import pc from "picocolors";
 
 const ORIGIN_NOTE: Record<SpeakerHint["strength"], string> = {
-    weak: " (the platform named this label: weak)",
+    weak: " (a named label: weak)",
     normal: "",
     strong: " (a language model guessed this label: strong)",
 };
