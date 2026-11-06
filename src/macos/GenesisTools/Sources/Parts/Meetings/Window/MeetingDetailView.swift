@@ -58,6 +58,10 @@ struct MeetingDetailView: View {
             WrapLayout(spacing: 8, lineSpacing: 8) {
                 Text(verbatim: whenLine(overview)).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
                 if let overview { MeetingBadgesView(meeting: overview, open: { detail.show($0) }) }
+                if let reason = record?.recording?.stopReason, reason == "failed" || reason == "error" {
+                    Badge("Recording failed", color: KitPalette.removed, symbol: "exclamationmark.triangle")
+                        .instantTooltip("The screen recording stopped by itself (\(reason)); the frames until then are kept.")
+                }
             }
             HStack(spacing: 10) {
                 projectPicker(record)

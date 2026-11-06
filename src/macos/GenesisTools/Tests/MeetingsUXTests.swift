@@ -354,4 +354,11 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(MeetingDetailModel.readdArgs(meeting: "a", refs[0]), ["context", "add", "a", "--note", "Budget is fixed", "--title", "Budget"])
         XCTAssertEqual(MeetingDetailModel.readdArgs(meeting: "a", refs[1]), ["context", "add", "a", "/tmp/spec.md", "--note", "the second part"])
     }
+
+    func testARecordKnowsWhyItsRecordingStopped() throws {
+        let recording = try JSONDecoder().decode(MeetingRecordView.Recording.self, from: Data("""
+        {"frames":120,"status":"stopped","stopReason":"failed"}
+        """.utf8))
+        XCTAssertEqual(recording.stopReason, "failed", "MU19: the header shows Recording failed")
+    }
 }

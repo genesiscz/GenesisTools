@@ -120,6 +120,8 @@ struct MeetingRecordView: Decodable, Equatable {
         let frames: Int?
         let status: String?
         let displays: [Display]?
+        /// Why a stopped recording stopped: "requested", "paused", "failed" or "error".
+        let stopReason: String?
     }
 
     let id: String
