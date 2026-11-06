@@ -51,7 +51,33 @@ export interface WindowRevisions {
     /** Null when the meeting's source cannot tell (it would ask a remote service): the window reads it again. */
     transcript: string | null;
     speakers: string | null;
-    timeline: string;
+    /** Null as well when the source cannot tell: the timeline's clock comes from the source. */
+    timeline: string | null;
+}
+
+/** What each part reads, already reduced to identities; `source` is null when the source cannot tell. */
+export interface RevisionFacts {
+    meeting: string;
+    recordFile: unknown;
+    config: unknown;
+    source: string | null;
+    screen: unknown[];
+}
+
+/**
+ * The tokens of `revisionsRead`. The timeline holds the source's revision too: its times count from the source's
+ * recording clock (`CallTimeline.forRecord`), so a source that changed its clock changes the Screen tab's times.
+ */
+export function revisionTokens(facts: RevisionFacts): WindowRevisions {
+    const { meeting, recordFile, config, source, screen } = facts;
+    const stamp = (...parts: unknown[]) => Bun.hash(SafeJSON.stringify(parts, { strict: true })).toString(36);
+    return {
+        meeting,
+        show: stamp(recordFile),
+        transcript: source === null ? null : stamp(recordFile, config, source),
+        speakers: source === null ? null : stamp(recordFile, source),
+        timeline: source === null ? null : stamp(recordFile, screen, source),
+    };
 }
 
 /**
@@ -62,7 +88,6 @@ export interface WindowRevisions {
 export async function revisionsRead(options: { store: MeetingStore; record: MeetingRecord }): Promise<WindowRevisions> {
     const { store, record } = options;
     const folder = store.folder(record.id);
-    const stamp = (...parts: unknown[]) => Bun.hash(SafeJSON.stringify(parts)).toString(36);
     const recordFile = fileIdentity(join(folder, MEETING_FILE));
     const config = fileIdentity(new MeetingsConfigStore().path);
     const ref = sourceRefOf(record);
@@ -85,13 +110,7 @@ export async function revisionsRead(options: { store: MeetingStore; record: Meet
             .filter((entry) => entry.isDirectory())
             .map((entry) => [entry.name, fileIdentity(join(folder, entry.name))]),
     ];
-    return {
-        meeting: record.id,
-        show: stamp(recordFile),
-        transcript: source === null ? null : stamp(recordFile, config, source),
-        speakers: source === null ? null : stamp(recordFile, source),
-        timeline: stamp(recordFile, screen),
-    };
+    return revisionTokens({ meeting: record.id, recordFile, config, source, screen });
 }
 
 /** `meetings record cost`: what a kept frame and each capture choice cost, from the recordings so far. */

@@ -28,7 +28,7 @@ import { meetingsOverview } from "./overview";
 import { removeProject, renameProject } from "./project-admin";
 import { screenTimeline } from "./screen-timeline";
 import { openMeetingsWindow, windowOpenArgs } from "./window";
-import { revisionsRead } from "./window-reads";
+import { revisionsRead, revisionTokens } from "./window-reads";
 
 let n = 0;
 
@@ -333,6 +333,16 @@ describe("window revisions", () => {
         expect(changed.show).not.toBe(added.show);
         expect(changed.transcript).not.toBe(added.transcript);
         expect(changed.speakers).not.toBe(added.speakers);
+    });
+
+    test("the timeline token holds the source's revision, which sets the timeline's clock", () => {
+        const facts = { meeting: "m1", recordFile: { ino: 1 }, config: { ino: 2 }, source: "r1", screen: [{ ino: 3 }] };
+        const first = revisionTokens(facts);
+
+        expect(revisionTokens({ ...facts }).timeline).toBe(first.timeline);
+        expect(revisionTokens({ ...facts, source: "r2" }).timeline).not.toBe(first.timeline);
+        expect(revisionTokens({ ...facts, source: null }).timeline).toBeNull();
+        expect(revisionTokens({ ...facts, config: { ino: 9 } }).timeline).toBe(first.timeline);
     });
 });
 
