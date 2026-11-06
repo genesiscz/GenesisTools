@@ -73,7 +73,14 @@ import {
     writeSubtitles,
 } from "./edit";
 import { stepDisplaySwitch, switchDisplay } from "./frames-movie";
-import { EDITOR_TABS, type EditorTab, ensureRecorderPart, type LibraryRow, listLibrary } from "./library";
+import {
+    EDITOR_TABS,
+    type EditorTab,
+    ensureRecorderPart,
+    type LibraryRow,
+    listLibrary,
+    resolveRecording,
+} from "./library";
 import {
     chaptersOf,
     clickGroupsOf,
@@ -1157,6 +1164,11 @@ export class Movie {
         readonly recording: string,
         private readonly ctx?: ToolsetContext
     ) {}
+
+    /** Printed as what it names: the whole object showed the worker's context, its scratch path and private methods (NR11). */
+    [Symbol.for("nodejs.util.inspect.custom")](): string {
+        return `Movie ${SafeJSON.stringify(this.recording)} (info() reads its edit; help() lists its methods)`;
+    }
 
     async info() {
         const opened = await openProject(this.recording);
@@ -2307,7 +2319,11 @@ export class MoviesToolset extends ReplToolset {
         return {
             movies: {
                 list: (options: { limit?: number } = {}) => listLibrary({ limit: options.limit ?? 20 }).map(withLength),
-                open: (recording: string) => serviceRoutedMovie(new Movie(recording, ctx), movieMethods),
+                // A name that matches nothing answered a Movie, and the first call failed far from the typo (NR11).
+                open: (recording: string) => {
+                    resolveRecording(recording);
+                    return serviceRoutedMovie(new Movie(recording, ctx), movieMethods);
+                },
                 record: (options: RecordOptions = {}) => record({ options, ctx, deps: { ...REAL_DEPS, ...this.deps } }),
                 demo: (options: z.input<typeof demoParamsSchema> & { steps: DemoStep[] }) => recordDemo(options, ctx),
                 search: (text: string) => searchLibrary(text),

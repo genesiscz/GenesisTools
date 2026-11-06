@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { RecordingSession, type SegmentRecorder } from "@app/control/lib/recording-session";
 import { SessionRecorderControl } from "@app/control/lib/recording-session-control";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
@@ -61,7 +61,7 @@ import { readProject, wholeProject, writeProject } from "@genesiscz/utils/record
 import { searchMethods } from "@genesiscz/utils/repl/discovery";
 import { readShowable } from "@genesiscz/utils/repl/show";
 import type { ToolsetContext } from "@genesiscz/utils/repl/toolset";
-import { type Clip, EditorToolset, editorApi, ReplJob } from "@genesiscz/utils/repl/toolsets/editor";
+import { type Clip, EditorToolset, editorApi, editSourceOf, ReplJob } from "@genesiscz/utils/repl/toolsets/editor";
 import {
     RecordingHandle,
     recorderApi,
@@ -222,10 +222,20 @@ describe("toolset method names", () => {
         expect(() => movies.opn).toThrow(
             'movies has no "opn" (did you mean open?); it has: list, search, open, record'
         );
-        const movie = movies.open("anything");
+        // NR11: a name that matches nothing used to answer a Movie; it is refused at once now (intended change).
+        expect(() => movies.open("nr11-no-such-recording")).toThrow();
+        const project = join(mkdtempSync(join(tmpdir(), "missing-method-")), "edit.json");
+        writeProject(
+            project,
+            wholeProject({ video: join(dirname(project), "screen.mp4"), durationUs: 1_000_000, width: 10, height: 10 })
+        );
+        const movie = movies.open(project);
         expect(() => Reflect.get(movie, "trim")).toThrow('movies.Movie has no "trim"');
         expect(Reflect.get(movie, "then")).toBeUndefined();
-        expect(Bun.inspect(movie)).toContain("Movie");
+        // NR11: printing a Movie showed the worker's context, its scratch path and a private method.
+        expect(Bun.inspect(movie)).toBe(
+            `Movie ${SafeJSON.stringify(project)} (info() reads its edit; help() lists its methods)`
+        );
 
         // A bad argument of an async method rejects, so `.catch()` sees it, with one line per problem.
         const clicks = Reflect.get(movie, "clicks") as (options: unknown) => Promise<unknown>;
@@ -417,6 +427,29 @@ describe("the clicks of a movie, grouped", () => {
         );
         await expect(new Movie(bare).clickGroups()).rejects.toThrow("no cursor track");
     });
+});
+
+// NR11: editor.open() of a video recording's folder read it as frames, and the first use threw "holds no frames".
+test("editor.open of a video recording's folder opens its movie, a frames folder stays, a missing path throws at once", () => {
+    const folder = mkdtempSync(join(tmpdir(), "gt-video-recording-"));
+    writeFileSync(
+        join(folder, "recording.json"),
+        SafeJSON.stringify({
+            version: 1,
+            id: "rec",
+            title: "Rec",
+            startedAt: "2026-11-05T10:00:00.000Z",
+            displays: [],
+            frames: [],
+            settings: { kind: "video" },
+        })
+    );
+    writeFileSync(join(folder, "screen.mp4"), "not really a movie");
+    expect(editSourceOf(folder)).toEqual({ file: join(folder, "screen.mp4") });
+
+    const frames = mkdtempSync(join(tmpdir(), "gt-frames-folder-"));
+    expect(editSourceOf(frames)).toEqual({ file: frames });
+    expect(() => editSourceOf(join(frames, "nope.mp4"))).toThrow("No such file or folder");
 });
 
 // NR33: movies.list() gave no length and no size, so an agent that wanted a short recording opened each one.

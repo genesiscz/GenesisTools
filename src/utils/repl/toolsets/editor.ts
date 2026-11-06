@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { JobRegistry, type ProgressEvent } from "@genesiscz/utils/jobs";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
     type EditFrame,
@@ -20,6 +21,7 @@ import {
     timeSchema,
 } from "@genesiscz/utils/recording-editor/plan";
 import { loadSource, locateSource } from "@genesiscz/utils/recording-editor/source";
+import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { z } from "zod";
 import { ReplToolset, type ToolsetContext } from "../toolset";
 
@@ -121,7 +123,7 @@ export const editorApi = defineApi({
             positional: ["source"],
             result: z.unknown(),
             resultName: "Clip",
-            doc: "A recording id (library or meeting) or a video or frames-folder path.",
+            doc: "A recording id (library or meeting) or a video or frames-folder path; a video recording's folder or id opens its movie.",
             effect: "read",
         }),
         defineMethod({
@@ -221,6 +223,11 @@ export class Clip {
         /** The edit that made this clip (a trim or a speed change): its info is the edited result, not the source. */
         private readonly derivedResult?: EditResult
     ) {}
+
+    /** Printed as its source: the whole object showed the editor, the worker's context and the steps (NR11). */
+    [Symbol.for("nodejs.util.inspect.custom")](): string {
+        return `Clip ${SafeJSON.stringify(this.source)}${this.prefix.length > 0 ? ` after ${this.prefix.length} edits` : ""} (info() reads it)`;
+    }
 
     private start(steps: EditStep[]): EditJob {
         const plan: EditPlanInput = { source: this.source, steps: [...this.prefix, ...steps] };
@@ -338,6 +345,36 @@ export function sourceOf(value: string): EditSource {
     return isAbsolute(value) || existsSync(value) ? { file: value } : { recording: value };
 }
 
+/** The movies a video recording keeps in its folder, in the order the editor prefers them. */
+const VIDEO_RECORDING_MOVIES = ["screen.mp4", "screen.mov"];
+
+/**
+ * What editor.open() edits: a video recording's folder or id is its movie. The folder was read as a frames folder, and
+ * the first use threw "holds no frames" (NR11). Throws at once for a source that does not exist.
+ */
+export function editSourceOf(value: string): EditSource {
+    const source = sourceOf(value);
+    const located = locateSource(source);
+
+    if (located.kind !== "frames") {
+        return source;
+    }
+
+    for (const folder of [located.path, dirname(located.path)]) {
+        if (readRecordingManifest(folder)?.settings?.kind !== "video") {
+            continue;
+        }
+
+        const movie = VIDEO_RECORDING_MOVIES.map((name) => join(folder, name)).find((path) => existsSync(path));
+
+        if (movie) {
+            return { file: movie };
+        }
+    }
+
+    return source;
+}
+
 /** The REPL's `editor` global. */
 export class EditorToolset extends ReplToolset {
     readonly api = editorApi;
@@ -346,11 +383,7 @@ export class EditorToolset extends ReplToolset {
 
     async bootstrap(ctx: ToolsetContext): Promise<Record<string, unknown>> {
         const editor = {
-            open: (source: string) => {
-                const clip = new Clip(this.editor, ctx, sourceOf(source));
-                locateSource(clip.source);
-                return clip;
-            },
+            open: (source: string) => new Clip(this.editor, ctx, editSourceOf(source)),
             run: (plan: EditPlanInput) => new ReplJob(this.editor.run(plan), (result) => result),
             jobs: () => this.jobs.list(),
         };
