@@ -399,6 +399,7 @@ private struct ProjectSummary: View {
                     .instantTooltip("Open Settings → Meetings → Dictionary")
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14).padding(.vertical, 10)
     }
 
