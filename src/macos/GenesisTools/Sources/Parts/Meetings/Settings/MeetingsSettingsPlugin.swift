@@ -34,6 +34,8 @@ enum MeetingsSettingsPages {
     static let projectsPage = "meetings.projects"
     static let dictionaryPage = "meetings.dictionary"
     static let windowPage = "meetings.window"
+    /// The card on the Window page that picks where a transcript time plays.
+    static let playbackAnchor = "playback"
 
     static func section(model: MeetingsSettingsModel, defaults: UserDefaults) -> NativeSettingsSection {
         NativeSettingsSection(id: "meetings", title: "Meetings", pages: [
@@ -252,6 +254,7 @@ struct MeetingsWindowPage: View {
     @State private var afterExport: String
     @State private var undoSeconds: Int
     @State private var typedAnswer: String
+    @State private var player: String
 
     /// The first frame shows the saved choices, never a default that snaps to them.
     init(defaults: UserDefaults) {
@@ -262,9 +265,17 @@ struct MeetingsWindowPage: View {
         _afterExport = State(initialValue: MeetingsPreferences.afterExport(defaults).rawValue)
         _undoSeconds = State(initialValue: MeetingsPreferences.undoSeconds(defaults))
         _typedAnswer = State(initialValue: MeetingsPreferences.typedAnswer(defaults).rawValue)
+        _player = State(initialValue: MeetingsPreferences.player(defaults).rawValue)
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            windowCard
+            audioCard
+        }
+    }
+
+    private var windowCard: some View {
         NativeSettingsCard("The Meetings window") {
             NativeSettingsSegmented("Open on", identifier: "meetings.window.openOn", options: [
                 NativeSettingsOption(MeetingsPreferences.OpenOn.needs.rawValue, "Needs you", detail: "The meetings that wait for you: no project, questions, suggestions."),
@@ -298,6 +309,18 @@ struct MeetingsWindowPage: View {
                 NativeSettingsOption(MeetingsPreferences.TypedAnswer.noChoices.rawValue, "Without choices", detail: "Only a question with no choices gets the field."),
             ], selection: binding($typedAnswer, key: MeetingsPreferences.typedAnswerKey))
         }
+    }
+
+    private var audioCard: some View {
+        NativeSettingsCard("Audio") {
+            NativeSettingsSegmented("Play a transcript time", identifier: "meetings.window.player", options: [
+                NativeSettingsOption(MeetingsPreferences.Player.window.rawValue, "In this window",
+                                     detail: "ffplay plays with no window of its own; the bar under the Meetings window pauses and stops it."),
+                NativeSettingsOption(MeetingsPreferences.Player.app.rawValue, "In the meetings player",
+                                     detail: "The player the meetings config names (VLC first) opens its own window; stop it there."),
+            ], selection: binding($player, key: MeetingsPreferences.playerKey))
+        }
+        .nativeSettingsAnchor(MeetingsSettingsPages.playbackAnchor)
     }
 
     private func binding(_ state: Binding<String>, key: String) -> Binding<String> {

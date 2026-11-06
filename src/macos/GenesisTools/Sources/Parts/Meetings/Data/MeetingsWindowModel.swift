@@ -86,6 +86,8 @@ final class MeetingsWindowModel {
     private(set) var detail: MeetingDetailModel?
     var notice: MeetingsNotice?
     var days: Int
+    /// The meeting audio that plays from a transcript time, shown and stopped by the bar under the window.
+    var playback = MeetingsPlayback()
     private var overviewGeneration = 0
     private let loadDetail: @MainActor (MeetingDetailModel) -> Void
 

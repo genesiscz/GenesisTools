@@ -320,9 +320,10 @@ final class MeetingDetailModel {
         change("context.remove.\(ref.id)", ["context", "remove", id, ref.id], done: "Removed \(MeetingsWords.contextTitle(ref))")
     }
 
-    /// Plays the meeting's audio from a transcript time in the meetings player (VLC, else ffplay).
+    /// Plays the meeting's audio from a transcript time in the player that Settings → Meetings → Window picks; the bar
+    /// under the window shows where it is and stops it.
     func play(at seconds: Double) {
-        change("play", ["play", id, "--at", String(Int(seconds.rounded(.down)))], done: nil)
+        window?.playback.play(meeting: id, at: seconds, player: MeetingsPreferences.player().cliPlayer)
     }
 
     func openInRecorder() {

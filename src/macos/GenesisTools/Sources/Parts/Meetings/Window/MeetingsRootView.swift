@@ -3,8 +3,18 @@ import SwiftUI
 /// The pane map: full-height sidebar (Needs you, All meetings, Projects) | the meetings of that place | one meeting.
 struct MeetingsRootView: View {
     @Bindable var model: MeetingsWindowModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        VStack(spacing: 0) {
+            panes
+            MeetingsPlayerBar(playback: model.playback,
+                              title: model.playback.meeting.flatMap { model.meeting($0)?.displayTitle })
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: model.playback.state == .idle)
+    }
+
+    private var panes: some View {
         NavigationSplitView {
             MeetingsSidebar(model: model)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
