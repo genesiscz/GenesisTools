@@ -323,6 +323,11 @@ struct ItemsTab: View {
     @State private var showDecided = false
     /// The keyboard's row: Up and Down move it, Return confirms, Delete rejects; its buttons stay live.
     @State private var selected: String?
+    /// How many suggestions and decided items the list holds. A List builds and hosts every row it holds for an
+    /// accessibility client: 430 suggestions cost 7.6 s of CPU per walk and the walk still failed (2026-11-06).
+    @State private var suggestedShown = ItemsTab.page
+    @State private var decidedShown = ItemsTab.page
+    static let page = 60
 
     var body: some View {
         LoadablePane(state: detail.record, reading: "Reading the items…", retry: detail.reloadRecord) { record in
@@ -346,7 +351,7 @@ struct ItemsTab: View {
                         }
                     }
                     Section(suggested.isEmpty ? "No suggestion waits" : "Suggested (\(suggested.count))") {
-                        ForEach(suggested) { item in
+                        ForEach(suggested.prefix(suggestedShown)) { item in
                             ItemRow(item: item, busy: detail.busyItems.contains(item.id), selected: selected == item.id,
                                     play: { detail.play(at: $0) },
                                     decide: { confirm, speaker in detail.decide(item, confirm: confirm, speaker: speaker) },
@@ -354,16 +359,22 @@ struct ItemsTab: View {
                                 .equatable()
                                 .tag(item.id)
                         }
+                        if suggested.count > suggestedShown {
+                            MoreRow(remaining: suggested.count - suggestedShown) { suggestedShown += Self.page }
+                        }
                     }
                     if !decided.isEmpty {
                         Section {
                             if showDecided {
-                                ForEach(decided) { item in
+                                ForEach(decided.prefix(decidedShown)) { item in
                                     ItemRow(item: item, busy: detail.isBusy("reopen.\(item.id)"), selected: selected == item.id,
                                             play: { detail.play(at: $0) },
                                             decide: nil, reopen: item.kind == "question" ? nil : { detail.reopen(item, token: nil) })
                                         .equatable()
                                         .tag(item.id)
+                                }
+                                if decided.count > decidedShown {
+                                    MoreRow(remaining: decided.count - decidedShown) { decidedShown += Self.page }
                                 }
                             }
                         } header: {
@@ -385,6 +396,10 @@ struct ItemsTab: View {
                 }
                 .onKeyPress(.return) { act(on: record, confirm: true) }
                 .onKeyPress(.delete) { act(on: record, confirm: false) }
+                .onChange(of: record.id) {
+                    suggestedShown = Self.page
+                    decidedShown = Self.page
+                }
             }
         }
     }
@@ -449,6 +464,23 @@ private struct BulkConfirmBar: View {
         menu.append(.divider)
         menu.append(.note("Questions, ranges with no speaker and terms with no spelling stay for you."))
         return menu
+    }
+}
+
+/// The end of a long section of the Items list: the next page of rows, and how many are not shown yet. The header
+/// keeps the full count, and "Confirm all at or above" acts on every item, shown or not.
+private struct MoreRow: View {
+    let remaining: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(verbatim: "Show \(min(remaining, ItemsTab.page)) more (\(remaining) not shown)")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+        }
+        .buttonStyle(.genHoverPlain())
+        .padding(.vertical, 4)
+        .accessibilityIdentifier("meetings.items.more")
     }
 }
 
