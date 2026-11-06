@@ -12,6 +12,15 @@ tools recorder start [--audio system,mic] [--mic-device UID] [--title T] [--max-
                      [--fps N] [--idle-fps N] [--threshold PCT] [--countdown [S]] [--camera]
                      [--exclude-window-ids IDS] [--system-cursor] [--no-shortcuts] [--no-controls]
                      [--no-indicator] [--open] [--json]
+                                                 # one target flag at most; a display that is not connected or an
+                                                 # area off every display is refused, naming the displays. A window
+                                                 # or app movie has no audio and no cursor track (--audio is refused
+                                                 # with them). --json prints events: preparing (the one-time ax-tool
+                                                 # build), started (id, folder, liveId), warning (another recording
+                                                 # runs), state, result. --camera asks the recorder face for the
+                                                 # camera: a refusal fails the start, a missing camera movie exits 1.
+                                                 # A start that records nothing leaves no folder (it goes to the
+                                                 # GenesisTools trash) and prints why
 tools recorder start --frames [original|jpeg] [--jpeg-quality Q] [--naming elapsed|wall-clock|absolute]
                      [--flush finish|piece] [--ocr] [--ocr-languages L] [--ocr-min-chars N]
                      [--ocr-sink sidecar|jsonl] [--displays all|main|IDS] [--max-long-side PX]
@@ -19,7 +28,10 @@ tools recorder start --frames [original|jpeg] [--jpeg-quality Q] [--naming elaps
                      [--audio …] [--mic-device UID] [--title T] [--max-seconds N] [--countdown [S]] [--json]
                                                  # frames instead of a movie: the REPL's recorder.start()
 tools recorder demo <script.json | -> [--no-export]  # a finished demo from a JSON script of steps (below)
-tools recorder stop|pause|resume|status [id]     # the newest live recording, or the id given
+tools recorder stop|pause|resume|status [id]     # the newest live recording, or the id given; each answers with the
+                                                 # live id, the library id and the folder (stop also with the movie);
+                                                 # pause on a paused one and resume on a running one say "already …"
+                                                 # and exit 0
 tools recorder mark <label> [id]                 # a marker at this moment (a movie, frames or meeting recording); the editor and movie.markers() show it
 tools recorder markers <recording> [--chapters]  # its markers as JSON with where each plays, or "0:00 Intro" chapter lines
 tools recorder click-groups <recording> [--gap 3] # its clicks in groups (count, source seconds, where each plays), as movie.clickGroups()
@@ -27,7 +39,23 @@ tools recorder rename <recording> <title>        # a new title for the library, 
 tools recorder undo <recording>                  # back one step of apply or the REPL (30 steps in <edit>.undo.json)
 tools recorder search <text> [--json]            # titles, marker labels and cached transcript lines across the library
 tools recorder sheet <recording> [--count N] [--from T] [--to T] [--at T,T] [--out PNG]  # frames on one labelled PNG
-tools recorder list [--live] [--limit N] [--json]
+tools recorder list [--live] [--limit N] [--json]  # local start times, length, outcome and a short id that every
+                                                 # command takes (--json has the full ids, folders and reasons)
+tools recorder copy <recording> [--gif]          # the movie (the newest export, else its own) to the clipboard as a
+                                                 # file; --gif a GIF of the edit, exported when none is current
+tools recorder reveal <recording> [--meeting]    # its folder in Finder; --meeting its meeting's meeting.json
+tools recorder trash <recording>                 # to the Trash (Finder's Put Back restores it); a meeting's screen
+                                                 # recording is refused
+tools recorder comment <recording> <at> <text>   # a review comment at an OUTPUT time (seconds or m:ss); the editor
+                                                 # shows it on the timeline (`comment add` is the same command)
+tools recorder comments <recording>              # its review comments in time order, with where each plays
+tools recorder resolve <recording> <id> [--reopen]  # a comment done (or open again)
+tools recorder uncomment <recording> <id>        # remove a comment
+tools recorder replace-words <recording> --find T --replace T [--match-case] [--part-of-word]  # fix a word in every
+                                                 # transcript line (captions and subtitles show it); one undo
+tools recorder check <recording>                 # what to fix before an export and what to look at; changes nothing
+tools recorder fix <recording>                   # every fix check offers, in one save and one undo step
+tools recorder items-at <recording> <at>         # what plays at an OUTPUT time, in words
 tools recorder edit <recording> [--no-focus] [--at T] [--tab NAME]  # the editor window; --at puts the playhead at an
                                                  # OUTPUT time, --tab opens an inspector tab (zoom, clip, hide, text,
                                                  # style, cursor, captions, audio, export)
