@@ -298,13 +298,27 @@ describe("toolsets", () => {
         }
     }, 20_000);
 
-    it("a preload that throws answers the turn with the reason and retries on the next turn", async () => {
-        const engine = new ReplEngine({ toolsets: [`${FIXTURE}#BrokenToolset`] });
+    // NR2 (deep test 2026-11-06): one broken toolset used to fail every turn, `1 + 1` and the other toolsets too.
+    it("a toolset whose preload throws leaves plain turns and the other toolsets working, and its global names it", async () => {
+        const engine = new ReplEngine({ toolsets: ["presets", `${FIXTURE}#BrokenToolset`] });
         try {
-            const result = await engine.run("1 + 1");
-            expect(result.ok).toBe(false);
-            expect(result.error).toContain("toolset preload failed: the native backend is missing");
-            expect((await engine.run("1 + 1")).error).toContain("toolset preload failed");
+            const first = await engine.run("1 + 1");
+            expect(first.ok).toBe(true);
+            expect(first.text).toBe(
+                "the counter toolset did not load: the native backend is missing; its global throws until js_reset\n2"
+            );
+            expect((await engine.run("typeof presets.list")).text).toBe("function");
+
+            const used = await engine.run('counter.logTo("/tmp/never")');
+            expect(used.ok).toBe(false);
+            expect(used.error).toBe(
+                "the counter toolset did not load: the native backend is missing; js_reset loads it again"
+            );
+            expect((await engine.run("help()")).text).toContain("counter: did not load: the native backend is missing");
+
+            // A reset preloads again, and the first turn after it says so again.
+            await engine.reset();
+            expect((await engine.run("3")).text).toStartWith("the counter toolset did not load");
         } finally {
             await engine.shutdown();
         }

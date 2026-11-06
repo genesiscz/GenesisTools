@@ -36,6 +36,8 @@ interface WorkerResponse {
     images: ReplImage[];
     error?: string;
     stack?: string;
+    /** A preload's toolsets that did not load; the worker runs without them. */
+    failed?: Array<{ id: string; error: string }>;
 }
 
 const WORKER_PATH = join(import.meta.dir, "worker.ts");
@@ -105,6 +107,8 @@ export class ReplEngine {
     private generation = 0;
     private shutdownJob?: Promise<void>;
     private scratch?: TemporaryArtifacts;
+    /** Which toolsets the current worker runs without; the next turn's output starts with it. */
+    private preloadNote?: string;
     private readonly recordings = new Set<LibraryRecording>();
     /** Post-processing failures of recordings that finished on their own; the next shutdown reports them. */
     private readonly recordingFailures: unknown[] = [];
@@ -227,6 +231,13 @@ export class ReplEngine {
                 onTimeout: `preloading ${this.toolsets.join(", ")} exceeded ${this.preloadTimeoutMs} ms; the worker was killed`,
             }
         );
+
+        if (response.ok && response.failed?.length) {
+            logger.warn({ failed: response.failed, toolsets: this.toolsets }, "node-repl toolsets did not load");
+            this.preloadNote = response.failed
+                .map(({ id, error }) => `the ${id} toolset did not load: ${error}; its global throws until js_reset`)
+                .join("\n");
+        }
 
         if (!response.ok) {
             logger.warn({ error: response.error, toolsets: this.toolsets }, "node-repl toolset preload failed");
@@ -422,7 +433,11 @@ export class ReplEngine {
                 onTimeout: `turn exceeded ${timeoutMs} ms; the worker was killed and every binding is gone`,
             }
         );
-        return { ...response, durationMs: Math.round(performance.now() - turnStarted) };
+        // The first turn of a worker says which toolsets it runs without, once.
+        const note = this.preloadNote;
+        this.preloadNote = undefined;
+        const text = note ? [note, response.text].filter(Boolean).join("\n") : response.text;
+        return { ...response, text, durationMs: Math.round(performance.now() - turnStarted) };
     }
 
     /** Same wall clock as a turn: a registration nobody answers must not hang the caller forever. */

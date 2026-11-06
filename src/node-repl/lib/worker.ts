@@ -64,6 +64,13 @@ interface Response {
     images: EmittedImage[];
     error?: string;
     stack?: string;
+    /** A preload's toolsets that did not load; the others did, and plain turns run. */
+    failed?: ToolsetFailure[];
+}
+
+interface ToolsetFailure {
+    id: string;
+    error: string;
 }
 
 const moduleDirs: string[] = [];
@@ -101,6 +108,8 @@ const replApi = {
 globalThis.nodeRepl = replApi;
 
 const toolsets: ReplToolset[] = [];
+/** The toolsets of this worker that did not load, with the reason; help() and their globals name them. */
+const failedToolsets: ToolsetFailure[] = [];
 
 async function showImages(input: ShowInput | ShowInput[]): Promise<void> {
     for (const one of Array.isArray(input) ? input : [input]) {
@@ -120,10 +129,17 @@ function helpText(name?: string): string {
     if (name === undefined) {
         // Each loaded toolset with the call that prints its methods, so a bare help() is never a dead end.
         const loaded = toolsets.map((toolset) => `${toolset.oneLine()} help("${toolset.id}") lists its methods.`);
-        return [...CORE_HELP, ...(loaded.length > 0 ? loaded : ["No toolsets are loaded (--toolset a,b)."])].join("\n");
+        const failed = failedToolsets.map((failure) => `${failure.id}: did not load: ${failure.error}`);
+        const listed = [...loaded, ...failed];
+        return [...CORE_HELP, ...(listed.length > 0 ? listed : ["No toolsets are loaded (--toolset a,b)."])].join("\n");
     }
 
     const toolset = toolsets.find((one) => one.id === name || one.api.global === name);
+    const failure = failedToolsets.find((one) => one.id === name);
+
+    if (failure) {
+        throw new Error(`the ${failure.id} toolset did not load: ${failure.error}; js_reset loads it again`);
+    }
 
     if (!toolset) {
         throw new Error(
@@ -187,7 +203,30 @@ function startHostedRecording(options: unknown): Promise<string> {
     });
 }
 
-async function preload(request: PreloadRequest): Promise<string> {
+/** Names an inspection or `await` reads off any object; a stub answers them instead of throwing. */
+const INSPECTED = new Set(["then", "toJSON", "constructor", "inspect", "toString", "valueOf", "asymmetricMatch"]);
+
+/** The global of a toolset that did not load: every use throws with its name and reason, inspection stays quiet. */
+function unloadedGlobal(failure: ToolsetFailure): object {
+    return new Proxy(
+        {},
+        {
+            get: (_target, property) => {
+                if (typeof property === "symbol" || INSPECTED.has(property)) {
+                    return undefined;
+                }
+
+                throw new Error(`the ${failure.id} toolset did not load: ${failure.error}; js_reset loads it again`);
+            },
+        }
+    );
+}
+
+/**
+ * Loads each toolset on its own: one that throws becomes a global that names it and the reason, and every other
+ * toolset and plain JavaScript keep working (NR2; a broken native backend used to fail even `1 + 1`).
+ */
+async function preload(request: PreloadRequest): Promise<{ text: string; failed: ToolsetFailure[] }> {
     const { createToolsets } = await import("./toolsets");
     const ctx: ToolsetContext = {
         scratchDir: request.scratchDir,
@@ -196,12 +235,26 @@ async function preload(request: PreloadRequest): Promise<string> {
         recorder: { start: startHostedRecording },
     };
 
-    for (const toolset of await createToolsets(request.toolsets)) {
-        Object.assign(globalThis, await toolset.load(ctx));
-        toolsets.push(toolset);
+    for (const entry of request.toolsets) {
+        let toolset: ReplToolset | undefined;
+
+        try {
+            [toolset] = await createToolsets([entry]);
+            Object.assign(globalThis, await toolset.load(ctx));
+            toolsets.push(toolset);
+        } catch (error) {
+            const failure = { id: toolset?.id ?? entry, error: describeError(error).message };
+            failedToolsets.push(failure);
+
+            if (toolset) {
+                Reflect.set(globalThis, toolset.api.global, unloadedGlobal(failure));
+            }
+        }
     }
 
-    return `toolsets preloaded: ${toolsets.map((toolset) => toolset.id).join(", ")}`;
+    const loaded = toolsets.map((toolset) => toolset.id).join(", ") || "none";
+    const failed = failedToolsets.map((failure) => `${failure.id} (${failure.error})`).join(", ");
+    return { text: `toolsets preloaded: ${loaded}${failed ? `; not loaded: ${failed}` : ""}`, failed: failedToolsets };
 }
 
 async function disposeToolsets(): Promise<string[]> {
@@ -323,7 +376,8 @@ async function handle(request: Request): Promise<Response> {
 
     if (request.op === "preload") {
         try {
-            return { id: request.id, ok: true, text: await preload(request), images };
+            const loaded = await preload(request);
+            return { id: request.id, ok: true, text: loaded.text, images, failed: loaded.failed };
         } catch (error) {
             const { message, stack } = describeError(error);
             return { id: request.id, ok: false, text: output.join("\n"), images, error: message, stack };
