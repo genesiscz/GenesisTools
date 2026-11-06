@@ -328,6 +328,20 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(MeetingsLanguage.name("en"), "English")
     }
 
+    func testASpeakerShowsItsSpanWordsAndHints() throws {
+        let stats = try JSONDecoder().decode(SpeakerStats.self, from: Data("""
+        {"speakers":[{"label":"Speaker 1","turns":7,"lines":7,"words":120,"spokenSec":40,"firstSec":12,"lastSec":1540},
+                     {"label":"Speaker 2","turns":427,"lines":430,"spokenSec":900}],
+         "hints":[{"kind":"several-people","label":"Speaker 2","share":0.4,"strength":"weak"},
+                  {"kind":"label-drift","label":"Speaker 2"}]}
+        """.utf8))
+        XCTAssertEqual(MeetingsWords.speakerSpan(stats.speakers[0]), "0:12 to 25:40", "MU8")
+        XCTAssertNil(MeetingsWords.speakerSpan(stats.speakers[1]))
+        XCTAssertEqual(MeetingsWords.speakerHints(stats.hints ?? [], for: "Speaker 2"),
+                       ["May hold several people (weak sign)", "May switch to another person partway"])
+        XCTAssertEqual(MeetingsWords.speakerHints(stats.hints ?? [], for: "Speaker 1"), [])
+    }
+
     func testContextTakesLinksAndNotesAndARemoveCanBeUndone() throws {
         XCTAssertEqual(MeetingDetailModel.contextAddArgs(meeting: "a", .link("https://example.com/spec"), title: "Spec"),
                        ["context", "add", "a", "https://example.com/spec", "--title", "Spec"], "MU12")

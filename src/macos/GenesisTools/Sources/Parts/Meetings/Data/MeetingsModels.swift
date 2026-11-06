@@ -168,6 +168,16 @@ struct SpeakerStat: Decodable, Equatable, Hashable, Identifiable {
 
 struct SpeakerStats: Decodable, Equatable {
     let speakers: [SpeakerStat]
+    /// Signs about single labels (`several-people`, `label-drift`); nil from a CLI older than them.
+    let hints: [SpeakerHint]?
+}
+
+/// A sign about one label from `speakers stats`, with how strong it is ("weak", "normal", "strong").
+struct SpeakerHint: Decodable, Equatable, Hashable {
+    let kind: String
+    let label: String?
+    let share: Double?
+    let strength: String?
 }
 
 // MARK: - Screen timeline (`tools meetings screen <id> --timeline --json`)

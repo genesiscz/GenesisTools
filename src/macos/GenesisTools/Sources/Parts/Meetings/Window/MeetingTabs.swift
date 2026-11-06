@@ -617,8 +617,13 @@ struct SpeakersTab: View {
                 EmptyState(symbol: "person.2", text: "No speaker yet", detail: "The speakers come from the transcript.")
             } else {
                 let renames = detail.record.value?.speakers.labels ?? [:]
-                List(stats.speakers) { speaker in
-                    SpeakerRow(speaker: speaker, rename: renames[speaker.label]) { detail.rename(label: speaker.label, to: $0) }
+                // The most spoken first: in the CLI's order a label with 7 turns stood above one with 427.
+                List(stats.speakers.sorted { $0.spokenSec > $1.spokenSec }) { speaker in
+                    SpeakerRow(speaker: speaker, rename: renames[speaker.label],
+                               hints: MeetingsWords.speakerHints(stats.hints ?? [], for: speaker.label),
+                               play: speaker.firstSec.map { first in { detail.play(at: first) } }) {
+                        detail.rename(label: speaker.label, to: $0)
+                    }
                 }
                 .listStyle(.inset)
             }
@@ -629,6 +634,10 @@ struct SpeakersTab: View {
 private struct SpeakerRow: View {
     let speaker: SpeakerStat
     let rename: String?
+    /// Signs about the label ("May hold several people"), each a line under it.
+    let hints: [String]
+    /// Plays the label from its first line, to hear whose voice it is.
+    let play: (() -> Void)?
     let commit: (String) -> Void
     @State private var name = ""
     @FocusState private var focused: Bool
@@ -638,10 +647,17 @@ private struct SpeakerRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: speaker.label).font(.system(size: 13, weight: .medium))
                 Text(verbatim: [Plural.count(speaker.turns, "turn"), MeetingsFormat.length(speaker.spokenSec).map { "\($0) spoken" },
+                                speaker.words.map { Plural.count($0, "word") }, MeetingsWords.speakerSpan(speaker),
                                 MeetingsWords.origin(speaker.origin)].compactMap { $0 }.joined(separator: " · "))
                     .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                ForEach(hints, id: \.self) { hint in
+                    Label(hint, systemImage: "exclamationmark.triangle").font(.system(size: 11.5)).foregroundStyle(KitPalette.modified)
+                }
             }
             Spacer()
+            if let play, let first = speaker.firstSec {
+                IconButton(systemName: "play.fill", tooltip: "Play \(speaker.label) from the first line, at \(MeetingsFormat.clock(first))", action: play)
+            }
             TextField("Rename", text: $name, prompt: Text(rename ?? "Rename for this meeting"))
                 .textFieldStyle(.roundedBorder).frame(width: 220)
                 .focused($focused)

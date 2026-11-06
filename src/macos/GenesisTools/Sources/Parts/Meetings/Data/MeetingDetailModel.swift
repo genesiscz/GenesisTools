@@ -677,3 +677,23 @@ extension MeetingDetailModel {
         return args
     }
 }
+
+extension MeetingsWords {
+    /// The signs about one label, as sentences under it.
+    static func speakerHints(_ hints: [SpeakerHint], for label: String) -> [String] {
+        hints.filter { $0.label == label }.map { hint in
+            let strength = hint.strength.map { " (\($0) sign)" } ?? ""
+            switch hint.kind {
+            case "several-people": return "May hold several people\(strength)"
+            case "label-drift": return "May switch to another person partway\(strength)"
+            default: return hint.kind.replacingOccurrences(of: "-", with: " ").capitalized + strength
+            }
+        }
+    }
+
+    /// "0:12 to 25:40": where a label speaks first and last.
+    static func speakerSpan(_ speaker: SpeakerStat) -> String? {
+        guard let first = speaker.firstSec, let last = speaker.lastSec else { return nil }
+        return "\(MeetingsFormat.clock(first)) to \(MeetingsFormat.clock(last))"
+    }
+}
