@@ -3,6 +3,7 @@ import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
+import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import {
     type MeetingCreator,
     type MeetingParticipant,
@@ -36,11 +37,52 @@ function mergeParticipants(current: MeetingParticipant[], incoming: MeetingParti
     return merged;
 }
 
+/** The records other than `exceptId` that hold this source meeting (its whole id, never a prefix). */
+export function sourceHolders(options: {
+    store: MeetingStore;
+    sourceId: string;
+    sourceMeetingId: string;
+    exceptId?: string;
+}): MeetingRecord[] {
+    return options.store
+        .list()
+        .filter(
+            (record) =>
+                record.id !== options.exceptId &&
+                record.sources[options.sourceId]?.meetingId === options.sourceMeetingId
+        );
+}
+
+/**
+ * Refuses to link a source meeting that another record holds: two records of one call split its frames, its items and
+ * its project, and the source reference no longer names one meeting (2026-11-05: a second record made by hand during
+ * the call and linked afterwards). The way out is to merge the two records.
+ */
+export function assertSourceFree(options: {
+    store: MeetingStore;
+    sourceId: string;
+    sourceMeetingId: string;
+    targetId: string;
+}): void {
+    const holders = sourceHolders({ ...options, exceptId: options.targetId });
+    const holder = holders[0];
+
+    if (!holder) {
+        return;
+    }
+
+    throw new MeetingsConflictError(
+        "source-linked",
+        `${options.sourceId}:${options.sourceMeetingId} is linked to ${holders.map((record) => record.id).join(", ")} already. ` +
+            `Merge the two records instead: ${toolCommand("meetings", "merge", options.targetId, "--into", holder.id)}`
+    );
+}
+
 /**
  * The source fills what the record does not have. With `refresh` (the source ended a meeting it was live for) its title
  * and end win, unless a person gave the record its title.
  */
-function applySource(options: {
+export function applySource(options: {
     record: MeetingRecord;
     sourceId: string;
     block: Record<string, unknown>;
@@ -53,6 +95,12 @@ function applySource(options: {
     record.title =
         options.refresh && meeting.title.trim() && !titledByHand ? meeting.title : record.title || meeting.title;
     record.end = options.refresh ? (meeting.end ?? record.end) : (record.end ?? meeting.end);
+
+    // A record made when a screen recording started began after the call did: the call's start is the meeting's.
+    if (meeting.start && Date.parse(meeting.start) < Date.parse(record.start)) {
+        record.start = meeting.start;
+    }
+
     record.participants = mergeParticipants(record.participants, meeting.participants);
     record.calendar ??= meeting.calendar;
 }
@@ -93,6 +141,15 @@ export async function linkSource(options: {
 
     if (options.meetingRef && !existing) {
         throw new Error(`No meeting "${options.meetingRef}" (${toolCommand("meetings", "list")})`);
+    }
+
+    if (existing) {
+        assertSourceFree({
+            store: options.store,
+            sourceId: ref.source,
+            sourceMeetingId: meeting.sourceMeetingId,
+            targetId: existing.id,
+        });
     }
 
     const { project } = await resolveProject({

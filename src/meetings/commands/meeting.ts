@@ -13,6 +13,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { collectAndReport } from "../lib/collect";
 import { linkSource } from "../lib/link";
+import { mergeMeetings } from "../lib/merge";
 import { resolveProject } from "../lib/project";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { showText } from "../lib/show-text";
@@ -223,6 +224,43 @@ async function link(ref: string, sourceRef: string, opts: { project?: string }):
     }
 }
 
+async function merge(fromRef: string, opts: { into: string; dryRun?: boolean; json?: boolean }): Promise<void> {
+    try {
+        const result = await mergeMeetings({
+            store: new MeetingStore(),
+            fromId: fromRef,
+            intoId: opts.into,
+            dryRun: opts.dryRun,
+        });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            return;
+        }
+
+        const { moved } = result;
+        const what = `${moved.frames} frames, ${moved.audio} sound files, ${moved.rows} OCR and sound rows, ${moved.context} context items, ${moved.history} history lines`;
+        ui.ok(`${result.dryRun ? "Would merge" : "Merged"} ${result.from} into ${result.into}: ${what}.`);
+        ui.dim(`  start ${localTime(result.start)}${result.end ? `, end ${localTime(result.end)}` : ""}`);
+
+        if (result.derived.length > 0) {
+            ui.dim(`  editor files made again on the next open: ${result.derived.join(", ")}`);
+        }
+
+        if (result.withdrawn) {
+            ui.dim(
+                `  the project question of ${result.from} is ${result.dryRun ? "to be withdrawn" : "withdrawn"}: ${result.withdrawn}`
+            );
+        }
+
+        if (result.backup) {
+            ui.dim(`  backup and restore steps: ${result.backup}/README.md`);
+        }
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
 async function contextAdd(
     ref: string,
     target: string | undefined,
@@ -373,6 +411,17 @@ export function registerMeetingCommands(program: Command): void {
         .description("Attach a source's meeting: its transcript, people, times and calendar entry")
         .option("--project <name>", "its project, when it has none yet")
         .action(link);
+
+    program
+        .command("merge")
+        .argument("<meeting>", "the record that goes away: an id, a unique prefix or last")
+        .description(
+            "Make two records of one call one: frames, sound, rows, context and history move, with a backup first"
+        )
+        .requiredOption("--into <meeting>", "the record that stays")
+        .option("--dry-run", "say what would move, change nothing")
+        .option("--json", "print the result as JSON")
+        .action(merge);
 
     const context = program.command("context").description("Reference material for a meeting: notes, files, links");
 

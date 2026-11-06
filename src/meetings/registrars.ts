@@ -7,7 +7,7 @@ import type { LazyRegistrar } from "@genesiscz/utils/cli/lazy-registrars";
  */
 export const MEETINGS_REGISTRARS: LazyRegistrar[] = [
     {
-        names: ["new", "list", "ls", "show", "set", "link", "context"],
+        names: ["new", "list", "ls", "show", "set", "link", "merge", "context"],
         load: async () => (await import("./commands/meeting")).registerMeetingCommands,
     },
     {

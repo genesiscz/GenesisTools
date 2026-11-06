@@ -13,6 +13,8 @@ export const MEETINGS_CONFLICT_CODES = [
     "item-changed",
     /** A dictionary entry with that value exists already in the level (`dictionary add --if-absent`). */
     "dictionary-exists",
+    /** The source meeting is linked to another record already (`link`): two records of one call split it. */
+    "source-linked",
 ] as const;
 export type MeetingsConflictCode = (typeof MEETINGS_CONFLICT_CODES)[number];
 

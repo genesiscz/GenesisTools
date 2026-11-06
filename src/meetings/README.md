@@ -14,7 +14,8 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `new --source wisprflow:<id>` | Create it from a source's meeting: title, times, people, the calendar entry |
 | `list [--project <name>]`, `show <meeting>` | The records (`--json`) |
 | `set <meeting> --project <name> \| --title <text>` | Change a field |
-| `link <meeting> wisprflow:<id>` | Attach a source's meeting to an existing record |
+| `link <meeting> wisprflow:<id>` | Attach a source's meeting to an existing record. A source meeting that another record holds is refused with `[source-linked]` and the `merge` command, because two records would split one call. When the call started before the record (a record made when a screen recording started), the record's start becomes the call's, so its times match the transcript |
+| `merge <meeting> --into <meeting> [--dry-run] [--json]` | Make two records of one call one: the frames, sound and their rows move into the record that stays, the recording blocks, context, labels, people and history merge, the start is the earlier one, and a generated title (`Meeting 14:29`) gives way to the call's. Both folders are cloned into `~/.genesis-tools/backups/meetings/<YYYY-MM-DD-HHMM>-merge-<meeting>/` first, with a `README.md` of restore steps; the record that goes away moves there, its editor files are made again on the next open, and its open project question is withdrawn. Refused for records of two source meetings, a record with items (decide them first), a record being recorded, and frame names in both |
 | `context add <meeting> [file\|url] [--title] [--note]`, `context list`, `context remove` | Reference material; a file is kept as its path, never copied |
 | `speakers stats <meeting> [--attendance <platform>\|<file>]` | Per label: origin, turns, spoken time, spans, with hints |
 | `speakers rename <meeting> <label> <name>` | Rename a label for this meeting |
@@ -78,7 +79,7 @@ the record's `history`, and a change that would make the record invalid writes n
 A refusal a client may act on leads its `✗` line on stderr with a code in brackets, and exits 1. A state of the
 meeting: `[no-transcript-source]`, the meeting has no linked source with a transcript or audio (`transcript`,
 `speakers stats`, `suggest`, `export`, `play`); the Meetings window shows its empty state on it. A conflict:
-`[config-stale]`, `[export-edited]`, `[export-unsafe-path]`, `[item-changed]`, `[dictionary-exists]`. The code is for
+`[config-stale]`, `[export-edited]`, `[export-unsafe-path]`, `[item-changed]`, `[dictionary-exists]`, `[source-linked]`. The code is for
 programs; the sentence after it is for people.
 
 Every command that creates or changes a meeting resolves its project in this order: `--project` (a new name joins
