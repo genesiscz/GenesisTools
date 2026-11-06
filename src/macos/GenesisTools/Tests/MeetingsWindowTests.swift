@@ -389,9 +389,8 @@ final class MeetingsWindowTests: XCTestCase {
     /// MP6: every open ran `assign proposals` (a process and a Calendar read) for a menu.
     func testOnlyAMeetingWithoutAProjectReadsItsProposalsAtOpen() throws {
         let overview = try JSONDecoder().decode(MeetingsOverview.self, from: overviewJSON())
-        XCTAssertFalse(MeetingDetailModel.readsProposalsAtOpen(overview.meetings.first { $0.id == "a" }), "a has a project")
-        XCTAssertTrue(MeetingDetailModel.readsProposalsAtOpen(overview.meetings.first { $0.id == "b" }), "b has none")
-        XCTAssertTrue(MeetingDetailModel.readsProposalsAtOpen(nil), "a meeting the list does not show yet reads them")
+        XCTAssertFalse(MeetingDetailModel.readsProposalsAtOpen(project: overview.meetings.first { $0.id == "a" }?.project), "a has a project")
+        XCTAssertTrue(MeetingDetailModel.readsProposalsAtOpen(project: overview.meetings.first { $0.id == "b" }?.project), "b has none")
     }
 
     /// MP9: reopening Settings read every Meetings page's data, the pages never shown included.

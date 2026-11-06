@@ -48,6 +48,8 @@ final class MeetingDetailModel {
     @ObservationIgnored private var inFlight: [AnyKeyPath: Task<Void, Never>] = [:]
     /// The window let this meeting go (another one opened): no read starts, and one that still lands is ignored.
     @ObservationIgnored private(set) var isDropped = false
+    /// Opened before the list showed the meeting: whether proposals read waits for its record.
+    @ObservationIgnored private var proposalsAwaitRecord = false
 
     /// A part of the pane with a `meetings revisions` token.
     enum RevisionPart: Hashable { case record, transcript, speakers, timeline }
@@ -62,16 +64,28 @@ final class MeetingDetailModel {
 
     func load() {
         reloadRecord()
-        if Self.readsProposalsAtOpen(window?.meeting(id)) { loadProposals() }
+        if let meeting = window?.meeting(id) {
+            if Self.readsProposalsAtOpen(project: meeting.project) { loadProposals() }
+        } else {
+            // Opened by id before the list shows it (a launch, `tools meetings window <id>`): the record decides.
+            proposalsAwaitRecord = true
+        }
         loadTab(tab)
     }
 
-    /// The proposals feed only the project picker. A meeting with no project (or one the list does not show yet)
-    /// reads them at once, since choosing a project is its next step; any other reads them when the pointer reaches
-    /// the picker or the picker opens (`ensureProposals`). That is one `assign proposals` process, about 600 ms of CPU
-    /// and a Calendar read, less per open of a meeting with a project.
-    static func readsProposalsAtOpen(_ meeting: OverviewMeeting?) -> Bool {
-        meeting?.project == nil
+    /// The proposals feed only the project picker. A meeting with no project reads them at once, since choosing a
+    /// project is its next step; any other reads them when the pointer reaches the picker or the picker opens
+    /// (`ensureProposals`). That is one `assign proposals` process, about 600 ms of CPU and a Calendar read, less per
+    /// open of a meeting with a project.
+    static func readsProposalsAtOpen(project: String?) -> Bool {
+        project == nil
+    }
+
+    /// The first record of a meeting opened before the list showed it: its project decides whether proposals read now.
+    private func recordLanded(_ record: MeetingRecordView) {
+        guard proposalsAwaitRecord else { return }
+        proposalsAwaitRecord = false
+        if Self.readsProposalsAtOpen(project: record.project) { ensureProposals() }
     }
 
     /// The project picker is about to be used: its proposals read now if nothing read them yet.
@@ -102,7 +116,9 @@ final class MeetingDetailModel {
     func loadProposals() { readProposals(quiet: false) }
 
     private func readRecord(quiet: Bool) {
-        read(\.record, generation: \.recordGeneration, ["show", id, "--json"], quiet: quiet, revision: .record)
+        read(\.record, generation: \.recordGeneration, ["show", id, "--json"], quiet: quiet, revision: .record) { [weak self] record in
+            self?.recordLanded(record)
+        }
     }
 
     private func readTranscript(quiet: Bool) {
@@ -131,7 +147,8 @@ final class MeetingDetailModel {
     private func read<Value: Decodable & Equatable>(
         _ part: ReferenceWritableKeyPath<MeetingDetailModel, Loadable<Value>>,
         generation: ReferenceWritableKeyPath<MeetingDetailModel, Int>,
-        _ args: [String], timeoutSeconds: Int = 60, quiet: Bool, revision: RevisionPart? = nil
+        _ args: [String], timeoutSeconds: Int = 60, quiet: Bool, revision: RevisionPart? = nil,
+        then landed: ((Value) -> Void)? = nil
     ) {
         guard !isDropped else { return }
         self[keyPath: generation] += 1
@@ -143,6 +160,7 @@ final class MeetingDetailModel {
                 let value = try await MeetingsCLI.json(Value.self, args, timeoutSeconds: timeoutSeconds)
                 guard let self, !self.isDropped, current == self[keyPath: generation] else { return }
                 self.settle(part, .loaded(value))
+                landed?(value)
             } catch {
                 guard let self, !Task.isCancelled, !self.isDropped, current == self[keyPath: generation] else { return }
                 if let revision { self.readAt[revision] = nil }
