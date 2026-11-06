@@ -19,6 +19,18 @@ final class RecorderSettingsTests: XCTestCase {
         RecorderNotice.outlets = .live
     }
 
+    /// The defect: the note measured its own host with no sizing options (0 x 0), so every failure note opened as an
+    /// invisible 0 x 0 window (review 2026-11-06).
+    @MainActor
+    func testAFailureNoteIsMeasuredAtItsRealSizeBeforeItShows() {
+        let short = RecorderNoticePanel.measure(text: "The recording did not start.", more: nil)
+        XCTAssertEqual(short.width, RecorderNoticePanel.width)
+        XCTAssertGreaterThan(short.height, 24)
+        let long = RecorderNoticePanel.measure(text: String(repeating: "The recording did not start. ", count: 8),
+                                               more: "exit 2")
+        XCTAssertGreaterThan(long.height, short.height, "a longer message wraps onto more lines")
+    }
+
     func testNothingStoredGivesTheDefaultsAndADamagedValueFallsBackToThem() {
         XCTAssertEqual(RecorderFailureStyle.load(defaults), .notice)
         XCTAssertEqual(CameraPreviewPolicy.load(defaults), .everyCameraRecording)

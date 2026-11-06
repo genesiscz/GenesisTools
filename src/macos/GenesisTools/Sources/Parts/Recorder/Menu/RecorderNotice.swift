@@ -126,7 +126,7 @@ final class RecorderNoticePanel {
             resized: { [weak self] size in self?.fit(size, generation: shown) }))
         let panel = panel ?? makePanel(host: host)
         self.panel = panel
-        let size = host.fittingSize
+        let size = Self.measure(text: text, more: more)
         let anchor = anchor()
         let visible = Self.screen(for: anchor)?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         panel.setFrame(CGRect(origin: Self.origin(size: size, anchor: anchor, visible: visible), size: size), display: true)
@@ -145,6 +145,15 @@ final class RecorderNoticePanel {
         ])
     }
 
+    /// The note's size before it shows. The panel's own host has no sizing options (the panel sets its size), so its
+    /// `fittingSize` is 0 x 0, and every note opened as a 0 x 0 window; a throwaway controller measures the same pill.
+    static func measure(text: String, more: String?) -> CGSize {
+        let probe = NSHostingController(rootView: RecorderNoticeContent(text: text, more: more, dismiss: {})
+            .environment(\.colorScheme, .dark))
+        let size = probe.sizeThatFits(in: CGSize(width: width, height: 10_000))
+        return CGSize(width: width, height: max(size.height.rounded(.up), 1))
+    }
+
     func close() { close(generation) }
 
     private func close(_ shown: Int) {
@@ -154,7 +163,8 @@ final class RecorderNoticePanel {
 
     /// Details opened or closed: the panel keeps its top edge and grows or shrinks downward.
     private func fit(_ size: CGSize, generation shown: Int) {
-        guard shown == generation, let panel, panel.isVisible, size.height > 0 else { return }
+        // Not only while visible: the first report comes during the show, before the panel is ordered in.
+        guard shown == generation, let panel, size.height > 0 else { return }
         let frame = panel.frame
         guard abs(frame.height - size.height) > 0.5 || abs(frame.width - size.width) > 0.5 else { return }
         panel.setFrame(CGRect(x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height), display: true)
@@ -220,11 +230,7 @@ private struct RecorderNoticeView: View {
     let resized: (CGSize) -> Void
 
     var body: some View {
-        // The pill's own translucent fill sits on an opaque backing of the same shape, so it reads over any window.
-        NoticePill(text: text, more: more, tone: .error, dismiss: dismiss)
-            .frame(width: RecorderNoticePanel.width, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color(white: 0.11)))
+        RecorderNoticeContent(text: text, more: more, dismiss: dismiss)
             .background(GeometryReader { proxy in
                 Color.clear
                     .onAppear { resized(proxy.size) }
@@ -233,6 +239,21 @@ private struct RecorderNoticeView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .environment(\.colorScheme, .dark)
             .accessibilityIdentifier("recorder.notice")
+    }
+}
+
+/// The note itself, at its own height: what the panel shows and what `RecorderNoticePanel.measure` measures.
+struct RecorderNoticeContent: View {
+    let text: String
+    let more: String?
+    let dismiss: () -> Void
+
+    var body: some View {
+        // The pill's own translucent fill sits on an opaque backing of the same shape, so it reads over any window.
+        NoticePill(text: text, more: more, tone: .error, dismiss: dismiss)
+            .frame(width: RecorderNoticePanel.width, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color(white: 0.11)))
     }
 }
 
