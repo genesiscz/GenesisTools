@@ -201,6 +201,36 @@ final class RecordingModelTests: XCTestCase {
     }
 }
 
+final class RecordingPickerPlacementTests: XCTestCase {
+    /// A 1512 x 982 display with a 25 pt menu bar; the picker is 400 x 460.
+    private let visible = CGRect(x: 0, y: 0, width: 1512, height: 957)
+    private let size = CGSize(width: 400, height: 460)
+
+    @MainActor
+    func testThePickerMeasuresItsContentBeforeItsSizeIsTheWindowsToSet() {
+        // With no sizing options `fittingSize` is 0 x 0: the picker opened as a 0 x 0 window and then grew below the
+        // screen (review 2026-11-06).
+        let hosting = NSHostingView(rootView: AnyView(Color.red.frame(width: 300, height: 120).fixedSize()))
+        XCTAssertEqual(RecordingPickerPanel.measure(hosting), CGSize(width: 300, height: 120))
+        XCTAssertTrue(hosting.sizingOptions.isEmpty, "the window's size is set by the panel from here on")
+    }
+
+    func testAtThePointerNearTheBottomThePickerOpensAboveItInsideTheScreen() {
+        let low = RecordingPanelLayout.picker(size: size, anchor: CGPoint(x: 700, y: 120), visible: visible)
+        XCTAssertEqual(low, CGRect(x: 500, y: 128, width: 400, height: 460))
+        let high = RecordingPanelLayout.picker(size: size, anchor: CGPoint(x: 1500, y: 900), visible: visible)
+        XCTAssertEqual(high, CGRect(x: 1104, y: 432, width: 400, height: 460))
+    }
+
+    func testAPickerThatGrowsKeepsItsTopEdgeUntilTheBottomOfTheScreenThenMovesUp() {
+        let open = CGRect(x: 500, y: 400, width: 400, height: 460)
+        XCTAssertEqual(RecordingPanelLayout.resized(open, to: CGSize(width: 400, height: 500), visible: visible),
+                       CGRect(x: 500, y: 360, width: 400, height: 500), "room below: the top edge stays")
+        XCTAssertEqual(RecordingPanelLayout.resized(open, to: CGSize(width: 400, height: 900), visible: visible),
+                       CGRect(x: 500, y: 8, width: 400, height: 900), "no room: it moves up, the bottom 8 pt inside")
+    }
+}
+
 final class RecordingPanelLayoutTests: XCTestCase {
     // Two displays: a 1728 x 1117 primary with a 25 pt menu bar and a 70 pt Dock, and one to its right.
     private let screens = [
