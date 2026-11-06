@@ -67,13 +67,53 @@ function stripTypes(source: string): string {
     try {
         return transpiler.transformSync(source);
     } catch (error) {
-        if (!String(error).includes("Top-level return")) {
+        const problems = parseProblems(error);
+
+        if (problems.length === 0) {
             throw error;
         }
 
+        const first = problems.find((problem) => !problem.message.includes("Top-level return"));
+
+        if (first) {
+            throw turnSyntaxError(first, 0);
+        }
+    }
+
+    try {
         const wrapped = transpiler.transformSync(`async function __turn__() {\n${source}\n}`);
         return wrapped.slice(wrapped.indexOf("{") + 1, wrapped.lastIndexOf("}"));
+    } catch (error) {
+        const [first] = parseProblems(error);
+
+        if (!first) {
+            throw error;
+        }
+
+        throw turnSyntaxError(first, 1);
     }
+}
+
+/** The transpiler throws one BuildMessage, or an AggregateError of them; only those with a position are kept. */
+function parseProblems(error: unknown): BuildMessage[] {
+    const all: unknown[] = error instanceof AggregateError ? error.errors : [error];
+    return all.filter((entry): entry is BuildMessage => entry instanceof BuildMessage && entry.position !== null);
+}
+
+/**
+ * A parse failure as one SyntaxError at the turn's line and column, with the line and a caret (NR8). The transpiler's own
+ * error reads "AggregateError: Parse error" with no position, and its frames are this file's. `lineOffset` is the
+ * number of lines a wrapper put before the turn.
+ */
+function turnSyntaxError(problem: BuildMessage, lineOffset: number): SyntaxError {
+    const position = problem.position;
+    const line = (position?.line ?? 1) - lineOffset;
+    const column = position?.column ?? 1;
+    const caret = `${" ".repeat(Math.max(0, column - 1))}^`;
+    const message = `${problem.message} at turn:${line}:${column}\n${position?.lineText ?? ""}\n${caret}`;
+    const error = new SyntaxError(message);
+    error.stack = `SyntaxError: ${message}`;
+    return error;
 }
 
 export function rewriteTurn(source: string): string {
