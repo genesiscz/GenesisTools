@@ -13,6 +13,15 @@ public enum RecordingPickerTab: String, CaseIterable, Hashable, Sendable {
         }
     }
 
+    /// The number-row key that switches to this tab, by position: 1, 2, 3 on a US keyboard, +, ě, š on a Czech one.
+    public var keyCode: UInt16 {
+        switch self {
+        case .windows: return 18
+        case .apps: return 19
+        case .displays: return 20
+        }
+    }
+
     static func of(_ target: RecordingTarget?) -> RecordingPickerTab {
         switch target {
         case .app: return .apps
@@ -23,23 +32,43 @@ public enum RecordingPickerTab: String, CaseIterable, Hashable, Sendable {
 }
 
 extension RecordingPickerTab {
-    /// The chord that switches to this tab, shown in the tab's tooltip.
-    var chord: String {
-        switch self {
-        case .windows: return "⌘1"
-        case .apps: return "⌘2"
-        case .displays: return "⌘3"
-        }
+    /// The chord that switches to this tab, shown in the tab's tooltip, as the user's layout prints the key.
+    @MainActor var chord: String { RecordingPickerKey.label(keyCode) }
+
+    /// The tab of a ⌘ press: by the key's position when the event is known, else by the US digit.
+    static func forKey(code: UInt16?, character: Character?) -> RecordingPickerTab? {
+        if let code { return allCases.first { $0.keyCode == code } }
+        return allCases.first { TableKeyLayout.us.character(for: $0.keyCode) == character.map(String.init) }
+    }
+}
+
+/// The picker's ⌘ keys, matched by their place on the keyboard. On a Czech layout ⌘ with the 4 key types "č", so a
+/// match by character never fired there (review 2026-11-06). SwiftUI's `KeyPress` carries no key code; the key event
+/// being handled has one.
+public enum RecordingPickerKey {
+    /// ⌘ and the 4 key: select an area.
+    public static let area: UInt16 = 21
+
+    /// The key code of the key-down event being handled now, nil outside one.
+    @MainActor public static func eventCode() -> UInt16? {
+        guard let event = NSApp.currentEvent, event.type == .keyDown else { return nil }
+        return event.keyCode
     }
 
-    static func forKey(_ character: Character) -> RecordingPickerTab? {
-        switch character {
-        case "1": return .windows
-        case "2": return .apps
-        case "3": return .displays
-        default: return nil
-        }
+    /// ⌘ alone and the key at `code`. Without an event (a test, a synthetic press) the US character decides.
+    public static func matches(modifiers: EventModifiers, eventCode: UInt16?, character: Character?, code: UInt16) -> Bool {
+        guard modifiers == .command else { return false }
+        if let eventCode { return eventCode == code }
+        return TableKeyLayout.us.character(for: code) == character.map(String.init)
     }
+
+    /// "⌘4" on a US layout, "⌘Č" on a Czech one: what the user's keyboard prints on that key.
+    @MainActor public static func label(_ code: UInt16) -> String { label(code, layout: SystemKeyLayout.shared) }
+
+    public static func label(_ code: UInt16, layout: KeyLayout) -> String { KeyChord.code(code, .command).label(layout: layout) }
+
+    /// The tab chords in one run, for a footer: "⌘1 ⌘2 ⌘3".
+    @MainActor public static var tabLabels: String { RecordingPickerTab.allCases.map(\.chord).joined(separator: " ") }
 }
 
 /// One line of the picker: an app header over its windows, or a target that a click records.
@@ -207,8 +236,9 @@ public struct RecordingTargetPicker: View {
             return .handled
         }
         .onKeyPress(phases: .down) { press in
-            guard press.modifiers == .command, let character = press.characters.first,
-                  let next = RecordingPickerTab.forKey(character) else { return .ignored }
+            guard press.modifiers == .command,
+                  let next = RecordingPickerTab.forKey(code: RecordingPickerKey.eventCode(), character: press.characters.first)
+            else { return .ignored }
             tab = next
             return .handled
         }
@@ -364,7 +394,7 @@ public struct RecordingTargetPicker: View {
 
     private var footer: some View {
         HStack(spacing: 4) {
-            Text(footerHint ?? "↑ ↓ to choose · Return records · Esc cancels · ⌘1 ⌘2 ⌘3 switch tabs")
+            Text(footerHint ?? "↑ ↓ to choose · Return records · Esc cancels · \(RecordingPickerKey.tabLabels) switch tabs")
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }

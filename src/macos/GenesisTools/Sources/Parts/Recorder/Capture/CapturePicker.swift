@@ -8,6 +8,12 @@ import SwiftUI
 final class CapturePicker {
     static let shared = CapturePicker()
 
+    /// The keys under the list, named as the user's layout prints them (⌘4 on a US keyboard, ⌘Č on a Czech one).
+    static var footerHint: String {
+        "↑ ↓ choose · Return records · \(RecordingPickerKey.label(RecordingPickerKey.area)) an area · Esc cancels · "
+            + "\(RecordingPickerKey.tabLabels) tabs"
+    }
+
     let model = CapturePickerModel()
     private let panel = RecordingPickerPanel()
     private var load: RecordingTargetPicker.Load = .loading
@@ -65,9 +71,12 @@ final class CapturePicker {
             restoring: filter,
             onFilterChange: { [weak self] tab, query in self?.filter = (tab, query) },
             accessory: AnyView(CaptureOptionsView(model: model, onArea: { [weak self] in self?.selectArea() })),
-            footerHint: "↑ ↓ choose · Return records · ⌘4 an area · Esc cancels · ⌘1 ⌘2 ⌘3 tabs")
+            footerHint: Self.footerHint)
             .onKeyPress(phases: .down) { [weak self] press in
-                guard press.modifiers == .command, press.characters == "4" else { return .ignored }
+                // By the key's position: a Czech layout types č on the 4 key with ⌘ held.
+                guard RecordingPickerKey.matches(modifiers: press.modifiers, eventCode: RecordingPickerKey.eventCode(),
+                                                 character: press.characters.first, code: RecordingPickerKey.area)
+                else { return .ignored }
                 self?.selectArea()
                 return .handled
             }
@@ -171,7 +180,7 @@ final class CapturePicker {
             load: .loaded(targets), title: "Record", initial: targets.defaultTarget(preferredPid: 501),
             onChoose: { _ in }, onCancel: {},
             accessory: AnyView(CaptureOptionsView(model: model, onArea: {})),
-            footerHint: "↑ ↓ choose · Return records · ⌘4 an area · Esc cancels · ⌘1 ⌘2 ⌘3 tabs")
+            footerHint: Self.footerHint)
         let hosting = NSHostingView(rootView: view.fixedSize())
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
@@ -290,7 +299,8 @@ struct CaptureOptionsView: View {
                     Image(systemName: "rectangle.dashed").frame(width: 18)
                     Text("Select an area…").font(.system(size: 12, weight: .medium))
                     Spacer(minLength: 0)
-                    Text(verbatim: "⌘4").font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
+                    Text(verbatim: RecordingPickerKey.label(RecordingPickerKey.area)).font(.system(size: 11))
+                        .foregroundStyle(SessionPalette.secondary)
                 }
                 .padding(.horizontal, 8).padding(.vertical, 5)
                 .contentShape(Rectangle())

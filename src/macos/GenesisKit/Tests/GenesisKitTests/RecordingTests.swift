@@ -201,6 +201,29 @@ final class RecordingModelTests: XCTestCase {
     }
 }
 
+final class RecordingPickerKeyTests: XCTestCase {
+    /// The defect: the picker matched ⌘4 and ⌘1 to ⌘3 by the character typed, and a Czech layout types č, +, ě and š
+    /// on those keys with ⌘ held, so they did nothing there (review 2026-11-06). They match by key position now.
+    func testThePickerKeysMatchByPositionWhateverTheLayoutTypes() {
+        XCTAssertTrue(RecordingPickerKey.matches(modifiers: .command, eventCode: 21, character: "č", code: RecordingPickerKey.area))
+        XCTAssertFalse(RecordingPickerKey.matches(modifiers: .command, eventCode: 20, character: "4", code: RecordingPickerKey.area))
+        XCTAssertFalse(RecordingPickerKey.matches(modifiers: [.command, .shift], eventCode: 21, character: "4", code: RecordingPickerKey.area))
+        XCTAssertTrue(RecordingPickerKey.matches(modifiers: .command, eventCode: nil, character: "4", code: RecordingPickerKey.area),
+                      "with no event (a test), the US character decides")
+        XCTAssertEqual(RecordingPickerTab.forKey(code: 18, character: "+"), .windows)
+        XCTAssertEqual(RecordingPickerTab.forKey(code: 20, character: "š"), .displays)
+        XCTAssertNil(RecordingPickerTab.forKey(code: 21, character: "1"), "a position decides when there is one")
+        XCTAssertEqual(RecordingPickerTab.forKey(code: nil, character: "2"), .apps)
+    }
+
+    func testTheLabelsNameTheKeyAsTheLayoutPrintsIt() {
+        let czech = TableKeyLayout([18: "+", 19: "ě", 20: "š", 21: "č"])
+        XCTAssertEqual(RecordingPickerKey.label(RecordingPickerKey.area, layout: czech), "⌘Č")
+        XCTAssertEqual(RecordingPickerKey.label(RecordingPickerKey.area, layout: TableKeyLayout.us), "⌘4")
+        XCTAssertEqual(RecordingPickerTab.allCases.map { RecordingPickerKey.label($0.keyCode, layout: czech) }, ["⌘+", "⌘Ě", "⌘Š"])
+    }
+}
+
 final class RecordingPickerPlacementTests: XCTestCase {
     /// A 1512 x 982 display with a 25 pt menu bar; the picker is 400 x 460.
     private let visible = CGRect(x: 0, y: 0, width: 1512, height: 957)
