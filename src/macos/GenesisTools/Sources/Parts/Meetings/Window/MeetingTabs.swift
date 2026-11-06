@@ -335,11 +335,7 @@ struct ItemsTab: View {
     @State private var showDecided = false
     /// The keyboard's row: Up and Down move it, Return confirms, Delete rejects; its buttons stay live.
     @State private var selected: String?
-    /// How many suggestions and decided items the list holds. A List builds and hosts every row it holds for an
-    /// accessibility client: 430 suggestions cost 7.6 s of CPU per walk and the walk still failed (2026-11-06).
-    @State private var suggestedShown = ItemsTab.page
-    @State private var decidedShown = ItemsTab.page
-    static let page = 60
+    @FocusState private var focused: Bool
 
     var body: some View {
         LoadablePane(state: detail.record, reading: "Reading the items…", retry: detail.reloadRecord) { record in
@@ -353,67 +349,96 @@ struct ItemsTab: View {
                            detail: hasTranscript ? "The rules suggest items from the transcript." : "The rules need a transcript, and this meeting has none.",
                            actionTitle: !hasTranscript ? nil : detail.isBusy("suggest") ? "Suggesting…" : "Suggest items") { detail.suggest() }
             } else {
-                List(selection: $selected) {
-                    if !questions.isEmpty {
-                        Section("Questions to answer (\(questions.count))") {
-                            ForEach(questions) { item in
-                                QuestionRow(item: item, busy: detail.isBusy("answer.\(item.id)"),
-                                            play: { detail.play(at: $0) }, answer: { detail.answer(item, with: $0) })
-                            }
-                        }
-                    }
-                    Section(suggested.isEmpty ? "No suggestion waits" : "Suggested (\(suggested.count))") {
-                        ForEach(suggested.prefix(suggestedShown)) { item in
-                            ItemRow(item: item, busy: detail.busyItems.contains(item.id), selected: selected == item.id,
-                                    play: { detail.play(at: $0) },
-                                    decide: { confirm, speaker in detail.decide(item, confirm: confirm, speaker: speaker) },
-                                    reopen: nil)
-                                .equatable()
-                                .tag(item.id)
-                        }
-                        if suggested.count > suggestedShown {
-                            MoreRow(remaining: suggested.count - suggestedShown) { suggestedShown += Self.page }
-                        }
-                    }
-                    if !decided.isEmpty {
-                        Section {
-                            if showDecided {
-                                ForEach(decided.prefix(decidedShown)) { item in
-                                    ItemRow(item: item, busy: detail.isBusy("reopen.\(item.id)"), selected: selected == item.id,
-                                            play: { detail.play(at: $0) },
-                                            decide: nil, reopen: item.kind == "question" ? nil : { detail.reopen(item, token: nil) })
-                                        .equatable()
-                                        .tag(item.id)
-                                }
-                                if decided.count > decidedShown {
-                                    MoreRow(remaining: decided.count - decidedShown) { decidedShown += Self.page }
+                let rows = suggested.map(\.id) + (showDecided ? decided.map(\.id) : [])
+                // A lazy stack, not a List: for an accessibility client a List built, measured and recycled every row
+                // it held, so a walk of 430 suggestions timed out, and of 60 it failed on rows that changed height and
+                // identity under it (2026-11-06/07). The stack holds only the rows near the viewport, as the
+                // Transcript does; selection and the keys are its own.
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            if !questions.isEmpty {
+                                ItemsHeader(text: "Questions to answer (\(questions.count))")
+                                ForEach(questions) { item in
+                                    QuestionRow(item: item, busy: detail.isBusy("answer.\(item.id)"),
+                                                play: { detail.play(at: $0) }, answer: { detail.answer(item, with: $0) })
+                                        .padding(.horizontal, 16)
                                 }
                             }
-                        } header: {
-                            Button {
-                                showDecided.toggle()
-                            } label: {
-                                Label("Decided (\(decided.count))", systemImage: showDecided ? "chevron.down" : "chevron.right")
-                                    .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                            ItemsHeader(text: suggested.isEmpty ? "No suggestion waits" : "Suggested (\(suggested.count))")
+                            ForEach(suggested) { item in
+                                selectable(item.id, ItemRow(item: item, busy: detail.busyItems.contains(item.id), selected: selected == item.id,
+                                                            play: { detail.play(at: $0) },
+                                                            decide: { confirm, speaker in detail.decide(item, confirm: confirm, speaker: speaker) },
+                                                            reopen: nil).equatable())
                             }
-                            .buttonStyle(.genHoverPlain())
-                            .accessibilityValue(showDecided ? "Expanded" : "Collapsed")
+                            if !decided.isEmpty {
+                                Button {
+                                    showDecided.toggle()
+                                } label: {
+                                    Label("Decided (\(decided.count))", systemImage: showDecided ? "chevron.down" : "chevron.right")
+                                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.genHoverPlain())
+                                .accessibilityValue(showDecided ? "Expanded" : "Collapsed")
+                                .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
+                                if showDecided {
+                                    ForEach(decided) { item in
+                                        selectable(item.id, ItemRow(item: item, busy: detail.isBusy("reopen.\(item.id)"), selected: selected == item.id,
+                                                                    play: { detail.play(at: $0) },
+                                                                    decide: nil, reopen: item.kind == "question" ? nil : { detail.reopen(item, token: nil) })
+                                            .equatable())
+                                    }
+                                }
+                            }
                         }
+                        .padding(.vertical, 6)
                     }
+                    .focusable()
+                    .focused($focused)
+                    .focusEffectDisabled()
+                    .onKeyPress(.upArrow) { step(-1, rows: rows, proxy: proxy) }
+                    .onKeyPress(.downArrow) { step(1, rows: rows, proxy: proxy) }
+                    .onKeyPress(.return) { act(on: record, confirm: true) }
+                    .onKeyPress(.delete) { act(on: record, confirm: false) }
                 }
-                .listStyle(.inset)
                 .safeAreaInset(edge: .top, spacing: 0) {
                     BulkConfirmBar(detail: detail, items: record.items,
                                    applyAbove: detail.window?.overview.value?.applyAbove ?? 0.5)
                 }
-                .onKeyPress(.return) { act(on: record, confirm: true) }
-                .onKeyPress(.delete) { act(on: record, confirm: false) }
-                .onChange(of: record.id) {
-                    suggestedShown = Self.page
-                    decidedShown = Self.page
-                }
             }
         }
+    }
+
+    /// A suggestion or decided item as a row the keyboard can select: a click selects it (its buttons keep their own
+    /// clicks), and the selected row is filled.
+    private func selectable(_ id: String, _ row: some View) -> some View {
+        row
+            .padding(.horizontal, 10)
+            .background(RoundedRectangle(cornerRadius: 6).fill(selected == id ? Color.accentColor.opacity(focused ? 0.28 : 0.16) : .clear))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                selected = id
+                focused = true
+            }
+            .id(id)
+            .padding(.horizontal, 6)
+    }
+
+    /// Up and Down: the next row in list order, kept in view.
+    private func step(_ offset: Int, rows: [String], proxy: ScrollViewProxy) -> KeyPress.Result {
+        guard let next = Self.step(from: selected, by: offset, in: rows) else { return .ignored }
+        selected = next
+        proxy.scrollTo(next)
+        return .handled
+    }
+
+    /// The row Up (-1) or Down (+1) selects: the first row when none is selected, and the ends hold.
+    static func step(from selected: String?, by offset: Int, in rows: [String]) -> String? {
+        guard !rows.isEmpty else { return nil }
+        guard let selected, let index = rows.firstIndex(of: selected) else { return rows[offset < 0 ? rows.count - 1 : 0] }
+        return rows[min(max(index + offset, 0), rows.count - 1)]
     }
 
     /// Return confirms and Delete rejects the selected suggestion (a range with no speaker waits for its menu).
@@ -422,6 +447,18 @@ struct ItemsTab: View {
               item.kind != "question", !(confirm && item.kind == "speaker-range" && item.speaker == nil) else { return .ignored }
         detail.decide(item, confirm: confirm)
         return .handled
+    }
+}
+
+/// A section title of the Items list, in the List's section style.
+private struct ItemsHeader: View {
+    let text: String
+
+    var body: some View {
+        Text(verbatim: text)
+            .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -476,23 +513,6 @@ private struct BulkConfirmBar: View {
         menu.append(.divider)
         menu.append(.note("Questions, ranges with no speaker and terms with no spelling stay for you."))
         return menu
-    }
-}
-
-/// The end of a long section of the Items list: the next page of rows, and how many are not shown yet. The header
-/// keeps the full count, and "Confirm all at or above" acts on every item, shown or not.
-private struct MoreRow: View {
-    let remaining: Int
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(verbatim: "Show \(min(remaining, ItemsTab.page)) more (\(remaining) not shown)")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
-        }
-        .buttonStyle(.genHoverPlain())
-        .padding(.vertical, 4)
-        .accessibilityIdentifier("meetings.items.more")
     }
 }
 

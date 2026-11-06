@@ -393,6 +393,18 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertTrue(MeetingDetailModel.readsProposalsAtOpen(project: overview.meetings.first { $0.id == "b" }?.project), "b has none")
     }
 
+    /// R2-MP1: Up and Down in the Items list, which is a lazy stack now and moves its own selection.
+    func testItemsArrowKeysStepThroughTheRows() {
+        let rows = ["i1", "i2", "i3"]
+        XCTAssertEqual(ItemsTab.step(from: nil, by: 1, in: rows), "i1")
+        XCTAssertEqual(ItemsTab.step(from: nil, by: -1, in: rows), "i3")
+        XCTAssertEqual(ItemsTab.step(from: "i2", by: 1, in: rows), "i3")
+        XCTAssertEqual(ItemsTab.step(from: "i3", by: 1, in: rows), "i3", "the end holds")
+        XCTAssertEqual(ItemsTab.step(from: "i1", by: -1, in: rows), "i1")
+        XCTAssertEqual(ItemsTab.step(from: "gone", by: 1, in: rows), "i1", "a row that left the list starts again")
+        XCTAssertNil(ItemsTab.step(from: nil, by: 1, in: []))
+    }
+
     /// MP9: reopening Settings read every Meetings page's data, the pages never shown included.
     func testReopeningSettingsReadsOnlyWhatAPageAlreadyRead() {
         let model = MeetingsSettingsModel(writes: false)
