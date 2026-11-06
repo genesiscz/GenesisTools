@@ -36,6 +36,7 @@ import { OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
 import { questionLabel, questionWarnings } from "../lib/questions";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
+import { meetingTranscript } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
 import { runSuggest } from "../lib/suggest-run";
@@ -177,9 +178,16 @@ async function items(ref: string, opts: { status?: string | boolean; kind?: stri
         return;
     }
 
-    const listed = record.items.filter(
-        (item) => (!status || item.status === status) && (!opts.kind || item.kind === opts.kind)
-    );
+    const kind =
+        opts.kind === undefined
+            ? undefined
+            : await resolveEnum({ value: opts.kind, values: FINDING_KINDS, flag: "--kind", subcommand: ["items"] });
+
+    if (opts.kind !== undefined && !kind) {
+        return;
+    }
+
+    const listed = record.items.filter((item) => (!status || item.status === status) && (!kind || item.kind === kind));
 
     if (opts.json) {
         out.result(SafeJSON.stringify(listed, null, 2));
@@ -373,11 +381,20 @@ async function decide(
     }
 
     const minConfidence = opts.minConfidence === undefined ? undefined : Number(opts.minConfidence);
+
+    if (minConfidence !== undefined && Number.isNaN(minConfidence)) {
+        fail(`--min-confidence ${opts.minConfidence} is not a number between 0 and 1 (0.8 = 80 %)`);
+        return;
+    }
+
     const flagOf = {
         speaker: " Confirm it with --speaker <name>.",
         proposed: " Confirm it with --proposed <text>.",
         listen: "",
+        nothing: "",
     };
+    // An item decided that way already is no failure; one that needs a value or an answer is.
+    const failed = (skipped: Array<{ needs: string }>) => skipped.some((skip) => skip.needs !== "nothing");
 
     try {
         const result = await decideItems({
@@ -392,16 +409,18 @@ async function decide(
 
         if (opts.json) {
             out.result(SafeJSON.stringify(result, null, 2));
-            process.exitCode = result.decided.length === 0 && result.skipped.length > 0 ? 1 : 0;
+            process.exitCode = result.decided.length === 0 && failed(result.skipped) ? 1 : 0;
             return;
         }
 
         for (const skip of result.skipped) {
-            ui.warn(`${skip.id}: ${skip.reason}${flagOf[skip.needs]}`);
+            skip.needs === "nothing"
+                ? ui.info(`${skip.id}: ${skip.reason}`)
+                : ui.warn(`${skip.id}: ${skip.reason}${flagOf[skip.needs]}`);
         }
 
         if (result.decided.length === 0) {
-            process.exitCode = result.skipped.length > 0 ? 1 : 0;
+            process.exitCode = failed(result.skipped) ? 1 : 0;
             return;
         }
 
@@ -481,6 +500,14 @@ async function speakersRename(ref: string, label: string, name: string): Promise
     }
 
     try {
+        // A label the transcript does not have would rename nothing and say it did (MC11): name the labels instead.
+        const labels = [...new Set((await meetingTranscript(record)).map((entry) => entry.speaker))];
+
+        if (!labels.includes(label) && record.speakers.labels[label] === undefined) {
+            fail(`${record.id} has no label "${label}". Its labels: ${labels.map((one) => `"${one}"`).join(", ")}`);
+            return;
+        }
+
         await store.renameSpeaker(record.id, label, name);
         ui.ok(
             name.trim() === label
@@ -629,7 +656,7 @@ export function registerItemCommands(program: Command): void {
         ["confirm", "confirmed"],
         ["reject", "rejected"],
     ] as const) {
-        program
+        const command = program
             .command(name)
             .argument("<meeting>", MEETING_REF)
             .argument("[items...]", "item ids: i1 i2 …, or a question's number: Q12")
@@ -638,9 +665,16 @@ export function registerItemCommands(program: Command): void {
                     ? "Confirm items: transcripts apply confirmed items"
                     : "Reject items: they are never suggested again"
             )
-            .option("--min-confidence <0..1>", "every suggested item at or above this confidence")
-            .option("--speaker <name>", "confirm: whose voice a speaker range is")
-            .option("--proposed <text>", "confirm: the right spelling of a term, when the proposal is wrong")
+            .option("--min-confidence <0..1>", "every suggested item at or above this confidence");
+
+        // Only a confirm takes a value: a reject keeps nothing of the item.
+        if (status === "confirmed") {
+            command
+                .option("--speaker <name>", "whose voice a speaker range is")
+                .option("--proposed <text>", "the right spelling of a term, when the proposal is wrong");
+        }
+
+        command
             .option("--json", "print { decided, token, skipped } as JSON (the token is what reopen --token takes)")
             .action(
                 (

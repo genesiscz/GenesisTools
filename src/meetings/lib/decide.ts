@@ -13,8 +13,11 @@ import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
 export interface DecideResult {
     decided: string[];
     token?: string;
-    /** `needs`: what decides it, a `speaker` or `proposed` value, or an answer by ear (`listen`). */
-    skipped: Array<{ id: string; reason: string; needs: "speaker" | "proposed" | "listen" }>;
+    /**
+     * `needs`: what decides it, a `speaker` or `proposed` value, or an answer by ear (`listen`); `nothing` when it is
+     * decided that way already, which is no failure.
+     */
+    skipped: Array<{ id: string; reason: string; needs: "speaker" | "proposed" | "listen" | "nothing" }>;
 }
 
 /** Picks the items a decision names: ids, or every suggested item at or above a confidence. */
@@ -59,11 +62,24 @@ export async function decideItems(options: {
 
     // A question is named by its number as people see it (Q12) as well as by its id.
     const ids = options.ids.map((id) => (/^q\d+$/i.test(id) ? questionIdOf(record, id) : id));
-    const picked = pickItems(record, ids, minConfidence);
+    // The record on disk now: a caller (the window) may hold one it read before another decision.
+    const picked = pickItems(store.read(record.id) ?? record, ids, minConfidence);
     const skipped: DecideResult["skipped"] = [];
 
+    // Deciding an item the same way again changes nothing, so it mints no token that would void the first Undo (MC16).
+    for (const item of picked) {
+        const changes =
+            status === "confirmed" &&
+            ((item.kind === "speaker-range" && speaker !== undefined && speaker !== item.speaker) ||
+                (item.kind === "term" && proposed !== undefined && proposed !== item.proposed));
+
+        if (item.status === status && !changes) {
+            skipped.push({ id: item.id, reason: `it is ${status} already`, needs: "nothing" });
+        }
+    }
+
     if (status === "confirmed") {
-        for (const item of picked) {
+        for (const item of picked.filter((one) => !skipped.some((skip) => skip.id === one.id))) {
             if (item.kind === "question") {
                 const label = questionLabel(record, item.id);
                 skipped.push({

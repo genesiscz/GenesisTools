@@ -515,6 +515,22 @@ describe("undo of a decision", () => {
         return { meetings, created };
     }
 
+    test("confirming a confirmed item again changes nothing, so the first Undo still works (MC16)", async () => {
+        const { meetings, created } = await meetingWith([
+            { kind: "term", id: "i1", status: "suggested", heard: "Viky", proposed: "wiki", rules: [], suggestedAt },
+        ]);
+        const first = await decideItems({ store: meetings, record: created, status: "confirmed", ids: ["i1"] });
+        const again = await decideItems({ store: meetings, record: created, status: "confirmed", ids: ["i1"] });
+
+        expect(again).toEqual({
+            decided: [],
+            skipped: [{ id: "i1", reason: "it is confirmed already", needs: "nothing" }],
+        });
+        expect(
+            (await reopenItems({ store: meetings, record: created, ids: ["i1"], token: first.token })).reopened
+        ).toEqual(["i1"]);
+    });
+
     test("an Undo names its decision, and is refused once another decision changed the item", async () => {
         const { meetings, created } = await meetingWith([
             { kind: "term", id: "i1", status: "suggested", heard: "Viky", proposed: "wiki", rules: [], suggestedAt },
