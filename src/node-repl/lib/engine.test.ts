@@ -20,6 +20,7 @@ import {
     toolsetCliHelp,
     toolsetOverlap,
 } from "./toolsets";
+import { browserError } from "./toolsets/browser";
 import { githubPrRef } from "./toolsets/github";
 
 // NR24: --help used to render every method of all ten toolsets, 535 lines. It now lists each toolset's one line and
@@ -385,6 +386,9 @@ describe("toolsets", () => {
             "movies.Movie.closeEditor": "reversible · user",
             "meetings.assign.sweep": "reversible · user",
             "meetings.Meeting.assign.ask": "reversible · user",
+            "browser.open": "reversible · user",
+            "browser.navigate": "reversible · user",
+            "browser.close": "destructive · user",
         });
     });
 
@@ -611,6 +615,24 @@ it("reset interrupts an active turn and cancels turns queued before it", async (
         await reset;
         engine.dispose();
     }
+});
+
+// NR26: four methods and no close or screenshot; a closed port said "Unable to connect" without the port.
+it("the browser toolset closes and screenshots tabs, and a port nobody answers on is named", async () => {
+    const [browserApi] = (await createToolsets(["browser"])).map((toolset) => toolset.api);
+    expect(browserApi.methods.map((method) => method.name)).toEqual([
+        "tabs",
+        "open",
+        "evaluate",
+        "navigate",
+        "close",
+        "screenshot",
+    ]);
+    expect(browserError(9, new Error("Unable to connect. Is the computer able to access the url?")).message).toBe(
+        "no browser answers on CDP port 9 (http://127.0.0.1:9); start one with --remote-debugging-port=9 --remote-debugging-address=127.0.0.1"
+    );
+    const other = new Error("Navigating to https://x.invalid/ failed: net::ERR_NAME_NOT_RESOLVED");
+    expect(browserError(9, other)).toBe(other);
 });
 
 // NR27: hub.prs() and hub.pr() were "→ unknown", and github.review() refused the URL that hub.pr() takes.
