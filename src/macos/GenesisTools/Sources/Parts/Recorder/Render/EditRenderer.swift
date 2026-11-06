@@ -186,11 +186,14 @@ final class ZoomState: @unchecked Sendable {
         return moved
     }
 
-    /// The texts showing at a source time, each fading in and out over 0.2 s (less for a short one).
+    /// How long a text of `lengthUs` fades in and out: 0.2 s, less for a short one.
+    static func textFadeUs(lengthUs: Int64) -> Int64 { min(200_000, max(1, lengthUs / 3)) }
+
+    /// The texts showing at a source time, each fading in and out over `textFadeUs`.
     static func texts(atSourceUs us: Int64, project: EditProject) -> [(note: EditProject.TextNote, opacity: Double)] {
         (project.texts ?? []).compactMap { note in
             guard us >= note.startUs, us < note.endUs else { return nil }
-            let fade = Double(min(200_000, max(1, (note.endUs - note.startUs) / 3)))
+            let fade = Double(textFadeUs(lengthUs: note.endUs - note.startUs))
             let opacity = min(1, Double(us - note.startUs) / fade, Double(note.endUs - us) / fade)
             return (note, max(0, opacity))
         }

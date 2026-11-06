@@ -173,6 +173,11 @@ enum FakeRules {
                                               height: rect["height"] ?? 0.2,
                                               style: op["op"] as? String == "spotlight" ? .spotlight : .blur, lane: lane))
             next.redactions = list
+        case "text":
+            var list = next.texts ?? []
+            list.append(EditProject.TextNote(id: "t\(list.count + 1)", startUs: us(op["from"]), endUs: us(op["to"]),
+                                             text: op["text"] as? String ?? ""))
+            next.texts = list
         case "unredact":
             next.redactions = next.redactions?.filter { $0.id != id }
             if next.redactions?.isEmpty == true { next.redactions = nil }

@@ -618,6 +618,17 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertFalse(EditorWindows.names(model, folder + "-other"))
     }
 
+    // Regression test: deep test 2026-11-06 RE7 — a text added at the playhead faded in from there, so the paused frame
+    // at the playhead showed none of it.
+    func testATextAddedAtThePlayheadShowsFullyAtThePlayhead() throws {
+        let model = model()
+        model.seek(2_000_000)
+        model.addText()
+        let note = try XCTUnwrap(model.project.texts?.first)
+        XCTAssertEqual(ZoomState.texts(atSourceUs: 2_000_000, project: model.project).first?.opacity, 1)
+        XCTAssertEqual(note.endUs - note.startUs, 3_000_000, "it keeps its 3 s")
+    }
+
     // Regression test: deep test 2026-11-06 RE2 and RE3 — ⌥← stepped the playhead instead of moving the selection, B
     // and C did nothing, and with Single-Key Shortcuts off S still split the clip: the key monitor kept its own copy
     // of the menu's keys.

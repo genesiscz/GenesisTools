@@ -680,7 +680,9 @@ final class EditorModel {
 
     /// A text at the top middle for 3 s from the playhead; the Text tab then writes and places it.
     func addText(_ text: String = "Title", atOutput outUs: Int64? = nil, durationUs: Int64 = 3_000_000, lane: String? = nil) {
-        let start = TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project)
+        // A text fades in from its start (`ZoomState.texts`): it starts that much earlier, so the paused frame at the
+        // playhead shows it whole.
+        let start = max(0, TimelineMap.sourceTime(atOutput: outUs ?? clock.outUs, in: project) - ZoomState.textFadeUs(lengthUs: durationUs))
         let op = EditOp.Text(from: EditOpDiff.seconds(start), to: EditOpDiff.seconds(start + durationUs), text: text, lane: lane)
         edit([.text(op)]) { [weak self] before, after in
             guard let self, let id = Self.addedID(before, after, { ($0.texts ?? []).map(\.id) }) else { return }
