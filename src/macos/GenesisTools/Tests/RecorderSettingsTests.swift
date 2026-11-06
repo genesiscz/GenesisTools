@@ -19,6 +19,19 @@ final class RecorderSettingsTests: XCTestCase {
         RecorderNotice.outlets = .live
     }
 
+    /// The defect: the recorder's menu bar item was not on screen (no window for it at all) while `isVisible` said
+    /// true, so its menu was out of reach and nothing said so (review 2026-11-06).
+    func testTheMenuBarItemIsCalledOffScreenWhenItsWindowIsMissingHiddenOrOffEveryScreen() {
+        let screens = [CGRect(x: 0, y: 0, width: 1512, height: 982)]
+        let bar = CGRect(x: 1200, y: 950, width: 24, height: 24)
+        XCTAssertEqual(RecorderMenu.placement(itemVisible: true, window: bar, windowShown: true, screens: screens), .shown)
+        XCTAssertEqual(RecorderMenu.placement(itemVisible: false, window: nil, windowShown: false, screens: screens), .hiddenByChoice)
+        XCTAssertEqual(RecorderMenu.placement(itemVisible: true, window: nil, windowShown: false, screens: screens), .offScreen)
+        XCTAssertEqual(RecorderMenu.placement(itemVisible: true, window: bar, windowShown: false, screens: screens), .offScreen)
+        XCTAssertEqual(RecorderMenu.placement(itemVisible: true, window: CGRect(x: -400, y: 950, width: 24, height: 24),
+                                              windowShown: true, screens: screens), .offScreen)
+    }
+
     /// The defect: a failed `tools` command's note showed the last six lines of the CLI's help, which named nothing
     /// (review 2026-11-06). The note says the line that names the problem, and Details keeps the whole output.
     func testAFailureNoteNamesTheProblemLineNotTheHelpDump() {

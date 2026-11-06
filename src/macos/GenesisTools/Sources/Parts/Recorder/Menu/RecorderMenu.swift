@@ -91,6 +91,42 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
             item.isVisible = true
         }
         HubPerf.log("recorder: menu bar item installed (saved choice \(saved), visible \(item.isVisible))")
+        // The bar lays the item out after this turn; look once it had time to.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.checkOnScreen() }
+    }
+
+    enum Placement: String, Equatable {
+        case shown
+        /// The user hid it (System Settings → Menu Bar, or ⌘-drag off the bar): their choice, nothing to say.
+        case hiddenByChoice
+        /// `isVisible` says yes, but no window of it is on a screen: macOS keeps it off the bar (no room beside the
+        /// notch, or the bar's own setting).
+        case offScreen
+    }
+
+    nonisolated static func placement(itemVisible: Bool, window: CGRect?, windowShown: Bool, screens: [CGRect]) -> Placement {
+        guard itemVisible else { return .hiddenByChoice }
+        guard let window, windowShown, screens.contains(where: { $0.intersects(window) }) else { return .offScreen }
+        return .shown
+    }
+
+    /// The menu, its toggles and Recent live only in this item. When macOS keeps it off the bar, say so once on this
+    /// Mac and name the other ways in, instead of a menu that silently cannot be reached (review 2026-11-06).
+    private func checkOnScreen(defaults: UserDefaults = .standard) {
+        guard let item else { return }
+        let window = item.button?.window
+        let placement = Self.placement(itemVisible: item.isVisible, window: window?.frame,
+                                       windowShown: window?.isVisible == true && window?.occlusionState.contains(.visible) == true,
+                                       screens: NSScreen.screens.map(\.frame))
+        HubPerf.log("recorder: menu bar item is \(placement.rawValue) (window \(window.map { "\($0.frame)" } ?? "none"))")
+        let key = "recorder.statusItemOffScreenNoted"
+        guard placement == .offScreen, !defaults.bool(forKey: key) else { return }
+        defaults.set(true, forKey: key)
+        let picker = RecorderShortcutBinding.load(.picker, defaults: defaults)
+        let way = picker.enabled ? "with \(picker.chord.label) or from the widget" : "from the widget"
+        RecorderNotice.outlets.note("The recorder's menu bar item is not on screen",
+                                    "macOS keeps it off the bar (no room beside the notch, or System Settings → Menu Bar). "
+                                        + "Open the capture picker \(way).")
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
