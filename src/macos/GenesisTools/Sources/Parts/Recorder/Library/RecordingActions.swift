@@ -38,7 +38,9 @@ enum RecordingAction: String, CaseIterable, Identifiable {
     /// What a recording offers: copies only with a movie, its meeting only for a meeting's recording, and never the
     /// Trash for a meeting's folder (it holds the whole meeting).
     static func offered(for item: RecorderMenu.Recent) -> [RecordingAction] {
-        allCases.filter { action in
+        // A recording that still runs has no movie yet, and its folder must stay where the recorder writes.
+        if item.recording { return [.reveal] }
+        return allCases.filter { action in
             switch action {
             case .copyMovie, .copyGIF: item.hasMovie
             case .openMeeting: item.isMeeting

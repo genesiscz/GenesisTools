@@ -366,6 +366,24 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(LibraryCard.accessibilityLabel(item, spoken: nil), "Demo, did not record: cannot record the window")
     }
 
+    /// The defect: a recording that still ran showed in Recent and in the library as a finished frames recording, with
+    /// Open in Editor, Rename and Move to Trash (round 2, 2026-11-07). Until it ends it offers Show in Finder only.
+    @MainActor
+    func testARecordingThatStillRunsOffersShowInFinderOnly() throws {
+        let library = FileManager.default.temporaryDirectory.appendingPathComponent("library-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: library) }
+        let running = library.appendingPathComponent("video-2026-11-07_00-40-24-85c04043")
+        try FileManager.default.createDirectory(at: running, withIntermediateDirectories: true)
+        try Data(#"{"title":"Running","startedAt":"2026-11-06T23:40:24.000Z","frames":[],"settings":{"kind":"video"}}"#.utf8)
+            .write(to: running.appendingPathComponent("recording.json"))
+
+        let item = try XCTUnwrap(RecorderMenu.readRecents(library, liveFolders: [running.standardizedFileURL.path]).first)
+        XCTAssertTrue(item.recording)
+        XCTAssertEqual(RecordingAction.offered(for: item), [.reveal])
+        XCTAssertEqual(LibraryCard.accessibilityLabel(item, spoken: nil), "Running, recording now")
+        XCTAssertFalse(try XCTUnwrap(RecorderMenu.readRecents(library).first).recording, "no live entry: it ended")
+    }
+
     /// The defect: a start that failed left a card with a "Frames" badge and no reason; it now says it failed and why.
     func testAFailedRecordingWithNoMovieReadsAsFailedWithItsFirstWarning() throws {
         let library = FileManager.default.temporaryDirectory.appendingPathComponent("library-\(UUID().uuidString)")

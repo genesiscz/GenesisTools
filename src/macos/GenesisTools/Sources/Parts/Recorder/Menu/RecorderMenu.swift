@@ -27,6 +27,14 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         /// Why the recording made no movie (`recording.json` says `outcome: failed` and no movie is there): its first
         /// warning, so the card says "Failed" with the reason instead of passing for a frames recording.
         var failure: String?
+        /// It still records (a live entry in `recordings/live` names this folder): until it ends there is no movie to
+        /// open, and its folder must not move.
+        var recording = false
+    }
+
+    /// The folders of the recordings that run now, as `readRecents` compares them.
+    nonisolated static func liveFolders(_ store: LiveRecordingStore = .live) -> Set<String> {
+        Set(store.load().compactMap { $0.folder.map { URL(fileURLWithPath: $0).standardizedFileURL.path } })
     }
 
     private var item: NSStatusItem?
@@ -49,6 +57,11 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     /// Opens a recording in the editor. A frames-only one (a meeting's screen, say) goes through
     /// `tools recorder open`, which makes its proxy movie first and then opens the editor.
     static func open(_ recent: Recent, atSourceSeconds: Double? = nil) {
+        if recent.recording {
+            RecorderNotice.outlets.note("“\(recent.title)” is still recording",
+                                        "It opens once it stops: the red menu bar item, or tools recorder stop.")
+            return
+        }
         if let failure = recent.failure {
             RecorderNotice.failure("“\(recent.title)” did not record, so there is nothing to open.", more: failure)
             return
@@ -170,6 +183,13 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
                 row.image = recent.thumbnail.flatMap { thumbnails[$0] } ?? NSImage(systemSymbolName: "video", accessibilityDescription: nil)
                 row.toolTip = "\(recent.folder.lastPathComponent)\(recent.hasMovie ? "" : " (frames only)")"
                 row.isEnabled = true
+                if recent.recording {
+                    row.title = "\(recent.title) (recording)"
+                    row.toolTip = "Still recording; stop it from the red menu bar item or with tools recorder stop"
+                    row.isEnabled = false
+                    menu.addItem(row)
+                    continue
+                }
                 if Self.recentActions {
                     // A row with a submenu opens it on hover; Open in Editor is its first entry.
                     row.submenu = MenuButtonPresenter.menu(RecordingActions.menuItems(for: recent) { [weak self] in self?.report($0) })
@@ -217,11 +237,14 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     }
 
     nonisolated static func readRecents(_ folders: [URL]) -> [Recent] {
-        folders.flatMap { readRecents($0, isMeeting: $0.standardizedFileURL == meetingsFolder.standardizedFileURL) }
-            .sorted { $0.started > $1.started }
+        let live = liveFolders()
+        return folders.flatMap {
+            readRecents($0, isMeeting: $0.standardizedFileURL == meetingsFolder.standardizedFileURL, liveFolders: live)
+        }
+        .sorted { $0.started > $1.started }
     }
 
-    nonisolated static func readRecents(_ folder: URL, isMeeting: Bool = false) -> [Recent] {
+    nonisolated static func readRecents(_ folder: URL, isMeeting: Bool = false, liveFolders: Set<String> = []) -> [Recent] {
         let manager = FileManager.default
         let names = (try? manager.contentsOfDirectory(atPath: folder.path)) ?? []
         var list: [Recent] = []
@@ -245,7 +268,8 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
                                started: started, thumbnail: movie ?? firstFrame, hasMovie: hasMovie,
                                edited: manager.fileExists(atPath: dir.appendingPathComponent("edit.json").path),
                                durationMs: (video?["durationMs"] as? NSNumber)?.doubleValue, isMeeting: isMeeting,
-                               openComments: open.count, firstOpenCommentUs: open.first?.atUs, failure: failure))
+                               openComments: open.count, firstOpenCommentUs: open.first?.atUs, failure: failure,
+                               recording: liveFolders.contains(dir.standardizedFileURL.path)))
         }
         return list.sorted { $0.started > $1.started }
     }

@@ -420,6 +420,7 @@ struct LibraryCard: View {
     /// What VoiceOver reads for a card: the title, the length and the edit state, or why it did not record; with a
     /// search, the moment that matched, as the card shows it under the title.
     static func accessibilityLabel(_ item: RecorderMenu.Recent, spoken: LibraryModel.SpokenHit?) -> String {
+        if item.recording { return "\(item.title), recording now" }
         if let failure = item.failure { return "\(item.title), did not record: \(failure)" }
         var label = "\(item.title), \(item.durationMs.map { formatClock(Int64($0 * 1000)) } ?? "no length"), "
             + (item.edited ? "edited" : "not edited")
@@ -531,7 +532,9 @@ struct LibraryCard: View {
                         Badge(Plural.count(item.openComments, "comment"),
                               tooltip: "Review comments not resolved yet; right-click → Open at First Comment")
                     }
-                    if let failure = item.failure {
+                    if item.recording {
+                        Badge("Recording", color: .red, look: .tone, tooltip: "Still recording; it opens once it stops")
+                    } else if let failure = item.failure {
                         Badge("Failed", color: .orange, look: .tone, tooltip: "Did not record: \(failure)")
                     } else if !item.hasMovie {
                         Badge("Frames", tooltip: "Frames only: the editor makes a movie of them first")
