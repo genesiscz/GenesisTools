@@ -647,6 +647,8 @@ private struct SpeakerRow: View {
                 .focused($focused)
                 .onSubmit { commit(name) }
                 .onExitCommand { name = rename ?? ""; focused = false }
+                // A name typed and left saves too; it looked saved and was lost (Esc puts the saved name back first).
+                .onChange(of: focused) { _, now in if !now { commit(name) } }
                 .accessibilityLabel("Rename \(speaker.label)")
         }
         .padding(.vertical, 3)
