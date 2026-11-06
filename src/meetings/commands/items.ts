@@ -705,7 +705,11 @@ export function registerItemCommands(program: Command): void {
         .option("--json", "print { reopened, skipped } as JSON")
         .action(reopen);
 
-    const speakers = program.command("speakers").description("The meeting's speakers: statistics, hints and renames");
+    const speakers = program
+        .command("speakers")
+        .description(
+            "The meeting's speakers: statistics (with hints about labels that hold several voices) and renames"
+        );
 
     speakers
         .command("stats")
