@@ -158,7 +158,7 @@ const movieDoc =
     "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, camera, captions, keys, transcriptFixes, motion, shapes, texts, lanes, warnings? }";
 
 /** What every edit method returns, short: the full field list once, on info(), keeps describe()'s lines readable. */
-const editResult = "Edit (the fields info() lists, plus warnings?)";
+const editResult = "{ summary, path, revision, outputSeconds, warnings? } (info() lists the whole edit)";
 
 /** A transcript cut as an agent reads it: source seconds, not microseconds. */
 function cutsOut(cuts: ReadonlyArray<CutMatch & { plays: number | null }>) {
@@ -198,7 +198,7 @@ const movieMethods = [
         params: z.object({}),
         result: z.unknown(),
         resultName:
-            "Edit (the fields info() lists) plus fixed (the issues check() no longer finds) and unchanged (the issues whose action changed nothing)",
+            "{ summary, path, revision, outputSeconds, warnings? } plus fixed (the issues check() no longer finds) and unchanged (the issues whose action changed nothing)",
         doc: "Runs every fix check() offers (each issue's action.ops: remove what never shows, move an edit marker a cut hides to the nearest kept moment, lengthen what is too short to read, move a text off another) in one save and one undo() step. Issues with no fix (a missing transcript or music file) stay; check() again lists them. An issue its action did not remove is reported as no change, never as fixed.",
         effect: "reversible",
     }),
@@ -1212,13 +1212,19 @@ export class Movie {
         return { ...edited, ...outcome, ...(warnings.length > 0 ? { warnings } : {}) };
     }
 
+    /**
+     * One edit's answer: what the movie is now in one line, and where. The whole edit (every clip, lane, cursor and audio
+     * setting) was about 1,500 characters per call, which an agent reads to find the summary (NR23); info() has it.
+     */
     private async change(ops: EditOp[]) {
         const edited = await editProject(this.recording, ops);
         const described = describeProject(edited.project, edited.path);
         const seconds = (us: number) => Math.round(us / 1000) / 1000;
         return {
             summary: summarize(edited.project, undefined),
-            ...described,
+            path: described.path,
+            revision: described.revision,
+            outputSeconds: described.outputSeconds,
             ...(edited.removedIdleUs
                 ? { removed: edited.removedIdleUs.map(([from, to]) => [seconds(from), seconds(to)]) }
                 : {}),

@@ -249,8 +249,13 @@ describe("toolset method names", () => {
             wholeProject({ video: join(folder, "screen.mp4"), durationUs: 10_000_000, width: 100, height: 100 })
         );
         const opened = movies.open(path);
-        const cut = Reflect.get(opened, "cut") as (...args: unknown[]) => Promise<{ clips: unknown[] }>;
-        expect((await cut({ from: 1, to: 2 })).clips).toHaveLength(2);
+        const cut = Reflect.get(opened, "cut") as (...args: unknown[]) => Promise<Record<string, unknown>>;
+        // NR23: an edit answers one summary line and where it is, not the whole edit (about 1,500 characters); info() has it.
+        const answer = await cut({ from: 1, to: 2 });
+        expect(Object.keys(answer).sort()).toEqual(["outputSeconds", "path", "revision", "summary"]);
+        expect(String(answer.summary)).toContain("2 clips");
+        const info = Reflect.get(opened, "info") as () => Promise<{ clips: unknown[] }>;
+        expect((await info()).clips).toHaveLength(2);
         await expect(cut({ start: 1, to: 2 })).rejects.toThrow("Invalid arguments for movies.Movie.cut");
 
         // itemsAt names what plays at an output time: after the 1 s cut, output 2 s is source 3 s.
