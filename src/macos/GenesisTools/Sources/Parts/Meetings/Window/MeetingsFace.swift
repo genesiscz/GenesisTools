@@ -109,18 +109,29 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
         if let tab = request.tab { model.detail?.show(tab) }
     }
 
+    /// The smallest window the layout is made for (the detail column narrows its header and tabs to fit it).
+    static let minimumSize = NSSize(width: 900, height: 560)
+
+    /// The hosting view sets the window's minimum back to zero as it lays out, so `minSize` alone let the window
+    /// shrink until the detail column was cut off. The delegate holds the floor on every live resize.
+    static func floored(_ size: NSSize) -> NSSize {
+        NSSize(width: max(size.width, minimumSize.width), height: max(size.height, minimumSize.height))
+    }
+
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize { Self.floored(frameSize) }
+
     static func makeWindow(model: MeetingsWindowModel, size: NSSize) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Meetings"
-        window.minSize = NSSize(width: 900, height: 560)
         window.appearance = NSAppearance(named: .darkAqua)
         window.isReleasedWhenClosed = false
         let hosting = NSHostingView(rootView: MeetingsRootView(model: model))
-        // The window keeps the size the reader gives it, and `minSize` above is its only floor: with the default options,
+        // The window keeps the size the reader gives it, and `minimumSize` is its only floor: with the default options,
         // and still with `.minSize`, each notice grew the window to the content's height (900 to 1982 pt in one session).
         hosting.sizingOptions = []
         window.contentView = hosting
+        window.minSize = minimumSize
         window.center()
         return window
     }

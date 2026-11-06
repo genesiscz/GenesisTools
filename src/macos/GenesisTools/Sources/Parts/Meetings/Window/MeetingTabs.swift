@@ -118,7 +118,9 @@ struct ScreenTab: View {
         } else {
             LoadablePane(state: detail.timeline, reading: "Reading the screen timeline…", retry: detail.loadTimeline) { timeline in
                 VStack(spacing: 0) {
-                    HStack(spacing: 12) {
+                    // Wraps in a narrow column: in one row the display tabs, the checkbox and the count needed about
+                    // 560 pt and ran past the window at its smallest size.
+                    WrapLayout(spacing: 12, lineSpacing: 8) {
                         if timeline.displays.count > 1 {
                             GenSegmentedTabs("Display", items: [GenSegmentedTabs.Item(-1, "All displays")] + timeline.displays.map {
                                 GenSegmentedTabs.Item($0.id ?? 0, $0.name ?? "Display \($0.id ?? 0)")
@@ -127,10 +129,10 @@ struct ScreenTab: View {
                         Toggle("Only frames with new text", isOn: $hideQuiet).toggleStyle(.checkbox).font(.system(size: 12))
                             .fixedSize()
                             .instantTooltip("Leave out the frames whose text the display already showed")
-                        Spacer()
                         Text(verbatim: Plural.count(frames(timeline).count, "frame")).font(.system(size: 11).monospacedDigit())
                             .foregroundStyle(.secondary).lineLimit(1).fixedSize()
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     Divider()
                     ScrollView {
@@ -231,7 +233,8 @@ private struct FrameViewer: View {
             }
         }
         .padding(16)
-        .frame(minWidth: 900, minHeight: 620)
+        // Smaller than the window's own minimum, so the sheet never hangs past a small window.
+        .frame(minWidth: 640, minHeight: 420)
     }
 }
 

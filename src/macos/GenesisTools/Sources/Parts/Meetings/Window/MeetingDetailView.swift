@@ -6,6 +6,11 @@ import GenesisToolsHost
 struct MeetingDetailView: View {
     @Bindable var detail: MeetingDetailModel
     let window: MeetingsWindowModel
+    /// Below this width the header's two actions become icon buttons and the tabs share the width. At the window's
+    /// minimum (900 pt) this column gets about 438 pt, and the labelled buttons and five 84 pt tabs needed more, so
+    /// the split view drew the column wider than the window and cut Export, the last tab and the ends of lines.
+    static let narrowWidth: CGFloat = 600
+    @State private var narrow = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,6 +30,7 @@ struct MeetingDetailView: View {
             tabContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.narrowWidth }) { narrow = $0 }
         .navigationTitle(detail.record.value?.displayTitle ?? window.meeting(detail.id)?.displayTitle ?? "Meeting")
     }
 
@@ -40,12 +46,13 @@ struct MeetingDetailView: View {
                     .font(.system(size: 17, weight: .semibold)).lineLimit(2).textSelection(.enabled)
                 Spacer(minLength: 8)
                 if overview?.hasRecording == true, AppParts.isLinked("recorder") {
-                    GhostButton("Open in the recorder editor", symbol: "film", tooltip: "Open the screen recording as an editor project, with the transcript as captions",
-                                identifier: "meetings.detail.recorder") { detail.openInRecorder() }
+                    headerAction("Open in the recorder editor", symbol: "film",
+                                 tooltip: "Open the screen recording as an editor project, with the transcript as captions",
+                                 identifier: "meetings.detail.recorder") { detail.openInRecorder() }
                         .disabled(detail.isBusy("recorder"))
                 }
-                GhostButton("Export", symbol: "square.and.arrow.up", tooltip: exportTooltip(record),
-                            identifier: "meetings.detail.export") { detail.export() }
+                headerAction("Export", symbol: "square.and.arrow.up", tooltip: exportTooltip(record),
+                             identifier: "meetings.detail.export") { detail.export() }
                     .disabled(record == nil || detail.isBusy("export"))
             }
             WrapLayout(spacing: 8, lineSpacing: 8) {
@@ -69,10 +76,25 @@ struct MeetingDetailView: View {
                            }])
             }
             GenSegmentedTabs("Meeting tab", items: MeetingDetailModel.Tab.allCases.map { GenSegmentedTabs.Item($0, tabTitle($0, record)) },
-                             selection: Binding(get: { detail.tab }, set: { detail.show($0) }), minSegmentWidth: 84,
-                             identifier: "meetings.detail.tabs")
+                             selection: Binding(get: { detail.tab }, set: { detail.show($0) }), minSegmentWidth: narrow ? 0 : 84,
+                             identifier: "meetings.detail.tabs", fillsWidth: narrow)
+                .frameProbe("meetings.detail.tabs")
         }
         .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
+        .frameProbe("meetings.detail.header")
+    }
+
+    /// A labelled action, or its icon with the same words as tooltip and label when the column is narrow.
+    @ViewBuilder
+    private func headerAction(_ title: String, symbol: String, tooltip: String, identifier: String,
+                              action: @escaping () -> Void) -> some View {
+        if narrow {
+            IconButton(systemName: symbol, tooltip: "\(title): \(tooltip)", action: action)
+                .accessibilityLabel(title)
+                .accessibilityIdentifier(identifier)
+        } else {
+            GhostButton(title, symbol: symbol, tooltip: tooltip, identifier: identifier, action: action)
+        }
     }
 
     private func whenLine(_ meeting: OverviewMeeting?) -> String {

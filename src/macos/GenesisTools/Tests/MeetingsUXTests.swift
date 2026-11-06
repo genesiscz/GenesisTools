@@ -31,6 +31,16 @@ final class MeetingsUXTests: XCTestCase {
         return (try XCTUnwrap(UserDefaults(suiteName: suite)), suite)
     }
 
+    /// The window drawn off screen: alpha 0, below the desktop, never activated.
+    private func hiddenWindow(_ model: MeetingsWindowModel, size: NSSize) -> NSWindow {
+        let window = MeetingsWindow.makeWindow(model: model, size: size)
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.orderFrontRegardless()
+        return window
+    }
+
     // MARK: MU3 the menu bar
 
     func testTheMenuBarClosesQuitsMinimizesAndEditsText() {
@@ -64,5 +74,33 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(model.place, .all)
         MeetingsMenuTarget.shared.showNeeds(nil)
         XCTAssertEqual(model.place, .needs)
+    }
+
+    // MARK: MU2 nothing is cut off at the smallest size
+
+    /// At the window's minimum size the detail column got about 438 pt and its header and tabs needed 464 or more:
+    /// the split view drew it wider than the window, so Export, the last tab and the ends of lines were cut off.
+    func testAtTheMinimumSizeTheDetailFitsTheWindow() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
+        model.receive(try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON()))
+        model.select("a")
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+
+        let window = hiddenWindow(model, size: NSSize(width: 900, height: 560))
+        defer { window.orderOut(nil); window.close() }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+
+        let width = try XCTUnwrap(window.contentView).bounds.width
+        XCTAssertEqual(MeetingsWindow.floored(NSSize(width: 600, height: 400)), MeetingsWindow.minimumSize,
+                       "a live resize stops at the minimum")
+        XCTAssertEqual(window.frame.width, MeetingsWindow.minimumSize.width, accuracy: 1, "the test runs at the window's own minimum")
+        let header = try XCTUnwrap(FrameProbe.frames["meetings.detail.header"], "the detail's header is on screen")
+        XCTAssertLessThanOrEqual(header.maxX, width + 1, "the header ends inside the window: \(header) in \(width) pt")
+        let tabs = try XCTUnwrap(FrameProbe.frames["meetings.detail.tabs"])
+        XCTAssertLessThanOrEqual(tabs.maxX, width + 1, "the last tab is inside the window: \(tabs) in \(width) pt")
     }
 }
