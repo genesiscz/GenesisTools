@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { imageSize } from "@genesiscz/utils/macos/ocr-boxes";
@@ -10,6 +11,7 @@ import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library"
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
+import { RECORDING_MOVIES } from "./library";
 
 const { log } = logger.scoped("recorder-proxy");
 
@@ -371,6 +373,14 @@ export async function makeProxy(folder: string, options: ProxyOptions = {}): Pro
     const frames = readFrameFolder(folder);
 
     if (frames.length === 0) {
+        const movie = RECORDING_MOVIES.find((name) => name !== PROXY_FILE && existsSync(join(folder, name)));
+
+        if (movie) {
+            throw new Error(
+                `${folder} has its movie (${movie}); a proxy is only for a frames recording, and the editor opens this one as it is (${toolCommand("recorder edit", folder)})`
+            );
+        }
+
         throw new Error(`${folder} has no frames to make a movie of`);
     }
 

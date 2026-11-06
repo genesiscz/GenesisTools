@@ -36,3 +36,13 @@ test("proxy retains valid audio before a truncated index row", async () => {
         encode.mockRestore();
     }
 });
+
+// Regression test: deep test 2026-11-06 RE14 — proxy on a movie recording said it "has no frames to make a movie of".
+test("proxy on a recording that has its movie says a proxy is for frames recordings", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "proxy-movie-"));
+    writeFileSync(join(folder, "screen.mp4"), "fixture");
+
+    await expect(makeProxy(folder)).rejects.toThrow(
+        "has its movie (screen.mp4); a proxy is only for a frames recording"
+    );
+});
