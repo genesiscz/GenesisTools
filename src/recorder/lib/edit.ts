@@ -10,7 +10,7 @@ import { fillerListsOf, MeetingsConfigStore } from "@genesiscz/utils/meetings/co
 import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { bubbleFromSidecar, readCameraSidecar } from "@genesiscz/utils/recording-editor/camera";
 import { cutIssues, type EditIssue } from "@genesiscz/utils/recording-editor/check";
-import { ensureDenoisedSource } from "@genesiscz/utils/recording-editor/denoise";
+import { audioTrackCount, ensureDenoisedSource } from "@genesiscz/utils/recording-editor/denoise";
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { integratedLoudness } from "@genesiscz/utils/recording-editor/loudness";
@@ -576,6 +576,10 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
     if (op.op === "normalize") {
         const lufs = await integratedLoudness({ video: project.source.video, mutedTracks: project.audio.mutedTracks });
         return { loudnessLufs: lufs ?? null };
+    }
+
+    if (op.op === "denoise" && op.enabled !== false && existsSync(project.source.video)) {
+        return { audioTracks: await audioTrackCount(project.source.video) };
     }
 
     if (op.op === "cutWords" || op.op === "cutFillers") {

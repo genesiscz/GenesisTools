@@ -1454,6 +1454,8 @@ export interface OpFacts {
     fillerLists?: FillerLists;
     /** The movie's integrated loudness at volume 1; null when it has no unmuted audio. */
     loudnessLufs?: number | null;
+    /** The source movie's audio tracks (`denoise`); absent when nobody counted them. */
+    audioTracks?: number;
 }
 
 /** A `zoom` op whose zoom went past a zoom it met (`placeZoom`), as a sentence a caller can return. */
@@ -1938,6 +1940,11 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             if (op.enabled === false) {
                 const { denoise: _denoise, ...audio } = project.audio;
                 return { ...project, audio };
+            }
+
+            // Saved, it would make every export fail at the cleaning step.
+            if (facts.audioTracks === 0) {
+                throw new Error("this movie has no sound to clean (it has no audio track)");
             }
 
             if (op.track !== undefined) {

@@ -1439,6 +1439,15 @@ describe("the editor window's item ops", () => {
         expect(() => applyOp(project, { op: "cameraShow", id: part.id, from: 1, to: 2 })).toThrow("not both");
     });
 
+    // Regression test: deep test 2026-11-06 NR36 — denoise on a movie with no sound saved, and every export then failed.
+    test("denoise refuses a movie with no audio track, as normalize does, and turning it off still works", () => {
+        const project = wholeProject(source);
+
+        expect(() => applyOp(project, { op: "denoise" }, { audioTracks: 0 })).toThrow("no sound to clean");
+        expect(applyOp(project, { op: "denoise" }, { audioTracks: 1 }).audio.denoise?.method).toBe("afftdn");
+        expect(applyOp(project, { op: "denoise", enabled: false }, { audioTracks: 0 }).audio.denoise).toBeUndefined();
+    });
+
     // The Audio tab's rules, which the window kept in EditorDenoise.swift before the service owned them.
     test("denoise per track: a track in or out, no track left is off, every track is no list, a base strength is not written", () => {
         let project = wholeProject(source);

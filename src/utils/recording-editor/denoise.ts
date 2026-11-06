@@ -74,7 +74,7 @@ export function denoisedSourceArgv(options: {
     ];
 }
 
-async function audioTrackCount(source: string): Promise<number> {
+export async function audioTrackCount(source: string): Promise<number> {
     const stdout = await runVideoCommand({
         command: [
             "ffprobe",
