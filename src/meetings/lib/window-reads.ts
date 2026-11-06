@@ -1,7 +1,11 @@
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
-import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { MEETING_FILE, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { TranscriptFormat } from "@genesiscz/utils/transcribe/render";
 import { type SpeakerStats, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { type AssignDeps, type AssignView, skipReason, viewProposals } from "./assign";
@@ -11,7 +15,10 @@ import { transcriptMarkdown } from "./export";
 import { type MatchDraft, type MatchPreviewRow, matchDraftSchema, matchPreview } from "./match-preview";
 import { OpenedMeeting } from "./opened-meeting";
 import { type MeetingsOverview, meetingsOverview } from "./overview";
+import { meetingSource, sourceRefOf } from "./sources";
 import { type CorrectedTranscript, correctTranscript } from "./transcript-corrections";
+
+const { log } = logger.scoped("meetings-window-reads");
 
 /**
  * The reads the Meetings window makes, each as the value its command prints with `--json`. The CLI commands and the
@@ -33,6 +40,56 @@ export async function overviewRead(options: { days: number; now: Date }): Promis
     });
     view.olderMeetings += bounded.olderMeetings;
     return view;
+}
+
+/** Per part of the Meetings window, a token of what it reads: an equal token means the part would read the same. */
+export interface WindowRevisions {
+    meeting: string;
+    show: string;
+    /** Null when the meeting's source cannot tell (it would ask a remote service): the window reads it again. */
+    transcript: string | null;
+    speakers: string | null;
+    timeline: string;
+}
+
+/**
+ * `meetings revisions <id>`: one token per window part, from the identities (inode, size, mtime, ctime) of the files
+ * the part reads and its source's revision. Reads no transcript and no frame, so the window can ask it on every
+ * return and read again only the parts whose token changed.
+ */
+export async function revisionsRead(options: { store: MeetingStore; record: MeetingRecord }): Promise<WindowRevisions> {
+    const { store, record } = options;
+    const folder = store.folder(record.id);
+    const stamp = (...parts: unknown[]) => Bun.hash(SafeJSON.stringify(parts)).toString(36);
+    const recordFile = fileIdentity(join(folder, MEETING_FILE));
+    const config = fileIdentity(new MeetingsConfigStore().path);
+    const ref = sourceRefOf(record);
+    let source: string | null = "no source";
+
+    if (ref) {
+        try {
+            source = await (await meetingSource(ref.sourceId)).revision(ref.sourceMeetingId);
+        } catch (error) {
+            log.debug({ error, meeting: record.id }, "the source gave no revision; the window reads it again");
+            source = null;
+        }
+    }
+
+    // The timeline reads ocr.jsonl and checks each frame file; a frame added or removed changes its folder's identity.
+    const screen = [
+        fileIdentity(join(folder, "ocr.jsonl")),
+        fileIdentity(folder),
+        ...readdirSync(folder, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => [entry.name, fileIdentity(join(folder, entry.name))]),
+    ];
+    return {
+        meeting: record.id,
+        show: stamp(recordFile),
+        transcript: source === null ? null : stamp(recordFile, config, source),
+        speakers: source === null ? null : stamp(recordFile, source),
+        timeline: stamp(recordFile, screen),
+    };
 }
 
 /** `meetings record cost`: what a kept frame and each capture choice cost, from the recordings so far. */

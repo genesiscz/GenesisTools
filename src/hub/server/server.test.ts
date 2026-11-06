@@ -23,6 +23,7 @@ import {
     meetingsOverviewDoor,
     meetingsProjectsPreviewDoor,
     meetingsRecordCostDoor,
+    meetingsRevisionsDoor,
     meetingsScreenTimelineDoor,
     meetingsShowDoor,
     meetingsSpeakerStatsDoor,
@@ -632,6 +633,7 @@ describe("meetings doors", () => {
         expect(meetingsConfigShowDoor.match(["meetings", "config", "show", "--json"])).toBe(true);
         expect(meetingsConfigShowDoor.match(["meetings", "config", "show", "global", "--json"])).toBeNull();
         expect(meetingsShowDoor.match(["meetings", "show", "m1", "--json"])).toEqual({ ref: "m1" });
+        expect(meetingsRevisionsDoor.match(["meetings", "revisions", "m1", "--json"])).toEqual({ ref: "m1" });
         expect(meetingsTranscriptDoor.match(["meetings", "transcript", "m1", "--format", "json"])).toEqual({
             ref: "m1",
         });

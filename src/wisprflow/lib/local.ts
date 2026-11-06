@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { CalendarPerson } from "@genesiscz/utils/meetings/calendar-entry";
@@ -203,6 +204,35 @@ export function hasLocalMeeting(id: string): boolean {
         withDb((db) => db.query<{ one: number }, [string]>("SELECT 1 AS one FROM Meetings WHERE id = ?").get(id)) !==
         null
     );
+}
+
+/**
+ * What `getLocalMeeting` reads for one meeting, as a token: the whole row, its folders, the count and newest time of the
+ * user's corrections, and the identity of both transcript files. Undefined when the meeting is not on this Mac.
+ */
+export function localMeetingRevision(id: string): string | undefined {
+    return withDb((db) => {
+        const row = db.query<MeetingRow, [string]>("SELECT * FROM Meetings WHERE id = ?").get(id);
+
+        if (!row) {
+            return undefined;
+        }
+
+        const folders = db
+            .query<{ folderId: string }, [string]>(
+                "SELECT folderId FROM FolderMeetings WHERE meetingId = ? ORDER BY folderId"
+            )
+            .all(id);
+        const edits = db
+            .query<{ n: number; last: string | null }, [string]>(
+                "SELECT count(*) AS n, max(updatedAt) AS last FROM TranscriptCorrections WHERE meetingId = ?"
+            )
+            .get(id);
+        const files = ["refined.ndjson", "live.ndjson"].map((name) =>
+            fileIdentity(join(WISPR_DIR, "meetings", id, name))
+        );
+        return Bun.hash(SafeJSON.stringify([row, folders, edits, files])).toString(36);
+    });
 }
 
 export function getLocalMeeting(id: string): Meeting | undefined {

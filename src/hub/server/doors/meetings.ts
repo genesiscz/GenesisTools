@@ -123,6 +123,27 @@ export const meetingsShowDoor: CallDoor<{ ref: string }> = {
     },
 };
 
+/** `meetings revisions <id> --json`: the token per window part that a return to the window compares. */
+export const meetingsRevisionsDoor: CallDoor<{ ref: string }> = {
+    kind: "call",
+    name: "meetings revisions --json",
+    command: ["meetings", "revisions"],
+    match(argv) {
+        const parsed = parseArgv(argv, {
+            command: ["meetings", "revisions"],
+            positionals: 1,
+            flags: { "--json": "bool" },
+        });
+        return parsed?.flags.get("--json") === true ? { ref: parsed.positionals[0] } : null;
+    },
+    async run({ ref }, { signal }) {
+        return answer(signal, async () => {
+            const { store, record } = await exactRecord(ref);
+            return (await reads()).revisionsRead({ store, record });
+        });
+    },
+};
+
 /** `meetings transcript <id> --format json` (any other flag or format stays a process). */
 export const meetingsTranscriptDoor: CallDoor<{ ref: string }> = {
     kind: "call",
@@ -304,6 +325,7 @@ export const MEETINGS_DOORS: readonly CallDoor[] = [
     meetingsOverviewDoor,
     meetingsConfigShowDoor,
     meetingsShowDoor,
+    meetingsRevisionsDoor,
     meetingsTranscriptDoor,
     meetingsSpeakerStatsDoor,
     meetingsScreenTimelineDoor,

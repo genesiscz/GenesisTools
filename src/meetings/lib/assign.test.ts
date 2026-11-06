@@ -98,6 +98,7 @@ function setup(
         id: "wisprflow",
         label: "Fake",
         load: async () => meeting,
+        revision: async () => null,
         describe: () => ({}),
         dictionary: async () => [],
         recordingClock: async () => null,
@@ -659,6 +660,7 @@ test("folder questions persist before posting and recover the same choices and i
                 load: async () => {
                     throw new Error("unused");
                 },
+                revision: async () => null,
                 describe: () => ({}),
                 dictionary: async () => [],
                 recordingClock: async () => null,

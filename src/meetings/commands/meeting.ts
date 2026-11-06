@@ -17,7 +17,7 @@ import { mergeMeetings } from "../lib/merge";
 import { resolveProject } from "../lib/project";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { showText } from "../lib/show-text";
-import { windowJson } from "../lib/window-reads";
+import { revisionsRead, windowJson } from "../lib/window-reads";
 import { askProjectAtEnd } from "./watch";
 
 /** The record a command names, or a message saying how to find one. */
@@ -136,6 +136,35 @@ async function list(opts: { project?: string; json?: boolean }): Promise<void> {
     }
 
     out.println(table.toString());
+}
+
+/** `meetings revisions <id>`: what each part of the Meetings window reads, as one token per part. */
+async function revisions(ref: string, opts: { json?: boolean }): Promise<void> {
+    const store = new MeetingStore();
+    const record = requireMeeting(store, ref);
+
+    if (!record) {
+        return;
+    }
+
+    try {
+        const view = await revisionsRead({ store, record });
+
+        if (opts.json) {
+            out.result(windowJson(view));
+            return;
+        }
+
+        for (const [part, token] of Object.entries(view)) {
+            if (part !== "meeting") {
+                out.println(
+                    `${part.padEnd(11)} ${token ?? "unknown: the source cannot tell, so the window reads it again"}`
+                );
+            }
+        }
+    } catch (err) {
+        fail(errorText(err));
+    }
 }
 
 async function show(ref: string, opts: { json?: boolean }): Promise<void> {
@@ -393,6 +422,13 @@ export function registerMeetingCommands(program: Command): void {
         .description("One meeting record")
         .option("--json", "print the record")
         .action(show);
+
+    program
+        .command("revisions")
+        .argument("<meeting>", MEETING_REF)
+        .description("One token per part of the Meetings window: an equal token means that part would read the same")
+        .option("--json", "print JSON")
+        .action(revisions);
 
     program
         .command("set")

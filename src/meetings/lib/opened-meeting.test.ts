@@ -31,6 +31,7 @@ function fakeSource(options: { evidence?: MeetingEvidence | null; clock?: string
         id: "wisprflow",
         label: "Fake",
         load: async () => meeting,
+        revision: async () => null,
         describe: () => ({ meetingId: "abc" }),
         dictionary: async () => [],
         recordingClock: async () =>

@@ -17,6 +17,7 @@ import { matchPreview } from "./match-preview";
 import { meetingsOverview } from "./overview";
 import { screenTimeline } from "./screen-timeline";
 import { openMeetingsWindow, windowOpenArgs } from "./window";
+import { revisionsRead } from "./window-reads";
 
 let n = 0;
 
@@ -251,6 +252,43 @@ describe("screen timeline", () => {
             ["Item two"],
         ]);
         expect(view.frames[1]).toMatchObject({ meetingSec: 20, width: 400, height: 200, lineCount: 2 });
+    });
+});
+
+describe("window revisions", () => {
+    test("a token changes only when what its part reads changed", async () => {
+        const { meetings } = stores();
+        const created = await meetings.create(
+            { title: "Demo", start: "2026-11-05T08:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const folder = meetings.folder(created.id);
+        const first = await revisionsRead({ store: meetings, record: created });
+
+        expect(await revisionsRead({ store: meetings, record: created })).toEqual(first);
+        // No source: the transcript read only says so, which the record alone decides, so the token is known.
+        expect(first.transcript).not.toBeNull();
+
+        mkdirSync(join(folder, "frames"), { recursive: true });
+        writeFileSync(join(folder, "ocr.jsonl"), "{}\n");
+        const framed = await revisionsRead({ store: meetings, record: created });
+
+        expect(framed.timeline).not.toBe(first.timeline);
+        expect({ ...framed, timeline: first.timeline }).toEqual(first);
+
+        writeFileSync(join(folder, "frames", "a-d1.png"), "x");
+        const added = await revisionsRead({ store: meetings, record: created });
+
+        expect(added.timeline).not.toBe(framed.timeline);
+
+        const updated = await meetings.update(created.id, { command: "test", change: "label" }, (record) => {
+            record.labels = ["demo"];
+        });
+        const changed = await revisionsRead({ store: meetings, record: updated });
+
+        expect(changed.show).not.toBe(added.show);
+        expect(changed.transcript).not.toBe(added.transcript);
+        expect(changed.speakers).not.toBe(added.speakers);
     });
 });
 
