@@ -271,6 +271,26 @@ export async function ensureRecorderPart(onStep?: (line: string) => void): Promi
     await buildApp({ onStep, parts: { add: ["recorder"] } });
 }
 
+/**
+ * The REPL's check for the recorder part: it refuses instead of building, because a build takes about a minute, the
+ * turn's limit kills it halfway, and the build went on as an orphan holding the app's build lock (R2-NR3).
+ */
+export function requireRecorderPart(doing: string): void {
+    const status = appStatus();
+
+    if (status.built && status.parts.includes("recorder")) {
+        return;
+    }
+
+    const missing = status.built
+        ? "the installed GenesisTools.app has no recorder part"
+        : "GenesisTools.app is not installed";
+    log.debug({ doing, built: status.built, parts: status.parts }, "recorder: refused, no recorder part");
+    throw new Error(
+        `${doing} needs the recorder part of GenesisTools.app, and ${missing}. Nothing was started. Add it from a shell (a build of about a minute, longer than a turn): ${toolCommand("macos permissions build --add-part recorder")}`
+    );
+}
+
 /** One editor window: its recording folder, title and (from a build with the recorder host) its window number. */
 const editorWindowSchema = z.object({ path: z.string(), title: z.string(), window: z.number().int().optional() });
 const editorOpenSchema = z.object({

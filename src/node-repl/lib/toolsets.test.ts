@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { RecordingSession, type SegmentRecorder } from "@app/control/lib/recording-session";
 import { SessionRecorderControl } from "@app/control/lib/recording-session-control";
+import type { AppStatus } from "@app/macos/lib/permissions/app";
+import * as appModule from "@app/macos/lib/permissions/app";
 import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { settingsPatchFromFlags } from "@app/meetings/lib/settings-flags";
 import { ReplEngine } from "@app/node-repl/lib/engine";
@@ -19,6 +21,7 @@ import {
     undoEdit,
 } from "@app/recorder/lib/edit";
 import { framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "@app/recorder/lib/frames-recording";
+import { requireRecorderPart } from "@app/recorder/lib/library";
 import {
     chapterMetadata,
     chaptersOf,
@@ -550,6 +553,45 @@ describe("an edit of the sound on a movie without sound", () => {
         );
         expect(silentMovieReason(video(["video", "audio"]), "clean")).toBeUndefined();
         expect(silentMovieReason(undefined, "mute")).toBeUndefined();
+    });
+});
+
+describe("a movie method that needs the recorder part of the app", () => {
+    const app = (built: boolean, parts: string[]): AppStatus => ({
+        bundlePath: "/Applications/GenesisTools.app",
+        launcherPath: "/Applications/GenesisTools.app/Contents/MacOS/GenesisTools",
+        built,
+        stale: false,
+        parts,
+        identityStable: true,
+    });
+
+    test("refuses with the command that adds it and starts no build: a build outlives the turn (R2-NR3)", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-no-part-"));
+        const path = join(folder, "screen.edit.json");
+        writeProject(
+            path,
+            wholeProject({ video: join(folder, "screen.mp4"), durationUs: 4_000_000, width: 100, height: 100 })
+        );
+        const build = spyOn(appModule, "buildApp").mockImplementation(() => {
+            throw new Error("a REPL method started an app build");
+        });
+        const status = spyOn(appModule, "appStatus").mockReturnValue(app(true, []));
+
+        try {
+            await expect(new Movie(path).still(1)).rejects.toThrow(
+                "movie.still() needs the recorder part of GenesisTools.app, and the installed GenesisTools.app has no recorder part. Nothing was started."
+            );
+            await expect(new Movie(path).export()).rejects.toThrow("macos permissions build --add-part recorder");
+            status.mockReturnValue(app(false, []));
+            await expect(new Movie(path).show()).rejects.toThrow("and GenesisTools.app is not installed");
+            expect(build).not.toHaveBeenCalled();
+            status.mockReturnValue(app(true, ["recorder"]));
+            expect(() => requireRecorderPart("movie.still()")).not.toThrow();
+        } finally {
+            build.mockRestore();
+            status.mockRestore();
+        }
     });
 });
 

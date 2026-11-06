@@ -76,9 +76,9 @@ import { stepDisplaySwitch, switchDisplay } from "./frames-movie";
 import {
     EDITOR_TABS,
     type EditorTab,
-    ensureRecorderPart,
     type LibraryRow,
     listLibrary,
+    requireRecorderPart,
     resolveRecording,
 } from "./library";
 import {
@@ -1645,7 +1645,7 @@ export class Movie {
                       fromUs: options.from === undefined ? 0 : timeToUs(options.from),
                       toUs: options.to === undefined ? outputDurationUs(opened.project) : timeToUs(options.to),
                   };
-        await ensureRecorderPart();
+        requireRecorderPart("movie.export()");
         const answer = await exportAs(opened.path, {
             out: options.out,
             format: options.format,
@@ -1747,7 +1747,7 @@ export class Movie {
             throw new Error(`${out} exists already; poster() never overwrites a file, so pass another out`);
         }
 
-        await ensureRecorderPart();
+        requireRecorderPart("movie.poster()");
         const answer = await hostStill({ path: opened.path, atSeconds: atUs / 1_000_000, out, full: true });
 
         if (!answer.ok || !answer.path) {
@@ -1789,7 +1789,7 @@ export class Movie {
             );
         }
 
-        await ensureRecorderPart();
+        requireRecorderPart("movie.sheet()");
         const out = options.out ?? join(this.ctx?.scratchDir ?? tmpdir(), `sheet-${Date.now()}.png`);
         const answer = await hostSheet({ path: opened.path, times: times.map((us) => us / 1_000_000), out });
 
@@ -1863,7 +1863,7 @@ export class Movie {
             );
         }
 
-        await ensureRecorderPart();
+        requireRecorderPart("movie.still()");
         const out = keep ? resolve(keep) : join(this.ctx?.scratchDir ?? tmpdir(), `still-${Date.now()}.png`);
         const answer = await hostStill({ path: opened.path, atSeconds: atUs / 1_000_000, out });
 
@@ -2040,7 +2040,7 @@ export class Movie {
     }
 
     async copy(options: { gif?: boolean } = {}) {
-        await ensureRecorderPart();
+        requireRecorderPart("movie.copy()");
         return copyRecording(await this.folder("it has no library copy"), options);
     }
 
@@ -2077,7 +2077,7 @@ export class Movie {
             writeProject(opened.path, opened.project);
         }
 
-        await ensureRecorderPart();
+        requireRecorderPart("movie.show()");
         const shown = await hostOpenEditor(opened.path, {
             focus: options.focus === true,
             atSeconds: options.at,
@@ -2301,6 +2301,12 @@ export function movieDemoDriver(options: RecordOptions, ctx?: ToolsetContext): D
 /** `movies.demo()`: the REPL door of runDemo, with the Movie of the result to keep editing. */
 async function recordDemo(options: z.input<typeof demoParamsSchema> & { steps: DemoStep[] }, ctx?: ToolsetContext) {
     const parsed = demoParamsSchema.parse(options);
+
+    if (parsed.export !== false) {
+        // Before the recording, not after minutes of steps.
+        requireRecorderPart("movies.demo() with its export");
+    }
+
     const recordOptions = { ...parsed.record, ...(parsed.title ? { title: parsed.title } : {}) };
     const result = await runDemo({
         steps: options.steps,

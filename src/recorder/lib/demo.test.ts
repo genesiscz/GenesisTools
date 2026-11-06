@@ -283,7 +283,7 @@ describe.skipIf(!hasFfmpeg)("movieDemoDriver on a recording session", () => {
                 );
                 return process.pid;
             }),
-            spyOn(library, "ensureRecorderPart").mockResolvedValue(undefined as never),
+            spyOn(library, "requireRecorderPart").mockReturnValue(undefined),
             spyOn(edit, "exportAs").mockImplementation(async (value, options) => {
                 exported.push({ path: value, out: options?.out });
                 const project = await edit.openProject(value);
