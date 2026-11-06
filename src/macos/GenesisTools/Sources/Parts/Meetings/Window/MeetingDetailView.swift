@@ -57,7 +57,7 @@ struct MeetingDetailView: View {
             }
             WrapLayout(spacing: 8, lineSpacing: 8) {
                 Text(verbatim: whenLine(overview)).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
-                if let overview { MeetingBadgesView(meeting: overview) }
+                if let overview { MeetingBadgesView(meeting: overview, open: { detail.show($0) }) }
             }
             HStack(spacing: 10) {
                 projectPicker(record)

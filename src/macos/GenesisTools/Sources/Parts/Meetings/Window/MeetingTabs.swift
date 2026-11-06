@@ -222,7 +222,9 @@ private struct FrameRow: View, Equatable {
                     Text(verbatim: line.text).font(.system(size: 12)).lineLimit(1).textSelection(.enabled)
                 }
                 if lines.count > 14 {
-                    Text(verbatim: "\(lines.count - 14) more lines").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    LiveButton(tooltip: "Show the frame large, with every line boxed", action: open) {
+                        Text(verbatim: "\(lines.count - 14) more lines…").font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
                 }
             }
             Spacer(minLength: 0)

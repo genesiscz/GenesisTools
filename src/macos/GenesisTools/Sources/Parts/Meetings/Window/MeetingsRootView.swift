@@ -232,15 +232,37 @@ struct MeetingRow: View, Equatable {
 /// The badges of a meeting, each a word and a colour, so the state never rests on colour alone.
 struct MeetingBadgesView: View {
     let meeting: OverviewMeeting
+    /// Opens the tab a badge counts (the detail's header); nil in a list row, where the row opens the meeting.
+    var open: ((MeetingDetailModel.Tab) -> Void)? = nil
 
     var body: some View {
         let badges = meeting.badges
         if meeting.live { Badge("Recording", color: KitPalette.removed, symbol: "record.circle") }
         if badges.noProject { Badge("No project", color: KitPalette.modified) }
-        if badges.openQuestions > 0 { Badge(Plural.count(badges.openQuestions, "question"), color: KitPalette.renamed, symbol: "ear") }
-        if badges.unclearSpeakers > 0 { Badge("Unclear speakers", color: KitPalette.modified, symbol: "person.fill.questionmark") }
-        if badges.recordingOnly { Badge("Recording only", color: KitPalette.dim, symbol: "rectangle.on.rectangle") }
+        if badges.openQuestions > 0 {
+            badge(Badge(Plural.count(badges.openQuestions, "question"), color: KitPalette.renamed, symbol: "ear"),
+                  opens: .items, tooltip: "Answer them in Items")
+        }
+        if badges.unclearSpeakers > 0 {
+            badge(Badge("Unclear speakers", color: KitPalette.modified, symbol: "person.fill.questionmark"),
+                  opens: .speakers, tooltip: "Name them in Speakers")
+        }
+        if badges.recordingOnly {
+            badge(Badge("Recording only", color: KitPalette.dim, symbol: "rectangle.on.rectangle"),
+                  opens: .screen, tooltip: "Show the screen recording")
+        }
         if badges.transcriptOnly { Badge("Transcript only", color: KitPalette.dim, symbol: "text.alignleft") }
+    }
+
+    @ViewBuilder
+    private func badge(_ badge: Badge, opens tab: MeetingDetailModel.Tab, tooltip: String) -> some View {
+        if let open {
+            Button { open(tab) } label: { badge }
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip(tooltip)
+        } else {
+            badge
+        }
     }
 }
 
