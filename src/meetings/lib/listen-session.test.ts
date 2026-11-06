@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import type { Correction } from "@genesiscz/utils/meetings/corrections";
 import { type MeetingItem, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { ANSWER_LOG_FILE, readAnswerEvents } from "./answer-log";
+import type { cutClip } from "./audio";
 import { findingItems, findingsFileSchema } from "./findings";
+import { SPEAKER_PAD_SEC, writeQuestionClips } from "./listen-clips";
 import {
     type AskedQuestion,
     type ListenAdapter,
@@ -14,7 +17,7 @@ import {
     type SessionNote,
 } from "./listen-session";
 import { GivenAnswerAdapter } from "./listen-session-answer";
-import { askedSpotSec, heardClip, type QuestionItem, questionView, questionWarnings } from "./questions";
+import { askedSpotSec, heardClip, openQuestions, type QuestionItem, questionView, questionWarnings } from "./questions";
 
 const now = "2026-11-02T15:00:00.000Z";
 let stores = 0;
@@ -434,4 +437,50 @@ test("a stale terminal decision preserves an answer submitted while it waited", 
         expect(f.events()).not.toContain("split");
         expect(f.read().items).toHaveLength(1);
     }
+});
+
+describe("listen --clip-out (MC22)", () => {
+    const words: TranscriptEntry[] = [
+        { speaker: "A", startSec: 50, text: "Dej to do Ada a pak taky do Ada, ne do zadání." },
+        { speaker: "B", startSec: 60, text: "Jo." },
+    ];
+
+    test("each open question's clip is cut to <dir>/<Q>.wav as the terminal plays it, and the record stays as it was", async () => {
+        const fx = await fixture([
+            question("i1", { about: "term", heard: "zadání", fromSec: 50, toSec: 54 }),
+            question("i2", { fromSec: 60, toSec: 61 }),
+        ]);
+        const record = fx.read();
+        const listen = meetingsConfigSchema.parse({}).global.playback.listen;
+        const cuts: Array<Parameters<typeof cutClip>[0]> = [];
+        const written = await writeQuestionClips({
+            record,
+            questions: openQuestions(record),
+            transcript: words,
+            listen,
+            padSec: 5,
+            audioPath: "/clips/call.ogg",
+            dir: "/clips/out",
+            cut: async (options) => {
+                cuts.push(options);
+            },
+        });
+
+        expect(written.map((clip) => [clip.question, clip.clip])).toEqual([
+            ["Q1", "/clips/out/Q1.wav"],
+            ["Q2", "/clips/out/Q2.wav"],
+        ]);
+        expect(cuts).toEqual(
+            written.map(({ question: _q, id: _id, clip, ...plan }) => ({
+                audioPath: "/clips/call.ogg",
+                outPath: clip,
+                ...plan,
+            }))
+        );
+        const spot = askedSpotSec(asQuestion(record.items[0]), words);
+        expect(written[0]).toMatchObject({ padSec: 5, toneAtSec: spot - listen.beepLeadSec });
+        expect(written[0]!.fromSec).toBeLessThan(spot);
+        expect(written[1]).toMatchObject({ fromSec: 60, toSec: 61, padSec: listen.beepLeadSec + SPEAKER_PAD_SEC });
+        expect(fx.read()).toEqual(record);
+    });
 });

@@ -1,7 +1,8 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import * as clack from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import {
     LISTEN_PLAYERS,
@@ -18,6 +19,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { ANSWER_LOG_FILE, readAnswerEvents, runningRound, subscribeAnswers } from "../lib/answer-log";
 import { clipPlayer, cutClip, playClip } from "../lib/audio";
+import { type ListenSettings, questionClip, writeQuestionClips } from "../lib/listen-clips";
 import {
     type AskedQuestion,
     type ListenAdapter,
@@ -29,15 +31,12 @@ import { GivenAnswerAdapter } from "../lib/listen-session-answer";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import {
     answerVocabulary,
-    askedSpotSec,
     type HeardContext,
-    heardClip,
     NONE_OF_THESE,
     openQuestions,
     type QuestionItem,
     questionIdOf,
     questionLabel,
-    questionOccurrence,
     questionView,
 } from "../lib/questions";
 import { errorText, fail, TOOL } from "../lib/shared";
@@ -49,8 +48,6 @@ const SKIP = "\u0000skip";
 const STOP = "\u0000stop";
 const SPLIT = "\u0000split";
 const DEFAULT_SUBSCRIBE_MINUTES = 120;
-/** Audio after a speaker question's span, and before it besides the tone's lead. */
-const SPEAKER_PAD_SEC = 0.3;
 const SAID_MAX_CHARS = 240;
 
 /** The first `listen` asks how much audio to hear around a range and keeps the answer. */
@@ -278,6 +275,41 @@ interface ListenOptions {
     subscribeAnswers?: boolean;
     fromStart?: boolean;
     timeout?: string;
+    clipOut?: string;
+    json?: boolean;
+}
+
+/** `--clip-out <dir>`: the questions' clips as files. No sound, no terminal and no round, so nothing is changed (MC22). */
+async function clipsOut(options: {
+    store: MeetingStore;
+    meeting: MeetingRecord;
+    questions: QuestionItem[];
+    dir: string;
+    json?: boolean;
+}): Promise<void> {
+    const { store, meeting } = options;
+    const listen = (await new MeetingsConfigStore().read()).global.playback.listen;
+    const opened = OpenedMeeting.of(store, meeting);
+    const written = await writeQuestionClips({
+        record: meeting,
+        questions: options.questions,
+        transcript: new TranscriptLines((await opened.meeting()).transcript),
+        listen,
+        // A file needs no prompt: the saved pad, else the smaller choice the first listen offers.
+        padSec: listen.padSec ?? PAD_CHOICES[0],
+        audioPath: await opened.audioPath(),
+        dir: resolve(options.dir),
+    });
+
+    if (options.json) {
+        out.result(SafeJSON.stringify(written, null, 2));
+        return;
+    }
+
+    for (const clip of written) {
+        const tone = clip.toneAtSec === undefined ? "" : `, tone at ${formatClock(clip.toneAtSec)}`;
+        out.println(`${clip.question} ${clip.clip} (${formatClock(clip.fromSec)}–${formatClock(clip.toSec)}${tone})`);
+    }
 }
 
 /** The terminal: each question's clip is cut and played, and the person picks an answer in the choice select. */
@@ -300,21 +332,10 @@ class TerminalAdapter implements ListenAdapter {
         const { question } = asked;
         const view = questionView(asked.record, question, transcript, SAID_MAX_CHARS);
         const clip = join(store.folder(meeting.id), "listen", `${question.id}.wav`);
-        const occurrence = questionOccurrence(asked.record, question);
-        // A word question plays the spot of its own occurrence, so a word late in a long line is in the clip.
-        const heard = (question.about === "speaker" ? undefined : heardClip(question, transcript, occurrence)) ??
-            question.clip ?? { fromSec: question.fromSec, toSec: question.toSec };
-        const spotSec = askedSpotSec(question, transcript, occurrence);
-        // A speaker question plays only the asked voice, from the tone on; a word keeps the audio around it.
-        const pad = question.about === "speaker" ? listen.beepLeadSec + SPEAKER_PAD_SEC : this.deps.padSec;
-        const inClip = spotSec >= heard.fromSec - pad && spotSec <= heard.toSec + pad;
         await cutClip({
             audioPath: this.deps.audioPath,
-            fromSec: heard.fromSec,
-            toSec: heard.toSec,
-            padSec: pad,
             outPath: clip,
-            ...(listen.beep ? { toneAtSec: (inClip ? spotSec : heard.fromSec) - listen.beepLeadSec } : {}),
+            ...questionClip({ record: asked.record, question, transcript, listen, padSec: this.deps.padSec }),
         });
         const part = asked.part ? ` · part ${asked.part.n}/${asked.part.of}` : "";
         const priority = view.priority === undefined ? "" : ` · priority ${view.priority}`;
@@ -382,8 +403,6 @@ class TerminalAdapter implements ListenAdapter {
         }
     }
 }
-
-type ListenSettings = MeetingsConfig["global"]["playback"]["listen"];
 
 interface AdapterContext {
     store: MeetingStore;
@@ -496,6 +515,22 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
         return;
     }
 
+    if (opts.clipOut) {
+        if (opts.answer !== undefined) {
+            fail("--clip-out only writes the clips; leave out --answer, or answer in another call.");
+            return;
+        }
+
+        try {
+            const questions = openQuestions(meeting).filter((item) => !itemId || item.id === itemId);
+            await clipsOut({ store, meeting, questions, dir: opts.clipOut, json: opts.json });
+        } catch (err) {
+            fail(errorText(err));
+        }
+
+        return;
+    }
+
     try {
         const settings = await new MeetingsConfigStore().read();
         const opened = OpenedMeeting.of(store, meeting);
@@ -563,5 +598,10 @@ export function registerListenCommand(program: Command): void {
             "--timeout <minutes>",
             `with --subscribe-answers: give up after this long (default ${DEFAULT_SUBSCRIBE_MINUTES})`
         )
+        .option(
+            "--clip-out <dir>",
+            "cut each open question's clip (only --item's with it) into <dir>/<Q12>.wav as listen plays it; plays nothing and changes nothing"
+        )
+        .option("--json", "with --clip-out: print [{ question, id, clip, fromSec, toSec, padSec, toneAtSec }]")
         .action(listen);
 }
