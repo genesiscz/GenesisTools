@@ -1012,7 +1012,8 @@ program
             }
 
             await ensureRecorderPart((line) => out.printlnErr(line));
-            await hostOpenEditor(path, { focus: flags.focus !== false, atSeconds, tab });
+            // What opened, so an agent needs no second call (`tools recorder opened`) to know it worked.
+            out.result({ ...(await hostOpenEditor(path, { focus: flags.focus !== false, atSeconds, tab })), path });
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
@@ -1198,6 +1199,13 @@ program
 
             for (const warning of answer.warnings ?? []) {
                 out.printlnErr(warning);
+            }
+
+            // A skipped step is said too: a subtitle file only when the edit asks for one.
+            if (!answer.subtitles && !answer.warnings?.some((warning) => warning.startsWith("no subtitles"))) {
+                out.printlnErr(
+                    `no subtitles: the edit asks for none (${toolCommand("recorder export", value, "--subtitles", "srt")} writes them)`
+                );
             }
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
