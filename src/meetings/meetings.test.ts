@@ -46,6 +46,7 @@ import {
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
 import { findReadAloud } from "@genesiscz/utils/transcribe/doc-match";
+import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
 import { groupTurns } from "@genesiscz/utils/transcribe/render";
 import { sameName, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -82,7 +83,7 @@ import {
 import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from "./lib/screen";
 import { framesMatching, ocrRowSchema, readOcrRows, renderScreenBoxes } from "./lib/screen-boxes";
 import { showText } from "./lib/show-text";
-import { suggestItems } from "./lib/suggest";
+import { settledTermItems, spokenOnPurpose, suggestItems, wordFamily } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
 import { transcriptDocument } from "./lib/transcript-document";
 import { type WatchDeps, type WatchNote, watchOnce } from "./lib/watch";
@@ -121,7 +122,7 @@ const record = meetingRecordSchema.parse({
 });
 
 describe("suggestItems", () => {
-    test("a later round asks existing findings that the first budget left out", () => {
+    test("the budget counts the meeting's open questions: a later round asks the rest once one is answered", () => {
         const pending = meetingRecordSchema.parse({
             ...record,
             items: [0, 100].map((atSec, index) => ({
@@ -150,6 +151,13 @@ describe("suggestItems", () => {
         expect(first).toHaveLength(1);
         expect(first[0]).toMatchObject({ kind: "question", decides: ["i1"] });
         pending.items.push(...first);
+        // MC4: while that question is open, a second run adds none (a second run used to add 11 of a cap of 12).
+        expect(suggestItems(options)).toEqual([]);
+        const asked = pending.items.find((item) => item.kind === "question");
+        if (asked) {
+            asked.status = "confirmed";
+        }
+
         const second = suggestItems(options);
         expect(second).toHaveLength(1);
         expect(second[0]).toMatchObject({ kind: "question", decides: ["i2"] });
@@ -4912,4 +4920,125 @@ test("addressed questions select repeated words within their own line", async ()
     expect(questionOccurrence(draft, second)).toBe(1);
     expect(heardContext(second, transcript, 240, 1)?.lead).toBe("word then ");
     expect(askedSpotSec(second, transcript, 1)).toBeGreaterThan(askedSpotSec(first, transcript, 0));
+});
+
+/** MC3 and MC5: slang and inflected forms of one word are said on purpose, and a keep entry covers its family. */
+describe("suggest: words said on purpose", () => {
+    // Knows the ordinary words of the transcript below, and nothing else (no root, no English word).
+    const words = (unknown: string[]): WordCheck => {
+        const ordinary = new Set(
+            slangMeeting.transcript
+                .flatMap((entry) => entry.text.toLowerCase().split(/[^\p{L}]+/u))
+                .filter((word) => !unknown.includes(word))
+        );
+        return {
+            provider: "fake",
+            language: "cs",
+            verdict: (word) =>
+                ordinary.has(word.toLowerCase()) ? { class: "dictionary", count: 9 } : { class: "unknown", count: 0 },
+            dispose: () => undefined,
+        };
+    };
+    const slangMeeting: SourceMeeting = {
+        ...meeting,
+        transcript: [
+            line("Alice Example", 0, "Ty testy poběží proti mokovaným datům.", 1),
+            line("Carol Example", 20, "Musíme to namokovat a mokovaný data držet v repu.", 2),
+            line("Alice Example", 40, "Rozhodli jsme, že zrelajzujem a kvapímu tu změnu zítra.", 1),
+            line("Carol Example", 60, "Zrelajzujem a kvapímu to taky.", 2),
+        ],
+    };
+    const unknown = ["mokovaným", "namokovat", "mokovaný", "zrelajzujem", "kvapímu"];
+
+    test("a word family heard in several forms gets no item, a lone unknown word stays, and nothing is proposed", () => {
+        const items = suggestItems({
+            record,
+            meeting: slangMeeting,
+            rules: ["terms"],
+            dictionary: { abbrExpansion: "every" as const, entries: [] },
+            sourceWords: [],
+            wordCheck: words(unknown),
+            now: meeting.start,
+        });
+        const terms = items.flatMap((item) => (item.kind === "term" ? [item] : []));
+
+        expect(terms.map((item) => item.heard).sort()).toEqual(["kvapímu", "zrelajzujem"]);
+        expect(terms.every((item) => item.proposed === undefined)).toBe(true);
+    });
+
+    test("two unknown words first heard in one line are one question", () => {
+        const options = {
+            record,
+            meeting: slangMeeting,
+            rules: ["terms" as const],
+            dictionary: { abbrExpansion: "every" as const, entries: [] },
+            sourceWords: [],
+            wordCheck: words(unknown),
+            now: meeting.start,
+            questionBudget: 12,
+        };
+        const questions = suggestItems(options).filter((item) => item.kind === "question");
+
+        expect(questions.map((item) => item.kind === "question" && Math.round(item.fromSec))).toEqual([40]);
+    });
+
+    test("the family and the English root rule", () => {
+        expect(wordFamily("nemokovaný")).toBe(wordFamily("mokovanejm"));
+        expect(wordFamily("mobilce")).toBe(wordFamily("mobilkou"));
+        expect([...spokenOnPurpose(["mokovat"], (root) => root === "mock")]).toEqual(["mokovat"]);
+        expect([...spokenOnPurpose(["kvapímu"], () => false)]).toEqual([]);
+        expect([...spokenOnPurpose(["mobilce", "mobilkou", "kvapímu"], () => false)].sort()).toEqual([
+            "mobilce",
+            "mobilkou",
+        ]);
+    });
+
+    test("a keep entry retires the suggested items of its word family and the questions that only they decide", () => {
+        const kept = meetingRecordSchema.parse({
+            ...record,
+            items: [
+                {
+                    id: "i1",
+                    kind: "term",
+                    status: "suggested",
+                    heard: "mokovanejm",
+                    atSec: 0,
+                    confidence: 0.3,
+                    rules: [MeetingRule.UnknownWord],
+                    suggestedAt: meeting.start,
+                },
+                {
+                    id: "i2",
+                    kind: "term",
+                    status: "suggested",
+                    heard: "kvapímu",
+                    atSec: 60,
+                    confidence: 0.3,
+                    rules: [MeetingRule.UnknownWord],
+                    suggestedAt: meeting.start,
+                },
+                {
+                    id: "i3",
+                    kind: "question",
+                    status: "suggested",
+                    about: "term",
+                    fromSec: 0,
+                    toSec: 4,
+                    question: "What is it?",
+                    heard: "mokovanejm",
+                    choices: [],
+                    decides: ["i1"],
+                    rules: [],
+                    suggestedAt: meeting.start,
+                },
+            ],
+        });
+        const settled = settledTermItems({
+            record: kept,
+            dictionary: { entries: [{ type: "keep", value: "mokovaný" }] },
+            known: () => false,
+        });
+
+        expect([...settled.keys()].sort()).toEqual(["i1", "i3"]);
+    });
 });

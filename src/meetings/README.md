@@ -20,7 +20,7 @@ for every source. The design is the vault note `GenesisTools/2026-11-02-MeetingT
 | `speakers stats <meeting> [--attendance <platform>\|<file>]` | Per label: origin, turns, spoken time, spans, with hints |
 | `speakers rename <meeting> <label> <name>` | Rename a label for this meeting |
 | `evidence <meeting> [--attendance <platform>\|<file>] [--files]` | Which voice each label's lines are: audio channel and the platform's speaking indicator, plus the volume check (`--format json`: one row per line) |
-| `suggest <meeting> [--rules speakers,evidence,terms] [--attendance <platform>\|<file>]` | Run the rules and add what they find as suggested items |
+| `suggest <meeting> [--rules speakers,evidence,terms] [--attendance <platform>\|<file>]` | Run the rules and add what they find as suggested items. A second run adds no item it already made and no question while the meeting has `questionCap` open. It first retires (rejects, with `evidence.retired`) the suggested words that a dictionary entry or the slang rule settles now, and the questions that decided only them |
 | `items <meeting> [--status …] [--kind …]` | The items with status, confidence and rules |
 | `confirm <meeting> <ids…> [--speaker <name>] [--proposed <text>]`, `--min-confidence 0.9` | Confirm items; a range nobody named needs `--speaker` |
 | `reject <meeting> <ids…>` | Reject items; they are never suggested again |
@@ -245,6 +245,11 @@ as an open question is.
   the microphone is ignored for that stretch.
 - `join`: a word cut between two lines ("dot" + "áhnu"), or one sentence cut between two whole words: a `joined`
   value with a space ("jsem zvědavej") keeps the space.
+- `term` from the word check (rule `unknown-word`, 30 %): a word no dictionary layer knows. It proposes nothing (the
+  closest terms are all below the suspect threshold, so they stay in `evidence.candidates`). A word said on purpose
+  gets no item: a word family heard in two or more forms (`wordFamily`, the first four letters of the stem after one
+  Czech prefix: "mokovaný", "namokovat", "nemokovaný"), or a Czech form of a known English word ("mokovat" from
+  "mock"). A `keep` entry covers every form of its family.
 - `term`: a misheard term and its proposed spelling, a passage read aloud from a context file (its quote and line),
   or a spoken path or identifier (its meaning after the words). A context file is read as the meeting saw it: when it
   changed or was deleted after the meeting, from its last git commit before the meeting's end; `suggest` warns when no
@@ -299,7 +304,8 @@ Only what is unsure and matters (Martin, 2026-11-02: "just on those which are re
 1. Confidence under `global.suggest.listenBelow` (0.6). A mixed channel alone is no reason to ask.
 2. A speaker range needs more than 5 words that are not all fillers, and 15 words or a decision or action word
    (`src/utils/transcribe/importance.ts`). A term needs two occurrences, an identifier, a person's name from the
-   summary, or a decision in its line; any other low term is only marked in the transcript.
+   summary, or a decision in its line; any other low term is only marked in the transcript. An unknown word with
+   nothing proposed needs two occurrences or an identifier's shape, and one line gets at most one such question.
 3. A goodbye or attendance range is dropped when finer audio-evidence items cover 80 % of it.
 4. Speaker questions cluster only for the same single label, exact range and clip times, and choices.
    Separate neighbouring passages stay separate.
@@ -309,7 +315,7 @@ Only what is unsure and matters (Martin, 2026-11-02: "just on those which are re
    unsure question usually scores 1 to 3, a cluster 6 or more. A question an agent adds takes `priority` on the same
    scale, so suggested and added questions sort in one order and `minPriority` means the same for both.
 
-`suggest` makes at most `global.suggest.questionCap` (12) questions; `listen` asks by priority, at most
+A meeting has at most `global.suggest.questionCap` (12) open questions, whatever the number of `suggest` runs; `listen` asks by priority, at most
 `playback.listen.roundCap` (12) per round and none under `minPriority` (0.5). A split
 uses no budget: its parts come next and share their parent's unit, so the header shows `3/12 · part 2/4`. Each
 answer settles compatible look-alikes. A speaker answer requires the same single label, exact range and signature,

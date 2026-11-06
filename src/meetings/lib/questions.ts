@@ -101,7 +101,8 @@ function impactOf(text: string, label: string, context: QuestionContext): { impa
  * (Martin, 2026-11-02: "just on those which are really important and not sure of"):
  * - a speaker range under `listenBelow` with more than 5 words that are not all fillers, and 15 words or a decision;
  * - a term under `listenBelow` whose time is known and that is seen twice, looks like an identifier, is a person's
- *   name from the summary, or sits in a line with a decision.
+ *   name from the summary, or sits in a line with a decision; an unknown word with nothing proposed only when seen twice
+ *   or shaped like an identifier.
  * The question carries its impact and signature in `evidence`; `selectQuestions` clusters and ranks them.
  */
 export function questionFor(item: MeetingItem, context: QuestionContext): NewQuestion | undefined {
@@ -162,7 +163,11 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
         const decision = atLine ? importanceOf(atLine.text).decision : false;
         const personName = item.rules.includes(MeetingRule.SummaryName);
 
-        if (occurrences < 2 && !identifier && !decision && !personName) {
+        // A word no layer knows and nothing resembles is asked only when heard twice or shaped like a code name: a lone
+        // colloquial form ("běžejí") in a decision line is speech, and asking it spent the budget (MC3).
+        const unknownWord = item.rules.includes(MeetingRule.UnknownWord) && !item.proposed;
+
+        if (unknownWord ? occurrences < 2 && !identifier : occurrences < 2 && !identifier && !decision && !personName) {
             return undefined;
         }
 

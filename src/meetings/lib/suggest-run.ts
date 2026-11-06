@@ -1,9 +1,10 @@
 import { logger } from "@genesiscz/utils/logger";
 import { languageSettings } from "@genesiscz/utils/meetings/config";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import { isEnglishWord } from "@genesiscz/utils/transcribe/terms";
 import { contextFileText, contextMoment } from "./context-file";
 import { OpenedMeeting } from "./opened-meeting";
-import { type SuggestRule, suggestItems } from "./suggest";
+import { type SuggestRule, settledTermItems, suggestItems } from "./suggest";
 import type { WordCheckChoice } from "./word-check";
 
 /**
@@ -18,7 +19,7 @@ export async function runSuggest(options: {
     rules: SuggestRule[];
     attendance?: string;
     wordCheck?: WordCheckChoice;
-}): Promise<{ fresh: MeetingItem[]; warnings: string[] }> {
+}): Promise<{ fresh: MeetingItem[]; retired: string[]; warnings: string[] }> {
     const { store, record, rules } = options;
     const warnings: string[] = [];
     const opened = OpenedMeeting.of(store, record);
@@ -63,9 +64,28 @@ export async function runSuggest(options: {
         now: new Date().toISOString(),
     };
     let fresh: MeetingItem[] = [];
+    let retired: string[] = [];
+    const known = (word: string) =>
+        isEnglishWord(word) || (wordCheck !== undefined && wordCheck.verdict(word).class !== "unknown");
 
     try {
         await store.update(record.id, { command: "suggest", change: "suggest findings and questions" }, (current) => {
+            // What the dictionary or the slang rule settles now is retired first, so its questions free the budget.
+            const settled = rules.includes("terms")
+                ? settledTermItems({ record: current, dictionary: inputs.dictionary, known })
+                : new Map<string, string>();
+
+            for (const item of current.items) {
+                const reason = settled.get(item.id);
+
+                if (reason) {
+                    item.status = "rejected";
+                    item.decidedAt = inputs.now;
+                    item.evidence = { ...item.evidence, retired: reason };
+                }
+            }
+
+            retired = [...settled.keys()];
             fresh = suggestItems({ ...inputs, record: current });
             current.items.push(...fresh);
         });
@@ -73,7 +93,7 @@ export async function runSuggest(options: {
         wordCheck?.dispose();
     }
 
-    return { fresh, warnings };
+    return { fresh, retired, warnings };
 }
 
 /** What the term rules cannot read as the meeting saw it: a context file that is gone, or changed with no commit. */

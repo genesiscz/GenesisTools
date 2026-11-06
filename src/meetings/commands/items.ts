@@ -126,7 +126,7 @@ async function suggest(
     }
 
     try {
-        const { fresh, warnings } = await runSuggest({
+        const { fresh, retired, warnings } = await runSuggest({
             store,
             record,
             rules,
@@ -141,6 +141,12 @@ async function suggest(
         if (opts.json) {
             out.result(SafeJSON.stringify(fresh, null, 2));
             return;
+        }
+
+        if (retired.length > 0) {
+            ui.info(
+                `Retired ${retired.length} suggestions the dictionary or the slang rule settles now: ${retired.join(" ")}`
+            );
         }
 
         if (fresh.length === 0) {
