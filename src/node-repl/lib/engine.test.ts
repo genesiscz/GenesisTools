@@ -387,6 +387,31 @@ describe("toolsets", () => {
         }
     });
 
+    // NR9: a toolset error carried two to six frames of library code, and a preset's frame named presets.ts.
+    it("an error keeps the frames its author wrote, a preset's under its own name, and drops library frames", async () => {
+        const engine = new ReplEngine({ toolsets: ["presets"] });
+        try {
+            const unknown = await engine.run('const n = 1;\ndescribe("no.such.method")');
+            expect(unknown.ok).toBe(false);
+            expect(unknown.stack).toContain("Unknown method: no.such.method");
+            expect(unknown.stack).toContain("turn:2");
+            expect(unknown.stack).not.toContain("discovery.ts");
+
+            const name = `nr9-throws-${process.pid}`;
+            await engine.run(
+                `await presets.save(${SafeJSON.stringify(name)}, { script: "const a = 1;\\nthrow new Error('boom ' + a);" })`
+            );
+            const thrown = await engine.run(`await presets.run(${SafeJSON.stringify(name)})`);
+            expect(thrown.ok).toBe(false);
+            expect(thrown.stack).toContain("boom 1");
+            expect(thrown.stack).toContain(`preset ${name}:2`);
+            expect(thrown.stack).not.toContain("presets.ts");
+            await engine.run(`await presets.remove(${SafeJSON.stringify(name)})`);
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
     it("help() lists the loaded toolsets from their descriptors and show() returns an image", async () => {
         const engine = new ReplEngine({ toolsets: [`${FIXTURE}#CounterToolset`] });
         try {

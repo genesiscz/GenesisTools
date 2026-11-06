@@ -41,6 +41,8 @@ interface WorkerResponse {
     stack?: string;
     /** A preload's toolsets that did not load; the worker runs without them. */
     failed?: Array<{ id: string; error: string }>;
+    /** Every frame of a failed turn's error, when `stack` dropped the library ones: logged, never returned. */
+    fullStack?: string;
 }
 
 const WORKER_PATH = join(import.meta.dir, "worker.ts");
@@ -580,15 +582,21 @@ export class ReplEngine {
                 onTimeout: `turn exceeded ${timeoutMs} ms; the worker was killed and every binding is gone`,
             }
         );
+        const { fullStack, ...answer } = response;
+
+        if (fullStack) {
+            logger.debug({ error: answer.error, stack: fullStack }, "node-repl turn failed (every frame)");
+        }
+
         // The first turn of a worker says which toolsets it runs without, once.
         const note = this.preloadNote;
         this.preloadNote = undefined;
         const text = capOutput({
-            text: note ? [note, response.text].filter(Boolean).join("\n") : response.text,
+            text: note ? [note, answer.text].filter(Boolean).join("\n") : answer.text,
             max: this.maxOutputChars,
             writeRest: (whole) => this.writeWholeOutput(whole),
         });
-        return { ...response, text, durationMs: Math.round(performance.now() - turnStarted) };
+        return { ...answer, text, durationMs: Math.round(performance.now() - turnStarted) };
     }
 
     /** Same wall clock as a turn: a registration nobody answers must not hang the caller forever. */

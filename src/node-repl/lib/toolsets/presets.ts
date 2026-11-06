@@ -87,7 +87,8 @@ export async function runPresetHere(
     }
 
     log.info({ name, params: Object.keys(params), toolsets: preset.meta.toolsets }, "preset run");
-    const body = new AsyncFunction("params", preset.script);
+    // The sourceURL names the script's frames `preset:<name>`, which the worker shows as `preset <name>:<line>`.
+    const body = new AsyncFunction("params", `${preset.script}\n//# sourceURL=preset:${name}`);
     const result = await body(params);
     noteRun(name, root);
     return result;

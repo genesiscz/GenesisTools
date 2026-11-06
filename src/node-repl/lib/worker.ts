@@ -64,6 +64,8 @@ interface Response {
     images: EmittedImage[];
     error?: string;
     stack?: string;
+    /** Every frame of a failed turn's error, when `stack` dropped some; the parent logs it and never returns it. */
+    fullStack?: string;
     /** A preload's toolsets that did not load; the others did, and plain turns run. */
     failed?: ToolsetFailure[];
 }
@@ -353,33 +355,46 @@ async function runTurn(code: string): Promise<Response["text"]> {
     return output.join("\n");
 }
 
-/** Frames of the kernel itself (this worker, the vm call, the toolset argument check), which say nothing about the turn. */
-const KERNEL_FRAME =
-    /node-repl[/\\]lib[/\\]worker\.ts|utils[/\\]repl[/\\]toolset\.ts|runInThisContext|processTicksAndRejections/;
 /** The script's own top level, which only calls the turn's wrapper. */
 const WRAPPER_FRAME = /^\s+at repl-turn\.js:\d+:\d+$/;
 /** `(async () => {` puts the turn one line below where its author wrote it. */
 const TURN_FRAME = /repl-turn\.js:(\d+)/g;
+/** A preset script's frame: `runPresetHere` names its body `preset:<name>`, two lines below the script's own line. */
+const PRESET_FRAME = /preset:([\w.-]+):(\d+)/g;
+/** The frames an author wrote: the turn's and a preset script's. Every other frame is library or kernel code. */
+const AUTHOR_FRAME = /repl-turn\.js:\d+|preset:[\w.-]+:\d+/;
+const FRAME = /^\s+at /;
 
-/** The stack as the turn's author reads it: kernel frames dropped, turn lines numbered as written. */
+/**
+ * The stack as the turn's author reads it: the message, then only the frames the author wrote, numbered as written. A
+ * toolset error carried two to six frames of library code (`discovery.ts`, `rpc/peer.ts`, `@octokit/graphql`), which
+ * say nothing the message does not (NR9); `describeError` keeps the whole stack for the log.
+ */
 export function turnStack(stack: string): string {
     return stack
         .split("\n")
-        .filter((line) => !(/^\s+at /.test(line) && KERNEL_FRAME.test(line)) && !WRAPPER_FRAME.test(line))
+        .filter((line) => !FRAME.test(line) || (AUTHOR_FRAME.test(line) && !WRAPPER_FRAME.test(line)))
         .map((line) =>
-            /^\s+at /.test(line)
-                ? line.replace(TURN_FRAME, (_, row: string) => `turn:${Math.max(1, Number(row) - 1)}`)
+            FRAME.test(line)
+                ? line
+                      .replace(TURN_FRAME, (_, row: string) => `turn:${Math.max(1, Number(row) - 1)}`)
+                      .replace(
+                          PRESET_FRAME,
+                          (_, name: string, row: string) => `preset ${name}:${Math.max(1, Number(row) - 2)}`
+                      )
                 : line
         )
         .join("\n");
 }
 
 /** An error thrown inside the vm context comes from that realm's Error, so instanceof is useless here. */
-function describeError(error: unknown): { message: string; stack?: string } {
+function describeError(error: unknown): { message: string; stack?: string; fullStack?: string } {
     const details: ErrorLike = typeof error === "object" && error !== null ? error : {};
+    const stack = typeof details.stack === "string" ? turnStack(details.stack) : undefined;
     return {
         message: typeof details.message === "string" ? details.message : String(error),
-        stack: typeof details.stack === "string" ? turnStack(details.stack) : undefined,
+        stack,
+        fullStack: typeof details.stack === "string" && details.stack !== stack ? details.stack : undefined,
     };
 }
 
@@ -416,8 +431,8 @@ async function handle(request: Request): Promise<Response> {
         const text = await runTurn(request.code);
         return { id: request.id, ok: true, text, images };
     } catch (error) {
-        const { message, stack } = describeError(error);
-        return { id: request.id, ok: false, text: output.join("\n"), images, error: message, stack };
+        const { message, stack, fullStack } = describeError(error);
+        return { id: request.id, ok: false, text: output.join("\n"), images, error: message, stack, fullStack };
     }
 }
 
