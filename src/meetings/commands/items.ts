@@ -35,7 +35,7 @@ import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } fro
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
 import { questionLabel, questionWarnings } from "../lib/questions";
-import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
+import { errorText, fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
 import { meetingTranscript } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
@@ -534,6 +534,7 @@ async function transcript(
     ref: string,
     opts: {
         format?: string | boolean;
+        json?: boolean;
         withSuggested?: boolean;
         dictionary?: boolean;
         timestamps?: boolean;
@@ -543,8 +544,14 @@ async function transcript(
 ): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
+    const flag = formatFlag(opts);
+
+    if (!flag) {
+        return;
+    }
+
     const format = await resolveEnum({
-        value: opts.format,
+        value: flag.format,
         fallback: "md",
         values: TRANSCRIPT_FORMATS,
         flag: "--format",
@@ -724,6 +731,7 @@ export function registerItemCommands(program: Command): void {
         .argument("<meeting>", MEETING_REF)
         .description("The transcript with renames, confirmed items and the dictionary applied")
         .option("--format [format]", `${TRANSCRIPT_FORMATS.join(" | ")} (default md)`)
+        .option("--json", "the same as --format json")
         .option("--with-suggested", "also apply the suggested items")
         .option("--no-dictionary", "do not apply the dictionary")
         .option("--no-frontmatter", "md: omit the frontmatter")

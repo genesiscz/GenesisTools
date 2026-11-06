@@ -6,6 +6,25 @@ import * as p from "@genesiscz/utils/prompts/p";
 export const TOOL = "tools meetings";
 
 /**
+ * `--json` is the short form of `--format json`, as on every other meetings command (MC19). The `--format` value for
+ * `resolveEnum`, or undefined (exit 1) when `--json` comes with another format.
+ */
+export function formatFlag(opts: { format?: string | boolean; json?: boolean }): { format: unknown } | undefined {
+    if (!opts.json) {
+        return { format: opts.format };
+    }
+
+    if (opts.format !== undefined && opts.format !== "json") {
+        const other = opts.format === true ? "--format" : `--format ${opts.format}`;
+        ui.err(`--json means --format json, so it cannot go with ${other}`);
+        process.exitCode = 1;
+        return undefined;
+    }
+
+    return { format: "json" };
+}
+
+/**
  * An enumerated flag declared `--flag [value]`: a value is checked, a bare flag prompts in a
  * terminal, and anything else prints the possible values with a ready command.
  */

@@ -8,7 +8,7 @@ import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { meetingAudioPath } from "./audio";
 import { choosePlayer, PLAYERS, playbackPlan } from "./players";
-import { enumHint, errorText } from "./shared";
+import { enumHint, errorText, formatFlag } from "./shared";
 import { linkedSource } from "./sources";
 
 /**
@@ -225,5 +225,23 @@ describe("a meeting without a transcript source", () => {
         expect(errors).toEqual([
             `[no-transcript-source] ${created.id} has no source with a transcript. Link one: tools meetings link ${created.id} 'wisprflow:<id>'`,
         ]);
+    });
+});
+
+describe("--json is the short form of --format json (MC19)", () => {
+    afterEach(() => {
+        process.exitCode = 0;
+    });
+
+    test("--json alone asks for json, and without it --format passes through", () => {
+        expect(formatFlag({ json: true })).toEqual({ format: "json" });
+        expect(formatFlag({ json: true, format: "json" })).toEqual({ format: "json" });
+        expect(formatFlag({ format: "table" })).toEqual({ format: "table" });
+        expect(formatFlag({})).toEqual({ format: undefined });
+    });
+
+    test("--json with another --format is refused with exit 1", () => {
+        expect(formatFlag({ json: true, format: "md" })).toBeUndefined();
+        expect(process.exitCode).toBe(1);
     });
 });

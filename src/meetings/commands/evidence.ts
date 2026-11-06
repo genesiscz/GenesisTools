@@ -11,7 +11,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { rawMeeting } from "../lib/raw";
-import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
+import { errorText, fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
 import { rawTerms } from "../lib/suggest";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
@@ -26,10 +26,23 @@ const SPREAD_MIN_WORDS = 30;
 
 async function evidence(
     ref: string,
-    opts: { attendance?: string; format?: string | boolean; files?: boolean; raw?: boolean; wordCheck?: string }
+    opts: {
+        attendance?: string;
+        format?: string | boolean;
+        json?: boolean;
+        files?: boolean;
+        raw?: boolean;
+        wordCheck?: string;
+    }
 ): Promise<void> {
+    const flag = formatFlag(opts);
+
+    if (!flag) {
+        return;
+    }
+
     const format = await resolveEnum({
-        value: opts.format,
+        value: flag.format,
         fallback: "table",
         values: FORMATS,
         flag: "--format",
@@ -226,5 +239,6 @@ export function registerEvidenceCommand(program: Command): void {
             `--raw: ${WORD_CHECKS.join(" | ")} for the term part (default: each language's languages.<code>.wordCheck, else ${DEFAULT_WORD_CHECK})`
         )
         .option("--format [format]", "table | json (json has one row per line)")
+        .option("--json", "the same as --format json")
         .action(evidence);
 }
