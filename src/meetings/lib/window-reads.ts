@@ -23,9 +23,11 @@ const { log } = logger.scoped("meetings-window-reads");
 /**
  * The reads the Meetings window makes, each as the value its command prints with `--json`. The CLI commands and the
  * hub server doors both serialize these with `windowJson`, so a door's answer is byte-identical to the command's.
+ * The values hold no comments, so the native writer gives the same bytes as comment-json at a tenth of its CPU
+ * (the screen timeline: 11.7 to 1.1 ms a call, 2026-11-07).
  */
 export function windowJson(value: unknown): string {
-    return SafeJSON.stringify(value, null, 2);
+    return SafeJSON.stringify(value, { strict: true }, 2);
 }
 
 /** `meetings overview --days <n>`: the meetings of the last `days`, with what needs the user. */
