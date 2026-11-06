@@ -22,7 +22,8 @@ public enum RecordingPickerTab: String, CaseIterable, Hashable, Sendable {
         }
     }
 
-    static func of(_ target: RecordingTarget?) -> RecordingPickerTab {
+    /// The tab that lists `target`: an app's tab, a display's tab, else the windows.
+    public static func of(_ target: RecordingTarget?) -> RecordingPickerTab {
         switch target {
         case .app: return .apps
         case .display: return .displays

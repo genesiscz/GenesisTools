@@ -2,6 +2,21 @@ import XCTest
 @testable import GenesisToolsRecorder
 
 final class CapturePickerTests: XCTestCase {
+    /// The defect: on the Windows and Apps tabs the audio, cursor and shortcuts toggles looked live, and only their
+    /// tooltips said that a window or an app movie records none of them (round 2, 2026-11-07). The options say it in
+    /// view now, and only on those tabs.
+    @MainActor
+    func testTheWindowsAndAppsTabsSayInViewWhatTheirMoviesLeaveOut() throws {
+        let model = CapturePickerModel(persist: false)
+        for (tab, shown) in [(RecordingPickerTab.windows, true), (.apps, true), (.displays, false)] {
+            model.tab = tab
+            let image = try EditorShots.write(CaptureOptionsView(model: model, onArea: {}),
+                                              name: "capture-options-\(tab.rawValue)", width: 380)
+            let text = try EditorShots.text(image)
+            XCTAssertEqual(text.contains("no audio"), shown, "\(tab): \(text)")
+        }
+    }
+
     /// The running recorder face draws the picker for `render.snapshot` and then closes the window it ordered in. A
     /// window made in code releases itself on close by default, so the close and ARC released it twice and the face
     /// crashed in the main queue's autorelease pool pop (EXC_BAD_ACCESS in objc_release, 2026-11-05 06:33).

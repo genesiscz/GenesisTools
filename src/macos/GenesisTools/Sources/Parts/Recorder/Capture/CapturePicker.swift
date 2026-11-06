@@ -58,6 +58,7 @@ final class CapturePicker {
     }
 
     private func present() {
+        model.tab = filter?.tab ?? RecordingPickerTab.of(initial)
         let view = RecordingTargetPicker(
             load: load, title: "Record", initial: initial,
             onChoose: { [weak self] target in self?.choose(.target(target)) },
@@ -69,7 +70,10 @@ final class CapturePicker {
                 Task { await self.refresh(preferredPid: nil) }
             },
             restoring: filter,
-            onFilterChange: { [weak self] tab, query in self?.filter = (tab, query) },
+            onFilterChange: { [weak self] tab, query in
+                self?.filter = (tab, query)
+                self?.model.tab = tab
+            },
             accessory: AnyView(CaptureOptionsView(model: model, onArea: { [weak self] in self?.selectArea() })),
             footerHint: Self.footerHint)
             .onKeyPress(phases: .down) { [weak self] press in
@@ -176,6 +180,7 @@ final class CapturePicker {
             frontmostPid: 501)
         let model = CapturePickerModel(persist: false)
         model.shortcutsOpen = shortcutsOpen
+        model.tab = RecordingPickerTab.of(targets.defaultTarget(preferredPid: 501))
         let view = RecordingTargetPicker(
             load: .loaded(targets), title: "Record", initial: targets.defaultTarget(preferredPid: 501),
             onChoose: { _ in }, onCancel: {},
@@ -249,6 +254,8 @@ final class CapturePickerModel: ObservableObject {
         }
     }
 
+    /// The picker's tab, so the options can say what a window or an app movie leaves out.
+    @Published var tab: RecordingPickerTab = .displays
     @Published var bindings: [RecorderShortcutAction: RecorderShortcutBinding] = CapturePickerModel.loadBindings()
     @Published var shortcutsOpen = false
     @Published var alwaysHeld = RecorderShortcuts.alwaysHeld {
@@ -334,6 +341,10 @@ struct CaptureOptionsView: View {
                 menu($model.options.threshold, CaptureOptions.thresholds, "recorder.capture.threshold") {
                     "\($0 == $0.rounded() ? String(Int($0)) : String($0)) %"
                 }
+            }
+            if let note = CaptureOptions.notRecorded(on: model.tab) {
+                InfoStrip(note)
+                    .accessibilityIdentifier("recorder.capture.windowNote")
             }
             row("System audio", detail: "What the Mac plays, as its own track; a display or an area only (a window movie has no audio)") {
                 toggle($model.options.systemAudio, "recorder.capture.audio.system")

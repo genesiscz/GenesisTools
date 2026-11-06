@@ -45,6 +45,16 @@ enum CaptureChoice: Equatable {
 /// The capture picker's options, each its own key in the app's defaults so the menu's toggles and the picker share
 /// them. Every value applies to the next recording.
 struct CaptureOptions: Equatable {
+    /// What a choice on `tab` does not record, said beside the options; nil on the Displays tab. "Select an area…"
+    /// sits on every tab and records all of them, so the rows stay usable and only this line explains.
+    static func notRecorded(on tab: RecordingPickerTab) -> String? {
+        switch tab {
+        case .windows: "A window movie has no audio, no cursor track and no shortcuts. Choose a display or an area for those."
+        case .apps: "An app movie has no audio, no cursor track and no shortcuts. Choose a display or an area for those."
+        case .displays: nil
+        }
+    }
+
     static let frameRates = [15, 24, 30, 60]
     /// 0 is "the same as the frame rate" (a movie keeps one rate).
     static let idleRates: [Double] = [0, 0.5, 1, 2, 5]
