@@ -15,6 +15,8 @@ import { MEETING_PLATFORM_IDS } from "./platform";
 const { log } = logger.scoped("meetings-record");
 
 export const MEETING_FILE = "meeting.json";
+/** A meeting folder name: no separator and no leading dot, so it names a folder of the store and nothing else. */
+const FOLDER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
 /** Who created the record. */
 export const MEETING_CREATORS = ["new", "link", "record", "autostart"] as const;
@@ -503,6 +505,17 @@ export class MeetingStore {
      * nothing fits and the records sit one level off.
      */
     resolve(ref: string): MeetingRecord | undefined {
+        // An exact id is one folder: read it alone before listing the store, which read every record (11 to 19 ms a
+        // call with 80 meetings, 2026-11-06). A ref that could name another folder (a separator, a leading dot)
+        // never reaches the disk this way.
+        if (ref !== "last" && FOLDER_NAME.test(ref)) {
+            const direct = this.read(ref);
+
+            if (direct?.id === ref) {
+                return direct;
+            }
+        }
+
         const records = this.list();
 
         if (ref === "last") {

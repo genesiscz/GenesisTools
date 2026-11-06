@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { FILLER_WORDS } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -482,6 +482,21 @@ describe("meeting records", () => {
         expect(store.resolve("wisprflow:1a2b3c4d")?.id).toBe(older.id);
         expect(store.resolve("wisprflow:ffff")).toBeUndefined();
         expect(() => store.resolve("2026-11")).toThrow("fits 2 meetings");
+    });
+
+    test("resolve reads an exact id alone, and lists the store for anything else", async () => {
+        const store = records();
+        const created = await store.create(
+            { title: "Planning", start: "2026-11-01T09:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "x" }
+        );
+        const listed = spyOn(store, "listBounded");
+
+        expect(store.resolve(created.id)?.id).toBe(created.id);
+        expect(listed).not.toHaveBeenCalled();
+        expect(store.resolve(created.id.slice(0, 10))?.id).toBe(created.id);
+        expect(store.resolve(`../${basename(store.root)}/${created.id}`)).toBeUndefined();
+        expect(listed).toHaveBeenCalledTimes(2);
     });
 
     test("an update appends one history line, and an invalid change writes nothing", async () => {
