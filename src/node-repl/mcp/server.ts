@@ -56,6 +56,19 @@ export function parseJsArguments(
     };
 }
 
+/** The toolsets whose calls can start a recording that the engine owns and finishes on a reset. */
+const RECORDING_TOOLSETS = ["recorder", "movies"];
+
+/** The `js_reset` description; the recording budgets only when a toolset that records is loaded (NR29). */
+export function jsResetDescription(toolsets: readonly string[]): string {
+    const recordings = toolsets.some((id) => RECORDING_TOOLSETS.includes(id))
+        ? " Owned recordings are stopped and finalized: pending recording startups may take up to 120 seconds by default, followed by up to 10 minutes for finalization. Toolsets then get up to 10 seconds to dispose before the worker is killed."
+        : toolsets.length > 0
+          ? " Toolsets then get up to 10 seconds to dispose before the worker is killed."
+          : "";
+    return `Reset the REPL and cancel queued turns; a running turn answers "cancelled by js_reset".${recordings} Every binding is gone; registered module directories stay.`;
+}
+
 /** The `js` description: the fixed text, then one line per preloaded toolset. */
 export function jsDescription(toolsetLines: readonly string[]): string {
     if (toolsetLines.length === 0) {
@@ -119,8 +132,7 @@ export function createServer(engine: ReplEngine, options: { toolsetLines?: reado
                 },
                 {
                     name: "js_reset",
-                    description:
-                        "Reset the REPL and cancel queued turns. Owned recordings are stopped and finalized: pending recording startups may take up to 120 seconds by default, followed by up to 10 minutes for finalization. Toolsets then get up to 10 seconds to dispose before the worker is killed. Every binding is gone; registered module directories stay.",
+                    description: jsResetDescription(engine.toolsets),
                     inputSchema: { type: "object", properties: {}, additionalProperties: false },
                 },
                 TURN_ENDED_TOOL,

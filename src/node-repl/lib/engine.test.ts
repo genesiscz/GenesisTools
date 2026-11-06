@@ -9,7 +9,7 @@ import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
 import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
-import { jsDescription, parseJsArguments } from "../mcp/server";
+import { jsDescription, jsResetDescription, parseJsArguments } from "../mcp/server";
 import { capOutput, DEFAULT_MAX_OUTPUT_CHARS, ReplEngine, resultMessage } from "./engine";
 import {
     createToolsets,
@@ -154,6 +154,14 @@ describe("ReplEngine", () => {
         expect(stuck.ok).toBe(false);
         expect(stuck.error).toContain("exceeded 1000 ms");
         expect(stuck.error).toContain("compiling the native helper");
+    });
+
+    // NR29: process.exit(3) answered "code unknown" and did not say that the bindings were gone.
+    it("a turn that exits the worker names the code and says every binding is gone", async () => {
+        await engine.run("globalThis.beforeExit = 1");
+        const exited = await engine.run("process.exit(3)");
+        expect(exited.error).toBe("the node-repl worker exited (code 3) before answering; every binding is gone");
+        expect((await engine.run("typeof beforeExit")).text).toBe("undefined");
     });
 
     // NR39: a malformed trust.json throws at the worker's module top level, before it can answer.
@@ -497,6 +505,14 @@ describe("toolsets", () => {
         );
     });
 
+    // NR29: js_reset talked about recordings with no toolset loaded that can start one.
+    it("the js_reset description names recordings only when a toolset that records is loaded", () => {
+        expect(jsResetDescription([])).not.toContain("recording");
+        expect(jsResetDescription(["browser"])).toContain("Toolsets then get up to 10 seconds to dispose");
+        expect(jsResetDescription(["recorder"])).toContain("Owned recordings are stopped and finalized");
+        expect(jsResetDescription(["movies"])).toContain("Owned recordings are stopped and finalized");
+    });
+
     // NR16: timeout_ms -5 and "abc" ran with the default, and an unknown key was accepted against the schema.
     it("the js arguments are checked as the schema declares them", () => {
         expect(parseJsArguments({ code: "1", timeout_ms: 500, title: "count" })).toEqual({
@@ -525,6 +541,8 @@ it("reset interrupts an active turn and cancels turns queued before it", async (
     const running = engine.run("await new Promise(() => {})", 60000);
     const queued = engine.run("globalThis.shouldNotRun = true");
     let reset: Promise<void> | undefined;
+    // The worker is warm, so a few microtasks send the turn; one timer tick later it runs, and the reset meets it there.
+    await Bun.sleep(20);
 
     try {
         reset = engine.reset();
@@ -534,7 +552,7 @@ it("reset interrupts an active turn and cancels turns queued before it", async (
                 throw new Error("reset waited for the active turn");
             }),
         ]);
-        expect((await running).ok).toBe(false);
+        expect((await running).error).toBe("cancelled by js_reset; every binding is gone");
         expect((await queued).ok).toBe(false);
         expect((await engine.run("typeof globalThis.shouldNotRun")).text).toContain("undefined");
     } finally {

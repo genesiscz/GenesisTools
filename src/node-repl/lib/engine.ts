@@ -416,7 +416,7 @@ export class ReplEngine {
                 : worker.signalCode
                   ? `signal ${worker.signalCode}`
                   : "code unknown";
-        return `the node-repl worker exited (${how}) before answering${tail?.quote("its last stderr lines") ?? ""}`;
+        return `the node-repl worker exited (${how}) before answering; every binding is gone${tail?.quote("its last stderr lines") ?? ""}`;
     }
 
     /**
@@ -706,7 +706,7 @@ export class ReplEngine {
 
     /** A fresh worker on the next turn: every binding is gone, the toolsets are disposed and preloaded again. */
     reset(): Promise<void> {
-        return this.shutdown("reset");
+        return this.shutdown("cancelled by js_reset; every binding is gone");
     }
 
     /** Synchronous last resort (process exit): kills the worker without asking its toolsets. */
