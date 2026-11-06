@@ -69,7 +69,13 @@ export function loadImportPolicy(path = importPolicyPath()): ImportPolicy {
         return DEFAULT_IMPORT_POLICY;
     }
 
-    const parsed: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
+    let parsed: unknown;
+
+    try {
+        parsed = SafeJSON.parse(readFileSync(path, "utf8"));
+    } catch (error) {
+        throw new Error(`${path}: not valid JSON (${error instanceof Error ? error.message : String(error)})`);
+    }
 
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
         throw new Error(`${path}: the import policy must be a JSON object`);

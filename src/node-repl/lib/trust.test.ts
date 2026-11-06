@@ -119,4 +119,9 @@ describe("loadImportPolicy", () => {
     it("refuses a policy that is not an object", () => {
         expect(() => loadImportPolicy(policyFile("[]"))).toThrow("JSON object");
     });
+
+    it("names the file when it is not valid JSON", () => {
+        const path = policyFile("{bad json");
+        expect(() => loadImportPolicy(path)).toThrow(`${path}: not valid JSON`);
+    });
 });

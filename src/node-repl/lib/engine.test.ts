@@ -3,10 +3,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { effectLabel } from "@genesiscz/utils/api-descriptor";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
 import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { jsDescription } from "../mcp/server";
 import { capOutput, DEFAULT_MAX_OUTPUT_CHARS, ReplEngine, resultMessage } from "./engine";
 import { createToolsets, parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp } from "./toolsets";
@@ -127,6 +129,38 @@ describe("ReplEngine", () => {
         const after = await engine.run("typeof marker");
         expect(after.ok).toBe(true);
         expect(after.text).toBe("undefined");
+    });
+
+    // NR6: a native helper compiling on first use logs that line to stderr and nowhere the caller sees.
+    it("a turn that overruns quotes what the worker wrote to stderr while it ran", async () => {
+        const stuck = await engine.run(
+            'process.stderr.write("compiling the native helper\\n"); await new Promise(() => {});',
+            1000
+        );
+        expect(stuck.ok).toBe(false);
+        expect(stuck.error).toContain("exceeded 1000 ms");
+        expect(stuck.error).toContain("compiling the native helper");
+    });
+
+    // NR39: a malformed trust.json throws at the worker's module top level, before it can answer.
+    it("a worker that dies before it answers names its exit code and its last stderr lines", async () => {
+        const home = mkdtempSync(join(tmpdir(), "node-repl-trust-"));
+        mkdirSync(genesisToolsDirIn(home, "node-repl"), { recursive: true });
+        writeFileSync(genesisToolsDirIn(home, "node-repl", "trust.json"), '{"allowPaths": []}');
+        const broken = new ReplEngine({ defaultTimeoutMs: 10_000 });
+
+        try {
+            let error: string | undefined;
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+                const result = await broken.run("1");
+                expect(result.ok).toBe(false);
+                error = result.error;
+            });
+            expect(error).toMatch(/exited \(code [1-9]\d*\) before answering/);
+            expect(error).toContain('"allowPaths" must be true or false');
+        } finally {
+            broken.dispose();
+        }
     });
 
     it("carries a declaration without an initialiser into the next turn", async () => {

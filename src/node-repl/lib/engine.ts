@@ -9,6 +9,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { recorderStartSchema } from "@genesiscz/utils/repl/toolsets/recorder";
 import { type LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
 import type { FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
+import { stripAnsi } from "@genesiscz/utils/string";
 
 /**
  * Parent side of the REPL: owns one worker process, one request at a time, and the wall clock.
@@ -67,6 +68,74 @@ async function* streamChunks(stream: ReadableStream<Uint8Array>): AsyncGenerator
         }
     } finally {
         reader.releaseLock();
+    }
+}
+
+/** How many of a worker's last stderr lines an error quotes, and the length of one quoted line. */
+const STDERR_TAIL_LINES = 8;
+const STDERR_LINE_CHARS = 300;
+/** How long a dead worker's exit code and last stderr bytes are awaited before its error is sent anyway. */
+const EXIT_READ_TIMEOUT_MS = 1000;
+
+/**
+ * A worker's last stderr lines. A worker that dies before it answers (a malformed trust.json throws at its module top
+ * level) and a turn that overruns (a native helper that compiles on first use) say why only on stderr, so their errors
+ * quote it (NR6, NR39).
+ */
+class StderrTail {
+    private readonly lines: Array<{ seq: number; text: string }> = [];
+    private partial = "";
+    private seq = 0;
+    /** Settles when the worker's stderr has ended. */
+    ended: Promise<void> = Promise.resolve();
+
+    /** The number of lines seen so far; `quote(heading, mark)` shows only the lines after it. */
+    get mark(): number {
+        return this.seq;
+    }
+
+    push(chunk: string): void {
+        const parts = (this.partial + chunk).split("\n");
+        this.partial = parts.pop() ?? "";
+
+        for (const part of parts) {
+            this.add(part);
+        }
+    }
+
+    end(): void {
+        this.add(this.partial);
+        this.partial = "";
+    }
+
+    /** The kept lines after `mark` under a heading, or "" when there are none. */
+    quote(heading: string, mark = 0): string {
+        const lines = this.lines.filter((line) => line.seq > mark).map((line) => `  ${line.text}`);
+        const partial = stripAnsi(this.partial).trim();
+
+        if (partial) {
+            lines.push(`  ${partial.slice(0, STDERR_LINE_CHARS)}`);
+        }
+
+        return lines.length > 0 ? `\n${heading}:\n${lines.join("\n")}` : "";
+    }
+
+    private add(raw: string): void {
+        const text = stripAnsi(raw).trimEnd();
+
+        if (!text.trim()) {
+            return;
+        }
+
+        this.seq += 1;
+        this.lines.push({
+            seq: this.seq,
+            text: text.length > STDERR_LINE_CHARS ? `${text.slice(0, STDERR_LINE_CHARS)}…` : text,
+        });
+
+        if (this.lines.length > STDERR_TAIL_LINES) {
+            this.lines.shift();
+        }
     }
 }
 
@@ -150,6 +219,7 @@ export class ReplEngine {
     /** Where cut turns keep their whole output; made at the first cut, kept after the engine stops. */
     private outputDir?: string;
     private cutTurns = 0;
+    private readonly stderrTails = new WeakMap<ReplWorker, StderrTail>();
 
     constructor(private readonly options: ReplEngineOptions = {}) {
         this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
@@ -245,8 +315,10 @@ export class ReplEngine {
         });
         logger.debug({ pid: worker.pid, toolsets: this.toolsets }, "node-repl worker started");
         this.worker = worker;
+        const tail = new StderrTail();
+        this.stderrTails.set(worker, tail);
+        tail.ended = this.drainStderr(worker, tail);
         void this.readResponses(worker);
-        void this.drainStderr(worker);
 
         for (const dir of this.moduleDirs) {
             void this.send(worker, { id: this.nextId++, op: "addDir", dir }).catch((error: unknown) => {
@@ -306,12 +378,14 @@ export class ReplEngine {
      * dependency is enough. The same hazard is handled three files away in
      * src/control/lib/peekaboo.ts, which says so in its own comment.
      */
-    private async drainStderr(worker: ReplWorker): Promise<void> {
+    private async drainStderr(worker: ReplWorker, tail: StderrTail): Promise<void> {
         const decoder = new TextDecoder();
 
         try {
             for await (const chunk of streamChunks(worker.stderr)) {
-                const text = decoder.decode(chunk, { stream: true }).trimEnd();
+                const decoded = decoder.decode(chunk, { stream: true });
+                tail.push(decoded);
+                const text = decoded.trimEnd();
 
                 if (text.length > 0) {
                     logger.debug({ pid: worker.pid, stderr: text.slice(0, 2000) }, "node-repl worker stderr");
@@ -319,7 +393,28 @@ export class ReplEngine {
             }
         } catch (error) {
             logger.debug({ error, pid: worker.pid }, "node-repl worker stderr stream ended");
+        } finally {
+            tail.end();
         }
+    }
+
+    /** Why a worker stopped: its exit code or signal and its last stderr lines, awaited for at most a second. */
+    private async exitReason(worker: ReplWorker): Promise<string> {
+        const tail = this.stderrTails.get(worker);
+
+        try {
+            await withTimeout(Promise.all([worker.exited, tail?.ended]), EXIT_READ_TIMEOUT_MS);
+        } catch (error) {
+            logger.debug({ error, pid: worker.pid }, "node-repl worker exit not seen in time");
+        }
+
+        const how =
+            worker.exitCode !== null
+                ? `code ${worker.exitCode}`
+                : worker.signalCode
+                  ? `signal ${worker.signalCode}`
+                  : "code unknown";
+        return `the node-repl worker exited (${how}) before answering${tail?.quote("its last stderr lines") ?? ""}`;
     }
 
     /**
@@ -342,9 +437,14 @@ export class ReplEngine {
             if (this.worker === worker) {
                 this.worker = null;
                 this.workerStopped();
-                this.settlePending(
-                    `the node-repl worker exited (code ${worker.exitCode ?? "unknown"}) before answering`
-                );
+                // Taken now: a turn that starts while the dead worker's last words are read belongs to the next one.
+                const waiting = [...this.pending];
+                this.pending.clear();
+                const reason = await this.exitReason(worker);
+
+                for (const [id, resolve] of waiting) {
+                    resolve({ id, ok: false, text: "", images: [], error: reason });
+                }
             }
         }
     }
@@ -417,14 +517,18 @@ export class ReplEngine {
         options: { timeoutMs: number; onTimeout: string }
     ): Promise<WorkerResponse> {
         const id = this.nextId++;
+        const tail = this.stderrTails.get(worker);
+        const mark = tail?.mark ?? 0;
 
         return new Promise<WorkerResponse>((resolve) => {
             const timer = setTimeout(() => {
+                const reason = `${options.onTimeout}${tail?.quote("while it ran, the worker wrote to stderr", mark) ?? ""}`;
+
                 if (this.worker === worker) {
-                    this.killWorker(options.onTimeout);
+                    this.killWorker(reason);
                 } else {
                     this.pending.delete(id);
-                    resolve({ id, ok: false, text: "", images: [], error: options.onTimeout });
+                    resolve({ id, ok: false, text: "", images: [], error: reason });
                 }
             }, options.timeoutMs);
             this.pending.set(id, (response) => {

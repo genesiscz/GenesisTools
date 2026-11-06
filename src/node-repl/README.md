@@ -136,11 +136,25 @@ the sandbox, and a second realm only makes `Bun.inspect` print every object with
 
 ## Imports
 
-Every `import()` inside a turn passes through one callback, which is the trust chokepoint.
-`~/.genesis-tools/node-repl/trust.json` may set `allowBuiltins`, `allowRepoDeps`, `allowPaths`
-and `allowBare`; the defaults allow `node:` builtins, absolute paths, the server's own
-dependencies and any directory added with `js_add_node_module_dir`. The policy is read when the
-worker starts and never changed by a turn.
+Every `import()` inside a turn passes through one callback, which is the trust chokepoint for
+imports. It covers `import()` only: `Bun.file`, `Bun.spawn` and `fetch` stay open to a turn.
+`~/.genesis-tools/node-repl/trust.json` may set these keys:
+
+```json
+{
+    "allowBuiltins": true,
+    "allowRepoDeps": true,
+    "allowPaths": true,
+    "allowBare": ["left-pad"]
+}
+```
+
+`allowBuiltins` (`node:` builtins), `allowRepoDeps` (bare names the server's own dependencies resolve) and
+`allowPaths` (absolute paths and `file:` URLs) are `true` or `false`; `allowBare` is an array of exact bare names.
+The defaults allow builtins, absolute paths, the server's own dependencies and any directory added with
+`js_add_node_module_dir`. The policy is read when the worker starts and never changed by a turn. A file that is not
+valid JSON, or a key of the wrong type, stops the worker, and every turn's error quotes the reason
+(`"allowPaths" must be true or false`).
 
 ## Registering it
 

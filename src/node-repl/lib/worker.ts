@@ -74,7 +74,20 @@ interface ToolsetFailure {
 }
 
 const moduleDirs: string[] = [];
-const policy: ImportPolicy = loadImportPolicy();
+const policy: ImportPolicy = policyOrExit();
+
+/**
+ * A malformed trust.json must stop the worker, never widen the gate. The reason goes to stderr as one line, because the
+ * engine quotes the worker's last stderr lines in the error of every turn, and a stack trace would push the reason out.
+ */
+function policyOrExit(): ImportPolicy {
+    try {
+        return loadImportPolicy();
+    } catch (error) {
+        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        process.exit(1);
+    }
+}
 const imageDir = mkdtempSync(join(tmpdir(), "node-repl-images-"));
 let output: string[] = [];
 let images: EmittedImage[] = [];
