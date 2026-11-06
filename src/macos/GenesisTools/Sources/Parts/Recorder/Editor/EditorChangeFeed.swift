@@ -93,9 +93,9 @@ enum EditDiff {
                 if (oldStart, oldEnd) == (start, end) {
                     verb = "Changed \(name(item))"
                 } else if oldEnd - oldStart == end - start {
-                    verb = "Moved \(name(item)) to \(span(start, end))"
+                    verb = "Moved \(name(item)), now \(span(start, end))"
                 } else {
-                    verb = "Trimmed \(name(item)) to \(span(start, end))"
+                    verb = "Trimmed \(name(item)), now \(span(start, end))"
                 }
                 lines.append(.init(symbol: symbol, text: verb))
                 ids.append(item.id)

@@ -1045,8 +1045,14 @@ final class RecorderEditTests: XCTestCase {
         var moved = after
         moved.texts = [EditProject.TextNote(id: "t1", startUs: 1_200_000, endUs: 4_200_000, text: "Hello")]
         let move = try XCTUnwrap(EditDiff.describe(old: after, new: moved, by: "agent", at: Date()))
-        XCTAssertEqual(move.lines.map(\.text), ["Moved the text “Hello” to 00:01.2 to 00:04.2"])
+        // Regression test: deep test 2026-11-06 RE14 (live re-check) — "Trimmed a circle to 00:19.9 to 00:20.0" read as
+        // two targets once a range said "to".
+        XCTAssertEqual(move.lines.map(\.text), ["Moved the text “Hello”, now 00:01.2 to 00:04.2"])
         XCTAssertFalse(move.touchesPicture)
+        var trimmed = moved
+        trimmed.texts = [EditProject.TextNote(id: "t1", startUs: 1_200_000, endUs: 2_000_000, text: "Hello")]
+        XCTAssertEqual(EditDiff.describe(old: moved, new: trimmed, by: "agent", at: Date())?.lines.map(\.text),
+                       ["Trimmed the text “Hello”, now 00:01.2 to 00:02.0"])
 
         var removed = moved
         removed.texts = []
