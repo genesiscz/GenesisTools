@@ -618,6 +618,36 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertFalse(EditorWindows.names(model, folder + "-other"))
     }
 
+    // Regression test: deep test 2026-11-06 RE2 and RE3 — ⌥← stepped the playhead instead of moving the selection, B
+    // and C did nothing, and with Single-Key Shortcuts off S still split the clip: the key monitor kept its own copy
+    // of the menu's keys.
+    func testEachKeyRunsItsMenuCommandAndSingleKeyShortcutsOffLetsLettersThrough() {
+        let left = String(UnicodeScalar(NSLeftArrowFunctionKey)!)
+        let right = String(UnicodeScalar(NSRightArrowFunctionKey)!)
+        let up = String(UnicodeScalar(NSUpArrowFunctionKey)!)
+        func title(_ key: String, _ modifiers: NSEvent.ModifierFlags = [], singleKeys: Bool = true) -> String? {
+            EditorKeys.command(key: key, modifiers: modifiers, singleKeys: singleKeys)?.title
+        }
+
+        XCTAssertEqual(title(left, .option), "Move Selection Earlier")
+        XCTAssertEqual(title(right, [.option, .shift]), "Move Selection a Second Later")
+        XCTAssertEqual(title(left, [.option, .numericPad, .function]), "Move Selection Earlier", "an arrow key carries these flags")
+        XCTAssertEqual(title(left), "Back One Frame (Shape: Nudge Left)")
+        XCTAssertEqual(title(up), "Nudge Shape Up")
+        XCTAssertEqual(title("b"), "Add Box at Playhead")
+        XCTAssertEqual(title("c"), "Add Circle at Playhead")
+        XCTAssertEqual(title("\u{7f}"), "Delete Selection", "the ⌫ key types DEL")
+        XCTAssertEqual(title(String(UnicodeScalar(NSDeleteFunctionKey)!)), "Delete Selection", "and ⌦ deletes too")
+        XCTAssertEqual(title("\u{7f}", .shift), "Delete In to Out")
+        XCTAssertEqual(title("Z", [.command, .shift]), "Redo")
+        XCTAssertNil(title("q", .command), "a key the editor has no command for goes on to the menu")
+
+        XCTAssertNil(title("s", singleKeys: false), "Single-Key Shortcuts off: S is not Split")
+        XCTAssertNil(title(" ", singleKeys: false))
+        XCTAssertEqual(title(left, .shift, singleKeys: false), "Back One Second (Shape: Nudge More)", "⇧← stays")
+        XCTAssertEqual(title("z", .command, singleKeys: false), "Undo")
+    }
+
     // Regression test: deep test 2026-11-06 RE4 — in a reopened window ⌘Z did nothing, though the service still held
     // the steps of the edit.
     func testUndoInAReopenedWindowUndoesTheStepsTheServiceKeptAndRedoBringsThemBack() {

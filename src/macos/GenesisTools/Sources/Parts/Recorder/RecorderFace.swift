@@ -451,43 +451,30 @@ private struct DocumentEditedMark: NSViewRepresentable {
     }
 }
 
-/// The editor's keys, for the key window only and never while a text field edits.
+/// The editor's keys, for the key window only and never while a text field edits. A key runs the command the menu bar
+/// lists for it (`EditorMenu`'s tables), so the key does what its menu item says; the monitor runs before the menu.
+@MainActor
 enum EditorKeys {
-    @MainActor
+    /// Every command with a key, in the menu bar's order.
+    static let keyed: [EditorCommand] = (EditorMenu.file + EditorMenu.edit + EditorMenu.timeline + EditorMenu.tabs).filter { !$0.key.isEmpty }
+
+    /// The command a key press runs, or nil to let the key through. `key` is the event's characters without modifiers;
+    /// with Single-Key Shortcuts off, a key with no modifier (S, Z, Space) runs nothing.
+    static func command(key: String, modifiers: NSEvent.ModifierFlags, singleKeys: Bool) -> EditorCommand? {
+        let pressed = modifiers.intersection([.command, .option, .shift, .control])
+        // ⌫ types DEL and ⌦ a function key; the menu names both by backspace.
+        let typed = key == "\u{7f}" || key == String(UnicodeScalar(NSDeleteFunctionKey)!) ? "\u{8}" : key.lowercased()
+        guard let command = keyed.first(where: { $0.key == typed && $0.modifiers == pressed }) else { return nil }
+        if !singleKeys, EditorMenuTarget.isSingleKey(command) { return nil }
+        return command
+    }
+
     static func install(model: EditorModel, window: NSWindow) -> Any? {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.window === window, !(window.firstResponder is NSText) else { return event }
-            let command = event.modifierFlags.contains(.command)
-            let shift = event.modifierFlags.contains(.shift)
-            switch (event.charactersIgnoringModifiers?.lowercased() ?? "", command) {
-            case (" ", false): model.togglePlay()
-            case ("s", false): model.splitAtPlayhead()
-            case ("[", false): model.trimToPlayhead(.start)
-            case ("]", false): model.trimToPlayhead(.end)
-            case ("z", false): model.addZoom()
-            case ("t", false): model.addText()
-            case ("a", false): model.addShape(.arrow)
-            case ("m", false): model.commentPrompt()
-            case ("z", true): shift ? model.redo() : model.undo()
-            case ("s", true): model.saveNow()
-            case ("e", true): model.tab = .export; model.export()
-            case ("j", false), ("k", false), ("l", false):
-                model.shuttle(Character(event.charactersIgnoringModifiers?.lowercased() ?? "k"))
-            case ("d", true): model.duplicateSelection()
-            case ("i", false): model.markIn()
-            case ("o", false): model.markOut()
-            default:
-                switch event.keyCode {
-                case 51 where shift: model.cutPart()
-                case 51, 117: model.deleteSelection()
-                case 123: model.step(frames: shift ? -60 : -1)
-                case 124: model.step(frames: shift ? 60 : 1)
-                case 115: model.seek(0)
-                case 119: model.seek(model.durationUs)
-                case 53: model.selection = .none; model.timelineRange = nil
-                default: return event
-                }
-            }
+            guard event.window === window, !(window.firstResponder is NSText),
+                  let command = command(key: event.charactersIgnoringModifiers ?? "", modifiers: event.modifierFlags,
+                                        singleKeys: EditorMenuTarget.singleKeysOn) else { return event }
+            command.run(model)
             return nil
         }
     }
