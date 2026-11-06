@@ -179,31 +179,39 @@ export function listLibrary(options: string | { root?: string; limit?: number } 
         if (rows.length >= Math.max(0, limit)) {
             break;
         }
-        const folder = join(root, name);
-        const manifest = readRecordingManifest(folder);
+        const row = libraryRow(join(root, name));
 
-        if (!manifest) {
-            continue;
+        if (row) {
+            rows.push(row);
         }
-
-        const end = recordingEndSchema.safeParse(manifest.settings).data ?? {};
-        rows.push({
-            id: manifest.id,
-            title: manifest.title,
-            folder,
-            startedAt: manifest.startedAt,
-            endedAt: manifest.endedAt,
-            movie: movieOf(folder),
-            frames: manifest.frames.length,
-            edited: existsSync(join(folder, "edit.json")),
-            ...(end.outcome ? { outcome: end.outcome } : {}),
-            ...(end.video?.durationMs === undefined ? {} : { durationMs: end.video.durationMs }),
-            ...(end.video?.frames === undefined ? {} : { movieFrames: end.video.frames }),
-            ...(end.outcome === "failed" && manifest.warnings[0] ? { reason: manifest.warnings[0] } : {}),
-        });
     }
 
     return rows.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+}
+
+/** One recording folder as `list --json` gives it (`tools recorder show`); undefined without a readable manifest. */
+export function libraryRow(folder: string): LibraryRow | undefined {
+    const manifest = readRecordingManifest(folder);
+
+    if (!manifest) {
+        return undefined;
+    }
+
+    const end = recordingEndSchema.safeParse(manifest.settings).data ?? {};
+    return {
+        id: manifest.id,
+        title: manifest.title,
+        folder,
+        startedAt: manifest.startedAt,
+        endedAt: manifest.endedAt,
+        movie: movieOf(folder),
+        frames: manifest.frames.length,
+        edited: existsSync(join(folder, "edit.json")),
+        ...(end.outcome ? { outcome: end.outcome } : {}),
+        ...(end.video?.durationMs === undefined ? {} : { durationMs: end.video.durationMs }),
+        ...(end.video?.frames === undefined ? {} : { movieFrames: end.video.frames }),
+        ...(end.outcome === "failed" && manifest.warnings[0] ? { reason: manifest.warnings[0] } : {}),
+    };
 }
 
 /**

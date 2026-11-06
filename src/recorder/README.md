@@ -45,6 +45,8 @@ tools recorder search <text> [--json]            # titles, marker labels and cac
 tools recorder sheet <recording> [--count N] [--from T] [--to T] [--at T,T] [--out PNG]  # frames on one labelled PNG
 tools recorder list [--live] [--limit N] [--json]  # local start times, length, outcome and a short id that every
                                                  # command takes (--json has the full ids, folders and reasons)
+tools recorder show|info <recording>             # one recording's row of list --json (every command takes --json;
+                                                 # an unknown command is only told of a read like this one)
 tools recorder copy <recording> [--gif]          # the movie (the newest export, else its own) to the clipboard as a
                                                  # file; --gif a GIF of the edit, exported when none is current
 tools recorder reveal <recording> [--meeting]    # its folder in Finder; --meeting its meeting's meeting.json

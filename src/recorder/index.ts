@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { acceptJsonEverywhere, suggestOnlySafeCommands } from "@genesiscz/utils/cli/commander-hints";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -44,6 +45,7 @@ import {
     ensureRecorderPart,
     findLiveEntry,
     framesCell,
+    libraryRow,
     listLibrary,
     liveRecordingRef,
     markerLabelProblem,
@@ -999,6 +1001,30 @@ program
     });
 
 program
+    .command("show")
+    .alias("info")
+    .description(
+        "One recording's facts as JSON, as a row of list --json: its id, title, folder, start, length, how it ended, frames, movie and whether it was edited"
+    )
+    .argument("<recording>", "a library id (short or whole), `last`, `open`, a recording folder or a movie")
+    .action((value: string) => {
+        try {
+            const path = resolveRecording(value);
+            const folder = statSync(path).isDirectory() ? path : dirname(path);
+            const row = libraryRow(folder);
+
+            if (!row) {
+                throw new Error(`${folder} holds no readable recording.json`);
+            }
+
+            out.result(row);
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
     .command("library")
     .description("Open the recordings library window: double-click a recording to edit it")
     .option("--no-focus", "open it behind the front window without activating the app")
@@ -1524,5 +1550,26 @@ program
     });
 
 registerServeCommand(program);
+
+/** The commands an unknown one may be told it meant: they change nothing (no stop, start or undo). */
+const READ_ONLY_COMMANDS = [
+    "status",
+    "list",
+    "show",
+    "info",
+    "search",
+    "markers",
+    "comments",
+    "check",
+    "items-at",
+    "project",
+    "words",
+    "opened",
+    "click-groups",
+    "library",
+    "help",
+];
+acceptJsonEverywhere(program, "accepted for scripts; the output is the same with or without it");
+suggestOnlySafeCommands(program, READ_ONLY_COMMANDS);
 
 await runTool(program, { tool: "recorder" });

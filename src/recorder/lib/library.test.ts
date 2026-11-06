@@ -18,6 +18,7 @@ import {
     editorOpenStatePath,
     findLiveEntry,
     framesCell,
+    libraryRow,
     listLibrary,
     movieOf,
     readEditorOpenState,
@@ -645,6 +646,8 @@ it("a movie's row counts the movie's frames, and the table says — for a movie 
     expect(older.movieFrames).toBeUndefined();
     expect(framesCell(older)).toBe("—");
     expect(framesCell(stills)).toBe("0");
+    expect(libraryRow(counted.folder)).toEqual(counted);
+    expect(libraryRow(join(root, "missing"))).toBeUndefined();
 });
 
 it("a short id is the stamp and the uuid's first block, and it opens the recording like the full id", () => {
