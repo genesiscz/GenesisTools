@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -11,7 +12,7 @@ import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recordin
 import { FILLER_WORDS } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { FRAME_NAMINGS, OCR_SINK_KINDS } from "@genesiscz/utils/screen-recorder/frame-output";
 import { renameRecording } from "@genesiscz/utils/screen-recorder/library";
-import { callRecorder, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
+import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_FLUSHES } from "@genesiscz/utils/screen-recorder/start";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { Command } from "commander";
@@ -39,6 +40,7 @@ import {
     type EditorTab,
     ensureRecorderPart,
     listLibrary,
+    liveRecordingRef,
     movieOf,
     openEditor,
     openLibraryWindow,
@@ -128,6 +130,10 @@ function editorTab(raw: string | boolean): EditorTab | null {
 
 /** The live recording a control command means: the one named, else the only one, else the newest. */
 function liveId(id: string | undefined): string {
+    return liveEntry(id).id;
+}
+
+function liveEntry(id: string | undefined): LiveEntry {
     const entries = listLiveRecordings();
 
     if (id) {
@@ -139,7 +145,7 @@ function liveId(id: string | undefined): string {
             );
         }
 
-        return found.id;
+        return found;
     }
 
     const newest = entries.at(-1);
@@ -148,7 +154,7 @@ function liveId(id: string | undefined): string {
         throw new Error(`No recording is running. Start one with ${toolCommand("recorder start")}.`);
     }
 
-    return newest.id;
+    return newest;
 }
 
 function parseFormat(raw: string): ExportFormat {
@@ -284,6 +290,18 @@ withStartOptions(
 
         refuseOtherKindFlags(flags);
         const request = parseStartFlags(flags);
+        // A fresh checkout compiles the native recorder first (up to a minute): say so before the silence.
+        await ensureBinaryAsync({
+            onBuild: () => {
+                const message =
+                    "building the native recorder (ax-tool) once; the first start in a checkout waits for it";
+                if (flags.json) {
+                    out.print(`${SafeJSON.stringify({ event: "preparing", message })}\n`);
+                } else {
+                    out.printlnErr(message);
+                }
+            },
+        });
         const target = request.target ?? (await defaultStartTarget());
 
         if (!tracksPointer(target)) {
@@ -295,6 +313,13 @@ withStartOptions(
         const result = await recordVideo({
             ...request,
             target,
+            onStarted: (recording) => {
+                if (flags.json) {
+                    out.print(`${SafeJSON.stringify({ event: "started", ...recording })}\n`);
+                } else {
+                    out.printlnErr(`recording into ${recording.folder} (live id ${recording.liveId})`);
+                }
+            },
             emit: (event) => {
                 if (flags.json) {
                     out.print(`${SafeJSON.stringify(event)}\n`);
@@ -338,13 +363,15 @@ for (const method of ["stop", "pause", "resume", "status"] as const) {
         .argument("[id]", `a live recording id, or its end (${toolCommand("recorder list --live")})`)
         .action(async (id: string | undefined) => {
             try {
-                const target = liveId(id);
+                const entry = liveEntry(id);
                 const answer = await callRecorder({
-                    id: target,
+                    id: entry.id,
                     method,
                     params: method === "stop" ? { wait: true } : undefined,
                 });
-                out.result(answer);
+                // The live id controls it; the library id and folder are what every later command takes.
+                const reply = answer !== null && typeof answer === "object" ? answer : { answer };
+                out.result({ ...reply, ...liveRecordingRef(entry, { stopped: method === "stop" }) });
             } catch (error) {
                 out.printlnErr(error instanceof Error ? error.message : String(error));
                 process.exitCode = 1;

@@ -60,6 +60,8 @@ export interface VideoRecordingOptions {
     /** The menu bar host opens the floating controls. */
     panel?: boolean;
     emit?: (event: RecordingSessionEvent) => void;
+    /** Called once the recording has its library folder and its live entry, before the first frame. */
+    onStarted?: (recording: { id: string; folder: string; liveId: string }) => void;
     /**
      * The start gate of a caller that waits for this recording and may give up (`movies.record`): passed right before
      * anything is made, after the slow part, so a recording that comes after the caller gave up never starts.
@@ -288,6 +290,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     });
     const activeLive = live;
     const activeControl = control;
+    options.onStarted?.({ id, folder, liveId: activeLive.id });
 
     let outcome: VideoRecordingResult["outcome"];
     try {

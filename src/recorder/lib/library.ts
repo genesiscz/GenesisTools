@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -41,6 +41,26 @@ export interface LibraryRow {
 
 export function movieOf(folder: string): string | undefined {
     return RECORDING_MOVIES.map((name) => join(folder, name)).find((path) => existsSync(path));
+}
+
+/** What a live recording is for an agent: its live id (stop, mark), its library id and folder, after a stop its movie. */
+export interface LiveRecordingRef {
+    liveId: string;
+    id?: string;
+    folder?: string;
+    movie?: string;
+}
+
+export function liveRecordingRef(
+    entry: { id: string; folder?: string },
+    { stopped = false }: { stopped?: boolean } = {}
+): LiveRecordingRef {
+    if (!entry.folder) {
+        return { liveId: entry.id };
+    }
+
+    const movie = stopped ? movieOf(entry.folder) : undefined;
+    return { liveId: entry.id, id: basename(entry.folder), folder: entry.folder, ...(movie ? { movie } : {}) };
 }
 
 /** Every library recording, newest first. */
