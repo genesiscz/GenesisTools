@@ -26,7 +26,13 @@ import {
 } from "@genesiscz/utils/screen-recorder/library";
 import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { trashRecordingFolder } from "@genesiscz/utils/screen-recorder/start";
-import { cameraRefusal, missingCameraWarning, recorderFaceState } from "./camera-recorder";
+import {
+    cameraRefusal,
+    missingCameraWarning,
+    recorderFaceState,
+    startRecordingCamera,
+    stopRecordingCamera,
+} from "./camera-recorder";
 import { CAMERA_MOVIE } from "./library";
 import { DEFAULT_MOVIE_FPS, VIDEO_RECORDING_MAX_SECONDS } from "./start-options";
 
@@ -129,6 +135,8 @@ export interface VideoRecordingResult {
     warnings: string[];
     /** The start failed before it recorded anything, so its folder went to the GenesisTools trash. */
     removed?: boolean;
+    /** The recording asked for the camera and no camera movie came: the CLI exits 1. */
+    cameraMissing?: boolean;
 }
 
 /**
@@ -316,6 +324,8 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
     options.onStarted?.({ id, folder, liveId: activeLive.id });
 
     let outcome: VideoRecordingResult["outcome"];
+    let cameraRefused: string | undefined;
+    let cameraStarted = false;
     try {
         outcome = await withInterrupt(
             async (signal) => {
@@ -328,12 +338,32 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
                     { once: true }
                 );
                 await session.start();
+
+                // Asked for, not left to the face's watch of the live recordings; a refusal ends the start.
+                if (options.camera) {
+                    cameraRefused = await startRecordingCamera(folder);
+                    cameraStarted = cameraRefused === undefined;
+
+                    if (cameraRefused) {
+                        emit({ event: "error", message: cameraRefused, code: "camera-refused", fatal: true });
+                        await activeControl.discard();
+                    }
+                }
+
                 return session.finished;
             },
             { handleTermination: true }
         );
     } finally {
         activeLive.close();
+    }
+
+    if (cameraStarted) {
+        await stopRecordingCamera(folder);
+    }
+
+    if (cameraRefused) {
+        outcome = "failed";
     }
 
     const joinedCursor = cursorTrackPath(movie);
@@ -345,8 +375,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
 
     // The face finishes the camera movie once the live entry is gone; a recording that asked for it and got none says
     // so here, in the manifest and in the result, instead of a movie that quietly has no camera.
-    const cameraWarning =
-        options.camera && outcome !== "discarded" ? await missingCameraWarning({ folder }) : undefined;
+    const cameraWarning = cameraStarted && outcome !== "discarded" ? await missingCameraWarning({ folder }) : undefined;
 
     if (cameraWarning) {
         log.warn({ id, folder }, "the recording asked for the camera and got no camera movie");
@@ -386,5 +415,6 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         durationMs,
         warnings,
         ...(removed ? { removed } : {}),
+        ...(cameraWarning ? { cameraMissing: true } : {}),
     };
 }

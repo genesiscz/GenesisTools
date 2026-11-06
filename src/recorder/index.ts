@@ -350,7 +350,7 @@ withStartOptions(
             );
         }
 
-        if (result.outcome === "failed") {
+        if (result.outcome === "failed" || result.cameraMissing) {
             process.exitCode = 1;
         }
 

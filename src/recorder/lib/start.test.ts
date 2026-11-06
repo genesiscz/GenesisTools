@@ -5,6 +5,8 @@ import { join } from "node:path";
 import type { ScreenInfo } from "@app/control/lib/native-record";
 import { segmentCaptureSpec } from "@app/control/lib/recording-native";
 import type { RecordingTarget } from "@app/control/lib/recording-targets";
+import { RpcError } from "@genesiscz/utils/screen-recorder/control";
+import { type CameraHost, startRecordingCamera, stopRecordingCamera } from "./camera-recorder";
 import { liveRecordingRef } from "./library";
 import { parseStartFlags, refuseTargetOffScreen } from "./start-options";
 import { recordedNothing, segmentRecorderOptions } from "./video-recording";
@@ -70,6 +72,27 @@ describe("a window or app movie", () => {
         await writeFile(join(folder, "camera.json"), "{}");
         expect(await recordedNothing(folder)).toBe(false);
         await rm(root, { recursive: true, force: true });
+    });
+
+    it("the camera starts through the recorder host, and a refusal comes back as the start's reason", async () => {
+        const calls: string[] = [];
+        const host = (fail?: string): CameraHost => ({
+            call: async (method, params) => {
+                calls.push(`${method} ${params.folder}`);
+
+                if (fail) {
+                    throw new RpcError(1014, fail);
+                }
+
+                return { started: true };
+            },
+        });
+        expect(await startRecordingCamera("/tmp/rec", host())).toBeUndefined();
+        expect(await startRecordingCamera("/tmp/rec", host("Camera access is off for GenesisTools"))).toContain(
+            "Camera access is off for GenesisTools"
+        );
+        await stopRecordingCamera("/tmp/rec", host("no recorder host said hello"));
+        expect(calls).toEqual(["camera.start /tmp/rec", "camera.start /tmp/rec", "camera.stop /tmp/rec"]);
     });
 
     it("two target flags are refused, naming both, instead of one silently winning", () => {
