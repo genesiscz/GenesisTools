@@ -333,6 +333,25 @@ export function refuseTargetOffScreen(target: RecordingTarget, screens: ScreenIn
     }
 }
 
+/**
+ * A start beside recordings that run already records as well (two borders, twice the cost, and `stop` without an id
+ * stops the newest); it said nothing of it (review 2026-11-06). Undefined when none runs.
+ */
+export function otherRecordingsWarning(
+    entries: { id: string; title: string; state: "recording" | "paused" | "stopping" | "stopped" }[]
+): string | undefined {
+    const running = entries.filter((entry) => entry.state === "recording" || entry.state === "paused");
+
+    if (running.length === 0) {
+        return undefined;
+    }
+
+    const names = running.map((entry) => `“${entry.title}” (live id ${entry.id}, ${entry.state})`).join(", ");
+    const lead =
+        running.length === 1 ? "another recording runs already" : `${running.length} other recordings run already`;
+    return `${lead}: ${names}; this one records as well, and stop without an id stops the newest`;
+}
+
 /** `refuseTargetOffScreen` against the displays `ax-tool screens` lists now. */
 export async function checkTargetOnScreen(target: RecordingTarget): Promise<void> {
     if (target.kind !== "display" && target.kind !== "region") {

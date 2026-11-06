@@ -9,7 +9,7 @@ import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { RpcError } from "@genesiscz/utils/screen-recorder/control";
 import { type CameraHost, startRecordingCamera, stopRecordingCamera } from "./camera-recorder";
 import { alreadyInState, liveRecordingRef, markerLabelProblem } from "./library";
-import { parseStartFlags, refuseTargetOffScreen } from "./start-options";
+import { otherRecordingsWarning, parseStartFlags, refuseTargetOffScreen } from "./start-options";
 import { recordedNothing, segmentRecorderOptions } from "./video-recording";
 
 const folder = "/tmp/recording";
@@ -76,6 +76,29 @@ describe("live control words for an agent", () => {
         expect(markerLabelProblem("   ")).toBe("A marker label is 1 to 80 characters.");
         expect(markerLabelProblem("x".repeat(81))).toBe("A marker label is 1 to 80 characters.");
         expect(markerLabelProblem("the login fails")).toBeUndefined();
+    });
+});
+
+describe("a start beside a running recording", () => {
+    it("says which recording runs already, and says nothing when none does", () => {
+        const entry = (id: string, state: "recording" | "paused" | "stopping" | "stopped", title = "Demo") => ({
+            id,
+            kind: "control-session",
+            title,
+            state,
+        });
+        expect(otherRecordingsWarning([])).toBeUndefined();
+        expect(
+            otherRecordingsWarning([entry("recorder-1-a", "stopping"), entry("recorder-2-b", "stopped")])
+        ).toBeUndefined();
+        expect(otherRecordingsWarning([entry("recorder-3-c", "paused", "Standup")])).toBe(
+            "another recording runs already: “Standup” (live id recorder-3-c, paused); this one records as well, and stop without an id stops the newest"
+        );
+        expect(
+            otherRecordingsWarning([entry("recorder-4-d", "recording"), entry("recorder-5-e", "recording")])
+        ).toMatch(
+            /^2 other recordings run already: “Demo” \(live id recorder-4-d, recording\), “Demo” \(live id recorder-5-e, recording\)/
+        );
     });
 });
 

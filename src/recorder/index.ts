@@ -64,6 +64,7 @@ import {
     checkTargetOnScreen,
     countdownSecondsOf,
     defaultStartTarget,
+    otherRecordingsWarning,
     parseStartFlags,
     type StartFlags,
     withStartOptions,
@@ -309,6 +310,18 @@ withStartOptions(
         });
         if (request.target) {
             await checkTargetOnScreen(request.target);
+        }
+
+        const alongside = otherRecordingsWarning(listLiveRecordings());
+
+        if (alongside) {
+            if (flags.json) {
+                out.print(
+                    `${SafeJSON.stringify({ event: "warning", code: "another-recording", message: alongside })}\n`
+                );
+            } else {
+                out.printlnErr(`note: ${alongside}`);
+            }
         }
 
         const target = request.target ?? (await defaultStartTarget());
