@@ -303,4 +303,15 @@ final class MeetingsUXTests: XCTestCase {
         model.select("a")
         XCTAssertEqual(model.detail?.tab, .transcript)
     }
+
+    // MARK: Minor findings
+
+    func testARangeReadsFromAndToWithNoDash() throws {
+        let items = try JSONDecoder().decode([MeetingItem].self, from: Data("""
+        [{"id":"r1","kind":"speaker-range","status":"suggested","fromSec":20,"toSec":30,"label":"Speaker 1","speaker":"Alice"},
+         {"id":"r2","kind":"speaker-range","status":"suggested","fromSec":20.2,"toSec":20.8,"label":"Speaker 1"}]
+        """.utf8))
+        XCTAssertEqual(MeetingsWords.itemTitle(items[0]), "Speaker 1 from 0:20 to 0:30 is Alice", "MU17")
+        XCTAssertEqual(MeetingsWords.itemTitle(items[1]), "Speaker 1 at 0:20 is someone else")
+    }
 }

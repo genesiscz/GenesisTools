@@ -151,7 +151,7 @@ final class MeetingsWindowTests: XCTestCase {
          "confidence":0.83,"rules":["E1"],"evidence":{"reason":"the call channel held it"},"suggestedAt":"2026-11-04T10:00:00.000Z"}
         """.utf8))
         XCTAssertEqual(MeetingsWords.itemKind(item), "Speaker range")
-        XCTAssertEqual(MeetingsWords.itemTitle(item), "S1 1:02–1:15 is Bob")
+        XCTAssertEqual(MeetingsWords.itemTitle(item), "S1 from 1:02 to 1:15 is Bob")
         XCTAssertEqual(MeetingsWords.confidence(item.confidence), "83 %")
         XCTAssertEqual(item.reason, "the call channel held it")
     }

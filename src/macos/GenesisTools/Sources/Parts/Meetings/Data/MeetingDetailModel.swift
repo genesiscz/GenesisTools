@@ -470,7 +470,8 @@ enum MeetingsWords {
     static func itemTitle(_ item: MeetingItem) -> String {
         switch item.kind {
         case "speaker-range":
-            let range = "\(MeetingsFormat.clock(item.fromSec ?? 0))–\(MeetingsFormat.clock(item.toSec ?? 0))"
+            let from = MeetingsFormat.clock(item.fromSec ?? 0), to = MeetingsFormat.clock(item.toSec ?? 0)
+            let range = from == to ? "at \(from)" : "from \(from) to \(to)"
             return "\(item.label ?? "?") \(range) is \(item.speaker ?? "someone else")"
         case "label": return "\(item.label ?? "?") holds several voices"
         case "join": return "Join the line at \(MeetingsFormat.clock(item.atSec ?? 0))"
