@@ -46,7 +46,7 @@ struct MeetingsOverview: Decodable, Equatable {
         let total: Int
     }
 
-    let generatedAt: String
+    // No `generatedAt`: it changes on every read, so an unchanged list would never compare equal and would redraw.
     let days: Int
     let applyAbove: Double
     let meetings: [OverviewMeeting]
@@ -54,6 +54,15 @@ struct MeetingsOverview: Decodable, Equatable {
     let olderMeetings: Int?
     let projects: [ProjectCount]
     let needsYou: NeedsYou
+}
+
+/// `tools meetings revisions <id> --json`: one token per part of the detail pane. An equal token means the part
+/// would read the same; nil means the source cannot tell, so the part reads again.
+struct MeetingRevisions: Decodable, Equatable {
+    let show: String?
+    let transcript: String?
+    let speakers: String?
+    let timeline: String?
 }
 
 // MARK: - One record (`tools meetings show <id> --json`)

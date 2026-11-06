@@ -105,8 +105,11 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
 
     func apply(_ request: MeetingsRequest, to model: MeetingsWindowModel) {
         if let place = request.place { model.go(place) }
-        if let meeting = request.meeting { model.select(meeting) }
-        if let tab = request.tab { model.detail?.show(tab) }
+        if let meeting = request.meeting {
+            model.select(meeting, tab: request.tab)
+        } else if let tab = request.tab {
+            model.detail?.show(tab)
+        }
     }
 
     /// The smallest window the layout is made for (the detail column narrows its header and tabs to fit it).
@@ -164,6 +167,9 @@ private func runMeetingsSnapshot(_ request: MeetingsRequest, to path: String) ->
         NSApp.setActivationPolicy(.prohibited)
         Task {
             let model = MeetingsWindowModel()
+            // The requested meeting is the selection before the list lands, so the list's first meeting is never read
+            // for nothing; the request applies once the list is there, so a recording-only meeting opens on Screen.
+            model.selectedMeetingID = request.meeting
             model.load()
             guard await waitUntil(40, { model.overview.value != nil || model.overview.failure != nil }) else {
                 FileHandle.standardError.write(Data("meetings snapshot timed out loading overview\n".utf8))

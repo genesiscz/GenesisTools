@@ -328,7 +328,63 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(sidebar.visibleRect.minY, 0, accuracy: 1, "the sidebar shows its first rows, \(sidebar.visibleRect)")
     }
 
-    // MARK: Performance (the deep manual test of 2026-11-06, finding MP9)
+    // MARK: Performance (the deep manual test of 2026-11-06, findings MP2, MP5, MP7, MP9, MP10)
+
+    private func perfModel(_ seen: @escaping @MainActor (MeetingDetailModel) -> Void = { _ in }) throws -> (MeetingsWindowModel, () -> Void) {
+        let suite = "meetings.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.set("all", forKey: MeetingsPreferences.openOnKey)
+        let model = MeetingsWindowModel(defaults: defaults, loadDetail: seen)
+        return (model, { defaults.removePersistentDomain(forName: suite) })
+    }
+
+    /// MP10: a refresh that reads the same list again set it again, and `@Observable` redrew every view of it; the
+    /// overview's `generatedAt` made every answer differ.
+    func testAnUnchangedOverviewIsNotSetAgain() throws {
+        let (model, cleanup) = try perfModel()
+        defer { cleanup() }
+        model.receive(try JSONDecoder().decode(MeetingsOverview.self, from: overviewJSON()))
+        let later = String(decoding: overviewJSON(), as: UTF8.self).replacingOccurrences(of: "2026-11-05T12:00:00.000Z", with: "2026-11-05T12:05:00.000Z")
+        XCTAssertEqual(model.overviewSets, 1)
+        model.receive(try JSONDecoder().decode(MeetingsOverview.self, from: Data(later.utf8)))
+        XCTAssertEqual(model.overviewSets, 1, "the same meetings at a later generatedAt redraw nothing")
+
+        // The positive control: a list that differs is set.
+        let fewer = later.replacingOccurrences(of: "\"days\":14", with: "\"days\":7")
+        model.receive(try JSONDecoder().decode(MeetingsOverview.self, from: Data(fewer.utf8)))
+        XCTAssertEqual(model.overviewSets, 2, "a changed list is set")
+    }
+
+    /// MP7: a Needs you question opened the meeting on its first tab, which read the transcript, and then switched to
+    /// Items. The tab is set before the first read now.
+    func testANeedsYouQuestionOpensOnItemsBeforeAnyRead() throws {
+        var firstTabs: [MeetingDetailModel.Tab] = []
+        let (model, cleanup) = try perfModel { firstTabs.append($0.tab) }
+        defer { cleanup() }
+        model.receive(try JSONDecoder().decode(MeetingsOverview.self, from: overviewJSON()))
+        model.select(needsTag: "q:c")
+        XCTAssertEqual(firstTabs.last, .items, "the detail's first read is for Items")
+        XCTAssertEqual(model.detail?.tab, .items)
+    }
+
+    /// MP5: switching meetings left the earlier meeting's reads running for nobody.
+    func testOpeningAnotherMeetingDropsTheEarlierOne() throws {
+        let (model, cleanup) = try perfModel()
+        defer { cleanup() }
+        model.receive(try JSONDecoder().decode(MeetingsOverview.self, from: overviewJSON()))
+        let first = try XCTUnwrap(model.detail)
+        model.select("c")
+        XCTAssertTrue(first.isDropped, "the earlier meeting stops its reads")
+        XCTAssertFalse(try XCTUnwrap(model.detail).isDropped)
+    }
+
+    /// MP2: on a return a part reads again only when its revision token changed or is unknown.
+    func testAPartReadsAgainOnlyWhenItsRevisionChanged() {
+        XCTAssertFalse(MeetingDetailModel.mustRead(seen: "t1", now: "t1"))
+        XCTAssertTrue(MeetingDetailModel.mustRead(seen: "t1", now: "t2"))
+        XCTAssertTrue(MeetingDetailModel.mustRead(seen: nil, now: "t1"), "a part read before any token reads once")
+        XCTAssertTrue(MeetingDetailModel.mustRead(seen: "t1", now: nil), "a source that cannot tell always reads")
+    }
 
     /// MP9: reopening Settings read every Meetings page's data, the pages never shown included.
     func testReopeningSettingsReadsOnlyWhatAPageAlreadyRead() {

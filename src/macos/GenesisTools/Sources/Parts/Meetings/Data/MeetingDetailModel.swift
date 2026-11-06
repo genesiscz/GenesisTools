@@ -40,6 +40,18 @@ final class MeetingDetailModel {
     private var timelineGeneration = 0
     private var speakersGeneration = 0
     private var proposalsGeneration = 0
+    @ObservationIgnored private var refreshGeneration = 0
+    /// The read in flight per part. A new read of a part cancels the one before it, which stops its process or server
+    /// call; `cancelReads()` stops them all.
+    @ObservationIgnored private var inFlight: [AnyKeyPath: Task<Void, Never>] = [:]
+    /// The window let this meeting go (another one opened): no read starts, and one that still lands is ignored.
+    @ObservationIgnored private(set) var isDropped = false
+
+    /// A part of the pane with a `meetings revisions` token.
+    enum RevisionPart: Hashable { case record, transcript, speakers, timeline }
+    /// The token each part was read at. A return to the window reads a part again only when its token changed; a part
+    /// read without one (the first open) reads on the first return and keeps a token from then on.
+    @ObservationIgnored private var readAt: [RevisionPart: String] = [:]
 
     init(id: String, window: MeetingsWindowModel?) {
         self.id = id
@@ -66,86 +78,73 @@ final class MeetingDetailModel {
         }
     }
 
-    func reloadRecord() {
-        recordGeneration += 1
-        let generation = recordGeneration
-        record = .loading(previous: record.value)
-        Task {
-            do {
-                let value = try await MeetingsCLI.json(MeetingRecordView.self, ["show", id, "--json"])
-                guard generation == recordGeneration else { return }
-                record = .loaded(value)
-            } catch {
-                guard generation == recordGeneration else { return }
-                record = .failed(asFailure(error), previous: record.value)
-            }
-        }
+    func reloadRecord() { readRecord(quiet: false) }
+    func loadTranscript() { readTranscript(quiet: false) }
+    func loadTimeline() { readTimeline(quiet: false) }
+    func loadSpeakers() { readSpeakers(quiet: false) }
+    func loadProposals() { readProposals(quiet: false) }
+
+    private func readRecord(quiet: Bool) {
+        read(\.record, generation: \.recordGeneration, ["show", id, "--json"], quiet: quiet, revision: .record)
     }
 
-    func loadTranscript() {
-        transcriptGeneration += 1
-        let generation = transcriptGeneration
-        transcript = .loading(previous: transcript.value)
-        Task {
-            do {
-                let value = try await MeetingsCLI.json(MeetingTranscript.self, ["transcript", id, "--format", "json"], timeoutSeconds: 120)
-                guard generation == transcriptGeneration else { return }
-                transcript = .loaded(value)
-            } catch {
-                guard generation == transcriptGeneration else { return }
-                transcript = .failed(asFailure(error), previous: transcript.value)
-            }
-        }
+    private func readTranscript(quiet: Bool) {
+        read(\.transcript, generation: \.transcriptGeneration, ["transcript", id, "--format", "json"], timeoutSeconds: 120,
+             quiet: quiet, revision: .transcript)
     }
 
-    func loadTimeline() {
-        timelineGeneration += 1
-        let generation = timelineGeneration
-        timeline = .loading(previous: timeline.value)
+    private func readTimeline(quiet: Bool) {
         let all = MeetingsPreferences.timelineLines() == .all
-        Task {
+        read(\.timeline, generation: \.timelineGeneration, ["screen", id, "--timeline", "--json"] + (all ? ["--all"] : []),
+             timeoutSeconds: 120, quiet: quiet, revision: .timeline)
+    }
+
+    private func readSpeakers(quiet: Bool) {
+        read(\.speakers, generation: \.speakersGeneration, ["speakers", "stats", id, "--json"], timeoutSeconds: 120,
+             quiet: quiet, revision: .speakers)
+    }
+
+    private func readProposals(quiet: Bool) {
+        read(\.proposals, generation: \.proposalsGeneration, ["assign", "proposals", id, "--json"], quiet: quiet)
+    }
+
+    /// One read of a part. A `quiet` read (a refresh) keeps what the pane shows until the answer lands, and an answer
+    /// equal to the shown one is not set again, so an unchanged pane redraws nothing. A failed read forgets the part's
+    /// revision token, so the next return reads it again.
+    private func read<Value: Decodable & Equatable>(
+        _ part: ReferenceWritableKeyPath<MeetingDetailModel, Loadable<Value>>,
+        generation: ReferenceWritableKeyPath<MeetingDetailModel, Int>,
+        _ args: [String], timeoutSeconds: Int = 60, quiet: Bool, revision: RevisionPart? = nil
+    ) {
+        guard !isDropped else { return }
+        self[keyPath: generation] += 1
+        let current = self[keyPath: generation]
+        if !quiet { self[keyPath: part] = .loading(previous: self[keyPath: part].value) }
+        inFlight[part]?.cancel()
+        inFlight[part] = Task { [weak self] in
             do {
-                let value = try await MeetingsCLI.json(
-                    ScreenTimeline.self, ["screen", id, "--timeline", "--json"] + (all ? ["--all"] : []), timeoutSeconds: 120)
-                guard generation == timelineGeneration else { return }
-                timeline = .loaded(value)
+                let value = try await MeetingsCLI.json(Value.self, args, timeoutSeconds: timeoutSeconds)
+                guard let self, !self.isDropped, current == self[keyPath: generation] else { return }
+                self.settle(part, .loaded(value))
             } catch {
-                guard generation == timelineGeneration else { return }
-                timeline = .failed(asFailure(error), previous: timeline.value)
+                guard let self, !Task.isCancelled, !self.isDropped, current == self[keyPath: generation] else { return }
+                if let revision { self.readAt[revision] = nil }
+                self.settle(part, .failed(asFailure(error), previous: self[keyPath: part].value))
             }
         }
     }
 
-    func loadSpeakers() {
-        speakersGeneration += 1
-        let generation = speakersGeneration
-        speakers = .loading(previous: speakers.value)
-        Task {
-            do {
-                let value = try await MeetingsCLI.json(SpeakerStats.self, ["speakers", "stats", id, "--json"], timeoutSeconds: 120)
-                guard generation == speakersGeneration else { return }
-                speakers = .loaded(value)
-            } catch {
-                guard generation == speakersGeneration else { return }
-                speakers = .failed(asFailure(error), previous: speakers.value)
-            }
-        }
+    /// Sets a part only when it changes: `@Observable` redraws every view that reads a property on each set, equal or not.
+    private func settle<Value: Equatable>(_ part: ReferenceWritableKeyPath<MeetingDetailModel, Loadable<Value>>, _ new: Loadable<Value>) {
+        if self[keyPath: part] != new { self[keyPath: part] = new }
     }
 
-    func loadProposals() {
-        proposalsGeneration += 1
-        let generation = proposalsGeneration
-        proposals = .loading(previous: proposals.value)
-        Task {
-            do {
-                let value = try await MeetingsCLI.json(AssignProposals.self, ["assign", "proposals", id, "--json"])
-                guard generation == proposalsGeneration else { return }
-                proposals = .loaded(value)
-            } catch {
-                guard generation == proposalsGeneration else { return }
-                proposals = .failed(asFailure(error), previous: proposals.value)
-            }
-        }
+    /// The window let this meeting go: every read in flight stops (its process ends, the server drops its call), and
+    /// none starts again.
+    func cancelReads() {
+        isDropped = true
+        for task in inFlight.values { task.cancel() }
+        inFlight.removeAll()
     }
 
     // MARK: - Actions
@@ -202,14 +201,40 @@ final class MeetingDetailModel {
         }
     }
 
-    /// The window came back: what a terminal changed since (a correction, a dictionary entry, a rename) shows in every
-    /// tab already read; a tab not read yet reads when it shows.
+    /// The window came back: a part already read reads again only when `meetings revisions` says what it reads changed
+    /// (a correction or a confirm in the terminal, a new frame), and quietly. The proposals read again each time: they
+    /// depend on the Calendar, which has no revision. Without revisions (an older CLI, a failed read) every part read
+    /// before reads again, as before.
     func refreshLoaded() {
-        reloadRecord()
-        loadProposals()
-        if transcript != .idle { loadTranscript() }
-        if speakers != .idle { loadSpeakers() }
-        if timeline != .idle { loadTimeline() }
+        guard !isDropped else { return }
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        let id = id
+        let key: AnyKeyPath = \MeetingDetailModel.refreshGeneration
+        inFlight[key]?.cancel()
+        inFlight[key] = Task { [weak self] in
+            let revisions = try? await MeetingsCLI.json(MeetingRevisions.self, ["revisions", id, "--json"])
+            guard let self, !Task.isCancelled, !self.isDropped, generation == self.refreshGeneration else { return }
+            if self.mustRead(.record, revisions?.show) { self.readRecord(quiet: true) }
+            if self.transcript != .idle, self.mustRead(.transcript, revisions?.transcript) { self.readTranscript(quiet: true) }
+            if self.speakers != .idle, self.mustRead(.speakers, revisions?.speakers) { self.readSpeakers(quiet: true) }
+            if self.timeline != .idle, self.mustRead(.timeline, revisions?.timeline) { self.readTimeline(quiet: true) }
+            self.readProposals(quiet: true)
+        }
+    }
+
+    /// Whether a part reads again on this return, keeping the new token for the next one. The token was taken before
+    /// the read starts, so the answer is at least as new as the token it keeps.
+    private func mustRead(_ part: RevisionPart, _ token: String?) -> Bool {
+        let seen = readAt[part]
+        readAt[part] = token
+        return Self.mustRead(seen: seen, now: token)
+    }
+
+    /// A part reads again unless both tokens are known and equal.
+    static func mustRead(seen: String?, now: String?) -> Bool {
+        guard let seen, let now else { return true }
+        return seen != now
     }
 
     func toggleLabel(_ label: String, on: Bool) {

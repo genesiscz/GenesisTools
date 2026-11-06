@@ -82,6 +82,9 @@ final class MeetingsWindowModel {
     var place: Place
     var selectedMeetingID: String?
     private(set) var overview: Loadable<MeetingsOverview> = .idle
+    /// How often an answer replaced the list. Each set redraws every view of it, so an unchanged answer must not set it
+    /// (the perf tests read this).
+    @ObservationIgnored private(set) var overviewSets = 0
     private(set) var settings: Loadable<MeetingsSettings> = .idle
     private(set) var detail: MeetingDetailModel?
     var notice: MeetingsNotice?
@@ -131,10 +134,11 @@ final class MeetingsWindowModel {
         loadSettings()
     }
 
-    func loadOverview() {
+    /// `quiet` (a return to the window): the list keeps what it shows until the answer lands.
+    func loadOverview(quiet: Bool = false) {
         overviewGeneration += 1
         let generation = overviewGeneration
-        overview = .loading(previous: overview.value)
+        if !quiet { overview = .loading(previous: overview.value) }
         let days = days
         Task {
             do {
@@ -153,22 +157,28 @@ final class MeetingsWindowModel {
         overview = .failed(failure, previous: overview.value)
     }
 
-    /// A read overview lands: the list shows it, and a selection it no longer holds moves to the first row.
+    /// A read overview lands: the list shows it, and a selection it no longer holds moves to the first row. An answer
+    /// equal to the shown one is not set again, so an unchanged list redraws nothing.
     func receive(_ value: MeetingsOverview) {
-        overview = .loaded(value)
+        if overview != .loaded(value) {
+            overview = .loaded(value)
+            overviewSets += 1
+        }
         if selectedMeetingID == nil {
             select(visibleMeetings.first?.id)
         }
     }
 
-    func loadSettings() {
-        settings = .loading(previous: settings.value)
+    func loadSettings(quiet: Bool = false) {
+        if !quiet { settings = .loading(previous: settings.value) }
         Task {
+            let next: Loadable<MeetingsSettings>
             do {
-                settings = .loaded(try await MeetingsCLI.json(ConfigShow.self, ["config", "show", "--json"]).value)
+                next = .loaded(try await MeetingsCLI.json(ConfigShow.self, ["config", "show", "--json"]).value)
             } catch {
-                settings = .failed(asFailure(error), previous: settings.value)
+                next = .failed(asFailure(error), previous: settings.value)
             }
+            if settings != next { settings = next }
         }
     }
 
@@ -183,19 +193,26 @@ final class MeetingsWindowModel {
         select(visibleMeetings.first?.id)
     }
 
-    func select(_ id: String?) {
+    /// Opens a meeting, on `tab` when given: the tab is set before the first read, so only its data loads. The meeting
+    /// it replaces stops its reads in flight.
+    func select(_ id: String?, tab: MeetingDetailModel.Tab? = nil) {
         selectedMeetingID = id
         if place == .needs, id.map({ needsSelection?.hasSuffix($0) != true }) ?? true {
             needsSelection = id
         }
         guard let id else {
+            detail?.cancelReads()
             detail = nil
             return
         }
         if detail?.id != id {
-            detail = MeetingDetailModel(id: id, window: self)
-            detail?.tab = MeetingDetailModel.firstTab(for: meeting(id))
-            if let detail { loadDetail(detail) }
+            detail?.cancelReads()
+            let next = MeetingDetailModel(id: id, window: self)
+            next.tab = tab ?? MeetingDetailModel.firstTab(for: meeting(id))
+            detail = next
+            loadDetail(next)
+        } else if let tab {
+            detail?.show(tab)
         }
     }
 
@@ -207,8 +224,7 @@ final class MeetingsWindowModel {
         needsSelection = tag
         guard let tag else { return }
         if tag.hasPrefix("q:") || tag.hasPrefix("s:") {
-            select(String(tag.dropFirst(2)))
-            detail?.show(.items)
+            select(String(tag.dropFirst(2)), tab: .items)
         } else {
             select(tag)
         }
@@ -222,10 +238,11 @@ final class MeetingsWindowModel {
         select(ids[min(max(index + offset, 0), ids.count - 1)])
     }
 
-    /// The window became key again: what changed outside it (a confirm in a terminal, a new meeting) shows.
+    /// The window became key again: what changed outside it (a confirm in a terminal, a new meeting) shows. The reads
+    /// are quiet: what is on screen stays until an answer differs.
     func refreshAfterReturn() {
-        loadOverview()
-        loadSettings()
+        loadOverview(quiet: true)
+        loadSettings(quiet: true)
         detail?.refreshLoaded()
     }
 }
