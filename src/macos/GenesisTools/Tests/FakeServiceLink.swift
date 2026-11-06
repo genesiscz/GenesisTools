@@ -86,7 +86,7 @@ final class FakeServiceLink: RecorderServiceLink {
     private func answer(_ method: String, _ params: [String: Any]) throws -> Any? {
         let gesture = params["gesture"] as? String ?? ""
         switch method {
-        case "session.open": return ["path": params["path"] ?? "", "project": try json(project), "revision": revision]
+        case "session.open": return ["path": params["path"] ?? "", "project": try json(project), "revision": revision, "undoDepth": undo.count]
         case "session.close": return ["closed": true]
         case "edit.apply":
             let next = try apply(params["ops"] as? [[String: Any]] ?? [], to: project)

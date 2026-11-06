@@ -16,6 +16,8 @@ final class EditorSession {
     let holder = UUID().uuidString
     /// The revision of the project the window last took from the service.
     private(set) var revision: Int?
+    /// The undo steps the service keeps for the edit, from the last `session.open`.
+    private(set) var undoDepth: Int?
     private(set) var isOpen = false
     /// The service answered `session.open`: the project it holds, which replaces the window's.
     var onOpened: ((EditProject) -> Void)?
@@ -65,6 +67,7 @@ final class EditorSession {
                 do {
                     let opened = try RecorderProtocol.decode(RecorderProtocol.OpenedSession.self, from: value)
                     self.revision = opened.revision
+                    self.undoDepth = opened.undoDepth
                     let wasOpen = self.isOpen
                     self.isOpen = true
                     HubPerf.log("recorder.editor: session open on the recorder service (\(self.path), revision \(opened.revision))")

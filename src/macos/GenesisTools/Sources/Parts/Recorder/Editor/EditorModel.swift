@@ -110,6 +110,9 @@ final class EditorModel {
     /// edit's real undo stack, and each step here mirrors one change this window made or took from outside.
     @ObservationIgnored var undoStack: [UndoStep] = []
     @ObservationIgnored var redoStack: [UndoStep] = []
+    /// Undo steps the service kept from before this window opened (an edit's steps outlive a close): ⌘Z takes them
+    /// once the window's own steps are used up, so an undo survives a reopen.
+    @ObservationIgnored var earlierSteps = 0
     /// Counts the new steps (a change, an outside edit, a display switch); an undo or redo that fails puts its step
     /// back on the redo list only when no new step came since (a new step empties that list).
     @ObservationIgnored var historyGeneration = 0
@@ -515,7 +518,7 @@ final class EditorModel {
     }
 
     func refreshUndoState() {
-        canUndo = !undoStack.isEmpty
+        canUndo = !undoStack.isEmpty || earlierSteps > 0
         canRedo = !redoStack.isEmpty
     }
 

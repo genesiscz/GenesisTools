@@ -106,7 +106,7 @@ extension EditorModel {
                     self.adopt(answer.project, rebuild: answer.project.clips != self.project.clips || answer.project.audio != self.project.audio)
                 case let .failure(error):
                     if let at = self.undoStack.lastIndex(of: .edit(open.mark)) { self.undoStack.remove(at: at) }
-                    self.canUndo = !self.undoStack.isEmpty
+                    self.refreshUndoState()
                     self.show(EditorSession.reason(error), error: true)
                     self.adopt(open.mark, rebuild: open.mark.clips != self.project.clips || open.mark.audio != self.project.audio)
                 }
@@ -192,8 +192,7 @@ extension EditorModel {
         guard next != project else { return }
         project = next
         zoom.update(next)
-        canUndo = !undoStack.isEmpty
-        canRedo = !redoStack.isEmpty
+        refreshUndoState()
         guard rebuildMovie else {
             refreshFrame()
             return
@@ -247,7 +246,10 @@ extension EditorModel {
 
     func undo() {
         finishGesture()
-        guard let step = undoStack.last else { return }
+        guard let step = undoStack.last else {
+            undoEarlierStep()
+            return
+        }
         let change = name(of: step, undoing: true)
         if case .display = step {
             undoDisplaySwitch(step, change: change)
@@ -290,6 +292,32 @@ extension EditorModel {
             self.refreshUndoState()
             self.adopt(next, rebuild: next.clips != self.project.clips || next.audio != self.project.audio)
             self.announce("Undid", change)
+        }
+    }
+
+    /// ⌘Z with none of this window's own steps left: a step the service kept from before the window opened. The step
+    /// that redoes it goes onto the redo list at once, as `beginMove` does, and comes off again if the service refuses.
+    private func undoEarlierStep() {
+        guard earlierSteps > 0, session.isOnline else {
+            show("Nothing to undo.", error: false)
+            return
+        }
+        let counterpart = UndoStep.edit(project)
+        earlierSteps -= 1
+        redoStack.append(counterpart)
+        refreshUndoState()
+        session.edit("edit.undo", [:]) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case let .success(answer):
+                self.adopt(answer.project, rebuild: answer.project.clips != self.project.clips || answer.project.audio != self.project.audio)
+                self.announce("Undid", (name: "an Earlier Change", tab: nil))
+            case let .failure(error):
+                if let at = self.redoStack.lastIndex(of: counterpart) { self.redoStack.remove(at: at) }
+                self.earlierSteps += 1
+                self.refreshUndoState()
+                self.show(EditorSession.reason(error), error: true)
+            }
         }
     }
 
@@ -506,6 +534,8 @@ extension EditorModel {
 
     /// The service holds the edit: its version replaces the window's when the session opens.
     func sessionOpened(_ next: EditProject) {
+        earlierSteps = max(0, (session.undoDepth ?? 0) - undoStack.count)
+        refreshUndoState()
         guard next != project else { return }
         HubPerf.log("recorder.editor: the service's edit (revision \(next.revision)) replaces the window's (revision \(project.revision))")
         adopt(next, rebuild: next.clips.map(\.fromUs) != project.clips.map(\.fromUs) || next.clips.map(\.toUs) != project.clips.map(\.toUs)

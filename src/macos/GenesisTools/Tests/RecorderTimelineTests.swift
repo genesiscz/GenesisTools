@@ -618,6 +618,26 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertFalse(EditorWindows.names(model, folder + "-other"))
     }
 
+    // Regression test: deep test 2026-11-06 RE4 — in a reopened window ⌘Z did nothing, though the service still held
+    // the steps of the edit.
+    func testUndoInAReopenedWindowUndoesTheStepsTheServiceKeptAndRedoBringsThemBack() {
+        let first = model()
+        first.addZoom(atOutput: 2_000_000)
+        XCTAssertEqual(service.project.zooms.count, 1)
+        first.close()
+
+        let reopened = EditorModel.on(service, store: ProjectStore(url: first.store.url))
+        XCTAssertTrue(reopened.canUndo, "the service's step is this window's to undo")
+        reopened.undo()
+        XCTAssertEqual(service.count("edit.undo"), 1, "the undo reaches the service")
+        XCTAssertTrue(reopened.project.zooms.isEmpty)
+        XCTAssertFalse(reopened.canUndo, "the service held one step")
+        reopened.undo()
+        XCTAssertEqual(service.count("edit.undo"), 1, "with no step left nothing is sent")
+        reopened.redo()
+        XCTAssertEqual(reopened.project.zooms.count, 1, "redo brings it back")
+    }
+
     // Regression test: deep test 2026-11-06 RE1 — two editor windows of one edit held it as one on the app's
     // connection, so closing the second window ended the first window's session.
     func testEachEditorSessionHoldsTheEditUnderItsOwnHolderAndRereadsUnderIt() {

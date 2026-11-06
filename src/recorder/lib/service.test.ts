@@ -426,6 +426,20 @@ describe("the recorder service", () => {
         expect(service.sessions.size).toBe(0);
     });
 
+    // Regression test: deep test 2026-11-06 RE4 — a reopened window could not tell that the service kept undo steps.
+    test("session.open says how many undo steps the edit keeps, after a close and a reopen too", async () => {
+        const { service } = await serviceFixture({ saveDelayMs: 0 });
+        const path = editFixture("rs-undo-depth-");
+        const window = await connect(service.entry);
+        await window.call<unknown>("hello", hello("host"));
+        expect(await window.call<{ undoDepth?: number }>("session.open", { path })).toMatchObject({ undoDepth: 0 });
+        await window.call<unknown>("edit.apply", { path, ops: [{ op: "volume", volume: 0.5 }] });
+        await window.call<unknown>("session.close", { path });
+        await Bun.sleep(20);
+
+        expect(await window.call<{ undoDepth?: number }>("session.open", { path })).toMatchObject({ undoDepth: 1 });
+    });
+
     // Regression test: deep test 2026-11-06 RE1 — a second editor window's close ended the first window's session.
     test("two windows on one connection hold a session apart, so one window's close leaves the other's", async () => {
         const { service } = await serviceFixture({ saveDelayMs: 10_000 });

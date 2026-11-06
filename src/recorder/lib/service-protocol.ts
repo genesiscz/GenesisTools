@@ -107,7 +107,8 @@ export const serviceApi = defineApi({
         defineMethod({
             name: "session.open",
             params: z.object({ path, holder }),
-            result: z.object({ path, ...project }),
+            // undoDepth: the undo steps the edit keeps (they outlive a close), so a reopened window can undo them.
+            result: z.object({ path, ...project, undoDepth: z.number().int().nonnegative().optional() }),
             doc: "Opens (or holds once more) the edit session of a recording; the connection's holder holds it until session.close or the connection's end. Opening it again for the same holder reads it and adds no hold.",
             effect: "read",
         }),
