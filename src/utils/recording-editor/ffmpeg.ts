@@ -82,6 +82,8 @@ function encodeArgs(format: "mp4" | "gif" | "webm", audio: boolean): string[] {
         case "mp4":
             return ["-vf", EVEN, ...H264, ...(audio ? ["-c:a", "aac"] : ["-an"]), "-movflags", "+faststart"];
         case "webm":
+            // Rows in parallel at speed 3, and CRF 32 for the detail speed 3 loses: on 10 s of 1440p60 a third less
+            // CPU than one row at a time at CRF 34, SSIM 0.99911 against 0.99900, the file 5 % larger (deep test RE8).
             return [
                 "-vf",
                 EVEN,
@@ -90,7 +92,13 @@ function encodeArgs(format: "mp4" | "gif" | "webm", audio: boolean): string[] {
                 "-b:v",
                 "0",
                 "-crf",
-                "34",
+                "32",
+                "-row-mt",
+                "1",
+                "-deadline",
+                "good",
+                "-cpu-used",
+                "3",
                 ...(audio ? ["-c:a", "libopus"] : ["-an"]),
             ];
         case "gif":

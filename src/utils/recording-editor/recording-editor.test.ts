@@ -1907,6 +1907,14 @@ test("editor commands replace guarded outputs and force the requested container"
     }
 });
 
+// Regression test: deep test 2026-11-06 RE8 — a 20 s WebM took 121 s: libvpx ran one row at a time at its slowest
+// speed. Measured on 10 s of 1440p60: these flags cost a third less CPU at an SSIM no lower (0.99911 against 0.99900).
+test("a WebM encodes rows in parallel at speed 3, with the CRF that keeps its quality", () => {
+    const args = exportVideoArgv({ input: "in.mp4", output: "out.webm", format: "webm" }).join(" ");
+
+    expect(args).toContain("-c:v libvpx-vp9 -b:v 0 -crf 32 -row-mt 1 -deadline good -cpu-used 3");
+});
+
 test("manifest duration preserves static recordings and the unchanged tail", async () => {
     for (const staticScreen of [true, false]) {
         const source = recordingFolder();
