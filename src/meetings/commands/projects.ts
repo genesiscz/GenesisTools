@@ -4,12 +4,11 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, sourceFolders } from "@genesiscz/utils/meetings/config";
 import type { PersonRef } from "@genesiscz/utils/meetings/people";
-import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { createBoxTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { matchDraftSchema, matchPreview } from "../lib/match-preview";
 import { errorText, fail } from "../lib/shared";
+import { matchPreviewRead, windowJson } from "../lib/window-reads";
 
 function matchSummary(config: MeetingsConfig, name: string): string {
     const project = config.projects[name];
@@ -171,20 +170,10 @@ async function people(name: string | undefined, opts: { json?: boolean }): Promi
 
 async function preview(opts: { draft?: string; limit?: string; json?: boolean }): Promise<void> {
     try {
-        const draft = opts.draft ? matchDraftSchema.parse(SafeJSON.parse(opts.draft, { strict: true })) : undefined;
-        const limit = Number(opts.limit ?? "20");
-        if (!Number.isSafeInteger(limit) || limit < 1) {
-            throw new Error("--limit must be a positive integer");
-        }
-        const rows = matchPreview({
-            records: new MeetingStore().listBounded({ limit }).records,
-            config: await new MeetingsConfigStore().read(),
-            ...(draft ? { draft } : {}),
-            limit,
-        });
+        const { draft, rows } = await matchPreviewRead(opts);
 
         if (opts.json) {
-            out.result(SafeJSON.stringify(rows, null, 2));
+            out.result(windowJson(rows));
             return;
         }
 

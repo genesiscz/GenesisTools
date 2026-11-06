@@ -14,21 +14,19 @@ import {
     unsetConfigValue,
 } from "../lib/config-edit";
 import { errorText, fail } from "../lib/shared";
+import { configShowRead, windowJson } from "../lib/window-reads";
 
 async function show(path: string | undefined, opts: { json?: boolean }): Promise<void> {
-    const store = new MeetingsConfigStore();
-
     try {
-        const config = await store.read();
-        const value = path ? configValueAt(config, parseConfigPath(path)) : config;
+        const view = await configShowRead(path);
 
         if (opts.json) {
-            out.result(SafeJSON.stringify({ path: store.path, value: value ?? null }, null, 2));
+            out.result(windowJson(view));
             return;
         }
 
-        out.println(SafeJSON.stringify(value ?? null, null, 2));
-        ui.dim(`config: ${store.path}`);
+        out.println(SafeJSON.stringify(view.value, null, 2));
+        ui.dim(`config: ${view.path}`);
     } catch (err) {
         fail(errorText(err));
     }

@@ -16,6 +16,7 @@ import { linkSource } from "../lib/link";
 import { resolveProject } from "../lib/project";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { showText } from "../lib/show-text";
+import { windowJson } from "../lib/window-reads";
 import { askProjectAtEnd } from "./watch";
 
 /** The record a command names, or a message saying how to find one. */
@@ -144,7 +145,7 @@ async function show(ref: string, opts: { json?: boolean }): Promise<void> {
     }
 
     if (opts.json) {
-        out.result(SafeJSON.stringify(record, null, 2));
+        out.result(windowJson(record));
         return;
     }
 

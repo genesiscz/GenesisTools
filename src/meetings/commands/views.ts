@@ -9,9 +9,10 @@ import { localTime } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { exportMeeting } from "../lib/export";
-import { type MeetingBadges, meetingsOverview } from "../lib/overview";
+import type { MeetingBadges } from "../lib/overview";
 import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { isWindowTab, openMeetingsWindow, WINDOW_TABS } from "../lib/window";
+import { overviewRead, windowJson } from "../lib/window-reads";
 
 function badgeWords(badges: MeetingBadges): string {
     return [
@@ -35,18 +36,10 @@ async function overview(opts: { days?: string; json?: boolean }): Promise<void> 
     }
 
     try {
-        const now = new Date();
-        const bounded = new MeetingStore().listBounded({ since: new Date(now.getTime() - days * 86_400_000) });
-        const view = meetingsOverview({
-            records: bounded.records,
-            config: await new MeetingsConfigStore().read(),
-            now,
-            days,
-        });
-        view.olderMeetings += bounded.olderMeetings;
+        const view = await overviewRead({ days, now: new Date() });
 
         if (opts.json) {
-            out.result(SafeJSON.stringify(view, null, 2));
+            out.result(windowJson(view));
             return;
         }
 

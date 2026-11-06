@@ -5,8 +5,9 @@ import { reasonText } from "@genesiscz/utils/meetings/proposals";
 import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { applyAnswer, askMeeting, assignSweep, defaultAssignDeps, skipReason, viewProposals } from "../lib/assign";
+import { applyAnswer, askMeeting, assignSweep, defaultAssignDeps, viewProposals } from "../lib/assign";
 import { errorText, fail, TOOL } from "../lib/shared";
+import { proposalsJsonView, proposalsRead, windowJson } from "../lib/window-reads";
 
 const MEETING_REF = "meeting id, a unique prefix, last, or wisprflow:<id>";
 
@@ -29,13 +30,11 @@ async function proposals(ref: string, opts: { json?: boolean }): Promise<void> {
             return;
         }
 
-        const deps = defaultAssignDeps();
-        const view = await viewProposals(store, record, deps);
-        const { assign } = (await deps.config.read()).global;
-        const skipped = skipReason({ record, store, now: deps.now(), retryFailedMin: assign.retryFailedMin });
+        const read = await proposalsRead({ store, record, deps: defaultAssignDeps() });
+        const { view, skipped } = read;
 
         if (opts.json) {
-            out.result(SafeJSON.stringify({ meeting: record.id, skipped, ...view, record: undefined }, null, 2));
+            out.result(windowJson(proposalsJsonView(record, read)));
             return;
         }
 

@@ -25,13 +25,12 @@ import {
     TRANSCRIPT_FORMATS,
     transcriptTextLines,
 } from "@genesiscz/utils/transcribe/render";
-import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
+import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
 import { prepareFindings } from "../lib/add-findings";
 import { decideItems, reopenItems } from "../lib/decide";
-import { transcriptMarkdown } from "../lib/export";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
@@ -41,6 +40,7 @@ import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
 import { runSuggest } from "../lib/suggest-run";
 import { correctTranscript, outcomeText } from "../lib/transcript-corrections";
+import { correctedTranscriptRead, speakerStatsRead, transcriptJsonView, windowJson } from "../lib/window-reads";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
 const { log } = logger.scoped("meetings-items");
@@ -451,16 +451,10 @@ async function speakersStats(ref: string, opts: { gap?: string; attendance?: str
     }
 
     try {
-        const opened = OpenedMeeting.of(store, record);
-        const meeting = await opened.meeting();
-        const stats = speakerStats(meeting.transcript, {
-            gapSec,
-            participants: meeting.speakers,
-            presence: await opened.presence(opts.attendance),
-        });
+        const stats = await speakerStatsRead({ store, record, gapSec, attendance: opts.attendance });
 
         if (opts.json) {
-            out.result(SafeJSON.stringify({ meeting: record.id, gapSec, ...stats }, null, 2));
+            out.result(windowJson(stats));
             return;
         }
 
@@ -529,23 +523,7 @@ async function transcript(
     }
 
     try {
-        const meeting = await loadTranscript(store, record);
-        const config = await new MeetingsConfigStore().read();
-        const markdown =
-            format === "md"
-                ? transcriptMarkdown({
-                      record,
-                      transcript: meeting.transcript,
-                      config,
-                      ...(opts.withSuggested !== undefined ? { withSuggested: opts.withSuggested } : {}),
-                      ...(opts.dictionary !== undefined ? { dictionary: opts.dictionary } : {}),
-                      frontmatter: opts.frontmatter !== false,
-                      timestamps: opts.timestamps === true,
-                      playLinks: opts.playLinks === true,
-                  })
-                : undefined;
-        const applied =
-            markdown?.applied ?? correctTranscript({ ...opts, record, transcript: meeting.transcript, config, format });
+        const { markdown, applied } = await correctedTranscriptRead({ store, record, format, flags: opts });
         reportOutcomes(applied.outcomes);
         ui.dim(
             `applied: ${applied.labels} renamed lines, ${applied.ranges} re-attributed, ${applied.joins} joins, ${applied.terms} term fixes, ${applied.fixes} dictionary fixes, ${applied.spoken} spoken forms, ${applied.fuzzy} fuzzy, ${applied.expansions} expansions, ${applied.meanings} meanings, ${applied.marks} quotes and meanings of spoken words, ${applied.unclear} unclear marks`
@@ -561,7 +539,7 @@ async function transcript(
         }
 
         if (format === "json") {
-            out.result(SafeJSON.stringify({ meeting: record.id, entries: applied.entries }, null, 2));
+            out.result(windowJson(transcriptJsonView(record, applied)));
             return;
         }
 

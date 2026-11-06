@@ -42,6 +42,7 @@ import { meetingScreen, type ScreenBoxFrame } from "../lib/screen-boxes";
 import { screenTimeline } from "../lib/screen-timeline";
 import { type SetSettingsFlags, settingsPatchFromFlags } from "../lib/settings-flags";
 import { errorText, fail, TOOL } from "../lib/shared";
+import { windowJson } from "../lib/window-reads";
 import { askProjectAtEnd } from "./watch";
 
 const { log } = logger.scoped("meetings-record-cmd");
@@ -535,7 +536,7 @@ async function timeline(store: MeetingStore, record: MeetingRecord, opts: Screen
         const view = await screenTimeline({ store, record, all: opts.all === true });
 
         if (opts.json) {
-            out.result(SafeJSON.stringify(view, null, 2));
+            out.result(windowJson(view));
             return;
         }
 
@@ -557,7 +558,7 @@ async function cost(opts: { json?: boolean }): Promise<void> {
         const view = captureCost({ store, records: store.list(), config: await new MeetingsConfigStore().read() });
 
         if (opts.json) {
-            out.result(SafeJSON.stringify(view, null, 2));
+            out.result(windowJson(view));
             return;
         }
 
