@@ -704,3 +704,32 @@ it("search ranks an exact method name first, then whole words, then substrings, 
     expect(lines.at(-1)).toBe('Each line has the doc\'s first sentence; describe("<name>") prints a method in full.');
     expect(answer.length).toBeLessThan(6000);
 });
+
+// R2-NR2: `run` with no code exited 0 and printed nothing, which reads as "it ran and returned nothing".
+it("run refuses a turn with no code, from stdin or an empty --file, and runs code from stdin", async () => {
+    const cli = join(import.meta.dir, "..", "index.ts");
+    const run = async (args: string[], stdin: string) => {
+        const child = Bun.spawn([process.execPath, cli, "run", ...args], {
+            stdin: new Blob([stdin]),
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const [stdout, stderr, code] = await Promise.all([
+            new Response(child.stdout).text(),
+            new Response(child.stderr).text(),
+            child.exited,
+        ]);
+        return { stdout, stderr, code };
+    };
+    const empty = await run([], "  \n");
+    expect(empty.code).toBe(1);
+    expect(empty.stdout).toBe("");
+    expect(empty.stderr).toContain("no code to run: pass it as an argument");
+    const file = join(mkdtempSync(join(tmpdir(), "nr-run-")), "empty.js");
+    writeFileSync(file, "");
+    const emptyFile = await run(["--file", file], "");
+    expect(emptyFile.code).toBe(1);
+    expect(emptyFile.stderr).toContain(`${file} is empty: there is no code to run`);
+    const piped = await run([], "1 + 2");
+    expect(piped).toMatchObject({ stdout: "3\n", code: 0 });
+});

@@ -23,6 +23,29 @@ function printTurnText(text: string): void {
 }
 
 /** `--max-output`, or undefined after an error line for a value that is not a whole number of characters. */
+/**
+ * The turn's code from the argument, --file or stdin, or undefined with the reason on stderr when there is none: a run
+ * with no code exited 0 and printed nothing, which reads as "it ran and returned nothing" (R2-NR2). A terminal on stdin
+ * is refused at once instead of waiting for Ctrl-D.
+ */
+async function runSource(code: string | undefined, file: string | undefined): Promise<string | undefined> {
+    const none = `no code to run: pass it as an argument (${toolCommand("node-repl run '1 + 1'")}), with --file <path>, or on stdin`;
+
+    if (code === undefined && file === undefined && process.stdin.isTTY) {
+        logger.error(none);
+        return undefined;
+    }
+
+    const source = file ? readFileSync(file, "utf8") : (code ?? (await Bun.stdin.text()));
+
+    if (source.trim() === "") {
+        logger.error(file ? `${file} is empty: there is no code to run` : none);
+        return undefined;
+    }
+
+    return source;
+}
+
 function maxOutputOption(value: string): number | undefined {
     const chars = Number(value);
 
@@ -169,7 +192,13 @@ program
                 return;
             }
 
-            const source = opts.file ? readFileSync(opts.file, "utf8") : (code ?? (await Bun.stdin.text()));
+            const source = await runSource(code, opts.file);
+
+            if (source === undefined) {
+                process.exitCode = 1;
+                return;
+            }
+
             const engine = new ReplEngine({ toolsets, maxOutputChars });
 
             try {
