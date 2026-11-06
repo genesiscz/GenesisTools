@@ -104,7 +104,7 @@ js { "code": "let counter = 41;\ncounter" }                       // -> 41
 // 2. a later, separate call sees it
 js { "code": "counter + 1" }                                       // -> 42
 // 3. make a project's node_modules importable
-js_add_node_module_dir { "path": "/Users/martin/proj" }            // -> "module directory registered: ..."
+js_add_node_module_dir { "path": "/path/to/project" }              // -> "module directory registered: ..." (it must hold node_modules)
 js { "code": "const { default: dayjs } = await import('dayjs');\ndayjs().year()" }
 // 4. hand back an image: any PNG bytes, from a file or an encoder
 js { "code": "await nodeRepl.emitImage({ bytes: await Bun.file('/tmp/chart.png').bytes(), mimeType: 'image/png' });\n'sent'" }
@@ -168,5 +168,5 @@ tools mcp-manager list                                                          
 By hand it is the same shape as every other server this repo owns:
 
 ```json
-{ "command": "/Users/Martin/projects/GenesisTools/tools", "args": ["node-repl", "mcp"] }
+{ "command": "tools", "args": ["node-repl", "mcp"] }
 ```
