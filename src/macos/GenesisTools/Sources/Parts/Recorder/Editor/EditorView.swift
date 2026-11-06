@@ -579,7 +579,7 @@ private struct StyleInspector: View {
     }
 }
 
-private struct CursorInspector: View {
+struct CursorInspector: View {
     @Bindable var model: EditorModel
     private static let clickColors = ["#FFD60A", "#FF453A", "#0A84FF", "#FFFFFF"]
     private static let clickColorNames = ["#FFD60A": "yellow", "#FF453A": "red", "#0A84FF": "blue", "#FFFFFF": "white"]
@@ -588,16 +588,17 @@ private struct CursorInspector: View {
         let clicks = model.project.clicks
         Text("Cursor and Clicks").font(.system(size: 15, weight: .semibold))
         VStack(alignment: .leading, spacing: 10) {
-            SwitchRow("Click rings", isOn: Binding(get: { clicks?.highlight == true }, set: { on in
-                model.setLooks { project in
-                    var next = project.clicks ?? EditProject.Clicks()
-                    next.highlight = on
-                    project.clicks = next
-                }
-            }))
-            .accessibilityIdentifier("recorder.style.clicks")
-            .instantTooltip("A ring at each click as it plays. To move or delete single marks, Annotate → Circle Every Click adds editable circles instead.")
+            // Without a cursor track there are no clicks to ring: the note below says so, and no switch pretends.
             if model.cursor != nil {
+                SwitchRow("Click rings", isOn: Binding(get: { clicks?.highlight == true }, set: { on in
+                    model.setLooks { project in
+                        var next = project.clicks ?? EditProject.Clicks()
+                        next.highlight = on
+                        project.clicks = next
+                    }
+                }))
+                .accessibilityIdentifier("recorder.style.clicks")
+                .instantTooltip("A ring at each click as it plays. To move or delete single marks, Annotate → Circle Every Click adds editable circles instead.")
                 SwitchRow("Click sound", isOn: Binding(get: { clicks?.sound == true }, set: { on in
                     model.setLooks { project in
                         var next = project.clicks ?? EditProject.Clicks()

@@ -290,6 +290,17 @@ final class RecorderScreenFindViewTests: XCTestCase {
         String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
     }
 
+    // Regression test: deep test 2026-11-07 R2-RE5 — a window movie (no cursor track) offered a Click rings switch that
+    // could draw nothing, right above the note that says so.
+    func testAMovieWithoutACursorTrackOffersNoClickRingsSwitch() throws {
+        let model = model()
+        XCTAssertNil(model.cursor)
+        let image = try EditorShots.write(CursorInspector(model: model).padding(18), name: "cursor-no-track", width: 300)
+        let text = try EditorShots.text(image).lowercased()
+        XCTAssertTrue(text.contains("no cursor track"), text)
+        XCTAssertFalse(text.contains("click rings"), "a switch that cannot draw anything: \(text)")
+    }
+
     func testAMovieWithoutARecordingSaysWhyItHasNoScreenText() throws {
         let model = model()
         model.screenQuery = "token"
