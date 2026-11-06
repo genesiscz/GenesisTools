@@ -471,12 +471,12 @@ program
 program
     .command("trash")
     .description(
-        "Move a library recording to the Trash (Finder's Put Back restores it); a meeting's screen recording is refused"
+        "Move a library recording through the removal policy (tools rm trash lists its restore command; a recording the policy does not allow becomes a request the user confirms); a meeting's screen recording is refused"
     )
     .argument("<recording>", "a library id, `last` or a recording folder")
     .action(async (value: string) => {
         try {
-            out.result(await trashRecording(resolveRecording(value)));
+            out.result(await trashRecording(resolveRecording(value), { askUser: true }));
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;

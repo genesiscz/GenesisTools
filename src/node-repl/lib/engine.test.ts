@@ -2,13 +2,14 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { effectLabel } from "@genesiscz/utils/api-descriptor";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
 import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 import { jsDescription } from "../mcp/server";
 import { ReplEngine, resultMessage } from "./engine";
-import { createToolsets, parseToolsetList, toolsetCliHelp } from "./toolsets";
+import { createToolsets, parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp } from "./toolsets";
 
 it("CLI help renders registered descriptor methods and handles", () => {
     const help = toolsetCliHelp();
@@ -199,6 +200,47 @@ const PNG_1X1 = Buffer.from(
 );
 
 describe("toolsets", () => {
+    // NR1 and NR7 (deep test 2026-11-06): an agent calls a read method without asking, so a read method reaches no
+    // one, and every method that prompts the user, takes the screen or spends money says so in its declaration.
+    it("every toolset declares who its calls reach, and no read method reaches anyone", async () => {
+        const reaching: Record<string, string> = {};
+
+        for (const toolset of await createToolsets(REPL_TOOLSET_IDS)) {
+            const owners = [
+                { owner: toolset.api.global, methods: toolset.api.methods },
+                ...(toolset.api.handles ?? []).map((handle) => ({
+                    owner: `${toolset.api.global}.${handle.name}`,
+                    methods: handle.methods,
+                })),
+            ];
+
+            for (const { owner, methods } of owners) {
+                for (const method of methods) {
+                    if (method.effect === "read") {
+                        expect(method.reaches ?? []).toEqual([]);
+                    }
+
+                    if (method.reaches?.length) {
+                        reaching[`${owner}.${method.name}`] = effectLabel(method);
+                    }
+                }
+            }
+        }
+
+        expect(reaching).toEqual({
+            "recorder.start": "reversible · user",
+            "movies.record": "reversible · user",
+            "movies.demo": "reversible · user",
+            "movies.Movie.transcript": "reversible · paid · user",
+            "movies.Movie.copy": "destructive · user",
+            "movies.Movie.reveal": "reversible · user",
+            "movies.Movie.show": "reversible · user",
+            "movies.Movie.closeEditor": "reversible · user",
+            "meetings.assign.sweep": "reversible · user",
+            "meetings.Meeting.assign.ask": "reversible · user",
+        });
+    });
+
     it("describe accepts handle names from both help and search", async () => {
         const engine = new ReplEngine({ toolsets: ["recorder"] });
         try {
@@ -313,7 +355,7 @@ describe("toolsets", () => {
     it("the js description lists each preloaded toolset's one line", () => {
         expect(jsDescription([])).not.toContain("Preloaded globals");
         expect(jsDescription(["counter: Counts. counter.logTo(path)"])).toContain(
-            "Preloaded globals, built once per worker (search(query) to find methods; describe(name) for full method docs; help(name) for a toolset):\n- counter: Counts. counter.logTo(path)"
+            'Preloaded globals, built once per worker (search(query) to find methods; describe(name) for full method docs; help(name) for a toolset; a method marked [read] changes nothing and reaches no one, "· user" or "· paid" marks one that reaches the user or costs money):\n- counter: Counts. counter.logTo(path)'
         );
     });
 });

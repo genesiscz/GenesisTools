@@ -666,7 +666,7 @@ it("replays created text and its subsequent ID edit without changing the returne
     sessions.release(path);
 });
 
-it("recording trash forwards policy refusal without touching the requested directory", async () => {
+it("recording trash from the CLI forwards policy refusal without touching the requested directory", async () => {
     const folder = mkdtempSync(join(tmpdir(), "recording-trash-policy-"));
     const run = spyOn(cli, "execTool").mockResolvedValue({
         success: false,
@@ -675,9 +675,42 @@ it("recording trash forwards policy refusal without touching the requested direc
         stderr: "policy refused",
     });
     try {
-        await expect(trashRecording(folder)).rejects.toThrow("policy refused");
+        await expect(trashRecording(folder, { askUser: true })).rejects.toThrow("policy refused");
         expect(run).toHaveBeenCalledWith(["rm", folder], { timeout: 30_000 });
         expect(existsSync(folder)).toBe(true);
+    } finally {
+        run.mockRestore();
+    }
+});
+
+// NR40 (deep test 2026-11-06): movie.trash() from the REPL made a tools rm request, which posted to the user's inbox.
+it("recording trash from an agent call asks no one: a policy that would ask refuses before any removal starts", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "recording-trash-agent-"));
+    const plan = (verdict: string) =>
+        SafeJSON.stringify([{ path: folder, verdict, reason: "no rule allows it", bytes: 1, willAside: true }]);
+    const calls: string[][] = [];
+    let verdict = "ask";
+    const run = spyOn(cli, "execTool").mockImplementation(async (args: readonly string[]) => {
+        calls.push([...args]);
+
+        if (args.includes("--dry-run")) {
+            return { success: true, exitCode: 0, stdout: plan(verdict), stderr: "" };
+        }
+
+        return { success: true, exitCode: 0, stdout: "", stderr: "" };
+    });
+    try {
+        await expect(trashRecording(folder)).rejects.toThrow(
+            "needs the user's confirmation to remove (no rule allows it); nothing was moved and no one was asked"
+        );
+        expect(calls).toEqual([["rm", "--dry-run", "--json", folder]]);
+
+        verdict = "allow";
+        expect(await trashRecording(folder)).toEqual({ trashed: folder });
+        expect(calls.slice(1)).toEqual([
+            ["rm", "--dry-run", "--json", folder],
+            ["rm", folder],
+        ]);
     } finally {
         run.mockRestore();
     }

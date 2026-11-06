@@ -1,9 +1,12 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type RecordingStoreId, recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
+import { z } from "zod";
 import { exportAs } from "./edit";
 import { movieOf, RECORDING_SOURCE_MOVIES } from "./library";
 
@@ -66,6 +69,7 @@ async function run(argv: string[]): Promise<void> {
 /** Puts a file (not its path) on the clipboard, as Finder's Copy does: a paste in Finder, Slack or Mail gets it. */
 export async function copyFileToClipboard(path: string): Promise<void> {
     const escaped = path.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+    assertReach("user", "replace the user's clipboard");
     await run(["osascript", "-e", `set the clipboard to (POSIX file "${escaped}")`]);
 }
 
@@ -108,17 +112,23 @@ export async function revealRecording(folder: string, { meeting = false }: { mee
         throw new Error(`${folder} is not a meeting's recording, so it has no meeting to open`);
     }
 
+    assertReach("user", "bring Finder to the front");
     await run(["open", "-R", target]);
     return { revealed: target };
 }
 
+const removalPlanSchema = z.array(z.object({ verdict: z.string(), reason: z.string().optional() }).passthrough());
+
 /**
  * Moves a library recording through the shared removal policy. `tools rm trash` lists its restore command. A kept meeting is
  * refused. `roots` replaces a store's root, for a test.
+ *
+ * When the policy would need the user's confirmation, it refuses and asks no one, unless `askUser` (the CLI command a
+ * person runs) lets `tools rm` file the request: an agent's call must never land in the user's inbox (NR40).
  */
 export async function trashRecording(
     folder: string,
-    { roots }: { roots?: Partial<Record<RecordingStoreId, string>> } = {}
+    { roots, askUser = false }: { roots?: Partial<Record<RecordingStoreId, string>>; askUser?: boolean } = {}
 ) {
     const kept = recordingStoreOf(folder, roots)?.kept;
 
@@ -128,9 +138,34 @@ export async function trashRecording(
         );
     }
 
+    if (askUser) {
+        assertReach("user", "ask the user to confirm a removal");
+    } else {
+        const plan = await execTool(["rm", "--dry-run", "--json", folder], { timeout: 30_000 });
+        const verdicts = removalPlanSchema.safeParse(
+            plan.success ? SafeJSON.parse(plan.stdout, { strict: true }) : null
+        );
+
+        if (!verdicts.success || verdicts.data.some((entry) => entry.verdict !== "allow")) {
+            const reason = verdicts.success
+                ? verdicts.data.find((entry) => entry.verdict !== "allow")?.reason
+                : undefined;
+            log.debug(
+                { folder, reason, planned: plan.success },
+                "trash refused: the removal policy would ask the user"
+            );
+            throw new Error(
+                `${folder} needs the user's confirmation to remove (${reason ?? "the removal policy did not allow it"}); nothing was moved and no one was asked. The user can run ${toolCommand("recorder trash")} ${folder}`
+            );
+        }
+    }
+
     const result = await execTool(["rm", folder], { timeout: 30_000 });
     if (!result.success) {
-        throw new Error(result.stderr || result.stdout || "removal policy refused the recording; no file was moved");
+        // stdout carries the policy's own words; stderr only its log lines.
+        throw new Error(
+            result.stdout.trim() || result.stderr.trim() || "removal policy refused the recording; no file was moved"
+        );
     }
     log.debug({ folder }, "moved a recording through the removal policy");
     return { trashed: folder };

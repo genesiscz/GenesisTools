@@ -27,6 +27,7 @@ import {
     recordingFolderOf,
     spreadTimes,
 } from "@app/recorder/lib/moments";
+import { forwardsToService } from "@app/recorder/lib/movie-client";
 import {
     DEFAULT_COUNTDOWN_SECONDS,
     parseStartFlags,
@@ -38,6 +39,7 @@ import { Movie, type MovieRecorderDeps, MoviesToolset, moviesApi } from "@app/re
 import { RecordingStartCancelled, recordVideo } from "@app/recorder/lib/video-recording";
 import { renderDocs } from "@genesiscz/utils/api-descriptor";
 import { withTimeout } from "@genesiscz/utils/async";
+import * as cli from "@genesiscz/utils/cli";
 import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as ocr from "@genesiscz/utils/macos/ocr";
@@ -240,6 +242,64 @@ describe("toolset method names", () => {
         expect(now).toMatchObject({ output: 2, source: 3, zoom: null, caption: null });
         expect(now.texts).toMatchObject([{ text: "Hello", from: 2.5, to: 4, plays: { from: 1.5, to: 3 } }]);
         expect((await itemsAt(60)).warnings).toEqual(["60 s is past the end; this is the last moment, 9 s"]);
+    });
+});
+
+// NR1 (deep test 2026-11-06): find() ran tools transcribe on a movie with no transcript and no sound; a vault-key
+// dialog stayed on the user's screen after the turn timed out. The spy throws, so a path that reaches it fails loudly.
+describe("a read call never starts the paid transcription", () => {
+    test("find() reads the cached transcript only, while transcript() still reaches tools transcribe", async () => {
+        const spawned: string[][] = [];
+        const run = spyOn(cli, "execTool").mockImplementation(async (args: readonly string[]) => {
+            spawned.push([...args]);
+            throw new Error(`execTool reached: ${args.join(" ")}`);
+        });
+
+        try {
+            const { movies } = (await new MoviesToolset().load(ctx)) as {
+                movies: { open(recording: string): Record<string, (...args: unknown[]) => Promise<unknown>> };
+            };
+            const folder = mkdtempSync(join(tmpdir(), "gt-find-no-transcript-"));
+            const path = join(folder, "edit.json");
+            writeProject(
+                path,
+                wholeProject({ video: join(folder, "screen.mp4"), durationUs: 10_000_000, width: 100, height: 100 })
+            );
+            const movie = movies.open(path);
+
+            await expect(movie.find("anything")).rejects.toThrow("this movie has no transcript yet");
+            expect(spawned).toEqual([]);
+
+            // The negative control: the method that declares the paid run still starts it.
+            await expect(movie.transcript()).rejects.toThrow("execTool reached: transcribe");
+            expect(spawned.map((args) => args[0])).toEqual(["transcribe"]);
+
+            writeFileSync(
+                join(folder, "screen.transcript.json"),
+                SafeJSON.stringify({ segments: [{ text: " hello there", start: 1, end: 2 }] })
+            );
+            expect(await movie.find("hello")).toMatchObject([{ text: "hello there" }]);
+            expect(spawned).toHaveLength(1);
+        } finally {
+            run.mockRestore();
+        }
+    });
+
+    test("the methods whose effect stopped being read keep running in the caller, not in the recorder service", () => {
+        const methods = moviesApi.handles?.find((handle) => handle.name === "Movie")?.methods ?? [];
+        const routed = (name: string) => {
+            const method = methods.find((candidate) => candidate.name === name);
+            return method ? forwardsToService(method) : undefined;
+        };
+
+        expect(["transcript", "still", "sheet", "reveal", "copy"].map(routed)).toEqual([
+            false,
+            false,
+            false,
+            false,
+            false,
+        ]);
+        expect(routed("cut")).toBe(true);
     });
 });
 

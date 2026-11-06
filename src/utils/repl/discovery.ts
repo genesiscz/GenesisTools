@@ -1,5 +1,6 @@
 import {
     type ApiDescriptor,
+    effectLabel,
     jsonSchemaOf,
     type MethodDescriptor,
     methodSignature,
@@ -32,7 +33,7 @@ function fullDescriptor(owner: string, method: MethodDescriptor): string {
     return [
         methodSignature(owner, method),
         method.doc,
-        `Effect: ${method.effect}`,
+        `Effect: ${effectLabel(method)}`,
         `Parameters: ${SafeJSON.stringify(jsonSchemaOf(method.params), null, 2)}`,
         resultLine,
         ...(method.mcp && Object.keys(method.mcp).length ? [`MCP: ${SafeJSON.stringify(method.mcp)}`] : []),
@@ -49,7 +50,7 @@ function methodLine(owner: string, method: MethodDescriptor): string {
         full.length <= LINE_SIGNATURE_MAX
             ? full
             : `${methodSignature(owner, method, 1)} (describe("${owner}.${method.name}") prints it in full)`;
-    return `${signature} [${method.effect}] — ${method.doc}`;
+    return `${signature} [${effectLabel(method)}] — ${method.doc}`;
 }
 
 /** One line per method of an owner (`movies`, `movies.Movie`, or its alias `movie`), like search's lines. */

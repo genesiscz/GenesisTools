@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import { JSON_RPC_ERRORS } from "@genesiscz/utils/rpc/errors";
 import { z } from "zod";
-import { defineApi, defineMethod } from "./descriptor";
+import { defineApi, defineMethod, effectLabel } from "./descriptor";
+import { assertReach, runInMethodScope, UndeclaredReachError } from "./reach";
 import { jsonSchemaOf, methodSignature, renderDocs, toMcpTools, typeText } from "./render";
 import { callArguments, handleHandlers, toRpcTable } from "./rpc";
 
@@ -195,5 +196,88 @@ describe("toRpcTable", () => {
         );
         expect(await handles.call("recording.stop", {}, undefined)).toEqual({ recordingId: "waited" });
         expect(callArguments(api.methods[2], { id: "r2" })).toEqual(["r2"]);
+    });
+});
+
+/**
+ * NR1 (deep test 2026-11-06): movie.find(), declared read, started a paid transcription and a vault-key dialog. The
+ * declaration is now enforced: a described call that reaches the user or spends money without saying so throws
+ * before the paid line runs.
+ */
+describe("declared reaches", () => {
+    class ReachToolset extends ReplToolset {
+        readonly spent: string[] = [];
+        readonly api = defineApi({
+            id: "fixture",
+            global: "fixture",
+            title: "Fixture",
+            summary: "Fixture",
+            methods: [
+                defineMethod({
+                    name: "peek",
+                    params: z.object({}),
+                    result: z.unknown(),
+                    doc: "Fixture",
+                    effect: "read",
+                }),
+                defineMethod({
+                    name: "transcribe",
+                    params: z.object({}),
+                    result: z.unknown(),
+                    doc: "Fixture",
+                    effect: "reversible",
+                    reaches: ["paid", "user"],
+                }),
+            ],
+        });
+
+        async bootstrap() {
+            // A paid primitive that records when it runs, guarded the way the movies toolset guards tools transcribe.
+            const pay = async () => {
+                await Bun.sleep(1);
+                assertReach("paid", "start a transcription");
+                this.spent.push("transcription");
+                return "paid";
+            };
+            return { fixture: { peek: async () => pay(), transcribe: async () => pay() } };
+        }
+    }
+    type Fixture = { fixture: { peek(): Promise<unknown>; transcribe(): Promise<unknown> } };
+    const ctx = { scratchDir: "/tmp", show: async () => undefined, write: () => undefined };
+
+    test("a read method that reaches a paid line is refused before the line runs, naming the method", async () => {
+        const toolset = new ReachToolset();
+        const loaded = (await toolset.load(ctx)) as Fixture;
+        const refused = loaded.fixture.peek();
+        await expect(refused).rejects.toBeInstanceOf(UndeclaredReachError);
+        await expect(refused).rejects.toThrow("fixture.peek is declared [read], so it may not start a transcription");
+        expect(toolset.spent).toEqual([]);
+    });
+
+    test("the method that declares the reach still reaches it, and a call outside every described method does too", async () => {
+        const toolset = new ReachToolset();
+        const loaded = (await toolset.load(ctx)) as Fixture;
+        expect(await loaded.fixture.transcribe()).toBe("paid");
+        expect(toolset.spent).toEqual(["transcription"]);
+        expect(() => assertReach("user", "open a dialog")).not.toThrow();
+    });
+
+    test("a read method may not declare a reach, and help prints the reaches beside the effect", () => {
+        expect(() =>
+            defineMethod({
+                name: "lie",
+                params: z.object({}),
+                result: z.unknown(),
+                doc: "Fixture",
+                effect: "read",
+                reaches: ["paid"],
+            })
+        ).toThrow("a read method reaches no one");
+        expect(effectLabel({ effect: "reversible", reaches: ["paid", "user"] })).toBe("reversible · paid · user");
+        expect(() =>
+            runInMethodScope({ name: "x.y", method: { effect: "reversible", reaches: ["paid"] } }, () =>
+                assertReach("user", "post to the inbox")
+            )
+        ).toThrow("x.y is declared [reversible · paid], so it may not post to the inbox (that reaches: user)");
     });
 });

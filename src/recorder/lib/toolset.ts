@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { RecordingTarget } from "@app/control/lib/recording-targets";
-import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
+import { assertReach, defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { FlockState } from "@genesiscz/utils/fs/flock";
@@ -688,8 +688,9 @@ const movieMethods = [
         doc:
             "The spoken lines in source seconds (plays: where each starts in the edit, null when cut), from " +
             toolCommand("transcribe") +
-            "; cached beside the movie, refresh: true transcribes again. The first run may ask for the AI vault key.",
-        effect: "read",
+            "; cached beside the movie, refresh: true transcribes again. A run without the cache is a paid transcription and may ask the user for the AI vault key; a video recorded without sound is refused.",
+        effect: "reversible",
+        reaches: ["paid", "user"],
     }),
     defineMethod({
         name: "poster",
@@ -713,7 +714,7 @@ const movieMethods = [
         result: z.unknown(),
         resultName: "{ path, width, height, times }",
         doc: "One picture of several frames of the edit as it exports, in rows of three, each labelled with its OUTPUT time: count (6) frames spread over from…to (the whole edit), or the times in at. One call to check a whole edit after a change, instead of a still() per moment. out keeps the PNG at that path (the REPL's own copy goes when the run ends).",
-        effect: "read",
+        effect: "reversible",
     }),
     defineMethod({
         name: "itemsAt",
@@ -731,7 +732,7 @@ const movieMethods = [
         result: z.unknown(),
         resultName: "{ path, width, height }",
         doc: "Shows one frame of the edit as it exports (zoom, clicks, cursor, captions, shortcuts, frame style) at OUTPUT seconds (what plays), so you can look at a change. Without `out` the PNG goes to the run's scratch folder and is gone after the run; give `out` (a .png path) to keep it. It renders at preview size (at most 1080 pixels on the short side), so its size can differ from export()'s, which follows the export settings; the picture is the same.",
-        effect: "read",
+        effect: "reversible",
     }),
     defineMethod({
         name: "find",
@@ -739,7 +740,7 @@ const movieMethods = [
         positional: ["text"],
         result: z.unknown(),
         resultName: "{ from, to, plays, text }[]",
-        doc: "The transcript lines that hold the text (case and accents ignored); cut one with cut(line.from, line.to).",
+        doc: "The lines of the cached transcript that hold the text (case and accents ignored); cut one with cut(line.from, line.to). Without a transcript it throws: transcript() makes one (a paid run), find() never does.",
         effect: "read",
     }),
     defineMethod({
@@ -863,16 +864,18 @@ const movieMethods = [
         params: z.object({ gif: z.boolean().optional() }).strict(),
         result: z.unknown(),
         resultName: '{ path, kind: "movie" | "gif", exported }',
-        doc: "Puts the recording's movie on the clipboard as a file (the newest export beside it, else its own movie), so a paste in Finder, Slack or Mail gets it; gif: true copies a GIF of the edit, exporting one when none is newer than the edit (exported says so). The menu bar's Recent list and the library window do the same.",
-        effect: "reversible",
+        doc: "Puts the recording's movie on the clipboard as a file (the newest export beside it, else its own movie), so a paste in Finder, Slack or Mail gets it; it replaces what the user's clipboard held. gif: true copies a GIF of the edit, exporting one when none is newer than the edit (exported says so). The menu bar's Recent list and the library window do the same.",
+        effect: "destructive",
+        reaches: ["user"],
     }),
     defineMethod({
         name: "reveal",
         params: z.object({ meeting: z.boolean().optional() }).strict(),
         result: z.unknown(),
         resultName: "{ revealed }",
-        doc: "Shows the recording's folder in Finder; meeting: true shows its meeting's meeting.json (a meeting's screen recording only).",
-        effect: "read",
+        doc: "Shows the recording's folder in a Finder window and brings Finder to the front; meeting: true shows its meeting's meeting.json (a meeting's screen recording only).",
+        effect: "reversible",
+        reaches: ["user"],
     }),
     defineMethod({
         name: "trash",
@@ -919,6 +922,7 @@ const movieMethods = [
         result: z.unknown(),
         doc: 'Opens the edit in the recorder window (behind the front window unless focus: true), at OUTPUT seconds `at` and on the inspector `tab` ("zoom", "clip", "hide", "text", "style", "cursor", "captions", "audio", "export"), so you can show the user a moment.',
         effect: "reversible",
+        reaches: ["user"],
     }),
     defineMethod({
         name: "closeEditor",
@@ -927,6 +931,7 @@ const movieMethods = [
         resultName: "{ closed, window? }",
         doc: "Closes the edit's recorder window, as its close button does (show() opens it); closed: false when no window shows it. Refused (1021) while the window has a drag not saved yet or an export running.",
         effect: "reversible",
+        reaches: ["user"],
     }),
 ];
 
@@ -1014,8 +1019,9 @@ export const moviesApi = defineApi({
             params: recordOptionsSchema,
             result: z.unknown(),
             resultName: "MovieRecording",
-            doc: `Starts a movie recording in its own process: the screen in use (it follows the pointer), or display (an index), app, window (CG ids) or region ("x,y,width,height" in points). The options are the flags of ${toolCommand("recorder start")} with the same limits: fps, idleFps (the rate while nothing moves), threshold (the % that must change to leave it), countdown (seconds on screen before it records; true is 3), systemCursor, shortcuts (false: no keys overlay), micDevice (with audio: ["mic"]), excludeWindowIds, camera (needs the menu bar recorder running), controls, indicator, maxSeconds, title.`,
+            doc: `Starts a movie recording in its own process: the screen in use (it follows the pointer), or display (an index), app, window (CG ids) or region ("x,y,width,height" in points). The options are the flags of ${toolCommand("recorder start")} with the same limits: fps, idleFps (the rate while nothing moves), threshold (the % that must change to leave it), countdown (seconds on screen before it records; true is 3), systemCursor, shortcuts (false: no keys overlay), micDevice (with audio: ["mic"]), excludeWindowIds, camera (needs the menu bar recorder running), controls, indicator, maxSeconds, title. It records what the user's screen shows, with an on-screen countdown and indicator unless they are off.`,
             effect: "reversible",
+            reaches: ["user"],
         }),
         defineMethod({
             name: "demo",
@@ -1025,6 +1031,7 @@ export const moviesApi = defineApi({
                 "{ movie: Movie, folder, steps: { caption, startMs, endMs }[], failed, ops, sourceSeconds, exported? }",
             doc: 'One call gives a finished demo: records the screen (record: the options of record()), runs each step ({ caption, run: async () => …, holdSeconds? }) between a marker at its start and a hold after it (holdSeconds, 1: the result stays on screen and is never cut), stops, cuts the waiting (still, silent stretches while the code of a step runs, and the time before the first and after the last step), adds the caption of each step while it plays, and exports (export: false skips it). A step that throws is listed in failed and the next one runs. edit takes cutIdle (true), idleMinSeconds (1), cutWaits (true), minWaitSeconds (0.8), keepSeconds (0.3), leadSeconds (0.5), tailSeconds (1), captions (true), captionPosition "bottom" | "top", captionMinSeconds (1.8), markers (true). Save a demo that worked with presets.save(name, script) to run it again.',
             effect: "reversible",
+            reaches: ["user"],
         }),
     ],
     handles: [
@@ -1073,6 +1080,19 @@ function facts(opened: { path: string; project: EditProject }): EditFacts {
         musicFileExists: project.audio.music ? existsSync(project.audio.music.file) : true,
         recordedMarkers: recordedMarkersOf(opened),
     };
+}
+
+/** True when a video recording's manifest lists no sound source, so a transcription would pay for silence. */
+function recordedWithoutSound(opened: { path: string; project: EditProject }): boolean {
+    const folder = recordingFolderOf(opened);
+    const settings = folder ? readRecordingManifest(folder)?.settings : undefined;
+    const audio = settings?.audio;
+
+    if (settings?.kind !== "video" || typeof audio !== "object" || audio === null || !("sources" in audio)) {
+        return false;
+    }
+
+    return Array.isArray(audio.sources) && audio.sources.length === 0;
 }
 
 export class Movie {
@@ -1564,6 +1584,12 @@ export class Movie {
             return transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project);
         }
 
+        if (recordedWithoutSound(opened)) {
+            throw new Error(`${video} was recorded without sound, so there is nothing to transcribe`);
+        }
+
+        // The guard sits on the paid call itself: a method declared read that reaches here is refused (NR1).
+        assertReach("paid", "start a transcription", "Call movie.transcript() first; it declares the paid run.");
         const args = ["transcribe", video, "--format", "json", "-o", cache];
 
         if (options.provider) {
@@ -1740,8 +1766,21 @@ export class Movie {
         return { path: answer.path, width: answer.width, height: answer.height };
     }
 
+    /** Reads the cached transcript only: a search must never start the paid transcription transcript() runs. */
     async find(text: string): Promise<TranscriptLine[]> {
-        return findInTranscript(await this.transcript(), text);
+        const opened = await openProject(this.recording);
+        const cache = transcriptCachePath(opened.project.source.video);
+
+        if (!existsSync(cache)) {
+            throw new Error(
+                "this movie has no transcript yet; call movie.transcript() first (a paid transcription), then find()"
+            );
+        }
+
+        return findInTranscript(
+            transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project),
+            text
+        );
     }
 
     async switchDisplay(input: { from: z.infer<typeof timeSchema>; to: z.infer<typeof timeSchema>; display: number }) {

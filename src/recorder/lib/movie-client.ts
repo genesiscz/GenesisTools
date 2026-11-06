@@ -83,8 +83,15 @@ export async function undoLastEdit(value: string, options: { dir?: string } = {}
     return openedOf(value, answer);
 }
 
-/** The Movie methods that stay in the caller's process: they draw, export or write beside the recording. */
+/**
+ * The Movie methods that stay in the caller's process: they draw, export or write beside the recording. transcript,
+ * still, sheet and reveal were read before their effects were declared honestly (NR7); they still run here.
+ */
 const STAYS_LOCAL = new Set([
+    "transcript",
+    "still",
+    "sheet",
+    "reveal",
     "show",
     "export",
     "poster",

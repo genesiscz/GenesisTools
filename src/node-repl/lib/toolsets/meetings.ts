@@ -15,7 +15,7 @@ import { meetingLiveId } from "@app/meetings/lib/recorder-shared";
 import { isSuggestRule, SUGGEST_RULES } from "@app/meetings/lib/suggest";
 import { runSuggest } from "@app/meetings/lib/suggest-run";
 import { correctTranscript, outcomeText } from "@app/meetings/lib/transcript-corrections";
-import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
+import { assertReach, defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { OCR_BOX_LEVELS } from "@genesiscz/utils/macos/ocr-boxes";
@@ -223,6 +223,7 @@ const assignSweepMethod = defineMethod({
     result: z.unknown(),
     resultName: "{ asked: string[], advanced: { meeting, outcome }[] }",
     effect: "reversible",
+    reaches: ["user"],
     doc: 'One "ask each time" pass, as the watcher runs it: read back answers and apply them, then post a decision-inbox question for each recent ended meeting without a project.',
 });
 const assignProposals = defineMethod({
@@ -239,6 +240,7 @@ const assignAsk = defineMethod({
     result: z.unknown(),
     resultName: "{ formId?, skipped? }",
     effect: "reversible",
+    reaches: ["user"],
     doc: "Post this meeting's project question to the decision inbox now (once per meeting; force asks again).",
 });
 const assignApply = defineMethod({
@@ -377,7 +379,7 @@ const screen = defineMethod({
     result: z.unknown(),
     resultName:
         "{ zeroMs, recorded, frames: { file, at, displayId, text, meetingSec }[], boxes?: { file, selection, boxes: { text, x, y, width, height }[], annotated, crops }[] }",
-    effect: "read",
+    effect: "reversible",
     doc: 'The screen frames at a transcript time (at, windowSec) or that show a text (match, limit), from the recording\'s ocr.jsonl. With boxes: { outDir }, each frame\'s OCR boxes in frame pixels (level "block" default, or "line"): the ones holding match, or without match the ones that changed since the display\'s earlier frame, drawn numbered on the frame plus one PNG crop each in outDir.',
 });
 const editorProject = defineMethod({
@@ -594,7 +596,10 @@ export class MeetingsToolset extends ReplToolset {
                     },
                 },
                 assign: {
-                    sweep: async () => (await loadAssign()).assignSweep(store),
+                    sweep: async () => {
+                        assertReach("user", "post questions to the decision inbox");
+                        return (await loadAssign()).assignSweep(store);
+                    },
                 },
             },
         };
@@ -753,6 +758,7 @@ export class MeetingsToolset extends ReplToolset {
                     };
                 },
                 ask: async (input: z.input<typeof assignAsk.params> = {}) => {
+                    assertReach("user", "post a question to the decision inbox");
                     const { askMeeting, defaultAssignDeps } = await loadAssign();
                     return askMeeting(store, current(), defaultAssignDeps(), assignAsk.params.parse(input));
                 },
