@@ -1,10 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ScreenInfo } from "@app/control/lib/native-record";
 import { segmentCaptureSpec } from "@app/control/lib/recording-native";
 import type { RecordingTarget } from "@app/control/lib/recording-targets";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { RpcError } from "@genesiscz/utils/screen-recorder/control";
 import { type CameraHost, startRecordingCamera, stopRecordingCamera } from "./camera-recorder";
 import { liveRecordingRef } from "./library";
@@ -12,6 +13,66 @@ import { parseStartFlags, refuseTargetOffScreen } from "./start-options";
 import { recordedNothing, segmentRecorderOptions } from "./video-recording";
 
 const folder = "/tmp/recording";
+const repo = join(moduleDir(import.meta), "..", "..", "..");
+
+/** Every `.command("name")` of `tools recorder`, and the names its stop/pause/resume/status loop registers. */
+async function recorderCommands(): Promise<Set<string>> {
+    const sources = [join(repo, "src/recorder/index.ts")];
+
+    for (const name of await readdir(join(repo, "src/recorder/commands"))) {
+        sources.push(join(repo, "src/recorder/commands", name));
+    }
+
+    const names = new Set<string>();
+
+    for (const source of sources) {
+        const text = await readFile(source, "utf8");
+
+        for (const match of text.matchAll(/\.command\("([a-z][a-z-]*)/g)) {
+            names.add(match[1]);
+        }
+
+        for (const loop of text.matchAll(/for \(const method of \[([^\]]+)\]/g)) {
+            for (const word of loop[1].matchAll(/"([a-z-]+)"/g)) {
+                names.add(word[1]);
+            }
+        }
+    }
+
+    return names;
+}
+
+/** `["recorder", "<command>"` in the app's Swift sources: the commands GenesisTools.app runs. */
+async function appRecorderCalls(): Promise<{ file: string; command: string }[]> {
+    const root = join(repo, "src/macos/GenesisTools/Sources");
+    const calls: { file: string; command: string }[] = [];
+
+    for (const entry of await readdir(root, { recursive: true })) {
+        if (!entry.endsWith(".swift")) {
+            continue;
+        }
+
+        const text = await readFile(join(root, entry), "utf8");
+
+        for (const match of text.matchAll(/\["recorder", "([a-z][a-z-]*)"/g)) {
+            calls.push({ file: entry, command: match[1] });
+        }
+    }
+
+    return calls;
+}
+
+describe("the commands GenesisTools.app runs", () => {
+    it("every tools recorder command the app runs exists in the CLI", async () => {
+        // The defect: the library and the menu opened a frames-only recording with `tools recorder open`, which never
+        // existed (it is `edit`), so it failed into a note full of help text (review 2026-11-06).
+        const commands = await recorderCommands();
+        const calls = await appRecorderCalls();
+        expect(commands.has("edit")).toBe(true);
+        expect(calls.length).toBeGreaterThan(10);
+        expect(calls.filter((call) => !commands.has(call.command))).toEqual([]);
+    });
+});
 const window: RecordingTarget = { kind: "window", windowIds: [83493] };
 const app: RecordingTarget = { kind: "app", app: "Notes" };
 const display: RecordingTarget = { kind: "display", screenIndex: 0, follow: true };

@@ -45,6 +45,15 @@ enum RecorderNotice {
         }
     }
 
+    /// A failed `tools` command: `text`, then the line of its output that names the problem (`ToolsRunner.problem`),
+    /// never a help dump; Details holds the whole output, or `fallback` when it printed nothing.
+    static func failure(_ text: String, output: String, fallback: String? = nil, defaults: UserDefaults = .standard) {
+        let problem = ToolsRunner.problem(in: output)
+        let headline = problem.map { "\(text): \($0.hasSuffix(".") ? String($0.dropLast()) : $0)." } ?? "\(text)."
+        failure(headline, more: output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : output,
+                defaults: defaults)
+    }
+
     /// A shortcut pressed with nothing to act on (no recording runs).
     static func nothingToActOn(_ title: String, detail: String, defaults: UserDefaults = .standard) {
         let feedback = IdleShortcutFeedback.load(defaults)

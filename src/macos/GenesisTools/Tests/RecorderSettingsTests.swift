@@ -19,6 +19,32 @@ final class RecorderSettingsTests: XCTestCase {
         RecorderNotice.outlets = .live
     }
 
+    /// The defect: a failed `tools` command's note showed the last six lines of the CLI's help, which named nothing
+    /// (review 2026-11-06). The note says the line that names the problem, and Details keeps the whole output.
+    func testAFailureNoteNamesTheProblemLineNotTheHelpDump() {
+        let dump = """
+        error: unknown command 'open'
+        (Did you mean opened?)
+        Usage: tools recorder [options] [command]
+
+        Commands:
+          serve [options]            Run the recorder service
+          help [command]             display help for command
+        """
+        XCTAssertEqual(ToolsRunner.problem(in: dump), "unknown command 'open'")
+        XCTAssertEqual(ToolsRunner.problem(in: "recording\nwindow 1 cannot record: it is gone\n"),
+                       "window 1 cannot record: it is gone")
+        XCTAssertEqual(ToolsRunner.problem(in: "Usage: tools recorder [options] [command]\n\nOptions:\n  -h, --help"),
+                       "it printed its usage instead of running")
+        XCTAssertNil(ToolsRunner.problem(in: "  \n"))
+
+        var calls: [String] = []
+        RecorderNotice.outlets = recordingOutlets { calls.append($0) }
+        defer { RecorderNotice.outlets = .live }
+        RecorderNotice.failure("“Demo” did not open (exit 1)", output: dump, defaults: defaults)
+        XCTAssertEqual(calls.first, "notice: “Demo” did not open (exit 1): unknown command 'open'. | \(dump)")
+    }
+
     /// The defect: the note measured its own host with no sizing options (0 x 0), so every failure note opened as an
     /// invisible 0 x 0 window (review 2026-11-06).
     @MainActor

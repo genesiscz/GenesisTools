@@ -49,15 +49,20 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     /// Opens a recording in the editor. A frames-only one (a meeting's screen, say) goes through
     /// `tools recorder open`, which makes its proxy movie first and then opens the editor.
     static func open(_ recent: Recent, atSourceSeconds: Double? = nil) {
+        if let failure = recent.failure {
+            RecorderNotice.failure("“\(recent.title)” did not record, so there is nothing to open.", more: failure)
+            return
+        }
         if recent.hasMovie {
             EditorWindows.shared.open(path: recent.folder.path, atSourceSeconds: atSourceSeconds)
             return
         }
-        HubPerf.log("recorder: open frames-only \(recent.folder.path) through tools recorder open")
+        HubPerf.log("recorder: open frames-only \(recent.folder.path) through tools recorder edit")
         do {
-            try ToolsRunner.detached(["recorder", "open", recent.folder.path]) { status, tail in
-                RecorderNotice.failure("“\(recent.title)” did not open: making its movie failed (exit \(status)).",
-                                       more: tail.isEmpty ? "tools recorder open \(recent.folder.path)" : tail)
+            // `edit` makes proxy.mp4 for a frames-only recording, then opens the editor (there never was an `open`).
+            try ToolsRunner.detached(["recorder", "edit", recent.folder.path]) { status, output in
+                RecorderNotice.failure("“\(recent.title)” did not open: making its movie failed (exit \(status))",
+                                       output: output, fallback: "tools recorder edit \(recent.folder.path)")
             }
         } catch {
             RecorderNotice.failure("“\(recent.title)” did not open.", more: error.localizedDescription)
@@ -320,9 +325,9 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
     func startRecording(arguments args: [String]) {
         HubPerf.log("recorder: start \(args.joined(separator: " "))")
         do {
-            try ToolsRunner.detached(args) { status, tail in
-                RecorderNotice.failure("The recording stopped at once (exit \(status)).",
-                                       more: tail.isEmpty ? "See ~/.genesis-tools/logs/recorder-start.log" : tail)
+            try ToolsRunner.detached(args) { status, output in
+                RecorderNotice.failure("The recording stopped at once (exit \(status))", output: output,
+                                       fallback: "See ~/.genesis-tools/logs/recorder-start.log")
             }
         } catch {
             RecorderNotice.failure("The recording did not start.", more: error.localizedDescription)
