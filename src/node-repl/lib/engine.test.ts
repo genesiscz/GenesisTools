@@ -20,6 +20,7 @@ import {
     toolsetCliHelp,
     toolsetOverlap,
 } from "./toolsets";
+import { githubPrRef } from "./toolsets/github";
 
 // NR24: --help used to render every method of all ten toolsets, 535 lines. It now lists each toolset's one line and
 // says how to print one toolset's API.
@@ -610,6 +611,20 @@ it("reset interrupts an active turn and cancels turns queued before it", async (
         await reset;
         engine.dispose();
     }
+});
+
+// NR27: hub.prs() and hub.pr() were "→ unknown", and github.review() refused the URL that hub.pr() takes.
+it("hub and github name their result shapes, and github.review takes a PR URL or owner/repo#n", async () => {
+    const apis = (await createToolsets(["hub", "github"])).map((toolset) => toolset.api);
+    expect(searchMethods(apis, "hub.prs")).toContain("→ { prs: ");
+    expect(searchMethods(apis, "hub.pr")).toContain("→ HubPrDetail");
+    expect(githubPrRef("https://github.com/acme/widgets/pull/42/files")).toEqual({
+        owner: "acme",
+        repo: "widgets",
+        number: 42,
+    });
+    expect(githubPrRef("acme/widgets#7")).toEqual({ owner: "acme", repo: "widgets", number: 7 });
+    expect(() => githubPrRef("widgets 7")).toThrow('"widgets 7" is not a GitHub pull request');
 });
 
 it("discovery covers handle names, missing names and ambiguous names", async () => {

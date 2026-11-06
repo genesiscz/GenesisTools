@@ -6,6 +6,9 @@ const list = defineMethod({
     name: "prs",
     params: z.object({ paths: z.array(z.string()).min(1), limit: z.number().int().positive().default(30) }),
     result: z.unknown(),
+    // NR27: these were "→ unknown"; the shapes are HubPrsResult and HubPrDetail in src/hub/lib/prs.ts.
+    resultName:
+        "{ prs: { number, title, state, draft, author, repo, url, headBranch, baseBranch, updatedAt, isMine, localWorktree }[], repos: { repo, paths, count, error, warnings }[], skipped: { path, reason }[] }",
     effect: "read",
     doc: "List open pull requests for local repositories.",
 });
@@ -13,6 +16,8 @@ const open = defineMethod({
     name: "pr",
     params: z.object({ ref: z.string().min(1) }),
     result: z.unknown(),
+    resultName:
+        "HubPrDetail: a prs() row plus body, commits, changedFiles, additions, deletions, mergeable, checks, webUrls, warnings, branchMentions",
     effect: "read",
     doc: "Read one pull request by its URL or repository reference.",
 });
