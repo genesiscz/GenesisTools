@@ -59,7 +59,7 @@ import { CallTimeline } from "./lib/call-timeline";
 import { suggestDictionary } from "./lib/dictionary-suggest";
 import { captionSegments } from "./lib/editor-project";
 import { findingItems, findingProblems, findingsFileSchema } from "./lib/findings";
-import { itemWhat } from "./lib/item-text";
+import { appliedLine, itemWhat } from "./lib/item-text";
 import { MEETING_PLATFORMS, platformOfSourceName, speakingEvidence } from "./lib/platforms";
 import { teamsAttendanceFromJson } from "./lib/platforms/teams";
 import { selectQuestions } from "./lib/question-select";
@@ -697,6 +697,30 @@ describe("itemWhat", () => {
 
         expect(itemWhat(range(279, 279))).toBe("Speaker 1 04:39 → Alice Example");
         expect(itemWhat(range(279, 301))).toBe("Speaker 1 04:39–05:01 → Alice Example");
+    });
+});
+
+describe("appliedLine", () => {
+    const none = {
+        labels: 0,
+        ranges: 0,
+        joins: 0,
+        terms: 0,
+        fixes: 0,
+        spoken: 0,
+        fuzzy: 0,
+        expansions: 0,
+        meanings: 0,
+        marks: 0,
+        unclear: 0,
+    };
+
+    test("names only what changed the transcript, and says so when nothing did (R2-MC3)", () => {
+        expect(appliedLine({ ...none, fixes: 4, unclear: 10 })).toBe("applied: 4 dictionary fixes, 10 unclear marks");
+        expect(appliedLine({ ...none, labels: 1 })).toBe("applied: 1 renamed line");
+        expect(appliedLine(none)).toBe(
+            "applied: nothing; no confirmed item, rename or dictionary entry changed a line"
+        );
     });
 });
 

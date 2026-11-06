@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { itemWhat } from "@app/meetings/lib/item-text";
+import { appliedLine, itemWhat } from "@app/meetings/lib/item-text";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseDuration } from "@genesiscz/utils/format";
@@ -568,9 +568,7 @@ async function transcript(
     try {
         const { markdown, applied } = await correctedTranscriptRead({ store, record, format, flags: opts });
         reportOutcomes(applied.outcomes);
-        ui.dim(
-            `applied: ${applied.labels} renamed lines, ${applied.ranges} re-attributed, ${applied.joins} joins, ${applied.terms} term fixes, ${applied.fixes} dictionary fixes, ${applied.spoken} spoken forms, ${applied.fuzzy} fuzzy, ${applied.expansions} expansions, ${applied.meanings} meanings, ${applied.marks} quotes and meanings of spoken words, ${applied.unclear} unclear marks`
-        );
+        ui.dim(appliedLine(applied));
 
         if (markdown) {
             if (markdown.warning) {
