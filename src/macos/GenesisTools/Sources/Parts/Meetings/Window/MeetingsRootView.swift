@@ -117,7 +117,9 @@ private struct MeetingsListPane: View {
             }
             content
         }
-        .navigationTitle(title)
+        // The window's title is the open meeting, so the title bar, Mission Control and the Window menu name it.
+        .navigationTitle(openTitle ?? title)
+        .navigationSubtitle(openTitle == nil ? "" : title)
         .toolbar {
             ToolbarItem {
                 MenuButton(items: {
@@ -131,6 +133,10 @@ private struct MeetingsListPane: View {
                 .instantTooltip("How many days back the list reaches")
             }
         }
+    }
+
+    private var openTitle: String? {
+        model.detail.map { model.meeting($0.id)?.displayTitle ?? "Meeting" }
     }
 
     private var title: String {
