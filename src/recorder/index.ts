@@ -55,7 +55,7 @@ import {
     waitForEditorOpen,
 } from "./lib/library";
 import { chaptersOf, clickGroupsOf, markersOf, searchLibrary } from "./lib/moments";
-import { applyEdit, undoLastEdit } from "./lib/movie-client";
+import { applyEdit, redoLastEdit, undoLastEdit } from "./lib/movie-client";
 import { type DisplayRange, PROXY_DISPLAY_POLICIES, type ProxyDisplay, parseDisplayPlan } from "./lib/proxy";
 import { copyRecording, revealRecording, trashRecordings } from "./lib/quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./lib/review";
@@ -445,13 +445,27 @@ program
 program
     .command("undo")
     .description(
-        "Put an edit back as it was before its last change made with apply or the REPL (30 steps, across runs)"
+        "Put an edit back as it was before its last change, made with apply, the REPL or the editor window (30 steps, across runs); redo makes it again"
     )
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .action(async (value: string) => {
         try {
             const undone = await undoLastEdit(value);
             out.result({ undone: undone.undone ?? [], ...describeProject(undone.project, undone.path) });
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("redo")
+    .description("Make the last change that undo took back again, while the edit has not changed since that undo")
+    .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+    .action(async (value: string) => {
+        try {
+            const redone = await redoLastEdit(value);
+            out.result({ redone: redone.redone ?? [], ...describeProject(redone.project, redone.path) });
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;

@@ -137,7 +137,7 @@ export const serviceApi = defineApi({
             name: "edit.redo",
             params: z.object({ path }),
             result: editAnswer.extend({ redone: z.array(z.string()) }),
-            doc: "Makes the last undone change again; it needs an open session.",
+            doc: "Makes the last undone change again: the open session's, else the last undo saved to the file.",
             effect: "reversible",
         }),
         defineMethod({

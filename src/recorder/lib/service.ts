@@ -14,7 +14,7 @@ import { callTimeoutFor } from "@genesiscz/utils/screen-recorder/live";
 import { RECORDING_EVENT, RECORDINGS_CHANGED } from "@genesiscz/utils/screen-recorder/service-link";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
-import { editPathOf, editProject, setEditOwner, undoEdit, withEditCancel } from "./edit";
+import { editPathOf, editProject, redoEdit, setEditOwner, undoEdit, withEditCancel } from "./edit";
 import { type EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import { ConnectedAppHost, type HeadlessDeps, HeadlessHost, type HostCallContext, type RecorderHost } from "./host";
 import { listLibrary } from "./library";
@@ -442,7 +442,13 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             const session = sessions.get(editPathOf(params.path));
 
             if (!session) {
-                throw new RpcError(RPC_ERRORS.nothingToRedo, "redo needs an open session of the edit (session.open)");
+                const redone = await redoEdit(params.path);
+
+                if (redone.saved) {
+                    fileChanged(redone, connection, "redo");
+                }
+
+                return { revision: redone.project.revision, project: redone.project, redone: redone.redone ?? [] };
             }
 
             const answer = await session.redo({ by: byOf(connection) });

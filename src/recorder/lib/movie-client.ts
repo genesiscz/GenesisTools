@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import type { MethodDescriptor } from "@genesiscz/utils/api-descriptor";
 import { logger } from "@genesiscz/utils/logger";
 import type { EditOp } from "@genesiscz/utils/recording-editor/project";
-import { editPathOf, editProject, type OpenedProject, undoEdit } from "./edit";
+import { editPathOf, editProject, type OpenedProject, redoEdit, undoEdit } from "./edit";
 import { resolveRecording } from "./library";
 import { withServiceClient } from "./service-client";
 import { readLiveService } from "./service-protocol";
@@ -30,6 +30,7 @@ interface ServiceEditAnswer {
     removedIdleUs?: Array<[number, number]>;
     loudness?: { measuredLufs: number | null; volume: number };
     undone?: string[];
+    redone?: string[];
 }
 
 function openedOf(value: string, answer: ServiceEditAnswer): OpenedProject {
@@ -41,6 +42,7 @@ function openedOf(value: string, answer: ServiceEditAnswer): OpenedProject {
         ...(answer.removedIdleUs?.length ? { removedIdleUs: answer.removedIdleUs } : {}),
         ...(answer.loudness ? { loudness: answer.loudness } : {}),
         ...(answer.undone ? { undone: answer.undone } : {}),
+        ...(answer.redone ? { redone: answer.redone } : {}),
     };
 }
 
@@ -85,6 +87,20 @@ export async function undoLastEdit(value: string, options: { dir?: string } = {}
 
     const answer = await withServiceClient(entry, (client) =>
         client.call<ServiceEditAnswer>("edit.undo", { path: callerPath(value) })
+    );
+    return openedOf(value, answer);
+}
+
+/** `tools recorder redo`: through the running service (`edit.redo`), else in this process (`redoEdit`). */
+export async function redoLastEdit(value: string, options: { dir?: string } = {}): Promise<OpenedProject> {
+    const entry = readLiveService(options.dir);
+
+    if (!entry) {
+        return redoEdit(value);
+    }
+
+    const answer = await withServiceClient(entry, (client) =>
+        client.call<ServiceEditAnswer>("edit.redo", { path: callerPath(value) })
     );
     return openedOf(value, answer);
 }

@@ -29,7 +29,7 @@ import { editProject, readUndoSteps, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
 import { EDITOR_TABS, shortRecordingId } from "./library";
-import { applyEdit, serviceRoutedMovie, undoLastEdit } from "./movie-client";
+import { applyEdit, redoLastEdit, serviceRoutedMovie, undoLastEdit } from "./movie-client";
 import { editorGolden, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
 import { hostCloseEditor, hostStill, ServiceHost } from "./service-client";
@@ -762,6 +762,32 @@ describe("the REPL's and the CLI's way to the service", () => {
         expect((await undoLastEdit(remote, { dir })).undone).toEqual(["volume", "mute", "text", "marker"]);
         expect((await undoLastEdit(local, { dir: nobody })).undone).toEqual(["volume", "mute", "text", "marker"]);
         expect(comparable(remote)).toEqual(comparable(local));
+    });
+
+    // Regression test: deep test 2026-11-07 R2-RE1 — an agent's undo from the CLI could not be made again: there was no
+    // redo command, and the service refused edit.redo for an edit no window held.
+    test("redo makes an undone CLI step again, in process and through the service, and a new edit drops it", async () => {
+        const ops = [{ op: "marker", at: 2, label: "Step one" }] as const;
+        const nobody = mkdtempSync(join(tmpdir(), "rs-none-"));
+        const local = editFixture("rs-redo-local-");
+        await applyEdit(local, [...ops], { dir: nobody });
+        await undoLastEdit(local, { dir: nobody });
+        const redone = await redoLastEdit(local, { dir: nobody });
+        expect(redone.redone).toEqual(["marker"]);
+        expect(redone.project.markers?.map((marker) => marker.label)).toEqual(["Step one"]);
+        expect((await undoLastEdit(local, { dir: nobody })).undone).toEqual(["marker"]);
+
+        const { dir } = await serviceFixture();
+        const remote = editFixture("rs-redo-remote-");
+        await applyEdit(remote, [...ops], { dir });
+        await undoLastEdit(remote, { dir });
+        expect((await redoLastEdit(remote, { dir })).project.markers?.map((marker) => marker.label)).toEqual([
+            "Step one",
+        ]);
+
+        await undoLastEdit(remote, { dir });
+        await applyEdit(remote, [{ op: "volume", volume: 0.5 }], { dir });
+        await expect(redoLastEdit(remote, { dir })).rejects.toThrow("nothing to redo");
     });
 
     test("the REPL's still reaches the connected host over the service and its answer comes back", async () => {

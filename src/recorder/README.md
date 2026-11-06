@@ -38,7 +38,8 @@ tools recorder mark <label> [id]                 # a marker at this moment (a mo
 tools recorder markers <recording> [--chapters]  # its markers as JSON with where each plays, or "0:00 Intro" chapter lines
 tools recorder click-groups <recording> [--gap 3] # its clicks in groups (count, source seconds, where each plays), as movie.clickGroups()
 tools recorder rename <recording> <title>        # a new title for the library, the editor window and movies.list()
-tools recorder undo <recording>                  # back one step of apply or the REPL (30 steps in <edit>.undo.json)
+tools recorder undo <recording>                  # back one step of apply, the REPL or the window (30 steps in <edit>.undo.json)
+tools recorder redo <recording>                  # make the step undo took back again, while nothing changed since
 tools recorder search <text> [--json]            # titles, marker labels and cached transcript lines across the library
 tools recorder sheet <recording> [--count N] [--from T] [--to T] [--at T,T] [--out PNG]  # frames on one labelled PNG
 tools recorder list [--live] [--limit N] [--json]  # local start times, length, outcome and a short id that every
