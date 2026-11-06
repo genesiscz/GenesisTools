@@ -777,16 +777,15 @@ struct CaptionLinesList: View {
         VStack(alignment: .leading, spacing: 6) {
             // A name the transcriber got wrong is wrong in every line: one replace fixes them all (one ⌘Z).
             SectionLabel(text: "Replace in every line")
-            TextField("Find words, e.g. a name it misheard", text: $find)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityLabel("Find words")
-                .accessibilityIdentifier("recorder.captions.find")
+            // AppKit fields: an agent's accessibility write reaches `find`, so Replace All enables for it too.
+            AgentTextField("Find words, e.g. a name it misheard", text: $find, label: "Find words",
+                           identifier: "recorder.captions.find")
+                .frame(height: 22)
             HStack(spacing: 6) {
-                TextField("Replace with", text: $replacement)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { model.replaceWords(find: find, replace: replacement) }
-                    .accessibilityLabel("Replace with")
-                    .accessibilityIdentifier("recorder.captions.replace")
+                AgentTextField("Replace with", text: $replacement, identifier: "recorder.captions.replace") {
+                    model.replaceWords(find: find, replace: replacement)
+                }
+                .frame(height: 22)
                 GhostButton("Replace All", symbol: "text.badge.checkmark", tooltip: "Replace these words in every line (whole words, any case; ⌘Z takes it back)",
                             identifier: "recorder.captions.replaceAll") { model.replaceWords(find: find, replace: replacement) }
                     .disabled(find.trimmingCharacters(in: .whitespaces).isEmpty)

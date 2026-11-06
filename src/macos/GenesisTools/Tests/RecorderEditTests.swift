@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import GenesisKit
 import SwiftUI
 import Vision
 import XCTest
@@ -1026,6 +1027,25 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(EditorModel.fixAllNotice(fixed: nil), "Fixed. ⌘Z undoes it.")
         XCTAssertEqual(EditorModel.actionNotice(label: "Lengthen", changed: false), "Lengthen changed nothing.")
         XCTAssertEqual(EditorModel.actionNotice(label: "Lengthen", changed: true), "Lengthen: done. ⌘Z undoes it.")
+    }
+
+    // Regression test: deep test 2026-11-06 RE12 — an accessibility write put the words into "Find words", but the
+    // field's binding never saw them, so Replace All stayed disabled for an agent.
+    func testAnAccessibilityWriteIntoTheFindFieldReachesItsBinding() throws {
+        var text = ""
+        let host = NSHostingView(rootView: AgentTextField("Find words", text: Binding(get: { text }, set: { text = $0 })))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 30), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        func field(in view: NSView) -> NSTextField? {
+            if let field = view as? NSTextField { return field }
+            return view.subviews.lazy.compactMap { field(in: $0) }.first
+        }
+        let found = try XCTUnwrap(field(in: host), "the control is an AppKit text field")
+        found.setAccessibilityValue("misheard")
+        XCTAssertEqual(text, "misheard", "the write reaches the binding, so Replace All can enable")
+        XCTAssertEqual(found.accessibilityLabel(), "Find words", "VoiceOver reads its placeholder as its name")
     }
 
     func testAnOutsideEditIsSaidInWordsWithWhatToFlashAndWhere() throws {
