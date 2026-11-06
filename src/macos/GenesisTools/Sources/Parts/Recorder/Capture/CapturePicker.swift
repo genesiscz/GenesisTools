@@ -325,16 +325,16 @@ struct CaptureOptionsView: View {
                     "\($0 == $0.rounded() ? String(Int($0)) : String($0)) %"
                 }
             }
-            row("System audio", detail: "What the Mac plays, as its own track") {
+            row("System audio", detail: "What the Mac plays, as its own track; a display or an area only (a window movie has no audio)") {
                 toggle($model.options.systemAudio, "recorder.capture.audio.system")
             }
-            row("Microphone", detail: "Your voice, as its own track") {
+            row("Microphone", detail: "Your voice, as its own track; a display or an area only (a window movie has no audio)") {
                 toggle($model.options.microphone, "recorder.capture.audio.mic")
             }
-            row("Draw the cursor", detail: "The editor draws it smoothed and at any size; off keeps the system cursor") {
+            row("Draw the cursor", detail: "The editor draws it smoothed and at any size; off keeps the system cursor. A window movie has no cursor track") {
                 toggle($model.options.drawCursor, "recorder.capture.drawCursor")
             }
-            row("Shortcuts overlay", detail: "Keeps ⌘ and ⌃ shortcuts for the editor's overlay; plain typing never") {
+            row("Shortcuts overlay", detail: "Keeps ⌘ and ⌃ shortcuts for the editor's overlay; plain typing never. Not for a window movie") {
                 toggle($model.options.shortcutsOverlay, "recorder.capture.shortcuts")
             }
             row("Camera bubble", detail: "Records the camera beside the screen; drag the bubble to place it") {

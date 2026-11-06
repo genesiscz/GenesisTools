@@ -28,6 +28,14 @@ enum CaptureChoice: Equatable {
         }
     }
 
+    /// A display, an area or the screen in use; not a window or an app, whose movie has no audio track.
+    var recordsAudio: Bool {
+        switch self {
+        case .target(.window), .target(.app): false
+        case .target(.display), .area, .followPointer: true
+        }
+    }
+
     /// Cocoa screen rect (bottom-left origin) to CoreGraphics global points, given the primary display's height.
     static func coreGraphicsRect(cocoa rect: CGRect, primaryHeight: CGFloat) -> CGRect {
         CGRect(x: rect.minX, y: primaryHeight - rect.maxY, width: rect.width, height: rect.height)
@@ -110,7 +118,8 @@ struct CaptureOptions: Equatable {
         args += ["--fps", String(fps)]
         if idleFps > 0 { args += ["--idle-fps", Self.number(idleFps)] }
         if threshold != 0.5 { args += ["--threshold", Self.number(threshold)] }
-        if !audioSources.isEmpty { args += ["--audio", audioSources.joined(separator: ",")] }
+        // A window or app movie is made from those windows alone and has no audio track; `start` refuses --audio there.
+        if !audioSources.isEmpty, choice.recordsAudio { args += ["--audio", audioSources.joined(separator: ",")] }
         if !drawCursor { args.append("--system-cursor") }
         if !shortcutsOverlay { args.append("--no-shortcuts") }
         if camera { args.append("--camera") }

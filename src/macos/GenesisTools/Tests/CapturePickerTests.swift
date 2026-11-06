@@ -55,6 +55,19 @@ final class CapturePickerTests: XCTestCase {
         ])
     }
 
+    /// The defect: with an audio toggle on, a window or app choice passed --audio, which a window movie cannot record,
+    /// so the start was refused. Its audio flags stay out; a display and an area keep them.
+    func testAWindowOrAppChoiceLeavesTheAudioOutAndADisplayOrAreaKeepsIt() {
+        var options = CaptureOptions()
+        options.systemAudio = true
+        options.microphone = true
+        let window = options.startArguments(.target(.window(ids: [501], app: "Editor", title: nil, pid: 4101)))
+        XCTAssertFalse(window.contains("--audio"))
+        XCTAssertFalse(options.startArguments(.target(.app(app: "Editor", name: nil))).contains("--audio"))
+        XCTAssertTrue(options.startArguments(.area(CGRect(x: 0, y: 0, width: 10, height: 10))).contains("--audio"))
+        XCTAssertTrue(options.startArguments(.followPointer).contains("--audio"))
+    }
+
     func testOptionsRoundTripThroughDefaultsAndRefuseValuesThePickerDoesNotOffer() throws {
         let suite = "genesistools.tests.capture.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
