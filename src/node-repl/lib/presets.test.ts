@@ -60,6 +60,35 @@ describe("preset store", () => {
         expect(() => readPreset("missing", dir)).toThrow('no preset "missing"; saved: kept');
     });
 
+    // NR19: a script that did not parse was saved and failed at its first run; zod's issue array was the CLI's message.
+    test("refuses a script that does not parse and a bad name with one line, and writes nothing", () => {
+        const dir = root();
+        expect(() =>
+            savePreset({ name: "broken", input: { script: "return ((( ;" }, knownToolsets: known, root: dir })
+        ).toThrow(/^the script of preset broken does not parse: /);
+        expect(existsSync(join(dir, "broken"))).toBe(false);
+        expect(() =>
+            savePreset({ name: "../escape", input: { script: "1" }, knownToolsets: known, root: dir })
+        ).toThrow(
+            /^a preset name is 1–64 letters, digits, dots, dashes or underscores, starting with a letter or digit$/
+        );
+    });
+
+    // NR19: saving a name again replaced the script with no copy anywhere.
+    test("saving a name again moves the old version to .trash", () => {
+        const dir = root();
+        savePreset({ name: "twice", input: { script: "return 'first';" }, knownToolsets: known, root: dir });
+        const second = savePreset({
+            name: "twice",
+            input: { script: "return 'second';" },
+            knownToolsets: known,
+            root: dir,
+        });
+        expect(second.replaced).toBeDefined();
+        expect(readFileSync(join(second.replaced ?? "", PRESET_SCRIPT), "utf8")).toBe("return 'first';\n");
+        expect(readPreset("twice", dir).script).toBe("return 'second';\n");
+    });
+
     test("removal moves the folder to .trash and the list drops it", () => {
         const dir = root();
         savePreset({ name: "old", input: { script: "1" }, knownToolsets: known, root: dir });
@@ -93,6 +122,15 @@ describe("preset params", () => {
         expect(resolveParams(meta, { count: 3 })).toEqual({ url: "https://example.org", count: 3, loud: false });
         expect(() => resolveParams(meta, {})).toThrow("needs count");
         expect(() => resolveParams(meta, { count: 1, colour: "red" })).toThrow("has no param colour");
+    });
+
+    // NR19: in the REPL, presets.run('p', { url: 5 }) ran with a number for a string param; the CLI checked types.
+    test("a value of the wrong type is refused, as the command line refuses it", () => {
+        expect(() => resolveParams(meta, { count: 1, url: 5 })).toThrow("param url takes a string (got 5)");
+        expect(() => resolveParams(meta, { count: "3" })).toThrow('param count takes a number (got "3")');
+        expect(() => resolveParams(meta, { count: 1, loud: "yes" })).toThrow(
+            'param loud takes true or false (got "yes")'
+        );
     });
 
     test("text from a command line is read as the param's type", () => {

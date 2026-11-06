@@ -264,6 +264,11 @@ preset
                 knownToolsets: REPL_TOOLSET_IDS,
             });
             out.printlnErr(`saved preset ${saved.meta.name} in ${saved.folder}`);
+
+            if (saved.replaced) {
+                out.printlnErr(`the version it replaced is in ${saved.replaced}`);
+            }
+
             out.result(saved.meta);
         } catch (error) {
             logger.error(error instanceof Error ? error.message : String(error));

@@ -59,6 +59,47 @@ export interface Preset {
 }
 
 /** `~/.genesis-tools/node-repl/presets` (GENESIS_TOOLS_HOME in tests). */
+/** A schema's parse whose failure is one line of messages, never zod's JSON array of issues (NR19). */
+function parseOneLine<T extends z.ZodType>(schema: T, value: unknown): z.output<T> {
+    const parsed = schema.safeParse(value);
+
+    if (!parsed.success) {
+        throw new Error(
+            parsed.error.issues
+                .map((issue) => (issue.path.length > 0 ? `${issue.path.join(".")}: ${issue.message}` : issue.message))
+                .join("; ")
+        );
+    }
+
+    return parsed.data;
+}
+
+type AsyncBody = (params: Record<string, unknown>) => Promise<unknown>;
+/** The constructor of async functions, which the language does not name as a global. */
+export const AsyncFunction: new (...args: string[]) => AsyncBody = Object.getPrototypeOf(
+    async () => undefined
+).constructor;
+
+/** Refuses a script that does not parse as an async function's body, at save rather than at its first run (NR19). */
+function checkScript(name: string, script: string): void {
+    try {
+        new AsyncFunction("params", script);
+    } catch (error) {
+        throw new Error(
+            `the script of preset ${name} does not parse: ${error instanceof Error ? error.message : String(error)}`
+        );
+    }
+}
+
+/** Moves a preset's folder to `.trash/<name>-<time>` and returns where, so it can be moved back. */
+function moveToTrash(folder: string, name: string, root: string, now: Date): string {
+    const trash = join(root, ".trash");
+    mkdirSync(trash, { recursive: true });
+    const target = join(trash, `${name}-${now.toISOString().replace(/[:.]/g, "-")}`);
+    renameSync(folder, target);
+    return target;
+}
+
 export function presetsRoot(): string {
     return genesisToolsDir("node-repl", "presets");
 }
@@ -84,12 +125,14 @@ export function savePreset(options: {
     knownToolsets: readonly string[];
     root?: string;
     now?: Date;
-}): Preset {
-    const name = presetNameSchema.parse(options.name);
-    const input = savePresetSchema.parse(options.input);
+}): Preset & { replaced?: string } {
+    const name = parseOneLine(presetNameSchema, options.name);
+    const input = parseOneLine(savePresetSchema, options.input);
+    checkScript(name, input.script);
     const root = options.root ?? presetsRoot();
     const folder = join(root, name);
-    const now = (options.now ?? new Date()).toISOString();
+    const at = options.now ?? new Date();
+    const now = at.toISOString();
     const previous = existsSync(join(folder, PRESET_META)) ? readPreset(name, root).meta : undefined;
     const unknown = (input.toolsets ?? []).filter((id) => !options.knownToolsets.includes(id));
 
@@ -97,7 +140,7 @@ export function savePreset(options: {
         throw new Error(`unknown toolset ${unknown.join(", ")}; known: ${options.knownToolsets.join(", ")}`);
     }
 
-    const meta = presetMetaSchema.parse({
+    const meta = parseOneLine(presetMetaSchema, {
         version: PRESET_VERSION,
         name,
         ...(input.description ? { description: input.description } : {}),
@@ -108,15 +151,17 @@ export function savePreset(options: {
         runs: previous?.runs ?? 0,
         ...(previous?.lastRunAt ? { lastRunAt: previous.lastRunAt } : {}),
     });
+    // A second save keeps the version it replaces in .trash/, as a removal does (NR19).
+    const replaced = previous ? moveToTrash(folder, name, root, at) : undefined;
     mkdirSync(folder, { recursive: true });
     writeFileSync(join(folder, PRESET_SCRIPT), `${input.script.trimEnd()}\n`);
     writeFileSync(join(folder, PRESET_META), `${SafeJSON.stringify(meta, null, 2)}\n`);
-    log.info({ name, folder, toolsets: meta.toolsets, params: Object.keys(meta.params) }, "preset saved");
-    return { meta, script: input.script, folder };
+    log.info({ name, folder, replaced, toolsets: meta.toolsets, params: Object.keys(meta.params) }, "preset saved");
+    return { meta, script: input.script, folder, ...(replaced ? { replaced } : {}) };
 }
 
 export function readPreset(name: string, root = presetsRoot()): Preset {
-    const folder = join(root, presetNameSchema.parse(name));
+    const folder = join(root, parseOneLine(presetNameSchema, name));
     const metaPath = join(folder, PRESET_META);
 
     if (!existsSync(metaPath)) {
@@ -124,7 +169,7 @@ export function readPreset(name: string, root = presetsRoot()): Preset {
         throw new Error(`no preset "${name}"; saved: ${known.join(", ") || "none"}`);
     }
 
-    const meta = presetMetaSchema.parse(SafeJSON.parse(readFileSync(metaPath, "utf8"), { strict: true }));
+    const meta = parseOneLine(presetMetaSchema, SafeJSON.parse(readFileSync(metaPath, "utf8"), { strict: true }));
     return { meta, script: readFileSync(join(folder, PRESET_SCRIPT), "utf8"), folder };
 }
 
@@ -156,10 +201,7 @@ export function listPresets(root = presetsRoot()): PresetMeta[] {
 /** Moves the preset to `.trash/<name>-<time>`; returns where, so it can be moved back. */
 export function removePreset(name: string, root = presetsRoot(), now = new Date()): string {
     const { folder } = readPreset(name, root);
-    const trash = join(root, ".trash");
-    mkdirSync(trash, { recursive: true });
-    const target = join(trash, `${name}-${now.toISOString().replace(/[:.]/g, "-")}`);
-    renameSync(folder, target);
+    const target = moveToTrash(folder, name, root, now);
     log.info({ name, target }, "preset moved to the trash");
     return target;
 }
@@ -193,6 +235,22 @@ export function coerceParam(name: string, param: PresetParam, raw: string): unkn
     }
 }
 
+/** Refuses a value of another type than the param's, as `coerceParam` refuses text from a command line (NR19). */
+function checkParamType(name: string, param: PresetParam, value: unknown): void {
+    const fits =
+        param.type === "json" ||
+        (param.type === "string" && typeof value === "string") ||
+        (param.type === "number" && typeof value === "number" && Number.isFinite(value)) ||
+        (param.type === "boolean" && typeof value === "boolean");
+
+    if (!fits) {
+        const wanted = { string: "a string", number: "a number", boolean: "true or false", json: "any value" }[
+            param.type
+        ];
+        throw new Error(`param ${name} takes ${wanted} (got ${SafeJSON.stringify(value)})`);
+    }
+}
+
 /** The values a run gets: the defaults, then `values`. Refuses an unknown name and a missing required one. */
 export function resolveParams(meta: PresetMeta, values: Record<string, unknown> = {}): Record<string, unknown> {
     const declared = Object.keys(meta.params);
@@ -211,6 +269,10 @@ export function resolveParams(meta: PresetMeta, values: Record<string, unknown> 
 
         if (value === undefined) {
             throw new Error(`preset ${meta.name} needs ${key}${param.description ? ` (${param.description})` : ""}`);
+        }
+
+        if (Object.hasOwn(values, key)) {
+            checkParamType(key, param, value);
         }
 
         resolved[key] = value;

@@ -4,6 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import { z } from "zod";
 import {
+    AsyncFunction,
     listPresets,
     noteRun,
     presetNameSchema,
@@ -62,10 +63,6 @@ const remove = defineMethod({
     effect: "reversible",
     doc: "Moves a preset to the presets folder's .trash/, from where it can be moved back.",
 });
-
-type AsyncBody = (params: Record<string, unknown>) => Promise<unknown>;
-/** The constructor of async functions, which the language does not name as a global. */
-const AsyncFunction: new (...args: string[]) => AsyncBody = Object.getPrototypeOf(async () => undefined).constructor;
 
 /**
  * Runs a preset's script as the body of an async function in the REPL's own global scope, so it sees every loaded
