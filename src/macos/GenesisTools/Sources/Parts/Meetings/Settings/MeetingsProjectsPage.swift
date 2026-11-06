@@ -79,6 +79,10 @@ struct MeetingsProjectsPage: View {
                     TextField("Project name (letters, digits, . _ -)", text: $newProject)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit(add)
+                        // Clears once the project is saved; a refused name stays to be corrected.
+                        .onChange(of: settings.projectNames) { _, names in
+                            if names.contains(newProject.trimmingCharacters(in: .whitespaces)) { newProject = "" }
+                        }
                     Button("Add a project", action: add)
                         .buttonStyle(.bordered).nativeSettingsPointer()
                         .disabled(newProject.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -89,7 +93,6 @@ struct MeetingsProjectsPage: View {
 
     private func add() {
         model.addProject(newProject)
-        newProject = ""
     }
 }
 
@@ -250,6 +253,10 @@ struct TokenList: View {
                 .textFieldStyle(.roundedBorder).frame(maxWidth: 260)
                 .onSubmit(add)
                 .onExitCommand { text = "" }
+                // Clears once the saved list holds the value; a refused write keeps it in the field.
+                .onChange(of: values) { _, now in
+                    if now.contains(text.trimmingCharacters(in: .whitespaces)) { text = "" }
+                }
         }
     }
 
@@ -260,7 +267,6 @@ struct TokenList: View {
             return
         }
         commit(values + [value])
-        text = ""
     }
 }
 
@@ -318,6 +324,8 @@ struct MeetingsDictionaryPage: View {
     @State private var spoken = ""
     @State private var caseSensitive = false
     @State private var editing: DictionaryEntry?
+    /// The value of an Add or Save in flight: the form clears once the dictionary holds it, so a refusal keeps it.
+    @State private var pendingValue: String?
 
     var body: some View {
         MeetingsSettingsFrame(model: model, reads: .dictionary) { settings in
@@ -387,7 +395,7 @@ struct MeetingsDictionaryPage: View {
                                        substitution: substitution.trimmingCharacters(in: .whitespaces),
                                        spoken: MeetingsDictionaryRules.spokenForms(spoken), meaning: meaning,
                                        caseSensitive: caseSensitive, replacing: editing?.value)
-                        clear()
+                        pendingValue = trimmed
                     }
                     .buttonStyle(.borderedProminent).nativeSettingsPointer()
                     .disabled(!canSave)
@@ -421,6 +429,11 @@ struct MeetingsDictionaryPage: View {
                     .liveRow()
                 }
             }
+        }
+        .onChange(of: model.dictionary.value?.entries ?? []) { _, entries in
+            guard let pendingValue, entries.contains(where: { $0.value == pendingValue }) else { return }
+            self.pendingValue = nil
+            clear()
         }
     }
 

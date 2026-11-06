@@ -182,7 +182,7 @@ struct MeetingDetailView: View {
                 .instantTooltip(on ? "Remove the label \(label)" : "Add the label \(label)")
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
-            AddLabelButton(enabled: record?.project != nil) { detail.toggleLabel($0, on: true) }
+            AddLabelButton(enabled: record?.project != nil, labels: record?.labels ?? []) { detail.toggleLabel($0, on: true) }
         }
     }
 
@@ -214,9 +214,13 @@ struct MeetingDetailView: View {
 /// "+ Label": a popover with one field; Return adds, Esc closes. A new label joins the project's labels.
 private struct AddLabelButton: View {
     let enabled: Bool
+    /// The meeting's labels: the field clears and the popover closes once the new one is among them, so a refused
+    /// label keeps what was typed.
+    let labels: [String]
     let add: (String) -> Void
     @State private var open = false
     @State private var text = ""
+    @State private var pending: String?
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -239,18 +243,22 @@ private struct AddLabelButton: View {
             .padding(12)
             .onAppear { focused = true }
         }
+        .onChange(of: labels) { _, now in
+            guard let pending, now.contains(pending) else { return }
+            self.pending = nil
+            text = ""
+            open = false
+        }
     }
 
     private func commit() {
         let label = text.trimmingCharacters(in: .whitespaces)
         guard !label.isEmpty else { return }
+        pending = label
         add(label)
-        text = ""
-        open = false
     }
 }
 
-/// A pane's read state in one place: the content, a spinner with what is being read, or the error with Retry.
 /// What a pane says for a meeting with no source that has a transcript or audio, where the CLI answers
 /// `[no-transcript-source]`: an empty state, not the refusal as an error.
 struct NoTranscriptSource {
