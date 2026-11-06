@@ -197,6 +197,14 @@ function corrections(db: Database, meetingId: string): Map<string, string> {
     return new Map(rows.map((row) => [row.entryId, row.editedText]));
 }
 
+/** Whether this Mac's Wispr Flow database holds the meeting: one indexed lookup, no transcript read. */
+export function hasLocalMeeting(id: string): boolean {
+    return (
+        withDb((db) => db.query<{ one: number }, [string]>("SELECT 1 AS one FROM Meetings WHERE id = ?").get(id)) !==
+        null
+    );
+}
+
 export function getLocalMeeting(id: string): Meeting | undefined {
     return withDb((db) => {
         const row = db.query<MeetingRow, [string]>("SELECT * FROM Meetings WHERE id = ?").get(id);

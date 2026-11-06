@@ -5,6 +5,7 @@ import { type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/reco
 import type { TranscriptFormat } from "@genesiscz/utils/transcribe/render";
 import { type SpeakerStats, speakerStats } from "@genesiscz/utils/transcribe/speakers";
 import { type AssignDeps, type AssignView, skipReason, viewProposals } from "./assign";
+import { captureCost } from "./capture-cost";
 import { configValueAt, parseConfigPath } from "./config-edit";
 import { transcriptMarkdown } from "./export";
 import { type MatchDraft, type MatchPreviewRow, matchDraftSchema, matchPreview } from "./match-preview";
@@ -32,6 +33,12 @@ export async function overviewRead(options: { days: number; now: Date }): Promis
     });
     view.olderMeetings += bounded.olderMeetings;
     return view;
+}
+
+/** `meetings record cost`: what a kept frame and each capture choice cost, from the recordings so far. */
+export async function captureCostRead(): Promise<ReturnType<typeof captureCost>> {
+    const store = new MeetingStore();
+    return captureCost({ store, records: store.list(), config: await new MeetingsConfigStore().read() });
 }
 
 /** `meetings config show [path]`: the config file's path and the value at `path` (the whole config without one). */

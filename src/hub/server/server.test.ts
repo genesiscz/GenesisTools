@@ -3,8 +3,11 @@ import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { windowJson } from "@app/meetings/lib/window-reads";
+import { asResult } from "@genesiscz/utils/cli/result";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { onReleaseMemory } from "@genesiscz/utils/process/release-memory";
 import { nativeRootsKey } from "@genesiscz/utils/providers/session-paths";
 import { currentTraceId } from "@genesiscz/utils/trace";
@@ -13,6 +16,18 @@ import { askHubServer, callHubServer } from "./client";
 import { agentsToolChangesDoor, agentsTurnChangesDoor } from "./doors/changes";
 import { proposalListDoor, repoDoor, usageSessionsDoor } from "./doors/frequent";
 import { HUB_SERVER_DOORS } from "./doors/index";
+import {
+    meetingsConfigShowDoor,
+    meetingsDictionaryShowDoor,
+    meetingsDictionaryTestDoor,
+    meetingsOverviewDoor,
+    meetingsProjectsPreviewDoor,
+    meetingsRecordCostDoor,
+    meetingsScreenTimelineDoor,
+    meetingsShowDoor,
+    meetingsSpeakerStatsDoor,
+    meetingsTranscriptDoor,
+} from "./doors/meetings";
 import { navConfigureDoor, navListDoor, navRecordDoor } from "./doors/nav";
 import { prShowDoor } from "./doors/prs";
 import { transcriptFetchDoor, transcriptLiveDoor } from "./doors/transcript";
@@ -604,6 +619,72 @@ describe("hub server argv", () => {
             proposalListDoor.match(["hub", "proposal", "list", "--json", "--provider", "bitbucket", ...pr.slice(2)])
         ).toBeNull();
         expect(proposalListDoor.match(["hub", "proposal", "list", ...pr])).toBeNull();
+    });
+});
+
+describe("meetings doors", () => {
+    it("take the argv the Meetings window sends, and leave every other shape to the process", () => {
+        expect(meetingsOverviewDoor.match(["meetings", "overview", "--days", "14", "--json"])).toEqual({ days: 14 });
+        expect(meetingsOverviewDoor.match(["meetings", "overview", "--json"])).toEqual({ days: 14 });
+        expect(meetingsOverviewDoor.match(["meetings", "overview", "--days", "0", "--json"])).toBeNull();
+        expect(meetingsOverviewDoor.match(["meetings", "overview", "--days", "1.5", "--json"])).toBeNull();
+        expect(meetingsOverviewDoor.match(["meetings", "overview", "--days", "14"])).toBeNull();
+        expect(meetingsConfigShowDoor.match(["meetings", "config", "show", "--json"])).toBe(true);
+        expect(meetingsConfigShowDoor.match(["meetings", "config", "show", "global", "--json"])).toBeNull();
+        expect(meetingsShowDoor.match(["meetings", "show", "m1", "--json"])).toEqual({ ref: "m1" });
+        expect(meetingsTranscriptDoor.match(["meetings", "transcript", "m1", "--format", "json"])).toEqual({
+            ref: "m1",
+        });
+        expect(meetingsTranscriptDoor.match(["meetings", "transcript", "m1", "--format", "md"])).toBeNull();
+        expect(
+            meetingsTranscriptDoor.match(["meetings", "transcript", "m1", "--format", "json", "--with-suggested"])
+        ).toBeNull();
+        expect(meetingsSpeakerStatsDoor.match(["meetings", "speakers", "stats", "m1", "--json"])).toEqual({
+            ref: "m1",
+        });
+        expect(
+            meetingsSpeakerStatsDoor.match(["meetings", "speakers", "stats", "m1", "--json", "--gap", "90s"])
+        ).toBeNull();
+        const timeline = ["meetings", "screen", "m1", "--timeline", "--json"];
+        expect(meetingsScreenTimelineDoor.match(timeline)).toEqual({ ref: "m1", all: false });
+        expect(meetingsScreenTimelineDoor.match([...timeline, "--all"])).toEqual({ ref: "m1", all: true });
+        expect(meetingsScreenTimelineDoor.match(["meetings", "screen", "m1", "--json"])).toBeNull();
+        expect(meetingsRecordCostDoor.match(["meetings", "record", "cost", "--json"])).toBe(true);
+        const preview = ["meetings", "projects", "preview", "--json"];
+        expect(meetingsProjectsPreviewDoor.match(preview)).toEqual({});
+        expect(meetingsProjectsPreviewDoor.match([...preview, "--draft", "{}"])).toEqual({ draft: "{}" });
+        expect(meetingsProjectsPreviewDoor.match([...preview, "--limit", "5"])).toBeNull();
+        expect(meetingsDictionaryShowDoor.match(["meetings", "dictionary", "show", "--json"])).toEqual({});
+        expect(
+            meetingsDictionaryShowDoor.match(["meetings", "dictionary", "show", "--json", "--project", "work"])
+        ).toEqual({ project: "work" });
+        expect(meetingsDictionaryTestDoor.match(["meetings", "dictionary", "test", "a b", "--json"])).toEqual({
+            phrase: "a b",
+        });
+        expect(meetingsDictionaryTestDoor.match(["meetings", "dictionary", "test", "a", "b", "--json"])).toBeNull();
+    });
+
+    it("answer an exact meeting id with the command's bytes, and send a prefix, last or an error to the process", async () => {
+        const store = new MeetingStore();
+        const created = await store.create(
+            { title: "Door fixture", start: "2026-11-06T09:00:00.000Z", createdBy: "new" },
+            { command: "test", change: "fixture" }
+        );
+        const signal = new AbortController().signal;
+        const answer = await meetingsShowDoor.run({ ref: created.id }, { signal });
+        expect(answer).toMatchObject({ exit: 0, stdout: asResult(windowJson(store.read(created.id))) });
+
+        for (const ref of [created.id.slice(0, 8), "last", "../meetings", `wisprflow:${created.id}`]) {
+            await expect(meetingsShowDoor.run({ ref }, { signal })).rejects.toBeInstanceOf(DoorUnsupported);
+        }
+
+        // No local transcript source: the process asks the source and prints its own message.
+        await expect(meetingsTranscriptDoor.run({ ref: created.id }, { signal })).rejects.toBeInstanceOf(
+            DoorUnsupported
+        );
+        await expect(meetingsDictionaryShowDoor.run({ project: "missing" }, { signal })).rejects.toBeInstanceOf(
+            DoorUnsupported
+        );
     });
 });
 

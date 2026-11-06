@@ -25,7 +25,6 @@ import {
 import { callRecorder, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import { formatClock, localTime, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
-import { captureCost } from "../lib/capture-cost";
 import { collectAndReport } from "../lib/collect";
 import { ensureScreenRecording } from "../lib/grants";
 import { linkSource } from "../lib/link";
@@ -42,7 +41,7 @@ import { meetingScreen, type ScreenBoxFrame } from "../lib/screen-boxes";
 import { screenTimeline } from "../lib/screen-timeline";
 import { type SetSettingsFlags, settingsPatchFromFlags } from "../lib/settings-flags";
 import { errorText, fail, TOOL } from "../lib/shared";
-import { windowJson } from "../lib/window-reads";
+import { captureCostRead, windowJson } from "../lib/window-reads";
 import { askProjectAtEnd } from "./watch";
 
 const { log } = logger.scoped("meetings-record-cmd");
@@ -554,8 +553,7 @@ async function timeline(store: MeetingStore, record: MeetingRecord, opts: Screen
 
 async function cost(opts: { json?: boolean }): Promise<void> {
     try {
-        const store = new MeetingStore();
-        const view = captureCost({ store, records: store.list(), config: await new MeetingsConfigStore().read() });
+        const view = await captureCostRead();
 
         if (opts.json) {
             out.result(windowJson(view));
