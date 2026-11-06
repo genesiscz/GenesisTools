@@ -6,7 +6,7 @@ import { env } from "@genesiscz/utils/env";
 import { TemporaryArtifacts } from "@genesiscz/utils/fs/temporary-artifacts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { recorderStartSchema } from "@genesiscz/utils/repl/toolsets/recorder";
+import { displayRefusal, recorderStartSchema } from "@genesiscz/utils/repl/toolsets/recorder";
 import { type LibraryRecording, startRecording } from "@genesiscz/utils/screen-recorder/start";
 import type { FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
 import { stripAnsi } from "@genesiscz/utils/string";
@@ -272,13 +272,15 @@ export class ReplEngine {
             const requestId = message.id;
             const startup = new AbortController();
             const task = (async () => {
+                let recorder: FrameRecorder | undefined;
+
                 try {
                     const recording = await withTimeout(
                         (async () => {
                             const options = recorderStartSchema.parse(message.recordingStart);
                             const { FRAME_RECORDERS } = await import("@genesiscz/utils/screen-recorder/recorders");
                             const { ensureBinaryAsync } = await import("@app/control/lib/runner");
-                            const recorder = this.options.recorder
+                            recorder = this.options.recorder
                                 ? await this.options.recorder.create()
                                 : FRAME_RECORDERS.native({ axTool: async (input) => [await ensureBinaryAsync(input)] });
                             startup.signal.throwIfAborted();
@@ -307,8 +309,12 @@ export class ReplEngine {
                     }
                 } catch (error) {
                     startup.abort(error);
+                    // The message alone: String(error) put the class in front, and the worker's Error put its own
+                    // in front of that ("Error: RpcError: no display 99999"), NR42.
+                    const refusal = await displayRefusal(error, () => recorder?.displays() ?? Promise.resolve([]));
+
                     if (this.worker === worker && worker.exitCode === null) {
-                        worker.send({ id: requestId, error: String(error) });
+                        worker.send({ id: requestId, error: refusal });
                     }
                 }
             })();

@@ -1030,6 +1030,22 @@ describe("recorder and editor toolsets", () => {
         }
     }, 30_000);
 
+    // NR42: "Error: RpcError: no display 99999" and "no display -5" named neither the class once nor the real displays.
+    test("an unknown display is refused once, naming the displays that are there", async () => {
+        const engine = new ReplEngine({ toolsets: ["recorder"], recorder: { create: async () => new FakeRecorder() } });
+        try {
+            const refused = await engine.run("await recorder.start({ displays: [99999] })", 10_000);
+            expect(refused.error).toBe("no display 99999; the displays: 1, 4");
+
+            await engine.run('const rec = await recorder.start({ displays: "all" })', 10_000);
+            const switched = await engine.run("await rec.displays.switch(5)", 10_000);
+            expect(switched.error).toEndWith("; the displays: 1, 4");
+            await engine.run("await rec.stop()", 10_000);
+        } finally {
+            await engine.shutdown();
+        }
+    }, 30_000);
+
     test("serial recorders reject multiple displays before capture and on live selection", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-serial-rec-"));
         const recorder = new FakeRecorder();
