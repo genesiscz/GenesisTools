@@ -93,9 +93,13 @@ final class MeetingsWindowModel {
     var playback = MeetingsPlayback()
     private var overviewGeneration = 0
     private let loadDetail: @MainActor (MeetingDetailModel) -> Void
+    private let refreshLive: @MainActor (MeetingDetailModel) -> Void
 
-    init(defaults: UserDefaults = .standard, loadDetail: @escaping @MainActor (MeetingDetailModel) -> Void = { $0.load() }) {
+    init(defaults: UserDefaults = .standard,
+         loadDetail: @escaping @MainActor (MeetingDetailModel) -> Void = { $0.load() },
+         refreshLive: @escaping @MainActor (MeetingDetailModel) -> Void = { $0.refreshLoaded(proposals: false) }) {
         self.loadDetail = loadDetail
+        self.refreshLive = refreshLive
         place = MeetingsPreferences.openOn(defaults) == .needs ? .needs : .all
         days = MeetingsPreferences.days(defaults)
     }
@@ -170,6 +174,7 @@ final class MeetingsWindowModel {
             select(visibleMeetings.first?.id)
         }
         detail?.listResolved()
+        updateLiveRefresh()
     }
 
     func loadSettings(quiet: Bool = false) {
@@ -203,6 +208,7 @@ final class MeetingsWindowModel {
         if place == .needs, id.map({ needsSelection?.hasSuffix($0) != true }) ?? true {
             needsSelection = id
         }
+        defer { updateLiveRefresh() }
         guard let id else {
             detail?.cancelReads()
             detail = nil
@@ -250,5 +256,63 @@ final class MeetingsWindowModel {
         loadOverview(quiet: true)
         loadSettings(quiet: true)
         detail?.refreshLoaded()
+    }
+
+    // MARK: A live meeting
+
+    /// While the open meeting records and the window can be seen, its parts refresh every few seconds: a window kept in
+    /// front showed a live meeting as it was when the window last became key. A round asks the revisions (one server
+    /// call of a few ms) and reads again only the parts whose token changed. It skips the proposals (a process of about
+    /// 400 ms that reads the Calendar) and the list (its render costs 120 to 180 ms of main thread); the list reads
+    /// again once the recording ends.
+    static let liveRefreshInterval: Duration = .seconds(5)
+    @ObservationIgnored private var liveRefresh: Task<Void, Never>?
+
+    /// Set by the face: the window is on screen and not covered, hidden or minimized.
+    @ObservationIgnored var windowVisible = true {
+        didSet {
+            guard windowVisible != oldValue else { return }
+            updateLiveRefresh()
+            if windowVisible, liveRefreshRuns { liveRound() }
+        }
+    }
+
+    var liveRefreshRuns: Bool { liveRefresh != nil }
+
+    static func isLiveStatus(_ status: String?) -> Bool { status == "recording" || status == "paused" }
+
+    /// The open record decides once it is read, so a refresh sees the recording end; before that, its list row.
+    private var selectedMeetingIsLive: Bool {
+        guard let id = selectedMeetingID else { return false }
+        if detail?.id == id, let recording = detail?.record.value?.recording {
+            return Self.isLiveStatus(recording.status)
+        }
+        return meeting(id)?.live == true
+    }
+
+    private func updateLiveRefresh() {
+        guard selectedMeetingIsLive, windowVisible else {
+            liveRefresh?.cancel()
+            liveRefresh = nil
+            return
+        }
+        guard liveRefresh == nil else { return }
+        liveRefresh = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.liveRefreshInterval)
+                guard !Task.isCancelled, let self else { return }
+                self.liveRound()
+            }
+        }
+    }
+
+    private func liveRound() {
+        guard selectedMeetingIsLive else {
+            liveRefresh?.cancel()
+            liveRefresh = nil
+            loadOverview(quiet: true)
+            return
+        }
+        if let detail { refreshLive(detail) }
     }
 }

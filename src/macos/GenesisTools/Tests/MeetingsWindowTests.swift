@@ -393,6 +393,38 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertTrue(MeetingDetailModel.readsProposalsAtOpen(project: overview.meetings.first { $0.id == "b" }?.project), "b has none")
     }
 
+    /// R2-MP10: a live meeting in a window kept in front never refreshed (only a return to the window did). The rounds
+    /// run while the open meeting records and the window can be seen.
+    func testALiveMeetingRefreshesOnlyWhileTheWindowCanBeSeen() throws {
+        var text = String(decoding: overviewJSON(), as: UTF8.self)
+        let first = try XCTUnwrap(text.range(of: #""live":false"#))
+        text.replaceSubrange(first, with: #""live":true"#)
+        let overview = try JSONDecoder().decode(MeetingsOverview.self, from: Data(text.utf8))
+        let suite = "meetings.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var rounds = 0
+        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in }, refreshLive: { _ in rounds += 1 })
+
+        model.receive(overview)
+        XCTAssertEqual(model.selectedMeetingID, "a")
+        XCTAssertTrue(model.liveRefreshRuns, "the open meeting records and the window can be seen")
+        model.windowVisible = false
+        XCTAssertFalse(model.liveRefreshRuns, "a covered, hidden or minimized window does not refresh")
+        XCTAssertEqual(rounds, 0)
+        model.windowVisible = true
+        XCTAssertTrue(model.liveRefreshRuns)
+        XCTAssertEqual(rounds, 1, "a window that can be seen again refreshes at once")
+        model.select("b")
+        XCTAssertFalse(model.liveRefreshRuns, "a meeting that does not record does not refresh")
+        model.select("a")
+        XCTAssertTrue(model.liveRefreshRuns)
+        model.select(nil)
+        XCTAssertFalse(model.liveRefreshRuns)
+        XCTAssertTrue(MeetingsWindowModel.isLiveStatus("paused"))
+        XCTAssertFalse(MeetingsWindowModel.isLiveStatus("stopped"))
+    }
+
     /// R2-MP1: Up and Down in the Items list, which is a lazy stack now and moves its own selection.
     func testItemsArrowKeysStepThroughTheRows() {
         let rows = ["i1", "i2", "i3"]

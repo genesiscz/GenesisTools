@@ -153,6 +153,11 @@ final class MeetingsWindow: NSObject, NSWindowDelegate {
         if case .loaded = model.overview { model.refreshAfterReturn() }
     }
 
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        // A live meeting refreshes only while the window can be seen (MeetingsWindowModel.windowVisible).
+        model.windowVisible = (notification.object as? NSWindow)?.occlusionState.contains(.visible) ?? true
+    }
+
     /// The window is the face: closing it ends the process, as the hub's window does.
     func windowWillClose(_ notification: Notification) {
         NSApp.terminate(nil)
