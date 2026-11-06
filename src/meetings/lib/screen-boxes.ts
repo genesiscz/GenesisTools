@@ -193,7 +193,7 @@ export async function renderScreenBoxes(request: ScreenBoxesRequest): Promise<Sc
         results.push(result);
     }
 
-    log.info(
+    log.debug(
         { frames: results.length, boxes: results.reduce((sum, one) => sum + one.boxes.length, 0), out: request.outDir },
         "screen boxes written"
     );

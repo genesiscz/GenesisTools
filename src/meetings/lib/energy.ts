@@ -70,7 +70,7 @@ export async function storeCalibration(options: {
         return record;
     }
 
-    log.info({ meeting: record.id, layout: channels.layout, silent: channels.callSilent.length }, "channels stored");
+    log.debug({ meeting: record.id, layout: channels.layout, silent: channels.callSilent.length }, "channels stored");
     return store.update(
         record.id,
         {

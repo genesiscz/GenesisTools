@@ -456,7 +456,7 @@ export async function askMeeting(
     try {
         await deps.inbox.post({ ...buildQuestion(view, config), id: formId, projectPath: store.folder(record.id) });
         setOpen(store, record.id, "ask");
-        log.info({ meeting: record.id, formId, proposals: view.proposals.projects.length }, "asked for the project");
+        log.debug({ meeting: record.id, formId, proposals: view.proposals.projects.length }, "asked for the project");
         return { formId };
     } catch (err) {
         log.warn({ err, meeting: record.id }, "posting the project question failed");

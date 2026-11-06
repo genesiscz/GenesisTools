@@ -324,7 +324,7 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
     cloneTree(fromFolder, join(backup, "before", from.id));
     cloneTree(intoFolder, join(backup, "before", into.id));
     writeFileSync(join(backup, "README.md"), backupReadme({ from, into, root: store.root, folder: backup }));
-    log.info({ from: from.id, into: into.id, backup }, "merge: both folders cloned");
+    log.debug({ from: from.id, into: into.id, backup }, "merge: both folders cloned");
 
     for (const name of MOVED_FOLDERS) {
         const source = join(fromFolder, name);
@@ -419,6 +419,6 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
         });
     }
 
-    log.info({ from: from.id, into: into.id, frames: result.moved.frames, rows: result.moved.rows }, "merge done");
+    log.debug({ from: from.id, into: into.id, frames: result.moved.frames, rows: result.moved.rows }, "merge done");
     return { ...result, backup };
 }

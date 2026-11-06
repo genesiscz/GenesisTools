@@ -465,7 +465,7 @@ export class ListenSession {
                       settled,
                   }
         );
-        log.info({ meeting: this.options.meeting.id, question: question.id, outcome, settled }, "question decided");
+        log.debug({ meeting: this.options.meeting.id, question: question.id, outcome, settled }, "question decided");
         const record = this.current();
         this.options.adapter.note({
             kind: "decided",
