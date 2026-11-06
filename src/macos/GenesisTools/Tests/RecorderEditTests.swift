@@ -351,6 +351,20 @@ final class RecorderEditTests: XCTestCase {
         }
     }
 
+    /// The defect: a search hit showed "00:17 marker one" under the card, but VoiceOver read only "title, 00:31, not
+    /// edited", so it never said why the card matched (review 2026-11-06).
+    func testALibraryCardSaysItsSearchHitToVoiceOver() {
+        let folder = URL(fileURLWithPath: "/tmp/library/video-1")
+        var item = RecorderMenu.Recent(folder: folder, title: "Demo", started: .distantPast, thumbnail: nil, hasMovie: true)
+        item.durationMs = 31_000
+        let hit = LibraryModel.SpokenHit(at: 17, text: "marker one", marker: true, more: [21, 25])
+        XCTAssertEqual(LibraryCard.accessibilityLabel(item, spoken: nil), "Demo, 00:31, not edited")
+        XCTAssertEqual(LibraryCard.accessibilityLabel(item, spoken: hit),
+                       "Demo, 00:31, not edited, marker at 00:17: marker one, 2 more matches")
+        item.failure = "cannot record the window"
+        XCTAssertEqual(LibraryCard.accessibilityLabel(item, spoken: nil), "Demo, did not record: cannot record the window")
+    }
+
     /// The defect: a start that failed left a card with a "Frames" badge and no reason; it now says it failed and why.
     func testAFailedRecordingWithNoMovieReadsAsFailedWithItsFirstWarning() throws {
         let library = FileManager.default.temporaryDirectory.appendingPathComponent("library-\(UUID().uuidString)")

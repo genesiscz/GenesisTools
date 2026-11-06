@@ -379,6 +379,9 @@ struct LibraryView: View {
                                     Text(verbatim: "\(section.items.count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
                                 }
                                 .padding(.top, 4)
+                                // One heading, "Today, 21 recordings", not two ("Today" and "21").
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("\(section.title), \(Plural.count(section.items.count, "recording"))")
                                 .accessibilityAddTraits(.isHeader)
                             }
                         }
@@ -414,6 +417,19 @@ struct LibraryView: View {
 }
 
 struct LibraryCard: View {
+    /// What VoiceOver reads for a card: the title, the length and the edit state, or why it did not record; with a
+    /// search, the moment that matched, as the card shows it under the title.
+    static func accessibilityLabel(_ item: RecorderMenu.Recent, spoken: LibraryModel.SpokenHit?) -> String {
+        if let failure = item.failure { return "\(item.title), did not record: \(failure)" }
+        var label = "\(item.title), \(item.durationMs.map { formatClock(Int64($0 * 1000)) } ?? "no length"), "
+            + (item.edited ? "edited" : "not edited")
+        if let spoken {
+            label += ", \(spoken.marker ? "marker" : "said") at \(formatClock(Int64(spoken.at * 1_000_000))): \(spoken.text)"
+            if !spoken.more.isEmpty { label += ", \(Plural.count(spoken.more.count, "more match", "more matches"))" }
+        }
+        return label
+    }
+
     let item: RecorderMenu.Recent
     /// What matched the search in what was said or marked, shown under the title.
     let spoken: LibraryModel.SpokenHit?
@@ -524,8 +540,7 @@ struct LibraryCard: View {
             }
             .contentShape(Rectangle())
         }
-        .accessibilityLabel(item.failure.map { "\(item.title), did not record: \($0)" }
-                            ?? "\(item.title), \(item.durationMs.map { formatClock(Int64($0 * 1000)) } ?? "no length"), \(item.edited ? "edited" : "not edited")")
+        .accessibilityLabel(Self.accessibilityLabel(item, spoken: spoken))
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityAction(named: "Open in Editor", open)
         .simultaneousGesture(TapGesture(count: 2).onEnded { open() })
