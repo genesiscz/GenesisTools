@@ -143,6 +143,13 @@ program
                 return;
             }
 
+            // Both used to run the file and drop the code without a word (NR32).
+            if (opts.file && code !== undefined) {
+                logger.error(`run takes the code as an argument or from --file, not both (--file ${opts.file})`);
+                process.exitCode = 1;
+                return;
+            }
+
             const source = opts.file ? readFileSync(opts.file, "utf8") : (code ?? (await Bun.stdin.text()));
             const engine = new ReplEngine({ toolsets, maxOutputChars });
 
