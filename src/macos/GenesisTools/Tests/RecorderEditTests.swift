@@ -1040,6 +1040,36 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(EditDiff.describe(old: removed, new: removed, by: "agent", at: Date()))
     }
 
+    // Regression test: deep test 2026-11-06 RE10 — an outside undo read "Added a spotlight" twice, the captions and the
+    // cursor shown again read "Changed", an agent's marker read "Changed the edit", and nothing said it was an undo.
+    func testAnOutsideChangeNamesMarkersRepeatsWhatItShowedAndAnUndo() throws {
+        var before = project([.init(id: "c", fromUs: 0, toUs: 10_000_000)])
+        before.captions = EditProject.Captions()
+        before.captions?.show = false
+        before.cursor = EditProject.Cursor()
+        before.cursor?.show = false
+        var after = before
+        after.redactions = ["r1", "r2"].map {
+            EditProject.Redaction(id: $0, startUs: 1_000_000, endUs: 2_000_000, x: 0.4, y: 0.4, width: 0.2, height: 0.2,
+                                  style: .spotlight, lane: nil)
+        }
+        after.markers = [EditProject.Marker(id: "m1", atUs: 5_000_000, label: "Intro")]
+        after.captions?.show = true
+        after.cursor?.show = true
+
+        let undone = try XCTUnwrap(EditDiff.describe(old: before, new: after, by: "agent", at: Date(), action: "undo"))
+        XCTAssertEqual(undone.lines.map(\.text),
+                       ["Added 2 spotlights", "Added the marker “Intro” at 00:05.0", "Showed the captions", "Showed the cursor"])
+        XCTAssertEqual(undone.title, "Undo by agent")
+        XCTAssertEqual(undone.hint, "⇧⌘Z in this window does it again")
+
+        let edited = try XCTUnwrap(EditDiff.describe(old: after, new: before, by: "agent", at: Date()))
+        XCTAssertEqual(edited.lines.map(\.text),
+                       ["Removed 2 spotlights", "Removed the marker “Intro”", "Hid the captions", "Hid the cursor"])
+        XCTAssertEqual(edited.title, "agent")
+        XCTAssertEqual(edited.hint, "⌘Z puts it back")
+    }
+
     // Regression test: deep test 2026-11-06 RE13 — the subtitle segments' identifiers read
     // "recorder.export.subtitles.optional(GenesisToolsRecorder-EditProject-SubtitleFormat-srt)".
     func testAnOptionalSegmentIdIsSpelledAsItsValueAndNilAsNone() {

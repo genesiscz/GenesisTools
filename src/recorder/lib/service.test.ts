@@ -440,6 +440,34 @@ describe("the recorder service", () => {
         expect(await window.call<{ undoDepth?: number }>("session.open", { path })).toMatchObject({ undoDepth: 1 });
     });
 
+    // Regression test: deep test 2026-11-06 RE10 — an undo from outside reached the window as a plain edit.
+    test("project.changed says when a change is an undo or a redo, with a session or without one", async () => {
+        const { service } = await serviceFixture({ saveDelayMs: 10_000 });
+        const held = editFixture("rs-action-held-");
+        const loose = editFixture("rs-action-loose-");
+        const watcher = await connect(service.entry);
+        const heard: RpcNotification[] = [];
+        watcher.onNotification((notification) => heard.push(notification));
+        await watcher.call<unknown>("subscribe", { events: ["project.changed"] });
+        const agent = await connect(service.entry);
+        await agent.call<unknown>("hello", hello("client"));
+        await agent.call<unknown>("session.open", { path: held });
+        await agent.call<unknown>("edit.apply", { path: held, ops: [{ op: "volume", volume: 0.4 }] });
+        await agent.call<unknown>("edit.undo", { path: held });
+        await agent.call<unknown>("edit.redo", { path: held });
+        await agent.call<unknown>("edit.apply", { path: loose, ops: [{ op: "volume", volume: 0.4 }] });
+        await agent.call<unknown>("edit.undo", { path: loose });
+        await waitUntil("every project.changed", () => heard.length === 5, 1_000);
+
+        expect(heard.map((notification) => Reflect.get(Object(notification.params), "action"))).toEqual([
+            undefined,
+            "undo",
+            "redo",
+            undefined,
+            "undo",
+        ]);
+    });
+
     // Regression test: deep test 2026-11-06 RE1 — a second editor window's close ended the first window's session.
     test("two windows on one connection hold a session apart, so one window's close leaves the other's", async () => {
         const { service } = await serviceFixture({ saveDelayMs: 10_000 });

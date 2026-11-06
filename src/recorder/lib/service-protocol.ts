@@ -388,7 +388,13 @@ const requestId = z.union([z.number().int(), z.string()]);
 
 /** Each notification's params: the two events and the transport's progress and cancel (`utils/rpc/peer.ts`). */
 export const NOTIFICATION_SCHEMAS = {
-    "project.changed": z.object({ path: z.string(), revision: z.number().int().nonnegative(), by: z.string() }),
+    "project.changed": z.object({
+        path: z.string(),
+        revision: z.number().int().nonnegative(),
+        by: z.string(),
+        /** The change undid or redid one before it; absent for an edit. */
+        action: z.enum(["undo", "redo"]).optional(),
+    }),
     "window.changed": windowStateSchema,
     "$/progress": z.object({
         id: requestId,

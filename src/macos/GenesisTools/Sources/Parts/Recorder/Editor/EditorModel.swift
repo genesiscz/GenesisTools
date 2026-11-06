@@ -135,6 +135,8 @@ final class EditorModel {
     var selection: EditorSelection = .none
     /// The banners of the last edits written from outside the window (EditorChangeFeed.swift).
     var changes: [EditChange] = []
+    /// Each banner's removal, cancelled while the pointer rests on it (`holdBanner`).
+    @ObservationIgnored var bannerTimers: [UUID: Task<Void, Never>] = [:]
     /// A counter per zoom, hidden part, text or shape id: its timeline segment flashes each time it rises.
     var flashes: [String: Int] = [:]
     /// Rises when an outside edit changed the whole picture, so the preview flashes.
@@ -205,7 +207,7 @@ final class EditorModel {
         store.onExternalChange = { [weak self] next in self?.fileChanged(next) }
         store.watch()
         session.onOpened = { [weak self] next in self?.sessionOpened(next) }
-        session.onOutsideChange = { [weak self] _ in self?.outsideChanged() }
+        session.onOutsideChange = { [weak self] changed in self?.outsideChanged(action: changed.action) }
         session.start()
         commentsStore.onChange = { [weak self] comments in self?.reviewComments = comments }
         commentsStore.watch()

@@ -4308,6 +4308,13 @@
           },
           "by": {
             "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "undo",
+              "redo"
+            ]
           }
         },
         "required": [

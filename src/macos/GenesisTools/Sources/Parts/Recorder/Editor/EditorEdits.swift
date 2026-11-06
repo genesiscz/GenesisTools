@@ -492,12 +492,12 @@ extension EditorModel {
     // MARK: Writers outside the window
 
     /// The service says another writer changed the edit: draw its version (one undo step away), after any drag.
-    func outsideChanged() {
+    func outsideChanged(action: String? = nil) {
         guard gesture == nil else {
             refetchPending = true
             return
         }
-        session.refetch { [weak self] next in self?.adoptExternal(next) }
+        session.refetch { [weak self] next in self?.adoptExternal(next, action: action) }
     }
 
     private func refetchIfOutsideChanged() {
@@ -514,20 +514,30 @@ extension EditorModel {
     }
 
     /// An agent changed the edit file: its version replaces this one, and this one stays one undo away.
-    func adoptExternal(_ next: EditProject) {
+    /// `action` is the service's word for the change: an outside undo moves the step it took back to the redo list
+    /// (⇧⌘Z makes it again), a redo moves it back, and an edit is one more undo step.
+    func adoptExternal(_ next: EditProject, action: String? = nil) {
         guard next != project else { return }
-        undoStack.append(.edit(project))
-        redoStack.removeAll()
+        switch action {
+        case "undo":
+            if undoStack.popLast() == nil, earlierSteps > 0 { earlierSteps -= 1 }
+            redoStack.append(.edit(project))
+        case "redo":
+            if !redoStack.isEmpty { redoStack.removeLast() }
+            undoStack.append(.edit(project))
+        default:
+            undoStack.append(.edit(project))
+            redoStack.removeAll()
+        }
         historyGeneration += 1
         let previous = project
         // An agent that transcribed the movie and turned captions on: read the transcript it cached.
         adopt(next, rebuild: next.clips != project.clips || next.audio != project.audio)
         if next.captions != nil, !hasTranscript { hasTranscript = zoom.reloadCaptions() }
-        canUndo = true
-        canRedo = false
+        refreshUndoState()
         // The window's own op names itself in its notice.
         guard ownOpsRunning == 0 else { return }
-        if !announceExternal(old: previous, new: next) {
+        if !announceExternal(old: previous, new: next, action: action) {
             show("The edit changed on disk (\(next.updatedBy ?? "another process")); ⌘Z brings this version back.", error: false)
         }
     }

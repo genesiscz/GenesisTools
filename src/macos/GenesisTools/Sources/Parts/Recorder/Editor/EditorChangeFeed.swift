@@ -14,16 +14,36 @@ struct EditChange: Identifiable, Equatable {
     let startUs: Int64?
     /// The edit changed the whole picture (the frame, the cursor, captions, clicks), so the preview flashes.
     let touchesPicture: Bool
+    /// "undo" or "redo" when the change took one back or made it again (the service's `project.changed`); nil for an edit.
+    var action: String?
 
     struct Line: Equatable {
         let symbol: String
         let text: String
     }
+
+    /// Who did what, for the banner's head: "Undo by agent", or the writer alone for an edit.
+    var title: String {
+        switch action {
+        case "undo": "Undo by \(by)"
+        case "redo": "Redo by \(by)"
+        default: by
+        }
+    }
+
+    /// The key that takes it back in this window: ⌘Z undoes the step on the service, ⇧⌘Z makes an undone one again.
+    var hint: String {
+        switch action {
+        case "undo": "⇧⌘Z in this window does it again"
+        case "redo": "⌘Z in this window undoes it again"
+        default: "⌘Z puts it back"
+        }
+    }
 }
 
 /// What changed between two versions of an edit, in words. Pure, so a test can read it without a window.
 enum EditDiff {
-    nonisolated static func describe(old: EditProject, new: EditProject, by: String, at: Date) -> EditChange? {
+    nonisolated static func describe(old: EditProject, new: EditProject, by: String, at: Date, action: String? = nil) -> EditChange? {
         guard old != new else { return nil }
         var lines: [EditChange.Line] = []
         var ids: [String] = []
@@ -35,17 +55,34 @@ enum EditDiff {
         }
         func span(_ start: Int64, _ end: Int64) -> String { "\(clock(start)) to \(clock(end))" }
 
+        /// One line per item, or "Added 2 spotlights" for two or more of one kind (an undo brings several back at once).
+        func grouped<Item>(_ items: [Item], verb: String, symbol: String, noun: (Item) -> String, one: (Item) -> String) {
+            var kinds: [(noun: String, items: [Item])] = []
+            for item in items {
+                if let at = kinds.firstIndex(where: { $0.noun == noun(item) }) {
+                    kinds[at].items.append(item)
+                } else {
+                    kinds.append((noun(item), [item]))
+                }
+            }
+            for kind in kinds {
+                let text = kind.items.count == 1 ? one(kind.items[0]) : "\(verb) \(Plural.count(kind.items.count, kind.noun))"
+                lines.append(.init(symbol: symbol, text: text))
+            }
+        }
+
         /// Added, removed and changed items of one list, by id.
         func walk<Item: Identifiable & Equatable>(
             _ before: [Item], _ after: [Item], symbol: String,
-            name: (Item) -> String, times: (Item) -> (Int64, Int64)
+            name: (Item) -> String, noun: (Item) -> String, times: (Item) -> (Int64, Int64)
         ) where Item.ID == String {
             let previous = Dictionary(before.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             let next = Set(after.map(\.id))
+            var added: [Item] = []
             for item in after {
                 let (start, end) = times(item)
                 guard let was = previous[item.id] else {
-                    lines.append(.init(symbol: symbol, text: "Added \(name(item)), \(span(start, end))"))
+                    added.append(item)
                     ids.append(item.id)
                     starts.append(TimelineMap.outputTime(ofSource: start, in: new) ?? start)
                     continue
@@ -64,33 +101,56 @@ enum EditDiff {
                 ids.append(item.id)
                 starts.append(TimelineMap.outputTime(ofSource: start, in: new) ?? start)
             }
-            for item in before where !next.contains(item.id) {
-                lines.append(.init(symbol: "trash", text: "Removed \(name(item))"))
+            grouped(added, verb: "Added", symbol: symbol, noun: noun) { item in
+                let (start, end) = times(item)
+                return "Added \(name(item)), \(span(start, end))"
             }
+            grouped(before.filter { !next.contains($0.id) }, verb: "Removed", symbol: "trash", noun: noun) { "Removed \(name($0))" }
         }
 
         walk(old.zooms, new.zooms, symbol: "plus.magnifyingglass",
-             name: { "a \(String(format: "%.1f", $0.scale))× zoom" }, times: { ($0.startUs, $0.endUs) })
+             name: { "a \(String(format: "%.1f", $0.scale))× zoom" }, noun: { _ in "zoom" }, times: { ($0.startUs, $0.endUs) })
         walk(old.redactions ?? [], new.redactions ?? [], symbol: "eye.slash",
              name: { $0.style == .spotlight ? "a spotlight" : "a \($0.style.rawValue) over part of the picture" },
-             times: { ($0.startUs, $0.endUs) })
+             noun: { $0.style == .spotlight ? "spotlight" : "hidden part" }, times: { ($0.startUs, $0.endUs) })
         walk(old.texts ?? [], new.texts ?? [], symbol: "textformat",
-             name: { "the text “\($0.text)”" }, times: { ($0.startUs, $0.endUs) })
+             name: { "the text “\($0.text)”" }, noun: { _ in "text" }, times: { ($0.startUs, $0.endUs) })
         walk(old.shapes ?? [], new.shapes ?? [], symbol: "scribble",
-             name: { "a \($0.kind.rawValue)" }, times: { ($0.startUs, $0.endUs) })
+             name: { "a \($0.kind.rawValue)" }, noun: { $0.kind.rawValue }, times: { ($0.startUs, $0.endUs) })
+
+        // A marker is a point: its time, not a span.
+        let oldMarkers = old.markers ?? []
+        let newMarkers = new.markers ?? []
+        let markerIDs = Set(oldMarkers.map(\.id))
+        let addedMarkers = newMarkers.filter { !markerIDs.contains($0.id) }
+        grouped(addedMarkers, verb: "Added", symbol: "flag", noun: { _ in "marker" }) { "Added the marker “\($0.label)” at \(clock($0.atUs))" }
+        starts += addedMarkers.map { TimelineMap.outputTime(ofSource: $0.atUs, in: new) ?? $0.atUs }
+        grouped(oldMarkers.filter { marker in !newMarkers.contains { $0.id == marker.id } }, verb: "Removed", symbol: "trash",
+                noun: { _ in "marker" }) { "Removed the marker “\($0.label)”" }
+        for marker in newMarkers {
+            guard let was = oldMarkers.first(where: { $0.id == marker.id }), was != marker else { continue }
+            lines.append(.init(symbol: "flag", text: was.atUs == marker.atUs
+                ? "Renamed the marker “\(was.label)” to “\(marker.label)”" : "Moved the marker “\(marker.label)” to \(clock(marker.atUs))"))
+        }
 
         if old.clips != new.clips {
             lines.append(.init(symbol: "scissors", text: "Changed the cuts: \(Plural.count(new.clips.count, "clip")), \(formatClock(new.outputDurationUs, tenths: true)) long"))
         }
 
-        /// A setting of the whole movie: turned on, turned off, or changed.
-        func setting<Value: Equatable>(_ before: Value?, _ after: Value?, symbol: String, name: String, detail: (Value) -> String = { _ in "" }) {
+        /// A setting of the whole movie: turned on, turned off, shown or hidden (its `show`), or changed.
+        func setting<Value: Equatable>(_ before: Value?, _ after: Value?, symbol: String, name: String,
+                                       shown: ((Value) -> Bool)? = nil, detail: (Value) -> String = { _ in "" }) {
             guard before != after else { return }
             picture = true
             switch (before, after) {
             case (nil, let value?): lines.append(.init(symbol: symbol, text: "Turned \(name) on\(detail(value))"))
             case (_?, nil): lines.append(.init(symbol: symbol, text: "Turned \(name) off"))
-            case (_, let value?): lines.append(.init(symbol: symbol, text: "Changed \(name)\(detail(value))"))
+            case (let was?, let value?):
+                if let shown, shown(was) != shown(value) {
+                    lines.append(.init(symbol: symbol, text: "\(shown(value) ? "Showed" : "Hid") \(name)"))
+                } else {
+                    lines.append(.init(symbol: symbol, text: "Changed \(name)\(detail(value))"))
+                }
             default: break
             }
         }
@@ -99,12 +159,12 @@ enum EditDiff {
             let aspect = frame.aspect.map { " (\($0.rawValue), \(frame.background.kind.rawValue))" } ?? " (\(frame.background.kind.rawValue))"
             return aspect
         }
-        setting(old.captions, new.captions, symbol: "captions.bubble", name: "the captions")
+        setting(old.captions, new.captions, symbol: "captions.bubble", name: "the captions", shown: { $0.show })
         setting(old.clicks, new.clicks, symbol: "cursorarrow.click", name: "the click rings")
-        setting(old.cursor, new.cursor, symbol: "cursorarrow", name: "the cursor") { cursor in
+        setting(old.cursor, new.cursor, symbol: "cursorarrow", name: "the cursor", shown: { $0.show }) { cursor in
             " (\(String(format: "%.1f", cursor.size))× size, \(Int((cursor.smoothing * 100).rounded())) % smoothing)"
         }
-        setting(old.keys, new.keys, symbol: "command", name: "the shortcut keys")
+        setting(old.keys, new.keys, symbol: "command", name: "the shortcut keys", shown: { $0.show })
         setting(old.motion, new.motion, symbol: "wind", name: "the zoom motion")
         setting(old.transcript, new.transcript, symbol: "text.quote", name: "the transcript fixes")
         if old.audio != new.audio {
@@ -117,7 +177,7 @@ enum EditDiff {
             lines.append(.init(symbol: "pencil", text: "Changed the edit"))
         }
         return EditChange(at: at, by: by, revision: new.revision, lines: lines, itemIDs: ids,
-                          startUs: starts.min(), touchesPicture: picture)
+                          startUs: starts.min(), touchesPicture: picture, action: action)
     }
 }
 
@@ -146,8 +206,8 @@ extension EditorModel {
 
     /// Shows, flashes and goes to an edit written from outside the window. Returns false when the banner is off, so
     /// the caller says it in the short notice instead.
-    func announceExternal(old: EditProject, new: EditProject) -> Bool {
-        guard let change = EditDiff.describe(old: old, new: new, by: new.updatedBy ?? "another process", at: Date()) else { return true }
+    func announceExternal(old: EditProject, new: EditProject, action: String? = nil) -> Bool {
+        guard let change = EditDiff.describe(old: old, new: new, by: new.updatedBy ?? "another process", at: Date(), action: action) else { return true }
         HubPerf.log("recorder.editor.external rev \(change.revision) by \(change.by): \(change.lines.map(\.text).joined(separator: "; "))")
         if Self.agentEditSetting(Self.agentEditFlashKey) {
             for id in change.itemIDs { flashes[id, default: 0] += 1 }
@@ -159,12 +219,28 @@ extension EditorModel {
         guard Self.agentEditSetting(Self.agentEditBannerKey) else { return false }
         changes.append(change)
         if changes.count > 3 { changes.removeFirst(changes.count - 3) }
-        let id = change.id
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(Self.agentEditSeconds))
-            self?.changes.removeAll { $0.id == id }
-        }
+        scheduleBannerRemoval(change.id)
         return true
+    }
+
+    /// Takes a banner away after `agentEditSeconds`.
+    func scheduleBannerRemoval(_ id: UUID) {
+        bannerTimers[id]?.cancel()
+        bannerTimers[id] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Self.agentEditSeconds))
+            guard !Task.isCancelled, let self else { return }
+            self.changes.removeAll { $0.id == id }
+            self.bannerTimers[id] = nil
+        }
+    }
+
+    /// The pointer on a banner keeps it; once the pointer leaves, it stays its whole time again.
+    func holdBanner(_ id: UUID, hovering: Bool) {
+        if hovering {
+            bannerTimers.removeValue(forKey: id)?.cancel()
+        } else if changes.contains(where: { $0.id == id }) {
+            scheduleBannerRemoval(id)
+        }
     }
 }
 
@@ -194,7 +270,7 @@ struct ChangeBanners: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles").foregroundStyle(RecorderPalette.zoom)
-                Text(verbatim: "\(Self.time.string(from: change.at)) · \(change.by) · revision \(change.revision)")
+                Text(verbatim: "\(Self.time.string(from: change.at)) · \(change.title) · revision \(change.revision)")
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
@@ -210,7 +286,7 @@ struct ChangeBanners: View {
                 }
                 .foregroundStyle(.white)
             }
-            Text("⌘Z puts it back").font(.system(size: 10)).foregroundStyle(.tertiary)
+            Text(verbatim: change.hint).font(.system(size: 10)).foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -218,7 +294,9 @@ struct ChangeBanners: View {
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(RecorderPalette.panel.opacity(0.96)))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(RecorderPalette.zoom.opacity(0.7), lineWidth: 1))
         .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
+        // The pointer on it keeps it up to be read; it goes its whole time after the pointer leaves.
+        .onHover { model.holdBanner(change.id, hovering: $0) }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Edit from \(change.by): \(change.lines.map(\.text).joined(separator: ". "))")
+        .accessibilityLabel("\(change.action == nil ? "Edit from \(change.by)" : change.title): \(change.lines.map(\.text).joined(separator: ". "))")
     }
 }

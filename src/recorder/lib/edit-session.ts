@@ -36,6 +36,8 @@ export interface ProjectChanged {
     revision: number;
     /** Who made it: `agent` (the REPL, the CLI), `editor` (the window), or the writer named in the file. */
     by: string;
+    /** The change undid or redid one before it; absent for an edit. */
+    action?: "undo" | "redo";
 }
 
 export interface EditAnswer {
@@ -440,7 +442,11 @@ export class EditSession {
         this.fresh = false;
         this.unsaved.push(unsaved);
         this.scheduleSave();
-        this.options.onChange({ path: this.path, revision: this.project.revision, by });
+        const action =
+            unsaved.kind === "restore" && (unsaved.what === "undo" || unsaved.what === "redo")
+                ? unsaved.what
+                : undefined;
+        this.options.onChange({ path: this.path, revision: this.project.revision, by, ...(action ? { action } : {}) });
     }
 
     private scheduleSave(): void {

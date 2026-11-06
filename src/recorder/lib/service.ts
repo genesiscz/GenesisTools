@@ -186,11 +186,16 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
     });
 
     /** An edit saved to the file with no open session: subscribers hear it as they hear a session's change. */
-    const fileChanged = (saved: { path: string; project: EditProject }, connection: Connection): void => {
+    const fileChanged = (
+        saved: { path: string; project: EditProject },
+        connection: Connection,
+        action?: ProjectChanged["action"]
+    ): void => {
         const change: ProjectChanged = {
             path: saved.path,
             revision: saved.project.revision,
             by: saved.project.updatedBy ?? byOf(connection),
+            ...(action ? { action } : {}),
         };
         server?.emit("project.changed", { ...change });
     };
@@ -428,7 +433,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
             const undone = await undoEdit(params.path);
 
             if (undone.saved) {
-                fileChanged(undone, connection);
+                fileChanged(undone, connection, "undo");
             }
 
             return { revision: undone.project.revision, project: undone.project, undone: undone.undone ?? [] };
