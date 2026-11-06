@@ -687,12 +687,20 @@ it("discovery covers handle names, missing names and ambiguous names", async () 
 });
 
 // NR15: search("cut") listed run_workflow ("execution") and movies.record ("shortcuts") before movies.Movie.cut.
-it("search ranks an exact method name first, then whole words, then substrings", async () => {
+// R2-NR1: and it answered 15,532 chars, each hit with its whole doc.
+it("search ranks an exact method name first, then whole words, then substrings, and names what is past ten lines", async () => {
     const apis = (await createToolsets(["computer", "movies"])).map((toolset) => toolset.api);
-    const lines = searchMethods(apis, "cut").split("\n");
+    const answer = searchMethods(apis, "cut");
+    const lines = answer.split("\n");
     expect(lines[0]).toStartWith("movies.Movie.cut(");
-    const wholeWord = lines.findIndex((line) => /\bcut\b/i.test(line.replace(/^\S+\(/, "")));
-    const substringOnly = lines.findIndex((line) => line.startsWith("computer.run_workflow("));
-    expect(substringOnly).toBeGreaterThan(0);
-    expect(wholeWord === -1 || wholeWord < substringOnly).toBe(true);
+    expect(lines[0]).toEndWith("— Removes a source range from the movie.");
+    const more = lines.at(-2) ?? "";
+    expect(more).toMatch(/^\d+ more: movies\./);
+    // The substring-only hits ("execution", "shortcuts") rank after the whole-word ones, so they are names in that list.
+    const shown = lines.slice(0, -2);
+    expect(shown).toHaveLength(10);
+    expect(more).toContain("computer.run_workflow, movies.search, movies.record");
+    expect(shown.some((line) => /^(computer\.run_workflow|movies\.record)\(/.test(line))).toBe(false);
+    expect(lines.at(-1)).toBe('Each line has the doc\'s first sentence; describe("<name>") prints a method in full.');
+    expect(answer.length).toBeLessThan(6000);
 });

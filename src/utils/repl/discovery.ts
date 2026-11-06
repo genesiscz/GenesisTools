@@ -43,14 +43,31 @@ function fullDescriptor(owner: string, method: MethodDescriptor): string {
 /** A line spells a signature out up to this length; a longer one (an op list of 60 kinds) goes one level deep. */
 const LINE_SIGNATURE_MAX = 600;
 
-/** One method as search and a listing print it: its own signature, its effect and its doc. */
-function methodLine(owner: string, method: MethodDescriptor): string {
+/** One method as search and a listing print it: its own signature, its effect and its doc (or the doc's start). */
+function methodLine(owner: string, method: MethodDescriptor, doc = method.doc): string {
     const full = methodSignature(owner, method);
     const signature =
         full.length <= LINE_SIGNATURE_MAX
             ? full
             : `${methodSignature(owner, method, 1)} (describe("${owner}.${method.name}") prints it in full)`;
-    return `${signature} [${effectLabel(method)}] — ${method.doc}`;
+    return `${signature} [${effectLabel(method)}] — ${doc}`;
+}
+
+/** search() prints this many hits as lines and names the rest: "transcript" answered 24 lines, 12,235 chars (R2-NR1). */
+const SEARCH_LINES = 10;
+/** A search line's doc is its first sentence, cut at a word to this length; describe(name) prints all of it. */
+const SEARCH_DOC_MAX = 200;
+
+function docStart(doc: string): string {
+    const end = doc.search(/[.!?](\s|$)/);
+    const sentence = end === -1 ? doc : doc.slice(0, end + 1);
+
+    if (sentence.length <= SEARCH_DOC_MAX) {
+        return sentence;
+    }
+
+    const cut = sentence.slice(0, SEARCH_DOC_MAX);
+    return `${cut.slice(0, cut.lastIndexOf(" "))} …`;
 }
 
 /** One line per method of an owner (`movies`, `movies.Movie`, or its alias `movie`), like search's lines. */
@@ -63,14 +80,27 @@ function ownerListing(list: ReturnType<typeof entries>, owner: string): string {
 
 export function searchMethods(apis: readonly ApiDescriptor[], query: string): string {
     const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-    return (
-        entries(apis)
-            .map((entry, index) => ({ entry, index, rank: searchRank(entry, terms) }))
-            .filter((hit): hit is typeof hit & { rank: number } => hit.rank !== undefined)
-            .sort((a, b) => a.rank - b.rank || a.index - b.index)
-            .map(({ entry }) => methodLine(entry.owner, entry.method))
-            .join("\n") || "No matching methods in the loaded toolsets."
-    );
+    const hits = entries(apis)
+        .map((entry, index) => ({ entry, index, rank: searchRank(entry, terms) }))
+        .filter((hit): hit is typeof hit & { rank: number } => hit.rank !== undefined)
+        .sort((a, b) => a.rank - b.rank || a.index - b.index)
+        .map(({ entry }) => entry);
+
+    if (hits.length === 0) {
+        return "No matching methods in the loaded toolsets.";
+    }
+
+    const lines = hits
+        .slice(0, SEARCH_LINES)
+        .map((entry) => methodLine(entry.owner, entry.method, docStart(entry.method.doc)));
+    const rest = hits.slice(SEARCH_LINES).map((entry) => `${entry.owner}.${entry.method.name}`);
+
+    if (rest.length > 0) {
+        lines.push(`${rest.length} more: ${rest.join(", ")}`);
+    }
+
+    lines.push('Each line has the doc\'s first sentence; describe("<name>") prints a method in full.');
+    return lines.join("\n");
 }
 
 /**
