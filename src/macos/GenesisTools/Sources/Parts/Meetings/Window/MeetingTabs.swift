@@ -25,10 +25,18 @@ struct TranscriptTab: View {
                 } else if lines.isEmpty {
                     EmptyState(symbol: "magnifyingglass", text: "No line holds “\(filter)”", actionTitle: "Clear the filter") { filter = "" }
                 } else {
-                    List(lines, id: \.rowID) { line in
-                        TranscriptRow(line: line, play: { detail.play(at: $0) }).equatable()
+                    // A lazy stack, not a List: an accessibility client asked a List for every row, and AppKit then
+                    // built and hosted each of the 274 rows (10 to 13 s of CPU per walk, 2026-11-06). The stack
+                    // realizes only the rows near the viewport, as the Screen tab's does (0.8 s for 258 frames).
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(lines, id: \.rowID) { line in
+                                TranscriptRow(line: line, play: { detail.play(at: $0) }).equatable()
+                                    .padding(.horizontal, 14)
+                            }
+                        }
+                        .padding(.vertical, 6)
                     }
-                    .listStyle(.plain)
                 }
             }
         }
@@ -62,14 +70,34 @@ private struct TranscriptRow: View, Equatable {
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: line.speaker.isEmpty ? "Unknown voice" : line.speaker)
                     .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
-                Text(verbatim: line.text).font(.system(size: 13)).textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                LineText(text: line.text)
             }
         }
         .padding(.vertical, 3)
         .contentShape(Rectangle())
         .liveRow()
+        // One element per line (time, voice, text) with Play, instead of a node per text and button.
+        .accessibilityElement(children: .combine)
         .accessibilityAction(named: "Play") { if let start = line.startSec { play(start) } }
+    }
+}
+
+/// A transcript line's text, selectable while its row is live (under the pointer). A resting row holds plain text:
+/// selectable text on all 274 lines gave an accessibility client a text node with links and paths to walk per line.
+private struct LineText: View {
+    let text: String
+    @Environment(\.rowLive) private var live
+
+    var body: some View {
+        if live {
+            plain.textSelection(.enabled)
+        } else {
+            plain
+        }
+    }
+
+    private var plain: some View {
+        Text(verbatim: text).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -494,10 +522,20 @@ private struct ItemRow: View, Equatable {
         .padding(.vertical, 3)
         .contentShape(Rectangle())
         .liveRow(selected: selected)
-        .accessibilityElement(children: .contain)
+        // One element per item with its actions, instead of a node per text, badge and button: with 425 suggestions a
+        // walk ran out of its budget after 887 nodes (2026-11-06).
+        .accessibilityElement(children: .combine)
         .accessibilityAction(named: "Confirm") { if let decide, !needsSpeaker, !needsSpelling { decide(true, nil) } }
         .accessibilityAction(named: "Reject") { decide?(false, nil) }
         .accessibilityAction(named: "Reopen") { reopen?() }
+        .accessibilityAction(named: "Play") { if let seconds = item.seconds { play(seconds) } }
+        .accessibilityActions {
+            if needsSpeaker, let decide {
+                ForEach(item.candidates ?? [], id: \.self) { name in
+                    Button("Confirm as \(name)") { decide(true, name) }
+                }
+            }
+        }
     }
 }
 
