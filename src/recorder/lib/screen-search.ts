@@ -158,6 +158,13 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
         throw new Error(`${folder} has no recording.json; make the proxy first (it writes one for a meeting)`);
     }
 
+    // A movie keeps no frames, so "no frame shows it" would read as "it was never on the screen".
+    if (manifest.frames.length === 0) {
+        throw new Error(
+            `${folder} has no screen text: only a frames recording (tools recorder start --frames) or a meeting keeps the text it read off its screens`
+        );
+    }
+
     const wanted = foldText(query);
 
     if (!wanted) {

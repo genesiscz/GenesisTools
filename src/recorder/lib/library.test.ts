@@ -393,6 +393,18 @@ describe("text on the screen", () => {
         });
     }
 
+    // Regression test: deep test 2026-11-07 R2-RE6 — Find on Screen on a movie recording answered "No frame shows
+    // “Changes”" while the word was on screen: a movie keeps no frames, so there was nothing to search.
+    it("refuses a movie recording, which keeps no screen text, instead of answering that no frame shows the text", () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-screen-movie-"));
+        writeFileSync(
+            join(folder, "recording.json"),
+            SafeJSON.stringify({ ...screenSearch.recording.manifest, frames: [] })
+        );
+
+        expect(() => findOnScreen(folder, "Changes")).toThrow("has no screen text");
+    });
+
     it("finds the shared fixture's hits: accents ignored, each listed where the proxy movie shows it, boxes placed in the letterboxed picture", () => {
         const folder = screenFolder();
 

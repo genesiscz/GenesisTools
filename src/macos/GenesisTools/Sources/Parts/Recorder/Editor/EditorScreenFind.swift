@@ -88,7 +88,8 @@ extension EditorModel {
 
     /// The failure in words: a movie without a recording has no screen text, anything else is the door's own line.
     nonisolated static func screenSearchProblem(stderr: String, status: Int32) -> String {
-        if stderr.contains("has no recording.json") {
+        // A movie without recording.json, and a movie recording, which keeps no frames: neither has text to search.
+        if stderr.contains("has no recording.json") || stderr.contains("has no screen text") {
             return "This movie has no screen text. Only a frames recording or a meeting keeps the text it read off its screens."
         }
         return "The search did not run: \(stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")"

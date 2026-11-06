@@ -296,6 +296,9 @@ final class RecorderScreenFindViewTests: XCTestCase {
         model.screenSearchFailure = EditorModel.screenSearchProblem(stderr: "/x has no recording.json; make the proxy first\n", status: 1)
         XCTAssertTrue(model.screenSearchFailure?.hasPrefix("This movie has no screen text.") == true)
         XCTAssertEqual(EditorModel.screenSearchProblem(stderr: "boom\nthe last line\n", status: 2), "The search did not run: the last line")
+        // Regression test: deep test 2026-11-07 R2-RE6 — a movie recording's refusal reads as the plain sentence too.
+        XCTAssertEqual(EditorModel.screenSearchProblem(stderr: "/x has no screen text: only a frames recording …\n", status: 1),
+                       "This movie has no screen text. Only a frames recording or a meeting keeps the text it read off its screens.")
         let image = try EditorShots.write(ScreenFindInspector(model: model).padding(18), name: "find-on-screen-no-text", width: 300)
         XCTAssertTrue(try EditorShots.text(image).lowercased().contains("no screen text"))
     }
