@@ -1158,6 +1158,20 @@ export function fixOutcome(
     };
 }
 
+/**
+ * What an edit answers: the movie in one line and where. The whole edit (every clip, lane, cursor and audio setting)
+ * was about 1,500 characters per call, which an agent reads to find the summary (NR23, R2-NR4); info() has it.
+ */
+function briefOf(project: EditProject, path: string) {
+    const described = describeProject(project, path);
+    return {
+        summary: summarize(project, undefined),
+        path: described.path,
+        revision: described.revision,
+        outputSeconds: described.outputSeconds,
+    };
+}
+
 export class Movie {
     /** `ctx`: the worker's scratch folder and `show`, for still(); absent outside a REPL. */
     constructor(
@@ -1196,7 +1210,12 @@ export class Movie {
         const { ops } = fixOps(opened.project, facts(opened));
 
         if (ops.length === 0) {
-            return { ...(await this.info()), fixed: [], warnings: ["check() found nothing that fix() can fix"] };
+            return {
+                ...briefOf(opened.project, opened.path),
+                fixed: [],
+                unchanged: [],
+                warnings: ["check() found nothing that fix() can fix"],
+            };
         }
 
         log.debug({ recording: this.recording, ops: ops.length }, "fixing what check found");
@@ -1212,19 +1231,12 @@ export class Movie {
         return { ...edited, ...outcome, ...(warnings.length > 0 ? { warnings } : {}) };
     }
 
-    /**
-     * One edit's answer: what the movie is now in one line, and where. The whole edit (every clip, lane, cursor and audio
-     * setting) was about 1,500 characters per call, which an agent reads to find the summary (NR23); info() has it.
-     */
+    /** One edit's answer (briefOf), with what the edit removed, measured or warns about. */
     private async change(ops: EditOp[]) {
         const edited = await editProject(this.recording, ops);
-        const described = describeProject(edited.project, edited.path);
         const seconds = (us: number) => Math.round(us / 1000) / 1000;
         return {
-            summary: summarize(edited.project, undefined),
-            path: described.path,
-            revision: described.revision,
-            outputSeconds: described.outputSeconds,
+            ...briefOf(edited.project, edited.path),
             ...(edited.removedIdleUs
                 ? { removed: edited.removedIdleUs.map(([from, to]) => [seconds(from), seconds(to)]) }
                 : {}),
@@ -1549,11 +1561,7 @@ export class Movie {
             ops.push(...(undone.undone ?? []));
         }
 
-        return {
-            undone: ops,
-            stepsLeft: undoDepth(undone.path),
-            ...describeProject(undone.project, undone.path),
-        };
+        return { undone: ops, stepsLeft: undoDepth(undone.path), ...briefOf(undone.project, undone.path) };
     }
 
     async shape(options: Omit<Extract<EditOp, { op: "shape" }>, "op">) {

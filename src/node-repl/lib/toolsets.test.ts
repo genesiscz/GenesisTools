@@ -636,6 +636,36 @@ describe("what a cut costs, in the answer of the call", () => {
     });
 });
 
+describe("the answer of fix() with nothing to fix and of undo()", () => {
+    // R2-NR4: both answered the whole edit (clips, zooms, audio, export, lanes: about 2,500 chars) where every other
+    // edit answers one line and where it is.
+    test("is the short answer of every edit, plus what each did", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-short-answer-"));
+        const path = join(folder, "screen.edit.json");
+        writeProject(
+            path,
+            wholeProject({ video: join(folder, "screen.mp4"), durationUs: 6_000_000, width: 100, height: 100 })
+        );
+        const movie = new Movie(path);
+        await movie.cut(1, 2);
+        const fixed = await movie.fix();
+        expect(Object.keys(fixed).sort()).toEqual(
+            ["fixed", "outputSeconds", "path", "revision", "summary", "unchanged", "warnings"].sort()
+        );
+        expect(fixed).toMatchObject({
+            fixed: [],
+            warnings: ["check() found nothing that fix() can fix"],
+            outputSeconds: 5,
+        });
+        const undone = await movie.undo();
+        expect(Object.keys(undone).sort()).toEqual(
+            ["outputSeconds", "path", "revision", "stepsLeft", "summary", "undone"].sort()
+        );
+        expect(undone).toMatchObject({ undone: ["cut"], stepsLeft: 0, outputSeconds: 6, path });
+        expect(undone.summary).toStartWith("6 s long");
+    });
+});
+
 describe("a copied recording folder", () => {
     test("reads its own movie and cursor track, and the original when the copy has a different movie", () => {
         const root = mkdtempSync(join(tmpdir(), "copied-rec-"));
