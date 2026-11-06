@@ -618,6 +618,27 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertFalse(EditorWindows.names(model, folder + "-other"))
     }
 
+    // Regression test: deep test 2026-11-06 RE1 — two editor windows of one edit held it as one on the app's
+    // connection, so closing the second window ended the first window's session.
+    func testEachEditorSessionHoldsTheEditUnderItsOwnHolderAndRereadsUnderIt() {
+        let service = FakeServiceLink(project: .whole(video: "/fixture/movie.mp4", durationUs: 1_000_000, width: 1920, height: 1080,
+                                                      cursor: nil, recording: nil))
+        let first = EditorSession(path: "/fixture/rec/edit.json", host: { service })
+        let second = EditorSession(path: "/fixture/rec/edit.json", host: { service })
+        first.start()
+        second.start()
+        first.refetch { _ in }
+        second.stop()
+
+        let holders = { (method: String) in service.calls.filter { $0.method == method }.map { $0.params["holder"] as? String } }
+        let opens = holders("session.open")
+        XCTAssertEqual(opens.count, 3)
+        XCTAssertNotNil(opens.first ?? nil)
+        XCTAssertNotEqual(opens[0], opens[1], "each window holds the edit under its own holder")
+        XCTAssertEqual(opens[2], opens[0], "a reread is the same window's holder, so it adds no hold")
+        XCTAssertEqual(holders("session.close"), [opens[1]])
+    }
+
     // Regression test: 2026-11-05 review of the editor gaps, R1.1, on the edit path. The undo's answer took the last
     // step off the list, and a drag that ended before the answer was that step: the drag could not be undone and the
     // zoom came back as a redo.

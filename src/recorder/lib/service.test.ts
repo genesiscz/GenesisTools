@@ -426,6 +426,26 @@ describe("the recorder service", () => {
         expect(service.sessions.size).toBe(0);
     });
 
+    // Regression test: deep test 2026-11-06 RE1 — a second editor window's close ended the first window's session.
+    test("two windows on one connection hold a session apart, so one window's close leaves the other's", async () => {
+        const { service } = await serviceFixture({ saveDelayMs: 10_000 });
+        const path = editFixture("rs-two-windows-");
+        const app = await connect(service.entry);
+        await app.call<unknown>("hello", hello("host"));
+        await app.call<unknown>("session.open", { path, holder: "window-1" });
+        await app.call<unknown>("session.open", { path, holder: "window-2" });
+        // A window reads the edit again with session.open; that is no second hold.
+        await app.call<unknown>("session.open", { path, holder: "window-1" });
+
+        await app.call<unknown>("session.close", { path, holder: "window-2" });
+        await Bun.sleep(20);
+        expect(service.sessions.size).toBe(1);
+
+        await app.call<unknown>("session.close", { path, holder: "window-1" });
+        await Bun.sleep(20);
+        expect(service.sessions.size).toBe(0);
+    });
+
     // Regression test: 2026-11-05 recorder service review, finding 12 — a service edit without an open session told nobody
     test("an edit and an undo through the service without an open session tell every subscriber; no change tells none", async () => {
         const { service } = await serviceFixture();

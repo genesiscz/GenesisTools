@@ -71,6 +71,8 @@ export const helloAnswerSchema = z.object({
 });
 
 const path = z.string().min(1);
+/** What holds a session inside one connection (an editor window); absent is the connection itself. */
+const holder = z.string().min(1).optional();
 const ops = z.array(editOpSchema).min(1);
 /** Output seconds as `{ from, to }`, `[from, to]` or `"from-to"`, as the host's `--snapshot` takes `part` and `range`. */
 export const spanSchema = z.union([
@@ -104,16 +106,16 @@ export const serviceApi = defineApi({
         }),
         defineMethod({
             name: "session.open",
-            params: z.object({ path }),
+            params: z.object({ path, holder }),
             result: z.object({ path, ...project }),
-            doc: "Opens (or holds once more) the edit session of a recording; the connection holds it until session.close or its end.",
+            doc: "Opens (or holds once more) the edit session of a recording; the connection's holder holds it until session.close or the connection's end. Opening it again for the same holder reads it and adds no hold.",
             effect: "read",
         }),
         defineMethod({
             name: "session.close",
-            params: z.object({ path }),
+            params: z.object({ path, holder }),
             result: z.object({ closed: z.boolean() }),
-            doc: "Lets go of the connection's hold; the last hold saves and closes the session.",
+            doc: "Lets go of the holder's hold; another holder of the same connection keeps its own, and the last hold saves and closes the session.",
             effect: "read",
         }),
         defineMethod({

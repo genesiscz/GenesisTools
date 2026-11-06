@@ -174,7 +174,8 @@ final class EditorWindows: NSObject, NSWindowDelegate {
                 model.seek(TimelineMap.outputTime(ofSource: sourceUs, in: model.project) ?? 0)
             }
         }
-        if let existing = open.values.first(where: { $0.1.store.url.deletingLastPathComponent().path == URL(fileURLWithPath: path).deletingLastPathComponent().path || $0.1.project.source.video == path }) {
+        // The same matcher as `close`: the recording's folder, its edit file or its movie bring the open window back.
+        if let existing = open.values.first(where: { Self.names($0.1, path) }) {
             place(existing.1)
             if wanted { focus(existing.0) }
             opened?(.success(existing.0))

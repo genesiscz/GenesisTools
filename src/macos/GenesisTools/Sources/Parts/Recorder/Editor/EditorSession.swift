@@ -11,6 +11,9 @@ final class EditorSession {
     /// The edit file the session holds (`edit.json`, or `<name>.edit.json` beside a plain movie).
     let path: String
     private let host: @MainActor () -> RecorderServiceLink?
+    /// This window's hold on the service: every editor window shares the app's one connection, and the service counts
+    /// each holder apart, so one window's close leaves another window's session of the same edit open.
+    let holder = UUID().uuidString
     /// The revision of the project the window last took from the service.
     private(set) var revision: Int?
     private(set) var isOpen = false
@@ -46,7 +49,7 @@ final class EditorSession {
         host()?.unlisten(self)
         guard isOpen else { return }
         isOpen = false
-        host()?.call("session.close", params: ["path": path], timeout: 10, onProgress: nil) { result in
+        host()?.call("session.close", params: ["path": path, "holder": holder], timeout: 10, onProgress: nil) { result in
             if case let .failure(error) = result { HubPerf.log("recorder.editor: session.close failed: \(error.localizedDescription)") }
         }
     }
@@ -54,7 +57,7 @@ final class EditorSession {
     private func open() {
         guard let host = host(), host.isConnected, !opening else { return }
         opening = true
-        host.call("session.open", params: ["path": path], timeout: 30, onProgress: nil) { [weak self] result in
+        host.call("session.open", params: ["path": path, "holder": holder], timeout: 30, onProgress: nil) { [weak self] result in
             guard let self else { return }
             self.opening = false
             switch result {
@@ -78,7 +81,7 @@ final class EditorSession {
 
     /// The edit as the service holds it now (after another writer's change).
     func refetch(_ done: @escaping (EditProject) -> Void) {
-        call("session.open", ["path": path]) { [weak self] result in
+        call("session.open", ["path": path, "holder": holder]) { [weak self] result in
             guard let self, case let .success(value) = result,
                   let opened = try? RecorderProtocol.decode(RecorderProtocol.OpenedSession.self, from: value) else { return }
             self.revision = opened.revision

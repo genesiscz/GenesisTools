@@ -59,8 +59,8 @@ interface ConnectionState {
     id: number;
     role?: ServiceRole;
     pid?: number;
-    /** The edit paths this connection holds sessions of. */
-    holds: Set<string>;
+    /** The edit paths this connection holds sessions of, each with its holders (editor windows); "" is the connection. */
+    holds: Map<string, Set<string>>;
     /** The gestures this connection began and has not ended: the session's key of each, to its edit path. */
     gestures: Map<string, string>;
     /** A `recording` connection: the ids of the live recordings it registered. */
@@ -338,11 +338,13 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
         },
         "session.open": async (params, { connection, context }: HandlerContext) => {
             const path = editPathOf(params.path);
+            const holder = params.holder ?? "";
 
-            if (connection.state.holds.has(path)) {
+            if (connection.state.holds.get(path)?.has(holder)) {
                 return { path, ...sessionOf(path).current };
             }
 
+            // One hold per holder, so one editor window's close leaves another window's session of the same edit.
             const session = await sessions.hold(params.path);
 
             // The caller went or cancelled, or the service stopped, while the session opened: no one would release it.
@@ -351,14 +353,27 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
                 throw new RpcError(RPC_ERRORS.cancelled, `the session of ${session.path} opened after its caller left`);
             }
 
-            connection.state.holds.add(session.path);
+            const holders = connection.state.holds.get(session.path) ?? new Set<string>();
+
+            // The same holder's other session.open finished first and holds it already.
+            if (holders.has(holder)) {
+                sessions.release(session.path);
+            }
+
+            holders.add(holder);
+            connection.state.holds.set(session.path, holders);
             return { path: session.path, ...session.current };
         },
         "session.close": (params, { connection }: HandlerContext) => {
             const path = editPathOf(params.path);
+            const holders = connection.state.holds.get(path);
 
-            if (!connection.state.holds.delete(path)) {
+            if (!holders?.delete(params.holder ?? "")) {
                 return { closed: false };
+            }
+
+            if (holders.size === 0) {
+                connection.state.holds.delete(path);
             }
 
             sessions.release(path);
@@ -639,7 +654,7 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
 
         const listening = new RpcSocketServer<ConnectionState>({
             socket,
-            state: () => ({ id: ++lastConnectionId, holds: new Set(), gestures: new Map(), recordings: new Set() }),
+            state: () => ({ id: ++lastConnectionId, holds: new Map(), gestures: new Map(), recordings: new Set() }),
             // A cancelled request's edit never lands: every edit it makes checks this request's signal before it saves.
             call: ({ method, params, connection, context }) =>
                 withEditCancel(context.signal, () => answer(method, params, connection, context)),
@@ -655,8 +670,10 @@ function listen(dir: string, options: RecorderServiceOptions): RecorderService {
 
                 connection.state.gestures.clear();
 
-                for (const path of connection.state.holds) {
-                    sessions.release(path);
+                for (const [path, holders] of connection.state.holds) {
+                    for (const _holder of holders) {
+                        sessions.release(path);
+                    }
                 }
 
                 connection.state.holds.clear();
