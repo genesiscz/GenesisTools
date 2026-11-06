@@ -363,7 +363,7 @@ final class EditorWindows: NSObject, NSWindowDelegate {
         if let monitor = entry.2 { NSEvent.removeMonitor(monitor) }
         open[ObjectIdentifier(window)] = nil
         writeOpenState(front: nil)
-        if open.isEmpty { NSApp.setActivationPolicy(.accessory) }
+        if open.isEmpty { RecorderActivation.windowClosed(window) }
     }
 }
 

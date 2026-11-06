@@ -580,10 +580,22 @@ final class LibraryWindow: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         model.stopWatching()
-        // Back to a menu bar app when no other titled window of the recorder stays open.
-        let closing = notification.object as? NSWindow
-        if !NSApp.windows.contains(where: { $0 !== closing && $0.isVisible && $0.styleMask.contains(.titled) }) {
-            NSApp.setActivationPolicy(.accessory)
+        RecorderActivation.windowClosed(notification.object as? NSWindow)
+    }
+}
+
+/// The recorder face's activation when one of its titled windows (the library, an editor) closes.
+@MainActor
+enum RecorderActivation {
+    /// Back to a menu bar app when no other titled window stays open, and out of the front: the face stayed the front
+    /// app with no window, so the next keys went nowhere (review 2026-11-06). `deactivate`, not `hide`: hiding would
+    /// take the camera bubble and the notes off the screen too.
+    static func windowClosed(_ closing: NSWindow?) {
+        guard !NSApp.windows.contains(where: { $0 !== closing && $0.isVisible && $0.styleMask.contains(.titled) }) else { return }
+        NSApp.setActivationPolicy(.accessory)
+        if NSApp.isActive {
+            HubPerf.log("recorder: the last window closed; the front goes back to the app before")
+            NSApp.deactivate()
         }
     }
 }
