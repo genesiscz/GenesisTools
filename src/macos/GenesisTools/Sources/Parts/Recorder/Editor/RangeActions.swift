@@ -157,7 +157,7 @@ struct RangeActionsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(verbatim: "\(formatClock(range.fromUs, tenths: true)) – \(formatClock(range.toUs, tenths: true)) · \(String(format: "%.1f s", Double(range.lengthUs) / 1_000_000))")
+            Text(verbatim: "\(formatClockRange(range.fromUs, range.toUs)) · \(String(format: "%.1f s", Double(range.lengthUs) / 1_000_000))")
                 .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8).padding(.bottom, 4)

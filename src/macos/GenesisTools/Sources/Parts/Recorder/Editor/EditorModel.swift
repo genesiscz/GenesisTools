@@ -1561,7 +1561,7 @@ final class EditorModel {
     /// the movie when noise reduction is on) and converts with ffmpeg, then prints `{ ok, path }`.
     private func exportThroughTools(_ format: EditProject.ExportFormat) {
         exportProgress = 0
-        show(format == .mp4 ? "Exporting an MP4 with the cleaned sound…" : "Exporting a \(format.rawValue.uppercased())…", error: false)
+        show(format == .mp4 ? "Exporting an MP4 with the cleaned sound…" : "Exporting a \(format.title)…", error: false)
         var argv = ["recorder", "export", store.url.path, "--format", format.rawValue, "--json"]
         var params: [String: Any] = ["format": format.rawValue]
         if let part = exportPart {
@@ -1579,7 +1579,7 @@ final class EditorModel {
             }
             guard let path = answer?["path"] as? String else {
                 let reason: String = if case let .failure(failure) = result { failure.reason } else { (answer?["error"] as? String) ?? "no movie was written" }
-                self.show("The \(format.rawValue.uppercased()) export failed: \(reason)", error: true)
+                self.show("The \(format.title) export failed: \(reason)", error: true)
                 return
             }
             let bytes = (answer?["bytes"] as? NSNumber)?.int64Value ?? 0

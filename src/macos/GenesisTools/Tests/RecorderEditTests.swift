@@ -1040,6 +1040,12 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(EditDiff.describe(old: removed, new: removed, by: "agent", at: Date()))
     }
 
+    // Regression test: deep test 2026-11-06 RE14 — "WEBM" beside "WebVTT", and en dashes in the time ranges.
+    func testFormatNamesAndTimeRangesReadAsWords() {
+        XCTAssertEqual(EditProject.ExportFormat.allCases.map(\.title), ["MP4", "GIF", "WebM"])
+        XCTAssertEqual(formatClockRange(3_000_000, 8_000_000), "00:03.0 to 00:08.0")
+    }
+
     func testSelectNextAndPreviousWalkTheItemsInTimeOrder() {
         let items: [EditorModel.TimelineItem] = [
             .init(selection: .zoom("z1"), startUs: 1_000_000),

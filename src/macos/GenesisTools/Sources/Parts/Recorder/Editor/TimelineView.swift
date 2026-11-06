@@ -202,13 +202,18 @@ func formatClock(_ us: Int64, tenths: Bool = false) -> String {
     return String(format: "%02d:%02d", minutes, seconds)
 }
 
-/// A source range as the edit plays it, the time the ruler shows ("00:00.5 – 00:03.0", or "Cut from the edit" when
+/// A time range in words, "00:03.0 to 00:08.0", as the change banner says it (no dash between the two times).
+func formatClockRange(_ fromUs: Int64, _ toUs: Int64) -> String {
+    "\(formatClock(fromUs, tenths: true)) to \(formatClock(toUs, tenths: true))"
+}
+
+/// A source range as the edit plays it, the time the ruler shows ("00:00.5 to 00:03.0", or "Cut from the edit" when
 /// none of it plays), and the range in the recording when the edit moved it (nil when the two read the same).
 func editRange(_ project: EditProject, fromUs: Int64, toUs: Int64) -> (edit: String, recording: String?) {
-    let source = "\(formatClock(fromUs, tenths: true)) – \(formatClock(toUs, tenths: true))"
+    let source = formatClockRange(fromUs, toUs)
     let spans = TimelineMap.outputSpans(fromUs: fromUs, toUs: toUs, in: project)
     guard let first = spans.first, let last = spans.last else { return ("Cut from the edit", "\(source) in the recording") }
-    let edit = "\(formatClock(first.fromUs, tenths: true)) – \(formatClock(last.toUs, tenths: true))"
+    let edit = formatClockRange(first.fromUs, last.toUs)
     return (edit, edit == source ? nil : "\(source) in the recording")
 }
 

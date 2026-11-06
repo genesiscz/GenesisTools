@@ -359,6 +359,15 @@ struct EditProject: Codable, Equatable {
 
     enum ExportFormat: String, Codable, CaseIterable {
         case mp4, gif, webm
+
+        /// The name as people write it ("WebM", beside "WebVTT"), not the file extension in capitals.
+        var title: String {
+            switch self {
+            case .mp4: "MP4"
+            case .gif: "GIF"
+            case .webm: "WebM"
+            }
+        }
     }
 }
 

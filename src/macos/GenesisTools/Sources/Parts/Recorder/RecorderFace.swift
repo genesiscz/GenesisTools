@@ -406,9 +406,9 @@ private struct ExportSummary: View {
         let part = model.exportPart
         VStack(alignment: .leading, spacing: 8) {
             Text("Export").font(.system(size: 14, weight: .semibold))
-            row("Format", format == .mp4 ? "MP4 · \(settings.codec == .h264 ? "H.264" : "HEVC")" : format.rawValue.uppercased())
+            row("Format", format == .mp4 ? "MP4 · \(settings.codec == .h264 ? "H.264" : "HEVC")" : format.title)
             if format != .gif { row("Size", "\(Int(size.width)) × \(Int(size.height))") }
-            row("Part", part.map { "\(formatClock($0.fromUs, tenths: true)) – \(formatClock($0.toUs, tenths: true))" }
+            row("Part", part.map { formatClockRange($0.fromUs, $0.toUs) }
                 ?? "Everything (\(formatClock(model.durationUs, tenths: true)))")
             row("File", EditExporter.outputURL(for: model.project, format: format).lastPathComponent)
             HStack {

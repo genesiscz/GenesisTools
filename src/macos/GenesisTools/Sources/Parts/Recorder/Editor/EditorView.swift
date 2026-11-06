@@ -379,8 +379,8 @@ private struct ClipInspector: View {
             let clip = current.clip
             VStack(alignment: .leading, spacing: 8) {
                 Text("Clip \(current.index + 1) of \(placed.count)").font(.system(size: 15, weight: .semibold))
-                SectionLabel(text: "In the edit", value: "\(formatClock(current.outStartUs, tenths: true)) – \(formatClock(current.outEndUs, tenths: true))")
-                SectionLabel(text: "In the recording", value: "\(formatClock(clip.fromUs, tenths: true)) – \(formatClock(clip.toUs, tenths: true))")
+                SectionLabel(text: "In the edit", value: formatClockRange(current.outStartUs, current.outEndUs))
+                SectionLabel(text: "In the recording", value: formatClockRange(clip.fromUs, clip.toUs))
                 SectionLabel(text: "Plays for", value: formatClock(clip.outputDurationUs, tenths: true))
             }
             VStack(alignment: .leading, spacing: 8) {
@@ -1532,7 +1532,7 @@ private struct ExportInspector: View {
                 }
             }
             SectionLabel(text: "Format")
-            GenSegmentedTabs("Format", items: EditProject.ExportFormat.allCases.map { .init($0, $0.rawValue.uppercased()) },
+            GenSegmentedTabs("Format", items: EditProject.ExportFormat.allCases.map { .init($0, $0.title) },
                              selection: Binding(get: { settings.format ?? .mp4 }, set: { format in model.setExport { $0.format = format == .mp4 ? nil : format } }),
                              minSegmentWidth: 70, identifier: "recorder.export.format", fillsWidth: true)
             if let format = settings.format, format != .mp4 {
@@ -1586,7 +1586,7 @@ private struct ExportInspector: View {
             let part = model.exportPart
             let length = part.map { $0.toUs - $0.fromUs } ?? model.durationUs
             HStack {
-                SectionLabel(text: "Part", value: part.map { "\(formatClock($0.fromUs, tenths: true)) – \(formatClock($0.toUs, tenths: true))" }
+                SectionLabel(text: "Part", value: part.map { formatClockRange($0.fromUs, $0.toUs) }
                     ?? "Everything (\(formatClock(model.durationUs, tenths: true)))")
                 if part != nil {
                     IconButton(systemName: "xmark.circle.fill", tooltip: "Export the whole edit again", size: 12) { model.clearPart() }
@@ -1641,7 +1641,7 @@ private struct ExportInspector: View {
                 SwitchRow("Show in Finder when done", isOn: $revealAfterExport)
                     .accessibilityIdentifier("recorder.export.reveal")
                 Button { model.export() } label: {
-                    Text(verbatim: "\((settings.format ?? .mp4) == .mp4 ? "Export Movie" : "Export \(settings.format?.rawValue.uppercased() ?? "")")   ⌘E")
+                    Text(verbatim: "\((settings.format ?? .mp4) == .mp4 ? "Export Movie" : "Export \(settings.format?.title ?? "")")   ⌘E")
                         .frame(maxWidth: .infinity, minHeight: 22)
                 }
                 .buttonStyle(.genPrimary())
