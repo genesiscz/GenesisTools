@@ -523,3 +523,14 @@ it("discovery covers handle names, missing names and ambiguous names", async () 
     expect(notes).toContain("control.read_image");
     expect(notes).not.toContain("computer.read_image");
 });
+
+// NR15: search("cut") listed run_workflow ("execution") and movies.record ("shortcuts") before movies.Movie.cut.
+it("search ranks an exact method name first, then whole words, then substrings", async () => {
+    const apis = (await createToolsets(["computer", "movies"])).map((toolset) => toolset.api);
+    const lines = searchMethods(apis, "cut").split("\n");
+    expect(lines[0]).toStartWith("movies.Movie.cut(");
+    const wholeWord = lines.findIndex((line) => /\bcut\b/i.test(line.replace(/^\S+\(/, "")));
+    const substringOnly = lines.findIndex((line) => line.startsWith("computer.run_workflow("));
+    expect(substringOnly).toBeGreaterThan(0);
+    expect(wholeWord === -1 || wholeWord < substringOnly).toBe(true);
+});

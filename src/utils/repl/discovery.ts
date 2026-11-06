@@ -65,14 +65,45 @@ export function searchMethods(apis: readonly ApiDescriptor[], query: string): st
     const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
     return (
         entries(apis)
-            .filter(({ owner, method }) => {
-                const text =
-                    `${owner}.${method.name} ${method.doc} ${SafeJSON.stringify(jsonSchemaOf(method.params))}`.toLowerCase();
-                return terms.every((term) => text.includes(term));
-            })
-            .map(({ owner, method }) => methodLine(owner, method))
+            .map((entry, index) => ({ entry, index, rank: searchRank(entry, terms) }))
+            .filter((hit): hit is typeof hit & { rank: number } => hit.rank !== undefined)
+            .sort((a, b) => a.rank - b.rank || a.index - b.index)
+            .map(({ entry }) => methodLine(entry.owner, entry.method))
             .join("\n") || "No matching methods in the loaded toolsets."
     );
+}
+
+/**
+ * How well one method matches every term, lower first, or undefined when a term is missing: the method's name is the
+ * term (0), the name holds it (1), the doc or a parameter holds it as a whole word (2), or only inside a word (3), so
+ * `search("cut")` lists `Movie.cut` before "execution" and "shortcuts" (NR15).
+ */
+function searchRank(
+    { owner, method }: { owner: string; method: MethodDescriptor },
+    terms: readonly string[]
+): number | undefined {
+    const name = method.name.toLowerCase();
+    const full = `${owner}.${method.name}`.toLowerCase();
+    const text = `${full} ${method.doc} ${SafeJSON.stringify(jsonSchemaOf(method.params))}`.toLowerCase();
+    let rank = 0;
+
+    for (const term of terms) {
+        if (!text.includes(term)) {
+            return undefined;
+        }
+
+        const word = new RegExp(`(^|[^a-z0-9_])${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z0-9_])`);
+        rank +=
+            name === term || full === term || full.endsWith(`.${term}`)
+                ? 0
+                : name.includes(term)
+                  ? 1
+                  : word.test(text)
+                    ? 2
+                    : 3;
+    }
+
+    return rank;
 }
 
 /**
