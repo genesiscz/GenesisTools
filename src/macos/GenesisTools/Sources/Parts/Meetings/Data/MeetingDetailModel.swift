@@ -262,7 +262,9 @@ final class MeetingDetailModel {
     /// (a correction or a confirm in the terminal, a new frame), and quietly. Proposals already read read again each
     /// time: they depend on the Calendar, which has no revision. Without revisions (an older CLI, a failed read) every
     /// part read before reads again, as before.
-    func refreshLoaded() {
+    /// `force` (the menu's Reload): every part read before reads again, whatever its token says, so a Reload repairs
+    /// what a revision missed.
+    func refreshLoaded(force: Bool = false) {
         guard !isDropped else { return }
         refreshGeneration += 1
         let generation = refreshGeneration
@@ -272,10 +274,10 @@ final class MeetingDetailModel {
         inFlight[key] = Task { [weak self] in
             let revisions = try? await MeetingsCLI.json(MeetingRevisions.self, ["revisions", id, "--json"])
             guard let self, !Task.isCancelled, !self.isDropped, generation == self.refreshGeneration else { return }
-            if self.mustRead(.record, revisions?.show) { self.readRecord(quiet: true) }
-            if self.transcript != .idle, self.mustRead(.transcript, revisions?.transcript) { self.readTranscript(quiet: true) }
-            if self.speakers != .idle, self.mustRead(.speakers, revisions?.speakers) { self.readSpeakers(quiet: true) }
-            if self.timeline != .idle, self.mustRead(.timeline, revisions?.timeline) { self.readTimeline(quiet: true) }
+            if self.mustRead(.record, revisions?.show) || force { self.readRecord(quiet: true) }
+            if self.transcript != .idle, self.mustRead(.transcript, revisions?.transcript) || force { self.readTranscript(quiet: true) }
+            if self.speakers != .idle, self.mustRead(.speakers, revisions?.speakers) || force { self.readSpeakers(quiet: true) }
+            if self.timeline != .idle, self.mustRead(.timeline, revisions?.timeline) || force { self.readTimeline(quiet: true) }
             if self.proposals != .idle { self.readProposals(quiet: true) }
         }
     }
@@ -758,16 +760,4 @@ extension MeetingsWords {
         if ref.kind == "note" { return ref.title?.isEmpty == false ? ref.ref : nil }
         return ref.note
     }
-}
-
-extension MeetingDetailModel {
-    /// View → Reload: every part already read reads again, whatever its revision token says, because a reload the
-    /// reader asks for must not be skipped as unchanged.
-    func reloadAll() {
-        readAt.removeAll()
-        refreshLoaded()
-    }
-
-    /// How many parts hold a revision token (a test reads it after Reload).
-    var revisionTokensKnown: Int { readAt.count }
 }

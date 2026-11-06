@@ -61,7 +61,7 @@ final class MeetingsMenuTarget: NSObject {
     @objc func showAll(_ sender: Any?) { model?.go(.all) }
     @objc func reload(_ sender: Any?) {
         model?.load()
-        model?.detail?.reloadAll()
+        model?.detail?.refreshLoaded(force: true)
     }
     @objc func openSettings(_ sender: Any?) { FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.windowPage) }
 }
