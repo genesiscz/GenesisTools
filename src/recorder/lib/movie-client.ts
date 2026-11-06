@@ -3,6 +3,7 @@ import type { MethodDescriptor } from "@genesiscz/utils/api-descriptor";
 import { logger } from "@genesiscz/utils/logger";
 import type { EditOp } from "@genesiscz/utils/recording-editor/project";
 import { editPathOf, editProject, type OpenedProject, undoEdit } from "./edit";
+import { resolveRecording } from "./library";
 import { withServiceClient } from "./service-client";
 import { readLiveService } from "./service-protocol";
 
@@ -16,7 +17,12 @@ const { log } = logger.scoped("recorder-service-client");
 /** A `movie.*` call through the service may run a long step (removeIdle over a meeting, a transcription). */
 const MOVIE_CALL_TIMEOUT_MS = 60 * 60_000;
 const EDIT_CALL_TIMEOUT_MS = 10 * 60_000;
-const callerPath = (value: string): string => (value === "last" || value === "open" ? value : resolve(value));
+/**
+ * What the caller names, resolved here by the rules the in-process edit uses (a path against this cwd, a full or short
+ * library id, "last", "open"): the service runs in another folder. `resolve(value)` sent "<cwd>/<id>" for an id, and
+ * the service refused every edit by id while it ran (round 2, from recorder-capture).
+ */
+const callerPath = (value: string): string => resolveRecording(value);
 
 interface ServiceEditAnswer {
     project: OpenedProject["project"];

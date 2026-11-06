@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
@@ -17,6 +17,7 @@ import {
     RpcError,
     type StopAnswer,
 } from "@genesiscz/utils/screen-recorder/control";
+import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { callRecorder, LiveRecordingServer, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import type { z } from "zod";
 import goldenFixture from "./__fixtures__/editor-golden.json";
@@ -27,7 +28,7 @@ import * as edits from "./edit";
 import { editProject, readUndoSteps, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
-import { EDITOR_TABS } from "./library";
+import { EDITOR_TABS, shortRecordingId } from "./library";
 import { applyEdit, serviceRoutedMovie, undoLastEdit } from "./movie-client";
 import { editorGolden, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
@@ -839,6 +840,51 @@ describe("the REPL's and the CLI's way to the service", () => {
         await expect(client.call<unknown>("window.close", {})).rejects.toMatchObject({
             code: RPC_ERRORS.invalidParams,
         });
+    });
+
+    // Round 2 (recorder-capture): callerPath resolved every value against the cwd, so `apply <id>` asked the service
+    // for "<cwd>/<id>" and was refused while a service ran; a folder path worked.
+    test("an edit, an undo and a REPL Movie's edit by a full or short library id reach the service's recording", async () => {
+        const id = "video-2026-11-07_00-10-00-5eb1ce11-0000-4000-8000-000000000001";
+        const folder = recordingsLibraryDir(id);
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(
+            join(folder, "recording.json"),
+            SafeJSON.stringify({
+                version: 1,
+                id,
+                title: "by id",
+                startedAt: "2026-11-06T23:10:00Z",
+                displays: [],
+                frames: [],
+            })
+        );
+        writeFileSync(join(folder, "screen.mp4"), "");
+        const path = join(folder, "edit.json");
+        writeProject(
+            path,
+            wholeProject({ video: join(folder, "screen.mp4"), durationUs: 10_000_000, width: 100, height: 100 })
+        );
+
+        try {
+            const { dir } = await serviceFixture();
+            expect((await applyEdit(shortRecordingId(id), [{ op: "volume", volume: 0.5 }], { dir })).path).toBe(path);
+            expect(readProject(path).audio.volume).toBe(0.5);
+            expect((await undoLastEdit(id, { dir })).undone).toEqual(["volume"]);
+            expect(readProject(path).audio.volume).toBe(1);
+            const methods = moviesApi.handles.find((handle) => handle.name === "Movie")?.methods ?? [];
+            // Its own volume() throws: only a call that went to the service, whose Movie runs it, passes.
+            const local = {
+                recording: shortRecordingId(id),
+                volume: async (_volume: number): Promise<unknown> => {
+                    throw new Error("ran in the caller's process");
+                },
+            };
+            await serviceRoutedMovie(local, methods, { dir }).volume(0.25);
+            expect(readProject(path).audio.volume).toBe(0.25);
+        } finally {
+            rmSync(folder, { recursive: true, force: true });
+        }
     });
 
     test("a REPL Movie's edit goes into the window's open session through the service, and runs locally without one", async () => {
