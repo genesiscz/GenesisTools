@@ -9,7 +9,14 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { createCanvas } from "@napi-rs/canvas";
 import type { z } from "zod";
 import { captureCost } from "./capture-cost";
-import { applyConfigEdits, configValueAt, parseConfigPath, setConfigValue, unsetConfigValue } from "./config-edit";
+import {
+    applyConfigEdits,
+    configValueAt,
+    parseConfigPath,
+    setConfigValue,
+    unknownConfigPath,
+    unsetConfigValue,
+} from "./config-edit";
 import { decideItems, reopenItems } from "./decide";
 import { testPhrase } from "./dictionary-test";
 import { exportMeeting } from "./export";
@@ -43,6 +50,19 @@ function record(fields: RecordInput): MeetingRecord {
 const suggestedAt = "2026-11-04T10:00:00.000Z";
 
 describe("config set and unset", () => {
+    test("a misspelled key is refused with the closest setting, and an unset may still remove it (MC6)", async () => {
+        const { config } = stores();
+
+        await expect(setConfigValue(config, "global.capture.activFps", 5)).rejects.toThrow(
+            'global.capture has no setting "activFps"; did you mean "activeFps"? Nothing was written.'
+        );
+        expect(unknownConfigPath(parseConfigPath("global.capture.activeFps"))).toBeUndefined();
+        expect(unknownConfigPath(parseConfigPath('["projects","a.b","labels"]'))).toBeUndefined();
+        expect(unknownConfigPath(parseConfigPath("languages.de.ocr"))).toBeUndefined();
+        expect(unknownConfigPath(parseConfigPath("global.nosuch"))?.reason).toBe('global has no setting "nosuch".');
+        await expect(unsetConfigValue(config, "global.capture.activFps")).resolves.toBeDefined();
+    });
+
     test("a write that names the value it replaces is refused when another editor changed it first", async () => {
         const { config } = stores();
         const path = '["languages","cs","ocr"]';

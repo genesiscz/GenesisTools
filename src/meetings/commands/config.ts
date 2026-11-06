@@ -11,6 +11,7 @@ import {
     parseConfigPath,
     parseConfigValue,
     setConfigValue,
+    unknownConfigPath,
     unsetConfigValue,
 } from "../lib/config-edit";
 import { errorText, fail } from "../lib/shared";
@@ -18,6 +19,13 @@ import { configShowRead, windowJson } from "../lib/window-reads";
 
 async function show(path: string | undefined, opts: { json?: boolean }): Promise<void> {
     try {
+        const unknown = path ? unknownConfigPath(parseConfigPath(path)) : undefined;
+
+        if (unknown) {
+            fail(`${unknown.reason} Its settings: ${unknown.settings}`);
+            return;
+        }
+
         const view = await configShowRead(path);
 
         if (opts.json) {

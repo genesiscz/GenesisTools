@@ -1,6 +1,9 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type MeetingsConfig, type MeetingsConfigStore, meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
+import { closestName } from "@genesiscz/utils/transclude/registry";
+import { z } from "zod";
 
 /** Keys a path may never walk through: they reach the object's prototype, not the config. */
 const FORBIDDEN = new Set(["__proto__", "prototype", "constructor"]);
@@ -49,6 +52,91 @@ function isObject(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** The settings schema as JSON Schema, made once: which keys each level knows, where a record takes any key. */
+let configShape: unknown;
+
+function shapeOfConfig(): unknown {
+    configShape ??= z.toJSONSchema(meetingsConfigSchema, { io: "input", unrepresentable: "any" });
+    return configShape;
+}
+
+/** The schema node one segment below `node`: a known key, any key of a record, an array index, or a union branch. */
+function childNode(node: unknown, segment: string): unknown {
+    if (!isObject(node)) {
+        return undefined;
+    }
+
+    if (isObject(node.properties) && Object.hasOwn(node.properties, segment)) {
+        return node.properties[segment];
+    }
+
+    if (isObject(node.additionalProperties)) {
+        return node.additionalProperties;
+    }
+
+    if (/^\d+$/.test(segment) && isObject(node.items)) {
+        return node.items;
+    }
+
+    for (const key of ["anyOf", "oneOf", "allOf"]) {
+        const branches = node[key];
+
+        for (const branch of Array.isArray(branches) ? branches : []) {
+            const found = childNode(branch, segment);
+
+            if (found !== undefined) {
+                return found;
+            }
+        }
+    }
+
+    return undefined;
+}
+
+/** A node that names no keys of its own takes any below it (an unrepresentable part, a free object). */
+function takesAnyKey(node: unknown): boolean {
+    return (
+        isObject(node) &&
+        node.properties === undefined &&
+        node.additionalProperties === undefined &&
+        node.items === undefined &&
+        node.anyOf === undefined &&
+        node.oneOf === undefined &&
+        node.allOf === undefined &&
+        (node.type === undefined || node.type === "object")
+    );
+}
+
+/**
+ * Why a path names no setting, or undefined when it does: a misspelled key must be refused, because the schema drops
+ * an unknown key, so the write said ✓ and changed nothing (MC6, 2026-11-06: `global.capture.activFps`).
+ */
+export function unknownConfigPath(segments: string[]): { reason: string; settings: string } | undefined {
+    let node = shapeOfConfig();
+
+    for (const [index, segment] of segments.entries()) {
+        if (takesAnyKey(node)) {
+            return undefined;
+        }
+
+        const next = childNode(node, segment);
+
+        if (next === undefined) {
+            const parent = segments.slice(0, index).join(".");
+            const known = isObject(node) && isObject(node.properties) ? Object.keys(node.properties) : [];
+            const hint = closestName(segment, known);
+            return {
+                reason: `${parent || "the config"} has no setting "${segment}"${hint ? `; did you mean "${hint}"?` : "."}`,
+                settings: toolCommand("meetings", "config", "show", ...(parent ? [parent] : [])),
+            };
+        }
+
+        node = next;
+    }
+
+    return undefined;
+}
+
 /** The value at a path of the config with its defaults filled in, or undefined. */
 export function configValueAt(config: MeetingsConfig, segments: string[]): unknown {
     let current: unknown = config;
@@ -79,6 +167,15 @@ function same(left: unknown, right: unknown): boolean {
  */
 export async function applyConfigEdits(store: MeetingsConfigStore, edits: ConfigEdit[]): Promise<MeetingsConfig> {
     const parsed = edits.map((edit) => ({ edit, segments: parseConfigPath(edit.path) }));
+
+    // An unset may name an unknown key: that is how a key an older version wrote is removed again.
+    for (const { edit, segments } of parsed) {
+        const unknown = "unset" in edit && edit.unset ? undefined : unknownConfigPath(segments);
+
+        if (unknown) {
+            throw new Error(`${unknown.reason} Nothing was written. Its settings: ${unknown.settings}`);
+        }
+    }
 
     return store.update((raw) => {
         const guarded = parsed.filter(({ edit }) => "expect" in edit);
