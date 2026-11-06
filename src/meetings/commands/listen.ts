@@ -487,11 +487,12 @@ async function listen(ref: string, opts: ListenOptions): Promise<void> {
     const first = openQuestions(meeting).find((item) => !itemId || item.id === itemId);
 
     if (!first) {
-        ui.info(
-            opts.item
-                ? `${opts.item} is not an open question in ${meeting.id} (${TOOL} items ${meeting.id} --kind question)`
-                : `No open questions in ${meeting.id}. Suggest some: ${TOOL} suggest ${meeting.id}`
-        );
+        // A named question that is not open was not answered, so that exits 1; an empty round is no failure.
+        opts.item
+            ? fail(
+                  `${opts.item} is not an open question in ${meeting.id} (${TOOL} items ${meeting.id} --kind question)`
+              )
+            : ui.info(`No open questions in ${meeting.id}. Suggest some: ${TOOL} suggest ${meeting.id}`);
         return;
     }
 

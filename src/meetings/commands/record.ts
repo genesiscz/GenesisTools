@@ -211,12 +211,16 @@ async function start(opts: {
     }
 }
 
-/** The running meeting recorder's live recording id, or undefined (with a message) when nothing records. */
+/**
+ * The running meeting recorder's live recording id, or undefined when nothing records: then the asked change (a mark,
+ * a pause, a setting) was not made, so the command exits 1 (MC14).
+ */
 function runningRecorder(store: MeetingStore): { id: string; meetingId: string; pid: number } | undefined {
     const current = readRecorderState(store);
 
     if (!current.running || !current.state) {
         ui.info("Nothing is recording.");
+        process.exitCode = 1;
         return undefined;
     }
 
@@ -387,6 +391,13 @@ async function displayMode(raw: string): Promise<void> {
 async function stop(opts: { meeting?: string; startedAt?: string }): Promise<void> {
     const store = new MeetingStore();
     const current = readRecorderState(store);
+
+    // Nothing to stop is the state a stop asks for: one line and exit 0, no "Stopping" before it (MC18).
+    if (!current.running || !current.state) {
+        ui.info("Nothing is recording.");
+        return;
+    }
+
     ui.dim("Stopping; the recorder converts its last frames, writes the summary and collects first.");
     const answer = await callRunning(store, async (recorder) =>
         requestRecorderStop(store, opts, () => recorder.stop())
@@ -560,24 +571,25 @@ async function cost(opts: { json?: boolean }): Promise<void> {
             return;
         }
 
-        ui.info(`one kept frame: ${view.keptFrameCpuMs} ms CPU (${view.source})`);
+        // The report is the command's result, so it goes to stdout like show and overview (MC19).
+        out.println(`one kept frame: ${view.keptFrameCpuMs} ms CPU (${view.source})`);
 
         if (view.observed) {
-            ui.info(
+            out.println(
                 `last recording ${view.observed.meeting}: ${view.observed.framesPerMin} frames/min on ${view.observed.displays} displays, about ${view.observed.cpuSecPerMin} s CPU per minute`
             );
         }
 
         for (const choice of view.activeFps) {
-            ui.dim(`  ${choice.value} fps while changing: at most ${choice.maxCpuSecPerMin} s CPU per minute`);
+            out.println(`  ${choice.value} fps while changing: at most ${choice.maxCpuSecPerMin} s CPU per minute`);
         }
 
         for (const choice of view.displays) {
-            ui.dim(`  displays ${choice.value}: at most ${choice.maxCpuSecPerMin} s CPU per minute`);
+            out.println(`  displays ${choice.value}: at most ${choice.maxCpuSecPerMin} s CPU per minute`);
         }
 
         if (view.thresholdNote) {
-            ui.dim(`  threshold: ${view.thresholdNote}`);
+            out.println(`  threshold: ${view.thresholdNote}`);
         }
     } catch (err) {
         fail(errorText(err));
