@@ -28,6 +28,21 @@ function maxOutputOption(value: string): number | undefined {
     return chars;
 }
 
+/** The entries of a `--toolset` list that do not load, so `movies,nope` is refused as "nope". */
+function unknownToolsets(value: string): string {
+    const entries = value.split(",").map((entry) => entry.trim());
+    const unknown = entries.filter((entry) => {
+        try {
+            parseToolsetList(entry);
+            return false;
+        } catch (error) {
+            logger.debug({ entry, error }, "node-repl --toolset entry does not load");
+            return true;
+        }
+    });
+    return (unknown.length > 0 ? unknown : entries).join(",");
+}
+
 /** The `--toolset` list, or undefined after printing the known ids for an empty or unknown entry. */
 function toolsetsOption(value: string | boolean | undefined, subcommand: string): string[] | undefined {
     if (value === undefined) {
@@ -41,11 +56,14 @@ function toolsetsOption(value: string | boolean | undefined, subcommand: string)
 
         return parseToolsetList(value);
     } catch (error) {
-        logger.error(error instanceof Error ? error.message : String(error));
-        out.println(
-            suggestEnumFlag(toolCommand("node-repl"), "--toolset", REPL_TOOLSET_IDS, {
+        // One message on stderr: the suggestion already names the bad value and the known ones. The subcommand belongs
+        // in the tool name, because `subcommand` strips those words from argv and expects them there (NR10).
+        logger.debug({ error }, "node-repl --toolset refused");
+        const given = typeof value === "string" ? unknownToolsets(value) : undefined;
+        out.printlnErr(
+            suggestEnumFlag(toolCommand(`node-repl ${subcommand}`), "--toolset", REPL_TOOLSET_IDS, {
                 subcommand: [subcommand],
-                given: typeof value === "string" ? value : undefined,
+                given,
             })
         );
         process.exitCode = 1;
