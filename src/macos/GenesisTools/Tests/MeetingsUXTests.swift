@@ -250,4 +250,37 @@ final class MeetingsUXTests: XCTestCase {
         try await until("the window's playback starts") { !asked.isEmpty }
         XCTAssertEqual(asked, ["a 12.7"])
     }
+
+    // MARK: MU4 confirm all at or above a line, with one Undo
+
+    static func itemsJSON() -> Data {
+        Data("""
+        [{"id":"r1","kind":"speaker-range","status":"suggested","confidence":0.9,"fromSec":20,"toSec":30,"speaker":"Alice"},
+         {"id":"r2","kind":"speaker-range","status":"suggested","confidence":0.95,"fromSec":40,"toSec":50},
+         {"id":"t1","kind":"term","status":"suggested","confidence":0.9,"heard":"jason"},
+         {"id":"t2","kind":"term","status":"suggested","confidence":0.85,"heard":"jason","proposed":"JSON"},
+         {"id":"q1","kind":"question","status":"suggested","confidence":0.99,"question":"Which one?"},
+         {"id":"l1","kind":"label","status":"suggested","confidence":0.6,"label":"Launch"},
+         {"id":"n1","kind":"label","status":"suggested","label":"Retro"},
+         {"id":"c1","kind":"label","status":"confirmed","confidence":0.99,"label":"Done"}]
+        """.utf8)
+    }
+
+    func testConfirmAllPicksWhatTheCliDecidesAndLeavesTheRest() throws {
+        let items = try JSONDecoder().decode([MeetingItem].self, from: Self.itemsJSON())
+        XCTAssertEqual(MeetingDetailModel.confirmable(items, atOrAbove: 0.8).map(\.id), ["r1", "t2"],
+                       "a range with no speaker, a term with no spelling and a question wait for the reader")
+        XCTAssertEqual(MeetingDetailModel.confirmable(items, atOrAbove: 0.5).map(\.id), ["r1", "t2", "l1"])
+        XCTAssertEqual(MeetingDetailModel.confirmable(items, atOrAbove: 0).map(\.id), ["r1", "t2", "l1", "n1"],
+                       "any confidence takes an item with none, as the CLI does")
+    }
+
+    func testABulkConfirmSaysHowManyAndWhatWaits() {
+        let both = DecideResult(decided: ["r1", "t2"], token: "tok", skipped: [.init(id: "r2", reason: "it has no speaker yet.")])
+        XCTAssertEqual(MeetingDetailModel.bulkNote(both, threshold: 0.8), "Confirmed 2 items at 80 % or more; 1 item still waits for you")
+        let none = DecideResult(decided: [], token: nil, skipped: [])
+        XCTAssertEqual(MeetingDetailModel.bulkNote(none, threshold: 0), "Nothing to confirm")
+        XCTAssertEqual(MeetingDetailModel.reopenArgs(meeting: "a", items: ["r1", "t2"], token: "tok"),
+                       ["reopen", "a", "r1", "t2", "--token", "tok"], "one Undo gives back every item the confirm took")
+    }
 }

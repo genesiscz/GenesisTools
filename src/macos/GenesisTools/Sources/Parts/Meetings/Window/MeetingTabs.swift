@@ -345,6 +345,10 @@ struct ItemsTab: View {
                     }
                 }
                 .listStyle(.inset)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    BulkConfirmBar(detail: detail, items: record.items,
+                                   applyAbove: detail.window?.overview.value?.applyAbove ?? 0.5)
+                }
                 .onKeyPress(.return) { act(on: record, confirm: true) }
                 .onKeyPress(.delete) { act(on: record, confirm: false) }
             }
@@ -357,6 +361,60 @@ struct ItemsTab: View {
               item.kind != "question", !(confirm && item.kind == "speaker-range" && item.speaker == nil) else { return .ignored }
         detail.decide(item, confirm: confirm)
         return .handled
+    }
+}
+
+/// Above the items: how many suggestions are at the apply line, and one menu that confirms all of them at or above a
+/// line, with one Undo. Before it every suggestion took its own click, 40 of them in a long meeting.
+private struct BulkConfirmBar: View {
+    let detail: MeetingDetailModel
+    let items: [MeetingItem]
+    /// The config's apply line (`assign.applyAbove`), the default threshold.
+    let applyAbove: Double
+
+    var body: some View {
+        let waiting = items.filter { $0.status == "suggested" && $0.kind != "question" }
+        if !waiting.isEmpty {
+            let atLine = MeetingDetailModel.confirmable(items, atOrAbove: applyAbove).count
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    Text(atLine > 0
+                         ? "\(Plural.count(atLine, "suggestion")) at \(pct(applyAbove)) or more"
+                         : "No suggestion at \(pct(applyAbove)) or more")
+                        .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer(minLength: 8)
+                    MenuButton(items: { menu() }) {
+                        Label("Confirm all…", systemImage: "checkmark.circle").font(.system(size: 12))
+                    }
+                    .disabled(detail.isBusy("confirm.all"))
+                    .instantTooltip("Confirm every suggestion at or above a confidence, with one Undo")
+                    .accessibilityIdentifier("meetings.items.confirmAll")
+                }
+                .padding(.horizontal, 14).padding(.vertical, 6)
+                Divider()
+            }
+            .background(.background)
+        }
+    }
+
+    private func pct(_ value: Double) -> String { MeetingsWords.confidence(value) ?? "" }
+
+    private func menu() -> [MenuButtonItem] {
+        var lines = [0.9, 0.8]
+        if !lines.contains(applyAbove), applyAbove > 0 { lines.append(applyAbove) }
+        var menu: [MenuButtonItem] = [.note("Confirm every suggestion at or above")]
+        for line in lines.sorted(by: >) {
+            let count = MeetingDetailModel.confirmable(items, atOrAbove: line).count
+            let mark = line == applyAbove ? " (the apply line)" : ""
+            menu.append(.action("\(pct(line))\(mark): \(Plural.count(count, "item"))", enabled: count > 0) {
+                detail.confirmAll(atOrAbove: line)
+            })
+        }
+        let every = MeetingDetailModel.confirmable(items, atOrAbove: 0).count
+        menu.append(.action("Any confidence: \(Plural.count(every, "item"))", enabled: every > 0) { detail.confirmAll(atOrAbove: 0) })
+        menu.append(.divider)
+        menu.append(.note("Questions, ranges with no speaker and terms with no spelling stay for you."))
+        return menu
     }
 }
 

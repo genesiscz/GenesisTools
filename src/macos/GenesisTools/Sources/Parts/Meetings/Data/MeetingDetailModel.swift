@@ -487,3 +487,84 @@ enum MeetingsWords {
         return source.note.map { "by hand: \($0)" } ?? "by hand"
     }
 }
+
+// MARK: - Bulk decide
+
+extension MeetingDetailModel {
+    /// The suggestions "confirm all at or above" decides: the CLI's own pick (`confirm --min-confidence`), less what it
+    /// skips and leaves for the reader (a question, a speaker range with no speaker, a term with no spelling).
+    static func confirmable(_ items: [MeetingItem], atOrAbove threshold: Double) -> [MeetingItem] {
+        items.filter { item in
+            item.status == "suggested" && item.kind != "question" && (item.confidence ?? 0) >= threshold
+                && !(item.kind == "speaker-range" && item.speaker == nil) && !item.needsSpelling
+        }
+    }
+
+    /// The note after a bulk confirm: how many, at which line, and how many wait for the reader.
+    static func bulkNote(_ result: DecideResult, threshold: Double) -> String {
+        let line = threshold > 0 ? " at \(MeetingsWords.confidence(threshold) ?? "") or more" : ""
+        let confirmed = result.decided.isEmpty ? "Nothing to confirm\(line)" : "Confirmed \(Plural.count(result.decided.count, "item"))\(line)"
+        return result.skipped.isEmpty ? confirmed : "\(confirmed); \(Plural.count(result.skipped.count, "item")) still \(result.skipped.count == 1 ? "waits" : "wait") for you"
+    }
+
+    /// Confirms every suggestion at or above `threshold` in one `tools meetings confirm --min-confidence`, with one Undo
+    /// for all of them.
+    func confirmAll(atOrAbove threshold: Double) {
+        let key = "confirm.all"
+        guard !busy.contains(key) else { return }
+        busy.insert(key)
+        Task {
+            defer { busy.remove(key) }
+            do {
+                let result = try await MeetingsCLI.json(
+                    DecideResult.self, ["confirm", id, "--min-confidence", String(threshold), "--json"], timeoutSeconds: 120)
+                for itemID in result.decided { mark(itemID, status: "confirmed") }
+                reloadRecord()
+                window?.loadOverview()
+                var note = MeetingsNotice(text: Self.bulkNote(result, threshold: threshold), tone: .success)
+                note.more = result.skipped.isEmpty ? nil : result.skipped.map { "\($0.id): \($0.reason)" }.joined(separator: "\n")
+                if !result.decided.isEmpty {
+                    note.actionTitle = "Undo"
+                    note.actionSymbol = "arrow.uturn.backward"
+                    note.action = { [weak model = self] in model?.reopenAll(result.decided, token: result.token) }
+                }
+                notice = note
+                scheduleUndoExpiry(for: note.id)
+                if !result.decided.isEmpty, Self.reloadsTranscript(after: .decision) {
+                    transcript = .idle
+                    if tab == .transcript { loadTranscript() }
+                }
+            } catch {
+                notice = .failure(error) { [weak model = self] in model?.confirmAll(atOrAbove: threshold) }
+            }
+        }
+    }
+
+    /// `reopen`'s arguments for several items: one token took them all, so one Undo gives them all back.
+    static func reopenArgs(meeting: String, items: [String], token: String?) -> [String] {
+        ["reopen", meeting] + items + (token.map { ["--token", $0] } ?? [])
+    }
+
+    /// The Undo of a bulk confirm.
+    func reopenAll(_ items: [String], token: String?) {
+        let key = "reopen.all"
+        guard !busy.contains(key) else { return }
+        busy.insert(key)
+        Task {
+            defer { busy.remove(key) }
+            do {
+                _ = try await MeetingsCLI.run(Self.reopenArgs(meeting: id, items: items, token: token))
+                notice = MeetingsNotice(text: "Suggested again: \(Plural.count(items.count, "item"))", tone: .success)
+            } catch let failure as MeetingsCLI.Failure where failure.code == "item-changed" {
+                notice = MeetingsNotice(text: "Not undone: some of these items were decided again in another window or the terminal.",
+                                        more: failure.detail, tone: .error)
+            } catch {
+                notice = .failure(error) { [weak model = self] in model?.reopenAll(items, token: token) }
+            }
+            reloadRecord()
+            window?.loadOverview()
+            transcript = .idle
+            if tab == .transcript { loadTranscript() }
+        }
+    }
+}
