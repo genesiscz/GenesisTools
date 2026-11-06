@@ -699,6 +699,25 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertEqual(reopened.project.zooms.count, 1, "redo brings it back")
     }
 
+    // Regression test: deep test 2026-11-06 RE10 (live re-check) — an agent's undo saves the file at once, and the
+    // window's file watcher took that version before the notification's refetch answered: the banner said "agent" and
+    // "⌘Z puts it back", and ⇧⌘Z could not make the step again.
+    func testAnOutsideUndoThatTheFileWatcherSeesFirstStaysAnUndo() throws {
+        let window = model()
+        let path = window.store.url.path
+        try service.outside("edit.apply", ops: [["op": "zoom", "from": 2.0, "to": 4.0]], path: path)
+        XCTAssertEqual(window.project.zooms.count, 1, "the agent's zoom is on the timeline")
+
+        service.holdAnswers = true
+        try service.outside("edit.undo", path: path, action: "undo")
+        window.fileChanged(service.project)
+        service.deliver()
+
+        XCTAssertTrue(window.project.zooms.isEmpty, "the undo took the zoom back")
+        XCTAssertTrue(window.canRedo, "⇧⌘Z makes the agent's step again")
+        XCTAssertEqual(window.changes.last?.title, "Undo by agent")
+    }
+
     // Regression test: deep test 2026-11-06 RE1 — two editor windows of one edit held it as one on the app's
     // connection, so closing the second window ended the first window's session.
     func testEachEditorSessionHoldsTheEditUnderItsOwnHolderAndRereadsUnderIt() {

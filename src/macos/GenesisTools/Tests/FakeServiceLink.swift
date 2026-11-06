@@ -79,9 +79,25 @@ final class FakeServiceLink: RecorderServiceLink {
         while !held.isEmpty { held.removeFirst()() }
     }
 
-    func listen(_ owner: AnyObject, notification: @escaping (String, Any?) -> Void, connected: @escaping () -> Void) {}
+    func listen(_ owner: AnyObject, notification: @escaping (String, Any?) -> Void, connected: @escaping () -> Void) {
+        listeners[ObjectIdentifier(owner)] = notification
+    }
 
-    func unlisten(_ owner: AnyObject) {}
+    func unlisten(_ owner: AnyObject) {
+        listeners[ObjectIdentifier(owner)] = nil
+    }
+
+    private var listeners: [ObjectIdentifier: (String, Any?) -> Void] = [:]
+
+    /// Another writer (an agent, the CLI) changes the edit at `path` on the service: the change, then the
+    /// `project.changed` every listener hears, as the service sends it.
+    func outside(_ method: String, ops: [[String: Any]] = [], path: String, action: String? = nil) throws {
+        _ = try answer(method, ["ops": ops])
+        project.updatedBy = "agent"
+        var change: [String: Any] = ["path": path, "revision": revision, "by": "agent"]
+        if let action { change["action"] = action }
+        for listener in listeners.values { listener("project.changed", change) }
+    }
 
     private func answer(_ method: String, _ params: [String: Any]) throws -> Any? {
         let gesture = params["gesture"] as? String ?? ""

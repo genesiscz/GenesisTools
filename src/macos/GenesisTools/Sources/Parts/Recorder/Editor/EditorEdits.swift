@@ -507,9 +507,11 @@ extension EditorModel {
     }
 
     /// The file changed on disk. With the service the session is the edit (its own saves and the agents' changes come
-    /// as answers and notifications), so only a writer that went round it reaches the window here.
+    /// as answers and notifications), so only a writer that went round it reaches the window here. A save the service
+    /// already announced waits for its refetch, which carries the change's action.
     func fileChanged(_ next: EditProject) {
-        if session.isOnline, next.revision <= (session.revision ?? .max) { return }
+        let known = max(session.revision ?? .max, session.notifiedRevision ?? .min)
+        if session.isOnline, next.revision <= known { return }
         adoptExternal(next)
     }
 

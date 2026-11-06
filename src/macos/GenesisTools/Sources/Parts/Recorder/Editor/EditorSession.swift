@@ -16,6 +16,9 @@ final class EditorSession {
     let holder = UUID().uuidString
     /// The revision of the project the window last took from the service.
     private(set) var revision: Int?
+    /// The newest revision another writer's `project.changed` named. Its file save can reach the file watcher before
+    /// the refetch answers, and that copy must wait for the refetch, which knows the change was an undo or a redo.
+    private(set) var notifiedRevision: Int?
     /// The undo steps the service keeps for the edit, from the last `session.open`.
     private(set) var undoDepth: Int?
     private(set) var isOpen = false
@@ -133,6 +136,7 @@ final class EditorSession {
         // The window's own change: its answer carries the project (the notification comes just before it).
         guard changed.by != "editor" else { return }
         guard changed.revision != revision else { return }
+        notifiedRevision = max(notifiedRevision ?? changed.revision, changed.revision)
         onOutsideChange?(changed)
     }
 
