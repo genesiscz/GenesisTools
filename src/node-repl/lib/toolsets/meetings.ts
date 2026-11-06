@@ -1,7 +1,7 @@
 import { prepareFindings } from "@app/meetings/lib/add-findings";
 import { captureCost } from "@app/meetings/lib/capture-cost";
 import { configValueAt, parseConfigPath, setConfigValue } from "@app/meetings/lib/config-edit";
-import { decideItems } from "@app/meetings/lib/decide";
+import { decideItems, reopenItems } from "@app/meetings/lib/decide";
 import { testPhrase } from "@app/meetings/lib/dictionary-test";
 import { findingSchema } from "@app/meetings/lib/findings";
 import { itemWhat } from "@app/meetings/lib/item-text";
@@ -123,7 +123,7 @@ const decide = {
         })
         .strict(),
     result: z.unknown(),
-    resultName: "{ decided: string[], skipped: { id, reason, needs }[] }",
+    resultName: "{ decided: string[], skipped: { id, reason, needs }[], token }",
     effect: "reversible" as const,
 };
 const confirm = defineMethod({
@@ -132,12 +132,20 @@ const confirm = defineMethod({
     doc:
         'Confirm items (ids "i3", or a question\'s number "Q2"), or every suggested item at or above minConfidence (0..1). Transcripts apply confirmed items. A range nobody named needs `speaker`, a term with no spelling needs `proposed`; a question is answered by ear (' +
         toolCommand("meetings listen") +
-        "). Those come back in `skipped` with the reason and what they need.",
+        "). Those come back in `skipped` with the reason and what they need. `token` undoes it with items.reopen.",
 });
 const reject = defineMethod({
     name: "items.reject",
     ...decide,
-    doc: "Reject items by id, or every suggested item at or above minConfidence: they are never suggested again.",
+    doc: "Reject items by id, or every suggested item at or above minConfidence: they are never suggested again. `token` undoes it with items.reopen.",
+});
+const reopen = defineMethod({
+    name: "items.reopen",
+    params: z.object({ ids: ids.min(1), token: z.string().min(1).optional() }).strict(),
+    result: z.unknown(),
+    resultName: "{ reopened: string[], skipped: { id, reason }[] }",
+    effect: "reversible",
+    doc: "Undo a confirm or a reject: each item gets back what the decision changed. Pass the `token` the decision answered; an item decided again since is refused, and nothing is reopened (NR20).",
 });
 const speakers = defineMethod({
     name: "speakers.stats",
@@ -153,7 +161,7 @@ const rename = defineMethod({
     result: z.unknown(),
     resultName: recordDoc,
     effect: "reversible",
-    doc: 'Name a speaker label ("Speaker 2" → "Alice"): this meeting\'s transcripts use the name from now on.',
+    doc: 'Name a speaker label ("Speaker 2" → "Alice"): this meeting\'s transcripts use the name from now on. A label the linked transcript does not have is refused, with the labels it has.',
 });
 const set = defineMethod({
     name: "set",
@@ -329,7 +337,7 @@ const exportMethod = defineMethod({
     result: z.unknown(),
     resultName: "{ path, folder, bytes, action, replaced, kept?, written }",
     effect: "reversible",
-    doc: "Write the polished transcript (play links, dictionary, confirmed items) into the project's export folder, or `to`. An edited note is kept: ifEdited beside (the config's default), refuse or replace.",
+    doc: "Write the polished transcript (play links, dictionary, confirmed items) into the project's export folder, or into the folder `to` (a folder, never a file name: the file is written inside it). An edited note is kept: ifEdited beside (the config's default), refuse or replace.",
 });
 
 const recordingSettings = defineMethod({
@@ -459,7 +467,7 @@ export class MeetingsToolset extends ReplToolset {
         handles: [
             {
                 name: "Meeting",
-                summary: "An opened meeting. Every call reads the meeting as saved now.",
+                summary: "An opened meeting; `id` and `title` name it. Every call reads the meeting as saved now.",
                 methods: [
                     info,
                     lines,
@@ -470,6 +478,7 @@ export class MeetingsToolset extends ReplToolset {
                     suggest,
                     confirm,
                     reject,
+                    reopen,
                     speakers,
                     rename,
                     set,
@@ -526,7 +535,21 @@ export class MeetingsToolset extends ReplToolset {
                     get: async (path?: string) => {
                         const parsed = configGet.params.parse(path === undefined ? {} : { path });
                         const config = await new MeetingsConfigStore().read();
-                        return parsed.path ? configValueAt(config, parseConfigPath(parsed.path)) : config;
+
+                        if (!parsed.path) {
+                            return config;
+                        }
+
+                        const value = configValueAt(config, parseConfigPath(parsed.path));
+
+                        // An unknown path printed nothing, the same as a value it could not find (NR20).
+                        if (value === undefined) {
+                            throw new Error(
+                                `"${parsed.path}" is not set and has no default; config.get() shows every setting with its default`
+                            );
+                        }
+
+                        return value;
                     },
                     set: async (path: string, value: unknown) => {
                         const parsed = configSet.params.parse({ path, value });
@@ -644,6 +667,10 @@ export class MeetingsToolset extends ReplToolset {
         };
 
         return {
+            id,
+            get title() {
+                return current().title;
+            },
             // Read again on each access, so the findings items.add stores show at once.
             get record() {
                 return current();
@@ -733,6 +760,12 @@ export class MeetingsToolset extends ReplToolset {
                 },
                 confirm: decideWith("confirmed"),
                 reject: decideWith("rejected"),
+                reopen: async (input: z.input<typeof reopen.params>) => {
+                    const options = reopen.params.parse(input);
+                    const result = await reopenItems({ store, record: current(), ...options });
+                    log.info({ meeting: id, reopened: result.reopened.length }, "items reopened");
+                    return result;
+                },
             },
             speakers: {
                 stats: async (input: z.input<typeof speakers.params> = {}) => {
@@ -746,6 +779,24 @@ export class MeetingsToolset extends ReplToolset {
                 },
                 rename: async (label: string, name: string) => {
                     const parsed = rename.params.parse({ label, name });
+                    // A label the transcript does not have was stored as a rename of nobody (NR20).
+                    const transcript = await opened()
+                        .meeting()
+                        .then((meeting) => meeting.transcript)
+                        .catch((error: unknown) => {
+                            log.debug({ error, meeting: id }, "no transcript to check the speaker label against");
+                            return undefined;
+                        });
+                    const labels = [
+                        ...new Set(transcript?.flatMap((entry) => (entry.speaker ? [entry.speaker] : [])) ?? []),
+                    ];
+
+                    if (transcript && !labels.includes(parsed.label)) {
+                        throw new Error(
+                            `the transcript has no speaker label "${parsed.label}"; its labels: ${labels.join(", ") || "none"}`
+                        );
+                    }
+
                     return describe(await store.renameSpeaker(id, parsed.label, parsed.name));
                 },
             },

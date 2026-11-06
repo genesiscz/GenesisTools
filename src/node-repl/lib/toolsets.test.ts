@@ -1426,6 +1426,47 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(Object.keys(answer as object).sort()).toEqual(["added", "warnings"]);
     });
 
+    // NR20: the handle had no id, a confirm's token had no door back, and an unknown config path printed nothing.
+    test("meetings: a handle names its meeting, a confirm is undone with its token, and an unknown config path is refused", async () => {
+        const record = await new MeetingStore().create(
+            { title: "Undo", start: "2026-11-02T17:00:00.000Z", createdBy: "new" },
+            { command: "new", change: "test" }
+        );
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: {
+                open(ref: string): {
+                    readonly id: string;
+                    readonly title: string;
+                    readonly record: { items: Array<{ id: string; status: string }> };
+                    items: {
+                        add(input: unknown): Promise<unknown>;
+                        confirm(input: unknown): Promise<{ decided: string[]; token?: string }>;
+                        reopen(input: unknown): Promise<{ reopened: string[] }>;
+                    };
+                };
+                config: { get(path?: string): Promise<unknown> };
+            };
+        };
+        const meeting = meetings.open(record.id);
+        expect(meeting.id).toBe(record.id);
+        expect(meeting.title).toBe("Undo");
+
+        // A question is answered by ear, so the fixture is a term with its spelling, which a confirm takes as it is.
+        await meeting.items.add({
+            findings: [{ kind: "term", at: 1, heard: "jason", proposed: "JSON", confidence: 0.9, reason: "a fixture" }],
+        });
+        const [item] = meeting.record.items;
+        const confirmed = await meeting.items.confirm({ ids: [item.id] });
+        expect(confirmed.decided).toEqual([item.id]);
+        expect(confirmed.token).toBeString();
+        expect((await meeting.items.reopen({ ids: [item.id], token: confirmed.token })).reopened).toEqual([item.id]);
+        expect(meeting.record.items[0].status).toBe("suggested");
+
+        await expect(meetings.config.get("global.no.such.key")).rejects.toThrow(
+            '"global.no.such.key" is not set and has no default'
+        );
+    });
+
     test("meetings: an opened meeting reads and changes the settings of its live recording, and says so when it is not recording", async () => {
         const store = new MeetingStore();
         const record = await store.create(
