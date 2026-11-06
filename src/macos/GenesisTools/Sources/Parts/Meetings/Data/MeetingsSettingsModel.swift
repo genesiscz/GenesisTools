@@ -48,11 +48,38 @@ final class MeetingsSettingsModel {
         !settings.isLoading && settings != .idle && !cost.isLoading && cost != .idle && !preview.isLoading && preview != .idle
     }
 
-    func load() {
+    /// The reads beside the settings that a page shows, so each page starts only its own.
+    struct Reads: OptionSet {
+        let rawValue: Int
+        static let cost = Reads(rawValue: 1)
+        static let preview = Reads(rawValue: 2)
+        static let dictionary = Reads(rawValue: 4)
+        static let all: Reads = [.cost, .preview, .dictionary]
+    }
+
+    /// The settings and `reads`; a snapshot reads all of them and waits for them.
+    func load(_ reads: Reads = .all) {
         loadSettings()
-        loadCost()
-        loadPreview()
-        loadDictionary()
+        if reads.contains(.cost) { loadCost() }
+        if reads.contains(.preview) { loadPreview() }
+        if reads.contains(.dictionary) { loadDictionary() }
+    }
+
+    /// A page showed: the settings and the page's own reads, each the first time only.
+    func ensure(_ reads: Reads) {
+        if settings == .idle { loadSettings() }
+        if reads.contains(.cost), cost == .idle { loadCost() }
+        if reads.contains(.preview), preview == .idle { loadPreview() }
+        if reads.contains(.dictionary), dictionary == .idle { loadDictionary() }
+    }
+
+    /// Settings opened again: each read a page already made reads again; the others wait for their page.
+    func reloadRead() {
+        var reads: Reads = []
+        if cost != .idle { reads.insert(.cost) }
+        if preview != .idle { reads.insert(.preview) }
+        if dictionary != .idle { reads.insert(.dictionary) }
+        if settings != .idle || !reads.isEmpty { load(reads) }
     }
 
     func loadSettings() {

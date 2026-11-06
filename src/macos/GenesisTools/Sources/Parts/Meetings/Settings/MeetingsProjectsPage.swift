@@ -7,7 +7,7 @@ struct MeetingsProjectsPage: View {
     @State private var newProject = ""
 
     var body: some View {
-        MeetingsSettingsFrame(model: model) { settings in
+        MeetingsSettingsFrame(model: model, reads: .preview) { settings in
             let assign = settings.global.assign
             NativeSettingsCard("Ask each time", subtitle: "A meeting with no project after its sources link gets one question in the decision inbox, with ranked proposals.") {
                 NativeSettingsToggle("Ask about each meeting without a project", identifier: "meetings.assign.ask",
@@ -320,7 +320,7 @@ struct MeetingsDictionaryPage: View {
     @State private var editing: DictionaryEntry?
 
     var body: some View {
-        MeetingsSettingsFrame(model: model) { settings in
+        MeetingsSettingsFrame(model: model, reads: .dictionary) { settings in
             NativeSettingsCard("Scope", subtitle: "A project's dictionary applies over the global one in its meetings.") {
                 NativeSettingsPicker("Dictionary", identifier: "meetings.dictionary.scope",
                                      options: [NativeSettingsOption("", "Global")] + settings.projectNames.map { NativeSettingsOption($0, $0) },

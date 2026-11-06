@@ -24,7 +24,7 @@ package final class MeetingsSettingsPlugin: FeatureSettingsPlugin {
     }
 
     package func settingsReopened() {
-        model?.load()
+        model?.reloadRead()
     }
 }
 
@@ -62,6 +62,8 @@ enum MeetingsSettingsPages {
 /// The page's read state, the last action's note, and the content once the settings are there.
 struct MeetingsSettingsFrame<Content: View>: View {
     @Bindable var model: MeetingsSettingsModel
+    /// What the page shows beside the settings; only these read when it appears.
+    var reads: MeetingsSettingsModel.Reads = []
     @ViewBuilder let content: (MeetingsSettings) -> Content
     @Environment(\.nativeSettingsIndexing) private var indexing
 
@@ -76,7 +78,7 @@ struct MeetingsSettingsFrame<Content: View>: View {
             }
             if let failure = model.settings.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.load() }])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.load(reads) }])
             }
             if let settings = model.settings.value {
                 content(settings)
@@ -89,7 +91,7 @@ struct MeetingsSettingsFrame<Content: View>: View {
                 }
             }
         }
-        .onAppear { if model.settings == .idle { model.load() } }
+        .onAppear { model.ensure(reads) }
     }
 }
 
@@ -99,7 +101,7 @@ struct MeetingsRecordingPage: View {
     @Bindable var model: MeetingsSettingsModel
 
     var body: some View {
-        MeetingsSettingsFrame(model: model) { settings in
+        MeetingsSettingsFrame(model: model, reads: .cost) { settings in
             let auto = settings.wispr?.autoRecord
             let capture = settings.global.capture
             let cost = model.cost.value

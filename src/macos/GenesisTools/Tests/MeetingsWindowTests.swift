@@ -328,6 +328,18 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertEqual(sidebar.visibleRect.minY, 0, accuracy: 1, "the sidebar shows its first rows, \(sidebar.visibleRect)")
     }
 
+    // MARK: Performance (the deep manual test of 2026-11-06, finding MP9)
+
+    /// MP9: reopening Settings read every Meetings page's data, the pages never shown included.
+    func testReopeningSettingsReadsOnlyWhatAPageAlreadyRead() {
+        let model = MeetingsSettingsModel(writes: false)
+        model.reloadRead()
+        XCTAssertEqual(model.settings, .idle)
+        XCTAssertEqual(model.cost, .idle)
+        XCTAssertEqual(model.preview, .idle)
+        XCTAssertEqual(model.dictionary, .idle)
+    }
+
     private static func firstView<V: NSView>(_ type: V.Type, in view: NSView) -> V? {
         if let match = view as? V { return match }
         for child in view.subviews {
