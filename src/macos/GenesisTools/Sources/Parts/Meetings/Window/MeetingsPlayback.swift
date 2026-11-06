@@ -5,8 +5,7 @@ import Observation
 /// The meeting's audio, played from a transcript time, with its state and its controls in the window. The CLI starts
 /// the player and names its process (`tools meetings play … --json`: the file, the start, the player, the pid). The
 /// window then owns that process: Pause suspends it, Resume continues it, Stop ends it, and its exit ends the state.
-/// A CLI that names no process leaves the player on its own, and the bar says so instead of offering a Stop it cannot
-/// keep. Before this, a time click started VLC or ffplay with sound and the window showed nothing at all.
+/// Before this, a time click started VLC or ffplay with sound and the window showed nothing at all.
 @Observable
 @MainActor
 final class MeetingsPlayback {
@@ -28,7 +27,7 @@ final class MeetingsPlayback {
 
         /// The transcript time the audio is at, counted on the wall clock from its start.
         func position(at now: Date) -> Double { startSec + playedBefore + max(0, now.timeIntervalSince(resumedAt)) }
-        /// Pausing works only for a player with no window of its own: VLC and QuickTime have their own controls.
+        /// Pausing works only for a player with no window of its own: VLC has its own controls.
         var canPause: Bool { player == "ffplay" }
     }
 
@@ -37,13 +36,11 @@ final class MeetingsPlayback {
         case starting(fromSec: Double)
         case playing(Session)
         case paused(Session, at: Double)
-        /// Started by a CLI that names no process: it plays on its own, and only its own window stops it.
-        case outside(fromSec: Double)
         case failed(MeetingsCLI.Failure, fromSec: Double)
     }
 
-    /// Starts the player for a meeting at a time; nil means it started but named no process.
-    typealias Starter = @MainActor (_ meeting: String, _ seconds: Double, _ player: String?) async throws -> Launch?
+    /// Starts the player for a meeting at a time.
+    typealias Starter = @MainActor (_ meeting: String, _ seconds: Double, _ player: String?) async throws -> Launch
     typealias Signal = (_ pid: pid_t, _ signal: Int32) -> Void
 
     private(set) var state: State = .idle {
@@ -85,12 +82,13 @@ final class MeetingsPlayback {
             do {
                 let launch = try await start(meeting, seconds, player)
                 guard generation == startGeneration else {
-                    if let pid = launch?.pid { signal(pid, SIGTERM) }
+                    if let pid = launch.pid { signal(pid, SIGTERM) }
                     return
                 }
-                guard let launch, let pid = launch.pid else {
-                    state = .outside(fromSec: seconds)
-                    GenAnnounce.post("Playing from \(MeetingsFormat.clock(seconds)) in the meetings player")
+                guard let pid = launch.pid else {
+                    // `play --json` names the process of every player it started; no pid means none runs.
+                    state = .failed(MeetingsCLI.Failure(sentence: "The player did not start.",
+                                                        detail: "tools meetings play printed no process id."), fromSec: seconds)
                     return
                 }
                 let session = Session(pid: pid, player: launch.player, startSec: launch.startSec, resumedAt: Date(), playedBefore: 0)
@@ -133,7 +131,7 @@ final class MeetingsPlayback {
             signal(session.pid, SIGTERM)
             state = .idle
             GenAnnounce.post("Stopped")
-        case .starting, .outside, .failed:
+        case .starting, .failed:
             state = .idle
         case .idle:
             break
@@ -146,12 +144,9 @@ final class MeetingsPlayback {
         play(meeting: lastRequest.meeting, at: lastRequest.seconds, player: lastRequest.player)
     }
 
-    /// Hides a note the bar holds (a failure, a player outside the window) without touching any process.
+    /// Hides a failure note.
     func dismiss() {
-        switch state {
-        case .failed, .outside: state = .idle
-        default: break
-        }
+        if case .failed = state { state = .idle }
     }
 
     /// The player ended by itself (the audio's end, its own window closed): the bar goes.
@@ -175,15 +170,10 @@ final class MeetingsPlayback {
         exitWatch = source
     }
 
-    /// The live starter: `tools meetings play --json` names the process. A CLI older than that flag refuses it; the
-    /// window then starts the player the old way and cannot control it.
-    static func cliStart(meeting: String, seconds: Double, player: String?) async throws -> Launch? {
+    /// The live starter: `tools meetings play --json` starts the player and names its process. A `--player` that is
+    /// not installed is refused, and the bar shows the refusal with Retry.
+    static func cliStart(meeting: String, seconds: Double, player: String?) async throws -> Launch {
         let at = String(Int(seconds.rounded(.down)))
-        do {
-            return try await MeetingsCLI.json(Launch.self, ["play", meeting, "--at", at, "--json"] + (player.map { ["--player", $0] } ?? []))
-        } catch let failure as MeetingsCLI.Failure where failure.detail.contains("unknown option") {
-            _ = try await MeetingsCLI.run(["play", meeting, "--at", at])
-            return nil
-        }
+        return try await MeetingsCLI.json(Launch.self, ["play", meeting, "--at", at, "--json"] + (player.map { ["--player", $0] } ?? []))
     }
 }

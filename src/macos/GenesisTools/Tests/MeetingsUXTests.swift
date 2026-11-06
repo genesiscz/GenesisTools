@@ -186,23 +186,32 @@ final class MeetingsUXTests: XCTestCase {
         try await until("the audio's end clears the bar") { playback.state == .idle }
     }
 
-    func testAPlayerOutsideTheWindowAndAFailedStartLeaveANote() async throws {
+    func testAFailedStartShowsTheRefusalAndRetries() async throws {
+        let player = try silentPlayer(seconds: "30")
+        defer { if player.isRunning { player.terminate() } }
         var calls = 0
         var fail = true
-        let failure = MeetingsCLI.Failure(sentence: "No player is installed.", detail: "ffplay: not found")
-        let playback = MeetingsPlayback(start: { _, _, _ in
+        let failure = MeetingsCLI.Failure(sentence: "ffplay is not installed.", detail: "brew install ffmpeg", code: "player-missing")
+        let playback = MeetingsPlayback(start: { _, seconds, _ in
             calls += 1
             if fail { throw failure }
-            return nil
+            return .init(audioPath: nil, startSec: seconds, player: "ffplay", pid: player.processIdentifier)
         })
         playback.play(meeting: "a", at: 12, player: "ffplay")
         try await until("the failure shows") { playback.state == .failed(failure, fromSec: 12) }
         fail = false
         playback.retry()
-        try await until("an outside player shows its note") { playback.state == .outside(fromSec: 12) }
+        try await until("Retry plays") { isPlaying(playback) }
         XCTAssertEqual(calls, 2, "Retry starts the same request again")
-        playback.dismiss()
-        XCTAssertEqual(playback.state, .idle)
+        playback.stop()
+
+        let silent = MeetingsPlayback(start: { _, seconds, _ in .init(audioPath: nil, startSec: seconds, player: "ffplay", pid: nil) })
+        silent.play(meeting: "a", at: 3, player: "ffplay")
+        try await until("a start with no process is a failure") {
+            if case .failed = silent.state { return true } else { return false }
+        }
+        silent.dismiss()
+        XCTAssertEqual(silent.state, .idle)
     }
 
     func testANewTimeEndsThePlayerOfTheTimeBefore() async throws {
@@ -233,7 +242,7 @@ final class MeetingsUXTests: XCTestCase {
         var asked: [String] = []
         model.playback = MeetingsPlayback(start: { meeting, seconds, _ in
             asked.append("\(meeting) \(seconds)")
-            return nil
+            return .init(audioPath: nil, startSec: seconds, player: "ffplay", pid: nil)
         })
         model.receive(try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON()))
         model.select("a")

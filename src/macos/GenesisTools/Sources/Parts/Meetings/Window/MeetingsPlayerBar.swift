@@ -57,18 +57,6 @@ struct MeetingsPlayerBar: View {
                     .accessibilityIdentifier("meetings.player.resume")
                 stopButton
             }
-        case .outside(let from):
-            HStack(spacing: 10) {
-                Image(systemName: "arrow.up.forward.app").foregroundStyle(.secondary).accessibilityHidden(true)
-                line("Playing from \(MeetingsFormat.clock(from)) in the meetings player. Pause and stop it in the player's own window.")
-                Spacer(minLength: 8)
-                GhostButton("Play here instead", symbol: "macwindow",
-                            tooltip: "Settings → Meetings → Window: play in this window, with Pause and Stop here",
-                            identifier: "meetings.player.settings") {
-                    FeatureSettingsLaunch.open(pageID: MeetingsSettingsPages.windowPage + "#" + MeetingsSettingsPages.playbackAnchor)
-                }
-                IconButton(systemName: "xmark", tooltip: "Hide this note") { playback.dismiss() }
-            }
         case .failed(let failure, _):
             NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
                        fixes: [.button("Retry", symbol: "arrow.clockwise") { playback.retry() }],

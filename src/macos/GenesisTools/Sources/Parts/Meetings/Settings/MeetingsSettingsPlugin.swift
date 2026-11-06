@@ -317,7 +317,7 @@ struct MeetingsWindowPage: View {
                 NativeSettingsOption(MeetingsPreferences.Player.window.rawValue, "In this window",
                                      detail: "ffplay plays with no window of its own; the bar under the Meetings window pauses and stops it."),
                 NativeSettingsOption(MeetingsPreferences.Player.app.rawValue, "In the meetings player",
-                                     detail: "The player the meetings config names (VLC first) opens its own window; stop it there."),
+                                     detail: "The player the meetings config names (VLC first) plays in its own window; the bar stops it."),
             ], selection: binding($player, key: MeetingsPreferences.playerKey))
         }
         .nativeSettingsAnchor(MeetingsSettingsPages.playbackAnchor)
