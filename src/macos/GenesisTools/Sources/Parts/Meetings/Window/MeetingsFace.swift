@@ -11,10 +11,19 @@ import SwiftUI
 private let meetingsInstance = SingleInstance(
     name: "meetings",
     lockFile: NativePreview.hubFile("meetings.lock"),
-    notificationPrefix: NativePreview.namespace + ".meetings",
+    notificationPrefix: meetingsNotificationPrefix(),
     retryHint: "close the Meetings window, then try again.",
     log: { HubPerf.log($0) }
 )
+
+/// The names of the forwarded request and its answer. They are distributed notifications, which every process of the
+/// login session sees, while the lock is per home: a window started on a sandbox (`GENESIS_TOOLS_HOME`) followed every
+/// `tools meetings window` request meant for the real window. A sandbox home carries its path in the name; the real
+/// home keeps the old name, so a window from an older build still takes the request.
+func meetingsNotificationPrefix(home: String = genesisHome(), realHome: String = NSHomeDirectory()) -> String {
+    let base = NativePreview.namespace + ".meetings"
+    return home == realHome ? base : base + ".home:" + home
+}
 
 struct MeetingsRequest {
     var place: MeetingsWindowModel.Place?

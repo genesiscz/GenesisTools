@@ -378,4 +378,12 @@ final class MeetingsUXTests: XCTestCase {
         asked.detail?.listLanded(asked.meeting("b"))
         XCTAssertEqual(asked.detail?.tab, .transcript, "a tab a request named stays")
     }
+
+    func testASandboxWindowNeverFollowsTheRealWindowsRequests() {
+        let real = meetingsNotificationPrefix(home: "/Users/alice", realHome: "/Users/alice")
+        let sandbox = meetingsNotificationPrefix(home: "/tmp/sandbox", realHome: "/Users/alice")
+        XCTAssertEqual(real, NativePreview.namespace + ".meetings", "the real home keeps the name older builds listen to")
+        XCTAssertNotEqual(sandbox, real, "a sandbox window listens to its own requests only")
+        XCTAssertEqual(meetingsNotificationPrefix(home: "/tmp/sandbox", realHome: "/Users/alice"), sandbox, "one home, one name")
+    }
 }
