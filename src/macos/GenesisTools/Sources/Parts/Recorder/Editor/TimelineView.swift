@@ -609,24 +609,36 @@ private struct EditMarkerFlag: View {
     let model: EditorModel
     let marker: EditProject.Marker
     let scale: TimelineScale
+    @State private var hovered = false
 
     var body: some View {
         if let out = TimelineMap.outputTime(ofSource: marker.atUs, in: model.project) {
-            Color.clear
-                .frame(width: 14, height: TimelineView.marksLaneHeight)
-                .contentShape(Rectangle())
-                .onTapGesture { model.selectMarker(id: marker.id, atUs: marker.atUs) }
-                .contextMenu {
-                    Button("Go to “\(marker.label)”") { model.seek(out) }
-                    Button("Delete Marker", role: .destructive) { model.deleteMarker(marker.id) }
-                }
-                .accessibilityElement()
-                .accessibilityLabel("Marker \(marker.label) at \(formatClock(out, tenths: true))")
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAction { model.selectMarker(id: marker.id, atUs: marker.atUs) }
-                .accessibilityAction(named: "Delete Marker") { model.deleteMarker(marker.id) }
-                .liveRow()
-                .offset(x: scale.x(out) - 2)
+            // The flag (7 pt) and its label as the lane draws them (the label 9 pt right of the line), the label laid
+            // out unseen here: a click on either selects the marker.
+            HStack(spacing: 2) {
+                Color.clear.frame(width: 7)
+                Text(verbatim: marker.label).font(.system(size: 9, weight: .semibold)).hidden()
+            }
+            .padding(.horizontal, 4)
+            .frame(height: TimelineView.marksLaneHeight)
+            .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(Color.white.opacity(hovered ? 0.12 : 0)))
+            .contentShape(Rectangle())
+            .onHover { inside in
+                hovered = inside
+                (inside ? NSCursor.pointingHand : NSCursor.arrow).set()
+            }
+            .onTapGesture { model.selectMarker(id: marker.id, atUs: marker.atUs) }
+            .contextMenu {
+                Button("Go to “\(marker.label)”") { model.seek(out) }
+                Button("Delete Marker", role: .destructive) { model.deleteMarker(marker.id) }
+            }
+            .accessibilityElement()
+            .accessibilityLabel("Marker \(marker.label) at \(formatClock(out, tenths: true))")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { model.selectMarker(id: marker.id, atUs: marker.atUs) }
+            .accessibilityAction(named: "Delete Marker") { model.deleteMarker(marker.id) }
+            .liveRow()
+            .offset(x: scale.x(out) - 4)
         }
     }
 }
@@ -655,6 +667,7 @@ private struct CommentMarker: View {
                 }
             }
             .contentShape(Rectangle())
+            .onHover { inside in (inside ? NSCursor.pointingHand : NSCursor.arrow).set() }
             .onTapGesture { model.goToComment(comment) }
             .instantTooltip(comment.text.isEmpty ? "A comment" : comment.text)
             .accessibilityElement()

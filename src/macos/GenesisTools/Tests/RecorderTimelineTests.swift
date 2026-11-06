@@ -136,6 +136,17 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertFalse(model.noticeIsError)
     }
 
+    // Regression test: deep test 2026-11-06 RE15 — a marker answered only on a 14 pt strip at its flag; a click on its
+    // label moved the playhead instead of selecting it.
+    func testAClickOnAMarkersLabelSelectsTheMarker() {
+        let model = model(markers: [.init(id: "m1", atUs: 3_000_000, label: "Login")])
+        let width: CGFloat = 1000
+        let window = host(model, width: width)
+        let x = scale(model, width: width).x(3_000_000)
+        click(window, x: x + 17, y: TimelineLayout(model: model).marksTop + TimelineView.marksLaneHeight / 2)
+        XCTAssertEqual(model.selection, .marker(id: "m1", atUs: 3_000_000))
+    }
+
     func testAClickOnTheZoomLaneStartsTheZoomUnderThePointer() {
         for (width, pointsPerSecond) in [(CGFloat(640), 0.0), (1000, 0), (1440, 0), (900, 120)] {
             let model = model()
