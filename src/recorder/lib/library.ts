@@ -13,6 +13,21 @@ import { z } from "zod";
 
 const { log } = logger.scoped("recorder-library");
 
+/** What a recorder writes into a manifest's `settings` when its recording ends: the outcome and the movie's length. */
+const recordingEndSchema = z.object({
+    outcome: z.string().optional(),
+    video: z.object({ durationMs: z.number().optional() }).optional(),
+});
+
+/** A library id with its whole uuid: `video-2026-11-06_20-50-38-0eb8dd5f-7cec-4561-9379-63bc9cbfa33b`. */
+const LONG_RECORDING_ID =
+    /^([a-z]+-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-[0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** The id a table shows: the stamp and the uuid's first block. Every command takes it (`resolveRecording`). */
+export function shortRecordingId(id: string): string {
+    return LONG_RECORDING_ID.exec(id)?.[1] ?? id;
+}
+
 /**
  * The movie a recording folder holds, in the order the editor looks for one: the recorder's movie, then the proxy
  * `tools recorder proxy` makes of a frames recording. The Swift app's RecordingMovie keeps the same list; both run
@@ -37,6 +52,12 @@ export interface LibraryRow {
     frames: number;
     /** `edit.json` exists: the recording was edited. */
     edited: boolean;
+    /** How the recording ended (`done`, `failed`, `discarded`), when its recorder wrote it. */
+    outcome?: string;
+    /** The movie's length, when the recorder wrote it. */
+    durationMs?: number;
+    /** Why a failed recording made no movie: its first warning. */
+    reason?: string;
 }
 
 export function movieOf(folder: string): string | undefined {
@@ -95,6 +116,7 @@ export function listLibrary(options: string | { root?: string; limit?: number } 
             continue;
         }
 
+        const end = recordingEndSchema.safeParse(manifest.settings).data ?? {};
         rows.push({
             id: manifest.id,
             title: manifest.title,
@@ -104,6 +126,9 @@ export function listLibrary(options: string | { root?: string; limit?: number } 
             movie: movieOf(folder),
             frames: manifest.frames.length,
             edited: existsSync(join(folder, "edit.json")),
+            ...(end.outcome ? { outcome: end.outcome } : {}),
+            ...(end.video?.durationMs === undefined ? {} : { durationMs: end.video.durationMs }),
+            ...(end.outcome === "failed" && manifest.warnings[0] ? { reason: manifest.warnings[0] } : {}),
         });
     }
 
@@ -155,6 +180,21 @@ export function resolveRecording(value: string, { alive }: { alive?: (pid: numbe
         if (existsSync(store.framesOf(value)) && statSync(folder).isDirectory()) {
             return folder;
         }
+    }
+
+    // A short id, as `tools recorder list` shows it: the one library folder whose name starts with it.
+    const library = recordingsLibraryDir();
+    const matches =
+        value.length >= 12 && existsSync(library) ? readdirSync(library).filter((name) => name.startsWith(value)) : [];
+
+    if (matches.length === 1) {
+        return join(library, matches[0]);
+    }
+
+    if (matches.length > 1) {
+        throw new Error(
+            `${matches.length} recordings start with "${value}": ${matches.join(", ")}. Give more of the id.`
+        );
     }
 
     const known = listLibrary({ limit: 5 }).map((row) => row.id);

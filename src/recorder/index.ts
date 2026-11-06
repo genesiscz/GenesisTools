@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -46,6 +47,7 @@ import {
     openLibraryWindow,
     readEditorOpenState,
     resolveRecording,
+    shortRecordingId,
     waitForEditorOpen,
 } from "./lib/library";
 import { chaptersOf, clickGroupsOf, markersOf, searchLibrary } from "./lib/moments";
@@ -889,7 +891,7 @@ program
 
             const table = createBoxTable(["ID", "KIND", "STATE", "TITLE", "STARTED"]);
             for (const entry of entries) {
-                table.push([entry.id, entry.kind, entry.state, entry.title, entry.startedAt]);
+                table.push([entry.id, entry.kind, entry.state, entry.title, formatLocalDateTimeStamp(entry.startedAt)]);
             }
 
             out.println(entries.length ? table.toString() : "No recording is running.");
@@ -903,19 +905,25 @@ program
         }
 
         renderCliHeader("Recordings", `${rows.length} newest`);
-        const table = createBoxTable(["ID", "TITLE", "STARTED", "MOVIE", "FRAMES", "EDITED"]);
+        const table = createBoxTable(["ID", "TITLE", "STARTED", "LENGTH", "OUTCOME", "FRAMES", "EDITED"]);
+        const clock = (ms: number) => {
+            const seconds = Math.round(ms / 1000);
+            return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+        };
         for (const row of rows) {
             table.push([
-                row.id,
+                shortRecordingId(row.id),
                 row.title,
-                row.startedAt.replace("T", " ").slice(0, 19),
-                row.movie ? "yes" : "—",
+                formatLocalDateTimeStamp(row.startedAt),
+                row.durationMs === undefined ? (row.movie ? "movie" : "—") : clock(row.durationMs),
+                row.outcome ?? "—",
                 String(row.frames),
                 row.edited ? "yes" : "",
             ]);
         }
 
         out.println(table.toString());
+        out.println("Every command takes the short id; --json has the full ids, folders and why a failed one failed.");
     });
 
 program

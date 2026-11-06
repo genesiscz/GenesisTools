@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import * as cli from "@genesiscz/utils/cli";
@@ -8,11 +8,19 @@ import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitratio
 import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
 import { applyOp, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
 import { withEditCancel } from "./edit";
 import { EditSessions } from "./edit-session";
 import { displaySwitchDepth, keepingSwitchStep, keptPlan, stepDisplaySwitch } from "./frames-movie";
-import { editorOpenStatePath, listLibrary, movieOf, readEditorOpenState, resolveRecording } from "./library";
+import {
+    editorOpenStatePath,
+    listLibrary,
+    movieOf,
+    readEditorOpenState,
+    resolveRecording,
+    shortRecordingId,
+} from "./library";
 import {
     boxInProxy,
     chosenPlan,
@@ -558,6 +566,67 @@ it("a library limit leaves older manifests unparsed", () => {
         })
     );
     expect(listLibrary({ root, limit: 1 }).map((row) => row.id)).toEqual(["new"]);
+});
+
+it("a library row says how the recording ended, how long its movie is, and why a failed one made none", () => {
+    const root = mkdtempSync(join(tmpdir(), "library-outcome-"));
+    const manifest = (id: string, extra: Record<string, unknown>) => {
+        mkdirSync(join(root, id));
+        writeFileSync(
+            join(root, id, "recording.json"),
+            SafeJSON.stringify({
+                version: 1,
+                id,
+                title: id,
+                startedAt: "2026-11-06T19:50:38Z",
+                displays: [],
+                frames: [],
+                ...extra,
+            })
+        );
+    };
+    manifest("video-2026-11-06_20-50-38-done", {
+        settings: { outcome: "done", video: { file: "screen.mp4", durationMs: 10_310 } },
+    });
+    manifest("video-2026-11-06_20-50-37-failed", {
+        settings: { outcome: "failed" },
+        warnings: ["cannot record the window"],
+    });
+    manifest("library-2026-11-06_20-50-36-frames", {});
+    const [done, failed, frames] = listLibrary({ root });
+    expect(done).toMatchObject({ outcome: "done", durationMs: 10_310 });
+    expect(done.reason).toBeUndefined();
+    expect(failed).toMatchObject({ outcome: "failed", reason: "cannot record the window" });
+    expect(frames.outcome).toBeUndefined();
+    expect(frames.durationMs).toBeUndefined();
+});
+
+it("a short id is the stamp and the uuid's first block, and it opens the recording like the full id", () => {
+    const id = "video-2026-11-06_20-50-38-0eb8dd5f-7cec-4561-9379-63bc9cbfa33b";
+    expect(shortRecordingId(id)).toBe("video-2026-11-06_20-50-38-0eb8dd5f");
+    expect(shortRecordingId("library-2026-11-05_10-00-00-new")).toBe("library-2026-11-05_10-00-00-new");
+    const folder = recordingsLibraryDir(id);
+    const twin = recordingsLibraryDir("video-2026-11-06_20-50-38-0eb8dd5f-0000-4561-9379-63bc9cbfa33b");
+    try {
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(
+            join(folder, "recording.json"),
+            SafeJSON.stringify({
+                version: 1,
+                id,
+                title: "short",
+                startedAt: "2026-11-06T19:50:38Z",
+                displays: [],
+                frames: [],
+            })
+        );
+        expect(resolveRecording(shortRecordingId(id))).toBe(folder);
+        mkdirSync(twin, { recursive: true });
+        expect(() => resolveRecording(shortRecordingId(id))).toThrow(/2 recordings start with/);
+    } finally {
+        rmSync(folder, { recursive: true, force: true });
+        rmSync(twin, { recursive: true, force: true });
+    }
 });
 
 it("replays created text and its subsequent ID edit without changing the returned ID", async () => {
