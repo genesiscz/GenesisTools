@@ -309,7 +309,9 @@ Only what is unsure and matters (Martin, 2026-11-02: "just on those which are re
 2. A speaker range needs more than 5 words that are not all fillers, and 15 words or a decision or action word
    (`src/utils/transcribe/importance.ts`). A term needs two occurrences, an identifier, a person's name from the
    summary, or a decision in its line; any other low term is only marked in the transcript. An unknown word with
-   nothing proposed needs two occurrences or an identifier's shape, and one line gets at most one such question.
+   nothing proposed needs an identifier's shape (`OpenAI`, `CTOčko`), or two occurrences with a capital that no
+   sentence start explains (a name). A lowercase unknown word is speech (a colloquial form or slang): it stays an item
+   in `items`, and gets no question and no mark in the transcript. One line gets at most one such question.
 3. A goodbye or attendance range is dropped when finer audio-evidence items cover 80 % of it.
 4. Speaker questions cluster only for the same single label, exact range and clip times, and choices.
    Separate neighbouring passages stay separate.

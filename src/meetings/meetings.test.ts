@@ -1307,6 +1307,36 @@ describe("questions (R2.3)", () => {
         expect(questionFor(term({ proposed: "PentahoDI" }), context())).toBeDefined();
     });
 
+    test("an unknown word with nothing proposed is asked only as a name or a code name, never as a lowercase word (R2-MC1)", () => {
+        const words = [
+            line("Bob Example", 10, "No tyhlecty věci řeší Wipcon, ne?"),
+            line("Bob Example", 20, "Tyhlecty taky, a Wipcon to ví."),
+            line("Bob Example", 30, "Okidoki, to je OpenAI."),
+            line("Bob Example", 40, "Okidoki."),
+        ];
+        const unknown = (heard: string, occurrences: number) =>
+            withItems([
+                {
+                    id: "i3",
+                    kind: "term",
+                    status: "suggested",
+                    atSec: 10,
+                    heard,
+                    confidence: 0.3,
+                    rules: [MeetingRule.UnknownWord],
+                    evidence: { occurrences },
+                    suggestedAt: now,
+                },
+            ]).items[0]!;
+        const said = context({ transcript: words });
+
+        expect(questionFor(unknown("tyhlecty", 2), said)).toBeUndefined();
+        expect(questionFor(unknown("Okidoki", 2), said)).toBeUndefined();
+        expect(questionFor(unknown("Wipcon", 2), said)).toMatchObject({ about: "term", heard: "Wipcon" });
+        expect(questionFor(unknown("Wipcon", 1), said)).toBeUndefined();
+        expect(questionFor(unknown("OpenAI", 1), said)).toMatchObject({ about: "term", heard: "OpenAI" });
+    });
+
     test("neighbouring candidate lists do not establish voice identity, while signatures still affect priority", () => {
         const question = (id: string, fromSec: number, choices: string[], confidence: number) => ({
             kind: "question" as const,
@@ -5034,20 +5064,39 @@ describe("suggest: words said on purpose", () => {
         expect(terms.every((item) => item.proposed === undefined)).toBe(true);
     });
 
-    test("two unknown words first heard in one line are one question", () => {
+    test("two unknown names first heard in one line are one question; lowercase unknown words are never asked (R2-MC1)", () => {
+        const named: SourceMeeting = {
+            ...meeting,
+            transcript: [
+                line("Alice Example", 40, "Rozhodli jsme, že Zrelaj a Kvapim tu změnu zítra vydají.", 1),
+                line("Carol Example", 60, "Zrelaj a Kvapim to taky.", 2),
+            ],
+        };
+        const names = ["zrelaj", "kvapim"];
         const options = {
             record,
-            meeting: slangMeeting,
+            meeting: named,
             rules: ["terms" as const],
             dictionary: { abbrExpansion: "every" as const, entries: [] },
             sourceWords: [],
-            wordCheck: words(unknown),
+            wordCheck: {
+                ...words(unknown),
+                verdict: (word: string) =>
+                    names.includes(word.toLowerCase())
+                        ? { class: "unknown" as const, count: 0 }
+                        : { class: "dictionary" as const, count: 9 },
+            },
             now: meeting.start,
             questionBudget: 12,
         };
         const questions = suggestItems(options).filter((item) => item.kind === "question");
 
         expect(questions.map((item) => item.kind === "question" && Math.round(item.fromSec))).toEqual([40]);
+        expect(
+            suggestItems({ ...options, meeting: slangMeeting, wordCheck: words(unknown) }).filter(
+                (item) => item.kind === "question"
+            )
+        ).toEqual([]);
     });
 
     test("the family and the English root rule", () => {
