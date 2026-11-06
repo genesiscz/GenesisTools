@@ -397,4 +397,35 @@ final class MeetingsUXTests: XCTestCase {
         let removal = try JSONDecoder().decode(ProjectRemoval.self, from: Data(#"{"name":"wrok","unassigned":["a","b"],"backup":"/tmp/b.json"}"#.utf8))
         XCTAssertEqual(MeetingsSettingsModel.removalNote(removal), "Removed the project wrok; 2 meetings now have no project")
     }
+
+    // MARK: Round 2
+
+    /// Hosts a view at a width in an off-screen window and returns the frame a probe recorded.
+    private func probe(_ name: String, width: CGFloat, _ view: some View) throws -> CGRect {
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false; FrameProbe.reset() }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 300), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.contentView = NSHostingView(rootView: view.frame(width: width, alignment: .leading).frame(maxHeight: .infinity, alignment: .top))
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil); window.close() }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        return try XCTUnwrap(FrameProbe.frames[name], "\(name) is on screen")
+    }
+
+    func testFourDisplaysFitANarrowScreenTab() throws {
+        // A probe written in the test body is built here, so probing is on before the view is.
+        FrameProbe.enabled = true
+        let displays = [(1, "MSI G27CQ4"), (2, "BenQ EX3501R"), (3, "Built-in Retina Display")]
+        let segments = try probe("old", width: 400, GenSegmentedTabs("Display", items: [GenSegmentedTabs.Item(-1, "All displays")]
+            + displays.map { GenSegmentedTabs.Item($0.0, $0.1) }, selection: .constant(-1), minSegmentWidth: 70).frameProbe("old"))
+        XCTAssertGreaterThan(segments.width, 401, "the cause: four displays as segments are wider than the column")
+        let picker = try probe("meetings.screen.display", width: 400, DisplayPicker(displays: displays, selection: .constant(-1)))
+        XCTAssertLessThanOrEqual(picker.width, 401, "R2-MU4: the picker fits the column: \(picker)")
+    }
 }

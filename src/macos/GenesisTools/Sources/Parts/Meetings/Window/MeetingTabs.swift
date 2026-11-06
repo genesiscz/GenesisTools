@@ -150,12 +150,12 @@ struct ScreenTab: View {
                 VStack(spacing: 0) {
                     // Wraps in a narrow column: in one row the display tabs, the checkbox and the count needed about
                     // 560 pt and ran past the window at its smallest size.
+                    if timeline.displays.count > 1 {
+                        DisplayPicker(displays: timeline.displays.map { ($0.id ?? 0, $0.name ?? "Display \($0.id ?? 0)") },
+                                      selection: $display)
+                            .padding(.horizontal, 14).padding(.top, 8)
+                    }
                     WrapLayout(spacing: 12, lineSpacing: 8) {
-                        if timeline.displays.count > 1 {
-                            GenSegmentedTabs("Display", items: [GenSegmentedTabs.Item(-1, "All displays")] + timeline.displays.map {
-                                GenSegmentedTabs.Item($0.id ?? 0, $0.name ?? "Display \($0.id ?? 0)")
-                            }, selection: $display, minSegmentWidth: 70, identifier: "meetings.screen.display")
-                        }
                         Toggle("Only frames with new text", isOn: $hideQuiet).toggleStyle(.checkbox).font(.system(size: 12))
                             .fixedSize()
                             .instantTooltip("Leave out the frames whose text the display already showed")
@@ -683,6 +683,40 @@ private struct QuestionRow: View {
 // MARK: - Speakers
 
 /// Each label of the transcript with its turns and spoken time; a rename edits in place and commits on Return.
+/// Which display the screen timeline shows: segments while they fit the column, else a pull-down with the same
+/// choices. Four displays as segments needed about 520 pt, so at the window's smallest size the detail column was
+/// drawn wider than the window and its last tab, Export and the last display were cut off.
+struct DisplayPicker: View {
+    let displays: [(id: Int, name: String)]
+    @Binding var selection: Int
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            GenSegmentedTabs("Display", items: [GenSegmentedTabs.Item(-1, "All displays")] + displays.map {
+                GenSegmentedTabs.Item($0.id, $0.name)
+            }, selection: $selection, minSegmentWidth: 70, identifier: "meetings.screen.display")
+            MenuButton(items: {
+                [MenuButtonItem.action("All displays", checked: selection == -1) { selection = -1 }]
+                    + displays.map { display in .action(display.name, checked: selection == display.id) { selection = display.id } }
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "display").accessibilityHidden(true)
+                    Text(verbatim: selected).lineLimit(1)
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).accessibilityHidden(true)
+                }
+                .font(.system(size: 12))
+            }
+            .instantTooltip("Which display the timeline shows")
+            .accessibilityLabel("Display: \(selected)")
+            .accessibilityIdentifier("meetings.screen.display")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frameProbe("meetings.screen.display")
+    }
+
+    private var selected: String { displays.first { $0.id == selection }?.name ?? "All displays" }
+}
+
 struct SpeakersTab: View {
     @Bindable var detail: MeetingDetailModel
 
