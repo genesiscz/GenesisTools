@@ -6,7 +6,7 @@ import { segmentCaptureSpec } from "@app/control/lib/recording-native";
 import type { RecordingTarget } from "@app/control/lib/recording-targets";
 import { liveRecordingRef } from "./library";
 import { parseStartFlags } from "./start-options";
-import { segmentRecorderOptions } from "./video-recording";
+import { recordedNothing, segmentRecorderOptions } from "./video-recording";
 
 const folder = "/tmp/recording";
 const window: RecordingTarget = { kind: "window", windowIds: [83493] };
@@ -54,6 +54,20 @@ describe("a window or app movie", () => {
         await writeFile(join(folder, "screen.mp4"), "movie");
         expect(liveRecordingRef(entry, { stopped: true }).movie).toBe(join(folder, "screen.mp4"));
         expect(liveRecordingRef({ id: "recorder-1-x" })).toEqual({ liveId: "recorder-1-x" });
+        await rm(root, { recursive: true, force: true });
+    });
+
+    it("a failed start that made only its manifest recorded nothing; any movie, camera file or segment is something", async () => {
+        const root = await mkdtemp(join(tmpdir(), "recorder-nothing-"));
+        const folder = join(root, "video-2026-11-06_20-55-16-57cdab2d");
+        await mkdir(join(folder, "segments-1a2b3c4d"), { recursive: true });
+        await writeFile(join(folder, "recording.json"), "{}");
+        expect(await recordedNothing(folder)).toBe(true);
+        await writeFile(join(folder, "segments-1a2b3c4d", "segment-001.mp4"), "part");
+        expect(await recordedNothing(folder)).toBe(false);
+        await rm(join(folder, "segments-1a2b3c4d"), { recursive: true });
+        await writeFile(join(folder, "camera.json"), "{}");
+        expect(await recordedNothing(folder)).toBe(false);
         await rm(root, { recursive: true, force: true });
     });
 

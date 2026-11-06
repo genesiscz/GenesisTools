@@ -39,6 +39,34 @@ import { type AudioTrack, type CapturedFrame, CaptureError, type CaptureResult, 
 
 const { log } = logger.scoped("screen-recorder-start");
 
+/**
+ * Moves a folder a recording reserved at its own start to the GenesisTools trash as a whole, so `tools rm restore` can
+ * bring it back during the grace period. Only for that folder: the recording made it, so no one else's files are in it.
+ * False when the trash refused it (the folder changed); a protected folder throws.
+ */
+export function trashRecordingFolder(folder: string, rule: string): boolean {
+    const config = loadRmConfig();
+    const caller = rmCallerFromRuntime();
+    const context = defaultRuleContext(config, caller, process.cwd());
+    const plan = planRemoval([folder], context);
+
+    if (plan.some((item) => item.verdict.kind === "deny")) {
+        throw new Error("The recording folder is protected from removal");
+    }
+
+    const batch = moveToTrash(
+        plan.map((item) => ({ target: item.target, rule })),
+        { config, caller, graceMinutes: Math.max(...plan.map((item) => graceMinutesFor(item, context))) }
+    );
+
+    if (!batch) {
+        return false;
+    }
+
+    kickDrainer(config);
+    return true;
+}
+
 export interface StartRecordingOptions {
     recorder: FrameRecorder;
     /** Cancels startup before any recording resources are created. */
@@ -317,28 +345,13 @@ export class LibraryRecording extends FrameRecording<number> {
 
         this.discarded = true;
         const answer = await this.stop();
-        const config = loadRmConfig();
-        const caller = rmCallerFromRuntime();
-        const context = defaultRuleContext(config, caller, process.cwd());
-        const plan = planRemoval([this.folder], context);
-
-        if (plan.some((item) => item.verdict.kind === "deny")) {
-            throw new Error("The recording folder is protected from removal");
-        }
-
-        // Discard authorizes only the folder this recording reserved at its start, so it goes to the trash as a whole.
-        const batch = moveToTrash(
-            plan.map((item) => ({ target: item.target, rule: "recording-discard" })),
-            { config, caller, graceMinutes: Math.max(...plan.map((item) => graceMinutesFor(item, context))) }
-        );
 
         // Nothing moved (the trash refused it): the folder and the claim on it stay, and the discard says so.
-        if (!batch) {
+        if (!trashRecordingFolder(this.folder, "recording-discard")) {
             throw new Error("The recording folder changed before it could be discarded");
         }
 
         this.ownsFolder = false;
-        kickDrainer(config);
         return answer;
     }
 

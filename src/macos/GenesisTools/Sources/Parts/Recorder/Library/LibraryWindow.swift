@@ -444,7 +444,8 @@ struct LibraryCard: View {
                             Image(nsImage: thumbnail).resizable().aspectRatio(contentMode: .fill)
                         } else {
                             RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.06))
-                                .overlay(Image(systemName: "video").font(.system(size: 22)).foregroundStyle(RecorderPalette.dim))
+                                .overlay(Image(systemName: item.failure == nil ? "video" : "exclamationmark.triangle")
+                                    .font(.system(size: 22)).foregroundStyle(RecorderPalette.dim))
                         }
                     }
                     .frame(height: 155)
@@ -514,12 +515,17 @@ struct LibraryCard: View {
                         Badge(Plural.count(item.openComments, "comment"),
                               tooltip: "Review comments not resolved yet; right-click → Open at First Comment")
                     }
-                    if !item.hasMovie { Badge("Frames", tooltip: "Frames only: the editor makes a movie of them first") }
+                    if let failure = item.failure {
+                        Badge("Failed", color: .orange, look: .tone, tooltip: "Did not record: \(failure)")
+                    } else if !item.hasMovie {
+                        Badge("Frames", tooltip: "Frames only: the editor makes a movie of them first")
+                    }
                 }
             }
             .contentShape(Rectangle())
         }
-        .accessibilityLabel("\(item.title), \(item.durationMs.map { formatClock(Int64($0 * 1000)) } ?? "no length"), \(item.edited ? "edited" : "not edited")")
+        .accessibilityLabel(item.failure.map { "\(item.title), did not record: \($0)" }
+                            ?? "\(item.title), \(item.durationMs.map { formatClock(Int64($0 * 1000)) } ?? "no length"), \(item.edited ? "edited" : "not edited")")
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityAction(named: "Open in Editor", open)
         .simultaneousGesture(TapGesture(count: 2).onEnded { open() })

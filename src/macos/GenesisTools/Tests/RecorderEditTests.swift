@@ -351,6 +351,25 @@ final class RecorderEditTests: XCTestCase {
         }
     }
 
+    /// The defect: a start that failed left a card with a "Frames" badge and no reason; it now says it failed and why.
+    func testAFailedRecordingWithNoMovieReadsAsFailedWithItsFirstWarning() throws {
+        let library = FileManager.default.temporaryDirectory.appendingPathComponent("library-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: library) }
+        let failed = library.appendingPathComponent("video-2026-11-06_20-55-16-57cdab2d")
+        let frames = library.appendingPathComponent("frames-2026-11-06_20-56-00-1a2b3c4d")
+        for folder in [failed, frames] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        try Data(#"{"title":"Window","startedAt":"2026-11-06T19:55:16.000Z","frames":[],"settings":{"kind":"video","outcome":"failed"},"warnings":["cannot record the window"]}"#.utf8)
+            .write(to: failed.appendingPathComponent("recording.json"))
+        try Data(#"{"title":"Frames","startedAt":"2026-11-06T19:56:00.000Z","frames":[],"settings":{"kind":"frames"},"warnings":[]}"#.utf8)
+            .write(to: frames.appendingPathComponent("recording.json"))
+
+        let items = RecorderMenu.readRecents(library)
+        XCTAssertEqual(items.first { $0.title == "Window" }?.failure, "cannot record the window")
+        XCTAssertNil(items.first { $0.title == "Frames" }?.failure)
+    }
+
     /// The defect: a meeting recording with only proxy.mp4 was offered Copy Movie and the click found no movie.
     @MainActor
     func testAProxyOnlyMeetingRecordingOffersCopyMovieAndTheCopyFindsTheProxy() throws {

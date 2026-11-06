@@ -336,7 +336,13 @@ withStartOptions(
         if (flags.json) {
             out.print(`${SafeJSON.stringify({ event: "result", ...result })}\n`);
         } else {
-            out.println(result.movie ? `${result.outcome}: ${result.movie}` : `${result.outcome}: ${result.folder}`);
+            out.println(
+                result.movie
+                    ? `${result.outcome}: ${result.movie}`
+                    : result.removed
+                      ? `failed, nothing was recorded: ${result.warnings[0] ?? "the capture did not start"}`
+                      : `${result.outcome}: ${result.folder}`
+            );
         }
 
         if (result.outcome === "failed") {

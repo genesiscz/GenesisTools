@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runCountdown } from "@app/control/lib/peekaboo";
 import {
@@ -25,6 +25,7 @@ import {
     recordingsLibraryDir,
 } from "@genesiscz/utils/screen-recorder/library";
 import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
+import { trashRecordingFolder } from "@genesiscz/utils/screen-recorder/start";
 import { cameraRefusal, missingCameraWarning, recorderFaceState } from "./camera-recorder";
 import { CAMERA_MOVIE } from "./library";
 import { DEFAULT_MOVIE_FPS, VIDEO_RECORDING_MAX_SECONDS } from "./start-options";
@@ -126,6 +127,28 @@ export interface VideoRecordingResult {
     cursorTrack?: string;
     durationMs?: number;
     warnings: string[];
+    /** The start failed before it recorded anything, so its folder went to the GenesisTools trash. */
+    removed?: boolean;
+}
+
+/**
+ * A start that made nothing: the folder holds only its recording.json and empty folders. Kept, it would stay in the
+ * library as a card with no movie and no reason.
+ */
+export async function recordedNothing(folder: string): Promise<boolean> {
+    for (const entry of await readdir(folder, { withFileTypes: true })) {
+        if (entry.isFile() && entry.name === RECORDING_MANIFEST) {
+            continue;
+        }
+
+        if (entry.isDirectory() && (await readdir(join(folder, entry.name))).length === 0) {
+            continue;
+        }
+
+        return false;
+    }
+
+    return true;
 }
 
 function stamp(date = new Date()): string {
@@ -343,6 +366,17 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         warnings,
     });
     log.info({ id, outcome, durationMs, warnings: warnings.length }, "video recording ended");
+    let removed = false;
+
+    if (outcome === "failed" && (await recordedNothing(folder))) {
+        try {
+            removed = trashRecordingFolder(folder, "recording-failed-start");
+            log.info({ id, folder, removed }, "the failed start recorded nothing; its folder goes to the trash");
+        } catch (error) {
+            log.warn({ error, folder }, "the failed start's empty folder stays in the library");
+        }
+    }
+
     return {
         outcome,
         id,
@@ -351,5 +385,6 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         cursorTrack: existsSync(cursorTrack) ? cursorTrack : undefined,
         durationMs,
         warnings,
+        ...(removed ? { removed } : {}),
     };
 }

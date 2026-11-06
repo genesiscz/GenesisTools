@@ -24,6 +24,9 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
         /// Review comments not yet resolved (comments.jsonl beside it), and where the first one is, in source µs.
         var openComments = 0
         var firstOpenCommentUs: Int64?
+        /// Why the recording made no movie (`recording.json` says `outcome: failed` and no movie is there): its first
+        /// warning, so the card says "Failed" with the reason instead of passing for a frames recording.
+        var failure: String?
     }
 
     private var item: NSStatusItem?
@@ -191,13 +194,17 @@ final class RecorderMenu: NSObject, NSMenuDelegate {
             let movie = RecordingMovie.own(in: dir)
             let hasMovie = movie != nil
             let firstFrame = ((root["frames"] as? [[String: Any]])?.first?["file"] as? String).map { dir.appendingPathComponent($0) }
-            let video = (root["settings"] as? [String: Any])?["video"] as? [String: Any]
+            let settings = root["settings"] as? [String: Any]
+            let video = settings?["video"] as? [String: Any]
+            let failure = !hasMovie && settings?["outcome"] as? String == "failed"
+                ? (root["warnings"] as? [String])?.first ?? "The recording failed before it recorded anything"
+                : nil
             let open = ReviewComments.read(dir.appendingPathComponent("comments.jsonl")).filter { !$0.isResolved }
             list.append(Recent(folder: dir, title: (root["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? name,
                                started: started, thumbnail: movie ?? firstFrame, hasMovie: hasMovie,
                                edited: manager.fileExists(atPath: dir.appendingPathComponent("edit.json").path),
                                durationMs: (video?["durationMs"] as? NSNumber)?.doubleValue, isMeeting: isMeeting,
-                               openComments: open.count, firstOpenCommentUs: open.first?.atUs))
+                               openComments: open.count, firstOpenCommentUs: open.first?.atUs, failure: failure))
         }
         return list.sorted { $0.started > $1.started }
     }
