@@ -24,7 +24,7 @@ import { testPhrase } from "./dictionary-test";
 import { exportMeeting } from "./export";
 import { matchPreview } from "./match-preview";
 import { projectLabels, setMeetingFields } from "./meeting-fields";
-import { meetingsOverview } from "./overview";
+import { meetingBadges, meetingsOverview } from "./overview";
 import { removeProject, renameProject } from "./project-admin";
 import { screenTimeline } from "./screen-timeline";
 import { openMeetingsWindow, windowOpenArgs } from "./window";
@@ -163,6 +163,7 @@ describe("overview", () => {
                         label: "S1",
                         fromSec: 0,
                         toSec: 9,
+                        speaker: "Alice Example",
                         confidence: 0.9,
                         suggestedAt,
                     },
@@ -807,5 +808,34 @@ describe("set and project labels for every door (R2-MC7)", () => {
         await expect(projectLabels({ config, project: "wrok", remove: ["x"] })).rejects.toThrow("No project wrok");
         expect(await projectLabels({ config, project: "work" })).toEqual([]);
         expect(await projectLabels({ config, project: "side", add: ["Launch"] })).toEqual(["Launch"]);
+    });
+});
+
+describe("the suggestions badge counts what a bulk confirm can take (R2-MC13)", () => {
+    test("a range with no speaker and a term with no spelling stay out of it, as the bulk bar and confirm leave them", () => {
+        const at = "2026-11-05T10:00:00.000Z";
+        const base = { status: "suggested" as const, suggestedAt: at, rules: [] };
+        const meeting = record({
+            id: "a",
+            start: at,
+            items: [
+                { ...base, id: "i1", kind: "speaker-range", label: "Speaker 1", fromSec: 0, toSec: 5, confidence: 0.9 },
+                {
+                    ...base,
+                    id: "i2",
+                    kind: "speaker-range",
+                    label: "Speaker 1",
+                    fromSec: 9,
+                    toSec: 12,
+                    speaker: "Alice Example",
+                    confidence: 0.9,
+                },
+                { ...base, id: "i3", kind: "term", atSec: 20, heard: "zzqx", confidence: 0.9 },
+                { ...base, id: "i4", kind: "term", atSec: 30, heard: "pentagon", proposed: "Pentaho", confidence: 0.9 },
+                { ...base, id: "i5", kind: "term", atSec: 40, heard: "pentagon", proposed: "Pentaho", confidence: 0.3 },
+            ],
+        });
+
+        expect(meetingBadges(meeting, 0.5)).toMatchObject({ suggestedAboveApply: 2, suggested: 5 });
     });
 });

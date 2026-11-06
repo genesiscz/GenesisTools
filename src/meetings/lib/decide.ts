@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
 import { appendCorrections, type Correction } from "@genesiscz/utils/meetings/corrections";
 import type { MeetingItem, MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
-import { questionIdOf, questionLabel } from "./questions";
+import { inputNeeded, questionIdOf, questionLabel } from "./questions";
 import { TOOL } from "./shared";
 import { decisionLedger, ledgerEntryFor } from "./transcript-corrections";
 
@@ -87,10 +87,10 @@ export async function decideItems(options: {
                     reason: `${label} is a question; answer it by ear: ${TOOL} listen ${record.id} --item ${label}`,
                     needs: "listen",
                 });
-            } else if (item.kind === "speaker-range" && !item.speaker && !speaker) {
+            } else if (item.kind === "speaker-range" && inputNeeded(item) === "speaker" && !speaker) {
                 const candidates = item.candidates?.length ? ` Candidates: ${item.candidates.join(", ")}.` : "";
                 skipped.push({ id: item.id, reason: `it has no speaker yet.${candidates}`, needs: "speaker" });
-            } else if (item.kind === "term" && !item.proposed && !item.meaning && !item.quote && !proposed) {
+            } else if (item.kind === "term" && inputNeeded(item) === "proposed" && !proposed) {
                 skipped.push({ id: item.id, reason: `"${item.heard}" has no spelling yet.`, needs: "proposed" });
             }
         }

@@ -1,6 +1,6 @@
 import type { MeetingsConfig } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
-import { openQuestions } from "./questions";
+import { inputNeeded, openQuestions } from "./questions";
 
 /** What one meeting still needs, as counts and flags a list row can show without reading the record again. */
 export interface MeetingBadges {
@@ -77,7 +77,9 @@ export function meetingBadges(record: MeetingRecord, applyAbove: number): Meetin
         unclearSpeakers: suggested.filter((item) => item.kind === "speaker-range" || item.kind === "label").length,
         recordingOnly: hasRecording && !hasTranscript,
         transcriptOnly: hasTranscript && !hasRecording,
-        suggestedAboveApply: suggested.filter((item) => (item.confidence ?? 0) >= applyAbove).length,
+        // What "confirm all at or above" takes: the open items it would skip are not ready, so they are not counted.
+        suggestedAboveApply: suggested.filter((item) => (item.confidence ?? 0) >= applyAbove && !inputNeeded(item))
+            .length,
         suggested: suggested.length,
     };
 }

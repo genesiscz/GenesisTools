@@ -235,6 +235,23 @@ export function questionKey(item: Pick<QuestionItem, "about" | "fromSec" | "toSe
     return `question|${item.about}|${Math.round(item.fromSec)}|${Math.round(item.toSec)}|${item.decides.join(",")}`;
 }
 
+/**
+ * What a suggestion needs from a person before a confirm can take it: a speaker for a range nobody named, a spelling for
+ * a term with no proposal, meaning or quote. `confirm` skips these, the window's bulk bar leaves them out
+ * (`MeetingDetailModel.confirmable`), and the overview's count must agree with both (R2-MC13).
+ */
+export function inputNeeded(item: MeetingItem): "speaker" | "proposed" | undefined {
+    if (item.kind === "speaker-range" && !item.speaker) {
+        return "speaker";
+    }
+
+    if (item.kind === "term" && !item.proposed && !item.meaning && !item.quote) {
+        return "proposed";
+    }
+
+    return undefined;
+}
+
 /** The open questions, the most valuable first (priority), then in transcript order. */
 export function openQuestions(record: MeetingRecord): QuestionItem[] {
     return record.items
