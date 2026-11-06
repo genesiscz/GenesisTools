@@ -1,7 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { UrlSource } from "@genesiscz/utils/ai/local/artifacts/sources/url";
+import { ui } from "@genesiscz/utils/cli/ui";
 import { findSuspectTerms, findUnknownWords, rawTermEvidence } from "@genesiscz/utils/transcribe/terms";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
 import { CZECH } from "./cs";
+import { ensureDownload } from "./downloads";
 import { macos } from "./spell/macos";
 import type { SpellEngine } from "./spell/types";
 import { createWordCheck, type WordCheck } from "./word-check";
@@ -161,5 +164,29 @@ describe.skipIf(process.platform !== "darwin")("macos spell checker", () => {
         const english = await macos.open("en");
 
         expect([...english.accepted(["DTLe", "OHP", "a1b2", "house"])]).toEqual(["house"]);
+    });
+});
+
+describe("a first download (R2-MC2)", () => {
+    test("says one short line per file; the URL and the licence details go to the day log only", async () => {
+        const fetched = spyOn(UrlSource.prototype, "ensure").mockResolvedValue({ path: "/fake/cs.dic", cached: false });
+        const lines: string[] = [];
+        const dim = spyOn(ui, "dim").mockImplementation((line: string) => {
+            lines.push(line);
+        });
+
+        try {
+            await ensureDownload({
+                file: `r2-mc2-${process.pid}/cs.dic`,
+                url: "https://example.com/cs.dic",
+                sha256: "0".repeat(64),
+                license: "GPL-2.0",
+            });
+        } finally {
+            fetched.mockRestore();
+            dim.mockRestore();
+        }
+
+        expect(lines).toEqual(["Downloading cs.dic for the word check (GPL-2.0); only this once."]);
     });
 });
