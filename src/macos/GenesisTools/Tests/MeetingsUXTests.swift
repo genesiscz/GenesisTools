@@ -283,4 +283,24 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(MeetingDetailModel.reopenArgs(meeting: "a", items: ["r1", "t2"], token: "tok"),
                        ["reopen", "a", "r1", "t2", "--token", "tok"], "one Undo gives back every item the confirm took")
     }
+
+    // MARK: MU1 a meeting with no transcript source
+
+    func testAScreenOnlyMeetingOpensOnItsScreenAndOffersIt() throws {
+        let (defaults, suite) = try defaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = MeetingsWindowModel(defaults: defaults, loadDetail: { _ in })
+        model.receive(try JSONDecoder().decode(MeetingsOverview.self, from: Self.overviewJSON()))
+        model.select("b")
+        let detail = try XCTUnwrap(model.detail)
+        XCTAssertEqual(detail.tab, .screen, "the transcript, speakers and items all need a source with audio")
+        let empty = detail.noTranscriptSource("transcript")
+        XCTAssertNotNil(empty.showScreen, "the empty state offers the screen recording")
+        empty.showScreen?()
+        XCTAssertEqual(detail.tab, .screen)
+        XCTAssertEqual(NoTranscriptSource.code, "no-transcript-source", "the CLI's code (src/meetings README)")
+
+        model.select("a")
+        XCTAssertEqual(model.detail?.tab, .transcript)
+    }
 }

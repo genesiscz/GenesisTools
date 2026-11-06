@@ -12,7 +12,8 @@ struct TranscriptTab: View {
     @FocusState private var filterFocused: Bool
 
     var body: some View {
-        LoadablePane(state: detail.transcript, reading: "Reading the transcript…", retry: detail.loadTranscript) { transcript in
+        LoadablePane(state: detail.transcript, reading: "Reading the transcript…", retry: detail.loadTranscript,
+                     noSource: detail.noTranscriptSource("transcript")) { transcript in
             VStack(spacing: 0) {
                 FilterField(text: $filter, prompt: "Filter the transcript", focused: $filterFocused)
                     .padding(.horizontal, 14).padding(.vertical, 8)
@@ -567,7 +568,8 @@ struct SpeakersTab: View {
     @Bindable var detail: MeetingDetailModel
 
     var body: some View {
-        LoadablePane(state: detail.speakers, reading: "Reading the speakers…", retry: detail.loadSpeakers) { stats in
+        LoadablePane(state: detail.speakers, reading: "Reading the speakers…", retry: detail.loadSpeakers,
+                     noSource: detail.noTranscriptSource("speakers")) { stats in
             if stats.speakers.isEmpty {
                 EmptyState(symbol: "person.2", text: "No speaker yet", detail: "The speakers come from the transcript.")
             } else {

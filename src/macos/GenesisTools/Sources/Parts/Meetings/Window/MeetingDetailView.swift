@@ -240,13 +240,35 @@ private struct AddLabelButton: View {
 }
 
 /// A pane's read state in one place: the content, a spinner with what is being read, or the error with Retry.
+/// What a pane says for a meeting with no source that has a transcript or audio, where the CLI answers
+/// `[no-transcript-source]`: an empty state, not the refusal as an error.
+struct NoTranscriptSource {
+    /// What the pane would list ("transcript", "speakers").
+    let what: String
+    /// Opens the Screen tab; nil when the meeting has no screen recording either.
+    let showScreen: (() -> Void)?
+
+    static let code = "no-transcript-source"
+}
+
 struct LoadablePane<Value: Equatable, Content: View>: View {
     let state: Loadable<Value>
     let reading: String
     let retry: () -> Void
+    var noSource: NoTranscriptSource? = nil
     @ViewBuilder let content: (Value) -> Content
 
     var body: some View {
+        if let noSource, state.failure?.code == NoTranscriptSource.code {
+            EmptyState(symbol: "waveform.slash", text: "This meeting has no \(noSource.what)",
+                       detail: "It has no linked source with a transcript or audio, so there is nothing to list yet. Linking its Wispr Flow meeting brings both.",
+                       actionTitle: noSource.showScreen == nil ? nil : "Show the screen recording", action: noSource.showScreen)
+        } else {
+            pane
+        }
+    }
+
+    private var pane: some View {
         VStack(spacing: 0) {
             if let failure = state.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,

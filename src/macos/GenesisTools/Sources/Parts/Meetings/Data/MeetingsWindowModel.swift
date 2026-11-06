@@ -194,6 +194,7 @@ final class MeetingsWindowModel {
         }
         if detail?.id != id {
             detail = MeetingDetailModel(id: id, window: self)
+            detail?.tab = MeetingDetailModel.firstTab(for: meeting(id))
             if let detail { loadDetail(detail) }
         }
     }

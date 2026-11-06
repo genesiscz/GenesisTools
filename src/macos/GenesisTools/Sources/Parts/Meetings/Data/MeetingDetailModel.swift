@@ -568,3 +568,20 @@ extension MeetingDetailModel {
         }
     }
 }
+
+// MARK: - A meeting with no transcript source
+
+extension MeetingDetailModel {
+    /// The empty state of a pane the CLI refuses with `[no-transcript-source]`; its button opens the screen recording.
+    func noTranscriptSource(_ what: String) -> NoTranscriptSource {
+        let screen = window?.meeting(id)?.hasRecording ?? (record.value?.recording != nil)
+        return NoTranscriptSource(what: what, showScreen: screen ? { [weak self] in self?.show(.screen) } : nil)
+    }
+
+    /// The tab a meeting opens on: its screen recording when it has nothing else, since the transcript, speakers and
+    /// items all need a source with audio.
+    static func firstTab(for meeting: OverviewMeeting?) -> Tab {
+        guard let meeting, meeting.badges.recordingOnly || (!meeting.hasTranscript && meeting.hasRecording) else { return .transcript }
+        return .screen
+    }
+}
