@@ -1,7 +1,7 @@
 import { Console } from "node:console";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { Writable } from "node:stream";
 import vm from "node:vm";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -343,7 +343,11 @@ async function runTurn(code: string): Promise<Response["text"]> {
 
             // The authorized path, never a second resolution: re-resolving by directory order
             // could load a different file from the one the containment check approved.
-            return import(decision.resolved ?? specifier);
+            try {
+                return await import(decision.resolved ?? specifier);
+            } catch (error) {
+                throw importError(specifier, error);
+            }
         }) as never,
     });
     const result = await script.runInThisContext();
@@ -359,6 +363,23 @@ async function runTurn(code: string): Promise<Response["text"]> {
     }
 
     return output.join("\n");
+}
+
+/**
+ * A failed import as the turn's author reads it: what is missing and how to get it. Bun's own message names the file the
+ * import ran from, which is this kernel, and says nothing about js_add_node_module_dir (NR31).
+ */
+function importError(specifier: string, error: unknown): unknown {
+    if (!/^Cannot find (package|module)/.test(describeError(error).message)) {
+        return error;
+    }
+
+    const isPath = /^(\/|\.|file:)/.test(specifier) || isAbsolute(specifier);
+    return new Error(
+        isPath
+            ? `Cannot find module '${specifier}': no file is there.`
+            : `Cannot find package '${specifier}'. Add the project that has it with js_add_node_module_dir, or import it by absolute path.`
+    );
 }
 
 /** The script's own top level, which only calls the turn's wrapper. */

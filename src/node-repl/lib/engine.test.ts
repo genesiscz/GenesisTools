@@ -232,6 +232,16 @@ describe("ReplEngine", () => {
         expect(imported.text).toBe("7");
     });
 
+    // NR31: a missing package named the kernel's file ("imported from …/worker.ts") and gave no way forward.
+    it("a missing package says how to make it importable, without the kernel's path", async () => {
+        const missing = await engine.run("await import('nr31-no-such-package')");
+        expect(missing.error).toBe(
+            "Cannot find package 'nr31-no-such-package'. Add the project that has it with js_add_node_module_dir, or import it by absolute path."
+        );
+        const path = await engine.run("await import('/nonexistent/nr31.ts')");
+        expect(path.error).toBe("Cannot find module '/nonexistent/nr31.ts': no file is there.");
+    });
+
     // NR17: a folder that does not exist was answered "module directory registered".
     it("refuses a module directory without a node_modules folder, and keeps the worker", async () => {
         await engine.run("globalThis.keptAcrossRefusal = 1");
