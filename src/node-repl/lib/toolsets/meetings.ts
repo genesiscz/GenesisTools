@@ -6,7 +6,7 @@ import { testPhrase } from "@app/meetings/lib/dictionary-test";
 import { findingSchema } from "@app/meetings/lib/findings";
 import { itemWhat } from "@app/meetings/lib/item-text";
 import { matchDraftSchema, matchPreview } from "@app/meetings/lib/match-preview";
-import { setMeetingFields } from "@app/meetings/lib/meeting-fields";
+import { projectLabels, setMeetingFields } from "@app/meetings/lib/meeting-fields";
 import { OpenedMeeting } from "@app/meetings/lib/opened-meeting";
 import { meetingsOverview } from "@app/meetings/lib/overview";
 import { questionLabel } from "@app/meetings/lib/questions";
@@ -192,7 +192,7 @@ const projectsLabels = defineMethod({
     result: z.unknown(),
     resultName: "string[]",
     effect: "reversible",
-    doc: 'A project\'s known labels; add and remove change them. meetings.projects.labels({ project: "shop", add: ["Checkout 2.0"] }).',
+    doc: 'A project\'s known labels; add and remove change them. A project nobody knows is refused, unless add makes it. meetings.projects.labels({ project: "shop", add: ["Checkout 2.0"] }).',
 });
 const projectsPair = defineMethod({
     name: "projects.pair",
@@ -573,16 +573,9 @@ export class MeetingsToolset extends ReplToolset {
                             limit: parsed.limit ?? 20,
                         });
                     },
-                    labels: async (input: z.input<typeof projectsLabels.params>) => {
-                        const parsed = projectsLabels.params.parse(input);
-                        const config = new MeetingsConfigStore();
-
-                        if (!parsed.add?.length && !parsed.remove?.length) {
-                            return (await config.read()).projects[parsed.project]?.labels ?? [];
-                        }
-
-                        return config.setProjectLabels(parsed.project, parsed);
-                    },
+                    // The CLI's lookup: a project nobody knows is refused, not answered with no labels (R2-MC10).
+                    labels: async (input: z.input<typeof projectsLabels.params>) =>
+                        projectLabels({ config: new MeetingsConfigStore(), ...projectsLabels.params.parse(input) }),
                     pair: async (input: z.input<typeof projectsPair.params>) => {
                         const parsed = projectsPair.params.parse(input);
                         const config = await new MeetingsConfigStore().pairPeople({

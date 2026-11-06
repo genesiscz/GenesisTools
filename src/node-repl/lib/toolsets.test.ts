@@ -1764,6 +1764,18 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect((await meeting.set({ unlabel: ["Kickoff"] })).labels).toEqual([]);
     });
 
+    // R2-MC10: an unknown project answered [] here, while the CLI refused it.
+    test("meetings: projects.labels refuses a project nobody knows, and adding a label makes one", async () => {
+        const { meetings } = (await new MeetingsToolset().load(ctx)) as {
+            meetings: { projects: { labels(input: unknown): Promise<string[]> } };
+        };
+        await expect(meetings.projects.labels({ project: "r2-mc10-nosuch" })).rejects.toThrow(
+            "No project r2-mc10-nosuch. The known ones:"
+        );
+        expect(await meetings.projects.labels({ project: "r2-mc10-new", add: ["Kickoff"] })).toEqual(["Kickoff"]);
+        expect(await meetings.projects.labels({ project: "r2-mc10-new" })).toEqual(["Kickoff"]);
+    });
+
     test("meetings: an opened meeting reads and changes the settings of its live recording, and says so when it is not recording", async () => {
         const store = new MeetingStore();
         const record = await store.create(
