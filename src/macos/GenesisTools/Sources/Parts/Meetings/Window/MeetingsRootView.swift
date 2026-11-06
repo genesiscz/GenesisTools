@@ -23,17 +23,7 @@ struct MeetingsRootView: View {
             }
             .heightFromWindow()
         }
-        .background(shortcuts)
-    }
-
-    /// ⌘1 Needs you, ⌘2 All meetings, ⌘R reload: hidden buttons, so the keys work wherever focus is.
-    private var shortcuts: some View {
-        ZStack {
-            Button("Needs you") { model.go(.needs) }.keyboardShortcut("1", modifiers: .command)
-            Button("All meetings") { model.go(.all) }.keyboardShortcut("2", modifiers: .command)
-            Button("Reload") { model.load(); model.detail?.refreshLoaded() }.keyboardShortcut("r", modifiers: .command)
-        }
-        .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
+        // ⌘1 Needs you, ⌘2 All meetings and ⌘R Reload are View menu items (MeetingsMenu), so they work wherever focus is.
     }
 }
 

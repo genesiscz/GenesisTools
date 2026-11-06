@@ -67,6 +67,8 @@ package func runMeetings(_ args: [String]) -> Never {
     MainActor.assumeIsolated {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
+        MeetingsMenuTarget.shared.model = MeetingsWindow.shared.model
+        MeetingsMenu.install()
         HangWatch.start()
         meetingsInstance.serve { forwarded in
             let next = MeetingsRequest.parse(forwarded)
