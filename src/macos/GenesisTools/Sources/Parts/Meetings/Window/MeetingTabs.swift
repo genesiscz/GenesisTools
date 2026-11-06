@@ -627,12 +627,14 @@ private struct QuestionRow: View {
             }
         }
         .padding(.vertical, 4)
+        .onChange(of: item.status) { typed = "" }
     }
 
+    /// The typed answer stays in the field until the answer is saved: the question then leaves the list, or its
+    /// status changes (`.onChange` above), so a refused answer keeps what was typed.
     private func submit() {
         guard !busy, let text = MeetingsWords.typedAnswer(typed) else { return }
         answer(text)
-        typed = ""
     }
 }
 
