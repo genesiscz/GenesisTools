@@ -55,7 +55,7 @@ import {
 import { chaptersOf, clickGroupsOf, markersOf, searchLibrary } from "./lib/moments";
 import { applyEdit, undoLastEdit } from "./lib/movie-client";
 import { type DisplayRange, PROXY_DISPLAY_POLICIES, type ProxyDisplay, parseDisplayPlan } from "./lib/proxy";
-import { copyRecording, revealRecording, trashRecording } from "./lib/quick-actions";
+import { copyRecording, revealRecording, trashRecordings } from "./lib/quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./lib/review";
 import { screenHitsWithOps } from "./lib/screen-ops";
 import { findOnScreen } from "./lib/screen-search";
@@ -510,12 +510,15 @@ program
 program
     .command("trash")
     .description(
-        "Move a library recording through the removal policy (tools rm trash lists its restore command; a recording the policy does not allow becomes a request the user confirms); a meeting's screen recording is refused"
+        "Move library recordings through the removal policy, all in one call (tools rm trash lists the restore command). Run by an agent, or for a recording the policy does not allow, it asks the user: every such recording goes into ONE request they confirm with tools rm approve <id>. A meeting's screen recording is refused, and then nothing is moved"
     )
-    .argument("<recording>", "a library id, `last` or a recording folder")
-    .action(async (value: string) => {
+    .argument("<recording...>", "library ids, `last` or recording folders")
+    .option("--no-aside", "keep the folders in the library while a request waits, instead of moving them aside")
+    .action(async (values: string[], opts: { aside: boolean }) => {
         try {
-            out.result(await trashRecording(resolveRecording(value), { askUser: true }));
+            const folders = values.map((value) => resolveRecording(value));
+            // RC24: one call per recording made one request each; one tools rm call makes at most one.
+            out.result(await trashRecordings(folders, { askUser: true, ...(opts.aside ? {} : { aside: false }) }));
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;

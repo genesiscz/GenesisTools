@@ -31,7 +31,7 @@ import {
     proxyCanvas,
     proxyVideoFilter,
 } from "./proxy";
-import { currentGif, shareableMovie, trashRecording } from "./quick-actions";
+import { currentGif, shareableMovie, trashRecording, trashRecordings } from "./quick-actions";
 import { screenHitsWithOps } from "./screen-ops";
 import { findOnScreen } from "./screen-search";
 
@@ -710,6 +710,56 @@ it("recording trash from an agent call asks no one: a policy that would ask refu
         expect(calls.slice(1)).toEqual([
             ["rm", "--dry-run", "--json", folder],
             ["rm", folder],
+        ]);
+    } finally {
+        run.mockRestore();
+    }
+});
+
+// RC24 (deep test 2026-11-06): 20 recordings trashed by an agent made 20 requests, and each moved its folder to /tmp.
+it("several recordings go through the removal policy in one call: one request, and --no-aside keeps the folders", async () => {
+    const first = mkdtempSync(join(tmpdir(), "recording-trash-many-a-"));
+    const second = mkdtempSync(join(tmpdir(), "recording-trash-many-b-"));
+    const calls: string[][] = [];
+    let verdicts: Record<string, string> = { [first]: "allow", [second]: "ask" };
+    const run = spyOn(cli, "execTool").mockImplementation(async (args: readonly string[]) => {
+        calls.push([...args]);
+
+        if (args.includes("--dry-run")) {
+            const plan = args
+                .filter((arg) => !arg.startsWith("-") && arg !== "rm")
+                .map((path) => ({
+                    path,
+                    verdict: verdicts[path],
+                    reason: "no rule allows it",
+                    bytes: 1,
+                    willAside: true,
+                }));
+            return { success: true, exitCode: 0, stdout: SafeJSON.stringify(plan), stderr: "" };
+        }
+
+        return { success: true, exitCode: 0, stdout: "", stderr: "" };
+    });
+    try {
+        // The CLI a person runs: one tools rm call for both, so at most one request.
+        expect(await trashRecordings([first, second, first], { askUser: true, aside: false })).toEqual({
+            trashed: [first, second],
+        });
+        expect(calls).toEqual([["rm", "--no-aside", first, second]]);
+
+        // An agent's call: one dry run for both, and when one would ask, none is moved and no one is asked.
+        calls.length = 0;
+        await expect(trashRecordings([first, second])).rejects.toThrow(
+            `${second} needs the user's confirmation to remove (no rule allows it); nothing was moved and no one was asked. The user can run tools recorder trash ${first} ${second}`
+        );
+        expect(calls).toEqual([["rm", "--dry-run", "--json", first, second]]);
+
+        verdicts = { [first]: "allow", [second]: "allow" };
+        calls.length = 0;
+        expect(await trashRecordings([first, second])).toEqual({ trashed: [first, second] });
+        expect(calls).toEqual([
+            ["rm", "--dry-run", "--json", first, second],
+            ["rm", first, second],
         ]);
     } finally {
         run.mockRestore();
