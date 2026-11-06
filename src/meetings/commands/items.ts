@@ -485,7 +485,10 @@ async function speakersStats(ref: string, opts: { gap?: string; attendance?: str
 
         const from = opts.attendance ?? record.attendance?.from;
         const platform = from && isMeetingPlatformId(from) ? MEETING_PLATFORMS[from].label : undefined;
-        printSpeakerStats(stats, platform ? { attendance: `${platform} attendance` } : {});
+        printSpeakerStats(stats, {
+            renames: record.speakers.labels,
+            ...(platform ? { attendance: `${platform} attendance` } : {}),
+        });
     } catch (err) {
         fail(errorText(err));
     }

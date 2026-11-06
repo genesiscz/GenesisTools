@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { checkImageDimensions } from "@genesiscz/utils/image/dimensions";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import { meetingsConfigSchema } from "@genesiscz/utils/meetings/config";
 import { voiceRuns } from "@genesiscz/utils/meetings/energy";
 import { MEETING_PLATFORM_IDS } from "@genesiscz/utils/meetings/platform";
@@ -44,6 +45,7 @@ import {
     FrameRecorder,
 } from "@genesiscz/utils/screen-recorder/types";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { applyCorrections } from "@genesiscz/utils/transcribe/apply";
 import { findReadAloud } from "@genesiscz/utils/transcribe/doc-match";
 import type { WordCheck } from "@genesiscz/utils/transcribe/languages/word-check";
@@ -84,6 +86,7 @@ import {
 import { framesAt, framesAtPerDisplay, recordedSpans, recordingSummary } from "./lib/screen";
 import { framesMatching, ocrRowSchema, readOcrRows, renderScreenBoxes } from "./lib/screen-boxes";
 import { showText } from "./lib/show-text";
+import { printSpeakerStats } from "./lib/speakers-view";
 import { settledTermItems, spokenOnPurpose, suggestItems, wordFamily } from "./lib/suggest";
 import { correctionsOf } from "./lib/transcript-corrections";
 import { transcriptDocument } from "./lib/transcript-document";
@@ -4513,6 +4516,41 @@ describe("showText", () => {
 
         expect(showText(linked([]))).toContain("- wisprflow: meeting m-1, in no folder");
         expect(showText(linked(["Work", "Side"]))).toContain("- wisprflow: meeting m-1, folders Work, Side");
+    });
+});
+
+describe("speakers stats text", () => {
+    test("a renamed label shows its name after the source label; the others stay as they are (MC11)", () => {
+        const stat = (label: string) => ({
+            label,
+            origin: "unknown" as const,
+            turns: 1,
+            lines: 1,
+            words: 3,
+            spokenSec: 4,
+            firstSec: 10,
+            lastSec: 14,
+            spans: [],
+            leaves: [],
+        });
+        const printed: string[] = [];
+        const println = spyOn(out, "println").mockImplementation((text: string) => {
+            printed.push(text);
+        });
+
+        try {
+            printSpeakerStats(
+                { timed: true, speakers: [stat("Speaker 2"), stat("Speaker 3")], hints: [] },
+                { renames: { "Speaker 2": "Tester A" } }
+            );
+        } finally {
+            println.mockRestore();
+        }
+
+        const table = stripAnsi(printed.join("\n"));
+        expect(table).toContain("Speaker 2 → Tester A");
+        expect(table).toContain("Speaker 3 ");
+        expect(table).not.toContain("Speaker 3 →");
     });
 });
 

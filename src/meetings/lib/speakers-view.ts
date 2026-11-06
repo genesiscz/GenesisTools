@@ -74,6 +74,8 @@ export function printSpeakerStats(
         untimedHint?: string;
         /** Where the stays came from, as the hints name it: `Microsoft Teams attendance`. */
         attendance?: string;
+        /** The meeting's renames (`speakers rename`): a renamed label reads `Speaker 2 → Tester A`. */
+        renames?: Record<string, string>;
     } = {}
 ): void {
     const attendance = options.attendance ?? "attendance";
@@ -95,7 +97,7 @@ export function printSpeakerStats(
                 ? "—"
                 : `${formatClock(stat.firstSec)}–${formatClock(stat.lastSec)}`;
         table.push([
-            pc.white(stat.label),
+            pc.white(options.renames?.[stat.label] ? `${stat.label} → ${options.renames[stat.label]}` : stat.label),
             stat.speakerId === undefined ? "—" : String(stat.speakerId),
             stat.origin === "unknown" ? "—" : stat.origin,
             String(stat.turns),
