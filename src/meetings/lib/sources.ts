@@ -1,4 +1,5 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { MEETING_SOURCE_IDS, type MeetingSourceId, type TranscriptSource } from "@genesiscz/utils/meetings/sources";
 import type { TranscriptEntry } from "@genesiscz/utils/transcribe/types";
@@ -47,7 +48,8 @@ export async function linkedSource(record: MeetingRecord): Promise<LinkedSource>
     const ref = sourceRefOf(record);
 
     if (!ref) {
-        throw new Error(
+        throw new MeetingsStateError(
+            "no-transcript-source",
             `${record.id} has no source with a transcript. Link one: ${toolCommand("meetings", "link", record.id, "wisprflow:<id>")}`
         );
     }

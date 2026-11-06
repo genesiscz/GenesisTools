@@ -75,6 +75,12 @@ One folder per meeting, `~/.genesis-tools/meetings/<YYYY-MM-DD_HH-MM>-<title>/me
 id, a unique prefix of it, `last`, or a source reference such as `wisprflow:1a2b3c4d`. Every change adds one line to
 the record's `history`, and a change that would make the record invalid writes nothing.
 
+A refusal a client may act on leads its `✗` line on stderr with a code in brackets, and exits 1. A state of the
+meeting: `[no-transcript-source]`, the meeting has no linked source with a transcript or audio (`transcript`,
+`speakers stats`, `suggest`, `export`, `play`); the Meetings window shows its empty state on it. A conflict:
+`[config-stale]`, `[export-edited]`, `[export-unsafe-path]`, `[item-changed]`, `[dictionary-exists]`. The code is for
+programs; the sentence after it is for people.
+
 Every command that creates or changes a meeting resolves its project in this order: `--project` (a new name joins
 the known projects), the meeting's own, one matching project (`projects.<name>.match`), a choice in a terminal, and
 without a terminal no project. `show` then says how to set it.

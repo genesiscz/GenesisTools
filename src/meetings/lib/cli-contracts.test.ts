@@ -2,10 +2,13 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { join } from "node:path";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { meetingRecordSchema } from "@genesiscz/utils/meetings/record";
 import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
+import { meetingAudioPath } from "./audio";
 import { choosePlayer, PLAYERS, playbackPlan } from "./players";
-import { enumHint } from "./shared";
+import { enumHint, errorText } from "./shared";
+import { linkedSource } from "./sources";
 
 /**
  * What the `tools meetings` commands promise a script or the Meetings window: a refusal names a command that runs,
@@ -164,5 +167,36 @@ describe("play: the player and the plan", () => {
             argv: ["ffplay", "-ss", "25", "-nodisp", "-autoexit", "/a/upload.ogg"],
         });
         expect(playbackPlan({ audioPath: "/a/x.ogg", atSec: 2, beforeSec: 5, player: PLAYERS.vlc }).startSec).toBe(0);
+    });
+});
+
+/** MU1: a recording-only meeting is a state, so the window reads a code and shows its empty state. */
+describe("a meeting without a transcript source", () => {
+    const recordingOnly = meetingRecordSchema.parse({
+        id: "2026-11-06_10-00-screen-only",
+        title: "Screen only",
+        start: "2026-11-06T09:00:00.000Z",
+        createdAt: "2026-11-06T09:00:00.000Z",
+        createdBy: "record",
+    });
+
+    test("transcript, speakers and suggest lead their sentence with [no-transcript-source]", async () => {
+        const failure = await linkedSource(recordingOnly).then(
+            () => "linked",
+            (err: unknown) => errorText(err)
+        );
+
+        expect(failure).toStartWith(
+            "[no-transcript-source] 2026-11-06_10-00-screen-only has no source with a transcript."
+        );
+    });
+
+    test("play leads with the same code", async () => {
+        const failure = await meetingAudioPath(recordingOnly).then(
+            () => "audio",
+            (err: unknown) => errorText(err)
+        );
+
+        expect(failure).toBe("[no-transcript-source] 2026-11-06_10-00-screen-only has no linked source with audio.");
     });
 });

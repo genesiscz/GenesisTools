@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import type { LISTEN_PLAYERS } from "@genesiscz/utils/meetings/config";
+import { MeetingsStateError } from "@genesiscz/utils/meetings/conflict";
 import type { MeetingRecord } from "@genesiscz/utils/meetings/record";
 import { PLAYERS, pickPlayer } from "./players";
 import { meetingSource, sourceRefOf } from "./sources";
@@ -13,7 +14,7 @@ export async function meetingAudioPath(record: MeetingRecord): Promise<string> {
     const ref = sourceRefOf(record);
 
     if (!ref) {
-        throw new Error(`${record.id} has no linked source with audio.`);
+        throw new MeetingsStateError("no-transcript-source", `${record.id} has no linked source with audio.`);
     }
 
     const evidence = await (await meetingSource(ref.sourceId)).evidence(ref.sourceMeetingId);
