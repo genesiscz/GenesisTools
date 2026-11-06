@@ -6,7 +6,7 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes, parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { OCR_BOX_LEVELS, type OcrBoxLevel } from "@genesiscz/utils/macos/ocr-boxes";
+import { foldText, OCR_BOX_LEVELS, type OcrBoxLevel } from "@genesiscz/utils/macos/ocr-boxes";
 import { calendarAround } from "@genesiscz/utils/meetings/calendar";
 import {
     DISPLAY_POLICIES,
@@ -695,6 +695,13 @@ async function screen(ref: string, opts: ScreenOptions): Promise<void> {
     }
 }
 
+/** The line of a box to print: the one that holds the match (a block's first line may not, MC21), else the first. */
+function shownLine(text: string, match: string | undefined): string {
+    const lines = text.split("\n");
+    const wanted = match ? foldText(match) : undefined;
+    return (wanted ? lines.find((line) => foldText(line).includes(wanted)) : undefined) ?? lines[0] ?? "";
+}
+
 /** `screen --boxes`: each frame's matching or changed boxes, the drawn frame and the crop of each box. */
 function printScreenBoxes(results: ScreenBoxFrame[], opts: ScreenOptions, clockOf: (ms: number) => string): void {
     if (opts.json) {
@@ -713,7 +720,7 @@ function printScreenBoxes(results: ScreenBoxFrame[], opts: ScreenOptions, clockO
         for (const [index, box] of frame.boxes.entries()) {
             const crop = frame.crops.find((path) => path.endsWith(`.${index + 1}.png`));
             out.println(
-                `   ${index + 1}. ${box.x},${box.y} ${box.width}x${box.height}  ${box.text.split("\n")[0]}${crop ? `  ${crop}` : ""}`
+                `   ${index + 1}. ${box.x},${box.y} ${box.width}x${box.height}  ${shownLine(box.text, opts.match)}${crop ? `  ${crop}` : ""}`
             );
         }
     }
