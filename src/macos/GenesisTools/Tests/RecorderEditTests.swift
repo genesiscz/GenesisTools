@@ -1058,6 +1058,13 @@ final class RecorderEditTests: XCTestCase {
     }
 
 
+    // Regression test: deep test 2026-11-06 RE9 — with "Include audio" off the export still carried the click ticks.
+    func testNoClickTicksWhileTheMoviesAudioIsLeftOut() {
+        var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 100, height: 100, cursor: nil, recording: nil)
+        project.audio.include = false
+        XCTAssertEqual(ClickSound.times(clicks: [1_000_000, 5_000_000], project: project), [])
+    }
+
     func testClickTicksPlayAtTheirOutputTimesOneTickApart() {
         var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 100, height: 100, cursor: nil, recording: nil)
         project.clips = [EditProject.Clip(id: "a", fromUs: 0, toUs: 4_000_000), EditProject.Clip(id: "b", fromUs: 6_000_000, toUs: 10_000_000)]

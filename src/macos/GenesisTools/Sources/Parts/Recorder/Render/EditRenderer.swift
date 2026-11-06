@@ -226,6 +226,8 @@ enum ClickSound {
 
     /// The output times of the clicks that play, at least one tick apart, in order.
     static func times(clicks: [Int64], project: EditProject) -> [Int64] {
+        // The ticks are sound: "Include audio" off leaves them out with the rest of it.
+        guard project.audio.include else { return [] }
         var times: [Int64] = []
         for us in clicks.compactMap({ TimelineMap.outputTime(ofSource: $0, in: project) }).sorted()
         where times.last.map({ us - $0 >= lengthUs }) ?? true {
