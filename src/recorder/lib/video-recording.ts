@@ -17,6 +17,7 @@ import { SessionRecorderControl } from "@app/control/lib/recording-session-contr
 import { describeRecordingTarget, type RecordingTarget } from "@app/control/lib/recording-targets";
 import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
+import { formatCount } from "@genesiscz/utils/format";
 import type { FlockState } from "@genesiscz/utils/fs/flock";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -142,6 +143,21 @@ export interface VideoRecordingResult {
     removed?: boolean;
     /** The recording asked for the camera and no camera movie came: the CLI exits 1. */
     cameraMissing?: boolean;
+}
+
+/** The line `tools recorder start` prints at the end of a movie: the movie with its frames and rate, or why it failed. */
+export function videoDoneLine(result: VideoRecordingResult): string {
+    if (result.movie) {
+        const rate =
+            result.averageFps === undefined
+                ? ""
+                : ` (${formatCount(result.frames ?? 0, "frame")}, ${result.averageFps} fps)`;
+        return `${result.outcome}: ${result.movie}${rate}`;
+    }
+
+    return result.removed
+        ? `failed, nothing was recorded: ${result.warnings[0] ?? "the capture did not start"}`
+        : `${result.outcome}: ${result.folder}`;
 }
 
 /**

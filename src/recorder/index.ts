@@ -35,7 +35,7 @@ import {
     restoreDisplayPlan,
     stepDisplaySwitch,
 } from "./lib/frames-movie";
-import { framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "./lib/frames-recording";
+import { framesDoneLine, framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "./lib/frames-recording";
 import {
     alreadyInState,
     describeLiveEntries,
@@ -72,7 +72,7 @@ import {
     withStartOptions,
 } from "./lib/start-options";
 import { Movie, movieDemoDriver } from "./lib/toolset";
-import { recordVideo, tracksPointer } from "./lib/video-recording";
+import { recordVideo, tracksPointer, videoDoneLine } from "./lib/video-recording";
 
 const { log } = logger.scoped("recorder");
 
@@ -272,8 +272,7 @@ async function startFrames(flags: StartFlags): Promise<void> {
     if (flags.json) {
         out.print(`${SafeJSON.stringify({ event: "result", ...result })}\n`);
     } else {
-        const unread = result.ocrFailed ? `, ${result.ocrFailed} without their text: OCR failed` : "";
-        out.println(`${result.outcome ?? result.state}: ${result.folder} (${result.frames ?? 0} frames${unread})`);
+        out.println(framesDoneLine(result));
 
         for (const note of result.notes ?? []) {
             out.printlnErr(`note: ${note}`);
@@ -360,14 +359,7 @@ withStartOptions(
         if (flags.json) {
             out.print(`${SafeJSON.stringify({ event: "result", ...result })}\n`);
         } else {
-            const rate = result.averageFps === undefined ? "" : ` (${result.frames} frames, ${result.averageFps} fps)`;
-            out.println(
-                result.movie
-                    ? `${result.outcome}: ${result.movie}${rate}`
-                    : result.removed
-                      ? `failed, nothing was recorded: ${result.warnings[0] ?? "the capture did not start"}`
-                      : `${result.outcome}: ${result.folder}`
-            );
+            out.println(videoDoneLine(result));
         }
 
         if (result.outcome === "failed" || result.cameraMissing) {

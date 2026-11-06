@@ -1,6 +1,7 @@
 import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { parseFlags } from "@genesiscz/utils/cli/flag-issues";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
+import { formatCount } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
 import { libraryStartOptions, recorderStartSchema } from "@genesiscz/utils/repl/toolsets/recorder";
 import type { StopAnswer } from "@genesiscz/utils/screen-recorder/control";
@@ -14,6 +15,20 @@ import type { FrameRecorder } from "@genesiscz/utils/screen-recorder/types";
 import type { z } from "zod";
 import { type StartFlags, startAudioOf } from "./start-options";
 import { showRecorderCountdown } from "./video-recording";
+
+/** The line `tools recorder start --frames` prints at the end: the folder, its frames and how many OCR could not read. */
+export function framesDoneLine(result: {
+    outcome?: string;
+    state?: string;
+    folder: string;
+    frames?: number;
+    ocrFailed?: number;
+}): string {
+    const unread = result.ocrFailed
+        ? `, ${result.ocrFailed} without ${result.ocrFailed === 1 ? "its" : "their"} text: OCR failed`
+        : "";
+    return `${result.outcome ?? result.state}: ${result.folder} (${formatCount(result.frames ?? 0, "frame")}${unread})`;
+}
 
 const { log } = logger.scoped("recorder-frames");
 

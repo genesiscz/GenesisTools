@@ -8,6 +8,7 @@ import type { RecordingTarget } from "@app/control/lib/recording-targets";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { RpcError } from "@genesiscz/utils/screen-recorder/control";
 import { type CameraHost, startRecordingCamera, stopRecordingCamera } from "./camera-recorder";
+import { framesDoneLine } from "./frames-recording";
 import { alreadyInState, liveRecordingRef, markerLabelProblem } from "./library";
 import {
     otherRecordingsWarning,
@@ -15,7 +16,7 @@ import {
     refuseMissingWindowOrApp,
     refuseTargetOffScreen,
 } from "./start-options";
-import { recordedNothing, segmentRecorderOptions } from "./video-recording";
+import { recordedNothing, segmentRecorderOptions, videoDoneLine } from "./video-recording";
 
 const folder = "/tmp/recording";
 const repo = join(moduleDir(import.meta), "..", "..", "..");
@@ -228,6 +229,21 @@ describe("a window or app movie", () => {
         );
         expect(() => refuseTargetOffScreen({ kind: "display", screenIndex: 0 }, screens)).not.toThrow();
         expect(() => refuseTargetOffScreen(window, screens)).not.toThrow();
+    });
+
+    it("the done lines count one frame as one frame", () => {
+        const movie = { outcome: "done" as const, id: "v", folder: "/f", movie: "/f/screen.mp4", warnings: [] };
+        expect(videoDoneLine({ ...movie, frames: 1, averageFps: 0.2 })).toBe("done: /f/screen.mp4 (1 frame, 0.2 fps)");
+        expect(videoDoneLine({ ...movie, frames: 151, averageFps: 30 })).toBe(
+            "done: /f/screen.mp4 (151 frames, 30 fps)"
+        );
+        expect(
+            videoDoneLine({ outcome: "failed", id: "v", folder: "/f", removed: true, warnings: ["no window"] })
+        ).toBe("failed, nothing was recorded: no window");
+        expect(framesDoneLine({ outcome: "done", folder: "/f", frames: 1 })).toBe("done: /f (1 frame)");
+        expect(framesDoneLine({ state: "stopped", folder: "/f", frames: 3, ocrFailed: 1 })).toBe(
+            "stopped: /f (3 frames, 1 without its text: OCR failed)"
+        );
     });
 
     it("a window that is not on screen and an app that does not run are refused before a folder is made", () => {
