@@ -276,7 +276,7 @@ struct RecorderNoticeContent: View {
 final class RecorderTitlePrompt: NSObject, NSWindowDelegate {
     private static var current: RecorderTitlePrompt?
 
-    private let panel: RecorderTitlePanel
+    let panel: RecorderTitlePanel
     private var done: ((String?) -> Void)?
 
     static func show(_ request: RecorderTitleRequest, done: @escaping (String?) -> Void) {
@@ -286,7 +286,7 @@ final class RecorderTitlePrompt: NSObject, NSWindowDelegate {
         prompt.present()
     }
 
-    private init(_ request: RecorderTitleRequest, done: @escaping (String?) -> Void) {
+    init(_ request: RecorderTitleRequest, done: @escaping (String?) -> Void) {
         self.done = done
         panel = RecorderTitlePanel(contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel],
                                    backing: .buffered, defer: false)
@@ -294,6 +294,9 @@ final class RecorderTitlePrompt: NSObject, NSWindowDelegate {
         let host = NSHostingView(rootView: RecorderTitlePromptView(request: request) { [weak self] answer in
             self?.finish(answer)
         }.titlebarZone())
+        // The title bar is empty (no title, no buttons), so it is no safe area: the content starts at the panel's top
+        // edge, and the fitting size below is the content's own, with no band above the heading or under the buttons.
+        host.safeAreaRegions = []
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
@@ -344,7 +347,7 @@ final class RecorderTitlePanel: EditingPanel {
     override var canBecomeMain: Bool { false }
 }
 
-private struct RecorderTitlePromptView: View {
+struct RecorderTitlePromptView: View {
     let request: RecorderTitleRequest
     let finish: (String?) -> Void
     @State private var text: String
@@ -383,11 +386,9 @@ private struct RecorderTitlePromptView: View {
                     .accessibilityIdentifier("recorder.rename.confirm")
             }
         }
-        // The title bar is empty (no title, no buttons), so the content uses its height: one 18 pt inset all round,
-        // not a 30 pt band under an invisible bar (review 2026-11-06).
+        // One 18 pt inset all round; the host gives the empty title bar no safe area (review 2026-11-06).
         .padding(18)
         .frame(width: 360)
-        .ignoresSafeArea(.container, edges: .top)
         .onAppear { DispatchQueue.main.async { focused = true } }
     }
 }

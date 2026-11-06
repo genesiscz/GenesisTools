@@ -84,6 +84,19 @@ final class RecorderSettingsTests: XCTestCase {
         XCTAssertGreaterThan(long.height, short.height, "a longer message wraps onto more lines")
     }
 
+    /// The defect: the prompt's content ignored the hidden title bar's safe area, but the panel took the hosting
+    /// view's fitting size, which still counted that bar, so the empty band moved from above the heading to under
+    /// the buttons (live check 2026-11-07). The panel is exactly as tall as its content now.
+    @MainActor
+    func testTheRenamePromptIsAsTallAsItsContent() {
+        let request = RecorderTitleRequest(heading: "Rename “Demo”", detail: "The library and the editor show this title.",
+                                           current: "Demo")
+        let prompt = RecorderTitlePrompt(request) { _ in }
+        let bare = NSHostingView(rootView: RecorderTitlePromptView(request: request) { _ in })
+        XCTAssertEqual(prompt.panel.frame.width, 360, accuracy: 1)
+        XCTAssertEqual(prompt.panel.frame.height, bare.fittingSize.height, accuracy: 1)
+    }
+
     func testNothingStoredGivesTheDefaultsAndADamagedValueFallsBackToThem() {
         XCTAssertEqual(RecorderFailureStyle.load(defaults), .notice)
         XCTAssertEqual(CameraPreviewPolicy.load(defaults), .everyCameraRecording)
