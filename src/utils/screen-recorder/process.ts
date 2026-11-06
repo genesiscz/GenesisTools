@@ -1,6 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
-import { descendantPids } from "@genesiscz/utils/process/processes";
+import { signalProcessTree } from "@genesiscz/utils/process/processes";
 
 const { log } = logger.scoped("screen-recorder");
 
@@ -15,17 +15,6 @@ export interface CaptureProcessResult {
     stderr: string;
     timedOut: boolean;
     aborted: boolean;
-}
-
-function killTree(pid: number): void {
-    for (const member of [...descendantPids(pid).reverse(), pid]) {
-        try {
-            // pid-verified: our own spawned recorder and its descendants, read from the kernel in this call.
-            process.kill(member, "SIGKILL");
-        } catch (error) {
-            log.debug({ error, pid: member }, "recorder process already ended");
-        }
-    }
 }
 
 /** Reads a pipe to its end, handing each complete line to `onLine` as it arrives. */
@@ -118,7 +107,7 @@ export async function runCaptureProcess(options: {
         grace = setTimeout(() => {
             if (proc.exitCode === null) {
                 log.warn({ pid: proc.pid }, "recorder ignored SIGINT; killing its process tree");
-                killTree(proc.pid);
+                signalProcessTree(proc.pid, { signal: "SIGKILL", includeSelf: true });
             }
         }, STOP_GRACE_MS);
     };

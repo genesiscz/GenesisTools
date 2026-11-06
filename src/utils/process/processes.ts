@@ -19,6 +19,7 @@ import { readFileSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename } from "node:path";
 import { libSystem } from "@genesiscz/utils/fs/native/libsystem";
+import { logger } from "@genesiscz/utils/logger";
 import { ownLineage } from "./cwd";
 import {
     listChildPids,
@@ -386,6 +387,42 @@ export function descendantPids(pid: number): number[] {
     }
 
     return found;
+}
+
+/**
+ * Signals every descendant of `pid`, deepest first, then `pid` itself with `includeSelf`. The tree is read in this
+ * call, so only processes below the caller's own are hit; one that ended meanwhile is skipped. Returns the pids it
+ * signalled. The screen recorder's stop and the REPL's worker cleanup each had a copy of this walk.
+ */
+export function signalProcessTree(
+    pid: number,
+    {
+        signal = "SIGTERM",
+        includeSelf = false,
+        descendants = descendantPids,
+        kill = (target: number, sent: NodeJS.Signals) => {
+            process.kill(target, sent);
+        },
+    }: {
+        signal?: NodeJS.Signals;
+        includeSelf?: boolean;
+        descendants?: (pid: number) => number[];
+        kill?: (pid: number, signal: NodeJS.Signals) => void;
+    } = {}
+): number[] {
+    const signalled: number[] = [];
+
+    for (const member of [...descendants(pid).reverse(), ...(includeSelf ? [pid] : [])]) {
+        try {
+            // pid-verified: read from the kernel in this call, at or below the caller's own child.
+            kill(member, signal);
+            signalled.push(member);
+        } catch (error) {
+            logger.debug({ error, pid: member, signal }, "process already ended before its signal");
+        }
+    }
+
+    return signalled;
 }
 
 function tableChildren(): (parent: number) => number[] {
