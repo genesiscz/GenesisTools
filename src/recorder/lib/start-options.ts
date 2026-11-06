@@ -2,11 +2,15 @@ import { parseScreenList, type ScreenInfo } from "@app/control/lib/native-record
 import {
     defaultRecordingTarget,
     listRecordingTargets,
+    parseRecordingWindows,
     parseRegionTarget,
     parseWindowIdList,
     type RecordingTarget,
+    type RecordingWindow,
 } from "@app/control/lib/recording-targets";
 import { runAxAsync } from "@app/control/lib/runner";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { logger } from "@genesiscz/utils/logger";
 import { FRAME_NAMINGS, OCR_SINK_KINDS } from "@genesiscz/utils/screen-recorder/frame-output";
 import { FRAME_FLUSHES } from "@genesiscz/utils/screen-recorder/start";
 import { Command, Option } from "commander";
@@ -307,7 +311,7 @@ function describeScreens(screens: ScreenInfo[]): string {
 
 /**
  * Refuses a display that is not connected and an area that meets no display, naming the displays there are. A window
- * or an app is checked by the capture itself, which names the window it cannot find.
+ * or an app is checked by `refuseMissingWindowOrApp`.
  */
 export function refuseTargetOffScreen(target: RecordingTarget, screens: ScreenInfo[]): void {
     if (target.kind === "display" && !screens.some((screen) => screen.index === target.screenIndex)) {
@@ -352,9 +356,110 @@ export function otherRecordingsWarning(
     return `${lead}: ${names}; this one records as well, and stop without an id stops the newest`;
 }
 
-/** `refuseTargetOffScreen` against the displays `ax-tool screens` lists now. */
+const { log } = logger.scoped("recorder-start-options");
+
+/** A running app as `ax-tool apps --all` lists it: what `--app` may name. */
+export interface RunningApp {
+    name: string;
+    bundleId?: string;
+    pid: number;
+}
+
+/** What is on screen and running now, for `refuseMissingWindowOrApp`. */
+export interface SeenTargets {
+    /** Every window on screen (layer 0), small ones too: the capture can record any of them. */
+    windowIds: Set<number>;
+    /** The windows worth naming in a refusal. */
+    windows: RecordingWindow[];
+    apps: RunningApp[];
+}
+
+/** How many windows a refusal names. */
+const NAMED_WINDOWS = 8;
+
+/** ax-tool's own rule (`resolveAppPid`): a pid, the name in any case, or a part of the bundle id. */
+function appRuns(value: string, apps: RunningApp[]): boolean {
+    if (/^\d+$/.test(value)) {
+        return apps.some((app) => app.pid === Number(value));
+    }
+
+    const lower = value.toLowerCase();
+    return apps.some(
+        (app) => app.name.toLowerCase() === lower || (app.bundleId?.toLowerCase().includes(lower) ?? false)
+    );
+}
+
+/**
+ * Refuses a window that is not on screen and an app that does not run, as `refuseTargetOffScreen` does for a display:
+ * the capture refused them only after a library folder was made, with its own diagnostics as the message (review
+ * 2026-11-07).
+ */
+export function refuseMissingWindowOrApp(target: RecordingTarget, seen: SeenTargets): void {
+    if (target.kind === "window") {
+        const missing = target.windowIds.filter((id) => !seen.windowIds.has(id));
+
+        if (missing.length === 0) {
+            return;
+        }
+
+        const named = seen.windows
+            .slice(0, NAMED_WINDOWS)
+            .map((window) => `${window.id} ${window.app}${window.title ? ` “${window.title}”` : ""}`)
+            .join("; ");
+        const more = seen.windows.length > NAMED_WINDOWS ? ` and ${seen.windows.length - NAMED_WINDOWS} more` : "";
+        throw new Error(
+            `--window ${missing.join(",")} is not a window on screen now (a minimized window or one on another Space cannot be recorded). Windows on screen: ${named || "none"}${more}`
+        );
+    }
+
+    if (target.kind === "app" && !appRuns(target.app, seen.apps)) {
+        throw new Error(
+            `--app "${target.app}" matches no running app (a name, a bundle id or a pid; ${toolCommand("control apps")} lists them)`
+        );
+    }
+}
+
+const frontIdsSchema = z.object({ windows: z.array(z.object({ windowId: z.number().int() }).passthrough()) });
+const appsSchema = z.object({
+    apps: z.array(z.object({ name: z.string(), bundleId: z.string().optional(), pid: z.number().int() })),
+});
+
+/** The windows on screen (`ax-tool front`) or the running apps (`ax-tool apps --all`); undefined when ax-tool fails. */
+async function seenTargets(kind: "window" | "app"): Promise<SeenTargets | undefined> {
+    const listed = await runAxAsync({ args: kind === "window" ? ["front"] : ["apps", "--all"], timeoutMs: 5000 });
+
+    if (!listed.ok) {
+        log.warn({ kind, error: listed.error }, "could not list the targets; the capture checks the target itself");
+        return undefined;
+    }
+
+    if (kind === "window") {
+        const rows = frontIdsSchema.safeParse(listed);
+        return rows.success
+            ? {
+                  windowIds: new Set(rows.data.windows.map((row) => row.windowId)),
+                  windows: parseRecordingWindows(listed),
+                  apps: [],
+              }
+            : undefined;
+    }
+
+    const apps = appsSchema.safeParse(listed);
+    return apps.success ? { windowIds: new Set(), windows: [], apps: apps.data.apps } : undefined;
+}
+
+/**
+ * `refuseTargetOffScreen` against the displays `ax-tool screens` lists now, and `refuseMissingWindowOrApp` against
+ * the windows and apps there are.
+ */
 export async function checkTargetOnScreen(target: RecordingTarget): Promise<void> {
-    if (target.kind !== "display" && target.kind !== "region") {
+    if (target.kind === "window" || target.kind === "app") {
+        const seen = await seenTargets(target.kind);
+
+        if (seen) {
+            refuseMissingWindowOrApp(target, seen);
+        }
+
         return;
     }
 

@@ -9,7 +9,12 @@ import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { RpcError } from "@genesiscz/utils/screen-recorder/control";
 import { type CameraHost, startRecordingCamera, stopRecordingCamera } from "./camera-recorder";
 import { alreadyInState, liveRecordingRef, markerLabelProblem } from "./library";
-import { otherRecordingsWarning, parseStartFlags, refuseTargetOffScreen } from "./start-options";
+import {
+    otherRecordingsWarning,
+    parseStartFlags,
+    refuseMissingWindowOrApp,
+    refuseTargetOffScreen,
+} from "./start-options";
 import { recordedNothing, segmentRecorderOptions } from "./video-recording";
 
 const folder = "/tmp/recording";
@@ -223,6 +228,35 @@ describe("a window or app movie", () => {
         );
         expect(() => refuseTargetOffScreen({ kind: "display", screenIndex: 0 }, screens)).not.toThrow();
         expect(() => refuseTargetOffScreen(window, screens)).not.toThrow();
+    });
+
+    it("a window that is not on screen and an app that does not run are refused before a folder is made", () => {
+        const seen = {
+            windowIds: new Set([52654, 7]),
+            windows: [
+                {
+                    id: 52654,
+                    pid: 90,
+                    app: "Activity Monitor",
+                    title: "CPU",
+                    bounds: { x: 0, y: 0, width: 800, height: 600 },
+                },
+            ],
+            apps: [{ name: "Activity Monitor", bundleId: "com.apple.ActivityMonitor", pid: 90 }],
+        };
+        expect(() => refuseMissingWindowOrApp({ kind: "window", windowIds: [999999] }, seen)).toThrow(
+            /--window 999999 is not a window on screen.*52654 Activity Monitor “CPU”/
+        );
+        expect(() => refuseMissingWindowOrApp({ kind: "window", windowIds: [52654, 7] }, seen)).not.toThrow();
+        expect(() => refuseMissingWindowOrApp({ kind: "app", app: "NoSuchApp" }, seen)).toThrow(
+            /--app "NoSuchApp" matches no running app/
+        );
+        expect(() => refuseMissingWindowOrApp({ kind: "app", app: "91" }, seen)).toThrow(/--app "91"/);
+        for (const app of ["Activity Monitor", "activity monitor", "activitymonitor", "90"]) {
+            expect(() => refuseMissingWindowOrApp({ kind: "app", app }, seen)).not.toThrow();
+        }
+
+        expect(() => refuseMissingWindowOrApp({ kind: "display", screenIndex: 0 }, seen)).not.toThrow();
     });
 
     it("--audio with --window or --app is refused before anything starts", () => {
