@@ -405,6 +405,18 @@ final class MeetingsWindowTests: XCTestCase {
         XCTAssertNil(ItemsTab.step(from: nil, by: 1, in: []))
     }
 
+    /// R2-MP2: a launch by id on the default Transcript tab read the transcript before the list moved a recording-only
+    /// meeting to Screen.
+    func testOnlyALaunchOnTheDefaultTranscriptWaitsForTheList() {
+        XCTAssertTrue(MeetingDetailModel.firstReadWaitsForList(rowKnown: false, listLoaded: false, tabIsDefault: true, tab: .transcript))
+        XCTAssertFalse(MeetingDetailModel.firstReadWaitsForList(rowKnown: true, listLoaded: true, tabIsDefault: true, tab: .transcript))
+        XCTAssertFalse(MeetingDetailModel.firstReadWaitsForList(rowKnown: false, listLoaded: true, tabIsDefault: true, tab: .transcript),
+                       "a meeting the loaded list does not hold reads at once")
+        XCTAssertFalse(MeetingDetailModel.firstReadWaitsForList(rowKnown: false, listLoaded: false, tabIsDefault: false, tab: .transcript),
+                       "a tab the request named reads at once")
+        XCTAssertFalse(MeetingDetailModel.firstReadWaitsForList(rowKnown: false, listLoaded: false, tabIsDefault: true, tab: .screen))
+    }
+
     /// MP9: reopening Settings read every Meetings page's data, the pages never shown included.
     func testReopeningSettingsReadsOnlyWhatAPageAlreadyRead() {
         let model = MeetingsSettingsModel(writes: false)

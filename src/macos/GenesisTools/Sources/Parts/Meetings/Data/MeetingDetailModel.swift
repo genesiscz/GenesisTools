@@ -50,6 +50,8 @@ final class MeetingDetailModel {
     @ObservationIgnored private(set) var isDropped = false
     /// Opened before the list showed the meeting: whether proposals read waits for its record.
     @ObservationIgnored private var proposalsAwaitRecord = false
+    /// The first tab read waits for the list (`firstReadWaitsForList`).
+    @ObservationIgnored private var tabAwaitsList = false
 
     /// A part of the pane with a `meetings revisions` token.
     enum RevisionPart: Hashable { case record, transcript, speakers, timeline }
@@ -70,6 +72,26 @@ final class MeetingDetailModel {
             // Opened by id before the list shows it (a launch, `tools meetings window <id>`): the record decides.
             proposalsAwaitRecord = true
         }
+        if Self.firstReadWaitsForList(rowKnown: window?.meeting(id) != nil, listLoaded: window?.overview.value != nil,
+                                      tabIsDefault: tabIsDefault, tab: tab) {
+            tabAwaitsList = true
+        } else {
+            loadTab(tab)
+        }
+    }
+
+    /// Opened by id before the list landed, on the default Transcript tab: the first tab read waits for the list,
+    /// which moves a recording-only meeting to Screen. A launch on one read its transcript first, as a process that
+    /// failed (448 ms, 2026-11-07). A tab the request named, and a list that is already here, read at once.
+    static func firstReadWaitsForList(rowKnown: Bool, listLoaded: Bool, tabIsDefault: Bool, tab: Tab) -> Bool {
+        !rowKnown && !listLoaded && tabIsDefault && tab == .transcript
+    }
+
+    /// The list landed or failed: a first tab read that waited for it runs now, on the tab the list chose.
+    func listResolved() {
+        guard tabAwaitsList else { return }
+        tabAwaitsList = false
+        listLanded(window?.meeting(id))
         loadTab(tab)
     }
 
