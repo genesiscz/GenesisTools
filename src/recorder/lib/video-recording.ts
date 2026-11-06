@@ -10,6 +10,7 @@ import {
     nativeSegmentRecorder,
     SESSION_MOTION_THRESHOLD,
     segmentJoiner,
+    titleAudioTracks,
 } from "@app/control/lib/recording-native";
 import { RecordingSession, type RecordingSessionEvent } from "@app/control/lib/recording-session";
 import { SessionRecorderControl } from "@app/control/lib/recording-session-control";
@@ -264,6 +265,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
 
     const warnings: string[] = [];
     let durationMs: number | undefined;
+    let segments = 0;
     let live: LiveRecordingServer | undefined;
     let control: SessionRecorderControl | undefined;
     const emit = (event: RecordingSessionEvent) => {
@@ -281,6 +283,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
 
         if (event.event === "done") {
             durationMs = event.durationMs;
+            segments = event.segments;
         }
 
         // A session pauses at its limit and waits for its host to decide; this recording's limit is the stop.
@@ -362,6 +365,13 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
 
     if (cameraStarted) {
         await stopRecordingCamera(folder);
+    }
+
+    // One segment is moved, not joined, so its tracks still read "Core Media Audio": title them by one stream copy.
+    if (outcome === "done" && segments === 1 && options.audio?.length && existsSync(movie)) {
+        await titleAudioTracks(movie, audioTrackTitles(options.audio)).catch((error: unknown) => {
+            log.warn({ error, movie }, "the audio tracks keep their untitled names");
+        });
     }
 
     if (cameraRefused) {

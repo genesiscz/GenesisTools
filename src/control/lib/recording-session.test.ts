@@ -13,6 +13,7 @@ import * as videoProbe from "@genesiscz/utils/video/probe";
 import { captureDiagnostics, validateBenchmark } from "../scripts/recorder-benchmark-policy";
 import * as captureRunner from "./capture-runner";
 import {
+    audioTitlesArgv,
     audioTrackTitles,
     type NativeRecorderOptions,
     nativeSegmentRecorder,
@@ -947,6 +948,18 @@ describe("joining segments with their audio and cursor tracks", () => {
         expect(
             concatCopyArgv({ list: "/s/list.txt", output: "/o.mp4" }).some((arg) => arg.startsWith("-metadata"))
         ).toBe(false);
+        // A movie of one segment is moved, not joined: its tracks get their titles by one stream copy.
+        const single = audioTitlesArgv({ input: "/m/screen.mp4", output: "/m/screen.mp4.titled.mp4", titles });
+        expect(single.slice(single.indexOf("-i"), single.indexOf("-i") + 6)).toEqual([
+            "-i",
+            "/m/screen.mp4",
+            "-map",
+            "0",
+            "-c",
+            "copy",
+        ]);
+        expect(single).toContain("title=Microphone");
+        expect(single.at(-1)).toBe("/m/screen.mp4.titled.mp4");
     });
 
     it("moves each segment's cursor samples by the length of the segments before it", () => {

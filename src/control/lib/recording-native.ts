@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { logger } from "@genesiscz/utils/logger";
 import { audioStreamCount, primaryVideo, readMediaFacts } from "@genesiscz/utils/video/media-facts";
 import { probeVideo } from "@genesiscz/utils/video/probe";
@@ -8,6 +8,7 @@ import type { CaptureSpec } from "./capture-plan";
 import { CaptureRunError, runCapturePlanWithSignal } from "./capture-runner";
 import { captureFromFlags, validateCaptureOptions } from "./native-record";
 import {
+    audioTitleArgs,
     concatCopyArgv,
     concatListLine,
     cursorTrackPath,
@@ -255,6 +256,53 @@ const AUDIO_TRACK_TITLES: Record<"system" | "mic", string> = { system: "System a
 /** The title of each audio track: ax-tool writes one track per `--audio` source, in the order given. */
 export function audioTrackTitles(sources: ("system" | "mic")[] = []): string[] {
     return sources.map((source) => AUDIO_TRACK_TITLES[source]);
+}
+
+/** One stream copy of `input` into `output` with the audio tracks titled; nothing is decoded. */
+export function audioTitlesArgv({
+    input,
+    output,
+    titles,
+}: {
+    input: string;
+    output: string;
+    titles: string[];
+}): string[] {
+    return [
+        "ffmpeg",
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        input,
+        "-map",
+        "0",
+        "-c",
+        "copy",
+        ...audioTitleArgs(titles),
+        "-movflags",
+        "+faststart",
+        output,
+    ];
+}
+
+/**
+ * Titles the audio tracks of a movie of one segment, which the session moves instead of joining, so the joiner's
+ * titles never reach it (ax-tool writes "Core Media Audio" on each track).
+ */
+export async function titleAudioTracks(movie: string, titles: string[]): Promise<void> {
+    if (titles.length === 0) {
+        return;
+    }
+
+    const temporary = `${movie}.titled.mp4`;
+    await runVideoCommand({
+        command: audioTitlesArgv({ input: movie, output: temporary, titles }),
+        timeoutMs: 120_000,
+    });
+    await rename(temporary, movie);
 }
 
 /** The joiner of a recording whose tracks are `audioTitles` (`audioTrackTitles(options.audio)`). */

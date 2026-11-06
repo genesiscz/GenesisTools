@@ -684,7 +684,7 @@ export function cursorTrackPath(movie: string): string {
  * `list` is a concat list file (`file '<path>'` per line).
  */
 /** `-metadata` for each audio track: its title and handler name, so a player lists "Microphone", not "Track 2". */
-function audioTitleArgs(titles: string[] = []): string[] {
+export function audioTitleArgs(titles: string[] = []): string[] {
     return titles.flatMap((title, index) => [
         `-metadata:s:a:${index}`,
         `title=${title}`,
