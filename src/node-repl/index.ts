@@ -7,11 +7,26 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { Command } from "commander";
-import { ReplEngine } from "./lib/engine";
+import { DEFAULT_MAX_OUTPUT_CHARS, ReplEngine } from "./lib/engine";
 import { coerceParam, listPresets, readPreset, removePreset, resolveParams, savePreset } from "./lib/presets";
 import { parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp } from "./lib/toolsets";
 
 handleReadmeFlag(import.meta.url);
+
+const MAX_OUTPUT_HELP = `the most characters a turn returns; longer output is cut with a note naming the file that holds all of it (0: no limit)`;
+
+/** `--max-output`, or undefined after an error line for a value that is not a whole number of characters. */
+function maxOutputOption(value: string): number | undefined {
+    const chars = Number(value);
+
+    if (!Number.isInteger(chars) || chars < 0) {
+        logger.error(`--max-output takes a whole number of characters (0: no limit), got "${value}"`);
+        process.exitCode = 1;
+        return undefined;
+    }
+
+    return chars;
+}
 
 /** The `--toolset` list, or undefined after printing the known ids for an empty or unknown entry. */
 function toolsetsOption(value: string | boolean | undefined, subcommand: string): string[] | undefined {
@@ -49,15 +64,17 @@ program
     .command("mcp")
     .description("Start the MCP stdio server (tools: js, js_reset, js_add_node_module_dir, turn_ended)")
     .option("--toolset [list]", `comma-separated toolsets to preload: ${REPL_TOOLSET_IDS.join(", ")}`)
-    .action(async (opts: { toolset?: string | boolean }) => {
+    .option("--max-output <chars>", MAX_OUTPUT_HELP, String(DEFAULT_MAX_OUTPUT_CHARS))
+    .action(async (opts: { toolset?: string | boolean; maxOutput: string }) => {
         const toolsets = toolsetsOption(opts.toolset, "mcp");
+        const maxOutputChars = maxOutputOption(opts.maxOutput);
 
-        if (!toolsets) {
+        if (!toolsets || maxOutputChars === undefined) {
             return;
         }
 
         const { startMcpServer } = await import("./mcp/server");
-        await startMcpServer({ toolsets });
+        await startMcpServer({ toolsets, maxOutputChars });
     });
 
 program
@@ -66,6 +83,7 @@ program
     .option("--file <path>", "read the code from a file")
     .option("--timeout <ms>", "wall-clock budget in milliseconds (30000 is 30 s)", "30000")
     .option("--toolset [list]", `comma-separated toolsets to preload: ${REPL_TOOLSET_IDS.join(", ")}`)
+    .option("--max-output <chars>", MAX_OUTPUT_HELP, String(DEFAULT_MAX_OUTPUT_CHARS))
     .addHelpText(
         "after",
         [
@@ -78,49 +96,55 @@ program
             "Each `run` is a fresh process, so bindings do not survive between calls; the mcp server keeps them.",
         ].join("\n")
     )
-    .action(async (code: string | undefined, opts: { file?: string; timeout: string; toolset?: string | boolean }) => {
-        // Bun fires a timer scheduled with NaN or a negative delay immediately, so an unchecked
-        // --timeout reports "the turn overran" for what is a bad argument.
-        const timeout = Number(opts.timeout);
+    .action(
+        async (
+            code: string | undefined,
+            opts: { file?: string; timeout: string; toolset?: string | boolean; maxOutput: string }
+        ) => {
+            // Bun fires a timer scheduled with NaN or a negative delay immediately, so an unchecked
+            // --timeout reports "the turn overran" for what is a bad argument.
+            const timeout = Number(opts.timeout);
 
-        if (!Number.isFinite(timeout) || timeout <= 0) {
-            logger.error(`--timeout must be a positive number of milliseconds, got "${opts.timeout}"`);
-            process.exitCode = 1;
-            return;
-        }
-
-        // A value under a second is almost always meant as seconds ("--timeout 120"): say so, but run as asked.
-        if (timeout < 1000) {
-            logger.warn(
-                `--timeout is in milliseconds: ${timeout} is ${timeout / 1000} s (for ${timeout} s, pass ${timeout * 1000})`
-            );
-        }
-
-        const toolsets = toolsetsOption(opts.toolset, "run");
-
-        if (!toolsets) {
-            return;
-        }
-
-        const source = opts.file ? readFileSync(opts.file, "utf8") : (code ?? (await Bun.stdin.text()));
-        const engine = new ReplEngine({ toolsets });
-
-        try {
-            const result = await engine.run(source, timeout);
-            out.print(result.text);
-
-            for (const image of result.images) {
-                out.log.info(`image written to ${image.path}`);
-            }
-
-            if (!result.ok) {
-                logger.error(result.stack ?? result.error ?? "unknown error");
+            if (!Number.isFinite(timeout) || timeout <= 0) {
+                logger.error(`--timeout must be a positive number of milliseconds, got "${opts.timeout}"`);
                 process.exitCode = 1;
+                return;
             }
-        } finally {
-            await engine.shutdown();
+
+            // A value under a second is almost always meant as seconds ("--timeout 120"): say so, but run as asked.
+            if (timeout < 1000) {
+                logger.warn(
+                    `--timeout is in milliseconds: ${timeout} is ${timeout / 1000} s (for ${timeout} s, pass ${timeout * 1000})`
+                );
+            }
+
+            const toolsets = toolsetsOption(opts.toolset, "run");
+            const maxOutputChars = maxOutputOption(opts.maxOutput);
+
+            if (!toolsets || maxOutputChars === undefined) {
+                return;
+            }
+
+            const source = opts.file ? readFileSync(opts.file, "utf8") : (code ?? (await Bun.stdin.text()));
+            const engine = new ReplEngine({ toolsets, maxOutputChars });
+
+            try {
+                const result = await engine.run(source, timeout);
+                out.print(result.text);
+
+                for (const image of result.images) {
+                    out.log.info(`image written to ${image.path}`);
+                }
+
+                if (!result.ok) {
+                    logger.error(result.stack ?? result.error ?? "unknown error");
+                    process.exitCode = 1;
+                }
+            } finally {
+                await engine.shutdown();
+            }
         }
-    });
+    );
 
 const preset = program
     .command("preset")

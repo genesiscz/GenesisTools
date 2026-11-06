@@ -16,7 +16,7 @@ import { createToolsets, parseToolsetList } from "../lib/toolsets";
 const log = logger.scoped("node-repl").log;
 
 const JS_DESCRIPTION =
-    "Execute JavaScript or TypeScript in a persistent REPL with top-level await. Top-level let, const, class and function bindings survive across calls and can be redeclared, until js_reset. Use nodeRepl.write(value) for output, and await show(image | path | Buffer) to return an image to the model; help() lists the loaded toolsets and help(name) prints one's API. nodeRepl.cwd, nodeRepl.homeDir and nodeRepl.tmpDir are available. Use dynamic import(); node: builtins, absolute paths and the server's own dependencies resolve, plus any directory added with js_add_node_module_dir. The default timeout is 30000 ms; a turn that overruns is killed with every binding.";
+    "Execute JavaScript or TypeScript in a persistent REPL with top-level await. Top-level let, const, class and function bindings survive across calls and can be redeclared, until js_reset. Use nodeRepl.write(value) for output, and await show(image | path | Buffer) to return an image to the model; help() lists the loaded toolsets and help(name) prints one's API. nodeRepl.cwd, nodeRepl.homeDir and nodeRepl.tmpDir are available. Use dynamic import(); node: builtins, absolute paths and the server's own dependencies resolve, plus any directory added with js_add_node_module_dir. The default timeout is 30000 ms; a turn that overruns is killed with every binding. A turn's text longer than the server's --max-output (20000 characters by default) is cut, with a note naming the file that holds all of it.";
 
 /** The `js` description: the fixed text, then one line per preloaded toolset. */
 export function jsDescription(toolsetLines: readonly string[]): string {
@@ -155,9 +155,11 @@ export function createServer(engine: ReplEngine, options: { toolsetLines?: reado
     return server;
 }
 
-export async function startMcpServer(options: { toolsets?: readonly string[]; name?: string } = {}): Promise<void> {
+export async function startMcpServer(
+    options: { toolsets?: readonly string[]; name?: string; maxOutputChars?: number } = {}
+): Promise<void> {
     const toolsets = parseToolsetList(options.toolsets ?? []);
-    const engine = new ReplEngine({ toolsets });
+    const engine = new ReplEngine({ toolsets, maxOutputChars: options.maxOutputChars });
     const toolsetLines = (await createToolsets(toolsets)).map((toolset) => toolset.oneLine());
     await serveStdio({
         name: options.name ?? "node-repl",

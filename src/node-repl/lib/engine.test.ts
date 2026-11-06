@@ -8,7 +8,7 @@ import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
 import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 import { jsDescription } from "../mcp/server";
-import { ReplEngine, resultMessage } from "./engine";
+import { capOutput, DEFAULT_MAX_OUTPUT_CHARS, ReplEngine, resultMessage } from "./engine";
 import { createToolsets, parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp } from "./toolsets";
 
 it("CLI help renders registered descriptor methods and handles", () => {
@@ -38,6 +38,35 @@ describe("resultMessage", () => {
     it("never answers a failure with an empty string", () => {
         expect(resultMessage({ ok: false, text: "", error: undefined })).toBe("unknown error");
         expect(resultMessage({ ok: false, text: "", error: "" })).toBe("unknown error");
+    });
+});
+
+// NR4 (deep test 2026-11-06): one turn returned 300,000 characters to the model.
+describe("the output limit of a turn", () => {
+    it("cuts a long text with a note that names the file holding all of it and how to read the next part", async () => {
+        const engine = new ReplEngine({ defaultTimeoutMs: 10_000, maxOutputChars: 100 });
+        try {
+            const long = await engine.run("'y'.repeat(1000)");
+            expect(long.ok).toBe(true);
+            const [kept, note] = long.text.split("\n… ");
+            expect(kept).toBe("y".repeat(100));
+            const path = note.match(/all of it is in (\S+)\. Read/)?.[1] ?? "";
+            expect(note).toStartWith("[output cut at 100 of 1,000 characters; all of it is in ");
+            expect(note).toContain(`.slice(100, 200)]`);
+            expect(readFileSync(path, "utf8")).toBe("y".repeat(1000));
+            expect((await engine.run("'short'")).text).toBe("short");
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
+    it("keeps text up to the limit whole, and a limit of 0 keeps everything", () => {
+        const writeRest = () => {
+            throw new Error("nothing should be written");
+        };
+        expect(DEFAULT_MAX_OUTPUT_CHARS).toBe(20_000);
+        expect(capOutput({ text: "x".repeat(20_000), max: 20_000, writeRest })).toHaveLength(20_000);
+        expect(capOutput({ text: "x".repeat(50_000), max: 0, writeRest })).toHaveLength(50_000);
     });
 });
 

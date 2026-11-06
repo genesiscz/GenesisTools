@@ -1,3 +1,5 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
@@ -89,6 +91,33 @@ export interface ReplEngineOptions {
     preloadTimeoutMs?: number;
     /** The budget of a recording's startup in the parent; `preloadTimeoutMs` when absent. */
     recordingStartupTimeoutMs?: number;
+    /** The most characters a turn's text returns (`DEFAULT_MAX_OUTPUT_CHARS`); the rest goes to a file. 0 is no limit. */
+    maxOutputChars?: number;
+}
+
+/** About 5,000 tokens: one careless `big.join()` must not fill an agent's context (NR4, 2026-11-06). */
+export const DEFAULT_MAX_OUTPUT_CHARS = 20_000;
+
+/**
+ * The text a turn returns, cut at `max` characters with a note that names the file holding all of it. The note says
+ * how to read the rest, so nothing is lost; `writeRest` writes the file and returns its path.
+ */
+export function capOutput({
+    text,
+    max,
+    writeRest,
+}: {
+    text: string;
+    max: number;
+    writeRest: (whole: string) => string;
+}): string {
+    if (max <= 0 || text.length <= max) {
+        return text;
+    }
+
+    const path = writeRest(text);
+    const next = `(await Bun.file(${SafeJSON.stringify(path)}).text()).slice(${max}, ${max * 2})`;
+    return `${text.slice(0, max)}\n… [output cut at ${max.toLocaleString("en-US")} of ${text.length.toLocaleString("en-US")} characters; all of it is in ${path}. Read the next part with ${next}]`;
 }
 
 /** How long `shutdown` and `reset` give the toolsets to release what they started before the worker is killed. */
@@ -117,12 +146,26 @@ export class ReplEngine {
     readonly preloadTimeoutMs: number;
     readonly recordingStartupTimeoutMs: number;
     readonly toolsets: readonly string[];
+    readonly maxOutputChars: number;
+    /** Where cut turns keep their whole output; made at the first cut, kept after the engine stops. */
+    private outputDir?: string;
+    private cutTurns = 0;
 
     constructor(private readonly options: ReplEngineOptions = {}) {
         this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
         this.preloadTimeoutMs = options.preloadTimeoutMs ?? 120_000;
         this.recordingStartupTimeoutMs = options.recordingStartupTimeoutMs ?? this.preloadTimeoutMs;
         this.toolsets = options.toolsets ?? [];
+        this.maxOutputChars = options.maxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS;
+    }
+
+    private writeWholeOutput(whole: string): string {
+        this.outputDir ??= mkdtempSync(join(tmpdir(), "node-repl-output-"));
+        this.cutTurns += 1;
+        const path = join(this.outputDir, `turn-${this.cutTurns}.txt`);
+        writeFileSync(path, whole);
+        logger.debug({ path, chars: whole.length, max: this.maxOutputChars }, "node-repl turn output cut");
+        return path;
     }
 
     /**
@@ -436,7 +479,11 @@ export class ReplEngine {
         // The first turn of a worker says which toolsets it runs without, once.
         const note = this.preloadNote;
         this.preloadNote = undefined;
-        const text = note ? [note, response.text].filter(Boolean).join("\n") : response.text;
+        const text = capOutput({
+            text: note ? [note, response.text].filter(Boolean).join("\n") : response.text,
+            max: this.maxOutputChars,
+            writeRest: (whole) => this.writeWholeOutput(whole),
+        });
         return { ...response, text, durationMs: Math.round(performance.now() - turnStarted) };
     }
 
