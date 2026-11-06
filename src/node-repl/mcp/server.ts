@@ -1,3 +1,4 @@
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { serveStdio, TURN_ENDED_TOOL } from "@genesiscz/utils/mcp/stdio";
 import {
@@ -17,6 +18,43 @@ const log = logger.scoped("node-repl").log;
 
 const JS_DESCRIPTION =
     "Execute JavaScript or TypeScript in a persistent REPL with top-level await. Top-level let, const, class and function bindings survive across calls and can be redeclared, until js_reset. Use nodeRepl.write(value) for output, and await show(image | path | Buffer) to return an image to the model; help() lists the loaded toolsets and help(name) prints one's API. nodeRepl.cwd, nodeRepl.homeDir and nodeRepl.tmpDir are available. Use dynamic import(); node: builtins, absolute paths and the server's own dependencies resolve, plus any directory added with js_add_node_module_dir. The default timeout is 30000 ms; a turn that overruns is killed with every binding. A turn's text longer than the server's --max-output (20000 characters by default) is cut, with a note naming the file that holds all of it.";
+
+const JS_ARGUMENTS = ["code", "timeout_ms", "title"];
+const TITLE_MAX_CHARS = 80;
+
+/**
+ * The `js` arguments as its input schema declares them, or why they are refused. A host may skip the schema check, and
+ * `timeout_ms: -5`, `"abc"` and an unknown key all ran with the defaults (NR16).
+ */
+export function parseJsArguments(
+    args: Record<string, unknown>
+): { code: string; timeoutMs?: number; title?: string } | { error: string } {
+    const unknown = Object.keys(args).filter((key) => !JS_ARGUMENTS.includes(key));
+
+    if (unknown.length > 0) {
+        return { error: `js takes code, timeout_ms and title; unknown: ${unknown.join(", ")}` };
+    }
+
+    if (typeof args.code !== "string" || args.code === "") {
+        return { error: "code is required" };
+    }
+
+    const timeout = args.timeout_ms;
+
+    if (timeout !== undefined && (typeof timeout !== "number" || !Number.isInteger(timeout) || timeout < 1)) {
+        return { error: `timeout_ms is a whole number of milliseconds, 1 or more; got ${SafeJSON.stringify(timeout)}` };
+    }
+
+    if (args.title !== undefined && typeof args.title !== "string") {
+        return { error: `title is a string; got ${SafeJSON.stringify(args.title)}` };
+    }
+
+    return {
+        code: args.code,
+        ...(timeout === undefined ? {} : { timeoutMs: timeout }),
+        ...(args.title === undefined ? {} : { title: args.title.slice(0, TITLE_MAX_CHARS) }),
+    };
+}
 
 /** The `js` description: the fixed text, then one line per preloaded toolset. */
 export function jsDescription(toolsetLines: readonly string[]): string {
@@ -97,17 +135,17 @@ export function createServer(engine: ReplEngine, options: { toolsetLines?: reado
 
         switch (name) {
             case "js": {
-                const code = typeof args.code === "string" ? args.code : "";
+                const parsed = parseJsArguments(args);
 
-                if (!code) {
-                    return { content: [{ type: "text", text: "code is required" }], isError: true };
+                if ("error" in parsed) {
+                    return { content: [{ type: "text", text: parsed.error }], isError: true };
                 }
 
-                const timeout =
-                    typeof args.timeout_ms === "number" && args.timeout_ms > 0
-                        ? args.timeout_ms
-                        : engine.defaultTimeoutMs;
-                const result = await engine.run(code, timeout);
+                const result = await engine.run(parsed.code, parsed.timeoutMs ?? engine.defaultTimeoutMs);
+                log.info(
+                    { title: parsed.title, durationMs: result.durationMs, ok: result.ok, chars: result.text.length },
+                    "node-repl turn"
+                );
                 const content: CallToolResult["content"] = [];
 
                 if (result.text) {

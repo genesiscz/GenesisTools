@@ -9,7 +9,7 @@ import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
 import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
-import { jsDescription } from "../mcp/server";
+import { jsDescription, parseJsArguments } from "../mcp/server";
 import { capOutput, DEFAULT_MAX_OUTPUT_CHARS, ReplEngine, resultMessage } from "./engine";
 import {
     createToolsets,
@@ -484,6 +484,27 @@ describe("toolsets", () => {
         expect(jsDescription(["counter: Counts. counter.logTo(path)"])).toContain(
             'Preloaded globals, built once per worker (search(query) to find methods; describe(name) for full method docs; help(name) for a toolset; a method marked [read] changes nothing and reaches no one, "· user" or "· paid" marks one that reaches the user or costs money):\n- counter: Counts. counter.logTo(path)'
         );
+    });
+
+    // NR16: timeout_ms -5 and "abc" ran with the default, and an unknown key was accepted against the schema.
+    it("the js arguments are checked as the schema declares them", () => {
+        expect(parseJsArguments({ code: "1", timeout_ms: 500, title: "count" })).toEqual({
+            code: "1",
+            timeoutMs: 500,
+            title: "count",
+        });
+        expect(parseJsArguments({ code: "1" })).toEqual({ code: "1" });
+        expect(parseJsArguments({ code: "1", timeout_ms: -5 })).toEqual({
+            error: "timeout_ms is a whole number of milliseconds, 1 or more; got -5",
+        });
+        expect(parseJsArguments({ code: "1", timeout_ms: "abc" })).toEqual({
+            error: 'timeout_ms is a whole number of milliseconds, 1 or more; got "abc"',
+        });
+        expect(parseJsArguments({ code: "1", bogus: true })).toEqual({
+            error: "js takes code, timeout_ms and title; unknown: bogus",
+        });
+        expect(parseJsArguments({})).toEqual({ error: "code is required" });
+        expect(parseJsArguments({ code: "1", title: "t".repeat(200) })).toEqual({ code: "1", title: "t".repeat(80) });
     });
 });
 
