@@ -218,11 +218,43 @@ export const meetingsScreenTimelineDoor: CallDoor<{ ref: string; all: boolean }>
     async run({ ref, all }, { signal }) {
         return answer(signal, async () => {
             const { store, record } = await exactRecord(ref);
+            const token = (await (await reads()).revisionsRead({ store, record })).timeline;
+            const key = token === null ? null : `${record.id}\0${all}\0${token}`;
+            const kept = key === null ? undefined : timelines.get(key);
+
+            if (key !== null && kept !== undefined) {
+                timelines.delete(key);
+                timelines.set(key, kept);
+                return kept;
+            }
+
             const { screenTimeline } = await import("@app/meetings/lib/screen-timeline");
-            return screenTimeline({ store, record, all });
+            const value = await screenTimeline({ store, record, all });
+
+            if (key !== null) {
+                timelines.set(key, value);
+                for (const old of timelines.keys()) {
+                    if (timelines.size <= TIMELINES_KEPT) {
+                        break;
+                    }
+
+                    timelines.delete(old);
+                }
+            }
+
+            return value;
         });
     },
 };
+
+/**
+ * The last few timelines built, under their revision token: a build costs about 90 ms of CPU (2026-11-07, load 35),
+ * and the window builds one for every open of a meeting with a screen recording. The token names every file the
+ * timeline reads and the source's revision, so a kept answer is never staler than a new build; a null token (the
+ * source cannot tell) builds every time.
+ */
+const TIMELINES_KEPT = 4;
+const timelines = new Map<string, unknown>();
 
 /** `meetings record cost --json`. */
 export const meetingsRecordCostDoor: CallDoor<true> = {

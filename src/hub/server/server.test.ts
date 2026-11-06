@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { screenTimeline } from "@app/meetings/lib/screen-timeline";
 import { windowJson } from "@app/meetings/lib/window-reads";
 import { asResult } from "@genesiscz/utils/cli/result";
 import { env } from "@genesiscz/utils/env";
@@ -11,6 +12,7 @@ import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { onReleaseMemory } from "@genesiscz/utils/process/release-memory";
 import { nativeRootsKey } from "@genesiscz/utils/providers/session-paths";
 import { currentTraceId } from "@genesiscz/utils/trace";
+import { createCanvas } from "@napi-rs/canvas";
 import { parseArgv } from "./argv";
 import { askHubServer, callHubServer } from "./client";
 import { agentsToolChangesDoor, agentsTurnChangesDoor } from "./doors/changes";
@@ -687,6 +689,37 @@ describe("meetings doors", () => {
         await expect(meetingsDictionaryShowDoor.run({ project: "missing" }, { signal })).rejects.toBeInstanceOf(
             DoorUnsupported
         );
+    });
+
+    it("keep a screen timeline under its revision token, and build it again once a frame is added", async () => {
+        const store = new MeetingStore();
+        const created = await store.create(
+            { title: "Timeline fixture", start: "2026-11-06T09:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const folder = store.folder(created.id);
+        mkdirSync(join(folder, "frames"), { recursive: true });
+        const png = createCanvas(40, 20).toBuffer("image/png");
+        const frame = (name: string, at: string, text: string) => {
+            writeFileSync(join(folder, "frames", name), png);
+            const bounds = { x: 0.1, y: 0.5, width: 0.5, height: 0.1 };
+            const row = { file: `frames/${name}`, at, displayId: 1, text, blocks: [{ text, confidence: 1, bounds }] };
+            appendFileSync(join(folder, "ocr.jsonl"), `${SafeJSON.stringify(row, { strict: true })}\n`);
+        };
+        const signal = new AbortController().signal;
+        const timeline = () => meetingsScreenTimelineDoor.run({ ref: created.id, all: false }, { signal });
+
+        frame("a-d1.png", "2026-11-06T09:00:10.000Z", "Agenda");
+        const first = await timeline();
+        expect(await timeline()).toEqual(first);
+
+        frame("b-d1.png", "2026-11-06T09:00:20.000Z", "Item two");
+        const added = await timeline();
+        expect(added).not.toEqual(first);
+        expect(added).toMatchObject({
+            exit: 0,
+            stdout: asResult(windowJson(await screenTimeline({ store, record: created }))),
+        });
     });
 });
 
