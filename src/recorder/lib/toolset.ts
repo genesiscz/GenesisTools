@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import type { RecordingTarget } from "@app/control/lib/recording-targets";
 import { defineApi, defineMethod } from "@genesiscz/utils/api-descriptor";
 import { execTool, spawnToolDetached } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -87,7 +88,14 @@ import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment }
 import { type ScreenHitWithOps, screenHitsWithOps } from "./screen-ops";
 import { findOnScreen } from "./screen-search";
 import { hostCloseEditor, hostOpenEditor, hostSheet, hostStill } from "./service-client";
-import { parseStartFlags, type RecordOptions, readStartArgs, recordOptionsSchema, startArgsOf } from "./start-options";
+import {
+    checkTargetOnScreen,
+    parseStartFlags,
+    type RecordOptions,
+    readStartArgs,
+    recordOptionsSchema,
+    startArgsOf,
+} from "./start-options";
 
 const { log } = logger.scoped("recorder-toolset");
 
@@ -2008,6 +2016,8 @@ export interface MovieRecorderDeps {
     start: (args: string[]) => void;
     /** Whether the menu bar recorder, the camera's only writer, runs. */
     recorderFace: () => FlockState;
+    /** Refuses a display that is not connected or an area off every display (`ax-tool screens`). */
+    checkTarget: (target: RecordingTarget) => Promise<void>;
 }
 
 const REAL_DEPS: MovieRecorderDeps = {
@@ -2015,6 +2025,7 @@ const REAL_DEPS: MovieRecorderDeps = {
         spawnToolDetached(args, { reparent: true });
     },
     recorderFace: recorderFaceState,
+    checkTarget: checkTargetOnScreen,
 };
 
 /** Starts `tools recorder start` in its own process and waits for its entry. */
@@ -2030,6 +2041,11 @@ async function record({
     const flags = startArgsOf(options);
     // The CLI's own checks, here: the child runs detached, so a refusal there would only show as a start that timed out.
     const request = parseStartFlags(readStartArgs(flags));
+
+    if (request.target) {
+        await deps.checkTarget(request.target);
+    }
+
     const cameraProblem = request.camera ? cameraRefusal(deps.recorderFace()) : undefined;
 
     if (cameraProblem) {

@@ -31,6 +31,7 @@ import {
     DEFAULT_COUNTDOWN_SECONDS,
     parseStartFlags,
     readStartArgs,
+    refuseTargetOffScreen,
     type StartRequest,
 } from "@app/recorder/lib/start-options";
 import { Movie, type MovieRecorderDeps, MoviesToolset, moviesApi } from "@app/recorder/lib/toolset";
@@ -1620,12 +1621,27 @@ describe("movies.record() takes the options of tools recorder start", () => {
                 server.close();
             }
         };
-        return { start, started, close };
+        // One 1512 x 982 display at the origin, instead of `ax-tool screens`.
+        const checkTarget: MovieRecorderDeps["checkTarget"] = async (target) =>
+            refuseTargetOffScreen(target, [
+                {
+                    index: 0,
+                    name: "Built-in",
+                    isPrimary: true,
+                    points: { width: 1512, height: 982 },
+                    scaleFactor: 2,
+                    framePixels: { width: 3024, height: 1964 },
+                    originCG: { x: 0, y: 0 },
+                },
+            ]);
+        return { start, started, close, checkTarget };
     }
 
     test("an area, the idle rate, the threshold, the countdown, the cursor, the shortcuts and the microphone reach the recorder", async () => {
         const fake = fakeRecorder();
-        const { movies } = (await new MoviesToolset({ start: fake.start }).load(ctx)) as {
+        const { movies } = (await new MoviesToolset({ start: fake.start, checkTarget: fake.checkTarget }).load(
+            ctx
+        )) as {
             movies: { record(options: unknown): Promise<{ folder?: string }> };
         };
 
@@ -1676,7 +1692,9 @@ describe("movies.record() takes the options of tools recorder start", () => {
 
     test("an option the CLI would refuse is refused before anything starts, with the CLI's message", async () => {
         const fake = fakeRecorder();
-        const { movies } = (await new MoviesToolset({ start: fake.start }).load(ctx)) as {
+        const { movies } = (await new MoviesToolset({ start: fake.start, checkTarget: fake.checkTarget }).load(
+            ctx
+        )) as {
             movies: { record(options: unknown): Promise<unknown> };
         };
         // The schema check throws at the call, the CLI's parse inside the promise: both must refuse.
@@ -1686,6 +1704,9 @@ describe("movies.record() takes the options of tools recorder start", () => {
         await expect(record({ countdown: 11 })).rejects.toThrow("countdown");
         await expect(record({ idleFps: 0 })).rejects.toThrow("idleFps");
         await expect(record({ region: "10,20,300" })).rejects.toThrow("--region takes x,y,width,height");
+        // Below the only display: refused here, instead of a child that refuses and a start that times out.
+        await expect(record({ region: "1,1300,300,200" })).rejects.toThrow("meets no display");
+        await expect(record({ display: 2 })).rejects.toThrow("--display 2 is not connected");
         await expect(record({ micDevice: "BuiltInMicrophoneDevice" })).rejects.toThrow(
             "--mic-device needs --audio mic"
         );

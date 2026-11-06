@@ -1,3 +1,4 @@
+import { parseScreenList, type ScreenInfo } from "@app/control/lib/native-record";
 import {
     defaultRecordingTarget,
     listRecordingTargets,
@@ -5,6 +6,7 @@ import {
     parseWindowIdList,
     type RecordingTarget,
 } from "@app/control/lib/recording-targets";
+import { runAxAsync } from "@app/control/lib/runner";
 import { FRAME_NAMINGS, OCR_SINK_KINDS } from "@genesiscz/utils/screen-recorder/frame-output";
 import { FRAME_FLUSHES } from "@genesiscz/utils/screen-recorder/start";
 import { Command, Option } from "commander";
@@ -216,7 +218,15 @@ export function countdownSecondsOf(raw: string | boolean | undefined): number | 
 }
 
 /** The target the flags name, in this order: an area, windows, an app, a display; undefined when they name none. */
+const TARGET_FLAGS = ["display", "window", "app", "region"] as const;
+
 function namedTarget(flags: StartFlags): RecordingTarget | undefined {
+    const named = TARGET_FLAGS.filter((flag) => flags[flag] !== undefined).map((flag) => `--${flag}`);
+
+    if (named.length > 1) {
+        throw new Error(`A recording has one target: give one of ${named.join(" and ")}, not both`);
+    }
+
     if (flags.region) {
         return parseRegionTarget(flags.region);
     }
@@ -286,6 +296,58 @@ export function parseStartFlags(flags: StartFlags): StartRequest {
 }
 
 /** No target named: the main display, followed to whichever screen the pointer or the focused window moves to. */
+function describeScreens(screens: ScreenInfo[]): string {
+    return screens
+        .map(
+            (screen) =>
+                `${screen.index} "${screen.name}" ${screen.points.width}x${screen.points.height} at ${screen.originCG.x},${screen.originCG.y}${screen.isPrimary ? " (main)" : ""}`
+        )
+        .join("; ");
+}
+
+/**
+ * Refuses a display that is not connected and an area that meets no display, naming the displays there are. A window
+ * or an app is checked by the capture itself, which names the window it cannot find.
+ */
+export function refuseTargetOffScreen(target: RecordingTarget, screens: ScreenInfo[]): void {
+    if (target.kind === "display" && !screens.some((screen) => screen.index === target.screenIndex)) {
+        throw new Error(`--display ${target.screenIndex} is not connected. The displays: ${describeScreens(screens)}`);
+    }
+
+    if (target.kind !== "region") {
+        return;
+    }
+
+    const meets = screens.some(
+        (screen) =>
+            target.x < screen.originCG.x + screen.points.width &&
+            target.x + target.width > screen.originCG.x &&
+            target.y < screen.originCG.y + screen.points.height &&
+            target.y + target.height > screen.originCG.y
+    );
+
+    if (!meets) {
+        throw new Error(
+            `--region ${target.x},${target.y},${target.width},${target.height} meets no display (global points, top-left origin). The displays: ${describeScreens(screens)}`
+        );
+    }
+}
+
+/** `refuseTargetOffScreen` against the displays `ax-tool screens` lists now. */
+export async function checkTargetOnScreen(target: RecordingTarget): Promise<void> {
+    if (target.kind !== "display" && target.kind !== "region") {
+        return;
+    }
+
+    const screens = await runAxAsync({ args: ["screens"], timeoutMs: 5000 });
+
+    if (!screens.ok) {
+        throw new Error(`Cannot list displays: ${screens.error ?? "ax-tool screens failed"}`);
+    }
+
+    refuseTargetOffScreen(target, parseScreenList(screens, "cocoa"));
+}
+
 export async function defaultStartTarget(): Promise<RecordingTarget> {
     const targets = await listRecordingTargets();
     const main = targets.displays.find((display) => display.isPrimary) ?? targets.displays[0];

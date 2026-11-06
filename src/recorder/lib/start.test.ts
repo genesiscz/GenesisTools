@@ -2,10 +2,11 @@ import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ScreenInfo } from "@app/control/lib/native-record";
 import { segmentCaptureSpec } from "@app/control/lib/recording-native";
 import type { RecordingTarget } from "@app/control/lib/recording-targets";
 import { liveRecordingRef } from "./library";
-import { parseStartFlags } from "./start-options";
+import { parseStartFlags, refuseTargetOffScreen } from "./start-options";
 import { recordedNothing, segmentRecorderOptions } from "./video-recording";
 
 const folder = "/tmp/recording";
@@ -69,6 +70,35 @@ describe("a window or app movie", () => {
         await writeFile(join(folder, "camera.json"), "{}");
         expect(await recordedNothing(folder)).toBe(false);
         await rm(root, { recursive: true, force: true });
+    });
+
+    it("two target flags are refused, naming both, instead of one silently winning", () => {
+        expect(() => parseStartFlags({ display: "0", window: "1" })).toThrow(/one target.*--display.*--window/);
+        expect(() => parseStartFlags({ app: "Notes", region: "0,0,10,10" })).toThrow(/--region.*--app|--app.*--region/);
+    });
+
+    it("a region that meets no display and a display that is not connected are refused, naming the displays", () => {
+        const screens: ScreenInfo[] = [
+            {
+                index: 0,
+                name: "Built-in",
+                isPrimary: true,
+                points: { width: 1512, height: 982 },
+                scaleFactor: 2,
+                framePixels: { width: 3024, height: 1964 },
+                originCG: { x: 0, y: 0 },
+            },
+        ];
+        const region = (x: number, y: number): RecordingTarget => ({ kind: "region", x, y, width: 300, height: 200 });
+        expect(() => refuseTargetOffScreen(region(1, 1300), screens)).toThrow(
+            /meets no display.*0 "Built-in" 1512x982 at 0,0/
+        );
+        expect(() => refuseTargetOffScreen(region(1400, 900), screens)).not.toThrow();
+        expect(() => refuseTargetOffScreen({ kind: "display", screenIndex: 2 }, screens)).toThrow(
+            /--display 2.*0 "Built-in"/
+        );
+        expect(() => refuseTargetOffScreen({ kind: "display", screenIndex: 0 }, screens)).not.toThrow();
+        expect(() => refuseTargetOffScreen(window, screens)).not.toThrow();
     });
 
     it("--audio with --window or --app is refused before anything starts", () => {

@@ -59,6 +59,7 @@ import { screenHitsWithOps } from "./lib/screen-ops";
 import { findOnScreen } from "./lib/screen-search";
 import { hostCloseEditor, hostOpenEditor } from "./lib/service-client";
 import {
+    checkTargetOnScreen,
     countdownSecondsOf,
     defaultStartTarget,
     parseStartFlags,
@@ -304,6 +305,10 @@ withStartOptions(
                 }
             },
         });
+        if (request.target) {
+            await checkTargetOnScreen(request.target);
+        }
+
         const target = request.target ?? (await defaultStartTarget());
 
         if (!tracksPointer(target)) {
