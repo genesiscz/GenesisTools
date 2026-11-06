@@ -22,6 +22,7 @@ import { testPhrase } from "./dictionary-test";
 import { exportMeeting } from "./export";
 import { matchPreview } from "./match-preview";
 import { meetingsOverview } from "./overview";
+import { removeProject, renameProject } from "./project-admin";
 import { screenTimeline } from "./screen-timeline";
 import { openMeetingsWindow, windowOpenArgs } from "./window";
 import { revisionsRead } from "./window-reads";
@@ -651,5 +652,53 @@ describe("window", () => {
             "--meetings",
             "--no-focus",
         ]);
+    });
+});
+
+/** MU11: a project can be renamed everywhere it is named, and removed with a backup. */
+describe("projects rename and remove", () => {
+    async function withProject() {
+        const { config, meetings } = stores();
+        await config.addProject("wrok");
+        await config.setProjectLabels("wrok", { add: ["Checkout 2.0"] });
+        await config.addSourceFolder("wisprflow", "wrok", "Work");
+        const used = await meetings.create(
+            { title: "Planning", start: "2026-11-02T14:00:00.000Z", createdBy: "new", project: "wrok" },
+            { command: "test", change: "created" }
+        );
+        return { config, meetings, used: used.id };
+    }
+
+    test("a rename moves the block, the folder pairing and the meetings' project", async () => {
+        const { config, meetings, used } = await withProject();
+        const result = await renameProject({ config, store: meetings, from: "wrok", to: "work" });
+        const read = await config.read();
+
+        expect(result.meetings).toEqual([used]);
+        expect(read.projects.wrok).toBeUndefined();
+        expect(read.projects.work?.labels).toEqual(["Checkout 2.0"]);
+        expect(read.sources.wisprflow.match.work?.folders).toEqual(["Work"]);
+        expect(meetings.read(used)?.project).toBe("work");
+        await expect(renameProject({ config, store: meetings, from: "work", to: "work" })).rejects.toThrow(
+            "exists already"
+        );
+    });
+
+    test("a project meetings use is refused unless --unassign, and the removed block is kept", async () => {
+        const { config, meetings, used } = await withProject();
+        const backupRoot = join(meetings.root, "..", "backups");
+
+        await expect(removeProject({ config, store: meetings, name: "wrok", backupRoot })).rejects.toThrow(used);
+
+        const result = await removeProject({ config, store: meetings, name: "wrok", unassign: true, backupRoot });
+        const kept = SafeJSON.parse(readFileSync(result.backup, "utf8"));
+
+        expect((await config.read()).projects.wrok).toBeUndefined();
+        expect(meetings.read(used)?.project).toBeUndefined();
+        expect(kept).toMatchObject({
+            project: "wrok",
+            block: { labels: ["Checkout 2.0"] },
+            sources: { wisprflow: { folders: ["Work"] } },
+        });
     });
 });

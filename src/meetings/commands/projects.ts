@@ -4,9 +4,11 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { type MeetingsConfig, MeetingsConfigStore, sourceFolders } from "@genesiscz/utils/meetings/config";
 import type { PersonRef } from "@genesiscz/utils/meetings/people";
+import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { createBoxTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { removeProject, renameProject } from "../lib/project-admin";
 import { errorText, fail } from "../lib/shared";
 import { matchPreviewRead, windowJson } from "../lib/window-reads";
 
@@ -61,6 +63,49 @@ async function addProject(name: string): Promise<void> {
     try {
         const added = await new MeetingsConfigStore().addProject(name);
         ui.ok(added ? `Added project ${name} to the known projects.` : `Project ${name} is known already.`);
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
+async function rename(name: string, to: string, opts: { json?: boolean }): Promise<void> {
+    try {
+        const result = await renameProject({
+            config: new MeetingsConfigStore(),
+            store: new MeetingStore(),
+            from: name,
+            to,
+        });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            return;
+        }
+
+        ui.ok(`Renamed the project ${name} to ${to}, with ${result.meetings.length} meetings.`);
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
+async function remove(name: string, opts: { unassign?: boolean; json?: boolean }): Promise<void> {
+    try {
+        const result = await removeProject({
+            config: new MeetingsConfigStore(),
+            store: new MeetingStore(),
+            name,
+            unassign: opts.unassign,
+        });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            return;
+        }
+
+        ui.ok(
+            `Removed the project ${name}${result.unassigned.length ? `; ${result.unassigned.length} meetings have no project now` : ""}.`
+        );
+        ui.dim(`  its settings, dictionary and pairings: ${result.backup}`);
     } catch (err) {
         fail(errorText(err));
     }
@@ -208,6 +253,21 @@ export function registerProjectsCommand(program: Command): void {
         .argument("<name>", "the project name")
         .description("Add a known project")
         .action(addProject);
+    projects
+        .command("rename")
+        .argument("<name>", "the project name")
+        .argument("<new-name>", "its new name")
+        .description("Rename a project everywhere: its settings, dictionary, folder pairings and its meetings")
+        .option("--json", "print { from, to, meetings } as JSON")
+        .action(rename);
+    projects
+        .command("remove")
+        .alias("rm")
+        .argument("<name>", "the project name")
+        .description("Remove a project, kept in a backup file first; refused while meetings have it")
+        .option("--unassign", "leave the meetings that have it without a project")
+        .option("--json", "print { name, unassigned, backup } as JSON")
+        .action(remove);
     projects
         .command("labels")
         .argument("<name>", "the project name")
