@@ -1110,6 +1110,25 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(edited.hint, "⌘Z puts it back")
     }
 
+    // Regression test: deep test 2026-11-07 R2-RE3 — an undo of Replace All (three caption lines fixed) said "Turned
+    // the transcript fixes off", as if a switch had changed.
+    func testCaptionLineFixesAreCountedAndNamedByWhatHappenedToEachLine() throws {
+        let before = project([.init(id: "c", fromUs: 0, toUs: 10_000_000)])
+        var after = before
+        after.transcript = EditProject.TranscriptSettings(fixes: ["1000": "Welcome", "4000": "The tour", "8000": ""])
+
+        let fixed = try XCTUnwrap(EditDiff.describe(old: before, new: after, by: "agent", at: Date()))
+        XCTAssertEqual(fixed.lines.map(\.text), ["Fixed 2 caption lines", "Hid 1 caption line"])
+
+        let undone = try XCTUnwrap(EditDiff.describe(old: after, new: before, by: "agent", at: Date(), action: "undo"))
+        XCTAssertEqual(undone.lines.map(\.text), ["Took back the fixes of 3 caption lines"])
+
+        var changed = after
+        changed.transcript?.fixes["1000"] = "Hello"
+        XCTAssertEqual(EditDiff.describe(old: after, new: changed, by: "agent", at: Date())?.lines.map(\.text),
+                       ["Fixed 1 caption line"])
+    }
+
     // Regression test: deep test 2026-11-06 RE13 — the subtitle segments' identifiers read
     // "recorder.export.subtitles.optional(GenesisToolsRecorder-EditProject-SubtitleFormat-srt)".
     func testAnOptionalSegmentIdIsSpelledAsItsValueAndNilAsNone() {

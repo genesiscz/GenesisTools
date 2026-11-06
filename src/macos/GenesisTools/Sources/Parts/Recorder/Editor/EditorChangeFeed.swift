@@ -166,7 +166,26 @@ enum EditDiff {
         }
         setting(old.keys, new.keys, symbol: "command", name: "the shortcut keys", shown: { $0.show })
         setting(old.motion, new.motion, symbol: "wind", name: "the zoom motion")
-        setting(old.transcript, new.transcript, symbol: "text.quote", name: "the transcript fixes")
+        // Caption line fixes by what happened to each line: a fix is no switch, and Replace All touches many lines.
+        let fixesBefore = old.transcript?.fixes ?? [:]
+        let fixesAfter = new.transcript?.fixes ?? [:]
+        if fixesBefore != fixesAfter {
+            picture = true
+            var fixed = 0, hidden = 0, takenBack = 0
+            for key in Set(fixesBefore.keys).union(fixesAfter.keys) where fixesBefore[key] != fixesAfter[key] {
+                switch fixesAfter[key] {
+                case nil: takenBack += 1
+                case ""?: hidden += 1
+                default: fixed += 1
+                }
+            }
+            if fixed > 0 { lines.append(.init(symbol: "text.quote", text: "Fixed \(Plural.count(fixed, "caption line"))")) }
+            if hidden > 0 { lines.append(.init(symbol: "eye.slash", text: "Hid \(Plural.count(hidden, "caption line"))")) }
+            if takenBack > 0 {
+                let fixes = takenBack == 1 ? "the fix of" : "the fixes of"
+                lines.append(.init(symbol: "arrow.uturn.backward", text: "Took back \(fixes) \(Plural.count(takenBack, "caption line"))"))
+            }
+        }
         if old.audio != new.audio {
             lines.append(.init(symbol: "speaker.wave.2", text: "Changed the sound"))
         }
