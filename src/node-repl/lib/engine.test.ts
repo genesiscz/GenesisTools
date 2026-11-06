@@ -125,14 +125,25 @@ describe("ReplEngine", () => {
     });
 
     it("emits images as base64 plus a file on disk", async () => {
+        // A 1×1 PNG: the bytes decide the type, as show() decides it.
+        const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
         const result = await engine.run(
-            "await nodeRepl.emitImage({ bytes: new Uint8Array([137, 80, 78, 71]), mimeType: 'image/png' });\n'done'"
+            `await nodeRepl.emitImage({ bytes: "${png}", mimeType: 'image/png' });\n'done'`
         );
         expect(result.ok).toBe(true);
         expect(result.images).toHaveLength(1);
         expect(result.images[0].mimeType).toBe("image/png");
-        expect(result.images[0].data).toBe(Buffer.from([137, 80, 78, 71]).toString("base64"));
+        expect(result.images[0].data).toBe(png);
         expect(result.images[0].path).toContain("node-repl-images-");
+    });
+
+    // NR22: three bytes and a plain string were sent to the host as images, which a host that checks images refuses.
+    it("emitImage refuses bytes that are not an image, as show() does", async () => {
+        const result = await engine.run(
+            "await nodeRepl.emitImage({ bytes: new Uint8Array([1, 2, 3]), mimeType: 'image/png' })"
+        );
+        expect(result.error).toBe("emitImage() got bytes that are not a PNG, JPEG, GIF or WebP image");
+        expect(result.images).toHaveLength(0);
     });
 
     it("kills a turn that overruns, on the wall clock, and starts clean", async () => {

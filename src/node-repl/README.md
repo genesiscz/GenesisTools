@@ -94,7 +94,7 @@ tools node-repl preset rm settings-demo
 
 Inside a turn the global `nodeRepl` offers `write(value)` (append to the turn's text output),
 `await emitImage({ bytes, mimeType })` (an MCP image block plus a file under the temp dir, whose
-path is also returned as text), `cwd`, `homeDir` and `tmpDir`.
+path is also returned as text; bytes that are not a PNG, JPEG, GIF or WebP are refused, as `show()` refuses them), `cwd`, `homeDir` and `tmpDir`.
 
 ## A call sequence
 

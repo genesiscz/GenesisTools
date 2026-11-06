@@ -114,12 +114,15 @@ const replApi = {
     write(value: unknown): void {
         output.push(typeof value === "string" ? value : Bun.inspect(value));
     },
-    async emitImage(input: { bytes: Uint8Array | string; mimeType: string }): Promise<void> {
-        const bytes = typeof input.bytes === "string" ? Buffer.from(input.bytes, "base64") : Buffer.from(input.bytes);
-        const extension = input.mimeType.split("/")[1]?.split("+")[0] ?? "bin";
-        const path = join(imageDir, `image-${++imageCounter}.${extension}`);
-        writeFileSync(path, bytes);
-        images.push({ mimeType: input.mimeType, data: bytes.toString("base64"), path });
+    /**
+     * One image's bytes (or base64), checked as show() checks them: the bytes decide the type. Unchecked bytes went to
+     * the host as an image, and a host that checks images refuses the whole result (NR22).
+     */
+    async emitImage(input: { bytes: Uint8Array | string; mimeType?: string }): Promise<void> {
+        const image = await readShowable({ bytes: input.bytes, mimeType: input.mimeType }).catch((error: unknown) => {
+            throw new Error(String(error instanceof Error ? error.message : error).replace(/^show\(\)/, "emitImage()"));
+        });
+        pushImage(image);
     },
     cwd: process.cwd(),
     homeDir: homedir(),
@@ -132,17 +135,25 @@ const toolsets: ReplToolset[] = [];
 /** The toolsets of this worker that did not load, with the reason; help() and their globals name them. */
 const failedToolsets: ToolsetFailure[] = [];
 
+/** A checked image into this turn's result and a file beside it. */
+function pushImage(image: { bytes: Uint8Array; mimeType: string }): void {
+    const bytes = Buffer.from(image.bytes);
+    const extension = image.mimeType.split("/")[1]?.split("+")[0] ?? "bin";
+    const path = join(imageDir, `image-${++imageCounter}.${extension}`);
+    writeFileSync(path, bytes);
+    images.push({ mimeType: image.mimeType, data: bytes.toString("base64"), path });
+}
+
 async function showImages(input: ShowInput | ShowInput[]): Promise<void> {
     for (const one of Array.isArray(input) ? input : [input]) {
-        const image = await readShowable(one);
-        await replApi.emitImage({ bytes: image.bytes, mimeType: image.mimeType });
+        pushImage(await readShowable(one));
     }
 }
 
 const CORE_HELP = [
     "search(query) finds methods across loaded toolsets; describe(name) prints a method's complete descriptor.",
     "help(name?) prints the docs of a loaded toolset; show(image | path | Buffer) returns an image to the model.",
-    "nodeRepl.write(value) adds output; nodeRepl.emitImage({ bytes, mimeType }) is show() without the type check; await sleep(ms) waits.",
+    "nodeRepl.write(value) adds output; nodeRepl.emitImage({ bytes }) is show() for one image's bytes, checked the same way; await sleep(ms) waits.",
     "Each method says what it does: [read] changes nothing and reaches no one; [reversible] or [destructive] change state; · user means the user meets it (a dialog, a window, focus, the clipboard, the inbox), · paid means a run billed to an account. A call that would reach someone it does not declare is refused.",
 ];
 
