@@ -61,8 +61,10 @@ class MemoryInbox implements AssignInbox {
         return this.forms.get(id) ?? null;
     }
 
-    async cancel(id: string): Promise<void> {
+    async cancel(id: string): Promise<boolean> {
+        const open = this.forms.get(id)?.status === "pending";
         this.forms.set(id, { status: "cancelled", answers: {} });
+        return open;
     }
 
     answer(id: string, answers: AskAnswer[]): void {
@@ -674,7 +676,7 @@ test("folder questions persist before posting and recover the same choices and i
         }),
         inbox: {
             read: async () => answer,
-            cancel: async () => {},
+            cancel: async () => true,
             post: async (input) => {
                 forms.push(input);
                 const saved = new MeetingStore(storage).read(record.id)!;
@@ -758,7 +760,7 @@ test("an inbox answer for a replaced question, or after the project was set mean
         now: () => Date.parse("2026-11-05T12:00:00.000Z"),
         calendars: async () => [],
         source: async () => undefined,
-        inbox: { read: async () => null, cancel: async () => {}, post: async (input) => ({ id: input.id! }) },
+        inbox: { read: async () => null, cancel: async () => false, post: async (input) => ({ id: input.id! }) },
     };
     const ask = {
         formId: "form-2",

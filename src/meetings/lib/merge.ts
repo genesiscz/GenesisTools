@@ -69,8 +69,10 @@ export interface MergeResult {
     derived: string[];
     start: string;
     end?: string;
-    /** The open inbox question of the record that went away, withdrawn. */
+    /** The open inbox question of the record that went away, withdrawn (in a dry run: to be withdrawn if still open). */
     withdrawn?: string;
+    /** The record's question that the inbox no longer held open (answered, cancelled, or in another inbox), so nothing was withdrawn. */
+    notOpen?: string;
 }
 
 /** Why two records cannot become one; each a sentence for the user. */
@@ -405,13 +407,19 @@ export async function mergeMeetings(request: MergeRequest): Promise<MergeResult>
     );
 
     if (pending) {
-        await (request.inbox ?? decisionInbox).cancel(pending).catch((err: unknown) => {
+        const withdrawn = await (request.inbox ?? decisionInbox).cancel(pending).catch((err: unknown) => {
             log.warn(
                 { err, formId: pending },
                 "merge: the project question of the merged record could not be withdrawn"
             );
-            result.withdrawn = undefined;
+            return false;
         });
+
+        // A cancel that found no open form withdrew nothing, so the result must not say it did.
+        if (!withdrawn) {
+            result.withdrawn = undefined;
+            result.notOpen = pending;
+        }
     }
 
     log.debug({ from: from.id, into: into.id, frames: result.moved.frames, rows: result.moved.rows }, "merge done");

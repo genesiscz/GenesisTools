@@ -290,7 +290,13 @@ async function merge(fromRef: string, opts: { into: string; dryRun?: boolean; js
 
         if (result.withdrawn) {
             ui.dim(
-                `  the project question of ${result.from} is ${result.dryRun ? "to be withdrawn" : "withdrawn"}: ${result.withdrawn}`
+                `  the project question of ${result.from} is ${result.dryRun ? "to be withdrawn if it is still open" : "withdrawn"}: ${result.withdrawn}`
+            );
+        }
+
+        if (result.notOpen) {
+            ui.dim(
+                `  the project question of ${result.from} was not open in the inbox, so nothing was withdrawn: ${result.notOpen}`
             );
         }
 

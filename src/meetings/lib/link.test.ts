@@ -137,7 +137,7 @@ describe("link: the call's start (MC2)", () => {
 });
 
 describe("merge: two records of one call become one (MC1 repair)", () => {
-    async function call(options: { collide?: boolean; otherSource?: boolean } = {}) {
+    async function call(options: { collide?: boolean; otherSource?: boolean; formOpen?: boolean } = {}) {
         stores += 1;
         const storage = new Storage(`meetings-merge-${process.pid}-${stores}`);
         const store = new MeetingStore(storage);
@@ -199,6 +199,7 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
             read: async () => null,
             cancel: async (id) => {
                 cancelled.push(id);
+                return options.formOpen ?? true;
             },
         };
         return {
@@ -251,7 +252,17 @@ describe("merge: two records of one call become one (MC1 repair)", () => {
         expect(existsSync(join(result.backup ?? "", "before", into, "recording.json"))).toBe(true);
         expect(existsSync(join(result.backup ?? "", "moved", from, "meeting.json"))).toBe(true);
         expect(cancelled).toEqual(["form-1"]);
+        expect(result.withdrawn).toBe("form-1");
         expect(store.resolve("wisprflow:call-1")?.id).toBe(into);
+    });
+
+    test("a question the inbox no longer holds open is reported as not withdrawn, not as withdrawn", async () => {
+        const { store, from, into, inbox, cancelled, backupRoot } = await call({ formOpen: false });
+        const result = await mergeMeetings({ store, fromId: from, intoId: into, inbox, backupRoot });
+
+        expect(cancelled).toEqual(["form-1"]);
+        expect(result.withdrawn).toBeUndefined();
+        expect(result.notOpen).toBe("form-1");
     });
 
     test("a dry run changes nothing", async () => {
