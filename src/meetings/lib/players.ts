@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import type { LISTEN_PLAYERS, MEETING_PLAYERS } from "@genesiscz/utils/meetings/config";
+import { formatClock } from "@genesiscz/utils/transcribe/render";
 
 export type PlayerId = (typeof LISTEN_PLAYERS)[number] | (typeof MEETING_PLAYERS)[number];
 
@@ -117,6 +118,19 @@ export function choosePlayer(options: {
 }
 
 /** Plays from `beforeSec` ahead of `atSec`, never before the start of the file. */
+/** Audio after the last speech this long is still the meeting (a silence, a goodbye); later is past its end. */
+export const PAST_END_GRACE_SEC = 30;
+
+/**
+ * Why `play --at` refuses a time after the meeting's end, or undefined. The bound is the last speech segment the source
+ * keeps, which `play` reads anyway; without segments there is no bound (R2-MC5).
+ */
+export function pastTheEnd(atSec: number, lastSpeechSec: number | undefined): string | undefined {
+    return lastSpeechSec !== undefined && atSec > lastSpeechSec + PAST_END_GRACE_SEC
+        ? `--at ${formatClock(atSec)} is after the meeting's last speech (${formatClock(lastSpeechSec)}).`
+        : undefined;
+}
+
 export function playbackPlan(options: {
     audioPath: string;
     atSec: number;

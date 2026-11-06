@@ -7,7 +7,7 @@ import { MeetingStore, meetingRecordSchema } from "@genesiscz/utils/meetings/rec
 import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { meetingAudioPath } from "./audio";
-import { choosePlayer, PLAYERS, playbackPlan } from "./players";
+import { choosePlayer, PLAYERS, pastTheEnd, playbackPlan } from "./players";
 import { enumHint, errorText, formatFlag } from "./shared";
 import { linkedSource } from "./sources";
 
@@ -244,5 +244,13 @@ describe("--json is the short form of --format json (MC19)", () => {
     test("--json with another --format is refused with exit 1", () => {
         expect(formatFlag({ json: true, format: "md" })).toBeUndefined();
         expect(process.exitCode).toBe(1);
+    });
+});
+
+describe("play --at past the meeting's end (R2-MC5)", () => {
+    test("a time more than 30 s after the last speech is refused with that speech's time; no segments means no bound", () => {
+        expect(pastTheEnd(356_400, 2772)).toBe("--at 99:00:00 is after the meeting's last speech (46:12).");
+        expect(pastTheEnd(2800, 2772)).toBeUndefined();
+        expect(pastTheEnd(356_400, undefined)).toBeUndefined();
     });
 });

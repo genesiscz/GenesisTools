@@ -5,8 +5,8 @@ import { MEETING_PLAYERS, MeetingsConfigStore } from "@genesiscz/utils/meetings/
 import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { formatClock, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
-import { meetingAudioPath } from "../lib/audio";
-import { choosePlayer, playbackPlan } from "../lib/players";
+import { meetingAudio } from "../lib/audio";
+import { choosePlayer, pastTheEnd, playbackPlan } from "../lib/players";
 import { errorText, fail, TOOL } from "../lib/shared";
 
 const { log } = logger.scoped("meetings-play");
@@ -51,8 +51,16 @@ async function play(
             return;
         }
 
+        const audio = await meetingAudio(record);
+        const late = pastTheEnd(atSec, audio.lastSpeechSec);
+
+        if (late) {
+            fail(late);
+            return;
+        }
+
         const plan = playbackPlan({
-            audioPath: await meetingAudioPath(record),
+            audioPath: audio.audioPath,
             atSec,
             beforeSec: beforeSec ?? playback.beforeSec,
             player: chosen.player,

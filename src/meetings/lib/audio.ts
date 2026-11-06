@@ -9,8 +9,20 @@ import { meetingSource, sourceRefOf } from "./sources";
 
 const { log } = logger.scoped("meetings-audio");
 
+/** A meeting's recording and the end of its last speech, both from the source's evidence. */
+export interface MeetingAudio {
+    audioPath: string;
+    /** The end of the last speech segment on the transcript clock; undefined when the source keeps no segments. */
+    lastSpeechSec?: number;
+}
+
 /** The recording of the first linked source that keeps one on this Mac. Throws a message ready to print. */
 export async function meetingAudioPath(record: MeetingRecord): Promise<string> {
+    return (await meetingAudio(record)).audioPath;
+}
+
+/** `meetingAudioPath` with the end of the last speech, which `play` needs to refuse a time past the end. */
+export async function meetingAudio(record: MeetingRecord): Promise<MeetingAudio> {
     const ref = sourceRefOf(record);
 
     if (!ref) {
@@ -23,7 +35,11 @@ export async function meetingAudioPath(record: MeetingRecord): Promise<string> {
         throw new Error(`The source keeps no audio for ${record.id} on this Mac.`);
     }
 
-    return evidence.audioPath;
+    const lastSpeechSec = evidence.segments.reduce<number | undefined>(
+        (last, segment) => (last === undefined || segment.endSec > last ? segment.endSec : last),
+        undefined
+    );
+    return { audioPath: evidence.audioPath, ...(lastSpeechSec === undefined ? {} : { lastSpeechSec }) };
 }
 
 /** The tone `cutClip` mixes in before the asked spot, so the listener knows which words the question is about. */
