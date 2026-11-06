@@ -2,7 +2,7 @@ import { isAbsolute } from "node:path";
 import { ComputerToolset } from "@app/control/lib/computer-use/toolset";
 import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { MoviesToolset } from "@app/recorder/lib/toolset";
-import { renderDocs } from "@genesiscz/utils/api-descriptor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ReplToolset, type ReplToolsetFactory } from "@genesiscz/utils/repl/toolset";
 import { EditorToolset } from "@genesiscz/utils/repl/toolsets/editor";
 import { RecorderToolset } from "@genesiscz/utils/repl/toolsets/recorder";
@@ -38,8 +38,17 @@ export const REPL_TOOLSETS = {
 export type ReplToolsetId = keyof typeof REPL_TOOLSETS;
 export const REPL_TOOLSET_IDS = Object.keys(REPL_TOOLSETS) as ReplToolsetId[];
 
+/**
+ * The toolsets for `--help`: one line each and the command that prints one's whole API. Every method of all of them
+ * was 535 lines (NR24); `help(name)` inside a turn prints the same docs `renderDocs` did.
+ */
 export function toolsetCliHelp(): string {
-    return `\nToolset APIs (JavaScript passed to run):\n\n${REPL_TOOLSET_IDS.map((id) => renderDocs(REPL_TOOLSETS[id]().api)).join("\n\n")}`;
+    const lines = REPL_TOOLSET_IDS.map((id) => {
+        const { api } = REPL_TOOLSETS[id]();
+        return `  ${id}: ${api.global === id ? "" : `(global ${api.global}) `}${api.summary}`;
+    });
+    const example = toolCommand(`node-repl run --toolset movies "help('movies')"`);
+    return `\nToolsets (--toolset <list>, comma-separated):\n${lines.join("\n")}\n\nOne toolset's whole API: ${example}`;
 }
 
 export function isToolsetId(value: string): value is ReplToolsetId {

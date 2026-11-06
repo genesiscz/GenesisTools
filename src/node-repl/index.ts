@@ -82,7 +82,7 @@ const program = new Command();
 program
     .name("node-repl")
     .description(
-        "A persistent JavaScript/TypeScript REPL for agents: bindings survive across calls, top-level await works, images come back as MCP content, and --toolset preloads APIs (computer) once per worker. The same four tools Codex's node_repl exposes, without Codex."
+        "A persistent JavaScript/TypeScript REPL for agents: bindings survive across calls, top-level await works, images come back as MCP content, and --toolset preloads toolsets (computer, movies, meetings, browser and the others listed below) once per worker. The same four tools Codex's node_repl exposes, without Codex."
     );
 
 program

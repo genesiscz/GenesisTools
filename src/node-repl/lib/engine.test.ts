@@ -13,11 +13,17 @@ import { jsDescription } from "../mcp/server";
 import { capOutput, DEFAULT_MAX_OUTPUT_CHARS, ReplEngine, resultMessage } from "./engine";
 import { createToolsets, parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp } from "./toolsets";
 
-it("CLI help renders registered descriptor methods and handles", () => {
+// NR24: --help used to render every method of all ten toolsets, 535 lines. It now lists each toolset's one line and
+// says how to print one toolset's API.
+it("CLI help lists every toolset with its one line and how to print one's API", () => {
     const help = toolsetCliHelp();
-    expect(help).toContain("recorder.start(options?:");
-    expect(help).toContain("recording.stop(");
-    expect(help).toContain("editor.open(source: string)");
+    for (const id of REPL_TOOLSET_IDS) {
+        expect(help).toContain(`  ${id}: `);
+    }
+
+    expect(help).toContain(`help('movies')`);
+    expect(help).not.toContain("recorder.start(options?:");
+    expect(help.split("\n").length).toBeLessThan(REPL_TOOLSET_IDS.length + 10);
 });
 
 // The MCP server renders a js_add_node_module_dir result with this. A timeout or a worker exit
