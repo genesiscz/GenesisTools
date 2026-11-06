@@ -677,6 +677,10 @@ it("hub and github name their result shapes, and github.review takes a PR URL or
 it("discovery covers handle names, missing names and ambiguous names", async () => {
     const apis = (await createToolsets(["meetings", "browser", "control"])).map((toolset) => toolset.api);
     expect(searchMethods(apis, "items.add")).toContain("meetings.Meeting.items.add");
+    // R2-NR6: the source transcript was "→ unknown", so its shape was known only after a call.
+    expect(searchMethods(apis, "meetings.Meeting.transcript")).toContain(
+        "meetings.Meeting.transcript() → { id?, startSec?, speakerId?, speaker, text }[] [read]"
+    );
     expect(describeMethod(apis, "meetings.Meeting.items.add")).toContain("Parameters:");
     expect(() => describeMethod(apis, "missing.method")).toThrow("Unknown method");
     expect(() => describeMethod(apis, "open")).toThrow("Ambiguous method");

@@ -79,8 +79,9 @@ const transcript = defineMethod({
     name: "transcript",
     params: z.object({}),
     result: z.unknown(),
+    resultName: "{ id?, startSec?, speakerId?, speaker, text }[]",
     effect: "read",
-    doc: "The linked source transcript as recorded, before any correction. lines() is the corrected one.",
+    doc: "The linked source transcript as recorded, before any correction. startSec is seconds from the recording's start, when the source has it. lines() is the corrected one.",
 });
 const lines = defineMethod({
     name: "lines",
