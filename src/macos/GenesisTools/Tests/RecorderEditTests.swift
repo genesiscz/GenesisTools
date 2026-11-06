@@ -1040,6 +1040,13 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(EditDiff.describe(old: removed, new: removed, by: "agent", at: Date()))
     }
 
+    // Regression test: deep test 2026-11-06 RE13 — the subtitle segments' identifiers read
+    // "recorder.export.subtitles.optional(GenesisToolsRecorder-EditProject-SubtitleFormat-srt)".
+    func testAnOptionalSegmentIdIsSpelledAsItsValueAndNilAsNone() {
+        XCTAssertEqual(GenAccessibilityID.suffix(Optional(EditProject.SubtitleFormat.srt)), "srt")
+        XCTAssertEqual(GenAccessibilityID.suffix(Optional<EditProject.SubtitleFormat>.none), "none")
+    }
+
     // Regression test: deep test 2026-11-06 RE14 — "WEBM" beside "WebVTT", and en dashes in the time ranges.
     func testFormatNamesAndTimeRangesReadAsWords() {
         XCTAssertEqual(EditProject.ExportFormat.allCases.map(\.title), ["MP4", "GIF", "WebM"])

@@ -618,6 +618,15 @@ final class RecorderTimelineTests: XCTestCase {
         XCTAssertFalse(EditorWindows.names(model, folder + "-other"))
     }
 
+    // Regression test: deep test 2026-11-06 RE13 — VoiceOver read a circle as "Arrow or Box, Circle", a zoom as
+    // "Zoom, Zoom 160%" and a spotlight as "Spotlight, Spotlight".
+    func testATimelineItemIsReadOnceByItsName() {
+        XCTAssertEqual(laneItemName(kindTitle: "Arrow or Box", label: "Circle"), "Circle")
+        XCTAssertEqual(laneItemName(kindTitle: "Zoom", label: "Zoom 160%"), "Zoom 160%")
+        XCTAssertEqual(laneItemName(kindTitle: "Spotlight", label: "Spotlight"), "Spotlight")
+        XCTAssertEqual(laneItemName(kindTitle: "Text", label: "Title"), "Text, Title")
+    }
+
     // Regression test: deep test 2026-11-06 RE7 — a text added at the playhead faded in from there, so the paused frame
     // at the playhead showed none of it.
     func testATextAddedAtThePlayheadShowsFullyAtThePlayhead() throws {

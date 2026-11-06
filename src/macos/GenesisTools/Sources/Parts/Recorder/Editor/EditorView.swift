@@ -149,6 +149,8 @@ struct SwitchRow: View {
             Text(title).frame(maxWidth: .infinity, alignment: .leading)
         }
         .toggleStyle(.switch)
+        // The switch style draws the title beside the switch, which VoiceOver then read without a name.
+        .accessibilityLabel(title)
     }
 }
 
@@ -722,11 +724,13 @@ struct CaptionLinesList: View {
             SectionLabel(text: "Replace in every line")
             TextField("Find words, e.g. a name it misheard", text: $find)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Find words")
                 .accessibilityIdentifier("recorder.captions.find")
             HStack(spacing: 6) {
                 TextField("Replace with", text: $replacement)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { model.replaceWords(find: find, replace: replacement) }
+                    .accessibilityLabel("Replace with")
                     .accessibilityIdentifier("recorder.captions.replace")
                 GhostButton("Replace All", symbol: "text.badge.checkmark", tooltip: "Replace these words in every line (whole words, any case; ⌘Z takes it back)",
                             identifier: "recorder.captions.replaceAll") { model.replaceWords(find: find, replace: replacement) }
@@ -1457,7 +1461,7 @@ private struct ExportIssues: View {
                             tooltip: "Run the \(fixable) fixes below in one step (⌘Z undoes them all)",
                             identifier: "recorder.export.issue.fixAll") { model.fixAll() }
             }
-            ForEach(model.issues) { issue in
+            ForEach(Array(model.issues.enumerated()), id: \.element.id) { index, issue in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: issue.mustFix ? "exclamationmark.triangle.fill" : "info.circle")
                         .foregroundStyle(issue.mustFix ? Color.red : RecorderPalette.dim)
@@ -1476,15 +1480,15 @@ private struct ExportIssues: View {
                             HStack(spacing: 6) {
                                 if let out = shownAt {
                                     GhostButton("Show", symbol: "arrow.right.circle", tooltip: "Move the playhead there",
-                                                identifier: "recorder.export.issue.show") { model.seek(out) }
+                                                identifier: "recorder.export.issue.show.\(index + 1)") { model.seek(out) }
                                 } else if removable {
                                     GhostButton("Remove", symbol: "trash", tooltip: "Remove it: it never shows (⌘Z brings it back)",
-                                                identifier: "recorder.export.issue.remove") { model.remove(issue) }
+                                                identifier: "recorder.export.issue.remove.\(index + 1)") { model.remove(issue) }
                                 }
                                 if let action {
                                     GhostButton(action.label, symbol: action.label == "Remove" ? "trash" : "wand.and.stars",
                                                 tooltip: "\(issue.fix.map { "Runs \($0)" } ?? action.label) (⌘Z undoes it)",
-                                                identifier: "recorder.export.issue.action") { model.runAction(issue) }
+                                                identifier: "recorder.export.issue.action.\(index + 1)") { model.runAction(issue) }
                                 }
                             }
                         }
