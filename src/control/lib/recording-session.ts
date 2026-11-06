@@ -27,6 +27,9 @@ export const FIRST_FRAME_MESSAGE =
     "Still waiting for the first frame. macOS sends none while the screen is locked or the window is hidden or minimized. Discard cancels it.";
 
 const SLOW_START_MS = 8000;
+/** A rest of the limit shorter than this starts no new segment: a capture's start costs about as long, and the
+ * recorder's deadline runs from its own launch, so such a refill ran past the limit (10.31 s for 10, 25.35 s for 20). */
+const MIN_REFILL_MS = 1000;
 
 export const recordingCommandSchema = z.discriminatedUnion("cmd", [
     z.object({ cmd: z.literal("pause") }),
@@ -355,8 +358,13 @@ export class RecordingSession {
         }
     }
 
+    /** What is left of the limit is too short for another segment. */
+    private limitReached(): boolean {
+        return this.limitMs - this.recordedMs < MIN_REFILL_MS;
+    }
+
     private resumeOrRefuse(target: RecordingTarget): void {
-        if (this.recordedMs >= this.limitMs) {
+        if (this.limitReached()) {
             this.setState("paused", "limit");
             this.options.emit({
                 event: "error",
@@ -473,7 +481,9 @@ export class RecordingSession {
             target: run.target,
         };
         this.segments.push(segment);
-        this.recordedMs += wallMs;
+        // The longer of the movie and the wall time this session saw: the recorder's deadline runs from its own launch,
+        // so its movie can be longer, and the limit must count what the movie holds.
+        this.recordedMs += Math.max(wallMs, segment.durationMs);
         this.options.emit({ event: "segment", ...segment });
     }
 
@@ -485,7 +495,7 @@ export class RecordingSession {
         this.current = undefined;
         this.record(run, result);
         if (result.endedBy === "deadline" && result.ok) {
-            if (this.recordedMs >= this.limitMs) {
+            if (this.limitReached()) {
                 log.info({ recordedMs: this.recordedMs }, "recording reached its limit");
                 this.setState("paused", "limit");
                 return;

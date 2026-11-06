@@ -679,6 +679,28 @@ describe("RecordingSession", () => {
         expect(joined[0].map((segment) => segment.durationMs)).toEqual([3000, 2000]);
     });
 
+    it("the limit counts the movie each run made, and leaves out a refill shorter than a second", async () => {
+        // The recorder's own deadline runs from its launch, so its movie is longer than the session's wall time.
+        const longer = fakeRecorder();
+        const recording = session(longer.recorder, { maxSeconds: 10 });
+        await recording.start();
+        clock += 9800;
+        await longer.runs[0].end({ ok: true, endedBy: "deadline", durationMs: 10_059 });
+        await Bun.sleep(0);
+        expect(longer.runs).toHaveLength(1);
+        expect(states()).toEqual(["recording:user:app", "paused:limit:app"]);
+
+        events = [];
+        const shorter = fakeRecorder();
+        const second = session(shorter.recorder, { maxSeconds: 10 });
+        await second.start();
+        clock += 9300;
+        await shorter.runs[0].end({ ok: true, endedBy: "deadline", durationMs: 9300 });
+        await Bun.sleep(0);
+        expect(shorter.runs).toHaveLength(1);
+        expect(states()).toEqual(["recording:user:app", "paused:limit:app"]);
+    });
+
     it("a first run that fails without a movie ends the session with the refusal code", async () => {
         const { recorder } = fakeRecorder({ failFirst: true });
         const recording = session(recorder);
