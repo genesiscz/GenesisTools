@@ -737,3 +737,15 @@ extension MeetingsWords {
         return ref.note
     }
 }
+
+extension MeetingDetailModel {
+    /// View → Reload: every part already read reads again, whatever its revision token says, because a reload the
+    /// reader asks for must not be skipped as unchanged.
+    func reloadAll() {
+        readAt.removeAll()
+        refreshLoaded()
+    }
+
+    /// How many parts hold a revision token (a test reads it after Reload).
+    var revisionTokensKnown: Int { readAt.count }
+}
