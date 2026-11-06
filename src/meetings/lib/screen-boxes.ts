@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
-import { renderAnnotationPlan } from "@genesiscz/utils/image/render-plan";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -125,6 +124,8 @@ function previousRow(rows: OcrRow[], row: OcrRow): OcrRow | undefined {
  * them numbered on the frame, and writes a crop of each, so a note can show only the part of the screen that matters.
  */
 export async function renderScreenBoxes(request: ScreenBoxesRequest): Promise<ScreenBoxFrame[]> {
+    // lazy: saves 101 ms of every meetings command that reads OCR rows (tools ts imports lazy, 2026-11-06): @napi-rs/canvas loads the system fonts at import, and only drawn boxes need it
+    const { renderAnnotationPlan } = await import("@genesiscz/utils/image/render-plan");
     const pad = request.pad ?? 12;
     const maxCrops = request.maxCrops ?? 24;
     mkdirSync(request.outDir, { recursive: true });

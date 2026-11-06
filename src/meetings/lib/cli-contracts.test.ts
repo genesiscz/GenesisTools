@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
 import { enumHint } from "./shared";
@@ -92,5 +94,26 @@ describe("MEETINGS_REGISTRARS", () => {
         const registered = program.commands.flatMap((command) => [command.name(), ...command.aliases()]);
 
         expect(registered).toEqual(MEETINGS_REGISTRARS.flatMap((entry) => entry.names));
+    });
+});
+
+/** MP3: @napi-rs/canvas loads the system fonts at import (about 100 ms), so only drawing boxes may load it. */
+describe("startup imports", () => {
+    test("the record and screen commands load no canvas until a box is drawn", async () => {
+        const probe = [
+            'const has = () => Object.keys(require.cache).some((key) => key.includes("@napi-rs/canvas"));',
+            'await import("./src/meetings/commands/record.ts");',
+            "const before = has();",
+            'await import("@genesiscz/utils/image/render-plan");',
+            "console.log(JSON.stringify({ before, after: has() }));",
+        ].join("\n");
+        const child = Bun.spawn(["bun", "-e", probe], {
+            cwd: join(moduleDir(import.meta), "..", "..", ".."),
+            stdout: "pipe",
+        });
+        const output = await new Response(child.stdout).text();
+        await child.exited;
+
+        expect(output.trim()).toBe(`{"before":false,"after":true}`);
     });
 });
