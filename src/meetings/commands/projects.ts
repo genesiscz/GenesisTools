@@ -8,6 +8,7 @@ import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { createBoxTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { projectLabels } from "../lib/meeting-fields";
 import { removeProject, renameProject } from "../lib/project-admin";
 import { errorText, fail } from "../lib/shared";
 import { matchPreviewRead, windowJson } from "../lib/window-reads";
@@ -117,20 +118,7 @@ async function remove(name: string, opts: { unassign?: boolean; json?: boolean }
 
 async function labels(name: string, opts: { add?: string[]; remove?: string[] }): Promise<void> {
     try {
-        const store = new MeetingsConfigStore();
-        const changes = (opts.add?.length ?? 0) + (opts.remove?.length ?? 0) > 0;
-        const projects = (await store.read()).projects;
-
-        // Adding labels may add the project (as "projects add" would); reading or removing needs a known one.
-        if (!projects[name] && !opts.add?.length) {
-            fail(`No project ${name}. The known ones: ${Object.keys(projects).join(", ") || "none"}`);
-            return;
-        }
-
-        // Without a change this only reads, so a typo never adds a project.
-        const known = changes
-            ? await store.setProjectLabels(name, opts)
-            : ((await store.read()).projects[name]?.labels ?? []);
+        const known = await projectLabels({ config: new MeetingsConfigStore(), project: name, ...opts });
         ui.ok(`${name} labels: ${known.length > 0 ? known.join(", ") : "none"}`);
     } catch (err) {
         fail(errorText(err));

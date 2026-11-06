@@ -23,6 +23,7 @@ import { decideItems, reopenItems } from "./decide";
 import { testPhrase } from "./dictionary-test";
 import { exportMeeting } from "./export";
 import { matchPreview } from "./match-preview";
+import { projectLabels, setMeetingFields } from "./meeting-fields";
 import { meetingsOverview } from "./overview";
 import { removeProject, renameProject } from "./project-admin";
 import { screenTimeline } from "./screen-timeline";
@@ -738,5 +739,63 @@ describe("projects rename and remove", () => {
             block: { labels: ["Checkout 2.0"] },
             sources: { wisprflow: { folders: ["Work"] } },
         });
+    });
+});
+
+describe("set and project labels for every door (R2-MC7)", () => {
+    async function meeting() {
+        const { config, meetings } = stores();
+        await config.addProject("work");
+        const created = await meetings.create(
+            { title: "Planning", start: "2026-11-02T14:00:00.000Z", createdBy: "new", project: "work", labels: ["Q4"] },
+            { command: "test", change: "created" }
+        );
+        return { config, meetings, record: created };
+    }
+
+    test("a label the meeting does not carry is refused before anything is written, project labels included", async () => {
+        const { config, meetings, record: created } = await meeting();
+
+        await expect(
+            setMeetingFields({
+                store: meetings,
+                config,
+                record: created,
+                change: { labels: ["Checkout"], unlabel: ["Nosuch"] },
+                quiet: true,
+            })
+        ).rejects.toThrow(`${created.id} has no label "Nosuch". Its labels: Q4`);
+        expect(meetings.read(created.id)?.history).toHaveLength(created.history.length);
+        expect((await config.read()).projects.work?.labels ?? []).toEqual([]);
+        await expect(
+            setMeetingFields({ store: meetings, config, record: created, change: {}, quiet: true })
+        ).rejects.toThrow("Nothing to set");
+    });
+
+    test("a real change still writes the fields, the project labels and one history line", async () => {
+        const { config, meetings, record: created } = await meeting();
+        const { record: updated, changes } = await setMeetingFields({
+            store: meetings,
+            config,
+            record: created,
+            change: { title: "Retro", labels: ["Checkout"], unlabel: ["Q4"] },
+            quiet: true,
+        });
+
+        expect(updated).toMatchObject({ title: "Retro", labels: ["Checkout"] });
+        expect(changes).toEqual(['title "Retro"', "labels + Checkout", "labels - Q4"]);
+        expect((await config.read()).projects.work?.labels).toEqual(["Checkout"]);
+        expect(updated.history).toHaveLength(created.history.length + 1);
+    });
+
+    test("project labels: reading or removing needs a known project; adding may add it", async () => {
+        const { config } = await meeting();
+
+        await expect(projectLabels({ config, project: "wrok" })).rejects.toThrow(
+            "No project wrok. The known ones: work"
+        );
+        await expect(projectLabels({ config, project: "wrok", remove: ["x"] })).rejects.toThrow("No project wrok");
+        expect(await projectLabels({ config, project: "work" })).toEqual([]);
+        expect(await projectLabels({ config, project: "side", add: ["Launch"] })).toEqual(["Launch"]);
     });
 });

@@ -4,7 +4,7 @@ import { isInteractive } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { MeetingsConfigStore, mergeLabels } from "@genesiscz/utils/meetings/config";
+import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore, nextId } from "@genesiscz/utils/meetings/record";
 import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
@@ -13,6 +13,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { collectAndReport } from "../lib/collect";
 import { linkSource } from "../lib/link";
+import { setMeetingFields } from "../lib/meeting-fields";
 import { mergeMeetings } from "../lib/merge";
 import { resolveProject } from "../lib/project";
 import { errorText, fail, TOOL } from "../lib/shared";
@@ -202,37 +203,11 @@ async function set(
     }
 
     try {
-        const config = new MeetingsConfigStore();
-        const project = opts.project ? (await resolveProject({ config, flag: opts.project })).project : undefined;
-        const target = project ?? record.project;
-
-        if (target && labels.length > 0) {
-            await config.setProjectLabels(target, { add: labels });
-        }
-
-        const changes = [
-            project ? `project ${project}` : "",
-            opts.title ? `title "${opts.title}"` : "",
-            labels.length > 0 ? `labels + ${labels.join(", ")}` : "",
-            unlabel.length > 0 ? `labels - ${unlabel.join(", ")}` : "",
-        ].filter(Boolean);
-        const removed = new Set(unlabel.map((label) => label.toLowerCase()));
-        const absent = unlabel.filter(
-            (label) => !record.labels.some((has) => has.toLowerCase() === label.toLowerCase())
-        );
-
-        // A label the meeting does not carry changes nothing, so it writes no history line saying it did (MC13).
-        if (absent.length > 0) {
-            fail(
-                `${record.id} has no label ${absent.map((one) => `"${one}"`).join(", ")}. Its labels: ${record.labels.join(", ") || "none"}`
-            );
-            return;
-        }
-
-        const updated = await store.update(record.id, { command: "set", change: changes.join(", ") }, (current) => {
-            current.project = project ?? current.project;
-            current.title = opts.title ?? current.title;
-            current.labels = mergeLabels(current.labels, labels).filter((label) => !removed.has(label.toLowerCase()));
+        const { record: updated, changes } = await setMeetingFields({
+            store,
+            config: new MeetingsConfigStore(),
+            record,
+            change: { project: opts.project, title: opts.title, labels, unlabel },
         });
         ui.ok(
             `${record.id}: ${changes.join(", ")}${updated.labels.length > 0 ? ` (labels: ${updated.labels.join(", ")})` : ""}`
