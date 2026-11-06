@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { join } from "node:path";
 import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { Command } from "commander";
 import { MEETINGS_REGISTRARS } from "../registrars";
+import { choosePlayer, PLAYERS, playbackPlan } from "./players";
 import { enumHint } from "./shared";
 
 /**
@@ -115,5 +116,53 @@ describe("startup imports", () => {
         await child.exited;
 
         expect(output.trim()).toBe(`{"before":false,"after":true}`);
+    });
+});
+
+/** MU5 and MC22: the window starts ffplay through `play --player ffplay --json`; an agent resolves without sound. */
+describe("play: the player and the plan", () => {
+    test("--player names the one player, and a missing one is refused rather than replaced", () => {
+        const ffplay = spyOn(PLAYERS.ffplay, "available").mockReturnValue(false);
+        const vlc = spyOn(PLAYERS.vlc, "available").mockReturnValue(true);
+
+        try {
+            expect(choosePlayer({ requested: "ffplay", configured: "vlc", all: ["vlc", "ffplay"] })).toEqual({
+                error: "ffplay is not installed on this Mac.",
+            });
+            expect(choosePlayer({ requested: "mpv", configured: "vlc", all: ["vlc", "ffplay"] })).toEqual({
+                error: "--player mpv is not a player: vlc, ffplay",
+            });
+            ffplay.mockReturnValue(true);
+            expect(choosePlayer({ requested: "ffplay", configured: "vlc", all: ["vlc", "ffplay"] })).toEqual({
+                player: PLAYERS.ffplay,
+            });
+        } finally {
+            ffplay.mockRestore();
+            vlc.mockRestore();
+        }
+    });
+
+    test("without --player the configured one plays, else the first installed", () => {
+        const ffplay = spyOn(PLAYERS.ffplay, "available").mockReturnValue(true);
+        const vlc = spyOn(PLAYERS.vlc, "available").mockReturnValue(false);
+
+        try {
+            expect(choosePlayer({ configured: "vlc", all: ["vlc", "ffplay"] })).toEqual({ player: PLAYERS.ffplay });
+        } finally {
+            ffplay.mockRestore();
+            vlc.mockRestore();
+        }
+    });
+
+    test("ffplay starts at the asked second with no window, and never before second 0", () => {
+        const plan = playbackPlan({ audioPath: "/a/upload.ogg", atSec: 30, beforeSec: 5, player: PLAYERS.ffplay });
+
+        expect(plan).toEqual({
+            audioPath: "/a/upload.ogg",
+            startSec: 25,
+            player: "ffplay",
+            argv: ["ffplay", "-ss", "25", "-nodisp", "-autoexit", "/a/upload.ogg"],
+        });
+        expect(playbackPlan({ audioPath: "/a/x.ogg", atSec: 2, beforeSec: 5, player: PLAYERS.vlc }).startSec).toBe(0);
     });
 });
