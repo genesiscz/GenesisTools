@@ -4,7 +4,7 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 
-import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { genesisToolsDir, genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 /**
  * GenesisTools.app is a tiny signed launcher (src/macos/GenesisTools) that becomes the macOS TCC
  * "responsible process" for everything `tools` runs. Calendar, Reminders, Contacts, Full Disk
@@ -26,8 +26,17 @@ export function genesisAppDir(): string {
     return genesisToolsDir("app");
 }
 
+/** The installed bundle, in the app home (`env.tools.getAppHome()`), never in a GENESIS_TOOLS_HOME sandbox. */
 export function genesisAppBundlePath(): string {
-    return join(env.tools.getHome(), "Applications", `${GENESIS_APP_NAME}.app`);
+    return join(env.tools.getAppHome(), "Applications", `${GENESIS_APP_NAME}.app`);
+}
+
+/**
+ * The installed bundle's own state (its build manifest, the install marker), beside the bundle in the app home. Under
+ * a GENESIS_TOOLS_HOME sandbox it stays the real one, so a sandbox sees the app that is installed.
+ */
+export function genesisAppInstallDir(): string {
+    return genesisToolsDirIn(env.tools.getAppHome(), "app");
 }
 
 /**
@@ -82,7 +91,7 @@ const UNREADABLE_INSTALL_MARKER_MS = 60_000;
  * renames the launcher path is missing, so a command started then would run without the app's grants.
  */
 export function genesisAppInstallMarkerPath(): string {
-    return join(genesisAppDir(), "install.lock");
+    return join(genesisAppInstallDir(), "install.lock");
 }
 
 export class GenesisAppUpdatingError extends Error {

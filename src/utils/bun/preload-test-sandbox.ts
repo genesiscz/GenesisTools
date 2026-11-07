@@ -239,7 +239,27 @@ function isolateNativeHomes(): void {
     });
 }
 
+/**
+ * GenesisTools.app lives in the app home (`env.tools.getAppHome()`), which does not follow GENESIS_TOOLS_HOME, so a
+ * test that reached the bundle path saw this Mac's installed app. An empty folder answers "not installed": no test opens
+ * or replaces the real bundle. A test that needs a launcher makes one and passes its own GENESIS_TOOLS_APP_HOME.
+ */
+function isolateAppHome(): void {
+    if (env.test.allowsRealHome()) {
+        return;
+    }
+
+    const sandboxRoot = mkdtempSync(join(tmpdir(), "gt-test-app-home-"));
+    env.testing.set("GENESIS_TOOLS_APP_HOME", sandboxRoot);
+    afterEach(() => {
+        if (!env.test.allowsRealHome() && !env.getTrimmed("GENESIS_TOOLS_APP_HOME")) {
+            env.testing.set("GENESIS_TOOLS_APP_HOME", sandboxRoot);
+        }
+    });
+}
+
 installSandbox();
+isolateAppHome();
 isolateAgentEnv();
 isolateObsidian();
 isolateCodexModelsCache();

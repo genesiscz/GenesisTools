@@ -47,7 +47,7 @@ export function inboxStateFromSignals(signals: NativeInboxSignals): NativeInboxS
 }
 
 export function previewBundlePath(): string {
-    return join(env.tools.getHome(), "Applications", PREVIEW_APP_NAME);
+    return join(env.tools.getAppHome(), "Applications", PREVIEW_APP_NAME);
 }
 
 /**

@@ -14,6 +14,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { isInteractive, spawnToolDetached } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { PRESETS } from "@genesiscz/utils/compress/presets";
 import { applyFolderRetention, planFolderRetention } from "@genesiscz/utils/compress/retention";
 import { env } from "@genesiscz/utils/env";
@@ -25,6 +26,7 @@ import {
     GENESIS_APP_NAME,
     genesisAppBundlePath,
     genesisAppDir,
+    genesisAppInstallDir,
     genesisAppInstallMarkerPath,
     genesisAppLauncherPath,
 } from "@genesiscz/utils/macos/genesis-app";
@@ -38,6 +40,7 @@ import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/proce
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import * as p from "@genesiscz/utils/prompts/p";
 import { withFileLock } from "@genesiscz/utils/storage";
+import { guardReason } from "@genesiscz/utils/storage/real-home-guard";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import {
     type ClickyLibraryPin,
@@ -484,7 +487,7 @@ export function appStatus(): AppStatus {
     const bundlePath = genesisAppBundlePath();
     const launcherPath = genesisAppLauncherPath();
     const built = existsSync(launcherPath);
-    const manifest = built ? readManifest() : undefined;
+    const manifest = built ? readManifest(genesisAppInstallDir()) : undefined;
     const signature = built ? readSignature(bundlePath) : undefined;
     const parts = installedParts(manifest);
     const stale =
@@ -575,6 +578,16 @@ function appBuildLockPath(): string {
 }
 
 export async function buildApp(options?: BuildAppOptions): Promise<BuildResult> {
+    // A test never builds the app, and a GENESIS_TOOLS_HOME sandbox has no app of its own: a window launched on one
+    // built a second GenesisTools.app inside it, Launch Services registered it, and it ran a link relay (2026-11-07).
+    const refusal = guardReason();
+
+    if (refusal) {
+        throw new Error(
+            `GenesisTools.app is not built here: ${refusal}. Build it on the real home: ${toolCommand("macos", "permissions", "build")}`
+        );
+    }
+
     mkdirSync(genesisAppDir(), { recursive: true });
     const lockPath = appBuildLockPath();
     const requestedAt = Date.now();
