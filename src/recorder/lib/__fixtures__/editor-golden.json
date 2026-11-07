@@ -948,6 +948,24 @@
         "y": 0.5
       },
       "target": "canvas"
+    },
+    {
+      "op": "text",
+      "from": 1,
+      "to": 3,
+      "text": "Step 1\nOpen the inbox",
+      "x": 0.62,
+      "block": {
+        "width": 0.35,
+        "align": "left"
+      }
+    },
+    {
+      "op": "setText",
+      "id": "t1",
+      "block": {
+        "align": "right"
+      }
     }
   ],
   "projects": [

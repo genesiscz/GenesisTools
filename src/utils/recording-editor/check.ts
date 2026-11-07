@@ -91,12 +91,14 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
     const texts = [...(project.texts ?? [])].sort((a, b) => a.startUs - b.startUs);
 
     for (const [index, note] of texts.entries()) {
-        const over = texts
-            .slice(index + 1)
-            .find(
-                (other) =>
-                    other.startUs < note.endUs && Math.abs(other.y - note.y) < 0.08 && Math.abs(other.x - note.x) < 0.3
-            );
+        const over = texts.slice(index + 1).find(
+            (other) =>
+                other.startUs < note.endUs &&
+                // R5 10: half of each text's height apart at least; a text of n lines is about n × 1.4 × its size
+                // tall (plus its plate), so two-line texts 0.1 apart overlap where one-liners did not.
+                Math.abs(other.y - note.y) < Math.max(0.08, halfHeight(note) + halfHeight(other)) &&
+                Math.abs(other.x - note.x) < 0.3
+        );
 
         if (over) {
             issues.push({
@@ -238,6 +240,12 @@ function checkedItems(project: EditProject) {
         ...(project.texts ?? []).map((note) => item("text", "untext", "texts", note, note.text)),
         ...(project.shapes ?? []).map((shape) => item(shape.kind, "unshape", "shapes", shape)),
     ];
+}
+
+// R5 10 multi-line texts
+/** Half a text's height as a share of the canvas's short side: its lines at 1.4 × size, plus the plate's margin. */
+function halfHeight(note: { text: string; size: number }): number {
+    return (note.text.split("\n").length * note.size * 1.4 + note.size * 0.8) / 2;
 }
 
 // R5 5 redaction edges

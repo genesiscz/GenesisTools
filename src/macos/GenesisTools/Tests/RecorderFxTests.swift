@@ -178,3 +178,28 @@ final class RecorderFrameLayoutTests: XCTestCase {
         }
     }
 }
+
+// R5 10 multi-line texts
+final class RecorderTextBlockTests: XCTestCase {
+    /// "\n" makes a second line, a long text wraps inside the block's width and is drawn whole, never cut.
+    func testATextBreaksAtNewlinesAndWrapsInsideItsBlock() throws {
+        let plates = TextPlates()
+        let one = try XCTUnwrap(plates.plate("Step one", fontSize: 40, maxWidth: 1500))
+        let two = try XCTUnwrap(plates.plate("Step one\nStep two", fontSize: 40, maxWidth: 1500))
+        XCTAssertGreaterThan(two.extent.height / one.extent.height, 1.6, "two lines")
+        let callout = String(repeating: "word ", count: 60).trimmingCharacters(in: .whitespaces)
+        let wrapped = try XCTUnwrap(plates.plate(callout, fontSize: 40, maxWidth: 600, alignment: .left))
+        XCTAssertLessThanOrEqual(wrapped.extent.width, 600)
+        XCTAssertGreaterThan(wrapped.extent.height, one.extent.height * 5, "the whole callout, wrapped")
+        // Drawn with a 0.3 block on a 1920 canvas, the plate is at most 576 wide and stays inside the canvas.
+        let size = CGSize(width: 1920, height: 1080)
+        let note = EditProject.TextNote(id: "t", startUs: 0, endUs: 1_000_000, text: callout, x: 0.7, y: 0.5, size: 0.03,
+                                        block: .init(width: 0.3, align: .left))
+        let canvas = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: size))
+        let drawn = Looks.drawText(note, opacity: 1, plates: plates, on: canvas, size: size)
+        XCTAssertEqual(drawn.extent, canvas.extent)
+        let plate = try XCTUnwrap(plates.plate(callout, fontSize: 32, maxWidth: 576, alignment: .left))
+        XCTAssertLessThanOrEqual(plate.extent.width, 576)
+        XCTAssertLessThan(plate.extent.height, size.height, "the callout fits the canvas's height")
+    }
+}

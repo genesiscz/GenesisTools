@@ -2,7 +2,7 @@ import { cameraHiddenId } from "./camera";
 import { denoiseSchema } from "./denoise";
 import { textAnimateOf } from "./overlays";
 import type { CursorSample, EditOp, EditProject } from "./project";
-import { MINIMUM_CLIP_US, newId, placeZoom } from "./project";
+import { MINIMUM_CLIP_US, newId, placeZoom, TEXT_MAX_CHARS } from "./project";
 
 /**
  * The ops that change an item that exists (a zoom, hidden part, text, shape, clip or lane) by its id, as the editor
@@ -110,12 +110,20 @@ export function setText(project: EditProject, op: Op<"setText">): EditProject {
         );
     }
 
-    const text = op.text === undefined ? item.text : op.text.trim().slice(0, 200);
+    const text = op.text === undefined ? item.text : op.text.trim();
 
     if (!text) {
         throw new RangeError("a text needs words; delete it with untext instead");
     }
 
+    // R5 10: said aloud, never cut without a word (a long callout lost its end that way).
+    if (text.length > TEXT_MAX_CHARS) {
+        throw new RangeError(
+            `a text holds at most ${TEXT_MAX_CHARS} characters (this one has ${text.length}); split it into two texts`
+        );
+    }
+
+    const block = op.block ? { ...item.block, ...op.block } : item.block;
     const next = {
         ...item,
         text,
@@ -123,6 +131,8 @@ export function setText(project: EditProject, op: Op<"setText">): EditProject {
         ...(op.y === undefined ? {} : { y: clamp(op.y, 0, 1) }),
         ...(op.size === undefined ? {} : { size: clamp(op.size, 0.02, 0.15) }),
         ...(op.style ? { style: op.style } : {}),
+        // R5 10 multi-line texts
+        ...(block && Object.keys(block).length > 0 ? { block } : {}),
     };
 
     // R4 6 animated texts: "fade" with no length goes back to the default (no key).

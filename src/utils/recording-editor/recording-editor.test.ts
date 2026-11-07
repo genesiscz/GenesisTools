@@ -874,6 +874,35 @@ describe("edit project (edit.json)", () => {
         expect([second?.startUs, second?.target]).toEqual([3_000_000, "canvas"]);
     });
 
+    // R5 10: a long callout was cut (setText cut it to 200 characters without a word) and "\n" was undocumented.
+    test("a text keeps its line breaks, takes a callout of 500 characters and refuses a longer one aloud", () => {
+        const callout = `Step one\n${"word ".repeat(60).trim()}`;
+        let project = applyOp(wholeProject(source), {
+            op: "text",
+            from: 1,
+            to: 4,
+            text: callout,
+            x: 0.7,
+            block: { width: 0.4, align: "left" },
+        });
+        const note = project.texts?.[0];
+        expect(note?.text).toBe(callout);
+        expect(note?.block).toEqual({ width: 0.4, align: "left" });
+        expect(describeProject(project, "/x/edit.json").texts[0]).toMatchObject({ lines: 2 });
+        project = applyOp(project, { op: "setText", id: note?.id ?? "", block: { align: "center" } });
+        expect(project.texts?.[0]?.block).toEqual({ width: 0.4, align: "center" });
+        expect(() => applyOp(project, { op: "setText", id: note?.id ?? "", text: "x".repeat(501) })).toThrow(
+            "at most 500 characters"
+        );
+        // Two two-line texts 0.1 apart overlap, which two one-liners would not.
+        let stacked = applyOp(wholeProject(source), { op: "text", from: 1, to: 4, text: "One\nTwo", y: 0.3 });
+        stacked = applyOp(stacked, { op: "text", from: 1, to: 4, text: "Three\nFour", y: 0.4 });
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        expect(
+            checkProject(stacked, facts).some((issue) => issue.message.includes("same time in the same place"))
+        ).toBe(true);
+    });
+
     // Regression test: deep test 2026-11-06 RE5 — Lengthen on a circle that ends at the movie's end changed nothing.
     test("a too-short item at the movie's end is lengthened by starting earlier", () => {
         const project = applyOp(wholeProject(source), { op: "shape", kind: "circle", from: 9.83, to: 10 });

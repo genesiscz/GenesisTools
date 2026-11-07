@@ -293,6 +293,9 @@ const EXAMPLE_OPS: readonly unknown[] = [
     { op: "frame", preset: "phone-left", layout: { scale: 1.1 } },
     { op: "frame", layout: { align: "right", scale: 1 } },
     { op: "zoom", from: 1, to: 3, scale: 2, focus: { x: 0.2, y: 0.5 }, target: "canvas" },
+    // R5 10 multi-line texts
+    { op: "text", from: 1, to: 3, text: "Step 1\nOpen the inbox", x: 0.62, block: { width: 0.35, align: "left" } },
+    { op: "setText", id: "t1", block: { align: "right" } },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */

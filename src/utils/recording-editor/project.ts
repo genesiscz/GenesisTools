@@ -352,11 +352,21 @@ export const TEXT_STYLES = ["plate", "plain"] as const;
  * A line of text over the picture for a time (a title, a step's name, a note), in the CANVAS: it stays where it is
  * through a zoom. `x`/`y` are its centre, 0...1 of the canvas from the top left; it fades in and out over 0.2 s.
  */
+// R5 10 multi-line texts
+/** A text's length limit; "\n" starts a new line, and a long line wraps at the block's width. */
+export const TEXT_MAX_CHARS = 500;
+export const TEXT_ALIGNS = ["left", "center", "right"] as const;
+/** The box a text wraps in: its width as a share of the canvas's width, and how its lines align. */
+export const textBlockSchema = z.object({
+    width: z.number().min(0.15).max(0.95).optional(),
+    align: z.enum(TEXT_ALIGNS).optional(),
+});
+
 export const textNoteSchema = z.object({
     id: z.string(),
     startUs: z.number().int().nonnegative(),
     endUs: z.number().int().positive(),
-    text: z.string().min(1).max(200),
+    text: z.string().min(1).max(TEXT_MAX_CHARS),
     x: z.number().min(0).max(1).default(0.5),
     y: z.number().min(0).max(1).default(0.12),
     /** The text height, as a fraction of the canvas's short side. */
@@ -368,6 +378,9 @@ export const textNoteSchema = z.object({
     // R4 6 animated texts
     /** How it comes in (overlays.ts); absent is the 0.2 s fade. */
     animate: textAnimateSchema.optional(),
+    // R5 10 multi-line texts
+    /** Where its lines wrap (width, 0.8 of the canvas) and how they align ("center"); absent is both defaults. */
+    block: textBlockSchema.optional(),
 });
 export type EditTextNote = z.infer<typeof textNoteSchema>;
 
@@ -1201,7 +1214,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             op: z.literal("text"),
             from: sourceTimeSchema,
             to: sourceTimeSchema,
-            text: z.string().trim().min(1).max(200),
+            /** "\n" starts a new line; a long line wraps at block.width. */
+            text: z.string().trim().min(1).max(TEXT_MAX_CHARS),
             /** The centre, 0...1 of the canvas from the top left; 0.5, 0.12 (top middle) by default. */
             x: z.number().min(0).max(1).optional(),
             y: z.number().min(0).max(1).optional(),
@@ -1215,6 +1229,9 @@ export const editOpSchema = z.discriminatedUnion("op", [
                 .object({ kind: z.enum(TEXT_ANIMATIONS), ms: z.number().int().min(100).max(5000).optional() })
                 .strict()
                 .optional(),
+            // R5 10 multi-line texts
+            /** Where its lines wrap (width 0.15 to 0.95 of the canvas, 0.8) and how they align ("center"). */
+            block: textBlockSchema.strict().optional(),
         })
         .strict(),
     z.object({ op: z.literal("untext"), id: z.string() }).strict(),
@@ -1549,7 +1566,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .object({
             op: z.literal("setText"),
             id: z.string(),
-            text: z.string().max(200).optional(),
+            // R5 10: the length is checked when it is set, with a message, instead of cut without a word.
+            text: z.string().optional(),
             x: z.number().optional(),
             y: z.number().optional(),
             size: z.number().optional(),
@@ -1559,6 +1577,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
                 .object({ kind: z.enum(TEXT_ANIMATIONS), ms: z.number().int().min(100).max(5000).optional() })
                 .strict()
                 .optional(),
+            // R5 10 multi-line texts: merged into the text's block; {} keeps it.
+            block: textBlockSchema.strict().optional(),
         })
         .strict(),
     /** Changes a shape that exists: its kind, its two points (held inside the picture), colour, width, appearance. */
@@ -2217,6 +2237,8 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 ...(op.style === undefined ? {} : { style: op.style }),
                 // R4 6 animated texts
                 ...(textAnimateOf(op.animate) ? { animate: textAnimateOf(op.animate) } : {}),
+                // R5 10 multi-line texts
+                ...(op.block && Object.keys(op.block).length > 0 ? { block: op.block } : {}),
             });
             return { ...project, texts: [...(project.texts ?? []), note] };
         }
@@ -2704,6 +2726,9 @@ export function describeProject(project: EditProject, path: string) {
             style: note.style,
             // R4 6 animated texts
             ...(note.animate ? { animate: note.animate } : {}),
+            // R5 10 multi-line texts: the lines it was written with (a long one also wraps at the block's width).
+            lines: note.text.split("\n").length,
+            ...(note.block ? { block: note.block } : {}),
         })),
         // R4 6 animated captions
         captionsStyle: project.captionsStyle ?? null,

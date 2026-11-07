@@ -394,6 +394,20 @@ struct EditProject: Codable, Equatable {
         var lane: String?
         // R4 6 animated texts
         var animate: TextAnimate?
+        // R5 10 multi-line texts
+        /// Where its lines wrap and how they align; nil is 0.8 of the canvas, centred. "\n" in `text` starts a line.
+        var block: TextBlock?
+    }
+
+    // R5 10 multi-line texts
+    enum TextAlign: String, Codable, CaseIterable {
+        case left, center, right
+    }
+
+    struct TextBlock: Codable, Equatable {
+        /// The wrap width as a share of the canvas's width (0.15 to 0.95); nil is 0.8.
+        var width: Double?
+        var align: TextAlign?
     }
 
     enum ShapeKind: String, Codable, CaseIterable {

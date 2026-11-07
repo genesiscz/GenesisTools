@@ -116,6 +116,8 @@ enum EditOpDiff {
         if a.style != b.style { op.style = b.style }
         // R4 6 animated texts: no animation is the fade.
         if a.animate != b.animate { op.animate = EditOp.Animate(kind: b.animate?.kind ?? .fade, ms: b.animate?.ms) }
+        // R5 10 multi-line texts: both fields, so a block taken away goes back to the defaults.
+        if a.block != b.block { op.block = EditProject.TextBlock(width: b.block?.width ?? 0.8, align: b.block?.align ?? .center) }
         let set: [EditOp] = op == EditOp.SetText(id: b.id) ? [] : [.setText(op)]
         return set + retime(b.id, from: (a.startUs, a.endUs), to: (b.startUs, b.endUs))
     }

@@ -69,8 +69,8 @@ final class TextPlates: @unchecked Sendable {
     /// `plain`: no plate, the text with a soft shadow, for a title over a busy picture. `highlight` colours the first
     /// `characters` characters (the karaoke caption's words said so far).
     func plate(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight = .semibold, plain: Bool = false,
-               highlight: (characters: Int, color: NSColor)? = nil) -> CIImage? {
-        let key = "\(text)|\(Int(fontSize))|\(Int(maxWidth))|\(weight.rawValue)|\(plain)|\(highlight.map { "\($0.characters)\($0.color)" } ?? "")"
+               highlight: (characters: Int, color: NSColor)? = nil, alignment: NSTextAlignment = .center) -> CIImage? {
+        let key = "\(text)|\(Int(fontSize))|\(Int(maxWidth))|\(weight.rawValue)|\(plain)|\(highlight.map { "\($0.characters)\($0.color)" } ?? "")|\(alignment.rawValue)"
         lock.lock()
         if let cached = images[key] {
             lock.unlock()
@@ -78,7 +78,7 @@ final class TextPlates: @unchecked Sendable {
         }
         lock.unlock()
         guard let image = Self.render(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight, plain: plain,
-                                      highlight: highlight) else { return nil }
+                                      highlight: highlight, alignment: alignment) else { return nil }
         lock.lock()
         images[key] = image
         lock.unlock()
@@ -86,9 +86,10 @@ final class TextPlates: @unchecked Sendable {
     }
 
     private static func render(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight, plain: Bool,
-                               highlight: (characters: Int, color: NSColor)?) -> CIImage? {
+                               highlight: (characters: Int, color: NSColor)?, alignment: NSTextAlignment) -> CIImage? {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
+        // R5 10 multi-line texts: "\n" starts a line, a long line wraps at maxWidth, and the lines align as asked.
+        paragraph.alignment = alignment
         let attributed = NSMutableAttributedString(string: text, attributes: [
             .font: NSFont.systemFont(ofSize: fontSize, weight: weight),
             .foregroundColor: NSColor.white,
@@ -133,13 +134,16 @@ extension Looks {
         let fontSize = max(8, (note.size * unit).rounded())
         // R4 6 animated texts
         let motion = TextMotion.at(sinceUs: sinceUs, note: note)
-        guard let full = plates.plate(note.text, fontSize: fontSize, maxWidth: size.width * 0.8, weight: .semibold,
-                                      plain: note.style == .plain) else { return image }
+        // R5 10 multi-line texts: the block's wrap width and line alignment.
+        let wrap = size.width * CGFloat(min(0.95, max(0.15, note.block?.width ?? 0.8)))
+        let alignment = textAlignment(note.block?.align)
+        guard let full = plates.plate(note.text, fontSize: fontSize, maxWidth: wrap, weight: .semibold,
+                                      plain: note.style == .plain, alignment: alignment) else { return image }
         var plate = full
         if motion.characters < note.text.count {
             guard motion.characters > 0 else { return image }
-            guard let typed = plates.plate(String(note.text.prefix(motion.characters)), fontSize: fontSize, maxWidth: size.width * 0.8,
-                                           weight: .semibold, plain: note.style == .plain) else { return image }
+            guard let typed = plates.plate(String(note.text.prefix(motion.characters)), fontSize: fontSize, maxWidth: wrap,
+                                           weight: .semibold, plain: note.style == .plain, alignment: alignment) else { return image }
             plate = typed
         }
         let shown = opacity * motion.opacity
@@ -153,6 +157,15 @@ extension Looks {
         let y = min(max(0, (1 - note.y) * size.height - height / 2), max(0, size.height - height)) - motion.drop * height
         let top = y + (height - plate.extent.height)
         return plate.transformed(by: CGAffineTransform(translationX: x.rounded(), y: top.rounded())).composited(over: image)
+    }
+
+    // R5 10 multi-line texts
+    static func textAlignment(_ align: EditProject.TextAlign?) -> NSTextAlignment {
+        switch align ?? .center {
+        case .left: .left
+        case .center: .center
+        case .right: .right
+        }
     }
 
     /// The caption plate centred near the bottom (or the top) of the output, sized from its short side. Returns the

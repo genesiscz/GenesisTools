@@ -52,6 +52,8 @@ import {
     SPOTLIGHT_CUTOUTS,
     shortcutsOf,
     sourceTimeOf,
+    TEXT_ALIGNS,
+    TEXT_MAX_CHARS,
     TEXT_STYLES,
     type TranscriptLine,
     transcriptCachePath,
@@ -277,7 +279,7 @@ const movieMethods = [
             .object({
                 from: sourceTimeSchema,
                 to: sourceTimeSchema,
-                text: z.string().trim().min(1).max(200),
+                text: z.string().trim().min(1).max(TEXT_MAX_CHARS),
                 x: z.number().min(0).max(1).optional(),
                 y: z.number().min(0).max(1).optional(),
                 size: z.number().min(0.02).max(0.15).optional(),
@@ -288,9 +290,17 @@ const movieMethods = [
                     .object({ kind: z.enum(TEXT_ANIMATIONS), ms: z.number().int().min(100).max(5000).optional() })
                     .strict()
                     .optional(),
+                // R5 10 multi-line texts
+                block: z
+                    .object({
+                        width: z.number().min(0.15).max(0.95).optional(),
+                        align: z.enum(TEXT_ALIGNS).optional(),
+                    })
+                    .strict()
+                    .optional(),
             })
             .strict(),
-        'animate { kind: "typewriter" | "slideUp" | "fade", ms (600) } is how it comes in (a fade by default). Puts a line of text over the picture from `from` to `to` (source seconds or "m:ss"): a title or a step\'s name. x, y is its centre as 0...1 of the CANVAS from the top left (0.5, 0.12, top middle, by default), so it stays put through a zoom; size is the text height as a fraction of the short side (0.055); style "plate" (white on a dark plate, default) | "plain" (white with a shadow). It fades in and out. The result lists texts with their ids.'
+        'animate { kind: "typewriter" | "slideUp" | "fade", ms (600) } is how it comes in (a fade by default). Puts a line of text over the picture from `from` to `to` (source seconds or "m:ss"): a title or a step\'s name. x, y is its centre as 0...1 of the CANVAS from the top left (0.5, 0.12, top middle, by default), so it stays put through a zoom; size is the text height as a fraction of the short side (0.055); style "plate" (white on a dark plate, default) | "plain" (white with a shadow). It fades in and out. The result lists texts with their ids. Several lines: "\\n" starts a new line (text: "Step 1\\nOpen the inbox"), and a line longer than the block wraps; the whole text is drawn, up to 500 characters (a longer one is refused, never cut). block { width: 0.15–0.95 of the canvas width (0.8), align: "left" | "center" | "right" } sets where the lines wrap and how they line up, e.g. block: { width: 0.35, align: "left" } for a callout beside a phone (frame({ preset: "phone-left" }), x 0.62). info().texts[].lines counts the lines it was written with.'
     ),
     edit("untext", z.object({ id: z.string() }), "Removes a text by its id.", ["id"]),
     edit(

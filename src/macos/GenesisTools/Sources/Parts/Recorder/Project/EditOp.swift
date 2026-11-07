@@ -358,6 +358,8 @@ extension EditOp {
         var lane: String?
         // R4 6 animated texts
         var animate: Animate?
+        // R5 10 multi-line texts
+        var block: EditProject.TextBlock?
         var op: EditOp { .text(self) }
     }
 
@@ -730,6 +732,8 @@ extension EditOp {
         var style: EditProject.TextStyle?
         // R4 6 animated texts
         var animate: Animate?
+        // R5 10 multi-line texts: merged into the text's block.
+        var block: EditProject.TextBlock?
         var op: EditOp { .setText(self) }
     }
 
