@@ -771,6 +771,11 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(EditRenderer.exportFps(nominal: 29.97), 30)
         XCTAssertEqual(EditRenderer.exportFps(nominal: 23.976), 24)
         XCTAssertEqual(EditRenderer.exportFps(nominal: 0), 30)
+        // A meeting's frames proxy (185 frames in 37 minutes) and a mostly still recording export at 30, never at 0.
+        XCTAssertEqual(EditRenderer.exportFps(nominal: 0.083), 30)
+        XCTAssertEqual(EditRenderer.exportFps(nominal: 0.4), 30)
+        XCTAssertEqual(EditRenderer.exportFps(nominal: 8), 30)
+        XCTAssertEqual(EditRenderer.exportFps(nominal: 25), 25)
     }
 
     func testH264SizeFitsLevelLimitsAtTheExportRate() {

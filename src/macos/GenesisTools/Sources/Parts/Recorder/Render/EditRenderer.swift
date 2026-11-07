@@ -447,11 +447,13 @@ struct EditRenderer {
     enum RenderError: LocalizedError {
         case noVideoTrack(String)
         case emptyEdit
+        case badComposition(String)
 
         var errorDescription: String? {
             switch self {
             case let .noVideoTrack(path): "\(path) has no video track"
             case .emptyEdit: "the edit keeps nothing of the movie"
+            case let .badComposition(detail): "the movie's picture settings are not valid (\(detail))"
             }
         }
     }
@@ -494,9 +496,13 @@ struct EditRenderer {
     /// The output's constant frame rate. A screen recording writes frames only while something moves, so its average
     /// (nominal) rate sits below the rate of its motion (45 for a 60 fps recording); above film rates it exports at
     /// 60. A film rate (24, 25, 30) is kept. `minFrameDuration` is no help: it read 1/15 on such a movie.
+    /// Below film rates it exports at 30: a mostly still recording (8 fps) and a meeting's frames proxy (185 frames in
+    /// 37 minutes, 0.08 fps) still animate their zooms and captions smoothly, and 0.08 rounded to 0 made a frame
+    /// duration of 1/0 that AVPlayerItem refused with an Objective-C exception, which crashed the editor (2026-11-07).
     static func exportFps(nominal: Double) -> Double {
-        guard nominal > 0 else { return 30 }
-        return nominal > 31 ? 60 : nominal.rounded()
+        if nominal > 31 { return 60 }
+        if nominal >= 23.5 { return nominal.rounded() }
+        return 30
     }
 
     static func render(project: EditProject, asset: AVURLAsset, zoom: ZoomState, maxHeight: Int) async throws -> Rendered {
@@ -606,6 +612,12 @@ struct EditRenderer {
         }
         videoComposition.renderSize = size
         videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps.rounded()))
+        // AVPlayerItem and the export session raise an Objective-C exception for an invalid frame duration or size,
+        // which Swift cannot catch and which leaves the main thread's executor state broken: refuse it here instead.
+        guard videoComposition.frameDuration.isValid, videoComposition.frameDuration > .zero,
+              size.width >= 2, size.height >= 2 else {
+            throw RenderError.badComposition("frame duration \(videoComposition.frameDuration.seconds) s, size \(Int(size.width))×\(Int(size.height))")
+        }
         // The CI-filter initializer times frames by the source track; a screen recording has a variable rate, and a
         // sped-up clip packs its frames closer (2× gave 74 fps). Without a timing track `frameDuration` decides.
         videoComposition.sourceTrackIDForFrameTiming = kCMPersistentTrackID_Invalid
