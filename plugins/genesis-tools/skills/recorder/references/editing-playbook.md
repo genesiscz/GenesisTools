@@ -1,7 +1,7 @@
 # Editing playbook: from a raw recording to a finished cut
 
-Written 2026-11-07 from Martin's review of an agent-made demo edit (a scrolling iOS simulator movie), and updated the
-same day from what three editors hit in editing loops round 1 and round 2. Every rule here fixes a mistake an edit made. Read it
+Written 2026-11-07 from Martin's review of an agent-made demo edit (a scrolling iOS simulator movie), and updated
+from what three editors hit in editing loops rounds 1 to 4. Every rule here fixes a mistake an edit made. Read it
 before you edit any recording that you did not just record with demo mode.
 
 ## 0. How to run an edit
@@ -14,6 +14,17 @@ before you edit any recording that you did not just record with demo mode.
   `tools node-repl run --toolset movies --file edit.js > edit.log 2>&1`, or start it as a background task of your
   harness (Claude Code: Bash `run_in_background`) and read `edit.log` as it grows. A trailing `&` in a shell call is
   no background task: the run dies with that shell.
+- A background run of your harness has its own time limit, and the run has another: give both. A Bash
+  `run_in_background` call needs `timeout` above the run's `--timeout` (an edit with `hideText` and `verifyHidden` on
+  a long movie takes 30 to 60 minutes), or the harness stops it half way. For a session of many long calls, use the
+  MCP server (`tools node-repl mcp --toolset movies`), where each call has its own budget and the bindings stay.
+- 🛑 Never `pkill` or `killall` a shared process to stop your run: `bun`, `ffmpeg`, `node-repl` and the recorder
+  service (`tools recorder serve`) also run other editors' edits and the user's own work. Stop your own run by the
+  task id your harness gave it, or by the one pid you started.
+- Every slow read of a movie (its screen text, the dense reads around a moving text, the motion, the change steps, the
+  scene times) is kept once per movie CONTENT in `~/.genesis-tools/recorder/analysis/`, so a copy made with
+  `duplicate()` or `cp -c` reads nothing again, and a second editor that asks for the same read while the first one
+  reads waits for it and takes its answer. Two editors of one demo therefore cost one OCR, not two.
 - `help("movies")` lists every method in one line each. `describe("movies.Movie.<name>")` prints one in full: its
   types, its whole doc, its parameters. Read the describe of a method before you use it the first time.
 - `describe()`, `help()` and `search()` RETURN their text. A bare call on its own line prints it (and so does the last
@@ -50,25 +61,25 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
 | `m.sheet({ source: true, effects: true, ... })` | Source seconds drawn THROUGH the edit (blurs, zooms, texts, frame); a cell whose time is cut gets a red border and "cut" (`cells[i].cut`). The tool for boundary checks (section 9) | `await m.sheet({ source: true, effects: true, at: [41.9, 42, 43.5, 43.6] })` |
 | `m.still({ at, source, full })` | One frame; `full: true` is the export's size, for small text | `await m.still({ at: 49.2, source: true, full: true })` |
 | `m.itemsAt(t)` | What plays at an OUTPUT second, in words | `await m.itemsAt(12.5)` |
-| `m.events({ kinds, taps })` | Scene changes, scrolls, still stretches, clicks, at source seconds | `await m.events({ kinds: ["scene", "scroll"] })` |
+| `m.events({ kinds, taps })` | Scene changes, scrolls, still stretches, clicks, at source seconds. A scene is where the picture changes, at its first frame (also on a simulator recording with uneven frame times): a tap whose screen loads for 2 s has its scene 2 s after the tap. A simulator movie has no cursor track, so pass the taps you know (`taps: [{ at }]`) to place an effect on the tap itself | `await m.events({ kinds: ["scene", "scroll"] })` |
 | `m.snap({ event, index, lead })` | One event's source time, to place an effect on | `(await m.snap({ event: "scene", index: 3, lead: -0.3 })).at` |
-| `m.findText({ text \| pattern \| texts \| patterns, unit, from, to })` | Where texts show, tracked through scrolls; several texts and patterns in ONE scan (each scan costs 10 to 60 s, so pass them together); `from`/`to` (source seconds) limit the scan as in `hideText`. A pattern matches each OCR line on its own, case-insensitive; `^` and `$` anchor to that line | `await m.findText({ texts: ["Alice Example"], patterns: ["\\d{4} \\d{4}"] })` |
+| `m.findText({ text \| pattern \| texts \| patterns, unit, from, to })` | Where texts show, tracked through scrolls; several texts and patterns in ONE scan (each scan costs 10 to 60 s, so pass them together); `from`/`to` (source seconds) limit the scan as in `hideText`. A pattern matches each OCR line on its own, case-insensitive; `^` and `$` anchor to that line. Patterns know every script (the `u` flag): `\w` and `\b` take Czech and other letters, `\p{L}` is any letter, `\p{Lu}` a capital. A text or pattern that matched no screen text is named in `warnings`: read them, a silent miss hides nothing | `await m.findText({ texts: ["Alice Example"], patterns: ["\\d{4} \\d{4}"] })` |
 | `m.privateData()` | Emails, tokens, phone numbers, IBANs, card numbers on screen | `await m.privateData({ names: ["Alice Example"] })` |
-| `m.hideText({ text \| pattern \| texts \| patterns, unit, style, exclude, excludeFixed })` | Hides each place a text shows, following it frame by frame through scrolls and slide-ins by the measured motion. `unit: "line"` hides the whole OCR line (the number beside a hidden name too). Read `hiding.uncertain` in the answer: stretches where the text could not be followed, covered by the band it may cross | `await m.hideText({ texts: ["Alice Example", "Main Street 1"], unit: "line", excludeFixed: true })` |
+| `m.hideText({ text \| pattern \| texts \| patterns, unit, style, exclude, excludeFixed })` | Hides each place a text shows, following it frame by frame through scrolls and slide-ins by the measured motion. `unit: "line"` hides the whole OCR line (the number beside a hidden name too). Read `hiding.uncertain` in the answer: stretches where the text could not be followed, covered by the band it may cross. A sliding or scrolling text is read 10 times a second, and its part keeps the read line's whole width with half a line of margin. `excludeFixed` leaves the fixed areas visible: never use it when a fixed area holds private text (section 5) | `await m.hideText({ texts: ["Alice Example", "Main Street 1"], unit: "line" })` |
 | `m.unhide({ text \| pattern \| ids \| all })` | Takes back what `hideText`/`hidePrivate` hid, and forgets it, so the same hide can run again; hand-drawn boxes and spotlights stay. `all: true` with nothing hidden changes nothing and says "nothing hidden". `info().redactions[i].kind` is `hidden` or `spotlight`, `hide.request` names the hide that made a part | `await m.unhide({ text: "Alice Example" })` |
 | `m.hidePrivate({ kinds, ids })` | Hides what `privateData()` lists | `await m.hidePrivate({ kinds: ["email", "phone"] })` |
-| `m.verifyHidden({ text \| pattern \| texts \| patterns \| private, everySeconds, aroundSeconds })` | Exports, reads the OUTPUT and lists every leak; all texts in one call. Besides the even samples it reads EVERY frame within `aroundSeconds` (0.2) of each cut, transition, zoom and hidden-part edge and scene change, where leaks hide. A head or tail of a value at a screen edge counts ("part at an edge"). Each leak has `source`/`output` seconds, `box` (export frame fractions) and `sourceBox` (source fractions, the space `redact` takes); `fixOps` are ready `redact` ops that cover every leak | `const v = await m.verifyHidden({ private: true, texts: ["Alice Example"] }); if (!v.ok) await m.apply(v.fixOps)` |
+| `m.verifyHidden({ text \| pattern \| texts \| patterns \| private, everySeconds, aroundSeconds })` | Exports, reads the OUTPUT and lists every leak; all texts in one call. Besides the even samples it reads EVERY frame within `aroundSeconds` (0.2) of each cut, transition, zoom and hidden-part edge and scene change, where leaks hide. A head or tail of a value at a screen edge counts ("part at an edge"), and so does a piece of a hidden value anywhere in a line: 4 or more of its digits in a row, or a word of 4 or more of its letters that starts or ends it ("part of a hidden value"), as a box over only the left part of a line leaves. Each leak has `source`/`output` seconds, `box` (export frame fractions) and `sourceBox` (source fractions, the space `redact` takes); `fixOps` are ready `redact` ops that cover every leak | `const v = await m.verifyHidden({ private: true, texts: ["Alice Example"] }); if (!v.ok) await m.apply(v.fixOps)` |
 | `m.waits()` / `m.speedUpWaits({ ids })` | Typing and waiting stretches, sped up 4x to 8x with a badge | `await m.speedUpWaits({})` |
 | `m.cut(from, to)` / `m.speed(from, to, x)` | Cut or speed a source range; a factor from 0.25 to 16, below 1 is slow motion | `await m.cut(5.6, 9.8)`; `await m.speed(61, 62.5, 0.5)` |
 | `m.zoom({ from, to, scale, focus })` | Zoom inside the picture. A zoom crops the picture's edges: 1.2x on a phone already cuts the side labels. `check()` names a zoom whose view cuts screen text (a `zoom-cuts-text` issue with a setZoom that fits, once `findText` or `hideText` has read the screen) | `await m.zoom({ from: 49, to: 54, scale: 1.4, focus: { x: 0.5, y: 0.3 } })` |
-| `m.spotlight({ from, to, rect })` / `m.lens(...)` | Point at a part; a lens keeps the context | `await m.lens({ from: 61, to: 64, at: { x: 0.3, y: 0.9 } })` |
+| `m.spotlight({ from, to, rect, dim, dimAround })` / `m.lens(...)` | Point at a part; a lens keeps the context. The rest dims by `dim` (0.5 by default, so it stays readable; 0.7 is strong). `dimAround` (0 to 0.5 of the picture's short side) lets the dim rise softly from the lit shape, so the frame around it stays readable: 0.1 is a good start | `await m.spotlight({ from: 61, to: 64, rect, dimAround: 0.1 })`; `await m.lens({ from: 61, to: 64, at: { x: 0.3, y: 0.9 } })` |
 | `m.text({ from, to, text, x, y, animate })` | A title or a callout on the canvas | `await m.text({ from: 10, to: 16, text: "1. Sign in", x: 0.17, y: 0.12 })` |
 | `m.frame({ aspect, background, padding })` | The canvas around the movie | `await m.frame({ aspect: "9:16", padding: 0.04 })` |
 | `m.transition({ kind, ms })` | Crossfade, zoom or blur at the cuts | `await m.transition({ kind: "crossfade", ms: 300 })` |
 | `m.marker(at, label)` / `m.progress({ chapterPlace })` | Chapters and the progress bar; each chapter's name shows in the frame's free area by default (`chapterPlace: "auto"`), never over the movie; `"topLeft"` and the other corners pin it | `await m.marker(40.4, "Dashboard")`; `await m.progress({ chapterPlace: "auto" })` |
 | `m.introCard(...)` / `m.endCard(...)` | Cards the export plays before and after | `await m.introCard({ title: "Customer app", seconds: 3 })` |
 | `m.say({ at, text })` / `m.voiceover({ at, file })` | A voice line placed at a source second | `await m.say({ at: 10.2, text: "Sign in takes one tap." })` |
-| `m.music({ file })` / `m.ducking({ db })` | Music, quieter under speech | `await m.ducking({ db: 14 })` |
+| `m.music({ file, volume, duck })` / `m.ducking({ db })` | Music, quieter under speech. Two different scales: `music({ duck })` is a share 0 to 1 (0.6 drops it TO 40 %), `ducking({ db })` is decibels quieter (12). `ducking()` replaces `duck` once set | `await m.music({ file, volume: 0.25 })`; `await m.ducking({ db: 14 })` |
 | `m.check()` / `m.fix()` | What to look at before export, and its fixes. Read `summary` first: one line per kind with its count ("check ×12 hiding-starts-after-cut: …"); `groups` has the items and times, `issues` every one. Severity `fix` breaks the export, `check` needs a look, `note` is a hole the export closes by itself | `(await m.check()).summary` |
 | `m.export({ out })` | Renders the movie | `await m.export({ out: "/tmp/cc/<project>/<session>/cut.mp4" })` |
 | `m.undo()` / `m.reset()` | Takes back the last change; starts over (music, voiceovers and cards go too) | `await m.undo()` |
@@ -91,10 +102,11 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
    `speedUpWaits()` what must stay but is slow. Read `changed` and `warnings` after each call: a time past the end is
    clamped, and `check()` keeps naming it.
 4. Hide the private data by its text, never by a box of the screen: `privateData()` and one `findText({ texts,
-   patterns })` list it, `hidePrivate()` and one `hideText({ texts, patterns, unit: "line", excludeFixed: true })`
+   patterns })` list it, `hidePrivate()` and one `hideText({ texts, patterns, unit: "line" })`
    hide it and follow it through every scroll and slide-in. Keep the scrolls: they show the app, and the hiding
    follows them. Read `hiding.uncertain`; each stretch there is covered by a wider band, so look at it on an effects
-   sheet. Use a fixed `redact()` box only for a still stretch, measured on a `still({ source: true, full: true })`.
+   sheet. Use a fixed `redact()` box only for a still stretch, measured on a `still({ source: true, full: true })`
+   (section 5 says how).
 5. Frame it: a phone (9:16) uses `frame({ aspect: "9:16" })` or "4:5" with padding, and titles go in the padding,
    never over the app's text or the status bar (section 6).
 6. Place every effect on an event from step 2 (section 4) and add the story: an intro card, markers, short callouts.
@@ -127,8 +139,18 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
   the OCR cannot read), never join two different texts, and start and end with the text. Where they cannot follow,
   they hide the band the text may cross and name that stretch in `hiding.uncertain` and in `check()`.
 - `unit: "line"` hides a whole line: use it for a name with a contract number or an address beside it.
-- Leave out what does not move with the content (a toast, a tab bar, the status bar) with `excludeFixed: true` or
-  `exclude`.
+- Leave out what does not move with the content and holds nothing private (a toast, a tab bar, the status bar) with
+  `exclude` or `excludeFixed: true`.
+- 🛑 A fixed header that holds private text (the user's name, a device or contract number) is NOT such an area: do not
+  use `excludeFixed` there, and never `exclude` it. An excluded area shows the picture through the part that excludes
+  it; only another hidden part that covers it without excluding it keeps it hidden. When in doubt, leave
+  `excludeFixed` off: a blurred tab bar costs less than a leaked name.
+- A hand box for a still stretch: take `still({ at, source: true, full: true })`, measure the text's rectangle in its
+  pixels, and divide by the still's width and height: that is the source fraction `redact({ rect })` takes. Never
+  measure on a `sheet()` cell: a cell is a scaled picture inside a grid with labels, and its pixels are not the source
+  frame's. Pad the box by half a line height on each side.
+- Hidden parts may overlap: overlapping blurs stay blurred, and an area one part excludes stays hidden where another
+  part covers it. You do not need to merge boxes by hand.
 - A box must never stay on after its text left: it then blurs the next screen's harmless content.
 - Verify the OUTPUT with `verifyHidden()` after the export. A leak found after delivery is a failed edit.
 - When `verifyHidden()` still names leaks in a scroll or a slide-in, do not cut the scroll and do not pixelate the
@@ -160,7 +182,8 @@ spotlight, zoom or box an error state unless the video is about that error; cut 
 
 - Voiceover lines are clips placed at source times (`voiceover`, `say`), so they move with cuts and speed changes.
   Never premix voice and music outside the editor when clips exist.
-- Music under speech ducks (`ducking({ db: 12 })`). Generate or pick music the user may use; never a commercial song.
+- Music under speech ducks (`ducking({ db: 12 })`, in decibels; the older `music({ duck })` is a share 0 to 1, so
+  `duck: 12` is refused and `db: 0.6` barely ducks). Generate or pick music the user may use; never a commercial song.
 - Write each line for the moment it plays: one idea, at most about 2.5 words per second of the stretch it covers.
 
 ## 9. Check every boundary before you export
