@@ -6,7 +6,7 @@ import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { type FractionBox, redactionBoxAt } from "@genesiscz/utils/recording-editor/private-data";
 import { applyOp, editOpSchema, wholeProject } from "@genesiscz/utils/recording-editor/project";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
-import { scanOf, textHitsOf } from "./fx-analysis";
+import { exportFrameCache, exportRangeOf, ocrVideo, scanOf, textHitsOf } from "./fx-analysis";
 
 /**
  * Round 6 item 1: hidden text must stay hidden while the screen scrolls or slides. The movie is generated from two
@@ -206,4 +206,50 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         expect(Math.min(...read)).toBeGreaterThanOrEqual(3_000_000);
         expect(Math.max(...read)).toBeLessThan(6_000_000);
     }, 120_000);
+
+    test("verifyHidden keeps each export frame it read by the file's content, and its range is in source time (round 8)", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-verify-cache-"));
+        const movie = join(folder, "export.mp4");
+        await runVideoCommand({
+            command: [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=s=320x180:r=10:d=2",
+                "-pix_fmt",
+                "yuv420p",
+                movie,
+            ],
+        });
+        // The first run reads the frames and keeps them (here: lines given in place of Vision's).
+        const lines = [{ text: "Orla Fictive", x: 0.1, y: 0.1, width: 0.3, height: 0.05 }];
+        const first = exportFrameCache(movie);
+        for (const atUs of [0, 500_000, 1_000_000, 1_500_000]) {
+            first.set(atUs, lines);
+        }
+        first.flush();
+        // A second run over the same file (a copy under another name too) finds them all, so Vision reads nothing.
+        const copy = join(folder, "copy.mp4");
+        await Bun.write(copy, Bun.file(movie));
+        const frames = await ocrVideo({ video: copy, toUs: 2_000_000, fps: 2, cache: exportFrameCache(copy) });
+        expect(frames.map((frame) => frame.atUs)).toEqual([0, 500_000, 1_000_000, 1_500_000]);
+        expect(frames.every((frame) => frame.lines[0]?.text === "Orla Fictive")).toBe(true);
+
+        // from/to in source seconds, a cut moment taken as the next or last kept one; the intro card leads.
+        const project = applyOp(
+            wholeProject({ video: movie, durationUs: 10_000_000, width: 320, height: 180 }),
+            editOpSchema.parse({ op: "cut", from: 2, to: 4 })
+        );
+        expect(exportRangeOf(project, { from: 1, to: 6 })).toEqual({ fromUs: 1_000_000, toUs: 4_000_000 });
+        expect(exportRangeOf(project, { from: 3, to: 9 })).toEqual({ fromUs: 2_000_000, toUs: 7_000_000 });
+        expect(exportRangeOf(project, { from: 1, to: 2, timeBase: "output" })).toEqual({
+            fromUs: 1_000_000,
+            toUs: 2_000_000,
+        });
+        expect(exportRangeOf(project, {})).toBeUndefined();
+    }, 60_000);
 });

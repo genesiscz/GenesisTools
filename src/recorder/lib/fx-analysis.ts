@@ -1,5 +1,17 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+    closeSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    openSync,
+    readdirSync,
+    readFileSync,
+    readSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
@@ -66,6 +78,8 @@ import {
     waitStretches,
 } from "@genesiscz/utils/recording-editor/waits";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
@@ -194,6 +208,80 @@ export function screenTextEverySeconds(durationUs: number): number {
  * this Mac). A frame whose picture is the same file as the one before reuses its text, so a still stretch costs one
  * read. Each frame lasts until the next.
  */
+/** R8 5: the lines read of a movie's frames by frame time, kept between runs. */
+export interface FrameCache {
+    get(atUs: number): ScreenTextFrame["lines"] | undefined;
+    set(atUs: number, lines: ScreenTextFrame["lines"]): void;
+}
+
+const frameLinesSchema = z.record(z.string(), screenFramesSchema.element.shape.lines);
+
+/**
+ * R8 5: what identifies a file's content without reading all of it: its size and a hash of its first, middle and last
+ * 2 MB. An export written again with other bytes is another key; the same file under another name is the same one.
+ */
+export function contentKey(path: string): string {
+    const size = statSync(path).size;
+    const chunk = 2 * 1024 * 1024;
+    const hash = createHash("sha1").update(String(size));
+    const buffer = Buffer.alloc(chunk);
+    const fd = openSync(path, "r");
+
+    try {
+        for (const start of [0, Math.max(0, Math.floor(size / 2) - chunk / 2), Math.max(0, size - chunk)]) {
+            const read = readSync(fd, buffer, 0, chunk, start);
+            hash.update(buffer.subarray(0, read));
+        }
+    } finally {
+        closeSync(fd);
+    }
+
+    return hash.digest("hex").slice(0, 24);
+}
+
+/**
+ * R8 5: the OCR of an export's frames, kept in `recorder/verify-ocr/<content key>.json` by frame time, so verifyHidden
+ * over the same export reads nothing twice, and a run that fails late keeps what it read (written every 10 frames and
+ * at the end).
+ */
+export function exportFrameCache(movie: string): FrameCache & { flush(): void } {
+    const path = toolDataDir("recorder", "verify-ocr", `${contentKey(movie)}.json`);
+    let lines: Record<string, ScreenTextFrame["lines"]> = {};
+
+    if (existsSync(path)) {
+        const parsed = frameLinesSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
+        lines = parsed.success ? parsed.data : {};
+    }
+
+    let unsaved = 0;
+    const flush = () => {
+        if (unsaved === 0) {
+            return;
+        }
+
+        try {
+            mkdirSync(dirname(path), { recursive: true });
+            writeFileSync(path, SafeJSON.stringify(lines));
+            unsaved = 0;
+        } catch (error) {
+            log.warn({ error, path }, "verifyHidden: its frame reads could not be kept; the next run reads them again");
+        }
+    };
+    const key = (atUs: number) => String(Math.round(atUs / 1000));
+    return {
+        get: (atUs) => lines[key(atUs)],
+        set: (atUs, read) => {
+            lines[key(atUs)] = read;
+            unsaved++;
+
+            if (unsaved >= 10) {
+                flush();
+            }
+        },
+        flush,
+    };
+}
+
 export async function ocrVideo(options: {
     video: string;
     fromUs?: number;
@@ -201,6 +289,8 @@ export async function ocrVideo(options: {
     fps: number;
     /** Called after each frame is read (done of total). */
     onFrame?: (done: number, total: number) => void;
+    /** R8 5: lines read before, by frame time (a frame found there is not read again), and where each new read goes. */
+    cache?: FrameCache;
 }): Promise<ScreenTextFrame[]> {
     const fromUs = options.fromUs ?? 0;
     const stepUs = 1_000_000 / options.fps;
@@ -240,7 +330,12 @@ export async function ocrVideo(options: {
             const digest = createHash("sha1").update(readFileSync(path)).digest("hex");
             const atUs = Math.round(fromUs + Number(file.replace(".png", "")) * stepUs);
 
-            if (digest !== previousDigest) {
+            const known = options.cache?.get(atUs);
+
+            if (known) {
+                previousLines = known;
+                previousDigest = digest;
+            } else if (digest !== previousDigest) {
                 // R6 4: one Vision read at a time on this Mac, retried once with a longer deadline.
                 const read = await recognizeTextBoxesQueued(path, {
                     fastFallback: false,
@@ -254,6 +349,9 @@ export async function ocrVideo(options: {
                     height: line.height / read.height,
                 }));
                 previousDigest = digest;
+                options.cache?.set(atUs, previousLines);
+            } else {
+                options.cache?.set(atUs, previousLines);
             }
 
             frames.push({ atUs, untilUs: Math.min(options.toUs, Math.round(atUs + stepUs)), lines: previousLines });
@@ -820,6 +918,61 @@ export async function findText(
     );
 }
 
+/**
+ * R8 5: the export microseconds (the intro card included) that a verifyHidden `from`/`to` asks for: SOURCE seconds by
+ * default, a cut moment taken as the next kept one (from) or the last kept one before it (to); `timeBase: "output"`
+ * takes what plays. Undefined without from and to.
+ */
+export function exportRangeOf(
+    project: EditProject,
+    options: { from?: TimeValue; to?: TimeValue; timeBase?: "source" | "output" }
+): { fromUs: number; toUs: number } | undefined {
+    if (options.from === undefined && options.to === undefined) {
+        return undefined;
+    }
+
+    const leadUs = cardsLeadUs(project);
+    const endUs = outputDurationUs(project);
+    const outputOf = (time: TimeValue, edge: "from" | "to"): number => {
+        const us = timeToUs(time);
+
+        if (options.timeBase === "output") {
+            return Math.min(endUs, Math.max(0, us));
+        }
+
+        let start = 0;
+        let last = 0;
+
+        for (const clip of project.clips) {
+            const length = Math.round(Math.max(0, clip.toUs - clip.fromUs) / clip.speed);
+
+            if (us >= clip.fromUs && us <= clip.toUs) {
+                return start + Math.round((us - clip.fromUs) / clip.speed);
+            }
+
+            if (edge === "from" && clip.fromUs > us) {
+                return start;
+            }
+
+            if (clip.toUs < us) {
+                last = start + length;
+            }
+
+            start += length;
+        }
+
+        return edge === "from" ? endUs : last;
+    };
+    const fromUs = options.from === undefined ? 0 : outputOf(options.from, "from");
+    const toUs = options.to === undefined ? endUs : outputOf(options.to, "to");
+
+    if (toUs <= fromUs) {
+        throw new Error("verifyHidden: to is not after from in what the edit plays; nothing to check there");
+    }
+
+    return { fromUs: leadUs + fromUs, toUs: leadUs + toUs };
+}
+
 /** A moment of the export where the text is still readable. */
 export interface Leak {
     /** Seconds of the export file (an intro card included). */
@@ -859,6 +1012,10 @@ export async function verifyHidden(
         /** R7 4: every frame this close to a cut, a transition, a zoom's or a hidden part's edge or a scene change (0.2). */
         aroundSeconds?: number;
         onProgress?: (line: string) => void;
+        /** R8 5: check only this part of the edit, in SOURCE seconds (or output seconds with `timeBase: "output"`). */
+        from?: TimeValue;
+        to?: TimeValue;
+        timeBase?: "source" | "output";
     }
 ): Promise<{ ok: boolean; movie: string; frames: number; leaks: Leak[]; fixOps: EditOp[]; notes?: string[] }> {
     const asked = Boolean(options.text || options.pattern || options.texts?.length || options.patterns?.length);
@@ -889,10 +1046,15 @@ export async function verifyHidden(
 
     const info = await probeVideo({ input: movie });
     const durationUs = info.durationUs;
+    // R8 5: only the asked part of the export, and every frame read once per export (kept by its content).
+    const range = exportRangeOf(project, options) ?? { fromUs: 0, toUs: durationUs };
+    const cache = exportFrameCache(movie);
     let shown = -1;
     const even = await ocrVideo({
         video: movie,
-        toUs: durationUs,
+        fromUs: range.fromUs,
+        toUs: Math.min(durationUs, range.toUs),
+        cache,
         fps: 1 / (options.everySeconds ?? 0.25),
         onFrame: (done, total) => {
             const tenth = Math.floor((done / Math.max(1, total)) * 10);
@@ -908,15 +1070,21 @@ export async function verifyHidden(
     const windows = boundaryWindows(project, {
         aroundUs: Math.round((options.aroundSeconds ?? 0.2) * 1_000_000),
         sceneUs: await sceneChangesOf(project),
-    });
+    })
+        .map(([fromUs, toUs]): [number, number] => [Math.max(fromUs, range.fromUs), Math.min(toUs, range.toUs)])
+        .filter(([fromUs, toUs]) => toUs > fromUs);
     // Every frame: the export runs at 60 fps at most, and a repeated frame is read once (ocrVideo compares them).
     const exportFps = 60;
     const dense: ScreenTextFrame[] = [];
 
     for (const [index, [fromUs, toUs]] of windows.entries()) {
         progress(`verifyHidden: every frame around edge ${index + 1} of ${windows.length}`);
-        dense.push(...(await ocrVideo({ video: movie, fromUs, toUs: Math.min(durationUs, toUs), fps: exportFps })));
+        dense.push(
+            ...(await ocrVideo({ video: movie, fromUs, toUs: Math.min(durationUs, toUs), fps: exportFps, cache }))
+        );
     }
+
+    cache.flush();
 
     const frames = mergeFrames(even, dense);
     // R6 5: an export starts with the intro card; what plays after it is the output, and each output moment a source one.
