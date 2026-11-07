@@ -347,6 +347,31 @@ struct EditProject: Codable, Equatable {
         var fadeMs: Int?
         /// A pixelate block's side in source pixels (2 to 256); nil is 1.8 % of the picture's height, at least 8.
         var cell: Double?
+        // R6 1 moving text, R6 7 the request
+        /// A part hideText or hidePrivate made: its hit, how sure its place is and the request; nil on a hand-made part.
+        var hide: Hide?
+    }
+
+    /// R6 1, R6 7: where a hidden part came from (hideText or hidePrivate) and how sure its place is. The editor keeps
+    /// it as it is, so a save from the window does not drop it.
+    struct Hide: Codable, Equatable {
+        var by: String
+        var hit: String
+        /// The band a moving text may cross where it could not be followed, not the text's own place.
+        var uncertain: Bool?
+        var movingSeconds: Double?
+        var keysPerSecond: Double?
+        var request: Request?
+
+        struct Request: Codable, Equatable {
+            var text: String?
+            var pattern: String?
+            var texts: [String]?
+            var patterns: [String]?
+            var unit: String?
+            var kinds: [String]?
+            var names: [String]?
+        }
     }
 
     /// fx B (round 4): a rectangle as fractions of the picture from its top left.

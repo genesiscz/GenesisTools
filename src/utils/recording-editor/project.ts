@@ -289,6 +289,18 @@ export const redactionSchema = z.object({
             /** Seconds it showed while the picture moved, and its places a second then (read or followed). */
             movingSeconds: z.number().nonnegative().optional(),
             keysPerSecond: z.number().nonnegative().optional(),
+            // R6 7: the request that made it, so info() says why the part is there.
+            request: z
+                .object({
+                    text: z.string().optional(),
+                    pattern: z.string().optional(),
+                    texts: z.array(z.string()).optional(),
+                    patterns: z.array(z.string()).optional(),
+                    unit: z.enum(HIDE_UNITS).optional(),
+                    kinds: z.array(z.string()).optional(),
+                    names: z.array(z.string()).optional(),
+                })
+                .optional(),
         })
         .optional(),
 });
@@ -2761,6 +2773,9 @@ export function describeProject(project: EditProject, path: string) {
             // R5 5 redaction edges
             ...(redaction.style === "spotlight" ? { fadeMs: redaction.fadeMs ?? 200 } : {}),
             ...(redaction.cell !== undefined ? { cell: redaction.cell } : {}),
+            // R6 7: a hidden part or a spotlight, and the hide request that made it (hideText, hidePrivate).
+            kind: redaction.style === "spotlight" ? ("spotlight" as const) : ("hidden" as const),
+            ...(redaction.hide ? { hide: redaction.hide } : {}),
         })),
         /** null: the system cursor is in the picture, so there is nothing to change. */
         cursor: trackDrawsCursor(project.source.cursor) ? cursorSchema.parse(project.cursor ?? {}) : null,
@@ -2861,7 +2876,12 @@ function hidePrivate(
     const picked = pickById(hits, op.ids, "private hit").filter(
         (hit) => !op.kinds || (hit.kind !== "text" && op.kinds.includes(hit.kind))
     );
-    return hideHits(project, picked, { style: op.style, exclude: op.exclude, by: "hidePrivate" });
+    return hideHits(project, picked, {
+        style: op.style,
+        exclude: op.exclude,
+        by: "hidePrivate",
+        request: requestOf({ kinds: op.kinds, names: op.names }),
+    });
 }
 
 function hideText(
@@ -2883,7 +2903,25 @@ function hideText(
         );
     }
 
-    return hideHits(project, picked, { style: op.style, exclude: op.exclude, label: op.label, by: "hideText" });
+    return hideHits(project, picked, {
+        style: op.style,
+        exclude: op.exclude,
+        label: op.label,
+        by: "hideText",
+        request: requestOf({
+            text: op.text,
+            pattern: op.pattern,
+            texts: op.texts,
+            patterns: op.patterns,
+            unit: op.unit,
+        }),
+    });
+}
+
+/** A hide request as a part keeps it (R6 7): only the keys the op was given. */
+function requestOf(request: NonNullable<NonNullable<EditRedaction["hide"]>["request"]>) {
+    const kept = Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined));
+    return Object.keys(kept).length > 0 ? kept : undefined;
 }
 
 /**
@@ -2898,6 +2936,7 @@ function hideHits(
         exclude?: ReadonlyArray<z.infer<typeof boxSchema>>;
         label?: string;
         by: NonNullable<EditRedaction["hide"]>["by"];
+        request?: NonNullable<EditRedaction["hide"]>["request"];
     }
 ): EditProject {
     const applied = new Set(project.privacy?.applied ?? []);
@@ -2945,6 +2984,7 @@ function hideHits(
                 hide: {
                     by: options.by,
                     hit: hit.id,
+                    ...(options.request ? { request: options.request } : {}),
                     ...(moving
                         ? {
                               movingSeconds: seconds(moving.movingUs),
@@ -2960,7 +3000,14 @@ function hideHits(
         for (const stretch of hit.uncertain ?? []) {
             add(
                 { fromUs: stretch.fromUs, toUs: stretch.toUs, rect: stretch.box, label: `${label} (uncertain)` },
-                { hide: { by: options.by, hit: hit.id, uncertain: true } }
+                {
+                    hide: {
+                        by: options.by,
+                        hit: hit.id,
+                        uncertain: true,
+                        ...(options.request ? { request: options.request } : {}),
+                    },
+                }
             );
         }
 

@@ -527,6 +527,51 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
                 { op: "zoom", from: 1, to: 3, scale: 2, focus: { x: 0.2, y: 0.5 }, target: "canvas" },
             ]),
         },
+        // R6 1 and 7: a part that follows a scrolled text, and the band where it could not, with the request.
+        {
+            name: "moving text hidden, with an uncertain band",
+            project: editProjectSchema.parse({
+                ...items,
+                privacy: { applied: ["p5e6f7a8b"] },
+                redactions: [
+                    ...(items.redactions ?? []),
+                    {
+                        id: "r12",
+                        startUs: 1_000_000,
+                        endUs: 3_000_000,
+                        x: 0.3,
+                        y: 0.8,
+                        width: 0.2,
+                        height: 0.05,
+                        style: "blur",
+                        label: "Text (auto)",
+                        track: [
+                            { atUs: 1_000_000, x: 0.3, y: 0.8, width: 0.2, height: 0.05 },
+                            { atUs: 1_500_000, x: 0.3, y: 0.4, width: 0.2, height: 0.05 },
+                        ],
+                        hide: {
+                            by: "hideText",
+                            hit: "p5e6f7a8b",
+                            movingSeconds: 0.6,
+                            keysPerSecond: 30,
+                            request: { texts: ["Orla Fictive"], unit: "line" },
+                        },
+                    },
+                    {
+                        id: "r13",
+                        startUs: 1_100_000,
+                        endUs: 1_400_000,
+                        x: 0.29,
+                        y: 0,
+                        width: 0.22,
+                        height: 0.86,
+                        style: "blur",
+                        label: "Text (auto) (uncertain)",
+                        hide: { by: "hideText", hit: "p5e6f7a8b", uncertain: true, request: { text: "Orla Fictive" } },
+                    },
+                ],
+            }),
+        },
     ];
 }
 

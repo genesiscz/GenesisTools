@@ -21,6 +21,7 @@ import {
 } from "./private-data";
 import {
     applyOp,
+    describeProject,
     editOpSchema,
     editProjectSchema,
     exportToOutputUs,
@@ -446,6 +447,24 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
         expect(out).toBe(12_000_000);
         expect(sourceTimeOf(edited, out ?? 0)).toBe(22_000_000);
         expect(exportToOutputUs(edited, 3_000_000 + 50_000_001)).toBeUndefined();
+    });
+
+    test("info() names each part's kind and the hide request that made it", () => {
+        const hits = textHits([frame(0, [row("Orla Fictive", 0.2)])], textMatcher({ texts: ["Orla Fictive"] }));
+        const hidden = applyOp(
+            applyOp(wholeProject(source), op({ op: "hideText", texts: ["Orla Fictive"], unit: "line" }), {
+                textHits: hits,
+            }),
+            op({ op: "spotlight", from: 1, to: 2, rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 } })
+        );
+        const parts = describeProject(hidden, "/movies/screen.edit.json").redactions;
+        expect(parts.map((part) => part.kind)).toEqual(["hidden", "spotlight"]);
+        expect(parts[0].hide).toEqual({
+            by: "hideText",
+            hit: hits[0].id,
+            request: { texts: ["Orla Fictive"], unit: "line" },
+        });
+        expect(parts[1].hide).toBeUndefined();
     });
 
     test("block matching finds a scroll's shift and leaves a still picture still", () => {

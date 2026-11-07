@@ -4859,6 +4859,49 @@
                     "keysPerSecond": {
                       "type": "number",
                       "minimum": 0
+                    },
+                    "request": {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        },
+                        "pattern": {
+                          "type": "string"
+                        },
+                        "texts": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "patterns": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "unit": {
+                          "type": "string",
+                          "enum": [
+                            "match",
+                            "line"
+                          ]
+                        },
+                        "kinds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "names": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "additionalProperties": false
                     }
                   },
                   "required": [
