@@ -87,6 +87,8 @@ enum EditOp: Equatable {
     case speedUpWaits(SpeedUpWaits)
     case autoSpeed(AutoSpeed)
     case hideText(HideText)
+    // R5 5 redaction edges
+    case redactionJoins(RedactionJoins)
 
     /// Every payload type, so the decoder finds one by its tag and the tag test lists them.
     static let payloads: [any EditOpPayload.Type] = [
@@ -105,6 +107,8 @@ enum EditOp: Equatable {
         Transition.self, Lens.self, SetLens.self, Unlens.self, Tilt.self,
         // fx B (round 4)
         HidePrivate.self, CursorSmooth.self, SpeedUpWaits.self, AutoSpeed.self, HideText.self,
+        // R5 5 redaction edges
+        RedactionJoins.self,
     ]
 
     static var tags: [String] { payloads.map { $0.tag } }
@@ -185,6 +189,7 @@ enum EditOp: Equatable {
         case let .speedUpWaits(op): op
         case let .autoSpeed(op): op
         case let .hideText(op): op
+        case let .redactionJoins(op): op
         }
     }
 
@@ -313,6 +318,8 @@ extension EditOp {
         var dim: Double?
         var cutout: EditProject.SpotlightCutout?
         var lane: String?
+        // R5 5 redaction edges
+        var cell: Double?
         var op: EditOp { .redact(self) }
     }
 
@@ -326,6 +333,8 @@ extension EditOp {
         var dim: Double?
         var cutout: EditProject.SpotlightCutout?
         var lane: String?
+        // R5 5 redaction edges
+        var fadeMs: Int?
         var op: EditOp { .spotlight(self) }
     }
 
@@ -692,6 +701,9 @@ extension EditOp {
         var follow: Bool?
         var dim: Double?
         var cutout: EditProject.SpotlightCutout?
+        // R5 5 redaction edges: fadeMs -1 and cell 0 go back to the defaults.
+        var fadeMs: Int?
+        var cell: Double?
         var op: EditOp { .setRedaction(self) }
     }
 
@@ -954,5 +966,15 @@ extension EditOp {
         var badge: Bool?
         var position: EditProject.SpeedBadgePosition?
         var op: EditOp { .autoSpeed(self) }
+    }
+}
+
+// R5 5 redaction edges
+extension EditOp {
+    /// How the export closes small holes around the hiding parts (Render/RedactionEdges.swift); 0 draws them as placed.
+    struct RedactionJoins: EditOpPayload {
+        static let tag = "redactionJoins"
+        var snapMs: Int
+        var op: EditOp { .redactionJoins(self) }
     }
 }

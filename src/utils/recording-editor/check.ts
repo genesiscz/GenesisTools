@@ -179,6 +179,9 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
         }
     }
 
+    // R5 5 redaction edges
+    issues.push(...redactionEdgeIssues(project));
+
     const rank = (issue: EditIssue) => (issue.severity === "fix" ? 0 : 1);
     return issues.sort((a, b) => rank(a) - rank(b) || (a.at ?? -1) - (b.at ?? -1));
 }
@@ -235,6 +238,124 @@ function checkedItems(project: EditProject) {
         ...(project.texts ?? []).map((note) => item("text", "untext", "texts", note, note.text)),
         ...(project.shapes ?? []).map((shape) => item(shape.kind, "unshape", "shapes", shape)),
     ];
+}
+
+// R5 5 redaction edges
+/** A hiding part that covers less of the export than this may miss the frames it was meant for. */
+const SHORT_HIDING_US = 150_000;
+/** Holes around hiding parts up to this long are worth a look; longer ones are taken as meant. */
+const HIDING_HOLE_US = 1_000_000;
+
+/** The output length of `startUs`..`endUs` (source): each kept piece at its clip's speed. */
+function playedUs(project: EditProject, startUs: number, endUs: number): number {
+    return project.clips.reduce(
+        (sum, clip) =>
+            sum + Math.max(0, Math.min(clip.toUs, endUs) - Math.max(clip.fromUs, startUs)) / (clip.speed || 1),
+        0
+    );
+}
+
+/** The source times where a kept clip ends before a cut (or the movie's end), and where one starts after a cut. */
+function cutEdgesOf(project: EditProject): { ends: number[]; starts: number[] } {
+    const clips = project.clips.filter((clip) => clip.toUs > clip.fromUs);
+    const ends = clips.filter((clip, index) => clips[index + 1]?.fromUs !== clip.toUs).map((clip) => clip.toUs);
+    const starts = clips
+        .filter((clip, index) => clip.fromUs > 0 && clips[index - 1]?.toUs !== clip.fromUs)
+        .map((clip) => clip.fromUs);
+    return { ends, starts };
+}
+
+/**
+ * The holes a hiding part (blur, pixelate, black) can leave, which the export cannot see in the picture: a part that
+ * covers under 0.15 s of the export, one that ends or starts a little short of a cut, and a short gap between two parts
+ * near each other (text that scrolled from one box into the next). Holes up to `redactionJoins.snapMs` (250 ms) the
+ * export closes by itself; the message says so, and the action writes the same times into the edit.
+ */
+function redactionEdgeIssues(project: EditProject): EditIssue[] {
+    const issues: EditIssue[] = [];
+    const snapUs = (project.redactionJoins?.snapMs ?? 250) * 1000;
+    const seconds = (us: number) => Math.round(us / 1000) / 1000;
+    const hiding = (project.redactions ?? []).filter(
+        (part) => part.style !== "spotlight" && keptUs(project, part.startUs, part.endUs) > 0
+    );
+    const edges = cutEdgesOf(project);
+    const said = (part: (typeof hiding)[number]) =>
+        `hidden part ${part.label ? `"${part.label}"` : `at ${tenths(part.startUs)} s`}`;
+    const closed = (holeUs: number) =>
+        holeUs <= snapUs
+            ? `the export covers the ${seconds(holeUs)} s between by itself (redactionJoins snapMs ${snapUs / 1000})`
+            : `the ${seconds(holeUs)} s between show the picture unhidden`;
+
+    for (const part of hiding) {
+        const item = `hidden part ${part.id}`;
+        const target = { list: "redactions" as const, id: part.id };
+        const played = playedUs(project, part.startUs, part.endUs);
+
+        if (played < SHORT_HIDING_US) {
+            issues.push({
+                severity: "check",
+                item,
+                message: `The ${said(part)} covers only ${Math.round(played / 1000)} ms of the export (about ${Math.max(1, Math.round(played / 33_333))} frame${played < 50_000 ? "" : "s"} at 30 fps); check that it spans every frame the hidden thing shows`,
+                fix: `movie.retime({ id: "${part.id}", from: ${seconds(Math.max(0, part.startUs - 100_000))}, to: ${seconds(Math.min(project.source.durationUs, part.endUs + 100_000))} })`,
+                at: tenths(part.startUs),
+                target,
+            });
+        }
+
+        const cut = edges.ends.find((end) => end > part.endUs && end - part.endUs <= HIDING_HOLE_US);
+
+        if (cut !== undefined && keptUs(project, part.endUs, cut) > 0) {
+            issues.push({
+                severity: "check",
+                item,
+                message: `The ${said(part)} ends ${seconds(cut - part.endUs)} s before ${cut === edges.ends.at(-1) ? "the movie's end" : `the cut at ${seconds(cut)} s`}; ${closed(cut - part.endUs)}`,
+                fix: `movie.retime({ id: "${part.id}", to: ${seconds(cut)} })`,
+                at: tenths(part.endUs),
+                target,
+                action: { label: "Extend to Cut", ops: [{ op: "retime", id: part.id, to: seconds(cut) }] },
+            });
+        }
+
+        const opened = [...edges.starts]
+            .reverse()
+            .find((start) => start < part.startUs && part.startUs - start <= HIDING_HOLE_US);
+
+        if (opened !== undefined && keptUs(project, opened, part.startUs) > 0) {
+            issues.push({
+                severity: "check",
+                item,
+                message: `The ${said(part)} starts ${seconds(part.startUs - opened)} s after the cut at ${seconds(opened)} s; ${closed(part.startUs - opened)}`,
+                fix: `movie.retime({ id: "${part.id}", from: ${seconds(opened)} })`,
+                at: tenths(opened),
+                target,
+                action: { label: "Start at Cut", ops: [{ op: "retime", id: part.id, from: seconds(opened) }] },
+            });
+        }
+
+        // The next part that starts after this one ends, near it on the picture (centres at most 0.3 apart).
+        const next = hiding
+            .filter((other) => other.id !== part.id && other.startUs > part.endUs)
+            .filter(
+                (other) =>
+                    Math.abs(other.x + other.width / 2 - (part.x + part.width / 2)) <= 0.3 &&
+                    Math.abs(other.y + other.height / 2 - (part.y + part.height / 2)) <= 0.3
+            )
+            .sort((a, b) => a.startUs - b.startUs)[0];
+
+        if (next && next.startUs - part.endUs <= HIDING_HOLE_US && keptUs(project, part.endUs, next.startUs) > 0) {
+            issues.push({
+                severity: "check",
+                item,
+                message: `The ${said(part)} ends ${seconds(next.startUs - part.endUs)} s before the ${said(next)} starts; ${closed(next.startUs - part.endUs)}`,
+                fix: `movie.retime({ id: "${part.id}", to: ${seconds(next.startUs)} })`,
+                at: tenths(part.endUs),
+                target,
+                action: { label: "Join", ops: [{ op: "retime", id: part.id, to: seconds(next.startUs) }] },
+            });
+        }
+    }
+
+    return issues;
 }
 
 /** How much of `startUs`..`endUs` (source) the edit keeps. */

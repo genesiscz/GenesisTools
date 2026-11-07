@@ -208,8 +208,26 @@ export const redactionSchema = z.object({
     track: z.array(trackKeySchema).optional(),
     /** Areas of the picture (fractions from its top left) the part leaves visible: a toast, a tab bar over the text. */
     exclude: z.array(boxSchema).optional(),
+    // R5 5 redaction edges
+    /**
+     * A spotlight's dim fades in and out over this many ms (at most a third of its length); 0 is a hard cut, absent is
+     * 200. The hiding styles never fade: they cover fully from their first frame to their last.
+     */
+    fadeMs: z.number().int().min(0).max(2000).optional(),
+    /** A pixelate block's side in source pixels (2 to 256); absent is 1.8 % of the picture's height, at least 8. */
+    cell: z.number().min(2).max(256).optional(),
 });
 export type EditRedaction = z.infer<typeof redactionSchema>;
+
+// R5 5 redaction edges
+/**
+ * How the export closes small holes around the hiding parts (blur, pixelate, black; not spotlights): one that ends
+ * up to snapMs before a cut is drawn to the cut, one that starts up to snapMs after a cut is drawn from it, and two
+ * with a gap up to snapMs meet. 0 draws every part exactly as placed. The export also keeps a part on while a frame
+ * from its time stays on screen (a screen recording writes no frame while nothing moves), whatever snapMs says.
+ */
+export const redactionJoinsSchema = z.object({ snapMs: z.number().int().min(0).max(2000).default(250) });
+export const REDACTION_SNAP_MS = 250;
 
 /**
  * Corrections to the cached transcript, kept in the edit so a new transcription does not lose them: the fixed text
@@ -457,6 +475,9 @@ export const editProjectSchema = z.object({
     // R4 9 intro and end cards
     /** A title card before the movie and an end card after it, in the export only (overlays.ts); absent is none. */
     cards: cardsSchema.optional(),
+    // R5 5 redaction edges
+    /** How the hiding parts close small holes at cuts and between each other; absent is snapMs 250. */
+    redactionJoins: redactionJoinsSchema.optional(),
 });
 
 export type EditProject = z.infer<typeof editProjectSchema>;
@@ -731,6 +752,9 @@ export function addRedaction(
         follow?: boolean;
         dim?: number;
         cutout?: EditRedaction["cutout"];
+        // R5 5 redaction edges
+        fadeMs?: number;
+        cell?: number;
     }
 ): EditProject {
     checkRange(project, options.fromUs, options.toUs);
@@ -760,6 +784,8 @@ export function addRedaction(
         ...(options.style === "spotlight" && options.cutout && options.cutout !== "rounded"
             ? { cutout: options.cutout }
             : {}),
+        ...(options.style === "spotlight" && options.fadeMs !== undefined ? { fadeMs: options.fadeMs } : {}),
+        ...(options.style === "pixelate" && options.cell !== undefined ? { cell: options.cell } : {}),
     };
     return { ...project, redactions: [...(project.redactions ?? []), redaction] };
 }
@@ -1066,6 +1092,9 @@ export const editOpSchema = z.discriminatedUnion("op", [
             cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
             /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
             lane: z.string().optional(),
+            // R5 5 redaction edges
+            /** Style "pixelate" only: a block's side in source pixels (2 to 256); absent is 1.8 % of the height. */
+            cell: z.number().min(2).max(256).optional(),
         })
         .strict(),
     z
@@ -1083,6 +1112,9 @@ export const editOpSchema = z.discriminatedUnion("op", [
             cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
             /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
             lane: z.string().optional(),
+            // R5 5 redaction edges
+            /** The dim's fade in and out in ms (200; at most a third of its length); 0 is a hard cut. */
+            fadeMs: z.number().int().min(0).max(2000).optional(),
         })
         .strict(),
     z.object({ op: z.literal("unredact"), id: z.string() }).strict(),
@@ -1416,6 +1448,11 @@ export const editOpSchema = z.discriminatedUnion("op", [
             follow: z.boolean().optional(),
             dim: z.number().optional(),
             cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
+            // R5 5 redaction edges
+            /** A spotlight's fade in ms (0 is a hard cut); -1 goes back to the default 200. */
+            fadeMs: z.number().int().min(-1).max(2000).optional(),
+            /** A pixelate block's side in source pixels (2 to 256); 0 goes back to the default. */
+            cell: z.number().min(0).max(256).optional(),
         })
         .strict(),
     /** Changes a text that exists: its words, its centre (0...1 of the canvas), its size and its style. */
@@ -1624,6 +1661,13 @@ export const editOpSchema = z.discriminatedUnion("op", [
             position: z.enum(SPEED_BADGE_POSITIONS).optional(),
         })
         .strict(),
+    // R5 5 redaction edges
+    /**
+     * How the export closes small holes around the hiding parts: snapMs (250) draws a part that ends that close before
+     * a cut up to the cut, one that starts that close after a cut from it, and two parts with a gap that short meet.
+     * 0 draws every part exactly as placed.
+     */
+    z.object({ op: z.literal("redactionJoins"), snapMs: z.number().int().min(0).max(2000) }).strict(),
 ]);
 export type EditOp = z.infer<typeof editOpSchema>;
 
@@ -2034,6 +2078,7 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 style: op.style ?? "blur",
                 label: op.label,
                 follow: op.follow,
+                cell: op.cell,
             });
         case "spotlight":
             return addRedaction(project, {
@@ -2045,6 +2090,7 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 follow: op.follow,
                 dim: op.dim,
                 cutout: op.cutout,
+                fadeMs: op.fadeMs,
             });
         case "unredact": {
             const list = project.redactions ?? [];
@@ -2446,6 +2492,9 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         case "unlens":
         case "tilt":
             return applyFxOp(project, op);
+        // R5 5 redaction edges
+        case "redactionJoins":
+            return { ...project, redactionJoins: { snapMs: op.snapMs } };
     }
 }
 
@@ -2519,6 +2568,9 @@ export function describeProject(project: EditProject, path: string) {
             // fx B (round 4): how many keyframes it follows, and the areas it leaves visible.
             ...(redaction.track ? { keyframes: redaction.track.length } : {}),
             ...(redaction.exclude ? { exclude: redaction.exclude } : {}),
+            // R5 5 redaction edges
+            ...(redaction.style === "spotlight" ? { fadeMs: redaction.fadeMs ?? 200 } : {}),
+            ...(redaction.cell !== undefined ? { cell: redaction.cell } : {}),
         })),
         /** null: the system cursor is in the picture, so there is nothing to change. */
         cursor: trackDrawsCursor(project.source.cursor) ? cursorSchema.parse(project.cursor ?? {}) : null,
@@ -2568,6 +2620,8 @@ export function describeProject(project: EditProject, path: string) {
         cursorSmooth: project.cursorSmooth ?? null,
         autoSpeed: project.autoSpeed ?? null,
         privateHidden: project.privacy?.applied.length ?? 0,
+        // R5 5 redaction edges
+        redactionJoins: { snapMs: project.redactionJoins?.snapMs ?? REDACTION_SNAP_MS },
     };
 }
 

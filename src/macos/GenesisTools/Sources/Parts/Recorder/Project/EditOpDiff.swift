@@ -61,6 +61,10 @@ enum EditOpDiff {
             let speed = new.autoSpeed ?? EditProject.AutoSpeed(badge: false)
             ops.append(.autoSpeed(EditOp.AutoSpeed(badge: speed.badge, position: speed.position)))
         }
+        // R5 5 redaction edges
+        if old.redactionJoins != new.redactionJoins {
+            ops.append(.redactionJoins(EditOp.RedactionJoins(snapMs: (new.redactionJoins ?? .init()).snapMs)))
+        }
         return ops
     }
 
@@ -96,6 +100,9 @@ enum EditOpDiff {
         if a.follow != b.follow { op.follow = b.follow ?? false }
         if a.cutout != b.cutout { op.cutout = b.cutout ?? .rounded }
         if a.dim != b.dim { op.dim = b.dim ?? Looks.spotlightDim }
+        // R5 5 redaction edges
+        if a.fadeMs != b.fadeMs { op.fadeMs = b.fadeMs ?? -1 }
+        if a.cell != b.cell { op.cell = b.cell ?? 0 }
         let set: [EditOp] = op == EditOp.SetRedaction(id: b.id) ? [] : [.setRedaction(op)]
         return set + retime(b.id, from: (a.startUs, a.endUs), to: (b.startUs, b.endUs))
     }

@@ -67,6 +67,15 @@ struct EditProject: Codable, Equatable {
     // R4 9 intro and end cards
     /// A title card before the movie and an end card after it, played by the export only; nil is none.
     var cards: Cards?
+    // R5 5 redaction edges
+    /// How the hiding parts close small holes (Render/RedactionEdges.swift); nil is `RedactionJoins()`.
+    var redactionJoins: RedactionJoins?
+
+    struct RedactionJoins: Codable, Equatable {
+        /// A hiding part that ends this close before a cut is drawn up to the cut, one that starts this close after a
+        /// cut is drawn from it, and two hiding parts with a gap this short meet; 0 leaves every part as placed.
+        var snapMs = 250
+    }
 
     struct Cards: Codable, Equatable {
         var intro: IntroCard?
@@ -317,6 +326,12 @@ struct EditProject: Codable, Equatable {
         var track: [TrackKey]?
         /// Areas the part leaves visible (a toast over the text); nil is none.
         var exclude: [Box]?
+        // R5 5 redaction edges
+        /// A spotlight's dim fades in and out over this many ms (capped at a third of its length); 0 is a hard cut,
+        /// nil is 200. The hiding styles never fade: they cover fully from their first frame to their last.
+        var fadeMs: Int?
+        /// A pixelate block's side in source pixels (2 to 256); nil is 1.8 % of the picture's height, at least 8.
+        var cell: Double?
     }
 
     /// fx B (round 4): a rectangle as fractions of the picture from its top left.

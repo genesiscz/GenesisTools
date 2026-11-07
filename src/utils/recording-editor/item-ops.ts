@@ -64,7 +64,18 @@ export function setRedaction(project: EditProject, op: Op<"setRedaction">): Edit
     const rect = op.rect ?? { x: item.x, y: item.y, width: item.width, height: item.height };
     const width = clamp(rect.width, 0.01, 1);
     const height = clamp(rect.height, 0.01, 1);
-    const { label: oldLabel, follow: oldFollow, dim: oldDim, cutout: oldCutout, ...rest } = item;
+    const {
+        label: oldLabel,
+        follow: oldFollow,
+        dim: oldDim,
+        cutout: oldCutout,
+        fadeMs: oldFadeMs,
+        cell: oldCell,
+        ...rest
+    } = item;
+    // R5 5 redaction edges: -1 and 0 go back to the defaults.
+    const fadeMs = op.fadeMs === undefined ? oldFadeMs : op.fadeMs < 0 ? undefined : op.fadeMs;
+    const cell = op.cell === undefined ? oldCell : op.cell < 2 ? undefined : op.cell;
     const label = op.label === undefined ? oldLabel : op.label.trim().slice(0, 60) || undefined;
     const follow = op.follow === undefined ? oldFollow : op.follow || undefined;
     const dim =
@@ -81,6 +92,8 @@ export function setRedaction(project: EditProject, op: Op<"setRedaction">): Edit
         ...(follow === undefined ? {} : { follow }),
         ...(dim === undefined ? {} : { dim }),
         ...(cutout === undefined ? {} : { cutout }),
+        ...(fadeMs === undefined ? {} : { fadeMs }),
+        ...(cell === undefined ? {} : { cell }),
     };
     return { ...project, redactions: list.map((redaction) => (redaction.id === op.id ? next : redaction)) };
 }

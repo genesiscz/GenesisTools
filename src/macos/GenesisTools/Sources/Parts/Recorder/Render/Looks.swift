@@ -185,7 +185,7 @@ enum Looks {
                 patch = image.cropped(to: rect).clampedToExtent().applyingGaussianBlur(sigma: max(6, extent.height * 0.012))
             case .pixelate:
                 patch = image.cropped(to: rect).clampedToExtent()
-                    .applyingFilter("CIPixellate", parameters: [kCIInputScaleKey: max(8, extent.height * 0.018),
+                    .applyingFilter("CIPixellate", parameters: [kCIInputScaleKey: pixelCell(redaction, pictureHeight: extent.height),
                                                                 kCIInputCenterKey: CIVector(x: rect.minX, y: rect.minY)])
             case .black:
                 patch = CIImage(color: CIColor(red: 0.04, green: 0.04, blue: 0.05))
@@ -208,6 +208,14 @@ enum Looks {
                 .cropped(to: extent)
         }
         return result
+    }
+
+    // R5 5 redaction edges
+    /// A pixelate block's side in source pixels: the part's `cell` (2 to 256), else 1.8 % of the picture's height and at
+    /// least 8 (about 19 px on a 1080 p movie, 39 px on a 2160 p one).
+    static func pixelCell(_ redaction: EditProject.Redaction, pictureHeight: CGFloat) -> CGFloat {
+        if let cell = redaction.cell { return CGFloat(min(256, max(2, cell))) }
+        return max(8, pictureHeight * 0.018)
     }
 
     /// The lit shape of one spotlight, white where it lights: a rectangle, a rectangle with corners of 12 % of its

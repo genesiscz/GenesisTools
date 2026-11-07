@@ -284,6 +284,11 @@ const EXAMPLE_OPS: readonly unknown[] = [
     { op: "cursorSmooth", enabled: false },
     { op: "speedUpWaits", ids: ["w1a2b3c4d"], minSeconds: 5, maxArea: 0.08, speed: 6 },
     { op: "autoSpeed", badge: true, position: "bottom-left" },
+    // R5 5 redaction edges
+    { op: "redact", from: 1, to: 2, rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.1 }, style: "pixelate", cell: 24 },
+    { op: "spotlight", from: 2, to: 3, rect: { x: 0.3, y: 0.3, width: 0.2, height: 0.2 }, fadeMs: 0 },
+    { op: "setRedaction", id: "r1", fadeMs: -1, cell: 12 },
+    { op: "redactionJoins", snapMs: 120 },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */
@@ -468,6 +473,39 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
                 ],
                 cursorSmooth: { strength: 0.8, jitterPx: 4, idleFadeSeconds: 2.5 },
                 autoSpeed: { badge: true, position: "bottom-left" },
+            }),
+        },
+        // R5 5 redaction edges: a pixelate cell, a hard spotlight and the join setting.
+        {
+            name: "redaction edges",
+            project: editProjectSchema.parse({
+                ...items,
+                redactions: [
+                    ...(items.redactions ?? []),
+                    {
+                        id: "r10",
+                        startUs: 1_000_000,
+                        endUs: 2_000_000,
+                        x: 0.1,
+                        y: 0.1,
+                        width: 0.2,
+                        height: 0.1,
+                        style: "pixelate",
+                        cell: 24,
+                    },
+                    {
+                        id: "r11",
+                        startUs: 2_000_000,
+                        endUs: 3_000_000,
+                        x: 0.3,
+                        y: 0.3,
+                        width: 0.2,
+                        height: 0.2,
+                        style: "spotlight",
+                        fadeMs: 0,
+                    },
+                ],
+                redactionJoins: { snapMs: 120 },
             }),
         },
     ];

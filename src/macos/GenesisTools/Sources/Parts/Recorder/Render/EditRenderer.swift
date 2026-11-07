@@ -19,6 +19,7 @@ final class ZoomState: @unchecked Sendable {
         captions = CaptionTrack.load(video: project.source.video)
         // R4 10 progress bar: the chapters the recording marked (the edit's own come with each project).
         recordedMarkers = EditorModel.readMarkers(video: project.source.video)
+        refreshRedactions(project, frames: nil)
     }
 
     // R4 10 progress bar
@@ -27,7 +28,39 @@ final class ZoomState: @unchecked Sendable {
     func update(_ project: EditProject) {
         lock.lock()
         self.project = project
+        let frames = sourceFrames
         lock.unlock()
+        refreshRedactions(project, frames: frames)
+    }
+
+    // R5 5 redaction edges
+    private var sourceFrames: SourceFrames?
+    /// The hidden parts as drawn (RedactionEdges), for the project they were made from.
+    private var drawnRedactions: (key: RedactionEdges.Key, parts: [EditProject.Redaction])?
+
+    /// The source movie's frame times, read by the renderer once it has the movie.
+    func setSourceFrames(_ frames: SourceFrames?) {
+        lock.lock()
+        sourceFrames = frames
+        let project = project
+        lock.unlock()
+        refreshRedactions(project, frames: frames)
+    }
+
+    private func refreshRedactions(_ project: EditProject, frames: SourceFrames?) {
+        let parts = RedactionEdges.effective(project, frames: frames)
+        lock.lock()
+        drawnRedactions = (RedactionEdges.Key(project), parts)
+        lock.unlock()
+    }
+
+    private func redactions(for project: EditProject) -> [EditProject.Redaction] {
+        lock.lock()
+        let cached = drawnRedactions
+        let frames = sourceFrames
+        lock.unlock()
+        if let cached, cached.key == RedactionEdges.Key(project) { return cached.parts }
+        return RedactionEdges.effective(project, frames: frames)
     }
 
     /// The camera bubble as the window has it now, so a moved or hidden bubble shows at the next frame.
@@ -167,7 +200,7 @@ final class ZoomState: @unchecked Sendable {
                              guard settings.show, let shown = cursor?.key(atMs: Double(sourceUs) / 1000, durationMs: settings.durationMs) else { return nil }
                              return KeyMark(label: shown.label, opacity: shown.opacity, settings: settings)
                          },
-                         redactions: (project.redactions ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
+                         redactions: redactions(for: project).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
                              .map { Self.placed($0, atSourceUs: sourceUs, track: cursor) },
                          texts: Self.texts(atSourceUs: sourceUs, project: project))
         look.previousView = previousView
@@ -179,8 +212,7 @@ final class ZoomState: @unchecked Sendable {
         look.shapes = Self.shapes(atSourceUs: sourceUs, project: project)
         look.speedBadge = SpeedBadge.badge(atOutput: outUs, project: project)
         look.spotlightFade = look.redactions.filter { $0.style == .spotlight }.map { spot in
-            let fade = Double(min(200_000, max(1, (spot.endUs - spot.startUs) / 3)))
-            return min(1, Double(sourceUs - spot.startUs) / fade, Double(spot.endUs - sourceUs) / fade)
+            Self.spotlightFade(spot, atSourceUs: sourceUs)
         }.max() ?? 1
         // Round 4 fx-render.
         look.transition = TransitionLook.mark(atOutputUs: outUs, project: project, track: cursor)
@@ -206,6 +238,16 @@ final class ZoomState: @unchecked Sendable {
                 return (shape, 1, max(0, out))
             }
         }
+    }
+
+    // R5 5 redaction edges
+    /// How far a spotlight's dim has come in (0...1): over its `fadeMs` (200 ms unless set, at most a third of its
+    /// length) after its start and before its end; `fadeMs` 0 dims fully from its first frame to its last.
+    static func spotlightFade(_ spot: EditProject.Redaction, atSourceUs us: Int64) -> Double {
+        let asked = Int64(max(0, spot.fadeMs ?? 200)) * 1000
+        guard asked > 0 else { return 1 }
+        let fade = Double(min(asked, max(1, (spot.endUs - spot.startUs) / 3)))
+        return max(0, min(1, Double(us - spot.startUs) / fade, Double(spot.endUs - us) / fade))
     }
 
     /// One output frame at 60 fps.
@@ -607,6 +649,10 @@ struct EditRenderer {
         // A picture of 0 pixels made the output scale infinite (every frame's transform), so refuse it with its size.
         guard natural.width.isFinite, natural.height.isFinite, natural.width >= 1, natural.height >= 1 else {
             throw RenderError.badComposition("the movie's picture is \(natural.width)×\(natural.height)")
+        }
+        // R5 5 redaction edges: a hidden part stays on while a frame from its time stays on screen.
+        if project.redactions?.isEmpty == false, (try? await video.load(.canProvideSampleCursors)) == true {
+            zoom.setSourceFrames(SourceFrames(track: video, durationUs: project.source.durationUs))
         }
         let composition = AVMutableComposition()
         guard let videoOut = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {

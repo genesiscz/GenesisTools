@@ -799,6 +799,53 @@ describe("edit project (edit.json)", () => {
         expect(checkProject(wholeProject(source), facts)).toEqual([]);
     });
 
+    // R5 5 redaction edges: check() said clean for each of these, and the export showed the picture there.
+    test("check names the holes around hidden parts: a short part, an early end before a cut, a gap between two", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const rect = { x: 0.1, y: 0.1, width: 0.2, height: 0.1 };
+        let project = applyOp(wholeProject(source), { op: "cut", from: 9, to: 9.5 });
+        project = applyOp(project, { op: "redact", from: 2, to: 3.9, rect, style: "black" });
+        project = applyOp(project, { op: "redact", from: 4, to: 6, rect: { ...rect, x: 0.3 }, style: "black" });
+        project = applyOp(project, { op: "redact", from: 6.5, to: 6.6, rect: { ...rect, x: 0.7, y: 0.7 } });
+        project = applyOp(project, { op: "redact", from: 7, to: 8.4, rect: { ...rect, x: 0.7 }, style: "pixelate" });
+        const [join, , flash, tail] = project.redactions ?? [];
+        const issues = checkProject(project, facts).filter((issue) => issue.target?.list === "redactions");
+        const about = (id: string | undefined) => issues.filter((issue) => issue.target?.id === id);
+        expect(about(join?.id).map((issue) => issue.message)).toEqual([
+            "The hidden part at 2 s ends 0.1 s before the hidden part at 4 s starts; the export covers the 0.1 s between by itself (redactionJoins snapMs 250)",
+        ]);
+        expect(about(join?.id)[0]?.action).toEqual({
+            label: "Join",
+            ops: [{ op: "retime", id: join?.id ?? "", to: 4 }],
+        });
+        expect(about(flash?.id)[0]?.message).toContain("covers only 100 ms of the export");
+        expect(about(tail?.id)[0]?.message).toBe(
+            "The hidden part at 7 s ends 0.6 s before the cut at 9 s; the 0.6 s between show the picture unhidden"
+        );
+        expect(about(tail?.id)[0]?.action?.ops).toEqual([{ op: "retime", id: tail?.id ?? "", to: 9 }]);
+        // A spotlight is not a hiding part; a part that ends at the cut leaves nothing open.
+        const covered = fixOps(project, facts).ops.reduce((next, op) => applyOp(next, op), project);
+        expect(
+            checkProject(covered, facts).filter((issue) => issue.target?.list === "redactions" && issue.action)
+        ).toEqual([]);
+        // snapMs 0: the same 0.1 s gap is no longer closed by the export, and the message says so.
+        const exact = applyOp(project, { op: "redactionJoins", snapMs: 0 });
+        expect(checkProject(exact, facts).find((issue) => issue.target?.id === join?.id)?.message).toContain(
+            "the 0.1 s between show the picture unhidden"
+        );
+        expect(describeProject(exact, "/x/edit.json").redactionJoins).toEqual({ snapMs: 0 });
+        // A pixelate cell and a hard spotlight are kept by the ops and read back.
+        let looks = applyOp(wholeProject(source), { op: "redact", from: 1, to: 2, rect, style: "pixelate", cell: 32 });
+        looks = applyOp(looks, { op: "spotlight", from: 2, to: 3, rect, fadeMs: 0 });
+        expect(looks.redactions?.map((part) => [part.cell, part.fadeMs])).toEqual([
+            [32, undefined],
+            [undefined, 0],
+        ]);
+        const pixelId = looks.redactions?.[0]?.id ?? "";
+        looks = applyOp(looks, { op: "setRedaction", id: pixelId, cell: 0 });
+        expect(looks.redactions?.[0]?.cell).toBeUndefined();
+    });
+
     // Regression test: deep test 2026-11-06 RE5 — Lengthen on a circle that ends at the movie's end changed nothing.
     test("a too-short item at the movie's end is lengthened by starting earlier", () => {
         const project = applyOp(wholeProject(source), { op: "shape", kind: "circle", from: 9.83, to: 10 });

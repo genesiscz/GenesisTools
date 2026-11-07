@@ -258,9 +258,11 @@ const movieMethods = [
                 label: z.string().max(60).optional(),
                 follow: z.boolean().optional(),
                 lane: z.string().optional(),
+                // R5 5 redaction edges
+                cell: z.number().min(2).max(256).optional(),
             })
             .strict(),
-        'Hides a rectangle of the SOURCE picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } as 0...1 of the picture from its top left, style "blur" (default) | "pixelate" | "black" | "spotlight" (the rectangle stays sharp and the rest of the picture dims, to point at something), label (what it hides, "API token"), follow: true (it moves with the drawn cursor, centred on it; rect gives its size). It moves with a zoom. The result lists redactions with their ids.'
+        'Hides a rectangle of the SOURCE picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } as 0...1 of the picture from its top left, style "blur" (default) | "pixelate" | "black" | "spotlight" (the rectangle stays sharp and the rest of the picture dims, to point at something), label (what it hides, "API token"), follow: true (it moves with the drawn cursor, centred on it; rect gives its size). It moves with a zoom. The result lists redactions with their ids. Edges: blur, pixelate and black never fade; they cover fully from the first frame of `from` to the last frame of `to`. The export keeps a part on while a frame from its time stays on screen (a screen recording writes no frame while nothing moves), draws a part that ends up to 250 ms before a cut up to the cut (and one that starts up to 250 ms after a cut from it), and joins two parts with a gap up to 250 ms (redactionJoins({ snapMs }) changes it, 0 turns it off); check() names every such hole and every part under 0.15 s. cell (pixelate only): a block\'s side in source pixels, 2 to 256 (default 1.8 % of the height, about 19 px at 1080p; 8 to 12 reads as a soft mosaic, 40 and up as big blocks).'
     ),
     edit("unredact", z.object({ id: z.string() }), "Removes a redaction by its id.", ["id"]),
     edit(
@@ -462,9 +464,11 @@ const movieMethods = [
                 dim: z.number().min(0.2).max(0.95).optional(),
                 cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
                 lane: z.string().optional(),
+                // R5 5 redaction edges
+                fadeMs: z.number().int().min(0).max(2000).optional(),
             })
             .strict(),
-        'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims; follow: true moves it with the cursor (a light on the pointer); dim 0.2 to 0.95 is how much black covers the rest (0.7; 0.5 leaves it at half), cutout "rounded" (default), "rect" or "circle" its lit shape (a circle is the ellipse inside rect, so give a square rect in pixels for a round one). The same as redact with style "spotlight" (op "spotlight" in apply); unredact(id) removes it.'
+        'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims; follow: true moves it with the cursor (a light on the pointer); dim 0.2 to 0.95 is how much black covers the rest (0.7; 0.5 leaves it at half), cutout "rounded" (default), "rect" or "circle" its lit shape (a circle is the ellipse inside rect, so give a square rect in pixels for a round one). The dim fades in after `from` and out before `to` over fadeMs (200, at most a third of its length, linear); fadeMs: 0 is a hard cut. The same as redact with style "spotlight" (op "spotlight" in apply); unredact(id) removes it.'
     ),
     edit(
         "addLane",
@@ -1312,6 +1316,13 @@ const movieMethods = [
         doc: "A source time on screen: { at } moves a guessed second to the nearest event (of kinds, when given; a stretch counts by its start or its end); { event, index, lead?, end? } names one (index 1 is the first, -1 the last; lead -0.2 starts 0.2 s before it; end: a stretch's end). Use the answer's at in zoom(), spotlight(), text(), shape() or hideText().",
         effect: "read",
     }),
+    // R5 5 redaction edges
+    edit(
+        "redactionJoins",
+        z.object({ snapMs: z.number().int().min(0).max(2000) }).strict(),
+        "How the export closes small holes around the hiding parts (blur, pixelate, black): a part that ends up to snapMs (250) before a cut is drawn to the cut, one that starts up to snapMs after a cut is drawn from it, and two parts with a gap up to snapMs meet. snapMs: 0 draws every part exactly as placed. Whatever it says, a part stays on while a frame from its time stays on screen. info().redactionJoins reads it.",
+        ["snapMs"]
+    ),
 ];
 
 const recordingMethods = [
@@ -2655,6 +2666,11 @@ export class Movie {
 
     async speedBadge(options: Omit<Extract<EditOp, { op: "autoSpeed" }>, "op"> = {}) {
         return this.change([{ op: "autoSpeed", ...options }]);
+    }
+
+    // R5 5 redaction edges
+    async redactionJoins(options: Omit<Extract<EditOp, { op: "redactionJoins" }>, "op">) {
+        return this.change([{ op: "redactionJoins", ...options }]);
     }
 
     /** A copy of the recording and its edit (APFS clones), as a new library recording or in `to`. */
