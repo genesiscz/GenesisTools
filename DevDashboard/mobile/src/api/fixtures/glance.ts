@@ -56,6 +56,7 @@ export const MOCK_GLANCE: GlanceDto = {
             title: "Which cache?",
             project: "shop",
             recommended: "a",
+            multiple: false,
             letters: [
                 { letter: "a", label: "Memory" },
                 { letter: "b", label: "Disk" },

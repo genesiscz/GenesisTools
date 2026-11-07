@@ -11,6 +11,7 @@ import {
     noteStateOf,
     reconcileNote,
     stagesOf,
+    toggleStagedLetter,
 } from "@/features/answer-queue/units";
 import { useThemeColors } from "@/theme/colors";
 
@@ -98,6 +99,11 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
                     {decision.prompt}
                 </Text>
             ) : null}
+            {decision.multiple ? (
+                <Text className="text-xs" style={{ color: c.textMuted }}>
+                    Pick any of these, then send.
+                </Text>
+            ) : null}
             <View className="gap-2">
                 {decision.choices.map((choice) => {
                     const staged = decision.draftOption?.includes(choice.id) === true;
@@ -105,13 +111,25 @@ export function DecisionCard({ session, decision, registerFlush }: DecisionCardP
                         <Pressable
                             key={choice.id}
                             testID={`${testId}-option-${choice.id}`}
-                            accessibilityRole="button"
-                            accessibilityState={{ selected: staged, disabled: stage.isPending }}
+                            accessibilityRole={decision.multiple ? "checkbox" : "button"}
+                            accessibilityState={{
+                                selected: staged,
+                                disabled: stage.isPending,
+                                ...(decision.multiple ? { checked: staged } : {}),
+                            }}
                             accessibilityLabel={`Option ${choice.id}: ${choice.label}${choice.recommended ? ", recommended" : ""}`}
                             disabled={stage.isPending}
-                            onPress={() =>
-                                void stageAsync({ option: choice.id }, decision.revision).catch(() => undefined)
-                            }
+                            onPress={() => {
+                                // A multiple decision stages the whole new set; the session's Send sends it.
+                                const option = decision.multiple
+                                    ? toggleStagedLetter({
+                                          staged: decision.draftOption,
+                                          letter: choice.id,
+                                          letters: decision.choices.map((entry) => entry.id),
+                                      })
+                                    : choice.id;
+                                void stageAsync({ option }, decision.revision).catch(() => undefined);
+                            }}
                             className="min-h-11 flex-row items-center gap-3 rounded-lg border px-3 py-2"
                             style={{
                                 borderColor: staged ? c.accent : c.border,

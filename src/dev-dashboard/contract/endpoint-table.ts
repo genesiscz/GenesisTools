@@ -180,6 +180,8 @@ export interface WaitingDecisionDto {
     prompt: string;
     choices: WaitingChoiceDto[];
     recommended: string | null;
+    /** The user may pick several letters; the staged `option` is then a set such as `ac`. */
+    multiple: boolean;
     blocking: boolean;
     /** `waiting` or `drafted`; a staged pick or note is `drafted`. */
     status: string;

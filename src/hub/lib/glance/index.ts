@@ -82,6 +82,7 @@ export function inboxOf(queue: WaitingQueue): GlanceDecisionDto[] {
                 title: item.title ?? item.prompt.split("\n")[0],
                 project: session.project,
                 recommended: item.recommended,
+                multiple: item.multiple,
                 letters: item.choices.map((choice) => ({ letter: choice.id, label: choice.label })),
                 at: item.at,
             });

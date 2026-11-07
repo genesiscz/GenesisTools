@@ -57,8 +57,57 @@ export function draftedAnswers(drafts: Drafts): Array<{ number: number; option?:
         .sort((a, b) => a.number - b.number);
 }
 
-/** The answer as the agent receives it: `b) label`, then the free text. */
-function answerText(item: InboxDecision): string {
+/** The letters of a stored option (`"ac"`), kept in the decision's option order. */
+export function chosenLetters(item: Pick<InboxDecision, "choices">, option: string | undefined): string[] {
+    const held = new Set(option ?? "");
+
+    return item.choices.map((choice) => choice.id).filter((id) => held.has(id));
+}
+
+/** A click on a letter of a multiple decision: toggles it in the draft option, kept in option order. */
+export function toggleLetter(item: Pick<InboxDecision, "choices">, option: string | undefined, letter: string): string {
+    const next = new Set(chosenLetters(item, option));
+
+    if (next.has(letter)) {
+        next.delete(letter);
+    } else {
+        next.add(letter);
+    }
+
+    return item.choices
+        .map((choice) => choice.id)
+        .filter((id) => next.has(id))
+        .join("");
+}
+
+/** The Send button's name: one drafted several-letter pick names its set, else the count of answers. */
+export function sendLabel(
+    answers: ReadonlyArray<{ number: number; option?: string }>,
+    decisions: ReadonlyArray<Pick<InboxDecision, "number" | "multiple" | "choices">>
+): string {
+    const only = answers.length === 1 ? answers[0] : undefined;
+    const decision = only ? decisions.find((item) => item.number === only.number) : undefined;
+
+    if (only?.option && decision?.multiple) {
+        return `Send ${chosenLetters(decision, only.option).join(" + ")}`;
+    }
+
+    return `Send ${answers.length} answer${answers.length === 1 ? "" : "s"}`;
+}
+
+/** The answer as the agent receives it: `b) label`, or `a) label, c) label` for a set, then the free text. */
+export function answerText(item: InboxDecision): string {
+    const letters = chosenLetters(item, item.option);
+
+    if (letters.length > 1) {
+        const list = letters
+            .map((id) => `${id}) ${item.choices.find((choice) => choice.id === id)?.label ?? ""}`.trim())
+            .join(", ");
+        const note = item.answer?.trim();
+
+        return note ? `${list} (${note})` : list;
+    }
+
     const label = item.choices.find((choice) => choice.id === item.option)?.label;
     const text = item.answer?.trim() || label || "";
 
@@ -101,7 +150,7 @@ function deliveryLine(result: InboxAnswerResult): string {
     return `Queued: ${result.detail ?? "no live route"}. The session's next prompt picks the answers up.`;
 }
 
-function DecisionItem({
+export function DecisionItem({
     item,
     draft,
     onDraft,
@@ -187,23 +236,46 @@ function DecisionItem({
                 <>
                     {item.choices.length > 0 ? (
                         <div className="flex flex-col gap-1.5">
+                            {item.multiple ? (
+                                <p className="text-[11px] text-[var(--dd-text-muted)]">
+                                    Pick any set: tick each option, then send.
+                                </p>
+                            ) : null}
                             {item.choices.map((choice) => {
-                                const on = current.option === choice.id;
+                                const on = item.multiple
+                                    ? chosenLetters(item, current.option).includes(choice.id)
+                                    : current.option === choice.id;
 
                                 return (
                                     <button
                                         key={choice.id}
                                         type="button"
-                                        aria-pressed={on}
+                                        {...(item.multiple
+                                            ? { role: "checkbox", "aria-checked": on }
+                                            : { "aria-pressed": on })}
                                         data-testid={`decision-option-${item.id}-${choice.id}`}
                                         className={`cursor-pointer rounded-md border px-3 py-1.5 text-left text-xs transition-colors ${
                                             on
                                                 ? "dd-accent-text border-[var(--color-primary)] bg-[var(--dd-border)]/40"
                                                 : "border-[var(--dd-border)] text-[var(--dd-text-secondary)] hover:bg-[var(--dd-border)]/30"
                                         }`}
-                                        onClick={() => onDraft({ ...current, option: on ? undefined : choice.id })}
+                                        onClick={() =>
+                                            onDraft({
+                                                ...current,
+                                                option: item.multiple
+                                                    ? toggleLetter(item, current.option, choice.id) || undefined
+                                                    : on
+                                                      ? undefined
+                                                      : choice.id,
+                                            })
+                                        }
                                     >
                                         <span className="font-medium text-[var(--dd-text-primary)]">
+                                            {item.multiple ? (
+                                                <span aria-hidden="true" className="mr-1.5">
+                                                    {on ? "☑" : "☐"}
+                                                </span>
+                                            ) : null}
                                             {choice.id}) {choice.label}
                                         </span>
                                         {choice.recommended ? (
@@ -379,9 +451,7 @@ function DecisionSessionCard({ session, onSent }: { session: InboxSession; onSen
                                 disabled={send.isPending}
                                 onClick={() => send.mutate(false)}
                             >
-                                {send.isPending
-                                    ? "Sending…"
-                                    : `Send ${answers.length} answer${answers.length === 1 ? "" : "s"}`}
+                                {send.isPending ? "Sending…" : sendLabel(answers, items)}
                             </Button>
                             <Button
                                 size="sm"

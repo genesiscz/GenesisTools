@@ -86,3 +86,38 @@ it("keeps a refused pick blocking Send across card unmount and remount until a p
     await card.unmount();
     queryClient.clear();
 });
+
+it("stages the whole set for a multiple decision and the single letter for a single one", async () => {
+    picks.length = 0;
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { gcTime: 0 } } });
+    const base = fixtureQueue().sessions[0].items.find((item) => item.kind === "decision")!;
+    if (base.kind !== "decision") {
+        throw new Error("Expected a decision fixture");
+    }
+    const mountWith = (decision: typeof base) =>
+        render(
+            createElement(QueryClientProvider, { client: queryClient },
+                createElement(KeptEditsContext.Provider, { value: keptEdits() },
+                    createElement(DecisionCard, { session: "session", decision, registerFlush: () => {} })))
+        );
+    const idOf = (decision: typeof base, option: string) =>
+        `answer-queue-decision-session-${decision.number}-option-${option}`;
+
+    const choices = ["a", "b", "c"].map((id) => ({ id, label: `Option ${id}`, rationale: null, recommended: false }));
+    const several = { ...base, choices, multiple: true, draftOption: "a" };
+    const card = await mountWith(several);
+    await fireEvent.press(card.getByTestId(idOf(several, "c")));
+    await fireEvent.press(card.getByTestId(idOf(several, "a")));
+    expect(picks).toEqual(["ac", ""]);
+    expect(card.getByTestId(idOf(several, "a")).props.accessibilityRole).toBe("checkbox");
+    await card.unmount();
+
+    picks.length = 0;
+    const single = { ...base, choices, multiple: false, draftOption: "a" };
+    const singleCard = await mountWith(single);
+    await fireEvent.press(singleCard.getByTestId(idOf(single, "c")));
+    expect(picks).toEqual(["c"]);
+    expect(singleCard.getByTestId(idOf(single, "c")).props.accessibilityRole).toBe("button");
+    await singleCard.unmount();
+    queryClient.clear();
+});

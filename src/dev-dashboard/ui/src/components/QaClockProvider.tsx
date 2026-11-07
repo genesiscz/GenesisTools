@@ -58,7 +58,9 @@ export function QaClockProvider({ children }: { children: ReactNode }) {
 function useQaClock<T extends string | number | boolean>(select: (now: number) => T): T {
     const clock = useContext(QaClockContext);
 
-    return useSyncExternalStore(clock.subscribe, () => select(clock.now()));
+    const read = () => select(clock.now());
+
+    return useSyncExternalStore(clock.subscribe, read, read);
 }
 
 export { useQaClock };
