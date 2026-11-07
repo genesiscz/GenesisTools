@@ -78,21 +78,24 @@ describe("scene changes: a partial swap, a slide over several steps, and the fra
         const video = join(folder, "screen.mp4");
         const box = (y: number) => `drawbox=x=0:y=${y}:w=160:h=64:color=black@1:t=fill`;
         const bar = "drawbox=x=0:y=290:w=160:h=30:color=gray@1:t=fill";
-        const made = Bun.spawnSync([
-            "ffmpeg",
-            "-nostdin",
-            "-v",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=c=white:s=160x320:r=30:d=3",
-            "-vf",
-            `${box(32)}:enable='lt(t,1.4)',${box(160)}:enable='gte(t,1.4)',${bar}`,
-            "-pix_fmt",
-            "yuv420p",
-            video,
-        ]);
+        const made = Bun.spawnSync(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=white:s=160x320:r=30:d=3",
+                "-vf",
+                `${box(32)}:enable='lt(t,1.4)',${box(160)}:enable='gte(t,1.4)',${bar}`,
+                "-pix_fmt",
+                "yuv420p",
+                video,
+            ],
+            { env: process.env }
+        );
         expect(made.exitCode).toBe(0);
         const measured = await measureChangeSteps({ video, width: 160, height: 320 });
         const coarse = movieEvents({ steps: measured.steps, fps: measured.fps, pictureHeight: measured.height });
