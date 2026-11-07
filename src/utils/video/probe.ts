@@ -38,26 +38,49 @@ export async function probeVideo({
 }): Promise<VideoInfo> {
     const path = resolve(input);
     const file = await stat(path);
-    if (!file.isFile() || file.size <= 0 || file.size > limits.maxBytes) {
+    if (file.isFile() && file.size === 0) {
+        throw new Error(`${path} is empty (0 bytes): the recording wrote no movie`);
+    }
+
+    if (!file.isFile() || file.size > limits.maxBytes) {
         throw new Error(`Choose a local video file up to ${Math.round(limits.maxBytes / 1024 ** 3)} GiB`);
     }
 
-    const raw = await runVideoCommand({
-        command: [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_streams",
-            "-show_format",
-            "-of",
-            "json",
-            path,
-        ],
-        signal,
-        timeoutMs: 30_000,
-    });
+    let raw: string;
+    try {
+        raw = await runVideoCommand({
+            command: [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_streams",
+                "-show_format",
+                "-of",
+                "json",
+                path,
+            ],
+            signal,
+            timeoutMs: 30_000,
+        });
+    } catch (error) {
+        signal?.throwIfAborted();
+        const reason = error instanceof Error ? error.message : String(error);
+        // ffprobe names the file in every line; the last line without it is the reason ("moov atom not found").
+        const lines = reason
+            .split("\n")
+            .map((line) =>
+                line
+                    .replace(/^\[[^\]]*\]\s*/, "")
+                    .replace(`${path}: `, "")
+                    .trim()
+            )
+            .filter(Boolean);
+        const why = lines.find((line) => /moov atom not found/i.test(line)) ?? lines.at(-1) ?? reason;
+        const unfinished = /moov atom not found/i.test(reason) ? "; a recording that did not finish has no index" : "";
+        throw new Error(`${path} is not a movie ffprobe can read (${why})${unfinished}`);
+    }
     const data = probeSchema.parse(SafeJSON.parse(raw, { strict: true }));
     const video = data.streams[0];
     const durationUs = secondsToMicroseconds(video.duration ?? data.format?.duration ?? "");

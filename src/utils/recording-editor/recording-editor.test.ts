@@ -1980,6 +1980,23 @@ test("video evidence rejects directories before hashing", async () => {
     ).rejects.toThrow("Choose a local video file up to 1 GiB");
 });
 
+test("an empty or unfinished movie is named as such, not as a file over the size limit", async () => {
+    const folder = workspace();
+    const empty = join(folder, "empty.mp4");
+    writeFileSync(empty, "");
+    await expect(probeVideo({ input: empty })).rejects.toThrow("is empty (0 bytes)");
+    // The first bytes of an MP4 whose recorder died before it wrote the index.
+    const unfinished = join(folder, "unfinished.mp4");
+    writeFileSync(
+        unfinished,
+        Buffer.concat([Buffer.from([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70]), Buffer.alloc(4096, 7)])
+    );
+    const error = await probeVideo({ input: unfinished }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error)).toContain("is not a movie ffprobe can read");
+    expect(String(error).split("\n")).toHaveLength(1);
+});
+
 test("a still trim keeps the image already on screen for each display", async () => {
     const result = await new RecordingEditor().run({
         source: { file: recordingFolder() },
