@@ -126,8 +126,11 @@ final class TransitionStills: @unchecked Sendable {
     init(asset: AVAsset) {
         generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = false
-        // The frame on screen at the time: never a later one, so the outgoing clip's last frame is its own.
-        generator.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 4)
+        // Exactly the frame on screen at the time, the one the clip itself shows there. Any tolerance lets the
+        // generator answer with an earlier key frame: 0.25 s gave the incoming still from the CUT part before the clip
+        // (40.29 s for 40.40 s, 65.32 s for 65.40 s on a phone recording), whose redactions are not the ones at the
+        // clip's start, so an exported transition showed a phone number and an address (2026-11-07).
+        generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
     }
 
