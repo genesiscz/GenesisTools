@@ -183,6 +183,15 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
 
     // R5 5 redaction edges
     issues.push(...redactionEdgeIssues(project));
+    // R5 11 clamps: an op time past the end was clamped to it; the edit call said so once, check() keeps saying it.
+    for (const note of project.notes?.clamped ?? []) {
+        issues.push({
+            severity: "check",
+            item: note.split(":")[0] ?? "edit",
+            message: `${note}; check that the end of the movie is the time you meant`,
+            fix: "undo() takes the change back; reset() clears this note with the whole edit",
+        });
+    }
 
     const rank = (issue: EditIssue) => (issue.severity === "fix" ? 0 : 1);
     return issues.sort((a, b) => rank(a) - rank(b) || (a.at ?? -1) - (b.at ?? -1));

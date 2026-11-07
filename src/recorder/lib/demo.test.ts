@@ -462,6 +462,21 @@ describe("movie survey on one time base", () => {
         expect(changedParts(projectOps.readProject(path), projectOps.readProject(path))).toBe("nothing");
     });
 
+    test("a cut or a speed past the end is clamped, and check() keeps saying so until the edit is reset", async () => {
+        const path = cutEdit();
+        const movie = new Movie(path);
+        const cut = await movie.cut(8, 30);
+        expect(cut.warnings?.join(" ")).toContain("to 30 s is past the end of the source (10 s)");
+        const checked = await movie.check();
+        expect(checked.ok).toBe(true);
+        expect(checked.clean).toBe(false);
+        expect(checked.issues.find((issue) => issue.item === "cut")?.message).toContain("to 30 s is past the end");
+        await movie.text({ from: 0, to: 1, text: "Hi" });
+        expect((await movie.check()).issues.some((issue) => issue.message.includes("past the end"))).toBe(true);
+        await movie.reset();
+        expect((await movie.check()).issues.some((issue) => issue.message.includes("past the end"))).toBe(false);
+    });
+
     test("a full source still asks the renderer for the export's size and answers both clocks", async () => {
         const path = cutEdit();
         const part = spyOn(library, "requireRecorderPart").mockImplementation(() => undefined);

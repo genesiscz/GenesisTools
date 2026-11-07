@@ -315,7 +315,8 @@ export async function computeEdit({
     const removedIdleUs: Array<[number, number]> = [];
     const facts: OpFacts[] = [];
     let loudness: { measuredLufs: number | null; volume: number } | undefined;
-    const warnings = ops.flatMap((op) => opTimeWarnings(op, project.source.durationUs));
+    const clamped = ops.flatMap((op) => opTimeWarnings(op, project.source.durationUs));
+    const warnings = [...clamped];
 
     for (const [index, op] of ops.entries()) {
         try {
@@ -335,6 +336,11 @@ export async function computeEdit({
             const which = ops.length > 1 ? `op ${index + 1} (${op.op})` : op.op;
             throw new Error(`${which} refused, nothing was saved: ${message}`);
         }
+    }
+
+    // R5 11: a clamp was a warning in this answer only; the edit keeps it so check() names it until an undo or a reset.
+    if (clamped.length > 0) {
+        next = { ...next, notes: { ...next.notes, clamped: [...(next.notes?.clamped ?? []), ...clamped].slice(-20) } };
     }
 
     // Ops that change nothing (a second annotateClicks, a fix to the same words) save no revision and no undo step.

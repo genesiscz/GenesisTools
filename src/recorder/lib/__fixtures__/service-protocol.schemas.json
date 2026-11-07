@@ -3488,7 +3488,7 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema10"
+            "$ref": "#/$defs/__schema11"
           },
           "undoDepth": {
             "type": "integer",
@@ -3516,7 +3516,7 @@
         "additionalProperties": false
       },
       "edit.apply": {
-        "$ref": "#/$defs/__schema11"
+        "$ref": "#/$defs/__schema12"
       },
       "edit.undo": {
         "type": "object",
@@ -3525,16 +3525,16 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema10"
+            "$ref": "#/$defs/__schema11"
           },
           "warnings": {
-            "$ref": "#/$defs/__schema12"
-          },
-          "removedIdleUs": {
             "$ref": "#/$defs/__schema13"
           },
-          "loudness": {
+          "removedIdleUs": {
             "$ref": "#/$defs/__schema14"
+          },
+          "loudness": {
+            "$ref": "#/$defs/__schema15"
           },
           "undone": {
             "type": "array",
@@ -3557,16 +3557,16 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema10"
+            "$ref": "#/$defs/__schema11"
           },
           "warnings": {
-            "$ref": "#/$defs/__schema12"
-          },
-          "removedIdleUs": {
             "$ref": "#/$defs/__schema13"
           },
-          "loudness": {
+          "removedIdleUs": {
             "$ref": "#/$defs/__schema14"
+          },
+          "loudness": {
+            "$ref": "#/$defs/__schema15"
           },
           "redone": {
             "type": "array",
@@ -3589,7 +3589,7 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema10"
+            "$ref": "#/$defs/__schema11"
           }
         },
         "required": [
@@ -3615,7 +3615,7 @@
         "additionalProperties": false
       },
       "gesture.commit": {
-        "$ref": "#/$defs/__schema11"
+        "$ref": "#/$defs/__schema12"
       },
       "gesture.cancel": {
         "type": "object",
@@ -3624,7 +3624,7 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema10"
+            "$ref": "#/$defs/__schema11"
           }
         },
         "required": [
@@ -3805,12 +3805,12 @@
         "type": "object",
         "properties": {
           "front": {
-            "$ref": "#/$defs/__schema15"
+            "$ref": "#/$defs/__schema16"
           },
           "open": {
             "type": "array",
             "items": {
-              "$ref": "#/$defs/__schema15"
+              "$ref": "#/$defs/__schema16"
             }
           }
         },
@@ -5564,6 +5564,19 @@
               "snapMs"
             ],
             "additionalProperties": false
+          },
+          "notes": {
+            "type": "object",
+            "properties": {
+              "clamped": {
+                "maxItems": 20,
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema10"
+                }
+              }
+            },
+            "additionalProperties": false
           }
         },
         "required": [
@@ -5675,27 +5688,30 @@
         "pattern": "^#[0-9a-fA-F]{6}$"
       },
       "__schema10": {
+        "type": "string"
+      },
+      "__schema11": {
         "type": "integer",
         "minimum": 0,
         "maximum": 9007199254740991
       },
-      "__schema11": {
+      "__schema12": {
         "type": "object",
         "properties": {
           "project": {
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema10"
+            "$ref": "#/$defs/__schema11"
           },
           "warnings": {
-            "$ref": "#/$defs/__schema12"
-          },
-          "removedIdleUs": {
             "$ref": "#/$defs/__schema13"
           },
-          "loudness": {
+          "removedIdleUs": {
             "$ref": "#/$defs/__schema14"
+          },
+          "loudness": {
+            "$ref": "#/$defs/__schema15"
           }
         },
         "required": [
@@ -5704,13 +5720,13 @@
         ],
         "additionalProperties": false
       },
-      "__schema12": {
+      "__schema13": {
         "type": "array",
         "items": {
           "type": "string"
         }
       },
-      "__schema13": {
+      "__schema14": {
         "type": "array",
         "items": {
           "type": "array",
@@ -5727,7 +5743,7 @@
           "maxItems": 2
         }
       },
-      "__schema14": {
+      "__schema15": {
         "type": "object",
         "properties": {
           "measuredLufs": {
@@ -5746,7 +5762,7 @@
         ],
         "additionalProperties": false
       },
-      "__schema15": {
+      "__schema16": {
         "type": "object",
         "properties": {
           "path": {

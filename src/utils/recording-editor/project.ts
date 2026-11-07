@@ -560,6 +560,12 @@ export const editProjectSchema = z.object({
     // R5 5 redaction edges
     /** How the hiding parts close small holes at cuts and between each other; absent is snapMs 250. */
     redactionJoins: redactionJoinsSchema.optional(),
+    // R5 11 clamps visible in check()
+    /**
+     * What edit calls did that check() keeps naming: `clamped` holds the warnings of ops whose time lay past the end
+     * of the source (the newest 20). An undo takes a note back with its edit; a reset clears them.
+     */
+    notes: z.object({ clamped: z.array(z.string()).max(20).optional() }).optional(),
 });
 
 export type EditProject = z.infer<typeof editProjectSchema>;
