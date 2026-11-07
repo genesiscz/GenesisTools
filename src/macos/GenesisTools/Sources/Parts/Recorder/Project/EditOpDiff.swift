@@ -106,6 +106,28 @@ enum EditOpDiff {
                 ops.append(.music(EditOp.Music(enabled: false)))
             }
         }
+        // R4 voiceover clips: the window moves a clip or changes its volume; adding or removing one sends its own op.
+        if a.voiceovers != b.voiceovers {
+            let before = a.voiceovers ?? []
+            for clip in b.voiceovers ?? [] {
+                guard let old = before.first(where: { $0.id == clip.id }), old != clip else { continue }
+                var op = EditOp.Voiceover(id: clip.id)
+                if old.atUs != clip.atUs { op.at = seconds(clip.atUs) }
+                if old.file != clip.file { op.file = clip.file }
+                if old.volume != clip.volume { op.volume = clip.volume }
+                if old.label != clip.label { op.label = clip.label ?? "" }
+                ops.append(.voiceover(op))
+            }
+        }
+        // R4 8 music ducking
+        if a.ducking != b.ducking {
+            if let ducking = b.ducking {
+                ops.append(.ducking(EditOp.Ducking(db: ducking.db, fadeMs: ducking.fadeMs, transcript: ducking.transcript,
+                                                   voiceovers: ducking.voiceovers, enabled: true)))
+            } else {
+                ops.append(.ducking(EditOp.Ducking(enabled: false)))
+            }
+        }
         if a.denoise != b.denoise {
             if let denoise = b.denoise {
                 ops.append(.denoise(EditOp.Denoise(enabled: true, method: denoise.method, reductionDb: denoise.reductionDb,

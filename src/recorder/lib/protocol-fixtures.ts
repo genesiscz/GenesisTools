@@ -207,6 +207,13 @@ const EXAMPLE_OPS: readonly unknown[] = [
     { op: "range", from: 1, to: 3, action: "spotlight" },
     { op: "range", from: 2, to: 4, action: "speed", factor: 2 },
     { op: "range", from: 2, to: 3, action: "text", text: "Step 1", lane: "lane3" },
+    // R4 voiceover clips
+    { op: "voiceover", at: 2.5, file: "/voice/intro.mp3", volume: 1.2, label: "Intro" },
+    { op: "voiceover", id: "v1", at: 3 },
+    { op: "unvoiceover", id: "v1" },
+    // R4 8 music ducking
+    { op: "ducking", db: 12, fadeMs: 300, transcript: true, voiceovers: false },
+    { op: "ducking", enabled: false },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */
@@ -313,6 +320,24 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
         { name: "the looks, the export and the sound", project: looks },
         { name: "the looks a recorded track turns on, and music", project: stableIds(tracked) },
         { name: "a camera with two hidden parts and lanes", project: camera },
+        // R4 voiceover clips, 8 music ducking
+        {
+            name: "voiceover clips and music ducking",
+            project: editProjectSchema.parse({
+                ...wholeProject(source),
+                audio: {
+                    include: true,
+                    volume: 1,
+                    mutedTracks: [],
+                    music: { file: "/music/bed.mp3", volume: 0.3 },
+                    voiceovers: [
+                        { id: "v1", atUs: 1_000_000, file: "/voice/intro.mp3", durationUs: 2_500_000, label: "Intro" },
+                        { id: "v2", atUs: 6_000_000, file: "/voice/outro.wav", durationUs: 1_200_000, volume: 1.4 },
+                    ],
+                    ducking: { db: 15, fadeMs: 250, transcript: false },
+                },
+            }),
+        },
     ];
 }
 

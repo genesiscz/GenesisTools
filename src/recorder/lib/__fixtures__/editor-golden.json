@@ -107,6 +107,10 @@
     "movie.shortcuts",
     "movie.show",
     "movie.closeEditor",
+    "movie.voiceover",
+    "movie.unvoiceover",
+    "movie.say",
+    "movie.ducking",
     "movies.list",
     "movies.search"
   ],
@@ -166,6 +170,9 @@
     "duplicate",
     "removeClickCircles",
     "renameLane",
+    "voiceover",
+    "unvoiceover",
+    "ducking",
     "range"
   ],
   "ops": [
@@ -629,6 +636,33 @@
       "action": "text",
       "text": "Step 1",
       "lane": "lane3"
+    },
+    {
+      "op": "voiceover",
+      "at": 2.5,
+      "file": "/voice/intro.mp3",
+      "volume": 1.2,
+      "label": "Intro"
+    },
+    {
+      "op": "voiceover",
+      "id": "v1",
+      "at": 3
+    },
+    {
+      "op": "unvoiceover",
+      "id": "v1"
+    },
+    {
+      "op": "ducking",
+      "db": 12,
+      "fadeMs": 300,
+      "transcript": true,
+      "voiceovers": false
+    },
+    {
+      "op": "ducking",
+      "enabled": false
     }
   ],
   "projects": [
@@ -1022,6 +1056,67 @@
             "lane": "lane3"
           }
         ]
+      }
+    },
+    {
+      "name": "voiceover clips and music ducking",
+      "project": {
+        "version": 1,
+        "source": {
+          "video": "/movies/screen.mp4",
+          "durationUs": 10000000,
+          "width": 1920,
+          "height": 1080
+        },
+        "clips": [
+          {
+            "id": "c00000000",
+            "fromUs": 0,
+            "toUs": 10000000,
+            "speed": 1
+          }
+        ],
+        "zooms": [],
+        "audio": {
+          "include": true,
+          "volume": 1,
+          "mutedTracks": [],
+          "music": {
+            "file": "/music/bed.mp3",
+            "volume": 0.3,
+            "duck": 0.6,
+            "fadeMs": 1500
+          },
+          "voiceovers": [
+            {
+              "id": "v1",
+              "atUs": 1000000,
+              "file": "/voice/intro.mp3",
+              "durationUs": 2500000,
+              "volume": 1,
+              "label": "Intro"
+            },
+            {
+              "id": "v2",
+              "atUs": 6000000,
+              "file": "/voice/outro.wav",
+              "durationUs": 1200000,
+              "volume": 1.4
+            }
+          ],
+          "ducking": {
+            "db": 15,
+            "fadeMs": 250,
+            "transcript": false,
+            "voiceovers": true
+          }
+        },
+        "export": {
+          "codec": "h264",
+          "maxHeight": 0,
+          "output": ""
+        },
+        "revision": 0
       }
     }
   ]

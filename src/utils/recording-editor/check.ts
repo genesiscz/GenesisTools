@@ -26,6 +26,9 @@ export interface EditFacts {
     musicFileExists: boolean;
     /** The markers set while it recorded (its recording.json), at source milliseconds; the edit does not hold them. */
     recordedMarkers?: ReadonlyArray<{ atMs: number; label: string }>;
+    // R4 voiceover clips
+    /** The ids of the voiceover clips whose file is gone; absent is none checked. */
+    missingVoiceovers?: readonly string[];
 }
 
 /** A text that loses less than this to a cut is not worth a word. */
@@ -140,12 +143,38 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
             });
         }
 
-        if (music && music.duck > 0) {
+        const voiceDucks = (project.audio.voiceovers?.length ?? 0) > 0 && project.audio.ducking?.voiceovers !== false;
+
+        if (music && music.duck > 0 && !voiceDucks) {
             issues.push({
                 severity: "check",
                 item: "music",
                 message: "The music should drop under speech, but without a transcript nothing ducks",
                 fix: "await movie.transcript()",
+            });
+        }
+    }
+
+    // R4 voiceover clips: a gone file plays nothing; a clip whose start is cut is not mixed at all.
+    for (const clip of project.audio.voiceovers ?? []) {
+        const name = clip.label ? `voiceover ${clip.id} ("${clip.label}")` : `voiceover ${clip.id}`;
+
+        if (facts.missingVoiceovers?.includes(clip.id)) {
+            issues.push({
+                severity: "fix",
+                item: name,
+                message: `The voiceover file "${clip.file.split(/[/\\]/).pop()}" is gone, so it does not play (it was ${clip.file})`,
+                fix: `movie.unvoiceover("${clip.id}") or movie.voiceover({ id: "${clip.id}", file: "<the file>" })`,
+                at: tenths(clip.atUs),
+                action: { label: "Remove", ops: [{ op: "unvoiceover", id: clip.id }] },
+            });
+        } else if (keptUs(project, clip.atUs, clip.atUs + 1) === 0) {
+            issues.push({
+                severity: "fix",
+                item: name,
+                message: `The voiceover at ${tenths(clip.atUs)} s starts in a cut part, so it does not play`,
+                fix: `movie.voiceover({ id: "${clip.id}", at: <a kept second> })`,
+                at: tenths(clip.atUs),
             });
         }
     }

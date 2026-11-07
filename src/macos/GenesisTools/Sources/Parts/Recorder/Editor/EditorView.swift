@@ -209,7 +209,7 @@ struct SwitchRow: View {
     }
 }
 
-private struct WideButton: View {
+struct WideButton: View {
     let title: String
     var systemImage: String?
     var role: ButtonRole?
@@ -1258,6 +1258,8 @@ private struct AudioInspector: View {
                 EmptyState(symbol: "speaker.slash", text: "The recording has no sound of its own",
                            detail: "Record with the microphone or the system audio on to get a sound track, or put music under it below.")
                 MusicSection(model: model)
+                // R4 voiceover clips
+                VoiceoverSection(model: model)
             }
         } else {
         VStack(alignment: .leading, spacing: 10) {
@@ -1311,6 +1313,8 @@ private struct AudioInspector: View {
                 NoiseReductionSection(model: model)
             }
             MusicSection(model: model)
+            // R4 voiceover clips
+            VoiceoverSection(model: model)
         }
         }
     }
@@ -1418,11 +1422,15 @@ private struct MusicSection: View {
                 SectionLabel(text: "Music volume", value: "\(Int((music.volume * 100).rounded()))%")
                 Slider(value: Binding(get: { music.volume }, set: { value in model.setMusic { $0.volume = (value * 20).rounded() / 20 } }), in: 0...1)
                     .accessibilityLabel("Music volume")
+                // R4 8 music ducking: with the dB setting on (DuckingSection) this older share does nothing.
+                if model.project.audio.ducking == nil {
                 SectionLabel(text: "Quieter under speech", value: music.duck == 0 ? "Off" : "\(Int((music.duck * 100).rounded()))%")
                 Slider(value: Binding(get: { music.duck }, set: { value in model.setMusic { $0.duck = (value * 20).rounded() / 20 } }), in: 0...1)
                     .accessibilityLabel("Music quieter under speech")
-                    .instantTooltip("While a transcript line plays the music drops by this much, so speech stays clear")
-                if model.zoom.captionLines.isEmpty && music.duck > 0 {
+                    .instantTooltip("While a transcript line or a voiceover plays the music drops by this much, so speech stays clear")
+                }
+                DuckingSection(model: model)
+                if model.zoom.captionLines.isEmpty && (model.project.audio.voiceovers ?? []).isEmpty && music.duck > 0 {
                     Text("Nothing ducks yet: the movie has no transcript (Captions tab → Transcribe).")
                         .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                         .fixedSize(horizontal: false, vertical: true)

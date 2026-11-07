@@ -113,6 +113,34 @@ struct EditProject: Codable, Equatable {
         /// Noise reduction on export, applied by the TypeScript export (src/utils/recording-editor/denoise.ts); kept
         /// here so a save from the editor does not drop it. nil is none.
         var denoise: Denoise?
+        // R4 voiceover clips
+        /// Extra sound files played from source times, in source order; nil is none.
+        var voiceovers: [Voiceover]?
+        // R4 8 music ducking
+        /// How far the music drops under speech; nil keeps `Music.duck` (src/utils/recording-editor/voiceovers.ts).
+        var ducking: Ducking?
+    }
+
+    // R4 voiceover clips
+    /// A sound file (a narration) that plays from SOURCE time `atUs` at its own speed for `durationUs`, measured
+    /// when it was added; `id` is what the `unvoiceover` op takes.
+    struct Voiceover: Codable, Equatable, Identifiable {
+        var id: String
+        var atUs: Int64
+        var file: String
+        var durationUs: Int64
+        /// 0 to 2.
+        var volume = 1.0
+        var label: String?
+    }
+
+    // R4 8 music ducking
+    /// The music drops `db` under the transcript's lines and the voiceovers (each switchable), over `fadeMs`.
+    struct Ducking: Codable, Equatable {
+        var db = 12.0
+        var fadeMs = 300
+        var transcript = true
+        var voiceovers = true
     }
 
     /// The export's noise reduction: `afftdn` turns the noise down by `reductionDb` on the chosen audio tracks.

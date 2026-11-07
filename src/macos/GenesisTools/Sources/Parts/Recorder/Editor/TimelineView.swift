@@ -570,7 +570,7 @@ private struct MusicLaneView: View {
             ? min(lengthUs, max(0, (fileUs ?? lengthUs) - Int64(music.startMs ?? 0) * 1000))
             : lengthUs
         let speech = MusicMix.speech(lines: model.zoom.captionLines, project: model.project)
-        let frames = MusicMix.keyframes(music: music, speech: speech, lengthUs: playedUs)
+        let frames = MusicMix.keyframes(music: music, speech: speech, lengthUs: playedUs, duck: .of(model.project))
         let tint = missing ? Color.red : Color(red: 0.55, green: 0.6, blue: 1)
         Canvas { context, size in
             let x0 = scale.x(0) + 1.5

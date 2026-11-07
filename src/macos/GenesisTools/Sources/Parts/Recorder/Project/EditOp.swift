@@ -63,6 +63,11 @@ enum EditOp: Equatable {
     case duplicate(Duplicate)
     case removeClickCircles(RemoveClickCircles)
     case renameLane(RenameLane)
+    // R4 voiceover clips
+    case voiceover(Voiceover)
+    case unvoiceover(Unvoiceover)
+    // R4 8 music ducking
+    case ducking(Ducking)
 
     /// Every payload type, so the decoder finds one by its tag and the tag test lists them.
     static let payloads: [any EditOpPayload.Type] = [
@@ -74,6 +79,8 @@ enum EditOp: Equatable {
         Normalize.self, Lanes.self, AddLane.self, RemoveLane.self, MoveLane.self, MoveToLane.self, RangeAction.self,
         SetZoom.self, SetRedaction.self, SetText.self, SetShape.self, Trim.self, DeleteClip.self, ClipSpeed.self,
         Duplicate.self, RemoveClickCircles.self, RenameLane.self,
+        // R4 voiceover clips, 8 music ducking
+        Voiceover.self, Unvoiceover.self, Ducking.self,
     ]
 
     static var tags: [String] { payloads.map { $0.tag } }
@@ -136,6 +143,10 @@ enum EditOp: Equatable {
         case let .duplicate(op): op
         case let .removeClickCircles(op): op
         case let .renameLane(op): op
+        // R4 voiceover clips, 8 music ducking
+        case let .voiceover(op): op
+        case let .unvoiceover(op): op
+        case let .ducking(op): op
         }
     }
 
@@ -705,5 +716,34 @@ extension EditOp {
         var id: String
         var name: String
         var op: EditOp { .renameLane(self) }
+    }
+
+    // R4 voiceover clips
+    /// Adds a clip at SOURCE seconds `at`, or with `id` changes that clip.
+    struct Voiceover: EditOpPayload {
+        static let tag = "voiceover"
+        var id: String?
+        var at: Double?
+        var file: String?
+        var volume: Double?
+        var label: String?
+        var op: EditOp { .voiceover(self) }
+    }
+
+    struct Unvoiceover: EditOpPayload {
+        static let tag = "unvoiceover"
+        var id: String
+        var op: EditOp { .unvoiceover(self) }
+    }
+
+    // R4 8 music ducking
+    struct Ducking: EditOpPayload {
+        static let tag = "ducking"
+        var db: Double?
+        var fadeMs: Int?
+        var transcript: Bool?
+        var voiceovers: Bool?
+        var enabled: Bool?
+        var op: EditOp { .ducking(self) }
     }
 }

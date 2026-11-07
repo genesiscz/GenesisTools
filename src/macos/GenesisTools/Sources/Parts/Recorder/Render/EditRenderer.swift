@@ -357,13 +357,36 @@ enum MusicMix {
     /// How long the music takes to dip under a line and come back.
     static let rampUs: Int64 = 300_000
 
-    /// The spoken parts in output time, from the cached transcript; lines closer than two ramps merge.
+    // R4 8 music ducking
+    /// How far the music drops under speech (`drop` 0.6 leaves 40 %) and how long the dip takes: the edit's `ducking`
+    /// in dB when it has one, else the music's older `duck` share over `rampUs`.
+    struct Duck: Equatable {
+        var drop: Double
+        var rampUs: Int64
+
+        static func of(_ project: EditProject) -> Duck {
+            guard let ducking = project.audio.ducking else {
+                return Duck(drop: project.audio.music?.duck ?? 0, rampUs: MusicMix.rampUs)
+            }
+            // A 0 ms fade still ramps over 10 ms: two keyframes on one time made no ramp at all.
+            return Duck(drop: 1 - pow(10, -ducking.db / 20), rampUs: max(10_000, Int64(ducking.fadeMs) * 1000))
+        }
+    }
+
+    /// The spoken parts in output time: the cached transcript's lines and the voiceover clips (each as the edit's
+    /// `ducking` allows); parts closer than two ramps merge.
     static func speech(lines: [CaptionTrack.Line], project: EditProject) -> [(fromUs: Int64, toUs: Int64)] {
-        let spans = lines.compactMap { line -> (fromUs: Int64, toUs: Int64)? in
+        let ducking = project.audio.ducking
+        let rampUs = Duck.of(project).rampUs
+        var spans = ((ducking?.transcript ?? true) ? lines : []).compactMap { line -> (fromUs: Int64, toUs: Int64)? in
             guard let from = TimelineMap.outputTime(ofSource: line.fromUs, in: project),
                   let to = TimelineMap.outputTime(ofSource: line.toUs, in: project), to > from else { return nil }
             return (from, to)
-        }.sorted { $0.fromUs < $1.fromUs }
+        }
+        if ducking?.voiceovers ?? true {
+            spans += VoiceoverMix.placements(project).map { ($0.outUs, $0.outUs + $0.playUs) }
+        }
+        spans.sort { $0.fromUs < $1.fromUs }
         var merged: [(fromUs: Int64, toUs: Int64)] = []
         for span in spans {
             if let last = merged.last, span.fromUs - last.toUs < rampUs * 2 {
@@ -376,7 +399,10 @@ enum MusicMix {
     }
 
     /// The music's volume at `us`: its level, times the fades at both ends, times the duck under a spoken part.
-    static func gain(atUs us: Int64, music: EditProject.Music, speech: [(fromUs: Int64, toUs: Int64)], lengthUs: Int64) -> Double {
+    /// `duck` nil is the music's own share over `rampUs`.
+    static func gain(atUs us: Int64, music: EditProject.Music, speech: [(fromUs: Int64, toUs: Int64)], lengthUs: Int64,
+                     duck: Duck? = nil) -> Double {
+        let duck = duck ?? Duck(drop: music.duck, rampUs: rampUs)
         let fadeUs = Double(max(1, Int64(music.fadeMs) * 1000))
         let fade = music.fadeMs == 0 ? 1 : max(0, min(1, Double(us) / fadeUs, Double(lengthUs - us) / fadeUs))
         var level = 1.0
@@ -384,27 +410,29 @@ enum MusicMix {
             let into: Double
             if us >= span.fromUs && us <= span.toUs {
                 into = 1
-            } else if us < span.fromUs && us > span.fromUs - rampUs {
-                into = 1 - Double(span.fromUs - us) / Double(rampUs)
-            } else if us > span.toUs && us < span.toUs + rampUs {
-                into = 1 - Double(us - span.toUs) / Double(rampUs)
+            } else if us < span.fromUs && us > span.fromUs - duck.rampUs {
+                into = 1 - Double(span.fromUs - us) / Double(duck.rampUs)
+            } else if us > span.toUs && us < span.toUs + duck.rampUs {
+                into = 1 - Double(us - span.toUs) / Double(duck.rampUs)
             } else {
                 into = 0
             }
-            level = min(level, 1 - music.duck * into)
+            level = min(level, 1 - duck.drop * into)
         }
         return music.volume * fade * level
     }
 
     /// The times where the volume changes its slope, with the volume there; a ramp runs between each pair.
-    static func keyframes(music: EditProject.Music, speech: [(fromUs: Int64, toUs: Int64)], lengthUs: Int64) -> [(us: Int64, volume: Double)] {
+    static func keyframes(music: EditProject.Music, speech: [(fromUs: Int64, toUs: Int64)], lengthUs: Int64,
+                          duck: Duck? = nil) -> [(us: Int64, volume: Double)] {
+        let rampUs = duck?.rampUs ?? rampUs
         let fadeUs = Int64(music.fadeMs) * 1000
         var times: Set<Int64> = [0, lengthUs, min(lengthUs, fadeUs), max(0, lengthUs - fadeUs)]
         for span in speech {
             times.formUnion([span.fromUs - rampUs, span.fromUs, span.toUs, span.toUs + rampUs])
         }
         return times.filter { $0 >= 0 && $0 <= lengthUs }.sorted()
-            .map { ($0, gain(atUs: $0, music: music, speech: speech, lengthUs: lengthUs)) }
+            .map { ($0, gain(atUs: $0, music: music, speech: speech, lengthUs: lengthUs, duck: duck)) }
     }
 
     /// Lays the music under the movie and returns its mix parameters; nil (logged) when the file has no sound.
@@ -434,7 +462,7 @@ enum MusicMix {
         // Played once, the music fades out at its own end.
         let playedUs = min(lengthUs, Int64((at.seconds * 1_000_000).rounded()))
         let speech = speech(lines: CaptionTrack.load(video: project.source.video)?.lines ?? [], project: project)
-        let frames = keyframes(music: music, speech: speech, lengthUs: playedUs)
+        let frames = keyframes(music: music, speech: speech, lengthUs: playedUs, duck: Duck.of(project))
         let parameters = AVMutableAudioMixInputParameters(track: out)
         for (start, end) in zip(frames, frames.dropFirst()) where end.us > start.us {
             parameters.setVolumeRamp(fromStartVolume: Float(start.volume), toEndVolume: Float(end.volume),
@@ -657,6 +685,8 @@ struct EditRenderer {
         if project.clicks?.sound == true, let parameters = try await ClickSound.add(to: composition, project: project) {
             inputs.append(parameters)
         }
+        // R4 voiceover clips
+        inputs += await VoiceoverMix.add(to: composition, project: project, lengthUs: Int64((cursor.seconds * 1_000_000).rounded()))
         var audioMix: AVAudioMix?
         if !inputs.isEmpty {
             let mix = AVMutableAudioMix()

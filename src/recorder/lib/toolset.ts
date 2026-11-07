@@ -945,6 +945,53 @@ const movieMethods = [
         effect: "reversible",
         reaches: ["user"],
     }),
+    // R4 voiceover clips
+    edit(
+        "voiceover",
+        z
+            .object({
+                at: sourceTimeSchema.optional(),
+                file: z.string().min(1).optional(),
+                volume: z.number().min(0).max(2).optional(),
+                label: z.string().max(200).optional(),
+                id: z.string().optional(),
+            })
+            .strict(),
+        'Plays a sound file (mp3, wav, aiff, m4a) from SOURCE time `at` (seconds or "m:ss") at its own speed, mixed into the preview and the export: a narration. volume 0 to 2 (1), label names it ("Intro"). With id (from info().voiceovers) it changes that clip instead: a new at moves it, a new file replaces it. The music drops under it (ducking()). unvoiceover(id) removes it. info().voiceovers lists each with plays (its OUTPUT second, null when its start is cut).'
+    ),
+    edit("unvoiceover", z.object({ id: z.string() }).strict(), "Removes a voiceover clip by its id.", ["id"]),
+    defineMethod({
+        name: "say",
+        params: z
+            .object({
+                at: sourceTimeSchema,
+                text: z.string().trim().min(1).max(2000),
+                provider: z.enum(["xai", "openai", "macos"]).optional(),
+                voice: z.string().optional(),
+                rate: z.number().min(0).max(2).optional(),
+                volume: z.number().min(0).max(2).optional(),
+                label: z.string().max(200).optional(),
+            })
+            .strict(),
+        result: z.unknown(),
+        resultName: `${editResult.replace(" }", ", voiceover: { id, file, seconds } }")}`,
+        doc: 'Speaks `text` into a sound file with `tools say --output` (provider "xai" by default, voice and rate as tools say takes them; it costs a cloud call) in the recording\'s voiceovers/ folder, then adds it as a voiceover at SOURCE time `at`, like voiceover(). Nothing plays aloud. A cloud failure throws (no fallback to the macOS voice).',
+        effect: "reversible",
+    }),
+    // R4 8 music ducking
+    edit(
+        "ducking",
+        z
+            .object({
+                db: z.number().min(0).max(40).optional(),
+                fadeMs: z.number().int().min(0).max(5000).optional(),
+                transcript: z.boolean().optional(),
+                voiceovers: z.boolean().optional(),
+                enabled: z.boolean().optional(),
+            })
+            .strict(),
+        "How far the music drops while someone speaks: db quieter (12), reached over fadeMs (300), under the transcript's lines (transcript, true) and under the voiceover clips (voiceovers, true). Without it the music's older duck share applies (to both). enabled: false removes it."
+    ),
 ];
 
 const recordingMethods = [
@@ -1091,6 +1138,10 @@ function facts(opened: { path: string; project: EditProject }): EditFacts {
         hasCursorTrack: Boolean(project.source.cursor && existsSync(project.source.cursor)),
         musicFileExists: project.audio.music ? existsSync(project.audio.music.file) : true,
         recordedMarkers: recordedMarkersOf(opened),
+        // R4 voiceover clips
+        missingVoiceovers: (project.audio.voiceovers ?? [])
+            .filter((clip) => !existsSync(clip.file))
+            .map((clip) => clip.id),
     };
 }
 
@@ -1301,6 +1352,82 @@ export class Movie {
 
     async unmarker(id: string) {
         return this.change([{ op: "unmarker", id }]);
+    }
+
+    // R4 voiceover clips
+    async voiceover(options: Omit<Extract<EditOp, { op: "voiceover" }>, "op">) {
+        return this.change([{ op: "voiceover", ...options }]);
+    }
+
+    async unvoiceover(id: string) {
+        return this.change([{ op: "unvoiceover", id }]);
+    }
+
+    /** Speaks the text into a file beside the recording (never aloud) and adds it as a voiceover. */
+    async say(options: {
+        at: TimeValue;
+        text: string;
+        provider?: "xai" | "openai" | "macos";
+        voice?: string;
+        rate?: number;
+        volume?: number;
+        label?: string;
+    }) {
+        const { project } = await openProject(this.recording);
+        const provider = options.provider ?? "xai";
+        const folder = join(dirname(project.source.video), "voiceovers");
+        mkdirSync(folder, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*$/, "");
+        const file = join(
+            folder,
+            `say-${stamp}-${Math.random().toString(36).slice(2, 6)}.${provider === "macos" ? "aiff" : "mp3"}`
+        );
+        const args = ["say", "--output", file, "--provider", provider];
+
+        if (provider !== "macos") {
+            args.push("--format", "mp3", "--no-fallback");
+        }
+
+        if (options.voice) {
+            args.push("--voice", options.voice);
+        }
+
+        if (options.rate !== undefined) {
+            args.push("--rate", String(options.rate));
+        }
+
+        args.push(options.text);
+        log.info({ provider, file, chars: options.text.length }, "movie.say: tools say --output");
+        const result = await execTool(args, { timeout: 120_000 });
+
+        if (!result.success || !existsSync(file) || statSync(file).size === 0) {
+            throw new Error(
+                `tools say --provider ${provider} wrote no sound (exit ${result.exitCode}): ${(result.stderr || result.stdout).slice(-400)}`
+            );
+        }
+
+        const label = options.label ?? options.text.slice(0, 60);
+        const before = new Set((project.audio.voiceovers ?? []).map((clip) => clip.id));
+        const answer = await this.change([
+            {
+                op: "voiceover",
+                at: options.at,
+                file,
+                label,
+                ...(options.volume === undefined ? {} : { volume: options.volume }),
+            },
+        ]);
+        const after = await openProject(this.recording);
+        const added = (after.project.audio.voiceovers ?? []).find((clip) => !before.has(clip.id) && clip.file === file);
+        return {
+            ...answer,
+            voiceover: { id: added?.id ?? null, file, seconds: added ? added.durationUs / 1_000_000 : null },
+        };
+    }
+
+    // R4 8 music ducking
+    async ducking(options: Omit<Extract<EditOp, { op: "ducking" }>, "op"> = {}) {
+        return this.change([{ op: "ducking", ...options }]);
     }
 
     /** Fixes the line spoken at `at` (any time inside it, so a time from find() or a still works). */

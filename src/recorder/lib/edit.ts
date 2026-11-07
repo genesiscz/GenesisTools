@@ -48,6 +48,7 @@ import {
     wordCuts,
     wordSpans,
 } from "@genesiscz/utils/recording-editor/transcript-cuts";
+import { audioFileDurationUs, voiceoverFile } from "@genesiscz/utils/recording-editor/voiceovers";
 import { RPC_ERRORS, RpcError } from "@genesiscz/utils/screen-recorder/control";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -630,6 +631,11 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
     if (op.op === "cutWords" || op.op === "cutFillers") {
         const fillerLists = op.op === "cutFillers" ? await configuredFillerLists() : undefined;
         return { transcript: readTranscriptSegments(project), ...(fillerLists ? { fillerLists } : {}) };
+    }
+
+    // R4 voiceover clips: the clip's length, so ducking and the lists know where it ends.
+    if (op.op === "voiceover" && op.file !== undefined) {
+        return { voiceoverDurationUs: await audioFileDurationUs(voiceoverFile(op.file)) };
     }
 
     // A fix is keyed by its line's start; without a transcript the time is taken as that start.

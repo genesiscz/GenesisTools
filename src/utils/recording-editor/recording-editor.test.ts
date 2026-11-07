@@ -1069,6 +1069,46 @@ describe("edit project (edit.json)", () => {
             loop: false,
             duck: 0,
         });
+        // R4 voiceover clips: added at a source time with the measured length, kept in source order; an id changes
+        // that clip; unvoiceover removes it and the last one removes the key. A file that is not a sound is refused.
+        const voice = join(dirname(song), "voice.mp3");
+        writeFileSync(voice, "");
+        expect(() => applyOp(project, { op: "voiceover", at: 2, file: voice })).toThrow("was not measured");
+        expect(() => applyOp(project, { op: "voiceover", at: 2, file: song.replace(".m4a", ".txt") })).toThrow(
+            "does not exist"
+        );
+        expect(() => applyOp(project, { op: "voiceover", file: voice }, { voiceoverDurationUs: 1 })).toThrow(
+            "needs `at`"
+        );
+        const voiced = applyOp(
+            applyOp(
+                project,
+                { op: "voiceover", at: 4, file: voice, label: "Second" },
+                { voiceoverDurationUs: 1_500_000 }
+            ),
+            { op: "voiceover", at: "0:01", file: voice, volume: 1.5 },
+            { voiceoverDurationUs: 2_000_000 }
+        );
+        const clips = voiced.audio.voiceovers ?? [];
+        expect(clips.map((clip) => [clip.atUs, clip.durationUs, clip.volume])).toEqual([
+            [1_000_000, 2_000_000, 1.5],
+            [4_000_000, 1_500_000, 1],
+        ]);
+        expect(clips[0]?.id).toMatch(/^v/);
+        const moved = applyOp(voiced, { op: "voiceover", id: clips[1]?.id, at: 0.5, volume: 0.5 });
+        expect(moved.audio.voiceovers?.map((clip) => [clip.label, clip.atUs, clip.volume])).toEqual([
+            ["Second", 500_000, 0.5],
+            [undefined, 1_000_000, 1.5],
+        ]);
+        expect(() => applyOp(voiced, { op: "unvoiceover", id: "v0" })).toThrow("voiceovers: ");
+        const once = applyOp(voiced, { op: "unvoiceover", id: clips[0]?.id ?? "" });
+        expect(applyOp(once, { op: "unvoiceover", id: clips[1]?.id ?? "" }).audio.voiceovers).toBeUndefined();
+        expect(describeProject(voiced, "/x/edit.json").voiceovers[0]).toMatchObject({ at: 1, seconds: 2, plays: 1 });
+        // R4 8 music ducking: the dB object with its defaults, merged by later ops, removed by enabled: false.
+        const ducked = applyOp(project, { op: "ducking", voiceovers: false });
+        expect(ducked.audio.ducking).toEqual({ db: 12, fadeMs: 300, transcript: true, voiceovers: false });
+        expect(applyOp(ducked, { op: "ducking", db: 18 }).audio.ducking).toMatchObject({ db: 18, voiceovers: false });
+        expect(applyOp(ducked, { op: "ducking", enabled: false }).audio.ducking).toBeUndefined();
         // Shapes: an arrow in source space with its defaults, a point-sized one refused, unshape removes it.
         const pointed = applyOp(project, {
             op: "shape",

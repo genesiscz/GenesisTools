@@ -47,6 +47,7 @@ import {
     type TranscriptSegment,
     wordCuts,
 } from "./transcript-cuts";
+import { applyDucking, applyVoiceover, duckingSchema, removeVoiceover, voiceoverSchema } from "./voiceovers";
 
 const { log } = logger.scoped("recording-editor-project");
 
@@ -354,6 +355,12 @@ export const editProjectSchema = z.object({
             music: musicSchema.optional(),
             /** Noise reduction of the sound on export (`denoise.ts`); absent is none. */
             denoise: denoiseSchema.optional(),
+            // R4 voiceover clips
+            /** Extra sound files played from source times (voiceovers.ts); absent is none. */
+            voiceovers: z.array(voiceoverSchema).optional(),
+            // R4 8 music ducking
+            /** How far the music drops under speech (voiceovers.ts); absent keeps `music.duck`. */
+            ducking: duckingSchema.optional(),
         })
         .default({ include: true, volume: 1, mutedTracks: [] }),
     export: z
@@ -398,7 +405,7 @@ export type EditProject = z.infer<typeof editProjectSchema>;
 export type EditClip = EditProject["clips"][number];
 export type EditZoom = EditProject["zooms"][number];
 
-export function newId(prefix: "c" | "z" | "r" | "t" | "s" | "m"): string {
+export function newId(prefix: "c" | "z" | "r" | "t" | "s" | "m" | "v"): string {
     return recordingItemId(prefix);
 }
 
@@ -1386,6 +1393,31 @@ export const editOpSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("removeClickCircles") }).strict(),
     /** Names a lane; "" gives it its default title back. */
     z.object({ op: z.literal("renameLane"), id: z.string(), name: z.string().max(200) }).strict(),
+    // R4 voiceover clips
+    /** Adds a sound file that plays from source time `at`; with `id` it changes that clip instead. */
+    z
+        .object({
+            op: z.literal("voiceover"),
+            id: z.string().optional(),
+            at: sourceTimeSchema.optional(),
+            file: z.string().min(1).optional(),
+            volume: z.number().min(0).max(2).optional(),
+            label: z.string().max(200).optional(),
+        })
+        .strict(),
+    z.object({ op: z.literal("unvoiceover"), id: z.string() }).strict(),
+    // R4 8 music ducking
+    z
+        .object({
+            op: z.literal("ducking"),
+            db: z.number().min(0).max(40).optional(),
+            fadeMs: z.number().int().min(0).max(5000).optional(),
+            transcript: z.boolean().optional(),
+            voiceovers: z.boolean().optional(),
+            /** false removes it: the music's older `duck` share applies again. */
+            enabled: z.boolean().optional(),
+        })
+        .strict(),
     /**
      * What the editor's range popover does to a range dragged on the frames lane, over OUTPUT times (what plays, as
      * the ruler shows them): cut it, play it at `factor` (2), zoom over it (`scale`), hide or spotlight the middle of
@@ -1463,6 +1495,9 @@ export interface OpFacts {
     loudnessLufs?: number | null;
     /** The source movie's audio tracks (`denoise`); absent when nobody counted them. */
     audioTracks?: number;
+    // R4 voiceover clips
+    /** The length of a `voiceover` op's file, measured with ffprobe. */
+    voiceoverDurationUs?: number;
 }
 
 /** A `zoom` op whose zoom went past a zoom it met (`placeZoom`), as a sentence a caller can return. */
@@ -1710,6 +1745,18 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             return removeClickCircles(project, readCursorTrack(project.source.cursor));
         case "renameLane":
             return renameLane(project, op.id, op.name);
+        // R4 voiceover clips
+        case "voiceover": {
+            const { op: _op, at, ...rest } = op;
+            return applyVoiceover(project, { ...rest, ...(at === undefined ? {} : { atUs: timeToUs(at) }) }, facts);
+        }
+        case "unvoiceover":
+            return removeVoiceover(project, op.id);
+        // R4 8 music ducking
+        case "ducking": {
+            const { op: _op, ...change } = op;
+            return applyDucking(project, change);
+        }
         case "removeIdle": {
             if (!facts.idleUs) {
                 throw new Error("removeIdle needs the movie's idle stretches; run it through editProject or the CLI");
@@ -2198,10 +2245,29 @@ export function describeProject(project: EditProject, path: string) {
                   // Ducking reads the transcript's lines; without a cached transcript the music plays level.
                   music: {
                       ...project.audio.music,
-                      ducks: project.audio.music.duck > 0 && existsSync(transcriptCachePath(project.source.video)),
+                      // R4 8 music ducking: the dB object decides the amount and what it ducks under.
+                      ducks:
+                          (project.audio.ducking ? project.audio.ducking.db > 0 : project.audio.music.duck > 0) &&
+                          (((project.audio.ducking?.transcript ?? true) &&
+                              existsSync(transcriptCachePath(project.source.video))) ||
+                              ((project.audio.ducking?.voiceovers ?? true) &&
+                                  (project.audio.voiceovers?.length ?? 0) > 0)),
                   },
               }
             : project.audio,
+        // R4 voiceover clips: where each plays in the edit (null when its start is cut).
+        voiceovers: (project.audio.voiceovers ?? []).map((clip) => {
+            const plays = outputTimeOf(project, clip.atUs);
+            return {
+                id: clip.id,
+                at: seconds(clip.atUs),
+                seconds: seconds(clip.durationUs),
+                plays: plays === undefined ? null : seconds(plays),
+                file: clip.file,
+                volume: clip.volume,
+                ...(clip.label ? { label: clip.label } : {}),
+            };
+        }),
         export: project.export,
         clicks: project.clicks ?? null,
         frame: project.frame ?? null,
