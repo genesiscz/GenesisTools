@@ -1353,6 +1353,38 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(TimelineMap.part(project, fromOut: 7_000_000, toOut: 9_000_000))
     }
 
+    // Regression test: deep test 2026-11-07 R3-RX1. A movie the renderer could not open left the preview black with a
+    // pill that read "The preview could not be built: Cannot Open": no cause, no next step. Each cause now has its own
+    // sentence, and AVFoundation's own words go to Details only.
+    func testAPreviewThatCannotReadItsMovieSaysWhyInWords() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("preview-problem-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("screen.mp4")
+        try Data(repeating: 7, count: 4096).write(to: movie)
+        let project = EditProject(source: .init(video: movie.path, durationUs: 1_000_000, width: 100, height: 100),
+                                  clips: [.init(id: "c", fromUs: 0, toUs: 1_000_000)])
+        var thrown: Error?
+        do {
+            _ = try await EditRenderer.render(project: project, asset: AVURLAsset(url: movie), zoom: ZoomState(project: project, cursor: nil),
+                                              maxHeight: 720)
+        } catch { thrown = error }
+        let error = try XCTUnwrap(thrown, "a file of junk bytes is no movie")
+        let problem = EditorModel.previewProblem(error, video: movie.path, fileExists: true)
+        XCTAssertEqual(problem.title, "This movie cannot be read")
+        XCTAssertTrue(problem.advice.contains("screen.mp4 may be cut short"), problem.advice)
+        XCTAssertFalse(problem.title.contains(error.localizedDescription), "the system's words stay in Details")
+        XCTAssertTrue(problem.detail.contains(error.localizedDescription) && problem.detail.contains(movie.path), problem.detail)
+
+        XCTAssertEqual(EditorModel.previewProblem(error, video: movie.path, fileExists: false).title, "The movie file is missing")
+        XCTAssertEqual(EditorModel.previewProblem(EditRenderer.RenderError.emptyEdit, video: movie.path, fileExists: true).title,
+                       "The edit keeps nothing of the movie")
+        XCTAssertEqual(EditorModel.previewProblem(EditRenderer.RenderError.noVideoTrack(movie.path), video: movie.path, fileExists: true).title,
+                       "This movie has no picture")
+        XCTAssertEqual(EditorModel.previewProblem(EditRenderer.RenderError.badComposition("frame duration inf s"), video: movie.path,
+                                                  fileExists: true).title, "The preview cannot show this movie")
+    }
+
     func testRenderSizeIsEvenAndCapped() {
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 4112, height: 2570), maxHeight: 1080), CGSize(width: 1728, height: 1080))
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 1919, height: 1200), maxHeight: 720), CGSize(width: 1150, height: 720))

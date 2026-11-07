@@ -101,7 +101,8 @@ enum RecorderRenders {
         }
         // After the player item landed, which resets the clock to its own start.
         model.seek(at)
-        let still = try await stillFrame(project: project, atOutput: at, zoom: model.zoom)
+        // A movie the preview cannot read draws the editor's own error state in the picture's place.
+        let still = try? await stillFrame(project: project, atOutput: at, zoom: model.zoom)
         let window = EditorWindows.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
         window.contentView = NSHostingView(rootView: EditorView(model: model, stillPreview: still))
         window.orderInForSnapshot()

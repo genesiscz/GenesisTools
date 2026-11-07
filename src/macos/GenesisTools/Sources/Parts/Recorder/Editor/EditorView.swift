@@ -1724,6 +1724,22 @@ private struct PreviewView: View {
         let aspect = canvas.width / max(1, canvas.height)
         ZStack {
             RecorderPalette.window
+            if let problem = model.previewProblem, still == nil {
+                // In the picture's place, not as a pill under a black frame: a preview with no picture says why and
+                // offers the next step.
+                PreviewProblemView(model: model, problem: problem)
+                    .aspectRatio(aspect, contentMode: .fit)
+                    .padding(28)
+            } else {
+                picture(aspect: aspect)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Preview")
+    }
+
+    private func picture(aspect: CGFloat) -> some View {
             Group {
                 if let still {
                     Image(decorative: still, scale: 1).resizable()
@@ -1750,9 +1766,58 @@ private struct PreviewView: View {
             }
             .shadow(color: .black.opacity(0.5), radius: 18, y: 6)
             .padding(28)
+    }
+}
+
+/// The preview's failure in place of the picture: what happened, what to do, Try Again and Show in Finder, and the
+/// system's own words behind Details.
+private struct PreviewProblemView: View {
+    @Bindable var model: EditorModel
+    let problem: PreviewProblem
+    @State private var details = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 26, weight: .medium))
+                .foregroundStyle(Color.orange)
+                .accessibilityHidden(true)
+            Text(verbatim: problem.title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(RecorderPalette.text)
+            Text(verbatim: problem.advice)
+                .font(.system(size: 12.5))
+                .foregroundStyle(RecorderPalette.dim)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 420)
+            HStack(spacing: 8) {
+                GhostButton("Try Again", symbol: "arrow.clockwise", tooltip: "Read the movie again and rebuild the preview",
+                            identifier: "recorder.preview.retry") { model.retryPreview() }
+                GhostButton("Show in Finder", symbol: "folder", tooltip: "Show the movie file in Finder",
+                            identifier: "recorder.preview.reveal") {
+                    PathOpener.reveal(model.project.source.video)
+                }
+            }
+            .padding(.top, 2)
+            GenDisclosure(isExpanded: $details, identifier: "recorder.preview.details", accessibilityTitle: "Details") {
+                Text(verbatim: problem.detail)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(RecorderPalette.dim)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } label: {
+                Text("Details").font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+            }
+            .frame(maxWidth: 420)
         }
+        .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityLabel("Preview")
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(RecorderPalette.hairline, lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("recorder.preview.problem")
     }
 }
 
@@ -2132,9 +2197,12 @@ private struct TransportBar: View {
             .frame(minWidth: 130, maxWidth: 250, alignment: .leading)
             Spacer(minLength: 8)
             IconButton(systemName: "backward.end.fill", tooltip: "To the start (Home)", size: 15) { model.seek(0) }
-            IconButton(systemName: model.isPlaying ? "pause.fill" : "play.fill", tooltip: model.isPlaying ? "Pause (Space)" : "Play (Space)", size: 18) {
+            IconButton(systemName: model.isPlaying ? "pause.fill" : "play.fill",
+                       tooltip: model.previewProblem != nil ? "Nothing to play: the preview has no picture"
+                           : model.isPlaying ? "Pause (Space)" : "Play (Space)", size: 18) {
                 model.togglePlay()
             }
+            .disabled(model.previewProblem != nil)
             .accessibilityIdentifier("recorder.play")
             IconButton(systemName: "forward.end.fill", tooltip: "To the end (End)", size: 15) { model.seek(model.durationUs) }
             Spacer(minLength: 8)

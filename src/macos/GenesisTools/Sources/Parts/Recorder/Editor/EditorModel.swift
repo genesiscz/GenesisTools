@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import Observation
+import SwiftUI
 import UniformTypeIdentifiers
 
 /// The playhead, kept apart from the model so that only the views that show the time re-render 30 times a second
@@ -150,6 +151,9 @@ final class EditorModel {
     var exportProgress: Double?
     var notice: String?
     var noticeIsError = false
+    /// Why the preview has no picture (the movie cannot be read, the edit keeps nothing); the preview shows it in place
+    /// of the picture with Try Again. Nil while the preview plays.
+    var previewProblem: PreviewProblem?
     /// A `tools recorder apply` step runs (Remove Still Parts); its button shows progress and does not start another.
     private(set) var isRemovingIdle = false
     /// `tools recorder apply` measures the loudness (Normalize).
@@ -1156,10 +1160,12 @@ final class EditorModel {
                 item.videoComposition = rendered.videoComposition
                 item.audioMix = rendered.audioMix
                 self.player.replaceCurrentItem(with: item)
+                self.previewProblem = nil
                 self.seek(min(keep, self.durationUs))
             } catch {
                 span.end()
-                self?.show("The preview could not be built: \(error.localizedDescription)", error: true)
+                guard !(error is CancellationError), !Task.isCancelled, let self else { return }
+                self.previewFailed(error)
             }
         }
     }
@@ -1604,5 +1610,66 @@ final class EditorModel {
         player.pause()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         timeObserver = nil
+    }
+}
+
+// MARK: - Preview problem
+
+/// Why the preview shows no picture, in the editor's words: what happened, what to do, and the system's own text for
+/// the Details disclosure.
+struct PreviewProblem: Equatable {
+    let title: String
+    let advice: String
+    let detail: String
+}
+
+extension EditorModel {
+    /// The preview could not be built: the old picture goes, the reason shows in its place, and VoiceOver hears it.
+    func previewFailed(_ error: Error) {
+        HubPerf.log("recorder.editor.render failed: \(error.localizedDescription)")
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        let problem = Self.previewProblem(error, video: project.source.video,
+                                          fileExists: FileManager.default.fileExists(atPath: project.source.video))
+        previewProblem = problem
+        AccessibilityNotification.Announcement("\(problem.title). \(problem.advice)").post()
+    }
+
+    /// Reads the movie again and builds the preview anew (the Try Again button).
+    func retryPreview() {
+        previewProblem = nil
+        reloadMovie()
+    }
+
+    /// Each cause its own sentence. AVFoundation answers a cut-short or damaged file with "Cannot Open" (-11829) or
+    /// "unknown error" (-11800), which say nothing to a person, so they go to Details only.
+    nonisolated static func previewProblem(_ error: Error, video: String, fileExists: Bool) -> PreviewProblem {
+        let name = URL(fileURLWithPath: video).lastPathComponent
+        let nsError = error as NSError
+        var detail = "\(error.localizedDescription) (\(nsError.domain) \(nsError.code))"
+        if let reason = nsError.localizedFailureReason { detail += "\n\(reason)" }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+            detail += "\n\(underlying.localizedDescription) (\(underlying.domain) \(underlying.code))"
+        }
+        detail += "\n\(video)"
+        guard fileExists else {
+            return PreviewProblem(title: "The movie file is missing", advice: "\(name) was moved or deleted. Put it back, then try again.",
+                                  detail: detail)
+        }
+        switch error as? EditRenderer.RenderError {
+        case .noVideoTrack:
+            return PreviewProblem(title: "This movie has no picture", advice: "\(name) holds no video track, so there is nothing to show.",
+                                  detail: detail)
+        case .emptyEdit:
+            return PreviewProblem(title: "The edit keeps nothing of the movie", advice: "Every part is cut. ⌘Z brings the last cut back.",
+                                  detail: detail)
+        case .badComposition:
+            return PreviewProblem(title: "The preview cannot show this movie",
+                                  advice: "Its frame rate or picture size is not one the preview can play.", detail: detail)
+        case nil:
+            return PreviewProblem(title: "This movie cannot be read",
+                                  advice: "\(name) may be cut short, damaged or still being written. Try again once it is complete.",
+                                  detail: detail)
+        }
     }
 }
