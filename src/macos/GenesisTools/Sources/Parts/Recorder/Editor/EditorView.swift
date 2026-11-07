@@ -2212,6 +2212,8 @@ private struct TransportBar: View {
                 Label("Add Lane", systemImage: "rectangle.stack.badge.plus")
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(RecorderPalette.text)
+                    .frame(minHeight: 22)
+                    .contentShape(Rectangle())
             }
             .instantTooltip("Add an effect lane under the others: zooms, hidden parts, texts, speed or any effect")
             .accessibilityIdentifier("recorder.timeline.addLane")
@@ -2238,7 +2240,10 @@ private struct TransportBar: View {
                     .accessibilityLabel("Timeline scale")
             }
             IconButton(systemName: "plus", tooltip: "Zoom the timeline in (⌘=)", size: 11) { model.zoomTimeline(by: 1.4) }
-            Button("Fit") { model.pointsPerSecond = 0 }
+            Button { model.pointsPerSecond = 0 } label: {
+                // 22 pt each way: the word alone took presses on 15 by 14 pt.
+                Text("Fit").frame(minWidth: 22, minHeight: 22).contentShape(Rectangle())
+            }
                 .buttonStyle(.genHoverPlain())
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(model.pointsPerSecond == 0 ? RecorderPalette.dim : RecorderPalette.text)
