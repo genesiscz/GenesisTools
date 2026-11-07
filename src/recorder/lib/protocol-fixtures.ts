@@ -300,6 +300,10 @@ const EXAMPLE_OPS: readonly unknown[] = [
     { op: "hideText", text: "Orla Fictive", unit: "line" },
     // R6 3 several texts and patterns in one scan
     { op: "hideText", texts: ["Orla Fictive", "Bram Sample"], patterns: ["\\d{3} \\d{3} \\d{3}"] },
+    // R6 6 unhide
+    { op: "unhide", text: "Orla Fictive" },
+    { op: "unhide", ids: ["r12", "p5e6f7a8b"] },
+    { op: "unhide", all: true },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */

@@ -133,6 +133,7 @@
     "movie.events",
     "movie.snap",
     "movie.redactionJoins",
+    "movie.unhide",
     "movies.list",
     "movies.search"
   ],
@@ -210,7 +211,8 @@
     "cursorSmooth",
     "speedUpWaits",
     "autoSpeed",
-    "redactionJoins"
+    "redactionJoins",
+    "unhide"
   ],
   "ops": [
     {
@@ -981,6 +983,21 @@
       "patterns": [
         "\\d{3} \\d{3} \\d{3}"
       ]
+    },
+    {
+      "op": "unhide",
+      "text": "Orla Fictive"
+    },
+    {
+      "op": "unhide",
+      "ids": [
+        "r12",
+        "p5e6f7a8b"
+      ]
+    },
+    {
+      "op": "unhide",
+      "all": true
     }
   ],
   "projects": [

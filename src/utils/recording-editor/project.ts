@@ -289,7 +289,7 @@ export const redactionSchema = z.object({
             /** Seconds it showed while the picture moved, and its places a second then (read or followed). */
             movingSeconds: z.number().nonnegative().optional(),
             keysPerSecond: z.number().nonnegative().optional(),
-            // R6 7: the request that made it, so info() says why the part is there.
+            // R6 7: the request that made it, so info() says why it is there and unhide() can take it back.
             request: z
                 .object({
                     text: z.string().optional(),
@@ -1842,6 +1842,20 @@ export const editOpSchema = z.discriminatedUnion("op", [
      * 0 draws every part exactly as placed.
      */
     z.object({ op: z.literal("redactionJoins"), snapMs: z.number().int().min(0).max(2000) }).strict(),
+    // R6 6 unhide
+    /**
+     * Takes back what hideText or hidePrivate hid, and forgets it, so the same hide runs again: the parts a request
+     * with `text` or `pattern` (or `kinds` of private data) made, or `ids` (part ids or hit ids), or `all`.
+     */
+    z
+        .object({
+            op: z.literal("unhide"),
+            text: z.string().trim().min(1).max(200).optional(),
+            pattern: z.string().min(1).max(200).optional(),
+            ids: z.array(z.string()).min(1).max(500).optional(),
+            all: z.boolean().optional(),
+        })
+        .strict(),
 ]);
 export type EditOp = z.infer<typeof editOpSchema>;
 
@@ -2284,15 +2298,9 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 );
             }
 
-            // Like `untext` and `unshape` (and the editor window): the last one gone removes the key.
-            const redactions = list.filter((redaction) => redaction.id !== op.id);
-
-            if (redactions.length === 0) {
-                const { redactions: _redactions, ...rest } = project;
-                return rest;
-            }
-
-            return { ...project, redactions };
+            // Like `untext` and `unshape` (and the editor window): the last one gone removes the key. R6 6: a part a
+            // hide made is forgotten as hidden too, so hiding the same text again works.
+            return withoutParts(project, new Set([op.id]));
         }
         case "text": {
             const fromUs = timeToUs(op.from);
@@ -2693,7 +2701,86 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         // R5 5 redaction edges
         case "redactionJoins":
             return { ...project, redactionJoins: { snapMs: op.snapMs } };
+        // R6 6 unhide
+        case "unhide":
+            return unhide(project, op);
     }
+}
+
+// R6 6 unhide
+/**
+ * The edit without `removed` hidden parts, with every hit no part hides any more dropped from `privacy.applied`, so
+ * the next hideText or hidePrivate hides it again instead of answering "nothing changed".
+ */
+function withoutParts(project: EditProject, removed: ReadonlySet<string>): EditProject {
+    const redactions = (project.redactions ?? []).filter((part) => !removed.has(part.id));
+    const kept = new Set(redactions.flatMap((part) => (part.hide ? [part.hide.hit] : [])));
+    const gone = new Set(
+        (project.redactions ?? []).flatMap((part) => (removed.has(part.id) && part.hide ? [part.hide.hit] : []))
+    );
+    const applied = (project.privacy?.applied ?? []).filter((hit) => kept.has(hit) || !gone.has(hit));
+    const { redactions: _redactions, privacy: _privacy, ...rest } = project;
+    return {
+        ...rest,
+        ...(redactions.length > 0 ? { redactions } : {}),
+        ...(project.privacy ? { privacy: privacySchema.parse({ ...project.privacy, applied }) } : {}),
+    };
+}
+
+function unhide(project: EditProject, op: Extract<EditOp, { op: "unhide" }>): EditProject {
+    if (!op.text && !op.pattern && !op.ids && !op.all) {
+        throw new Error("unhide needs text, pattern, ids (hidden part ids or hit ids) or all: true");
+    }
+
+    const fold = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+    const made = (project.redactions ?? []).filter((part) => part.hide);
+    const picked = made.filter((part) => {
+        const request = part.hide?.request;
+
+        if (op.all) {
+            return true;
+        }
+
+        if (op.ids && (op.ids.includes(part.id) || (part.hide && op.ids.includes(part.hide.hit)))) {
+            return true;
+        }
+
+        if (op.text) {
+            const texts = [request?.text, ...(request?.texts ?? [])].filter((text): text is string => Boolean(text));
+            return texts.some((text) => fold(text) === fold(op.text ?? ""));
+        }
+
+        if (op.pattern) {
+            return [request?.pattern, ...(request?.patterns ?? [])].includes(op.pattern);
+        }
+
+        return false;
+    });
+
+    if (picked.length === 0) {
+        const asked = op.ids ? `ids ${op.ids.join(", ")}` : op.text ? `"${op.text}"` : `/${op.pattern}/`;
+        const requests = [
+            ...new Set(
+                made.map((part) => {
+                    const request = part.hide?.request;
+                    const said = [
+                        request?.text,
+                        ...(request?.texts ?? []),
+                        request?.pattern,
+                        ...(request?.patterns ?? []),
+                    ]
+                        .filter(Boolean)
+                        .join(", ");
+                    return `${part.hide?.by}${said ? ` ${said}` : ""}`;
+                })
+            ),
+        ];
+        throw new Error(
+            `no hidden part was made for ${asked}; ${requests.length ? `hidden by: ${requests.join("; ")}` : "no part was made by hideText or hidePrivate"}`
+        );
+    }
+
+    return withoutParts(project, new Set(picked.map((part) => part.id)));
 }
 
 /** What an agent reads back after an edit: seconds, not microseconds. */

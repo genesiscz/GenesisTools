@@ -89,6 +89,8 @@ enum EditOp: Equatable {
     case hideText(HideText)
     // R5 5 redaction edges
     case redactionJoins(RedactionJoins)
+    // R6 6 unhide
+    case unhide(Unhide)
 
     /// Every payload type, so the decoder finds one by its tag and the tag test lists them.
     static let payloads: [any EditOpPayload.Type] = [
@@ -109,6 +111,8 @@ enum EditOp: Equatable {
         HidePrivate.self, CursorSmooth.self, SpeedUpWaits.self, AutoSpeed.self, HideText.self,
         // R5 5 redaction edges
         RedactionJoins.self,
+        // R6 6 unhide
+        Unhide.self,
     ]
 
     static var tags: [String] { payloads.map { $0.tag } }
@@ -190,6 +194,7 @@ enum EditOp: Equatable {
         case let .autoSpeed(op): op
         case let .hideText(op): op
         case let .redactionJoins(op): op
+        case let .unhide(op): op
         }
     }
 
@@ -1000,5 +1005,18 @@ extension EditOp {
         static let tag = "redactionJoins"
         var snapMs: Int
         var op: EditOp { .redactionJoins(self) }
+    }
+}
+
+// R6 6 unhide
+extension EditOp {
+    /// Takes back what hideText or hidePrivate hid, and forgets it: by the request's text or pattern, by ids, or all.
+    struct Unhide: EditOpPayload {
+        static let tag = "unhide"
+        var text: String?
+        var pattern: String?
+        var ids: [String]?
+        var all: Bool?
+        var op: EditOp { .unhide(self) }
     }
 }

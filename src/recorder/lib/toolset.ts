@@ -297,7 +297,12 @@ const movieMethods = [
             .strict(),
         'Hides a rectangle of the SOURCE picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } as 0...1 of the picture from its top left, style "blur" (default) | "pixelate" | "black" | "spotlight" (the rectangle stays sharp and the rest of the picture dims, to point at something), label (what it hides, "API token"), follow: true (it moves with the drawn cursor, centred on it; rect gives its size). It moves with a zoom. The result lists redactions with their ids. Edges: blur, pixelate and black never fade; they cover fully from the first frame of `from` to the last frame of `to`. The export keeps a part on while a frame from its time stays on screen (a screen recording writes no frame while nothing moves), draws a part that ends up to 250 ms before a cut up to the cut (and one that starts up to 250 ms after a cut from it), and joins two parts with a gap up to 250 ms (redactionJoins({ snapMs }) changes it, 0 turns it off); check() names every such hole and every part under 0.15 s. cell (pixelate only): a block\'s side in source pixels, 2 to 256 (default 1.8 % of the height, about 19 px at 1080p; a cell under about half the text\'s height leaves the text readable: 6 px blocks left a 48 px heading legible on a test movie, so keep cells at least as large as the default for anything private, and smaller only for a soft look over non-private parts).'
     ),
-    edit("unredact", z.object({ id: z.string() }), "Removes a redaction by its id.", ["id"]),
+    edit(
+        "unredact",
+        z.object({ id: z.string() }),
+        "Removes a redaction by its id. A part hideText() or hidePrivate() made is forgotten as hidden too, so the same hide adds it again; unhide({ text }) takes back a whole hide at once.",
+        ["id"]
+    ),
     edit(
         "text",
         z
@@ -1406,6 +1411,19 @@ const movieMethods = [
         z.object({ snapMs: z.number().int().min(0).max(2000) }).strict(),
         "How the export closes small holes around the hiding parts (blur, pixelate, black): a part that ends up to snapMs (250) before a cut is drawn to the cut, one that starts up to snapMs after a cut is drawn from it, and two parts with a gap up to snapMs meet. snapMs: 0 draws every part exactly as placed. Whatever it says, a part stays on while a frame from its time stays on screen. info().redactionJoins reads it.",
         ["snapMs"]
+    ),
+    // R6 6 unhide
+    edit(
+        "unhide",
+        z
+            .object({
+                text: z.string().trim().min(1).max(200).optional(),
+                pattern: z.string().min(1).max(200).optional(),
+                ids: z.array(z.string()).min(1).max(500).optional(),
+                all: z.boolean().optional(),
+            })
+            .strict(),
+        "Takes back what hideText() or hidePrivate() hid and forgets it, so the same hide runs again: { text } or { pattern } removes every part a request with that text or pattern made (info().redactions[].hide.request says which), { ids } removes parts by their id or by the hit id (findText, privateData), { all: true } every part a hide made. Hand-drawn redact() parts and spotlights stay. unredact(id) removes one part and forgets it too. One undo() puts them back."
     ),
 ];
 
@@ -2925,6 +2943,11 @@ export class Movie {
     // R5 5 redaction edges
     async redactionJoins(options: Omit<Extract<EditOp, { op: "redactionJoins" }>, "op">) {
         return this.change([{ op: "redactionJoins", ...options }]);
+    }
+
+    // R6 6 unhide
+    async unhide(options: Omit<Extract<EditOp, { op: "unhide" }>, "op">) {
+        return this.change([{ op: "unhide", ...options }]);
     }
 
     /** A copy of the recording and its edit (APFS clones), as a new library recording or in `to`. */

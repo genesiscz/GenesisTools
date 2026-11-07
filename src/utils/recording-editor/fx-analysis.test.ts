@@ -467,6 +467,34 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
         expect(parts[1].hide).toBeUndefined();
     });
 
+    test("unhide takes a hide back and forgets it, so the same hide runs again; unredact forgets its part too", () => {
+        const hits = textHits(
+            [frame(0, [row("Orla Fictive", 0.2), row("Bram Sample", 0.5)])],
+            textMatcher({ texts: ["Orla Fictive", "Bram Sample"] })
+        );
+        const hide = op({ op: "hideText", texts: ["Orla Fictive", "Bram Sample"] });
+        const drawn = applyOp(
+            wholeProject(source),
+            op({ op: "redact", from: 1, to: 2, rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.1 } })
+        );
+        const hidden = applyOp(drawn, hide, { textHits: hits });
+        expect(hidden.redactions?.length).toBe(3);
+        // Before round 6, a second hide after unredact answered "nothing changed": the hit stayed applied.
+        const [first] = (hidden.redactions ?? []).filter((part) => part.hide);
+        const unredacted = applyOp(hidden, op({ op: "unredact", id: first.id }));
+        expect(unredacted.privacy?.applied).not.toContain(first.hide?.hit);
+        expect(applyOp(unredacted, hide, { textHits: hits }).redactions?.length).toBe(3);
+        // unhide by a text of the request takes back every part that request made; the hand-drawn part stays.
+        const back = applyOp(hidden, op({ op: "unhide", text: "orla  fictive" }));
+        expect(back.redactions?.length).toBe(1);
+        expect(back.privacy?.applied).toEqual([]);
+        expect(applyOp(back, hide, { textHits: hits }).redactions?.length).toBe(3);
+        expect(applyOp(hidden, op({ op: "unhide", ids: [hits[1].id] })).redactions?.length).toBe(2);
+        expect(applyOp(hidden, op({ op: "unhide", all: true })).redactions?.length).toBe(1);
+        expect(() => applyOp(hidden, op({ op: "unhide", pattern: "^nope" }))).toThrow(/no hidden part was made/);
+        expect(() => applyOp(hidden, op({ op: "unhide" }))).toThrow(/needs text, pattern, ids/);
+    });
+
     test("block matching finds a scroll's shift and leaves a still picture still", () => {
         const width = 96;
         const height = 96;
