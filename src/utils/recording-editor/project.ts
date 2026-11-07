@@ -44,6 +44,7 @@ import {
     applyCard,
     applyProgress,
     CAPTION_KINDS,
+    CHAPTER_PLACES,
     captionsStyleSchema,
     cardsLeadUs,
     cardsSchema,
@@ -1659,6 +1660,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             height: z.number().min(0.002).max(0.03).optional(),
             chapters: z.boolean().optional(),
             chapterMs: z.number().int().min(500).max(10_000).optional(),
+            // R6 8 chapter label place
+            chapterPlace: z.enum(CHAPTER_PLACES).optional(),
             /** false removes it. */
             enabled: z.boolean().optional(),
         })

@@ -106,6 +106,13 @@ struct EditProject: Codable, Equatable {
         var height = 0.008
         var chapters = true
         var chapterMs = 2000
+        // R6 8 chapter label place: nil is auto (the frame's free area).
+        var chapterPlace: ChapterPlace?
+    }
+
+    // R6 8 chapter label place
+    enum ChapterPlace: String, Codable, CaseIterable {
+        case auto, topLeft, topRight, bottomLeft, bottomRight
     }
 
     // R4 6 animated captions and texts

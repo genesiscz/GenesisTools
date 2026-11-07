@@ -785,8 +785,11 @@ struct EditRenderer {
                 result = LensLook.draw(look.lenses, view: view, on: result)
             }
             cursor = cursor.map(toPicture)
+            // R6 8 chapter label place: where the movie sits on the canvas, so the chapter's name goes beside it.
+            var movieRect: CGRect?
             if let frame = look.frame {
                 let placement = Looks.framePlacement(frame, picture: picture, canvas: size, focus: look.coverFocus)
+                movieRect = placement.inner
                 if let pose = look.tilt {
                     // The picture and its shadow turn as one; the background stays, the cursor turns with the picture.
                     let layers = Looks.frameLayers(frame, to: result, canvas: size, placement: placement)
@@ -810,6 +813,7 @@ struct EditRenderer {
             // R5 4 canvas zoom: the framed canvas (picture, frame, background) and the cursor on it, before the
             // captions, keys and texts, which stay where they are on the export.
             if look.canvasView.scale > 1.0005 {
+                movieRect = movieRect.map { Looks.zoomCanvasRect($0, view: look.canvasView, size: size) }
                 result = Looks.zoomCanvas(result, view: look.canvasView, size: size)
                 cursor = cursor.map { Looks.zoomCanvas($0, view: look.canvasView, size: size) }
             }
@@ -845,7 +849,7 @@ struct EditRenderer {
             }
             // R4 10 progress bar: over everything, as the player's own chrome would be.
             if let progress = look.progress {
-                result = Looks.drawProgress(progress, plates: zoom.keyPlates, on: result, size: size)
+                result = Looks.drawProgress(progress, plates: zoom.keyPlates, on: result, size: size, movie: movieRect)
                     .cropped(to: CGRect(origin: .zero, size: size))
             }
             request.finish(with: result, context: nil)

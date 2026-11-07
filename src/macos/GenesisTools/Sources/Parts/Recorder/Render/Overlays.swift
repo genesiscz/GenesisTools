@@ -70,6 +70,8 @@ struct ProgressMark: Equatable {
     var height: Double
     var chapter: String?
     var chapterOpacity = 1.0
+    // R6 8 chapter label place
+    var chapterPlace: EditProject.ChapterPlace = .auto
 
     static let fadeUs: Int64 = 200_000
 
@@ -99,6 +101,7 @@ struct ProgressMark: Equatable {
             let into = outUs - current.outUs
             mark.chapter = current.label
             mark.chapterOpacity = min(1, Double(into) / Double(fadeUs), Double(showUs - into) / Double(fadeUs))
+            mark.chapterPlace = settings.chapterPlace ?? .auto
         }
         return mark
     }
@@ -106,8 +109,9 @@ struct ProgressMark: Equatable {
 
 extension Looks {
     /// The bar along the bottom edge (a dim track, the played part in its colour, a dark gap at each chapter) and the
-    /// starting chapter's name at the top left.
-    static func drawProgress(_ mark: ProgressMark, plates: TextPlates, on image: CIImage, size: CGSize) -> CIImage {
+    /// starting chapter's name where `mark.chapterPlace` puts it. `movie` is where the picture sits on the canvas (Core
+    /// Image coordinates); nil means it fills the canvas.
+    static func drawProgress(_ mark: ProgressMark, plates: TextPlates, on image: CIImage, size: CGSize, movie: CGRect? = nil) -> CIImage {
         let unit = min(size.width, size.height)
         let barHeight = max(2, (mark.height * unit).rounded())
         let color = Looks.color(mark.color)
@@ -123,15 +127,89 @@ extension Looks {
             result = rect(size.width * divider - gap / 2, gap, CIColor(red: 0, green: 0, blue: 0, alpha: 0.9)).composited(over: result)
         }
         if let chapter = mark.chapter, mark.chapterOpacity > 0.01,
-           var plate = plates.plate(chapter, fontSize: max(8, (unit * 0.034).rounded()), maxWidth: size.width * 0.5, weight: .semibold) {
+           let placed = chapterPlate(chapter, mark: mark, plates: plates, canvas: size, movie: movie, barHeight: barHeight) {
+            var plate = placed.plate
             if mark.chapterOpacity < 0.999 {
                 plate = plate.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(mark.chapterOpacity))])
             }
-            let margin = (unit * 0.035).rounded()
-            result = plate.transformed(by: CGAffineTransform(translationX: margin, y: size.height - margin - plate.extent.height))
-                .composited(over: result)
+            result = plate.transformed(by: CGAffineTransform(translationX: placed.origin.x, y: placed.origin.y)).composited(over: result)
         }
         return result
+    }
+}
+
+// R6 8 chapter label place
+extension Looks {
+    /// The chapter's name plate and where its bottom-left corner goes. "auto" tries the full size, then 75 % and 60 %,
+    /// in the frame's free area; with no room there (no frame, or a padding thinner than the name) it sits at the
+    /// bottom left above the bar, the place that hides the least of a phone's status bar or a window's title.
+    static func chapterPlate(_ chapter: String, mark: ProgressMark, plates: TextPlates, canvas size: CGSize, movie: CGRect?,
+                             barHeight: CGFloat) -> (plate: CIImage, origin: CGPoint)? {
+        let unit = min(size.width, size.height)
+        let base = max(8, (unit * 0.034).rounded())
+        let margin = (unit * 0.035).rounded()
+        let make = { (fontSize: CGFloat, maxWidth: CGFloat) in
+            plates.plate(chapter, fontSize: fontSize, maxWidth: maxWidth, weight: .semibold)
+        }
+        if mark.chapterPlace == .auto, let movie {
+            for scale in [1.0, 0.75, 0.6] as [CGFloat] {
+                let fontSize = max(8, (base * scale).rounded())
+                for band in ChapterPlacement.freeBands(canvas: size, movie: movie, barHeight: barHeight) {
+                    guard let plate = make(fontSize, max(40, band.width - fontSize)),
+                          let origin = ChapterPlacement.origin(plate: plate.extent.size, in: band, margin: margin)
+                    else { continue }
+                    return (plate, origin)
+                }
+            }
+        }
+        guard let plate = make(base, size.width * 0.5) else { return nil }
+        return (plate, ChapterPlacement.corner(mark.chapterPlace, plate: plate.extent.size, canvas: size, barHeight: barHeight, margin: margin))
+    }
+}
+
+extension Looks {
+    /// A rectangle of the canvas where `zoomCanvas` moves it (Core Image coordinates).
+    static func zoomCanvasRect(_ rect: CGRect, view: ZoomCurve.View, size: CGSize) -> CGRect {
+        let shown = view.rect
+        let crop = CGRect(x: shown.minX * size.width, y: (1 - shown.maxY) * size.height, width: shown.width * size.width,
+                          height: shown.height * size.height)
+        let sx = size.width / crop.width, sy = size.height / crop.height
+        return CGRect(x: (rect.minX - crop.minX) * sx, y: (rect.minY - crop.minY) * sy, width: rect.width * sx, height: rect.height * sy)
+    }
+}
+
+/// Where a chapter's name may go: the canvas less the movie (and the bar), in Core Image coordinates (y up).
+enum ChapterPlacement {
+    /// The free bands around the movie that are at least a few pixels deep, the largest first.
+    static func freeBands(canvas size: CGSize, movie: CGRect, barHeight: CGFloat) -> [CGRect] {
+        let shown = movie.intersection(CGRect(origin: .zero, size: size))
+        guard !shown.isNull else { return [CGRect(x: 0, y: barHeight, width: size.width, height: size.height - barHeight)] }
+        let bands = [
+            CGRect(x: 0, y: shown.maxY, width: size.width, height: size.height - shown.maxY),
+            CGRect(x: 0, y: barHeight, width: size.width, height: shown.minY - barHeight),
+            CGRect(x: 0, y: barHeight, width: shown.minX, height: size.height - barHeight),
+            CGRect(x: shown.maxX, y: barHeight, width: size.width - shown.maxX, height: size.height - barHeight),
+        ]
+        return bands.filter { $0.width >= 4 && $0.height >= 4 }.sorted { $0.width * $0.height > $1.width * $1.height }
+    }
+
+    /// The plate at the top left of the band, `margin` in (less when the band is tighter); nil when it does not fit.
+    static func origin(plate: CGSize, in band: CGRect, margin: CGFloat) -> CGPoint? {
+        let inset = min(margin, (band.width - plate.width) / 2, (band.height - plate.height) / 2)
+        guard inset >= 0 else { return nil }
+        return CGPoint(x: (band.minX + inset).rounded(), y: (band.maxY - inset - plate.height).rounded())
+    }
+
+    /// A corner of the canvas; "auto" without free room is the bottom left above the bar.
+    static func corner(_ place: EditProject.ChapterPlace, plate: CGSize, canvas size: CGSize, barHeight: CGFloat, margin: CGFloat) -> CGPoint {
+        let left = margin, right = size.width - margin - plate.width
+        let top = size.height - margin - plate.height, bottom = barHeight + margin
+        switch place {
+        case .topLeft: return CGPoint(x: left, y: top)
+        case .topRight: return CGPoint(x: right, y: top)
+        case .bottomRight: return CGPoint(x: right, y: bottom)
+        case .bottomLeft, .auto: return CGPoint(x: left, y: bottom)
+        }
     }
 }
 

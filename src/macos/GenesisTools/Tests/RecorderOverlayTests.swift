@@ -143,6 +143,71 @@ final class RecorderOverlayTests: XCTestCase {
         XCTAssertEqual(pixel(50, 10).0, 0, "nothing above the bar")
     }
 
+    // R6 8 chapter label place
+    func testTheChapterNameGoesInTheFramesFreeAreaNeverOverTheMovie() throws {
+        let plates = TextPlates()
+        var mark = ProgressMark(share: 0.1, dividers: [], color: "#FFFFFF", height: 0.008, chapter: "Sign in")
+        let bar: CGFloat = 9
+        // phone-portrait: a 9:16 canvas, the phone from the top, the bottom 0.135 free (Core Image y up).
+        let portrait = CGSize(width: 1080, height: 1920)
+        let phone = CGRect(x: 120, y: 1920 * 0.135, width: 840, height: 1920 * 0.865 - 43)
+        let low = try XCTUnwrap(Looks.chapterPlate("Sign in", mark: mark, plates: plates, canvas: portrait, movie: phone, barHeight: bar))
+        let lowRect = CGRect(origin: low.origin, size: low.plate.extent.size)
+        XCTAssertFalse(lowRect.intersects(phone), "the name is not over the phone: \(lowRect)")
+        XCTAssertLessThan(lowRect.maxY, phone.minY + 1, "it sits in the free band under the phone")
+        XCTAssertGreaterThan(lowRect.minY, bar, "and above the bar")
+        // phone-left: a 16:9 canvas, the phone against the left edge, three quarters free.
+        let wide = CGSize(width: 1920, height: 1080)
+        let left = CGRect(x: 43, y: 43, width: 560, height: 994)
+        let side = try XCTUnwrap(Looks.chapterPlate("Sign in", mark: mark, plates: plates, canvas: wide, movie: left, barHeight: bar))
+        let sideRect = CGRect(origin: side.origin, size: side.plate.extent.size)
+        XCTAssertFalse(sideRect.intersects(left), "the name is not over the phone: \(sideRect)")
+        XCTAssertGreaterThan(sideRect.minX, left.maxX, "it sits on the free side")
+        // A centred 16:9 movie with the default padding: the thin top band still holds it.
+        let centred = CGRect(x: 65, y: 65, width: 1790, height: 950)
+        let thin = try XCTUnwrap(Looks.chapterPlate("Sign in", mark: mark, plates: plates, canvas: wide, movie: centred, barHeight: bar))
+        XCTAssertFalse(CGRect(origin: thin.origin, size: thin.plate.extent.size).intersects(centred), "a smaller name fits the padding")
+        // No frame: the bottom left above the bar, not over the status bar at the top.
+        let bare = try XCTUnwrap(Looks.chapterPlate("Sign in", mark: mark, plates: plates, canvas: wide, movie: nil, barHeight: bar))
+        XCTAssertLessThan(bare.origin.y, 200, "without a frame it sits low")
+        // A corner pins it: topLeft is the old place.
+        mark.chapterPlace = .topLeft
+        let pinned = try XCTUnwrap(Looks.chapterPlate("Sign in", mark: mark, plates: plates, canvas: portrait, movie: phone, barHeight: bar))
+        XCTAssertGreaterThan(pinned.origin.y + pinned.plate.extent.height, 1850, "topLeft is the canvas's top left")
+        XCTAssertEqual(ProgressMark.at(outUs: 0, project: edit(), recorded: [(0, "A")],
+                                       settings: .init(chapterPlace: .bottomRight))?.chapterPlace, .bottomRight)
+
+        // Drawn: white text pixels land in the free band, none inside the phone.
+        mark.chapterPlace = .auto
+        let black = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: portrait))
+        let drawn = Looks.drawProgress(mark, plates: plates, on: black, size: portrait, movie: phone)
+        var bytes = [UInt8](repeating: 0, count: 1080 * 1920 * 4)
+        CIContext().render(drawn, toBitmap: &bytes, rowBytes: 1080 * 4, bounds: CGRect(origin: .zero, size: portrait), format: .RGBA8,
+                           colorSpace: CGColorSpaceCreateDeviceRGB())
+        var inPhone = 0, inBand = 0
+        for y in Int(bar) + 2..<1920 {
+            for x in stride(from: 0, to: 1080, by: 2) where bytes[((1919 - y) * 1080 + x) * 4] > 180 {
+                if phone.contains(CGPoint(x: x, y: y)) { inPhone += 1 } else { inBand += 1 }
+            }
+        }
+        XCTAssertEqual(inPhone, 0, "no bright pixel of the name over the phone")
+        XCTAssertGreaterThan(inBand, 50, "the name is drawn")
+        // RECORDER_PROOF_DIR=<folder> keeps the picture (a grey phone on black) as the rendered proof of the place.
+        if let folder = ProcessInfo.processInfo.environment["RECORDER_PROOF_DIR"] {
+            let phoneLayer = CIImage(color: CIColor(red: 0.35, green: 0.35, blue: 0.4)).cropped(to: phone)
+            let proof = Looks.drawProgress(mark, plates: plates, on: phoneLayer.composited(over: black), size: portrait, movie: phone)
+            let context = CIContext()
+            try context.writePNGRepresentation(of: proof, to: URL(fileURLWithPath: folder).appendingPathComponent("r6-8-chapter-portrait.png"),
+                                               format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+            let wideProof = Looks.drawProgress(mark, plates: plates,
+                                               on: CIImage(color: CIColor(red: 0.35, green: 0.35, blue: 0.4)).cropped(to: left)
+                                                   .composited(over: CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: wide))),
+                                               size: wide, movie: left)
+            try context.writePNGRepresentation(of: wideProof, to: URL(fileURLWithPath: folder).appendingPathComponent("r6-8-chapter-phone-left.png"),
+                                               format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+        }
+    }
+
     // R4 9 intro and end cards
     func testCardsSitBeforeAndAfterTheMovieOnlyInTheExport() {
         var project = edit()

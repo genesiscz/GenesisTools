@@ -62,6 +62,14 @@ export function textAnimateOf(
 
 // R4 10 progress bar and chapter strip
 /**
+ * R6 8: where a chapter's name shows. "auto" (the default) puts it in the frame's free area (the padding, or the free
+ * side of a phone preset), never over the movie; without a frame it sits at the bottom left above the bar. The four
+ * corners are the canvas's corners ("topLeft" was the place before round 6).
+ */
+export const CHAPTER_PLACES = ["auto", "topLeft", "topRight", "bottomLeft", "bottomRight"] as const;
+export type ChapterPlace = (typeof CHAPTER_PLACES)[number];
+
+/**
  * A thin bar along the bottom of the export showing the share played, divided at the markers (the recording's and
  * the edit's), and the name of each chapter for `chapterMs` when it starts. `height` is a share of the canvas's short
  * side.
@@ -72,12 +80,23 @@ export const progressSchema = z.object({
     height: z.number().min(0.002).max(0.03).default(0.008),
     chapters: z.boolean().default(true),
     chapterMs: z.number().int().min(500).max(10_000).default(2000),
+    // R6 8 chapter label place
+    /** Where a chapter's name shows; absent is "auto". */
+    chapterPlace: z.enum(CHAPTER_PLACES).optional(),
 });
 export type EditProgress = z.infer<typeof progressSchema>;
 
 export function applyProgress(
     project: EditProject,
-    op: { show?: boolean; color?: string; height?: number; chapters?: boolean; chapterMs?: number; enabled?: boolean }
+    op: {
+        show?: boolean;
+        color?: string;
+        height?: number;
+        chapters?: boolean;
+        chapterMs?: number;
+        chapterPlace?: ChapterPlace;
+        enabled?: boolean;
+    }
 ): EditProject {
     if (op.enabled === false) {
         const { progress: _progress, ...rest } = project;

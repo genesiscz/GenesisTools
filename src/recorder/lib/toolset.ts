@@ -21,7 +21,12 @@ import { TRANSITION_KINDS } from "@genesiscz/utils/recording-editor/fx";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { placedShape } from "@genesiscz/utils/recording-editor/item-ops";
 import { DEFAULT_LANES, EFFECT_KINDS, type EffectLane } from "@genesiscz/utils/recording-editor/lanes";
-import { CAPTION_KINDS, cardsLeadUs, TEXT_ANIMATIONS } from "@genesiscz/utils/recording-editor/overlays";
+import {
+    CAPTION_KINDS,
+    CHAPTER_PLACES,
+    cardsLeadUs,
+    TEXT_ANIMATIONS,
+} from "@genesiscz/utils/recording-editor/overlays";
 import {
     outputTimeSchema,
     sourceTimeSchema,
@@ -1103,10 +1108,11 @@ const movieMethods = [
                 height: z.number().min(0.002).max(0.03).optional(),
                 chapters: z.boolean().optional(),
                 chapterMs: z.number().int().min(500).max(10_000).optional(),
+                chapterPlace: z.enum(CHAPTER_PLACES).optional(),
                 enabled: z.boolean().optional(),
             })
             .strict(),
-        "A thin bar along the bottom of the movie (preview and export) showing how much has played, in color (\"#FFFFFF\"), height a share of the short side (0.008), divided at the markers (the recording's and the edit's, markers()); with chapters (true) each marker's label shows at the top left for chapterMs (2000) when it starts. show: false hides it and keeps the settings; enabled: false removes it."
+        'A thin bar along the bottom of the movie (preview and export) showing how much has played, in color ("#FFFFFF"), height a share of the short side (0.008), divided at the markers (the recording\'s and the edit\'s, markers()); with chapters (true) each marker\'s label shows for chapterMs (2000) when it starts, at chapterPlace: "auto" (default) puts it in the frame\'s free area (the padding, or the free side of a phone preset: below the phone with phone-portrait, on the free side with phone-left/right), never over the movie, and at the bottom left above the bar without a frame; "topLeft" | "topRight" | "bottomLeft" | "bottomRight" pin it to that corner of the canvas. show: false hides it and keeps the settings; enabled: false removes it.'
     ),
     // R4 9 intro and end cards
     edit(

@@ -2592,6 +2592,16 @@
                 "minimum": 500,
                 "maximum": 10000
               },
+              "chapterPlace": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "topLeft",
+                  "topRight",
+                  "bottomLeft",
+                  "bottomRight"
+                ]
+              },
               "enabled": {
                 "type": "boolean"
               }
@@ -5471,6 +5481,16 @@
                 "type": "integer",
                 "minimum": 500,
                 "maximum": 10000
+              },
+              "chapterPlace": {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "topLeft",
+                  "topRight",
+                  "bottomLeft",
+                  "bottomRight"
+                ]
               }
             },
             "required": [

@@ -1338,6 +1338,8 @@ describe("edit project (edit.json)", () => {
         expect(applyOp(barred, { op: "progress", show: false }).progress?.color).toBe("#FF375F");
         expect(applyOp(barred, { op: "progress", enabled: false }).progress).toBeUndefined();
         expect(() => applyOp(project, { op: "progress", color: "red" })).toThrow();
+        // R6 8: the chapter label's place; absent is "auto" (the frame's free area).
+        expect(applyOp(barred, { op: "progress", chapterPlace: "topRight" }).progress?.chapterPlace).toBe("topRight");
         // R4 9 intro and end cards: a title (or text) the first time, then changes merge; a logo must be a picture
         // that exists; a QR code needs a link; the last card gone removes the key.
         expect(() => applyOp(project, { op: "introCard", subtitle: "x" })).toThrow("needs a title");

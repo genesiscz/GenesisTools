@@ -831,6 +831,8 @@ extension EditOp {
         var chapters: Bool?
         var chapterMs: Int?
         var enabled: Bool?
+        // R6 8 chapter label place
+        var chapterPlace: EditProject.ChapterPlace?
         var op: EditOp { .progress(self) }
     }
 

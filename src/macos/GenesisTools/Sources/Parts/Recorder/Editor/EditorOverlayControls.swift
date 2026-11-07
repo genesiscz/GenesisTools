@@ -90,9 +90,20 @@ struct ProgressBarSection: View {
                     .accessibilityLabel("Progress bar height")
                     .accessibilityIdentifier("recorder.style.progressHeight")
                 SwitchRow("Chapter names", isOn: Binding(get: { bar.chapters }, set: { on in set { $0.chapters = on } }))
-                    .instantTooltip("Each marker's name shows at the top left when its chapter starts")
+                    .instantTooltip("Each marker's name shows when its chapter starts")
                     .accessibilityIdentifier("recorder.style.progressChapters")
                 if bar.chapters {
+                    // R6 8 chapter label place
+                    Picker("Name at", selection: Binding(get: { bar.chapterPlace ?? .auto }, set: { place in set { $0.chapterPlace = place } })) {
+                        Text("Free area").tag(EditProject.ChapterPlace.auto)
+                        Text("Top left").tag(EditProject.ChapterPlace.topLeft)
+                        Text("Top right").tag(EditProject.ChapterPlace.topRight)
+                        Text("Bottom left").tag(EditProject.ChapterPlace.bottomLeft)
+                        Text("Bottom right").tag(EditProject.ChapterPlace.bottomRight)
+                    }
+                    .font(.system(size: 12.5))
+                    .instantTooltip("Free area puts the name beside the movie (the frame's padding or a phone preset's free side), never over it")
+                    .accessibilityIdentifier("recorder.style.progressChapterPlace")
                     SectionLabel(text: "Name shows for", value: String(format: "%.1f s", Double(bar.chapterMs) / 1000))
                     Slider(value: Binding(get: { Double(bar.chapterMs) }, set: { value in set { $0.chapterMs = Int((value / 250).rounded() * 250) } }),
                            in: 500...6000)
