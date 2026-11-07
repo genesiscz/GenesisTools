@@ -597,6 +597,8 @@ public struct LiveWidgetView: View {
     private func optionRow(_ card: WidgetCard, choice: WidgetChoice, index: Int, key: String?, picked: Bool,
                            focused: Bool) -> some View {
         let stages = card.kind == "decision" && model.decisionClickStages
+        // A decision that takes any set of its options: a check box per option, and a click only ticks it.
+        let multiple = card.takesSeveral
         let text = Self.choiceText(choice)
         Button {
             model.choose(card, option: choice.id)
@@ -604,7 +606,8 @@ public struct LiveWidgetView: View {
             // The badge is the key that picks the option; the letter, which the agent and the hub name it by, leads
             // its text. Up and Down move through the options; the chosen one wears the focus ring.
             WidgetOptionLabel(badge: key ?? choice.id, letter: key == nil ? nil : choice.id, text: text, picked: picked,
-                              recommended: choice.recommended, focused: focused, rationale: choice.rationale)
+                              recommended: choice.recommended, focused: focused, rationale: choice.rationale,
+                              multiple: multiple)
         }
         .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
         // An answer on its way takes no second, conflicting pick (forms say "Answer queued" the same way).
@@ -613,14 +616,16 @@ public struct LiveWidgetView: View {
         .id("choice-" + card.id + "-" + choice.id)
         .instantTooltip(card.kind == "dialog" ? "Send this option to the open dialog." : DecisionAnswering.optionTooltip(
             choice.id, recommended: choice.recommended, stages: stages, picked: picked,
-            swaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true, key: index < 9 ? index + 1 : nil))
+            swaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true, key: index < 9 ? index + 1 : nil,
+            multiple: multiple))
         .accessibilityLabel(WidgetOptionText.accessibilityLabel(letter: choice.id, text: text, stages: stages,
-                                                                recommended: choice.recommended)
+                                                                recommended: choice.recommended, multiple: multiple,
+                                                                picked: picked)
             + (choice.rationale.map { ". " + $0 } ?? ""))
-        .accessibilityValue(picked ? "Staged" : "")
+        .accessibilityValue(WidgetOptionText.accessibilityValue(picked: picked, multiple: multiple))
         // Selected is the staged pick; the keyboard's option shows by its focus ring and VoiceOver's own cursor.
         .accessibilityAddTraits(picked ? .isSelected : [])
-        .accessibilityHint(picked && stages ? "Click again to unstage" : "")
+        .accessibilityHint(picked && stages && !multiple ? "Click again to unstage" : "")
     }
 
     /// The key that picks the option at `index` (the open decision's number keys, as the keymap has them), or nil.
@@ -677,9 +682,18 @@ public struct LiveWidgetView: View {
                         if let pickUnder, pickUnder.letter == choice.id {
                             // Under the option's text: the label's padding, its badge and the gap after it.
                             WidgetProposalLine(text: pickUnder.text)
-                                .padding(.leading, WidgetOptionLabel.textInset)
+                                .padding(.leading, WidgetOptionLabel.textInset(multiple: card.takesSeveral))
                                 .padding(.trailing, 8)
                         }
+                    }
+                    // A set the agent recommends, ticked in one click while it is not the ticked set already.
+                    if card.takesSeveral,
+                       let recommended = DecisionAnswering.recommendedSet(
+                           card.choices.filter(\.recommended).map(\.id).joined(), count: card.choices.count),
+                       recommended != staged {
+                        WidgetRecommendedPickButton(letters: recommended) { model.pickSet(card, option: recommended) }
+                            .disabled(model.cardPending || model.sendingDecisionIDs.contains(card.sourceId))
+                            .padding(.leading, 4)
                     }
                     if card.kind == "decision" { ownAnswer(card) }
                 }
@@ -711,12 +725,16 @@ public struct LiveWidgetView: View {
                     // sits at the right edge, so it never moves when staging adds the buttons before it (UX audit P13).
                     if staged(card) {
                         let sending = model.sendingDecisionIDs.contains(card.sourceId)
-                        Button(sending ? "Sending…" : "Send now") {
+                        // A set's Send names the ticked letters: "Send a + b + c".
+                        let letters = model.shownStagedOption(card.sourceId, stored: card.draftOption)
+                        let namesSet = card.takesSeveral && letters != nil
+                        Button(sending ? "Sending…" : DecisionAnswering.sendTitle(letters, multiple: card.takesSeveral)) {
                             model.sendStaged([card.sourceId], known: [WidgetModel.inboxItem(card)])
                         }
                         .buttonStyle(.genPrimary())
                         .disabled(sending)
-                        .instantTooltip("Sends this staged decision alone, without the others.")
+                        .instantTooltip(namesSet ? DecisionAnswering.setSendTooltip(letters)
+                                                 : "Sends this staged decision alone, without the others.")
                         Button("Unstage") { model.unstage(card) }
                             .disabled(sending)
                             .instantTooltip(card.draft == nil ? "Clears the staged pick."

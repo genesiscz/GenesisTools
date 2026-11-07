@@ -120,6 +120,15 @@ struct WidgetInboxOverview: View {
             }
             return
         }
+        // A set: Return ticks or unticks the option, as a click does; ⌘-Return sends the ticked set.
+        if item.takesSeveral {
+            if alternate {
+                model.sendSet(item, orLetter: letter)
+            } else {
+                model.choose(item, option: letter)
+            }
+            return
+        }
         let preferences = model.snapshot?.state.preferences
         let stages = DecisionAnswering.clickStages(preferences, command: alternate)
         let swaps = preferences?.decisionCommandSwaps ?? true
@@ -290,8 +299,22 @@ struct WidgetInboxOverview: View {
                                            focused: focusID == item.id && focusedOption == letter)
                         .id(item.id + "#" + letter)
                 }
+                // A set's clicks only tick, so its Send lives here, beside the options it sends.
+                if item.takesSeveral { setSendBar(item) }
             }
         }
+    }
+
+    /// The Send of a decision that takes any set of its options, and its recommended set in one click.
+    private func setSendBar(_ item: WidgetInboxItem) -> some View {
+        WidgetSetSendBar(
+            letters: model.shownStagedOption(item.sourceId, stored: item.draftOption),
+            recommended: DecisionAnswering.recommendedSet(item.recommended, count: item.options?.count ?? 0),
+            sending: model.sendingDecisionIDs.contains(item.sourceId),
+            identifier: "widget.overview.sendSet." + item.sourceId,
+            pick: { model.pickSet(item, option: $0) },
+            send: { model.sendStaged([item.sourceId], known: [item]) })
+            .padding(.top, 2)
     }
 
     /// An open decision's question under its title, drawn as the alert popup draws it (`WidgetPeekSummary`), so a pick

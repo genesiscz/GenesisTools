@@ -96,10 +96,16 @@ struct InboxItem: Decodable, Identifiable, Hashable {
     var revision: Int? = nil
     /// Who recorded a closed decision's answer (`agent`, `automatic_heuristic`, or the user), when the row says.
     var answeredVia: String? = nil
+    /// The decision takes any set of its options (`InboxDecision.multiple`, `takesSeveral` in
+    /// src/question/lib/decisions/option-labels.ts): check boxes, a click ticks or unticks a letter, one Send answers
+    /// the set. Nil from an older `tools`, read as one option.
+    var multiple: Bool? = nil
 
     var isForm: Bool { kind == "form" }
     var isDialog: Bool { kind == "dialog" || source == "dialog" }
     var isDecision: Bool { kind == "decision" && !isDialog }
+    /// `multiple` for a decision; never for a dialog or a form.
+    var takesSeveral: Bool { isDecision && multiple == true }
     var isOpen: Bool { status == "waiting" || status == "drafted" }
     var answerRoute: InboxAnswerRoute { InboxAnswerRoute(source: source, kind: kind) }
     /// The picked letters as the card and the not-waiting notice write them: "a) c)".
@@ -746,7 +752,8 @@ final class HubInboxModel: ObservableObject {
 
     /// A click on a decision option, as the widget answers one (`DecisionAnswering.clickStages`): it stages the pick (a
     /// click on the staged letter clears it) or sends it at once, and ⌘ does the other while "⌘ does the other" is on.
-    /// ⇧-click adds or removes another letter, staged.
+    /// ⇧-click adds or removes another letter, staged. A decision that takes any set of its options does that on every
+    /// click and number key, in every click mode: only its Send sends.
     /// `note`: the card's note when the user changed it since it was saved, else nil, so a click never writes back a
     /// stale copy over a note staged in the widget or the session's sidebar.
     func choose(_ item: InboxItem, in session: InboxSession, letter: String, note: String?, shift: Bool, command: Bool) {
@@ -756,7 +763,8 @@ final class HubInboxModel: ObservableObject {
             return
         }
         let plan = Self.clickPlan(letters: letters(item), letter: letter, shift: shift,
-                                  stages: DecisionAnswering.clickStages(freshPreferences(), command: command))
+                                  stages: DecisionAnswering.clickStages(freshPreferences(), command: command),
+                                  multiple: item.takesSeveral)
         keyCardID = item.id
         // The typed note goes along with the pick and is the staged one now.
         if let note { noteTexts[item.id] = note }
@@ -764,10 +772,19 @@ final class HubInboxModel: ObservableObject {
               then: plan.send ? { [weak self] in self?.sendStaged([item.id], in: session) } : nil)
     }
 
-    /// What a click on `letter` does with the staged `letters`: the pick it stores, and whether it is sent at once.
-    nonisolated static func clickPlan(letters: String, letter: String, shift: Bool, stages: Bool) -> (option: String, send: Bool) {
-        if shift { return (InboxDecisionCard.toggled(letters, letter, add: true), false) }
+    /// What a click on `letter` does with the staged `letters`: the pick it stores, and whether it is sent at once. A
+    /// decision that takes any set of its options (`multiple`) toggles the letter and never sends, as ⇧ does.
+    nonisolated static func clickPlan(letters: String, letter: String, shift: Bool, stages: Bool,
+                                      multiple: Bool = false) -> (option: String, send: Bool) {
+        if shift || multiple { return (InboxDecisionCard.toggled(letters, letter, add: true), false) }
         return stages ? (InboxDecisionCard.toggled(letters, letter, add: false), false) : (letter, true)
+    }
+
+    /// "Pick the recommended a + b + c": the staged pick becomes exactly `option`, with the card's changed note.
+    func pickSet(_ item: InboxItem, in session: InboxSession, option: String, note: String?) {
+        keyCardID = item.id
+        if let note { noteTexts[item.id] = note }
+        draft(item, in: session, option: option, text: note)
     }
 
     /// Return in a decision's note, as Return in the widget's own answer (`DecisionAnswering.returnStages`): it stages
@@ -2240,6 +2257,7 @@ struct InboxDecisionCard: View, Equatable {
                 ForEach(Array((item.choices ?? []).enumerated()), id: \.element.id) { index, choice in
                     optionRow(choice, index: index)
                 }
+                recommendedPick
             }
             if !item.isOpen, let answer = item.answerBeyondPick {
                 answerBlock(answer)
@@ -2526,15 +2544,20 @@ struct InboxDecisionCard: View, Equatable {
             HStack(spacing: 10) {
                 // A staged decision sends from its own card, next to the pick, or leaves the staged list (F2).
                 if staged, pickable {
+                    // A set's Send names the ticked letters: "Send a + b + c".
+                    let namesSet = item.takesSeveral && !letters.isEmpty
                     Button {
                         inbox.sendNow(item, in: session, note: noteDirty ? note : nil)
                     } label: {
-                        Label("Send now", systemImage: "paperplane.fill").font(.system(size: 12))
+                        Label(DecisionAnswering.sendTitle(letters, multiple: item.takesSeveral),
+                              systemImage: "paperplane.fill").font(.system(size: 12))
                     }
                     .buttonStyle(.genPrimary())
                     .fixedSize()
                     .disabled(sessionSending || writing)
-                    .instantTooltip(sessionSending ? "This session's send is running" : "Send this staged decision alone, without the others")
+                    .instantTooltip(sessionSending ? "This session's send is running"
+                        : namesSet ? DecisionAnswering.setSendTooltip(letters)
+                        : "Send this staged decision alone, without the others")
                     LiveButton(tooltip: "Take the pick and the note off the staged list; the note stays here",
                                enabled: !(sessionSending || writing), pressable: true) {
                         inbox.unstage(item, in: session, keeping: note)
@@ -2600,6 +2623,8 @@ struct InboxDecisionCard: View, Equatable {
         let preferences = state.preferences
         let stages = DecisionAnswering.clickStages(preferences, command: false)
         let recommended = choice.recommended == true || item.recommended == choice.id
+        // A decision that takes any set of its options: a check box per option, and a click only ticks it.
+        let multiple = item.takesSeveral
         let shape = RoundedRectangle(cornerRadius: 8)
         // A second pick while the session's send runs would race it (P14).
         let enabled = pickable && !sessionSending
@@ -2609,6 +2634,11 @@ struct InboxDecisionCard: View, Equatable {
                          shift: flags.contains(.shift), command: flags.contains(.command))
         }
         let label = HStack(alignment: .top, spacing: 9) {
+            if multiple {
+                // Ticked in the staged blue while open, in the answered green once closed.
+                WidgetOptionCheckBox(checked: picked, tint: answered ? ReviewPalette.added : SessionPalette.blue)
+                    .padding(.top, 0.5)
+            }
             // A staged letter is the widget's blue, never the green of "answered" (F2); the deep send blue keeps
             // the white letter at 4.5:1.
             Text(verbatim: "\(choice.id))")
@@ -2626,7 +2656,8 @@ struct InboxDecisionCard: View, Equatable {
                     if recommended {
                         DecisionRecommendedBadge()
                     }
-                    if stagedPick {
+                    // A set's ticked box already says it; the word stays for a one-letter pick.
+                    if stagedPick && !multiple {
                         Text("Staged")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(SessionPalette.blue)
@@ -2656,13 +2687,40 @@ struct InboxDecisionCard: View, Equatable {
                         : sessionSending ? "This session's send is running"
                         : DecisionAnswering.optionTooltip(choice.id, recommended: recommended, stages: stages, picked: stagedPick,
                                                           swaps: preferences?.decisionCommandSwaps ?? true,
-                                                          key: index < 9 ? index + 1 : nil))
+                                                          key: index < 9 ? index + 1 : nil, multiple: multiple))
             } else {
                 label.restingButton(enabled: enabled, action: choose)
             }
         }
-        .accessibilityValue(stagedPick ? "Staged" : answered ? "Chosen" : "")
+        .modifier(SetOptionAccessibility(
+            label: multiple && item.isOpen
+                ? WidgetOptionText.accessibilityLabel(letter: choice.id, text: choice.shownLabel, stages: stages,
+                                                      recommended: recommended, multiple: true, picked: stagedPick)
+                : nil))
+        .accessibilityValue(multiple && item.isOpen ? WidgetOptionText.accessibilityValue(picked: stagedPick, multiple: true)
+                            : stagedPick ? "Staged" : answered ? "Chosen" : "")
         .accessibilityAddTraits(picked ? .isSelected : [])
+    }
+
+    /// "Pick the recommended a + b + c" under the options of an open decision that takes any set of them, while the
+    /// ticked set is not that one already. Nothing is sent; the card's Send does that.
+    @ViewBuilder private var recommendedPick: some View {
+        if item.isOpen, pickable, item.takesSeveral,
+           let set = DecisionAnswering.recommendedSet(item.recommended, count: item.choices?.count ?? 0),
+           set != letters {
+            LiveButton(tooltip: "Ticks exactly the options the agent recommends. Nothing is sent until you press Send.",
+                       enabled: !sessionSending, pressable: true) {
+                inbox.pickSet(item, in: session, option: set, note: noteDirty ? note : nil)
+            } label: {
+                // The line is 14 pt of text: the 22 pt row is the hit area.
+                Label(DecisionAnswering.recommendedPickTitle(set), systemImage: "checkmark.square")
+                    .font(.system(size: 11))
+                    .frame(minHeight: 22)
+                    .contentShape(Rectangle())
+            }
+            .foregroundColor(ReviewPalette.dim)
+            .padding(.leading, 6)
+        }
     }
 
     /// Toggles one letter in a pick string. Plain click replaces the set; ⇧-click adds or removes.
@@ -2674,6 +2732,21 @@ struct InboxDecisionCard: View, Equatable {
             set = set == [id] ? [] : [id]
         }
         return set.sorted().joined()
+    }
+}
+
+/// What VoiceOver reads for an option of a decision that takes any set ("Tick a: …", "Untick a: …",
+/// `WidgetOptionText.accessibilityLabel`). Nil keeps the row's own combined text, which a one-letter decision's row
+/// has always read.
+private struct SetOptionAccessibility: ViewModifier {
+    let label: String?
+
+    func body(content: Content) -> some View {
+        if let label {
+            content.accessibilityLabel(Text(verbatim: label))
+        } else {
+            content
+        }
     }
 }
 

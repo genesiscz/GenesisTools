@@ -715,9 +715,12 @@ struct WidgetPeekView: View {
                 // A pick sent at once stays in the popup, which shows its outcome (`peekOutcome`), or opens its session
                 // when "After a send" says so (UX audit P11: it expanded the whole panel by itself, with no setting).
                 // Read at the click, ⌘ included: a click that only stages never opens anything.
+                // A decision that takes any set of its options only ticks the letter, in every click mode.
                 WidgetItemOptionButton(model: model, item: item, index: index, option: option) {
                     if Self.sendOpensSession(model.snapshot?.state.preferences,
-                        staging: model.clickStagesNow || NSEvent.modifierFlags.contains(.shift)) { open() }
+                        staging: model.clickStagesNow || NSEvent.modifierFlags.contains(.shift) || item.takesSeveral) {
+                        open()
+                    }
                 }
             }
             if options.count > Self.shownOptions {
@@ -908,13 +911,17 @@ struct WidgetPeekView: View {
                 .accessibilityIdentifier("widget.peek.sendStaged")
         } else if staged {
             let sending = model.sendingDecisionIDs.contains(item.sourceId)
-            Button(sending ? "Sending…" : "Send now") {
+            // A set's Send names the ticked letters: "Send a + b + c".
+            let letters = model.shownStagedOption(item.sourceId, stored: item.draftOption)
+            let namesSet = item.takesSeveral && letters != nil
+            Button(sending ? "Sending…" : DecisionAnswering.sendTitle(letters, multiple: item.takesSeveral)) {
                 model.sendStaged([item.sourceId], known: [item])
                 if Self.sendOpensSession(model.snapshot?.state.preferences) { open() }
             }
                 .buttonStyle(.genPrimary())
                 .disabled(sending)
-                .instantTooltip("Sends this staged decision alone, without the others.")
+                .instantTooltip(namesSet ? DecisionAnswering.setSendTooltip(letters)
+                                         : "Sends this staged decision alone, without the others.")
         } else {
             Button(openTitle) { open() }
         }

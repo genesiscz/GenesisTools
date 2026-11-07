@@ -20,6 +20,36 @@ public enum DecisionAnswering {
         return next.isEmpty ? nil : next
     }
 
+    /// The Send of a staged decision. One that takes any set of its options names the ticked letters ("Send a + b + c"),
+    /// so the button says what goes; every other one, and a set with only a note staged, says "Send now".
+    public static func sendTitle(_ option: String?, multiple: Bool) -> String {
+        let letters = (option ?? "").map(String.init)
+        guard multiple, !letters.isEmpty else { return "Send now" }
+        return "Send " + letters.joined(separator: " + ")
+    }
+
+    /// The tooltip of a set's Send: what it sends, and that the other staged decisions stay.
+    public static func setSendTooltip(_ option: String?) -> String {
+        let letters = (option ?? "").map { "\($0))" }.joined(separator: " ")
+        return "Sends \(letters) as this decision's answer, without the other staged decisions."
+    }
+
+    /// The letters a recommendation names when it names a set of at least two of the `count` options ("abc"), for the
+    /// one-click "Pick the recommended a + b + c". Nil for one letter, for words, or for a letter past the options.
+    public static func recommendedSet(_ recommended: String?, count: Int) -> String? {
+        guard let recommended else { return nil }
+        let letters = WidgetOptionText.recommendedLetters(recommended)
+        guard letters.count >= 2,
+              letters.allSatisfy({ letter in letter.first.flatMap { WidgetOptionText.index(of: $0, count: count) } != nil })
+        else { return nil }
+        return letters.sorted().joined()
+    }
+
+    /// "Pick the recommended a + b + c".
+    public static func recommendedPickTitle(_ letters: String) -> String {
+        "Pick the recommended " + letters.map(String.init).joined(separator: " + ")
+    }
+
     /// A staged answer in words for a sentence: "pick b)", "pick a) c) and note", "note".
     public static func pickWords(option: String?, note: String?) -> String {
         let letters = (option ?? "").map { "\($0))" }.joined(separator: " ")
@@ -52,10 +82,16 @@ public enum DecisionAnswering {
         (NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags).contains(.command)
     }
 
-    /// An option's tooltip: what a click does now, and what ⌘-click does. `key` is its number key, if it has one.
+    /// An option's tooltip: what a click does now, and what ⌘-click does. `key` is its number key, if it has one. An
+    /// option of a decision that takes any set (`multiple`) is ticked or unticked by every click and key, and only the
+    /// decision's Send sends.
     public static func optionTooltip(_ letter: String, recommended: Bool, stages: Bool, picked: Bool, swaps: Bool,
-                                     key: Int? = nil) -> String {
+                                     key: Int? = nil, multiple: Bool = false) -> String {
         let keyText = key.map { " · key \($0)" } ?? ""
+        if multiple {
+            return (picked ? "Untick \(letter)" : "Tick \(letter)") + (recommended ? " (recommended)" : "") + keyText
+                + " · this decision takes any set of its options; Send answers with the ticked ones"
+        }
         // ⇧ always stages and keeps the other picked letters (`nextPick`), on every surface.
         let shiftText = picked ? " · ⇧-click takes it out of the pick" : " · ⇧-click adds it to the pick"
         if !stages {

@@ -2129,7 +2129,14 @@ public final class WidgetModel: ObservableObject {
         switch kind {
         case .open:
             guard let current else { return false }
-            if let decision, let focused {
+            if let decision, let focused, decision.takesSeveral {
+                // A set: Return ticks or unticks the option, as a click does; ⌘-Return sends the ticked set.
+                if listKey?.alternate == true {
+                    sendSet(decision, orLetter: decision.choices[focused].id)
+                } else {
+                    choose(decision, option: decision.choices[focused].id)
+                }
+            } else if let decision, let focused {
                 guard Self.returnStagesChoice(kind: decision.kind, decisionClickStages: decisionClickStages) else {
                     // Return never sends (ux checklist, Keyboard); with "Send at once" the number key does.
                     postNote("Return does not send an answer. Press \(focused + 1) to send this one.")

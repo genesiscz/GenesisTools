@@ -554,6 +554,218 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         release?.resume()
     }
 
+    // MARK: - Decisions that take any set of their options (2026-11-07)
+
+    static let setOptions = ["a) prune the build folders", "b) trim the logs", "c) empty the trash",
+                             "d) drop the old worktrees", "e) clear the model cache", "f) nothing yet"]
+
+    /// DECISION 15 of 2026-11-07 in the inbox of every session: six options, "Pick any set of letters", recommended
+    /// "abc", carried as `multiple`.
+    static func setItem(_ key: String, draftOption: String? = nil, multiple: Bool? = true) -> [String: Any] {
+        var item = Self.item(key, number: 15, options: setOptions, draftOption: draftOption)
+        item["title"] = "Which cleanup steps may run now?"
+        item["recommended"] = "abc"
+        if let multiple { item["multiple"] = multiple }
+        return item
+    }
+
+    /// DECISION 15's card in its session's inbox.
+    static func setCard(_ key: String, draftOption: String? = nil, multiple: Bool? = true) -> [String: Any] {
+        var card = Self.card(key, number: 15, draftOption: draftOption)
+        card["title"] = "Which cleanup steps may run now?"
+        card["body"] = "The disk is at 92%. Pick any set of letters."
+        card["choices"] = setOptions.enumerated().map { index, title in
+            ["id": WidgetOptionText.letter(index), "title": title, "recommended": index < 3] as [String: Any]
+        }
+        if let multiple { card["multiple"] = multiple }
+        return card
+    }
+
+    /// `multiple` decodes on a card and an inbox item; an absent one (an older hub, a one-option decision) reads as one
+    /// option. A card handed to the inbox-item sends keeps it, with every recommended letter.
+    func testADecisionThatTakesASetDecodesMultipleAndAbsentReadsAsOne() throws {
+        func card(_ json: [String: Any]) throws -> WidgetCard {
+            try JSONDecoder().decode(WidgetCard.self, from: JSONSerialization.data(withJSONObject: json))
+        }
+        func item(_ json: [String: Any]) throws -> WidgetInboxItem {
+            try JSONDecoder().decode(WidgetInboxItem.self, from: JSONSerialization.data(withJSONObject: json))
+        }
+        let set = try card(Self.setCard(key + "0"))
+        XCTAssertEqual(set.multiple, true)
+        XCTAssertTrue(set.takesSeveral)
+        XCTAssertFalse(try card(Self.setCard(key + "0", multiple: nil)).takesSeveral, "absent means one option")
+        XCTAssertFalse(try card(Self.setCard(key + "0", multiple: false)).takesSeveral)
+        XCTAssertTrue(try item(Self.setItem(key + "0")).takesSeveral)
+        XCTAssertFalse(try item(Self.setItem(key + "0", multiple: nil)).takesSeveral, "absent means one option")
+        let handed = WidgetModel.inboxItem(set)
+        XCTAssertTrue(handed.takesSeveral)
+        XCTAssertEqual(handed.recommended, "abc", "the whole recommended set, not its first letter")
+        let single = WidgetModel.inboxItem(try card(Self.card(key + "0", number: 8)))
+        XCTAssertFalse(single.takesSeveral)
+        XCTAssertEqual(single.recommended, "b", "a one-option decision hands on its one letter, as before")
+    }
+
+    /// The words of a set: its Send names the ticked letters, VoiceOver says Tick and Untick, the tooltip says a click
+    /// ticks, and the recommended set is read from "abc" or "a + c". A one-option decision keeps every word it had.
+    func testASetsSendNamesTheTickedLettersAndItsOptionsSayTick() {
+        XCTAssertEqual(DecisionAnswering.sendTitle("abc", multiple: true), "Send a + b + c")
+        XCTAssertEqual(DecisionAnswering.sendTitle("c", multiple: true), "Send c")
+        XCTAssertEqual(DecisionAnswering.sendTitle(nil, multiple: true), "Send now", "a set with only a note staged")
+        XCTAssertEqual(DecisionAnswering.sendTitle("b", multiple: false), "Send now", "one option: unchanged")
+        XCTAssertEqual(WidgetOptionText.accessibilityLabel(letter: "a", text: "trim", stages: true, recommended: true,
+                                                           multiple: true, picked: false), "Tick a: trim, recommended")
+        XCTAssertEqual(WidgetOptionText.accessibilityLabel(letter: "a", text: "trim", stages: false, recommended: false,
+                                                           multiple: true, picked: true), "Untick a: trim")
+        XCTAssertEqual(WidgetOptionText.accessibilityLabel(letter: "a", text: "trim", stages: true, recommended: false),
+                       "Stage a: trim", "one option: unchanged")
+        XCTAssertEqual(WidgetOptionText.accessibilityValue(picked: true, multiple: true), "Ticked")
+        XCTAssertEqual(WidgetOptionText.accessibilityValue(picked: true, multiple: false), "Staged")
+        XCTAssertEqual(DecisionAnswering.optionTooltip("b", recommended: false, stages: false, picked: false, swaps: true,
+                                                       key: 2, multiple: true),
+                       "Tick b · key 2 · this decision takes any set of its options; Send answers with the ticked ones")
+        XCTAssertEqual(DecisionAnswering.optionTooltip("b", recommended: true, stages: false, picked: false, swaps: true, key: 2),
+                       "Answer b (recommended) · key 2 · ⌘-click stages it · ⇧-click adds it to the pick",
+                       "one option: unchanged")
+        XCTAssertEqual(DecisionAnswering.recommendedSet("abc", count: 6), "abc")
+        XCTAssertEqual(DecisionAnswering.recommendedSet("a + c", count: 3), "ac")
+        XCTAssertNil(DecisionAnswering.recommendedSet("b", count: 6), "one letter is no set")
+        XCTAssertNil(DecisionAnswering.recommendedSet("abz", count: 3), "a letter past the options")
+        XCTAssertEqual(DecisionAnswering.recommendedPickTitle("abc"), "Pick the recommended a + b + c")
+    }
+
+    /// The hub writes this model's actions are recorded; `drain` waits until two queued barriers ran, so a send that a
+    /// stage's completion queued behind the first one has run too.
+    private func recordActions(_ model: WidgetModel) -> (actions: () -> [(action: String, option: String?)],
+                                                          drain: () async -> Void) {
+        var seen: [(action: String, option: String?)] = []
+        model.actionRunner = { value in
+            if case .object(let fields) = value, case .string(let action) = fields["action"],
+               ["ledger", "send-staged"].contains(action) {
+                var option: String?
+                if case .string(let text) = fields["draftOption"] { option = text }
+                seen.append((action, option))
+            }
+            return ["ok": true]
+        }
+        let drain: () async -> Void = { [weak self] in
+            for round in 0..<2 {
+                guard let self else { return }
+                let done = self.expectation(description: "barrier \(round)")
+                model.action(["action": "fixture-barrier"], completed: { done.fulfill() })
+                await self.fulfillment(of: [done], timeout: 3)
+            }
+        }
+        return ({ seen }, drain)
+    }
+
+    /// DECISION 15 with "Send at once": a click on an option of a set ticks it and a second click unticks it, in the
+    /// inbox of every session and in its session's card, and nothing is sent until its Send. A one-option decision
+    /// with the same setting still sends on the click.
+    func testAClickOnASetTicksAndNeverSendsWithSendAtOnce() async throws {
+        let model = try model(preferences: ["decisionClick": "send"], cards: [Self.setCard(key + "0")],
+                              inbox: [Self.setItem(key + "0")])
+        defer { model.stop() }
+        let record = recordActions(model)
+        let item = try XCTUnwrap(model.inbox.sessions.first?.items?.first)
+        XCTAssertTrue(item.takesSeveral)
+        model.choose(item, option: "a")
+        model.choose(item, option: "c")
+        XCTAssertEqual(model.stagedOption("d15", stored: nil), "ac", "two clicks tick two letters")
+        model.choose(item, option: "a")
+        XCTAssertEqual(model.stagedOption("d15", stored: nil), "c", "a click on a ticked letter unticks it")
+        await record.drain()
+        XCTAssertEqual(record.actions().map(\.action), ["ledger", "ledger", "ledger"])
+        XCTAssertEqual(record.actions().map(\.option), ["a", "ac", "c"])
+
+        let card = try XCTUnwrap(model.cards.first { $0.sourceId == "d15" })
+        XCTAssertTrue(card.takesSeveral)
+        model.choose(card, option: "e")
+        XCTAssertEqual(model.stagedOption("d15", stored: nil), "ce", "the card's click ticks into the same pick")
+        await record.drain()
+        XCTAssertFalse(record.actions().contains { $0.action == "send-staged" }, "a click never sends a set: \(record.actions())")
+
+        // Its Send sends the ticked set.
+        model.sendStaged(["d15"], known: [WidgetModel.inboxItem(card)])
+        await record.drain()
+        XCTAssertEqual(record.actions().last?.action, "send-staged")
+
+        // A one-option decision with the same setting: the click sends at once, as before.
+        let single = try self.model(preferences: ["decisionClick": "send"],
+                                    inbox: [Self.item(key + "0", number: 4, options: Self.threeOptions)])
+        defer { single.stop() }
+        let singleRecord = recordActions(single)
+        let one = try XCTUnwrap(single.inbox.sessions.first?.items?.first)
+        XCTAssertFalse(one.takesSeveral)
+        single.choose(one, option: "b")
+        await singleRecord.drain()
+        XCTAssertEqual(singleRecord.actions().map(\.action), ["ledger", "send-staged"], "one option sends on the click")
+    }
+
+    /// The keys on a set's card: a number key and Return on the arrows' option tick it, as a click does; ⌘-Return sends
+    /// the ticked set.
+    func testTheKeysTickASetAndCommandReturnSendsIt() async throws {
+        let model = try model(preferences: ["decisionClick": "send"], cards: [Self.setCard(key + "0")])
+        defer { model.stop() }
+        let record = recordActions(model)
+        let card = try XCTUnwrap(model.cards.first { $0.sourceId == "d15" })
+        model.expanded = .right
+        model.openCard(card)
+        model.choose(option: "b")
+        XCTAssertEqual(model.stagedOption("d15", stored: nil), "b", "the number key ticks")
+        model.choiceFocus = WidgetChoiceFocus(cardID: card.id, choiceID: "d")
+        XCTAssertTrue(model.moveInList(.open), "the inbox takes Return")
+        XCTAssertEqual(model.stagedOption("d15", stored: nil), "bd", "Return ticks the arrows' option")
+        await record.drain()
+        XCTAssertFalse(record.actions().contains { $0.action == "send-staged" }, "\(record.actions())")
+        XCTAssertTrue(model.moveInList(.open, alternate: true), "the inbox takes ⌘-Return")
+        await record.drain()
+        XCTAssertEqual(record.actions().last?.action, "send-staged", "⌘-Return sends the ticked set")
+        XCTAssertEqual(model.stagedOption("d15", stored: nil), "bd", "⌘-Return did not tick or untick the option")
+    }
+
+    /// DECISION 15's open card with a and c ticked, and its entry in the inbox of every session: check boxes, the
+    /// Send names the set, and the recommended set is one click away.
+    func testASetsCardAndEntryDrawCheckBoxesAndASendThatNamesTheSet() throws {
+        let model = try model(cards: [Self.setCard(key + "0", draftOption: "ac")])
+        defer { model.stop() }
+        model.error = nil
+        model.openCard(try XCTUnwrap(model.cards.first { $0.number == 15 }))
+        let size = CGSize(width: Self.widgetWidth, height: 900)
+        let card = LiveWidgetView(model: model, edge: .right, embedded: true)
+            .frame(width: size.width, height: size.height, alignment: .top)
+            .background(NativeThemePalette.graphiteBase)
+            .environment(\.nativeSettingsTheme, .graphite)
+            .environment(\.colorScheme, .dark)
+        let text = try recognizedText(try XCTUnwrap(KitShots.render(card, size: size, name: "set-card-open", settle: 1.2)
+            .cgImage)).replacingOccurrences(of: "\n", with: " ")
+        XCTAssertTrue(text.contains("Send a + c"), "the Send names the ticked set: \(text)")
+        XCTAssertTrue(text.contains("Pick the recommended a + b + c"), text)
+        XCTAssertFalse(text.contains("Send now (all"), text)
+
+        let overview = try self.model(inbox: [Self.setItem(key + "0", draftOption: "b")])
+        defer { overview.stop() }
+        let entry = try recognizedText(try XCTUnwrap(openOverviewEntry(overview, name: "set-overview-open").cgImage))
+            .replacingOccurrences(of: "\n", with: " ")
+        XCTAssertTrue(entry.contains("Send b"), "the entry has its own Send: \(entry)")
+        XCTAssertTrue(entry.contains("Pick the recommended a + b + c"), entry)
+
+        // A one-option decision with a staged pick keeps its Send now and its Staged word.
+        let single = try self.model(cards: [Self.card(key + "0", number: 8, draftOption: "b")])
+        defer { single.stop() }
+        single.error = nil
+        single.openCard(try XCTUnwrap(single.cards.first { $0.number == 8 }))
+        let one = LiveWidgetView(model: single, edge: .right, embedded: true)
+            .frame(width: size.width, height: size.height, alignment: .top)
+            .background(NativeThemePalette.graphiteBase)
+            .environment(\.nativeSettingsTheme, .graphite)
+            .environment(\.colorScheme, .dark)
+        let oneText = try recognizedText(try XCTUnwrap(KitShots.render(one, size: size, name: "single-card-open", settle: 1.2)
+            .cgImage)).replacingOccurrences(of: "\n", with: " ")
+        XCTAssertTrue(oneText.contains("Send now"), oneText)
+        XCTAssertTrue(oneText.contains("Staged"), oneText)
+        XCTAssertFalse(oneText.contains("Pick the recommended"), oneText)
+    }
+
     // MARK: - The hub Inbox card's context (2026-11-01)
 
     /// The decision of the 2026-11-01 screenshot with an invented session, paths and answer: a context taller than the

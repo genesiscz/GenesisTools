@@ -4,6 +4,24 @@ import XCTest
 @testable import GenesisToolsHost
 @testable import GenesisToolsHub
 
+/// The writes a test's `captureWrite` saw, from the queue the model writes on.
+private final class WriteLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var writes: [[String]] = []
+
+    func append(_ args: [String]) {
+        lock.lock()
+        defer { lock.unlock() }
+        writes.append(args)
+    }
+
+    var all: [[String]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return writes
+    }
+}
+
 /// The hub's decision surfaces as the user reads them (UX audit 2026-10-27): the Decisions pane's words, and the Inbox
 /// card's words, keys and states.
 final class HubInboxUXTests: XCTestCase {
@@ -374,6 +392,84 @@ final class HubInboxUXTests: XCTestCase {
         // An untitled decision's heading is its prompt: the card does not print it twice.
         let untitled = try Self.decision(#"{"prompt":"Keep the cache?","choices":[{"id":"a","label":"keep"}]}"#)
         XCTAssertNil(untitled.shownPrompt)
+    }
+
+    // MARK: - Decisions that take any set of their options (2026-11-07)
+
+    /// DECISION 15 of 2026-11-07 as `tools question inbox --json` sends it: six options, recommended "abc", `multiple`.
+    static func setDecision(draftOption: String? = nil, multiple: Bool? = true) throws -> InboxItem {
+        let labels = ["prune the build folders", "trim the logs", "empty the trash", "drop the old worktrees",
+                      "clear the model cache", "nothing yet"]
+        var fields: [String: Any] = [
+            "id": "d_15_s1", "number": 15, "title": "Which cleanup steps may run now?", "recommended": "abc",
+            "revision": 1,
+            "choices": labels.enumerated().map { index, label -> [String: Any] in
+                ["id": WidgetOptionText.letter(index), "label": label, "recommended": index < 3]
+            },
+        ]
+        if let multiple { fields["multiple"] = multiple }
+        if let draftOption { fields["draftOption"] = draftOption }
+        let data = try JSONSerialization.data(withJSONObject: fields)
+        return try decision(String(decoding: data, as: UTF8.self))
+    }
+
+    /// `multiple` decodes; an older `tools` that leaves it out reads as one option, and a dialog never takes a set.
+    func testADecisionThatTakesASetDecodesMultiple() throws {
+        XCTAssertTrue(try Self.setDecision().takesSeveral)
+        XCTAssertFalse(try Self.setDecision(multiple: nil).takesSeveral, "absent means one option")
+        XCTAssertFalse(try Self.setDecision(multiple: false).takesSeveral)
+        XCTAssertFalse(try Self.decision(#"{"id":"dialog-1","kind":"dialog","source":"dialog","multiple":true}"#).takesSeveral)
+    }
+
+    /// A click on an option of a set toggles its letter and never sends, also with "Send at once" (`stages` false); a
+    /// one-option decision still replaces the pick or sends it, as before.
+    func testAClickOnASetTogglesAndNeverSendsAtOnce() {
+        XCTAssertTrue(HubInboxModel.clickPlan(letters: "", letter: "a", shift: false, stages: false, multiple: true) == ("a", false))
+        XCTAssertTrue(HubInboxModel.clickPlan(letters: "a", letter: "c", shift: false, stages: false, multiple: true) == ("ac", false))
+        XCTAssertTrue(HubInboxModel.clickPlan(letters: "ac", letter: "a", shift: false, stages: true, multiple: true) == ("c", false))
+        XCTAssertTrue(HubInboxModel.clickPlan(letters: "a", letter: "b", shift: false, stages: false) == ("b", true),
+                      "one option with Send at once: sent at once")
+        XCTAssertTrue(HubInboxModel.clickPlan(letters: "a", letter: "b", shift: false, stages: true) == ("b", false),
+                      "one option staging: the pick is replaced")
+    }
+
+    /// The model's click on a set, two letters in a row: both go into the staged pick ("ac"), and no send starts, whatever
+    /// the widget's Decision click setting on this Mac says.
+    @MainActor
+    func testTheInboxModelTicksASetWithoutSending() async throws {
+        let inbox = HubInboxModel()
+        let item = try Self.setDecision()
+        let session = Self.session("s1", items: [item])
+        let writes = WriteLog()
+        let settled = expectation(description: "writes settled")
+        settled.assertForOverFulfill = false
+        inbox.captureWrite = { args in
+            writes.append(args)
+            return ProcessCapture(status: 0, stdout: Data("{}".utf8), stderr: Data())
+        }
+        inbox.reloadAfterWrite = { settled.fulfill() }
+        inbox.choose(item, in: session, letter: "a", note: nil, shift: false, command: false)
+        inbox.choose(item, in: session, letter: "c", note: nil, shift: false, command: false)
+        XCTAssertEqual(inbox.letters(item), "ac")
+        await fulfillment(of: [settled], timeout: 3)
+        XCTAssertTrue(inbox.sendingSessions.isEmpty, "a click on a set never sends")
+        let options = writes.all.compactMap { args in args.firstIndex(of: "--option").map { args[$0 + 1] } }
+        XCTAssertEqual(options.last, "ac", "\(writes.all)")
+        XCTAssertTrue(writes.all.allSatisfy { $0.count > 2 && $0[2] == "draft" }, "\(writes.all)")
+    }
+
+    /// The set's card with a and c ticked: check boxes, a Send that names the set, and the recommended set one click away.
+    @MainActor
+    func testASetsCardSendsNamesTheTickedLetters() throws {
+        let text = try Self.drawnText(Self.render(card: Self.setDecision(draftOption: "ac"), name: "inbox-card-set"))
+            .replacingOccurrences(of: "\n", with: " ")
+        XCTAssertTrue(text.contains("Send a + c"), text)
+        XCTAssertTrue(text.contains("Pick the recommended a + b + c"), text)
+        XCTAssertFalse(text.contains("Send now"), text)
+        // Ticked exactly as recommended: the one-click pick has nothing left to do.
+        let recommended = try Self.drawnText(Self.render(card: Self.setDecision(draftOption: "abc"), name: "inbox-card-set-abc"))
+        XCTAssertTrue(recommended.contains("Send a + b + c"), recommended)
+        XCTAssertFalse(recommended.contains("Pick the recommended"), recommended)
     }
 
     // MARK: - Fixtures
