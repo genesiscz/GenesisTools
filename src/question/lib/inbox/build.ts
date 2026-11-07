@@ -9,6 +9,7 @@ import {
     type AnsweredVia,
     type DecisionDelivery,
     type DecisionRecord,
+    decisionAskedIn,
     type HarvestedDecision,
     kindOf,
 } from "../decisions/store";
@@ -78,6 +79,11 @@ export interface InboxDecision {
      * removes a letter, and one Send answers the set ("ac").
      */
     multiple: boolean;
+    /**
+     * The asking session for a reader outside it, when another agent's thread started that session ("Review of the
+     * cache PR, a sub-agent of Overnight lead"; `decisionAskedIn`). Null for a session no other thread started.
+     */
+    askedIn: string | null;
     blocking: boolean;
     status: InboxStatus;
     /** The chosen letters once answered. */
@@ -418,6 +424,7 @@ export function fromRecord(row: DecisionRecord): InboxDecision {
         choices: choicesOf(shown.options, row.rationales, row.recommended ?? null),
         recommended: row.recommended ?? null,
         multiple: takesSeveral({ ...row, options: shown.options }),
+        askedIn: decisionAskedIn(row),
         blocking: row.blocking === true,
         status: STATUS[row.state],
         option: row.option ?? null,
@@ -486,6 +493,7 @@ function fromBlock(sessionId: string, block: HarvestedDecision, at: string): Inb
             prompt: [block.prompt, block.notes].filter(Boolean).join("\n"),
             options: block.options,
         }),
+        askedIn: null,
         blocking: false,
         status: "waiting",
         option: null,

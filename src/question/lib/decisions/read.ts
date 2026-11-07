@@ -21,6 +21,7 @@ import {
     type DecisionKind,
     type DecisionRecord,
     type DecisionState,
+    decisionAskedIn,
     type HarvestedDecision,
     kindOf,
     promptReserved,
@@ -173,6 +174,8 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
             const meta = [
                 row.for ? `for: ${row.for}` : null,
                 row.blocking ? "blocking" : null,
+                // A sub-agent's section is read by its lead, who may relay several sessions' DECISION 1 (DECISION 46 b).
+                decisionAskedIn(row) ? `asked in ${decisionAskedIn(row)}` : null,
                 !todo && takesSeveral({ ...row, options: decisionOptionLabels(row.prompt, row.options) })
                     ? "pick any set of letters (ac)"
                     : null,

@@ -20,6 +20,7 @@ describe("several-letter decisions on the /qa decisions tab", () => {
         choices,
         recommended: null,
         multiple: true,
+        askedIn: null,
         blocking: false,
         status: "waiting",
         option: null,
@@ -85,5 +86,18 @@ describe("several-letter decisions on the /qa decisions tab", () => {
         expect(single).not.toContain('role="checkbox"');
         expect(single).not.toContain("☐");
         expect(single.match(/aria-pressed="true"/g)).toHaveLength(1);
+    });
+
+    test("a sub-agent's decision names its thread and its lead; a session no thread started names none", () => {
+        const askedIn = "Review of the cache PR, a sub-agent of Overnight lead";
+        const sub = renderToStaticMarkup(
+            createElement(DecisionItem, { item: decision({ askedIn }), draft: { text: "" }, onDraft: () => {} })
+        );
+        const own = renderToStaticMarkup(
+            createElement(DecisionItem, { item: decision({}), draft: { text: "" }, onDraft: () => {} })
+        );
+
+        expect(sub).toContain(`asked in ${askedIn}`);
+        expect(own).not.toContain("asked in");
     });
 });

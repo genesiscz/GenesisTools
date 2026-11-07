@@ -22,6 +22,8 @@ interface ThreadRow {
     projectRoot: string | null;
     parentThreadId: string | null;
     relationship: string | null;
+    title: string | null;
+    parentTitle: string | null;
 }
 
 /**
@@ -53,9 +55,13 @@ export function readT3ThreadDetails(threadId: string, homeDir: string): Partial<
                             t.project_id AS projectId,
                             p.workspace_root AS projectRoot,
                             json_extract(t.payload_json, '$.lineage.parentThreadId') AS parentThreadId,
-                            json_extract(t.payload_json, '$.lineage.relationshipToParent') AS relationship
+                            json_extract(t.payload_json, '$.lineage.relationshipToParent') AS relationship,
+                            json_extract(t.payload_json, '$.title') AS title,
+                            json_extract(parent.payload_json, '$.title') AS parentTitle
                        FROM orchestration_v2_projection_threads t
                        LEFT JOIN projection_projects p ON p.project_id = t.project_id
+                       LEFT JOIN orchestration_v2_projection_threads parent
+                              ON parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
                       WHERE t.thread_id = ?`
                 )
                 .get(threadId);
@@ -72,6 +78,9 @@ export function readT3ThreadDetails(threadId: string, homeDir: string): Partial<
                 projectRoot: row.projectRoot,
                 parentThreadId: row.parentThreadId,
                 relationshipToParent: row.relationship,
+                // Only when T3 named them: a thread with no title adds no field.
+                ...(row.title ? { title: row.title } : {}),
+                ...(row.parentTitle ? { parentTitle: row.parentTitle } : {}),
             };
         } catch (error) {
             log.debug({ error, path }, "agent-context: the T3 Code thread lookup failed; the host stays the thread id");

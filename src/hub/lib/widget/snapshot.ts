@@ -182,6 +182,11 @@ export interface WidgetDecisionDetails {
     /** The recommended option's letter. */
     recommended?: string;
     blocking?: boolean;
+    /**
+     * The asking session, when another agent's thread started it ("Review of the cache PR, a sub-agent of Overnight
+     * lead"; `decisionAskedIn`), so a sub-agent's DECISION 1 reads apart from its lead's.
+     */
+    askedIn?: string;
     /** The `file:line` refs the card shows: the lines read from disk, or a file that could not be found. */
     refs?: InboxRef[];
     /** Where the last send took the answer ("Sent 18:31 to …"). */
@@ -1722,6 +1727,7 @@ export async function widgetSnapshot({
             ...(inbox.confidence ? { confidence: inbox.confidence } : {}),
             ...(inbox.recommended ? { recommended: inbox.recommended } : {}),
             ...(inbox.blocking ? { blocking: true } : {}),
+            ...(inbox.askedIn ? { askedIn: inbox.askedIn } : {}),
             ...(inbox.delivery ? { delivery: inbox.delivery } : {}),
         };
         if (inbox.refs.length > 0) {

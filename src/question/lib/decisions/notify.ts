@@ -11,7 +11,7 @@ import { hubItemClickCommand } from "../hub-link";
 import { NOTICE_IDS, type NoticeDeps, noticeItem, postNotice } from "../notices/notices";
 import { waitsOnHuman } from "../waiting/set";
 import { recommendedLetters, shownDecisionText } from "./option-labels";
-import { type DecisionRecord, kindOf } from "./store";
+import { type DecisionRecord, decisionAskedIn, kindOf } from "./store";
 
 const log = logger.child({ component: "question:decision-notify" });
 
@@ -130,7 +130,8 @@ async function postGroupedBanner(waiting: DecisionRecord[], deps: DecisionNotice
         }
     }
 
-    const where = first.project ?? first.sessionTitle;
+    // A sub-agent's decision names its thread and its lead, so two sessions' DECISION 1 read apart (DECISION 46 b).
+    const where = decisionAskedIn(first) ?? first.project ?? first.sessionTitle;
     return postNotice(
         {
             event: {
@@ -168,7 +169,9 @@ async function postPhonePushes(waiting: DecisionRecord[], deps: DecisionNoticeDe
                 event: {
                     app: "question",
                     title: decisionLabel(row),
-                    ...(row.project || row.sessionTitle ? { subtitle: row.project ?? row.sessionTitle } : {}),
+                    ...(decisionAskedIn(row) || row.project || row.sessionTitle
+                        ? { subtitle: decisionAskedIn(row) ?? row.project ?? row.sessionTitle }
+                        : {}),
                     message: phoneDecisionBody(row),
                     id: NOTICE_IDS.decision(row.id),
                     timeSensitive: row.blocking !== false,

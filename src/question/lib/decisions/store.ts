@@ -4,6 +4,7 @@ import { isAbsolute, resolve } from "node:path";
 import { canonicalAgent, runtimeAgentName } from "@app/handoff/targeting";
 import { STAMP_FACETS, whoIsCallingHere } from "@genesiscz/utils/agent/caller-identity";
 import { toRuntimeContext } from "@genesiscz/utils/agent/identity";
+import type { CallerHost } from "@genesiscz/utils/agent/identity/types";
 import { type AgentRuntimeContext, callerCwd } from "@genesiscz/utils/agent/runtime";
 import { createTranscriptAnchor, type TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import { letterPastOptions } from "@genesiscz/utils/agents/dialogs/keys";
@@ -58,6 +59,15 @@ export interface DecisionDelivery {
     at: string;
 }
 
+/** The host app of the asking session, as `DecisionRecord.host` keeps it. One app today, so one shape. */
+export interface DecisionHost {
+    app: "t3code";
+    threadId: string;
+    title?: string;
+    /** The thread that started this one, and how they relate ("subagent" for a `delegate_task` thread). */
+    parent?: { threadId: string; title?: string; relationship?: string };
+}
+
 export interface DecisionRecord {
     transcriptAnchor?: TranscriptAnchor;
     worktreePath?: string | null;
@@ -93,6 +103,13 @@ export interface DecisionRecord {
     isWorktree?: boolean;
     cmuxSurface?: string;
     sessionTitle?: string;
+    /**
+     * The app that hosts the asking session (a T3 Code thread), saved at the post: the thread and its title, and the
+     * lead thread that started it when another agent did. Every surface that shows the decision outside its session
+     * names the session by it (`decisionAskedIn`), so three sub-agents' "DECISION 1" stay three questions (DECISION
+     * 46 b, 2026-11-07).
+     */
+    host?: DecisionHost;
     /** The user's unsent note. Consumed by the move to `answered`. */
     draft?: string;
     /** The user's unsent pick: option letters, several allowed (`"ac"`). Consumed with `draft`. */
@@ -157,6 +174,7 @@ const VERSIONED_KEYS = [
     "worktreePath",
     "sessionTitle",
     "cmuxSurface",
+    "host",
     "excerpt",
     "title",
     "proposal",
@@ -523,7 +541,8 @@ export async function postDecisions(
     const readFile = deps.readFile ?? ((path: string) => readFileSync(path, "utf8"));
     // `fallbackCwd` applies only to a request scope whose session is explicitly null (a gateway caller it could not name).
     const identity = whoIsCallingHere({
-        facets: STAMP_FACETS,
+        // `host` adds the T3 Code thread's title and its lead thread (one indexed read of T3's database).
+        facets: [...STAMP_FACETS, "host"],
         fallbackCwd: input.cwd,
         overrides: deps.ctx,
         env: deps.env ?? (isTestProcess() ? {} : env.getProcessEnv()),
@@ -564,6 +583,7 @@ export async function postDecisions(
         worktreePath: poster.worktreePath,
         ...(cmuxSurface ? { cmuxSurface } : {}),
         ...(sessionTitle ? { sessionTitle } : {}),
+        ...(identity.host ? { host: decisionHost(identity.host) } : {}),
     };
 
     return withDecisionsLock(file, () => {
@@ -708,6 +728,42 @@ export async function postDecisions(
 
         return created;
     });
+}
+
+/** The caller's host as a decision keeps it: only the facts a label needs, each only when T3 Code named it. */
+function decisionHost(host: CallerHost): DecisionHost {
+    const parent = host.parentThreadId
+        ? {
+              threadId: host.parentThreadId,
+              ...(host.parentTitle ? { title: host.parentTitle } : {}),
+              ...(host.relationshipToParent ? { relationship: host.relationshipToParent } : {}),
+          }
+        : undefined;
+
+    return {
+        app: host.app,
+        threadId: host.threadId,
+        ...(host.title ? { title: host.title } : {}),
+        ...(parent ? { parent } : {}),
+    };
+}
+
+/**
+ * The session a decision was asked in, named for a reader outside it, when another agent's thread started that
+ * session: "Review of the cache PR, a sub-agent of Overnight lead". Each session keeps its own numbers, so a lead and
+ * its sub-agents can each have a DECISION 1; this label tells them apart in a relay, a notice and the inbox (DECISION
+ * 46 b). Null for a session no other thread started: its own title already heads it everywhere.
+ */
+export function decisionAskedIn(row: Pick<DecisionRecord, "host" | "sessionTitle" | "sessionId">): string | null {
+    const parent = row.host?.parent;
+
+    if (!parent) {
+        return null;
+    }
+
+    const own = row.host?.title?.trim() || row.sessionTitle?.trim() || `session ${row.sessionId.slice(0, 8)}`;
+    const lead = parent.title?.trim() || `thread ${parent.threadId.slice(0, 12)}`;
+    return `${own}, a ${parent.relationship === "subagent" ? "sub-agent" : "thread"} of ${lead}`;
 }
 
 type ContentFields = Pick<DecisionRecord, "prompt" | "options" | VersionedKey>;

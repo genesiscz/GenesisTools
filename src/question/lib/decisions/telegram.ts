@@ -20,7 +20,7 @@ import {
 import { NOTICE_IDS, type NoticeDeps, noticeItem, postNotice } from "../notices/notices";
 import { needsHuman } from "./notify";
 import { recommendedLetters, shownDecisionText } from "./option-labels";
-import { awaitsAnswer, type DecisionRecord, kindOf } from "./store";
+import { awaitsAnswer, type DecisionRecord, decisionAskedIn, kindOf } from "./store";
 
 const log = logger.child({ component: "question:decision-telegram" });
 
@@ -45,7 +45,8 @@ function clip(value: string, max: number): string {
  */
 export function decisionTelegramText(row: DecisionRecord, project: TelegramDecisionProject): string {
     const head = `${kindOf(row) === "todo" ? "TODO" : "❓ DECISION"} ${row.number}${row.title ? `: ${row.title}` : ""}`;
-    const where = [row.project, row.sessionTitle].filter(Boolean).join(" · ");
+    // A sub-agent's decision names its thread and its lead, so two sessions' DECISION 1 read apart (DECISION 46 b).
+    const where = [row.project, decisionAskedIn(row) ?? row.sessionTitle].filter(Boolean).join(" · ");
     const recommended = row.recommended ? `Recommended: ${row.recommended}` : undefined;
     const { several } = decisionChoice(row);
 

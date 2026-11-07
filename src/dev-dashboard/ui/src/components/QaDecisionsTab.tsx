@@ -180,6 +180,9 @@ export function DecisionItem({
                     DECISION {item.number}
                     {item.title && item.title !== item.prompt ? ` · ${item.title}` : ""}
                 </span>
+                {item.askedIn ? (
+                    <span data-testid={`decision-asked-in-${item.id}`}>asked in {item.askedIn}</span>
+                ) : null}
                 <span
                     className={`rounded-full border px-2 py-[1px] ${
                         waiting
