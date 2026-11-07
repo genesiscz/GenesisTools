@@ -261,7 +261,7 @@ enum ClickSound {
         return times
     }
 
-    static func add(to composition: AVMutableComposition, project: EditProject) async throws -> AVMutableAudioMixInputParameters? {
+    static func add(to composition: AVMutableComposition, project: EditProject, offsetUs: Int64 = 0) async throws -> AVMutableAudioMixInputParameters? {
         let clicks = (CursorTrack.load(project.source.cursor)?.clicks ?? []).map { Int64(($0.ms * 1000).rounded()) }
         let times = times(clicks: clicks, project: project)
         let movieUs = project.outputDurationUs
@@ -273,7 +273,7 @@ enum ClickSound {
               let out = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { return nil }
         let available = try await source.load(.timeRange)
         try out.insertTimeRange(CMTimeRange(start: available.start, duration: CMTimeMinimum(available.duration, EditRenderer.us(movieUs))),
-                                of: source, at: .zero)
+                                of: source, at: EditRenderer.us(offsetUs))
         let parameters = AVMutableAudioMixInputParameters(track: out)
         parameters.setVolume(0.3, at: .zero)
         HubPerf.log("recorder.clickSound: \(times.count) ticks in \(asset.url.lastPathComponent)")
@@ -458,8 +458,9 @@ enum MusicMix {
     }
 
     /// Lays the music under the movie and returns its mix parameters; nil (logged) when the file has no sound.
+    /// `offsetUs`: where the movie starts in the composition (after an intro card); the speech moves by it.
     static func add(_ music: EditProject.Music, to composition: AVMutableComposition, lengthUs: Int64,
-                    project: EditProject) async throws -> AVMutableAudioMixInputParameters? {
+                    project: EditProject, offsetUs: Int64 = 0) async throws -> AVMutableAudioMixInputParameters? {
         let asset = AVURLAsset(url: URL(fileURLWithPath: music.file))
         guard let source = try? await asset.loadTracks(withMediaType: .audio).first,
               let out = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
@@ -484,6 +485,7 @@ enum MusicMix {
         // Played once, the music fades out at its own end.
         let playedUs = min(lengthUs, Int64((at.seconds * 1_000_000).rounded()))
         let speech = speech(lines: CaptionTrack.load(video: project.source.video)?.lines ?? [], project: project)
+            .map { (fromUs: $0.fromUs + offsetUs, toUs: $0.toUs + offsetUs) }
         let frames = keyframes(music: music, speech: speech, lengthUs: playedUs, duck: Duck.of(project))
         let parameters = AVMutableAudioMixInputParameters(track: out)
         for (start, end) in zip(frames, frames.dropFirst()) where end.us > start.us {
@@ -566,7 +568,10 @@ struct EditRenderer {
         return 30
     }
 
-    static func render(project: EditProject, asset: AVURLAsset, zoom: ZoomState, maxHeight: Int) async throws -> Rendered {
+    /// `cards` (the export only) plays the intro card before the movie and the end card after it; every output time
+    /// of the movie then sits `leadUs` later in the composition. The preview leaves them out, so its time is the edit's.
+    static func render(project: EditProject, asset: AVURLAsset, zoom: ZoomState, maxHeight: Int,
+                       cards: Bool = false) async throws -> Rendered {
         guard let video = try await asset.loadTracks(withMediaType: .video).first else {
             throw RenderError.noVideoTrack(asset.url.path)
         }
@@ -584,6 +589,14 @@ struct EditRenderer {
             composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
         }
         var cursor = CMTime.zero
+        // R4 9 intro and end cards: the first frame held for the intro's length under it, so the compositor runs.
+        let cardSpans = CardSpans(project: project, enabled: cards)
+        if cardSpans.leadUs > 0, let first = project.clips.first(where: { $0.sourceDurationUs > 0 }) {
+            let still = CMTimeRange(start: us(first.fromUs), duration: us(min(first.sourceDurationUs, 33_333)))
+            try videoOut.insertTimeRange(still, of: video, at: .zero)
+            composition.scaleTimeRange(CMTimeRange(start: .zero, duration: still.duration), toDuration: us(cardSpans.leadUs))
+            cursor = us(cardSpans.leadUs)
+        }
         for clip in project.clips where clip.sourceDurationUs > 0 {
             let range = CMTimeRange(start: us(clip.fromUs), duration: us(clip.sourceDurationUs))
             try videoOut.insertTimeRange(range, of: video, at: cursor)
@@ -602,7 +615,16 @@ struct EditRenderer {
             }
             cursor = cursor + played
         }
-        guard cursor > .zero else { throw RenderError.emptyEdit }
+        guard cursor > us(cardSpans.leadUs) else { throw RenderError.emptyEdit }
+        // R4 9 end card: the last frame held for its length.
+        let movieUs = Int64(((cursor - us(cardSpans.leadUs)).seconds * 1_000_000).rounded())
+        if cardSpans.tailUs > 0, let last = project.clips.last(where: { $0.sourceDurationUs > 0 }) {
+            let held = min(last.sourceDurationUs, 33_333)
+            let still = CMTimeRange(start: us(last.toUs - held), duration: us(held))
+            try videoOut.insertTimeRange(still, of: video, at: cursor)
+            composition.scaleTimeRange(CMTimeRange(start: cursor, duration: still.duration), toDuration: us(cardSpans.tailUs))
+            cursor = cursor + us(cardSpans.tailUs)
+        }
 
         let fps = Self.exportFps(nominal: Double(nominalFps))
         let (picture, size) = outputSizes(source: natural, maxHeight: maxHeight, aspect: project.frame?.aspect,
@@ -612,7 +634,12 @@ struct EditRenderer {
         let videoComposition = AVMutableVideoComposition(asset: composition) { request in
             let image = request.sourceImage
             let extent = image.extent
-            let outUs = Int64((request.compositionTime.seconds * 1_000_000).rounded())
+            // R4 9 intro and end cards: the composition's time less the intro is the movie's output time.
+            let outUs = Int64((request.compositionTime.seconds * 1_000_000).rounded()) - cardSpans.leadUs
+            if let card = cardSpans.card(atOutput: outUs, movieUs: movieUs) {
+                request.finish(with: Looks.drawCard(card, project: project, plates: zoom.keyPlates, size: size), context: nil)
+                return
+            }
             let look = zoom.look(atOutput: outUs)
             let view = look.view
             var result = Looks.redact(look.redactions, on: image, spotlightFade: look.spotlightFade).cropped(to: extent)
@@ -703,19 +730,22 @@ struct EditRenderer {
             if volume > 0 {
                 for ramp in Declick.ramps(at: Declick.cuts(in: project), lengthUs: project.outputDurationUs) {
                     parameters.setVolumeRamp(fromStartVolume: volume * Float(ramp.from), toEndVolume: volume * Float(ramp.to),
-                                             timeRange: CMTimeRange(start: us(ramp.startUs), duration: us(ramp.endUs - ramp.startUs)))
+                                             timeRange: CMTimeRange(start: us(ramp.startUs + cardSpans.leadUs),
+                                                                    duration: us(ramp.endUs - ramp.startUs)))
                 }
             }
             return parameters
         }
-        if let music = project.audio.music, let parameters = try await MusicMix.add(music, to: composition, lengthUs: Int64((cursor.seconds * 1_000_000).rounded()), project: project) {
+        // R4 9 intro and end cards: the music runs under the cards too; everything the movie times moves by the intro.
+        if let music = project.audio.music, let parameters = try await MusicMix.add(music, to: composition, lengthUs: Int64((cursor.seconds * 1_000_000).rounded()),
+                                                                                    project: project, offsetUs: cardSpans.leadUs) {
             inputs.append(parameters)
         }
-        if project.clicks?.sound == true, let parameters = try await ClickSound.add(to: composition, project: project) {
+        if project.clicks?.sound == true, let parameters = try await ClickSound.add(to: composition, project: project, offsetUs: cardSpans.leadUs) {
             inputs.append(parameters)
         }
         // R4 voiceover clips
-        inputs += await VoiceoverMix.add(to: composition, project: project, lengthUs: Int64((cursor.seconds * 1_000_000).rounded()))
+        inputs += await VoiceoverMix.add(to: composition, project: project, lengthUs: movieUs, offsetUs: cardSpans.leadUs)
         var audioMix: AVAudioMix?
         if !inputs.isEmpty {
             let mix = AVMutableAudioMix()
@@ -788,7 +818,9 @@ final class EditExporter {
         }
         let asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
         let zoom = ZoomState(project: project, cursor: CursorTrack.load(project.source.cursor))
-        let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: project.export.maxHeight)
+        // R4 9 intro and end cards: only the export plays them.
+        let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: project.export.maxHeight,
+                                                     cards: true)
         let preset = project.export.codec == .hevc ? AVAssetExportPresetHEVCHighestQuality : AVAssetExportPresetHighestQuality
         guard let session = AVAssetExportSession(asset: rendered.composition, presetName: preset) else {
             throw ExportError.noSession(preset)

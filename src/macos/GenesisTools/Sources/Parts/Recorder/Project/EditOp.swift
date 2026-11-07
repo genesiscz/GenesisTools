@@ -72,6 +72,9 @@ enum EditOp: Equatable {
     case captionsStyle(CaptionsStyle)
     // R4 10 progress bar
     case progress(ProgressBar)
+    // R4 9 intro and end cards
+    case introCard(IntroCard)
+    case endCard(EndCard)
 
     /// Every payload type, so the decoder finds one by its tag and the tag test lists them.
     static let payloads: [any EditOpPayload.Type] = [
@@ -85,6 +88,7 @@ enum EditOp: Equatable {
         Duplicate.self, RemoveClickCircles.self, RenameLane.self,
         // R4 voiceover clips, 8 music ducking
         Voiceover.self, Unvoiceover.self, Ducking.self, CaptionsStyle.self, ProgressBar.self,
+        IntroCard.self, EndCard.self,
     ]
 
     static var tags: [String] { payloads.map { $0.tag } }
@@ -153,6 +157,8 @@ enum EditOp: Equatable {
         case let .ducking(op): op
         case let .captionsStyle(op): op
         case let .progress(op): op
+        case let .introCard(op): op
+        case let .endCard(op): op
         }
     }
 
@@ -771,6 +777,29 @@ extension EditOp {
         var chapterMs: Int?
         var enabled: Bool?
         var op: EditOp { .progress(self) }
+    }
+
+    // R4 9 intro and end cards
+    /// Changes merge into the card; `logo` "" removes the logo; `enabled` false removes the card.
+    struct IntroCard: EditOpPayload {
+        static let tag = "introCard"
+        var title: String?
+        var subtitle: String?
+        var logo: String?
+        var date: String?
+        var seconds: Double?
+        var enabled: Bool?
+        var op: EditOp { .introCard(self) }
+    }
+
+    struct EndCard: EditOpPayload {
+        static let tag = "endCard"
+        var text: String?
+        var link: String?
+        var qr: Bool?
+        var seconds: Double?
+        var enabled: Bool?
+        var op: EditOp { .endCard(self) }
     }
 
     // R4 8 music ducking

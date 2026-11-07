@@ -222,6 +222,18 @@ const EXAMPLE_OPS: readonly unknown[] = [
     // R4 10 progress bar and chapter strip
     { op: "progress", show: true, color: "#FF375F", height: 0.01, chapters: true, chapterMs: 2500 },
     { op: "progress", enabled: false },
+    // R4 9 intro and end cards
+    {
+        op: "introCard",
+        title: "Demo",
+        subtitle: "A short tour",
+        logo: "/pictures/logo.png",
+        date: "7 November 2026",
+        seconds: 2.5,
+    },
+    { op: "introCard", enabled: false },
+    { op: "endCard", text: "Thanks for watching", link: "https://example.com/demo", qr: true, seconds: 4 },
+    { op: "endCard", enabled: false },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */
@@ -358,6 +370,9 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
                         // R4 10 progress bar and chapter strip
                         { op: "marker", at: 4, label: "Second step" },
                         { op: "progress", color: "#0A84FF", chapterMs: 1500 },
+                        // R4 9 intro and end cards
+                        { op: "introCard", title: "Demo", subtitle: "A short tour", date: "7 November 2026" },
+                        { op: "endCard", text: "Thanks for watching", link: "https://example.com/demo", qr: true },
                     ],
                     editProjectSchema.parse({ ...wholeProject(source), captions: { show: true } })
                 )

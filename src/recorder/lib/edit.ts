@@ -14,6 +14,7 @@ import { audioTrackCount, ensureDenoisedSource } from "@genesiscz/utils/recordin
 import { exportVideoArgv } from "@genesiscz/utils/recording-editor/ffmpeg";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { integratedLoudness } from "@genesiscz/utils/recording-editor/loudness";
+import { cardsLeadUs } from "@genesiscz/utils/recording-editor/overlays";
 import { type TimeValue, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
     applyOp,
@@ -936,11 +937,14 @@ export async function writeSubtitles({
     format,
     out,
     part,
+    leadUs,
 }: {
     value: string;
     format: SubtitleFormat;
     out?: string;
     part?: { fromUs: number; toUs: number };
+    /** R4 9 intro card: the export's time before the movie; every cue moves by it. */
+    leadUs?: number;
 }): Promise<{ path: string; cues: number; format: SubtitleFormat }> {
     const opened = await openProject(value);
     const cache = transcriptCachePath(opened.project.source.video);
@@ -952,7 +956,10 @@ export async function writeSubtitles({
     }
 
     const lines = transcriptLines(SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true }), opened.project);
-    const cues = subtitleCues(lines, opened.project, part);
+    const shift = leadUs ?? 0;
+    const cues = subtitleCues(lines, opened.project, part).map((cue) =>
+        shift ? { ...cue, fromUs: cue.fromUs + shift, toUs: cue.toUs + shift } : cue
+    );
     const path = out
         ? resolve(out)
         : join(dirname(opened.project.source.video), `${defaultExportName(opened.project.source.video)}.${format}`);
@@ -969,14 +976,25 @@ export async function embedChapters({
     value,
     movie,
     part,
+    leadUs,
 }: {
     value: string;
     movie: string;
     part?: { fromUs: number; toUs: number };
+    /** R4 9 intro card: the export's time before the movie; the intro becomes its own first chapter. */
+    leadUs?: number;
 }): Promise<number> {
     const opened = await openProject(value);
     const whole = chapterPoints(markersOf(opened), { minSeconds: 1 });
-    const chapters = part ? chaptersOfPart(whole, { from: part.fromUs / 1_000_000, to: part.toUs / 1_000_000 }) : whole;
+    const inPart = part ? chaptersOfPart(whole, { from: part.fromUs / 1_000_000, to: part.toUs / 1_000_000 }) : whole;
+    const lead = (leadUs ?? 0) / 1_000_000;
+    const chapters =
+        lead > 0 && inPart.length > 0
+            ? [
+                  { at: 0, label: opened.project.cards?.intro?.title ?? "Intro" },
+                  ...inPart.map((chapter) => ({ ...chapter, at: chapter.at + lead })),
+              ]
+            : inPart;
 
     if (chapters.length === 0) {
         return 0;
@@ -1053,13 +1071,15 @@ export async function finishExport({
     const { project } = await openProject(value);
     const format = subtitles ?? project.export.subtitles;
     const warnings: string[] = [];
+    // R4 9 intro card: the renderer plays it before the movie, so subtitles and chapters move by its length.
+    const leadUs = cardsLeadUs(project);
     const extras: { subtitles?: string; chapters?: number } = {};
 
     if (format) {
         const out = join(dirname(movie), `${basename(movie, extname(movie))}.${format}`);
 
         try {
-            extras.subtitles = (await writeSubtitles({ value, format, out, part })).path;
+            extras.subtitles = (await writeSubtitles({ value, format, out, part, leadUs })).path;
         } catch (error) {
             log.debug({ error, value }, "no subtitles beside the export");
             warnings.push(`no subtitles: ${error instanceof Error ? error.message : String(error)}`);
@@ -1068,7 +1088,7 @@ export async function finishExport({
 
     if (extname(movie).toLowerCase() === ".mp4" && project.export.chapters !== false) {
         try {
-            const count = await embedChapters({ value, movie, part });
+            const count = await embedChapters({ value, movie, part, leadUs });
 
             if (count) {
                 extras.chapters = count;
@@ -1142,7 +1162,8 @@ export async function exportAs(
 
         try {
             const copy = join(scratch, "part.edit.json");
-            const trimmed = partOf(whole.project, options.part.fromUs, options.part.toUs);
+            // R4 9 intro and end cards: a part is a clip of the movie, without the cards around it.
+            const { cards: _cards, ...trimmed } = partOf(whole.project, options.part.fromUs, options.part.toUs);
             writeProject(copy, { ...trimmed, export: { ...trimmed.export, output: "" } });
             log.debug({ value, part: options.part, clips: trimmed.clips.length }, "exporting a part of the edit");
             return await exportAs(copy, {

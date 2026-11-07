@@ -50,6 +50,31 @@ struct EditProject: Codable, Equatable {
     // R4 10 progress bar and chapter strip
     /// A bar along the bottom showing the share played, divided at the markers; nil is none.
     var progress: ProgressBar?
+    // R4 9 intro and end cards
+    /// A title card before the movie and an end card after it, played by the export only; nil is none.
+    var cards: Cards?
+
+    struct Cards: Codable, Equatable {
+        var intro: IntroCard?
+        var end: EndCard?
+    }
+
+    struct IntroCard: Codable, Equatable {
+        var title: String
+        var subtitle: String?
+        /// A picture file, absolute.
+        var logo: String?
+        var date: String?
+        var seconds = 3.0
+    }
+
+    struct EndCard: Codable, Equatable {
+        var text: String
+        var link: String?
+        /// A QR code of `link` under it.
+        var qr = false
+        var seconds = 3.0
+    }
 
     /// `height` is a share of the canvas's short side; each chapter's name shows for `chapterMs` when it starts.
     struct ProgressBar: Codable, Equatable {

@@ -25,7 +25,9 @@ enum VoiceoverMix {
     }
 
     /// Lays every clip that plays into the composition; one mix input per clip at its volume.
-    static func add(to composition: AVMutableComposition, project: EditProject, lengthUs: Int64) async -> [AVMutableAudioMixInputParameters] {
+    /// `offsetUs`: where the movie starts in the composition (after an intro card).
+    static func add(to composition: AVMutableComposition, project: EditProject, lengthUs: Int64,
+                    offsetUs: Int64 = 0) async -> [AVMutableAudioMixInputParameters] {
         var inputs: [AVMutableAudioMixInputParameters] = []
         for placement in placements(project, lengthUs: lengthUs) {
             let asset = AVURLAsset(url: URL(fileURLWithPath: placement.clip.file))
@@ -39,7 +41,7 @@ enum VoiceoverMix {
                 guard duration > .zero,
                       let out = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
                 try out.insertTimeRange(CMTimeRange(start: available.start, duration: duration), of: source,
-                                        at: EditRenderer.us(placement.outUs))
+                                        at: EditRenderer.us(placement.outUs + offsetUs))
                 let parameters = AVMutableAudioMixInputParameters(track: out)
                 parameters.setVolume(Float(placement.clip.volume), at: .zero)
                 inputs.append(parameters)

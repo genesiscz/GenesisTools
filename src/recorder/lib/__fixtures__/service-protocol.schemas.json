@@ -2492,6 +2492,76 @@
             "properties": {
               "op": {
                 "type": "string",
+                "const": "introCard"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "subtitle": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "logo": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string",
+                "maxLength": 60
+              },
+              "seconds": {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 15
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "endCard"
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "link": {
+                "type": "string",
+                "maxLength": 300
+              },
+              "qr": {
+                "type": "boolean"
+              },
+              "seconds": {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 15
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
                 "const": "range"
               },
               "from": {
@@ -4479,6 +4549,74 @@
               "chapters",
               "chapterMs"
             ],
+            "additionalProperties": false
+          },
+          "cards": {
+            "type": "object",
+            "properties": {
+              "intro": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "subtitle": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "logo": {
+                    "type": "string"
+                  },
+                  "date": {
+                    "type": "string",
+                    "maxLength": 60
+                  },
+                  "seconds": {
+                    "default": 3,
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": 15
+                  }
+                },
+                "required": [
+                  "title",
+                  "seconds"
+                ],
+                "additionalProperties": false
+              },
+              "end": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "link": {
+                    "type": "string",
+                    "maxLength": 300
+                  },
+                  "qr": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "seconds": {
+                    "default": 3,
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": 15
+                  }
+                },
+                "required": [
+                  "text",
+                  "qr",
+                  "seconds"
+                ],
+                "additionalProperties": false
+              }
+            },
             "additionalProperties": false
           }
         },

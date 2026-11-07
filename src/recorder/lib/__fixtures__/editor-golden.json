@@ -113,6 +113,8 @@
     "movie.ducking",
     "movie.captionsStyle",
     "movie.progress",
+    "movie.introCard",
+    "movie.endCard",
     "movies.list",
     "movies.search"
   ],
@@ -177,6 +179,8 @@
     "ducking",
     "captionsStyle",
     "progress",
+    "introCard",
+    "endCard",
     "range"
   ],
   "ops": [
@@ -704,6 +708,29 @@
     },
     {
       "op": "progress",
+      "enabled": false
+    },
+    {
+      "op": "introCard",
+      "title": "Demo",
+      "subtitle": "A short tour",
+      "logo": "/pictures/logo.png",
+      "date": "7 November 2026",
+      "seconds": 2.5
+    },
+    {
+      "op": "introCard",
+      "enabled": false
+    },
+    {
+      "op": "endCard",
+      "text": "Thanks for watching",
+      "link": "https://example.com/demo",
+      "qr": true,
+      "seconds": 4
+    },
+    {
+      "op": "endCard",
       "enabled": false
     }
   ],
@@ -1243,6 +1270,20 @@
           "height": 0.008,
           "chapters": true,
           "chapterMs": 1500
+        },
+        "cards": {
+          "intro": {
+            "title": "Demo",
+            "subtitle": "A short tour",
+            "date": "7 November 2026",
+            "seconds": 3
+          },
+          "end": {
+            "text": "Thanks for watching",
+            "link": "https://example.com/demo",
+            "qr": true,
+            "seconds": 3
+          }
         }
       }
     }

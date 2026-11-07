@@ -39,9 +39,11 @@ import {
 } from "./lanes";
 import {
     applyCaptionsStyle,
+    applyCard,
     applyProgress,
     CAPTION_KINDS,
     captionsStyleSchema,
+    cardsSchema,
     progressSchema,
     TEXT_ANIMATIONS,
     textAnimateOf,
@@ -418,6 +420,9 @@ export const editProjectSchema = z.object({
     // R4 10 progress bar and chapter strip
     /** A bar along the bottom showing the share played, divided at the markers (overlays.ts); absent is none. */
     progress: progressSchema.optional(),
+    // R4 9 intro and end cards
+    /** A title card before the movie and an end card after it, in the export only (overlays.ts); absent is none. */
+    cards: cardsSchema.optional(),
 });
 
 export type EditProject = z.infer<typeof editProjectSchema>;
@@ -1471,6 +1476,31 @@ export const editOpSchema = z.discriminatedUnion("op", [
             enabled: z.boolean().optional(),
         })
         .strict(),
+    // R4 9 intro and end cards
+    z
+        .object({
+            op: z.literal("introCard"),
+            title: z.string().trim().min(1).max(120).optional(),
+            subtitle: z.string().max(200).optional(),
+            /** A picture file; "" removes the logo. */
+            logo: z.string().optional(),
+            date: z.string().max(60).optional(),
+            seconds: z.number().min(0.5).max(15).optional(),
+            /** false removes the card. */
+            enabled: z.boolean().optional(),
+        })
+        .strict(),
+    z
+        .object({
+            op: z.literal("endCard"),
+            text: z.string().trim().min(1).max(200).optional(),
+            link: z.string().max(300).optional(),
+            qr: z.boolean().optional(),
+            seconds: z.number().min(0.5).max(15).optional(),
+            /** false removes the card. */
+            enabled: z.boolean().optional(),
+        })
+        .strict(),
     /**
      * What the editor's range popover does to a range dragged on the frames lane, over OUTPUT times (what plays, as
      * the ruler shows them): cut it, play it at `factor` (2), zoom over it (`scale`), hide or spotlight the middle of
@@ -1819,6 +1849,12 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         case "progress": {
             const { op: _op, ...change } = op;
             return applyProgress(project, change);
+        }
+        // R4 9 intro and end cards
+        case "introCard":
+        case "endCard": {
+            const { op: kind, ...change } = op;
+            return applyCard(project, kind === "introCard" ? "intro" : "end", change, { exists: existsSync, resolve });
         }
         case "removeIdle": {
             if (!facts.idleUs) {
@@ -2380,6 +2416,8 @@ export function describeProject(project: EditProject, path: string) {
         captionsStyle: project.captionsStyle ?? null,
         // R4 10 progress bar and chapter strip
         progress: project.progress ?? null,
+        // R4 9 intro and end cards: the export plays them around the movie; outputSeconds is the movie alone.
+        cards: project.cards ?? null,
         /** The timeline's effect lanes top to bottom, each with the ids of the items on it. */
         lanes: resolveLanes(project).map(({ lane, items, automatic }) => ({
             id: lane.id,

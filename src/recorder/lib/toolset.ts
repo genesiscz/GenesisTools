@@ -1030,6 +1030,37 @@ const movieMethods = [
             .strict(),
         "A thin bar along the bottom of the movie (preview and export) showing how much has played, in color (\"#FFFFFF\"), height a share of the short side (0.008), divided at the markers (the recording's and the edit's, markers()); with chapters (true) each marker's label shows at the top left for chapterMs (2000) when it starts. show: false hides it and keeps the settings; enabled: false removes it."
     ),
+    // R4 9 intro and end cards
+    edit(
+        "introCard",
+        z
+            .object({
+                title: z.string().trim().min(1).max(120).optional(),
+                subtitle: z.string().max(200).optional(),
+                /** A picture file; "" removes the logo. */
+                logo: z.string().optional(),
+                date: z.string().max(60).optional(),
+                seconds: z.number().min(0.5).max(15).optional(),
+                /** false removes the card. */
+                enabled: z.boolean().optional(),
+            })
+            .strict(),
+        'A title card the export plays BEFORE the movie for seconds (3): title (needed the first time), subtitle, logo (a picture file; "" removes it) and date (any text), on the frame\'s background (frame(); a gradient without one). The preview plays the movie alone; still({ card: "intro" }) is not a thing: export() shows it. A part export (from/to) leaves the cards out. Subtitles and chapters written with the export move by its length. enabled: false removes it.'
+    ),
+    edit(
+        "endCard",
+        z
+            .object({
+                text: z.string().trim().min(1).max(200).optional(),
+                link: z.string().max(300).optional(),
+                qr: z.boolean().optional(),
+                seconds: z.number().min(0.5).max(15).optional(),
+                /** false removes the card. */
+                enabled: z.boolean().optional(),
+            })
+            .strict(),
+        "A card the export plays AFTER the movie for seconds (3): text (needed the first time), a link under it and, with qr: true, a QR code of the link, on the frame's background. enabled: false removes it."
+    ),
 ];
 
 const recordingMethods = [
@@ -1471,6 +1502,15 @@ export class Movie {
     // R4 10 progress bar and chapter strip
     async progress(options: Omit<Extract<EditOp, { op: "progress" }>, "op"> = {}) {
         return this.change([{ op: "progress", ...options }]);
+    }
+
+    // R4 9 intro and end cards
+    async introCard(options: Omit<Extract<EditOp, { op: "introCard" }>, "op">) {
+        return this.change([{ op: "introCard", ...options }]);
+    }
+
+    async endCard(options: Omit<Extract<EditOp, { op: "endCard" }>, "op">) {
+        return this.change([{ op: "endCard", ...options }]);
     }
 
     // R4 8 music ducking

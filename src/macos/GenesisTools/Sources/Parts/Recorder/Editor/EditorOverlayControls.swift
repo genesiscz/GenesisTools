@@ -1,5 +1,7 @@
 import AppKit
+import CoreImage
 import SwiftUI
+import UniformTypeIdentifiers
 
 // R4 6 animated captions and texts (agent fx-overlay): the inspector controls; the drawing is Render/Overlays.swift.
 
@@ -102,6 +104,126 @@ struct ProgressBarSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+    }
+}
+
+// R4 9 intro and end cards
+/// The title card before the movie and the end card after it: their words, a logo, a link with its QR code, their
+/// length, and a still of each as the export draws it (the preview plays the movie alone).
+struct CardsSection: View {
+    @Bindable var model: EditorModel
+
+    private func setIntro(_ change: @escaping (inout EditProject.IntroCard?) -> Void) {
+        model.setLooks { project in
+            var cards = project.cards ?? EditProject.Cards()
+            change(&cards.intro)
+            project.cards = cards.intro == nil && cards.end == nil ? nil : cards
+        }
+    }
+
+    private func setEnd(_ change: @escaping (inout EditProject.EndCard?) -> Void) {
+        model.setLooks { project in
+            var cards = project.cards ?? EditProject.Cards()
+            change(&cards.end)
+            project.cards = cards.intro == nil && cards.end == nil ? nil : cards
+        }
+    }
+
+    var body: some View {
+        let intro = model.project.cards?.intro
+        let end = model.project.cards?.end
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Cards").font(.system(size: 13, weight: .semibold))
+            SwitchRow("Intro card", isOn: Binding(get: { intro != nil }, set: { on in
+                setIntro { $0 = on ? EditProject.IntroCard(title: URL(fileURLWithPath: model.project.source.video).deletingPathExtension().lastPathComponent) : nil }
+            }))
+            .instantTooltip("A title card the export plays before the movie, on the frame's background")
+            .accessibilityIdentifier("recorder.style.introCard")
+            if let intro {
+                field("Title", intro.title) { value in if !value.trimmingCharacters(in: .whitespaces).isEmpty { setIntro { $0?.title = value } } }
+                field("Subtitle", intro.subtitle ?? "") { value in setIntro { $0?.subtitle = value.isEmpty ? nil : value } }
+                field("Date", intro.date ?? "") { value in setIntro { $0?.date = value.isEmpty ? nil : value } }
+                HStack(spacing: 8) {
+                    WideButton(title: intro.logo == nil ? "Add a Logo…" : "Other Logo…", systemImage: "photo") {
+                        let panel = NSOpenPanel()
+                        panel.allowedContentTypes = [.image]
+                        panel.message = "A logo for the intro card"
+                        guard panel.runModal() == .OK, let url = panel.url else { return }
+                        setIntro { $0?.logo = url.path }
+                    }
+                    if intro.logo != nil {
+                        IconButton(systemName: "trash", tooltip: "Remove the logo") { setIntro { $0?.logo = nil } }
+                    }
+                }
+                seconds("Intro lasts", intro.seconds) { value in setIntro { $0?.seconds = value } }
+                CardStill(project: model.project, kind: .intro(intro))
+            }
+            SwitchRow("End card", isOn: Binding(get: { end != nil }, set: { on in
+                setEnd { $0 = on ? EditProject.EndCard(text: "Thanks for watching") : nil }
+            }))
+            .instantTooltip("A card the export plays after the movie: a line, a link and its QR code")
+            .accessibilityIdentifier("recorder.style.endCard")
+            if let end {
+                field("Text", end.text) { value in if !value.trimmingCharacters(in: .whitespaces).isEmpty { setEnd { $0?.text = value } } }
+                field("Link", end.link ?? "") { value in setEnd { card in
+                    card?.link = value.isEmpty ? nil : value
+                    if value.isEmpty { card?.qr = false }
+                } }
+                SwitchRow("QR code of the link", isOn: Binding(get: { end.qr }, set: { on in setEnd { $0?.qr = on } }))
+                    .disabled(end.link == nil)
+                    .accessibilityIdentifier("recorder.style.endCardQR")
+                seconds("End card lasts", end.seconds) { value in setEnd { $0?.seconds = value } }
+                CardStill(project: model.project, kind: .end(end))
+            }
+            if intro != nil || end != nil {
+                Text("The export plays the cards; the preview plays the movie alone.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func field(_ title: String, _ value: String, set: @escaping (String) -> Void) -> some View {
+        TextField(title, text: Binding(get: { value }, set: { set(String($0.prefix(200))) }))
+            .textFieldStyle(.roundedBorder)
+            .accessibilityLabel(title)
+    }
+
+    private func seconds(_ title: String, _ value: Double, set: @escaping (Double) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            SectionLabel(text: title, value: String(format: "%.1f s", value))
+            Slider(value: Binding(get: { value }, set: { set(($0 * 2).rounded() / 2) }), in: 1...10)
+                .accessibilityLabel(title)
+        }
+    }
+}
+
+/// A small still of a card as the export draws it, made off the main thread when the card changes.
+private struct CardStill: View {
+    let project: EditProject
+    let kind: CardSpans.Kind
+    @State private var image: CGImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(decorative: image, scale: 2).resizable().aspectRatio(contentMode: .fit)
+            } else {
+                Rectangle().fill(Color.white.opacity(0.05)).aspectRatio(16 / 9, contentMode: .fit)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .accessibilityLabel("A still of the card")
+        .task(id: "\(kind)|\(String(describing: project.frame?.background))") {
+            let project = project
+            let kind = kind
+            image = await Task.detached(priority: .utility) {
+                let size = CGSize(width: 640, height: 360)
+                let frame = CardSpans.Frame(kind: kind, sinceUs: Looks.cardFadeUs, lengthUs: Looks.cardFadeUs * 3)
+                let drawn = Looks.drawCard(frame, project: project, plates: TextPlates(), size: size)
+                return CIContext().createCGImage(drawn, from: CGRect(origin: .zero, size: size))
+            }.value
         }
     }
 }

@@ -143,6 +143,40 @@ final class RecorderOverlayTests: XCTestCase {
         XCTAssertEqual(pixel(50, 10).0, 0, "nothing above the bar")
     }
 
+    // R4 9 intro and end cards
+    func testCardsSitBeforeAndAfterTheMovieOnlyInTheExport() {
+        var project = edit()
+        project.cards = EditProject.Cards(intro: .init(title: "Demo", seconds: 2), end: .init(text: "Bye", link: "https://example.com", qr: true, seconds: 3))
+        let off = CardSpans(project: project, enabled: false)
+        XCTAssertEqual(off.leadUs, 0)
+        XCTAssertNil(off.card(atOutput: -1, movieUs: 10_000_000), "the preview has no cards")
+        let on = CardSpans(project: project, enabled: true)
+        XCTAssertEqual(on.leadUs, 2_000_000)
+        XCTAssertEqual(on.tailUs, 3_000_000)
+        XCTAssertEqual(on.card(atOutput: -1_500_000, movieUs: 10_000_000)?.sinceUs, 500_000)
+        XCTAssertNil(on.card(atOutput: 0, movieUs: 10_000_000))
+        XCTAssertEqual(on.card(atOutput: 11_000_000, movieUs: 10_000_000)?.sinceUs, 1_000_000)
+        guard case .end = on.card(atOutput: 10_000_000, movieUs: 10_000_000)?.kind else { return XCTFail("the end card starts at the movie's end") }
+    }
+
+    func testTheEndCardDrawsItsQRCodeOnTheBackground() throws {
+        var project = edit()
+        project.frame = EditProject.Frame(background: .init(kind: .color, colors: ["#202040"]))
+        let size = CGSize(width: 640, height: 360)
+        let end = EditProject.EndCard(text: "Bye", link: "https://example.com/demo", qr: true)
+        let drawn = Looks.drawCard(.init(kind: .end(end), sinceUs: 1_000_000, lengthUs: 3_000_000), project: project, plates: TextPlates(), size: size)
+        var bytes = [UInt8](repeating: 0, count: 640 * 360 * 4)
+        CIContext().render(drawn, toBitmap: &bytes, rowBytes: 640 * 4, bounds: CGRect(origin: .zero, size: size), format: .RGBA8,
+                           colorSpace: CGColorSpaceCreateDeviceRGB())
+        let pixels = stride(from: 0, to: bytes.count, by: 4).map { (bytes[$0], bytes[$0 + 1], bytes[$0 + 2]) }
+        let white = pixels.filter { $0.0 > 240 && $0.1 > 240 && $0.2 > 240 }.count
+        let black = pixels.filter { $0.0 < 15 && $0.1 < 15 && $0.2 < 15 }.count
+        XCTAssertGreaterThan(white, 3000, "the QR code's white board and the text")
+        XCTAssertGreaterThan(black, 800, "the QR code's modules (about 1400 at this size)")
+        XCTAssertGreaterThan(pixels.filter { $0.2 > 50 && $0.0 < 50 }.count, 100_000, "the rest is the frame's colour")
+        XCTAssertNotNil(CardCodes.shared.qr("https://example.com/demo", side: 100))
+    }
+
     /// Pixels that are clearly yellow (red and green high, blue low).
     private func yellowPixels(_ image: CIImage, size: CGSize) throws -> Int {
         let width = Int(size.width), height = Int(size.height)

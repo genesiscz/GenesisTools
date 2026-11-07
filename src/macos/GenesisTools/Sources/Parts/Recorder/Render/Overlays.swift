@@ -134,3 +134,116 @@ extension Looks {
         return result
     }
 }
+
+// R4 9 intro and end cards
+
+/// Where the export's cards sit: the intro's `leadUs` before the movie and the end card's `tailUs` after it. Off (the
+/// preview) is zero for both, so the composition's time is the movie's.
+struct CardSpans {
+    enum Kind: Equatable {
+        case intro(EditProject.IntroCard)
+        case end(EditProject.EndCard)
+    }
+
+    /// One frame of a card: which, how far into it and how long it is.
+    struct Frame: Equatable {
+        var kind: Kind
+        var sinceUs: Int64
+        var lengthUs: Int64
+    }
+
+    let intro: EditProject.IntroCard?
+    let end: EditProject.EndCard?
+
+    init(project: EditProject, enabled: Bool) {
+        intro = enabled ? project.cards?.intro : nil
+        end = enabled ? project.cards?.end : nil
+    }
+
+    var leadUs: Int64 { intro.map { Int64(($0.seconds * 1_000_000).rounded()) } ?? 0 }
+    var tailUs: Int64 { end.map { Int64(($0.seconds * 1_000_000).rounded()) } ?? 0 }
+
+    /// The card at a movie output time (negative is the intro), or nil inside the movie.
+    func card(atOutput outUs: Int64, movieUs: Int64) -> Frame? {
+        if let intro, outUs < 0 {
+            return Frame(kind: .intro(intro), sinceUs: outUs + leadUs, lengthUs: leadUs)
+        }
+        if let end, outUs >= movieUs {
+            return Frame(kind: .end(end), sinceUs: outUs - movieUs, lengthUs: tailUs)
+        }
+        return nil
+    }
+}
+
+extension Looks {
+    static let cardFadeUs: Int64 = 400_000
+
+    /// A card on the frame's background (its gradient, colour or picture; the default gradient without a frame): the
+    /// intro's logo, title, subtitle and date, or the end card's text, link and QR code, centred, fading in and out.
+    static func drawCard(_ card: CardSpans.Frame, project: EditProject, plates: TextPlates, size: CGSize) -> CIImage {
+        var background = project.frame?.background ?? EditProject.Background()
+        if background.kind == .none { background = EditProject.Background() }
+        let canvas = Looks.background(background, size: size)
+        let unit = min(size.width, size.height)
+        var items: [CIImage] = []
+        let text = { (words: String, share: CGFloat, weight: NSFont.Weight) -> CIImage? in
+            plates.plate(words, fontSize: max(8, (unit * share).rounded()), maxWidth: size.width * 0.8, weight: weight, plain: true)
+        }
+        switch card.kind {
+        case let .intro(intro):
+            if let logo = intro.logo, let picture = BackgroundPictures.shared.image(logo) {
+                let scale = min(unit * 0.2 / max(1, picture.extent.height), size.width * 0.4 / max(1, picture.extent.width))
+                items.append(picture.transformed(by: CGAffineTransform(scaleX: scale, y: scale)))
+            }
+            items += [text(intro.title, 0.085, .bold), intro.subtitle.flatMap { text($0, 0.045, .medium) },
+                      intro.date.flatMap { text($0, 0.032, .regular) }].compactMap { $0 }
+        case let .end(end):
+            items += [text(end.text, 0.07, .bold), end.link.flatMap { text($0, 0.036, .medium) }].compactMap { $0 }
+            if end.qr, let link = end.link, let code = CardCodes.shared.qr(link, side: unit * 0.26) {
+                items.append(code)
+            }
+        }
+        let gap = unit * 0.025
+        let total = items.reduce(0) { $0 + $1.extent.height } + gap * CGFloat(max(0, items.count - 1))
+        var top = (size.height + total) / 2
+        var content = CIImage.empty()
+        for item in items {
+            let x = ((size.width - item.extent.width) / 2 - item.extent.minX).rounded()
+            let y = (top - item.extent.height - item.extent.minY).rounded()
+            content = item.transformed(by: CGAffineTransform(translationX: x, y: y)).composited(over: content)
+            top -= item.extent.height + gap
+        }
+        let fade = min(1, Double(card.sinceUs) / Double(cardFadeUs), Double(card.lengthUs - card.sinceUs) / Double(cardFadeUs))
+        if fade < 0.999 {
+            content = content.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(max(0, fade)))])
+        }
+        return content.composited(over: canvas).cropped(to: CGRect(origin: .zero, size: size))
+    }
+}
+
+/// QR codes of the end card's link, made once per link and size: every frame of the card draws one.
+final class CardCodes: @unchecked Sendable {
+    static let shared = CardCodes()
+    private let lock = NSLock()
+    private var codes: [String: CIImage] = [:]
+
+    /// Black modules on a white square with a quiet zone, `side` pixels wide, sharp (each module scaled whole).
+    func qr(_ link: String, side: CGFloat) -> CIImage? {
+        let key = "\(link)|\(Int(side))"
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = codes[key] { return cached }
+        guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(Data(link.utf8), forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        guard let modules = filter.outputImage, modules.extent.width > 0 else { return nil }
+        let quiet: CGFloat = 4
+        let scale = max(1, (side / (modules.extent.width + quiet * 2)).rounded(.down))
+        let code = modules.samplingNearest().transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let board = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: code.extent.width + quiet * 2 * scale,
+                                                             height: code.extent.height + quiet * 2 * scale))
+        let image = code.transformed(by: CGAffineTransform(translationX: quiet * scale, y: quiet * scale)).composited(over: board)
+        codes[key] = image
+        return image
+    }
+}

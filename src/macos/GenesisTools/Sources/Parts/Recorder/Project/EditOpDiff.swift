@@ -40,6 +40,17 @@ enum EditOpDiff {
                 EditOp.ProgressBar(show: $0.show, color: $0.color, height: $0.height, chapters: $0.chapters, chapterMs: $0.chapterMs, enabled: true)
             } ?? EditOp.ProgressBar(enabled: false)))
         }
+        // R4 9 intro and end cards
+        if old.cards?.intro != new.cards?.intro {
+            ops.append(.introCard(new.cards?.intro.map {
+                EditOp.IntroCard(title: $0.title, subtitle: $0.subtitle ?? "", logo: $0.logo ?? "", date: $0.date ?? "", seconds: $0.seconds)
+            } ?? EditOp.IntroCard(enabled: false)))
+        }
+        if old.cards?.end != new.cards?.end {
+            ops.append(.endCard(new.cards?.end.map {
+                EditOp.EndCard(text: $0.text, link: $0.link ?? "", qr: $0.qr, seconds: $0.seconds)
+            } ?? EditOp.EndCard(enabled: false)))
+        }
         return ops
     }
 

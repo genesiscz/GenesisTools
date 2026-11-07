@@ -91,3 +91,106 @@ export function applyProgress(
     });
     return { ...project, progress };
 }
+
+// R4 9 intro and end cards
+/** A title card before the movie: title, subtitle, a logo picture and a date, on the frame's background. */
+export const introCardSchema = z.object({
+    title: z.string().trim().min(1).max(120),
+    subtitle: z.string().max(200).optional(),
+    /** A picture file (png, jpg, heic), absolute. */
+    logo: z.string().optional(),
+    /** Any text ("7 November 2026"). */
+    date: z.string().max(60).optional(),
+    seconds: z.number().min(0.5).max(15).default(3),
+});
+
+/** A card after the movie: a line of text, a link and, with `qr`, a QR code of the link. */
+export const endCardSchema = z.object({
+    text: z.string().trim().min(1).max(200),
+    link: z.string().max(300).optional(),
+    qr: z.boolean().default(false),
+    seconds: z.number().min(0.5).max(15).default(3),
+});
+
+/**
+ * The cards around the movie. The export (`tools recorder export`, the window's Export, movie.export()) plays the
+ * intro before the first frame and the end card after the last; the preview and output times stay the movie's own.
+ */
+export const cardsSchema = z.object({
+    intro: introCardSchema.optional(),
+    end: endCardSchema.optional(),
+});
+export type EditCards = z.infer<typeof cardsSchema>;
+
+const PICTURE_EXTENSIONS = ["png", "jpg", "jpeg", "heic", "tiff", "gif", "webp"];
+
+/** `introCard` and `endCard` ops: a change merges into the card; `enabled: false` removes that card. */
+export function applyCard(
+    project: EditProject,
+    which: "intro" | "end",
+    change: Record<string, unknown> & { enabled?: boolean },
+    files: { exists: (path: string) => boolean; resolve: (path: string) => string }
+): EditProject {
+    const { enabled, ...fields } = change;
+    const current = project.cards ?? {};
+    let next: EditCards;
+
+    if (enabled === false) {
+        const { [which]: _gone, ...rest } = current;
+        next = rest;
+    } else {
+        // An empty text removes that field ("" for subtitle, logo, date or link), as the editor window sends it.
+        const merged: Record<string, unknown> = Object.fromEntries(
+            Object.entries({
+                ...current[which],
+                ...Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)),
+            }).filter(([, value]) => value !== "")
+        );
+
+        if (which === "intro") {
+            const logo = typeof merged.logo === "string" && merged.logo ? files.resolve(merged.logo) : undefined;
+
+            if (logo) {
+                const extension = logo.split(".").pop()?.toLowerCase() ?? "";
+
+                if (!files.exists(logo)) {
+                    throw new Error(`the logo ${logo} does not exist`);
+                }
+
+                if (!PICTURE_EXTENSIONS.includes(extension)) {
+                    throw new Error(`a logo is a picture (${PICTURE_EXTENSIONS.join(", ")}), not ${logo}`);
+                }
+            }
+
+            const { logo: _logo, ...rest } = merged;
+
+            if (!rest.title) {
+                throw new Error("the intro card needs a title the first time");
+            }
+
+            next = { ...current, intro: introCardSchema.parse({ ...rest, ...(logo ? { logo } : {}) }) };
+        } else {
+            if (!merged.text) {
+                throw new Error("the end card needs a text the first time");
+            }
+
+            if (merged.qr === true && !merged.link) {
+                throw new Error("a QR code needs a link");
+            }
+
+            next = { ...current, end: endCardSchema.parse(merged) };
+        }
+    }
+
+    if (!next.intro && !next.end) {
+        const { cards: _cards, ...rest } = project;
+        return rest;
+    }
+
+    return { ...project, cards: next };
+}
+
+/** How long the export plays before the movie's first frame (the intro card), in microseconds. */
+export function cardsLeadUs(project: EditProject): number {
+    return Math.round((project.cards?.intro?.seconds ?? 0) * 1_000_000);
+}

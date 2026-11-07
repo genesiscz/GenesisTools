@@ -1135,6 +1135,30 @@ describe("edit project (edit.json)", () => {
         expect(applyOp(barred, { op: "progress", show: false }).progress?.color).toBe("#FF375F");
         expect(applyOp(barred, { op: "progress", enabled: false }).progress).toBeUndefined();
         expect(() => applyOp(project, { op: "progress", color: "red" })).toThrow();
+        // R4 9 intro and end cards: a title (or text) the first time, then changes merge; a logo must be a picture
+        // that exists; a QR code needs a link; the last card gone removes the key.
+        expect(() => applyOp(project, { op: "introCard", subtitle: "x" })).toThrow("needs a title");
+        expect(() => applyOp(project, { op: "introCard", title: "T", logo: `${song}.png` })).toThrow("does not exist");
+        expect(() => applyOp(project, { op: "introCard", title: "T", logo: song })).toThrow("a logo is a picture");
+        expect(() => applyOp(project, { op: "endCard", text: "Bye", qr: true })).toThrow("needs a link");
+        const carded = applyOp(applyOp(project, { op: "introCard", title: "Demo" }), {
+            op: "endCard",
+            text: "Bye",
+            link: "https://example.com",
+            qr: true,
+        });
+        expect(carded.cards).toEqual({
+            intro: { title: "Demo", seconds: 3 },
+            end: { text: "Bye", link: "https://example.com", qr: true, seconds: 3 },
+        });
+        expect(applyOp(carded, { op: "introCard", subtitle: "Tour" }).cards?.intro).toEqual({
+            title: "Demo",
+            subtitle: "Tour",
+            seconds: 3,
+        });
+        const noIntro = applyOp(carded, { op: "introCard", enabled: false });
+        expect(noIntro.cards).toEqual({ end: carded.cards?.end });
+        expect(applyOp(noIntro, { op: "endCard", enabled: false }).cards).toBeUndefined();
         // Shapes: an arrow in source space with its defaults, a point-sized one refused, unshape removes it.
         const pointed = applyOp(project, {
             op: "shape",
