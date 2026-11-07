@@ -117,13 +117,45 @@ enum ZoomCurve {
         }
     }
 
+    /// Two zooms that touch, overlap, or leave less room between them than one zoom out and the next zoom in take,
+    /// are linked: the view glides from the first zoom's view to the second's and never returns to the whole frame in
+    /// between. Before 2026-11-07 the first zoom snapped out and the second snapped in again, with one frame of the
+    /// whole frame between them, which read as the picture blinking (two touching zooms at 5.30 s of a 22:19 recording).
+    static func linked(_ first: EditProject.Zoom, _ second: EditProject.Zoom) -> Bool {
+        second.startUs > first.startUs && second.startUs - first.endUs < Int64(first.easeOutMs + second.easeInMs) * 1000
+    }
+
     static func view(atSource sourceUs: Int64, zooms: [EditProject.Zoom], cursor: CursorTrack?) -> View {
-        guard let zoom = zooms.first(where: { sourceUs >= $0.startUs && sourceUs < $0.endUs }) else { return .whole }
+        let ordered = zooms.sorted { $0.startUs < $1.startUs }
+        for (first, second) in zip(ordered, ordered.dropFirst()) where linked(first, second) {
+            // The glide runs from where the first zoom would start to leave to where the second would have arrived.
+            let start = max(first.startUs + Int64(first.easeInMs) * 1000, first.endUs - Int64(first.easeOutMs) * 1000)
+            let end = min(second.endUs - Int64(second.easeOutMs) * 1000, second.startUs + Int64(second.easeInMs) * 1000)
+            guard end > start, sourceUs >= start, sourceUs < end else { continue }
+            let t = Double(sourceUs - start) / Double(end - start)
+            let progress = t * t * (3 - 2 * t)
+            let from = shown(first, amount: 1, atSource: sourceUs, cursor: cursor)
+            let to = shown(second, amount: 1, atSource: sourceUs, cursor: cursor)
+            return View(scale: from.scale + (to.scale - from.scale) * progress,
+                        centerX: from.centerX + (to.centerX - from.centerX) * progress,
+                        centerY: from.centerY + (to.centerY - from.centerY) * progress)
+        }
+        guard let index = ordered.lastIndex(where: { sourceUs >= $0.startUs && sourceUs < $0.endUs }) else { return .whole }
+        let zoom = ordered[index]
+        let linkedIn = index > 0 && linked(ordered[index - 1], zoom)
+        let linkedOut = index + 1 < ordered.count && linked(zoom, ordered[index + 1])
         let into = Double(sourceUs - zoom.startUs) / 1000
         let left = Double(zoom.endUs - sourceUs) / 1000
-        let inProgress = zoom.easeInMs > 0 ? min(1, into / Double(zoom.easeInMs)) : 1
-        let outProgress = zoom.easeOutMs > 0 ? min(1, left / Double(zoom.easeOutMs)) : 1
-        let amount = easeOut(min(inProgress, outProgress))
+        let inProgress = linkedIn || zoom.easeInMs <= 0 ? 1 : min(1, into / Double(zoom.easeInMs))
+        let outProgress = linkedOut || zoom.easeOutMs <= 0 ? 1 : min(1, left / Double(zoom.easeOutMs))
+        // In: fast, then a soft landing on the zoomed view. Out: the mirror, leaving fast and landing softly on the
+        // whole frame. `easeOut(outProgress)` held the zoom until its last few milliseconds and then snapped out.
+        let amount = min(easeOut(inProgress), 1 - easeOut(1 - outProgress))
+        return shown(zoom, amount: amount, atSource: sourceUs, cursor: cursor)
+    }
+
+    /// The view of one zoom, `amount` of the way from the whole frame to its full scale and focus.
+    private static func shown(_ zoom: EditProject.Zoom, amount: Double, atSource sourceUs: Int64, cursor: CursorTrack?) -> View {
         let scale = 1 + (zoom.scale - 1) * amount
         var focus = (x: zoom.focusX, y: zoom.focusY)
         // ±600 ms: the view glides after a quick move (about a tenth of the frame per 100 ms at most) instead of

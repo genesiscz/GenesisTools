@@ -682,6 +682,44 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(ZoomCurve.easeOut(1), 1, accuracy: 0.0001)
     }
 
+    func testTheZoomLeavesFastAndLandsSoftlyOnTheWholeFrame() {
+        let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: 3_000_000, scale: 2, easeInMs: 500, easeOutMs: 500)
+        // 50 ms before the end the view is nearly whole again, not still zoomed and about to snap.
+        let late = ZoomCurve.view(atSource: 2_950_000, zooms: [zoom], cursor: nil)
+        XCTAssertLessThan(late.scale, 1.05)
+        // 100 ms into the release it has already moved a good part of the way out.
+        let early = ZoomCurve.view(atSource: 2_600_000, zooms: [zoom], cursor: nil)
+        XCTAssertLessThan(early.scale, 1.7)
+        // The release starts fast like the zoom in (about a fifth of the scale in its first 60 fps frame), never more.
+        var previous = ZoomCurve.view(atSource: 2_400_000, zooms: [zoom], cursor: nil).scale
+        for us in stride(from: 2_416_667, through: 3_000_000, by: 16_667) {
+            let scale = ZoomCurve.view(atSource: Int64(us), zooms: [zoom], cursor: nil).scale
+            XCTAssertLessThan(abs(scale - previous), 0.25, "at \(us) µs")
+            previous = scale
+        }
+    }
+
+    func testTouchingZoomsNeverShowTheWholeFrameBetweenThem() {
+        // Two zooms that touch, as a recording's edit had at 5.30 s: the picture blinked out for one frame.
+        let first = EditProject.Zoom(id: "a", startUs: 3_302_578, endUs: 5_302_578, scale: 1.5, easeInMs: 450, easeOutMs: 450)
+        let second = EditProject.Zoom(id: "b", startUs: 5_302_578, endUs: 7_302_578, scale: 1.5, easeInMs: 450, easeOutMs: 450)
+        for us in stride(from: 4_000_000, through: 6_500_000, by: 16_667) {
+            let view = ZoomCurve.view(atSource: Int64(us), zooms: [second, first], cursor: nil)
+            XCTAssertEqual(view.scale, 1.5, accuracy: 0.0001, "at \(us) µs")
+        }
+        // A short gap glides too: from one focus to the other, smoothly, without going back to the whole frame.
+        let left = EditProject.Zoom(id: "l", startUs: 0, endUs: 2_000_000, scale: 2, focusX: 0.25, focusY: 0.5)
+        let right = EditProject.Zoom(id: "r", startUs: 2_300_000, endUs: 4_000_000, scale: 2, focusX: 0.75, focusY: 0.5)
+        var previous = ZoomCurve.view(atSource: 1_400_000, zooms: [left, right], cursor: nil)
+        for us in stride(from: 1_416_667, through: 2_900_000, by: 16_667) {
+            let view = ZoomCurve.view(atSource: Int64(us), zooms: [left, right], cursor: nil)
+            XCTAssertEqual(view.scale, 2, accuracy: 0.0001, "at \(us) µs")
+            XCTAssertLessThan(abs(view.centerX - previous.centerX), 0.05, "at \(us) µs")
+            previous = view
+        }
+        XCTAssertEqual(ZoomCurve.view(atSource: 3_000_000, zooms: [left, right], cursor: nil).centerX, 0.75, accuracy: 0.0001)
+    }
+
     func testAFollowZoomTracksTheSmoothedCursor() {
         let track = CursorTrack(samples: (0...40).map { CursorTrack.Sample(ms: Double($0) * 50, x: 0.3, y: 0.6, click: nil) })
         let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: 2_000_000, scale: 2, mode: .follow, easeInMs: 0, easeOutMs: 0)
