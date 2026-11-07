@@ -350,24 +350,34 @@ enum Looks {
     }
 
     static func applyFrame(_ frame: EditProject.Frame, to image: CIImage, canvas size: CGSize, placement: FramePlacement) -> CIImage {
+        let layers = frameLayers(frame, to: image, canvas: size, placement: placement)
+        return layers.picture.composited(over: layers.background).cropped(to: CGRect(origin: .zero, size: size))
+    }
+
+    /// The frame in two layers: the rounded picture over its shadow (on clear, exactly `rect` large, so the tilt can
+    /// turn it as one), and the background. Round 4 fx-render split it out of applyFrame for the tilt.
+    static func frameLayers(_ frame: EditProject.Frame, to image: CIImage, canvas size: CGSize, placement: FramePlacement)
+        -> (picture: CIImage, background: CIImage, rect: CGRect) {
         let unit = min(size.width, size.height)
         let inner = placement.inner
         let placed = placement.place(image)
         let radius = frame.cornerRadius * unit
         let mask = roundedRect(inner, radius: radius, color: .white)
-        let clipped = placed.applyingFilter("CIBlendWithMask", parameters: [
+        var picture = placed.applyingFilter("CIBlendWithMask", parameters: [
             kCIInputBackgroundImageKey: CIImage.empty(),
             kCIInputMaskImageKey: mask,
         ])
-        var canvas = background(frame.background, size: size)
+        let blur = unit * 0.018
         if frame.shadow {
-            let blur = unit * 0.018
             let shadow = roundedRect(inner, radius: radius, color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.55))
                 .transformed(by: CGAffineTransform(translationX: 0, y: -unit * 0.008))
                 .applyingGaussianBlur(sigma: blur)
-            canvas = shadow.composited(over: canvas)
+            picture = picture.composited(over: shadow)
         }
-        return clipped.composited(over: canvas).cropped(to: CGRect(origin: .zero, size: size))
+        // Whole pixels: Core Image rounds a crop's extent out, and the tilt maps the layer's own extent.
+        let rect = inner.insetBy(dx: -blur * 3, dy: -blur * 3 - unit * 0.008).intersection(CGRect(origin: .zero, size: size)).integral
+        let layer = picture.composited(over: CIImage(color: .clear).cropped(to: rect)).cropped(to: rect)
+        return (layer, background(frame.background, size: size), rect)
     }
 
     /// The part of the picture (Core Image coordinates, y up) with the room's shape, as large as fits, centred on

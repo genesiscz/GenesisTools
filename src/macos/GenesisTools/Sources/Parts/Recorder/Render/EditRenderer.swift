@@ -104,6 +104,11 @@ final class ZoomState: @unchecked Sendable {
         var outUs: Int64 = 0
         // R4 10 progress bar
         var progress: ProgressMark?
+        // Round 4 fx-render (RenderFx.swift).
+        /// The transition this frame sits in; nil outside one.
+        var transition: TransitionLook.Mark?
+        var lenses: [LensLook.Mark] = []
+        var tilt: TiltLook.Pose?
     }
 
     /// Every frame the renderer drew; the editor compares it with the frames a playback should have shown.
@@ -172,6 +177,10 @@ final class ZoomState: @unchecked Sendable {
             let fade = Double(min(200_000, max(1, (spot.endUs - spot.startUs) / 3)))
             return min(1, Double(sourceUs - spot.startUs) / fade, Double(spot.endUs - sourceUs) / fade)
         }.max() ?? 1
+        // Round 4 fx-render.
+        look.transition = TransitionLook.mark(atOutputUs: outUs, project: project, track: cursor)
+        look.lenses = LensLook.marks(atSourceUs: sourceUs, project: project, track: cursor)
+        look.tilt = project.tilt.flatMap { TiltLook.pose(atOutputUs: outUs, lengthUs: project.outputDurationUs, tilt: $0) }
         return look
     }
 
@@ -631,8 +640,10 @@ struct EditRenderer {
                                           h264Fps: project.export.codec == .h264 ? fps : nil)
         let outputScale = picture.height / natural.height
         let cameraFeed = await CameraFeed.make(project: project)
+        // Round 4 fx-render: the frames a transition blends with, read when a frame first needs them.
+        let stills = TransitionStills(asset: asset)
         let videoComposition = AVMutableVideoComposition(asset: composition) { request in
-            let image = request.sourceImage
+            var image = request.sourceImage
             let extent = image.extent
             // R4 9 intro and end cards: the composition's time less the intro is the movie's output time.
             let outUs = Int64((request.compositionTime.seconds * 1_000_000).rounded()) - cardSpans.leadUs
@@ -642,6 +653,10 @@ struct EditRenderer {
             }
             let look = zoom.look(atOutput: outUs)
             let view = look.view
+            if let mark = look.transition, let still = stills.image(atSourceUs: mark.otherSourceUs, extent: extent) {
+                let other = Looks.redact(mark.otherRedactions, on: still).cropped(to: extent)
+                image = TransitionLook.blend(live: image, still: other, mark: mark)
+            }
             var result = Looks.redact(look.redactions, on: image, spotlightFade: look.spotlightFade).cropped(to: extent)
             for drawn in look.shapes {
                 result = Looks.drawShape(drawn.shape, drawn: drawn.drawn, opacity: drawn.opacity, on: result).cropped(to: extent)
@@ -671,11 +686,31 @@ struct EditRenderer {
             if let previous = look.previousView {
                 result = Looks.motionBlur(from: previous, to: view, amount: look.motionBlur, on: result)
             }
+            if !look.lenses.isEmpty {
+                result = LensLook.draw(look.lenses, view: view, on: result)
+            }
             cursor = cursor.map(toPicture)
             if let frame = look.frame {
                 let placement = Looks.framePlacement(frame, picture: picture, canvas: size, focus: look.coverFocus)
-                result = Looks.applyFrame(frame, to: result, canvas: size, placement: placement)
-                cursor = cursor.map { placement.place($0).cropped(to: placement.inner) }
+                if let pose = look.tilt {
+                    // The picture and its shadow turn as one; the background stays, the cursor turns with the picture.
+                    let layers = Looks.frameLayers(frame, to: result, canvas: size, placement: placement)
+                    result = TiltLook.apply(layers.picture, rect: layers.rect, pose: pose, canvas: size)
+                        .composited(over: layers.background).cropped(to: CGRect(origin: .zero, size: size))
+                    cursor = cursor.map {
+                        TiltLook.apply(TiltLook.pin(placement.place($0).cropped(to: placement.inner), to: layers.rect), rect: layers.rect,
+                                       pose: pose, canvas: size)
+                    }
+                } else {
+                    result = Looks.applyFrame(frame, to: result, canvas: size, placement: placement)
+                    cursor = cursor.map { placement.place($0).cropped(to: placement.inner) }
+                }
+            } else if let pose = look.tilt {
+                // No frame: the picture tilts over black.
+                let bounds = CGRect(origin: .zero, size: size)
+                result = TiltLook.apply(TiltLook.pin(result, to: bounds), rect: bounds, pose: pose, canvas: size)
+                    .composited(over: CIImage(color: .black).cropped(to: bounds)).cropped(to: bounds)
+                cursor = cursor.map { TiltLook.apply(TiltLook.pin($0, to: bounds), rect: bounds, pose: pose, canvas: size) }
             }
             var captionUsed: CGFloat = 0
             if let caption = look.caption {

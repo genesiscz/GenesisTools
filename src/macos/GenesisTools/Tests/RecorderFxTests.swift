@@ -1,0 +1,130 @@
+import CoreImage
+import XCTest
+@testable import GenesisToolsRecorder
+
+/// Round 4 fx-render: transitions at cuts, the magnifier lens and the 3D tilt, checked on rendered pixels.
+final class RecorderFxTests: XCTestCase {
+    private let context = CIContext()
+
+    private func gray(_ image: CIImage, _ x: Int, _ y: Int) -> UInt8 {
+        var pixel = [UInt8](repeating: 0, count: 4)
+        context.render(image, toBitmap: &pixel, rowBytes: 4, bounds: CGRect(x: x, y: y, width: 1, height: 1),
+                       format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+        return pixel[0]
+    }
+
+    private func alpha(_ image: CIImage, _ x: Int, _ y: Int) -> UInt8 {
+        var pixel = [UInt8](repeating: 0, count: 4)
+        context.render(image, toBitmap: &pixel, rowBytes: 4, bounds: CGRect(x: x, y: y, width: 1, height: 1),
+                       format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+        return pixel[3]
+    }
+
+    /// A cut at 4 s of output (source 4 to 5 s gone) and a split at 7 s that joins nothing.
+    private func cutProject(_ transitions: EditProject.Transitions?) -> EditProject {
+        var project = EditProject.whole(video: "/movies/demo.mp4", durationUs: 10_000_000, width: 200, height: 100, cursor: nil, recording: nil)
+        project.clips = [
+            .init(id: "c1", fromUs: 0, toUs: 4_000_000),
+            .init(id: "c2", fromUs: 5_000_000, toUs: 7_000_000),
+            .init(id: "c3", fromUs: 7_000_000, toUs: 10_000_000),
+        ]
+        project.transitions = transitions
+        return project
+    }
+
+    func testAJoinIsACutNotASplitAndItsTransitionIsCentredOnIt() throws {
+        XCTAssertTrue(TransitionLook.joins(in: cutProject(nil)).isEmpty, "no settings: a hard cut")
+        let fade = EditProject.Transitions(default: .init(kind: .crossfade, ms: 400))
+        let joins = TransitionLook.joins(in: cutProject(fade))
+        XCTAssertEqual(joins.map(\.clip), ["c2"], "the split at 7 s joins nothing")
+        XCTAssertEqual(joins.first?.atUs, 4_000_000)
+        XCTAssertEqual(joins.first?.outgoingSourceUs, 3_999_999)
+        XCTAssertEqual(joins.first?.incomingSourceUs, 5_000_000)
+        XCTAssertNil(TransitionLook.mark(atOutputUs: 3_700_000, project: cutProject(fade), track: nil), "before the 200 ms half")
+        let before = try XCTUnwrap(TransitionLook.mark(atOutputUs: 3_900_000, project: cutProject(fade), track: nil))
+        XCTAssertFalse(before.incoming)
+        XCTAssertEqual(before.otherSourceUs, 5_000_000, "before the join the still is the incoming clip's first frame")
+        XCTAssertEqual(before.progress, 0.25, accuracy: 0.001)
+        let after = try XCTUnwrap(TransitionLook.mark(atOutputUs: 4_100_000, project: cutProject(fade), track: nil))
+        XCTAssertTrue(after.incoming)
+        XCTAssertEqual(after.otherSourceUs, 3_999_999)
+        // One join's own transition wins over the default, and none there is a hard cut.
+        let own = EditProject.Transitions(default: .init(kind: .crossfade, ms: 400), joins: ["c2": .init(kind: .none, ms: 300)])
+        XCTAssertTrue(TransitionLook.joins(in: cutProject(own)).isEmpty)
+    }
+
+    func testEachTransitionBlendsBothSidesAtTheJoin() {
+        let extent = CGRect(x: 0, y: 0, width: 200, height: 100)
+        let black = CIImage(color: .black).cropped(to: extent)
+        let white = CIImage(color: .white).cropped(to: extent)
+        for kind in [EditProject.TransitionKind.crossfade, .zoom] {
+            let middle = TransitionLook.Mark(kind: kind, progress: 0.5, incoming: false, otherSourceUs: 0, otherRedactions: [])
+            let value = Int(gray(TransitionLook.blend(live: black, still: white, mark: middle), 100, 50))
+            XCTAssertTrue((60...200).contains(value), "\(kind) at the join is between both sides, got \(value)")
+            let start = TransitionLook.Mark(kind: kind, progress: 0, incoming: false, otherSourceUs: 0, otherRedactions: [])
+            XCTAssertEqual(gray(TransitionLook.blend(live: black, still: white, mark: start), 100, 50), 0, "\(kind) starts on the live side")
+        }
+        // The blur wipe shows the incoming side on the left first.
+        let wipe = TransitionLook.Mark(kind: .blur, progress: 0.5, incoming: true, otherSourceUs: 0, otherRedactions: [])
+        let wiped = TransitionLook.blend(live: white, still: black, mark: wipe)
+        XCTAssertGreaterThan(gray(wiped, 10, 50), 200, "the left is the incoming (live) side")
+        XCTAssertLessThan(gray(wiped, 190, 50), 60, "the right is still the outgoing side")
+        XCTAssertEqual(wiped.extent, extent)
+    }
+
+    func testTheLensMagnifiesUnderItsCentreAndLeavesTheRest() {
+        // Black left half, white right half; the lens sits left of the edge at 4×.
+        let extent = CGRect(x: 0, y: 0, width: 200, height: 100)
+        let picture = CIImage(color: .white).cropped(to: CGRect(x: 100, y: 0, width: 100, height: 100))
+            .composited(over: CIImage(color: .black).cropped(to: extent))
+        let mark = LensLook.Mark(x: 0.45, y: 0.5, radius: 0.3, magnification: 4, ring: "#FF0000", opacity: 1)
+        let drawn = LensLook.draw([mark], view: .whole, on: picture)
+        XCTAssertEqual(gray(picture, 110, 50), 255)
+        XCTAssertLessThan(gray(drawn, 110, 50), 40, "x 110 shows source x 95 (black) through the lens")
+        XCTAssertEqual(gray(drawn, 190, 50), 255, "outside the lens the picture stays")
+        XCTAssertEqual(gray(drawn, 5, 50), 0)
+        XCTAssertGreaterThan(gray(drawn, 90, 50 + 29), 120, "the red ring shows at the lens's edge (red over black)")
+        XCTAssertEqual(drawn.extent, extent)
+        // Under a 2× zoom on the left half, the same source point lands further right.
+        let zoomed = ZoomCurve.View(scale: 2, centerX: 0.25, centerY: 0.5)
+        XCTAssertEqual(LensLook.pictureCenter(x: 0.25, y: 0.5, view: zoomed, picture: extent).x, 100, accuracy: 0.01)
+    }
+
+    func testTheTiltTurnsInSettlesDriftsAndTurnsOut() throws {
+        let tilt = EditProject.Tilt(strength: 0.5, drift: false, tiltIn: true, tiltOut: true, inMs: 1000, outMs: 1000)
+        let start = try XCTUnwrap(TiltLook.pose(atOutputUs: 0, lengthUs: 10_000_000, tilt: tilt))
+        let settled = try XCTUnwrap(TiltLook.pose(atOutputUs: 5_000_000, lengthUs: 10_000_000, tilt: tilt))
+        let end = try XCTUnwrap(TiltLook.pose(atOutputUs: 10_000_000, lengthUs: 10_000_000, tilt: tilt))
+        XCTAssertGreaterThan(abs(start.yaw), abs(settled.yaw) * 3, "it tilts in from a stronger turn")
+        XCTAssertLessThan(start.scale, settled.scale)
+        XCTAssertGreaterThan(end.yaw, settled.yaw, "it tilts out the other way")
+        XCTAssertNil(TiltLook.pose(atOutputUs: 5_000_000, lengthUs: 10_000_000,
+                                   tilt: .init(strength: 0, drift: true, tiltIn: false, tiltOut: false)), "strength 0 is flat")
+        // A white card in the middle of a 400×200 canvas: after the turn its corners moved.
+        let canvas = CGSize(width: 400, height: 200)
+        let rect = CGRect(x: 100, y: 50, width: 200, height: 100)
+        let card = CIImage(color: .white).cropped(to: rect)
+        let turned = TiltLook.apply(card, rect: rect, pose: start, canvas: canvas)
+        XCTAssertNotEqual(turned.extent.integral, rect, "the perspective moves the card's corners")
+        XCTAssertEqual(alpha(turned, 200, 100), 255, "the middle stays covered")
+        let corners = [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY)].map {
+            TiltLook.project($0, pose: start, pivot: CGPoint(x: 200, y: 100), distance: 880)
+        }
+        XCTAssertNotEqual(corners[0], CGPoint(x: rect.minX, y: rect.minY))
+    }
+
+    func testTheFrameSplitIntoLayersDrawsWhatApplyFrameDraws() {
+        let picture = CGSize(width: 160, height: 90)
+        let canvas = CGSize(width: 200, height: 120)
+        let white = CIImage(color: .white).cropped(to: CGRect(origin: .zero, size: picture))
+        let frame = EditProject.Frame()
+        let placement = Looks.framePlacement(frame, picture: picture, canvas: canvas)
+        let whole = Looks.applyFrame(frame, to: white, canvas: canvas, placement: placement)
+        let layers = Looks.frameLayers(frame, to: white, canvas: canvas, placement: placement)
+        let joined = layers.picture.composited(over: layers.background)
+        for (x, y) in [(100, 60), (4, 4), (Int(placement.inner.midX), Int(placement.inner.minY) - 2)] {
+            XCTAssertEqual(gray(whole, x, y), gray(joined, x, y), "pixel \(x),\(y)")
+        }
+        XCTAssertEqual(layers.picture.extent, layers.rect)
+    }
+}
