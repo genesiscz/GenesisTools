@@ -312,6 +312,22 @@ final class RecorderScreenFindViewTests: XCTestCase {
         XCTAssertTrue(text.contains("the only clip stays"), text)
     }
 
+    // Regression test: deep test 2026-11-07 R3-RX6. A selected shape's row read "Starts 00:08.0 to 00:09.2" (a range under
+    // the name of its start) beside a button cut to "Start at Playh…", over a native segmented control.
+    func testASelectedShapeNamesItsRangeAndItsWholeButton() throws {
+        let model = model()
+        let shape = EditProject.Shape(id: "s1", startUs: 1_000_000, endUs: 2_200_000, kind: .circle, x1: 0.2, y1: 0.2, x2: 0.4, y2: 0.4)
+        model.change { $0.shapes = [shape] }
+        model.gesture?.commit?.cancel()
+        model.selectedShape = "s1"
+        let image = try EditorShots.write(ShapeRow(model: model, shape: shape).padding(18), name: "shape-selected", width: 300)
+        let text = try EditorShots.text(image).lowercased()
+        for word in ["shows", "start at playhead", "draws on", "fades in", "at once"] {
+            XCTAssertTrue(text.contains(word), "\(word) missing from: \(text)")
+        }
+        XCTAssertFalse(text.contains("starts"), text)
+    }
+
     func testAMovieWithoutARecordingSaysWhyItHasNoScreenText() throws {
         let model = model()
         model.screenQuery = "token"

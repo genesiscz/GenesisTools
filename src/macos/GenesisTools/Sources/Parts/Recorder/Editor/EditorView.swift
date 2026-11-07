@@ -1989,7 +1989,7 @@ private struct TextHandles: View {
 }
 
 /// One arrow, box or circle in the Text tab: select it (the playhead goes to it), its colour, line and length, delete.
-private struct ShapeRow: View {
+struct ShapeRow: View {
     @Bindable var model: EditorModel
     let shape: EditProject.Shape
     /// Its number among the shapes of its kind, when there is more than one ("Box 2").
@@ -2040,20 +2040,19 @@ private struct ShapeRow: View {
                 Slider(value: Binding(get: { shape.width }, set: { value in model.updateShape(shape.id) { $0.width = (value * 2000).rounded() / 2000 } }), in: 0.002...0.03)
                     .accessibilityLabel("\(name) line width")
                 SectionLabel(text: "Appears", value: nil)
-                Picker("Appears", selection: Binding(get: { shape.appear ?? .draw }, set: { value in
-                    model.updateShape(shape.id) { $0.appear = value == .draw ? nil : value }
-                })) {
-                    Text("Draws On").tag(EditProject.ShapeAppear.draw)
-                    Text("Fades In").tag(EditProject.ShapeAppear.fade)
-                    Text("At Once").tag(EditProject.ShapeAppear.none)
-                }
-                .pickerStyle(.segmented).labelsHidden()
-                .accessibilityLabel("How the \(name.lowercased()) appears")
-                HStack {
-                    SectionLabel(text: "Starts", value: editRange(model.project, fromUs: shape.startUs, toUs: shape.endUs).edit)
-                    GhostButton("Start at Playhead", symbol: "arrow.right.to.line", tooltip: "Move the start here and keep the length",
-                                identifier: "recorder.shape.startHere") { model.moveShapeStart(shape.id) }
-                }
+                // The kit's segmented control, as every other choice in the inspector: the native one drew grey in a
+                // window that is not key and looked unlike its neighbours.
+                GenSegmentedTabs("How the \(name.lowercased()) appears",
+                                 items: [.init(EditProject.ShapeAppear.draw, "Draws On"), .init(EditProject.ShapeAppear.fade, "Fades In"),
+                                         .init(EditProject.ShapeAppear.none, "At Once")],
+                                 selection: Binding(get: { shape.appear ?? .draw }, set: { value in
+                                     model.updateShape(shape.id) { $0.appear = value == .draw ? nil : value }
+                                 }),
+                                 identifier: "recorder.shape.appears", fillsWidth: true)
+                // The row named the start but showed the whole range, and its button was cut to "Start at Playh…".
+                SectionLabel(text: "Shows", value: editRange(model.project, fromUs: shape.startUs, toUs: shape.endUs).edit)
+                GhostButton("Start at Playhead", symbol: "arrow.right.to.line", tooltip: "Move the start here and keep the length",
+                            identifier: "recorder.shape.startHere") { model.moveShapeStart(shape.id) }
                 let longest = max(0.6, min(15, Double(model.project.source.durationUs - shape.startUs) / 1_000_000))
                 SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(shape.endUs - shape.startUs) / 1_000_000))
                 Slider(value: Binding(get: { min(longest, Double(shape.endUs - shape.startUs) / 1_000_000) }, set: { value in
