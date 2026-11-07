@@ -185,7 +185,7 @@ const movieDoc =
 
 /** What every edit method returns, short: the full field list once, on info(), keeps describe()'s lines readable. */
 const editResult =
-    '{ summary (the edit after this call), changed (what this call changed: "0 texts → 16 texts", or "nothing"), path, revision, outputSeconds, warnings? } (info() lists the whole edit)';
+    "{ summary, changed, path, revision, outputSeconds, warnings? } (summary: the edit after this call; changed: what this call did; info() lists the whole edit)";
 
 /** A transcript cut as an agent reads it: source seconds, not microseconds. */
 function cutsOut(cuts: ReadonlyArray<CutMatch & { plays: number | null }>) {
@@ -548,7 +548,11 @@ const movieMethods = [
         "Removes a marker set while editing, by the id markers() gives it; the recording's own markers stay.",
         ["id"]
     ),
-    edit("reset", z.object({}), "Starts over: the whole movie, no zooms, default audio and export."),
+    edit(
+        "reset",
+        z.object({}),
+        "Starts over: the whole movie with default audio and export. Everything else goes too: cuts, zooms, texts, hidden parts, music, voiceovers, cards, frame, markers of the edit; undo() takes a reset back."
+    ),
     edit(
         "clicks",
         z
