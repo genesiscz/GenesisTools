@@ -583,6 +583,9 @@ private struct StyleInspector: View {
                 Divider().padding(.vertical, 4)
                 CameraBubbleSection(model: model)
             }
+            // Round 4 fx-render: transitions, tilt, lens (EditorRenderFx.swift).
+            Divider().padding(.vertical, 4)
+            RenderFxSection(model: model)
         }
     }
 }

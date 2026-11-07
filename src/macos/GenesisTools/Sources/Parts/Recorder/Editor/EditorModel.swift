@@ -448,6 +448,10 @@ final class EditorModel {
         if a.lanes != b.lanes { parts.append("lanes") }
         if a.camera != b.camera { parts.append("camera") }
         if a.markers != b.markers { parts.append("markers") }
+        // Round 4 fx-render.
+        if a.transitions != b.transitions { parts.append("transitions") }
+        if a.lens != b.lens { parts.append("lens") }
+        if a.tilt != b.tilt { parts.append("tilt") }
         // A count change (an add or a delete) is its own step, never part of a drag.
         if (a.zooms.count, a.redactions?.count, a.texts?.count, a.shapes?.count, a.clips.count, a.markers?.count)
             != (b.zooms.count, b.redactions?.count, b.texts?.count, b.shapes?.count, b.clips.count, b.markers?.count)
@@ -491,6 +495,10 @@ final class EditorModel {
         case "captions": return ("Captions", .captions)
         case "keys": return ("Shortcuts", .captions)
         case "transcript": return ("Caption Fix", .captions)
+        // Round 4 fx-render.
+        case "transitions": return ("Transitions", .style)
+        case "lens": return ("Lens", .style)
+        case "tilt": return ("3D Tilt", .style)
         default: return ("Changes", nil)
         }
         if part == "clips" { return (counts.1 > counts.0 ? "Split" : counts.1 < counts.0 ? "Delete Clip" : "Clip Change", .clip) }
