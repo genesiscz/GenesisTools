@@ -72,7 +72,11 @@ struct EditProject: Codable, Equatable {
         var speed: Double = 1
 
         var sourceDurationUs: Int64 { max(0, toUs - fromUs) }
-        var outputDurationUs: Int64 { Int64((Double(sourceDurationUs) / speed).rounded()) }
+        /// A speed the decoder would refuse (0, negative, or not finite) plays at 1 rather than trapping on Int64(inf).
+        var outputDurationUs: Int64 {
+            guard speed.isFinite, speed > 0 else { return sourceDurationUs }
+            return Int64((Double(sourceDurationUs) / speed).rounded())
+        }
     }
 
     enum ZoomMode: String, Codable, CaseIterable {
@@ -408,6 +412,7 @@ extension EditProject {
         guard var root = object as? [String: Any] else { throw ProjectError.notAnObject }
         root = try migrate(root)
         let project = try JSONDecoder().decode(EditProject.self, from: JSONSerialization.data(withJSONObject: root))
+        try project.validate()
         guard let url else { return project }
         return project.inItsFolder(url.deletingLastPathComponent())
     }
@@ -441,14 +446,31 @@ extension EditProject {
         return try encoder.encode(self)
     }
 
+    /// The ranges `tools recorder apply` keeps (src/utils/recording-editor/project.ts, clipSchema). A file edited by
+    /// hand or by another writer can hold anything; a clip speed of 0 made every duration Int64(infinity), which traps,
+    /// and a negative one asked AVFoundation for a negative duration. Refused here with the clip named instead.
+    func validate() throws {
+        guard source.durationUs >= 0 else { throw ProjectError.badValue("source.durationUs is \(source.durationUs); it must be 0 or more") }
+        for (index, clip) in clips.enumerated() {
+            guard clip.speed.isFinite, (0.25...16).contains(clip.speed) else {
+                throw ProjectError.badValue("clip \(index + 1) (\(clip.id)) has speed \(clip.speed); it must be 0.25 to 16")
+            }
+            guard clip.fromUs >= 0, clip.toUs >= 0 else {
+                throw ProjectError.badValue("clip \(index + 1) (\(clip.id)) runs from \(clip.fromUs) to \(clip.toUs) µs; times must be 0 or more")
+            }
+        }
+    }
+
     enum ProjectError: LocalizedError {
         case notAnObject
         case newerVersion(Int)
+        case badValue(String)
 
         var errorDescription: String? {
             switch self {
             case .notAnObject: "the edit file is not a JSON object"
             case let .newerVersion(version): "the edit file has version \(version); this build reads up to \(EditProject.currentVersion)"
+            case let .badValue(detail): "the edit file is not valid: \(detail)"
             }
         }
     }

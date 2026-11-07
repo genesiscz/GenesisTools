@@ -56,4 +56,31 @@ final class RecorderRobustnessTests: XCTestCase {
         }
         XCTAssertEqual(ramps([3_000_000]).map(\.startUs), [2_975_000, 3_000_000], "a lone cut keeps its two 25 ms ramps")
     }
+
+    func testAnEditFileWithAClipSpeedOfZeroIsRefusedWithItsClipNamed() throws {
+        let edit = EditProject.whole(video: "/m.mp4", durationUs: 2_000_000, width: 320, height: 200, cursor: nil, recording: nil)
+        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: edit.encoded()) as? [String: Any])
+        for (speed, words) in [(0.0, "speed 0.0"), (-1.0, "speed -1.0"), (1e300, "speed 1e+300")] {
+            var clip = try XCTUnwrap((root["clips"] as? [[String: Any]])?.first)
+            clip["speed"] = speed
+            root["clips"] = [clip]
+            XCTAssertThrowsError(try EditProject.decode(JSONSerialization.data(withJSONObject: root))) { error in
+                XCTAssertTrue(error.localizedDescription.contains(words), "\(error.localizedDescription) names \(words)")
+            }
+        }
+        var clip = try XCTUnwrap((root["clips"] as? [[String: Any]])?.first)
+        clip["speed"] = 2
+        clip["fromUs"] = -1
+        root["clips"] = [clip]
+        XCTAssertThrowsError(try EditProject.decode(JSONSerialization.data(withJSONObject: root)))
+        clip["fromUs"] = 0
+        root["clips"] = [clip]
+        XCTAssertEqual(try EditProject.decode(JSONSerialization.data(withJSONObject: root)).clips.first?.speed, 2, "a valid speed still reads")
+    }
+
+    func testAClipBuiltInCodeWithSpeedZeroDoesNotTrap() {
+        XCTAssertEqual(EditProject.Clip(id: "a", fromUs: 0, toUs: 1_000_000, speed: 0).outputDurationUs, 1_000_000)
+        XCTAssertEqual(EditProject.Clip(id: "a", fromUs: 0, toUs: 1_000_000, speed: .nan).outputDurationUs, 1_000_000)
+        XCTAssertEqual(EditProject.Clip(id: "a", fromUs: 0, toUs: 1_000_000, speed: 2).outputDurationUs, 500_000)
+    }
 }
