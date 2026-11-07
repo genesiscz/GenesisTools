@@ -822,10 +822,9 @@ program
         try {
             const answer = await new Movie(value).check();
 
-            for (const issue of answer.issues) {
-                out.printlnErr(
-                    `${issue.severity === "fix" ? "fix  " : "check"}  ${issue.message}${issue.fix ? `  (${issue.fix})` : ""}`
-                );
+            // R6 9: one line per kind of issue with its count; --json (the result) keeps every issue.
+            for (const line of answer.summary) {
+                out.printlnErr(line);
             }
 
             if (!answer.issues.length) {

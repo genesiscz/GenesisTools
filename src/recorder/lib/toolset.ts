@@ -9,7 +9,14 @@ import type { FlockState } from "@genesiscz/utils/fs/flock";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { awaitStart, startGatePath, stopPassedChild, sweepStartGates } from "@genesiscz/utils/process/start-gate";
-import { checkProject, type EditFacts, type EditIssue, fixOps } from "@genesiscz/utils/recording-editor/check";
+import {
+    checkProject,
+    type EditFacts,
+    type EditIssue,
+    fixOps,
+    groupIssues,
+    issueSummary,
+} from "@genesiscz/utils/recording-editor/check";
 import {
     eventAnchorSchema,
     MOVIE_EVENT_KINDS,
@@ -231,8 +238,8 @@ const movieMethods = [
         params: z.object({}),
         result: z.unknown(),
         resultName:
-            '{ ok, clean, issues: { severity: "fix" | "check", item, message, fix?, at?, target?, action?: { label, ops } }[] }',
-        doc: 'What to look at before export(): items whose whole time is cut (they never show), a marker in cut time (no chapter: an edit marker comes with a move to the nearest kept moment, one set while it recorded is stood in for by an edit marker of its name), a text a cut shortens, a missing music file, captions, subtitles or ducking without a transcript, a part that follows a cursor the movie lacks, items too short to read, texts drawn over each other, and every op time past the end of the source that an edit clamped (until undo() or reset()). "fix" issues come first, each with a call that fixes it when one does (`fix`, and the same as edit ops in `action.ops` for apply()); ok is true when there is no "fix" issue (the export works), clean when there is no issue at all. It changes nothing. An edit call whose cut hides an item or a marker, or shortens a text, says so in its own warnings too.',
+            '{ ok, clean, counts: { fix, check, note }, summary: string[], groups: { kind, severity, count, message, items, at, fix?, fixable }[], issues: { severity: "fix" | "check" | "note", kind, item, message, fix?, at?, target?, action?: { label, ops } }[] }',
+        doc: 'What to look at before export(): items whose whole time is cut (they never show), a marker in cut time (no chapter: an edit marker comes with a move to the nearest kept moment, one set while it recorded is stood in for by an edit marker of its name), a text a cut shortens, a missing music file, captions, subtitles or ducking without a transcript, a part that follows a cursor the movie lacks, items too short to read, texts drawn over each other, and every op time past the end of the source that an edit clamped (until undo() or reset()). "fix" issues come first, each with a call that fixes it when one does (`fix`, and the same as edit ops in `action.ops` for apply()); "note" issues are holes the export closes by itself (redactionJoins), said only so nothing is hidden. Read `summary` first: one line per kind of issue with its count ("check ×40 hiding-starts-after-cut: …"); `groups` holds the same with the items and source times (at most 20 each), `issues` every single one. ok is true when there is no "fix" issue (the export works), clean when there is no "fix" or "check" issue. Two texts count as "same time, same place" only when their rendered plates overlap (font size, wrap and the shape of the canvas). It changes nothing. An edit call whose cut hides an item or a marker, or shortens a text, says so in its own warnings too.',
         effect: "read",
     }),
     defineMethod({
@@ -1706,8 +1713,17 @@ export class Movie {
         const opened = await openProject(this.recording);
         const issues = checkProject(opened.project, facts(opened));
         log.debug({ recording: this.recording, issues: issues.length }, "edit checked");
-        // ok: nothing that breaks the export; clean: nothing to look at either.
-        return { ok: !issues.some((issue) => issue.severity === "fix"), clean: issues.length === 0, issues };
+        // ok: nothing that breaks the export; clean: nothing to look at either (a "note" is the export handling it).
+        // R6 9: the groups (one per kind, with a count) and their lines come first; issues stays the full list.
+        const { counts, lines } = issueSummary(issues);
+        return {
+            ok: counts.fix === 0,
+            clean: counts.fix + counts.check === 0,
+            counts,
+            summary: lines,
+            groups: groupIssues(issues),
+            issues,
+        };
     }
 
     async fix() {

@@ -14,7 +14,14 @@ import {
     cameraBubbleSchema,
     readCameraSidecar,
 } from "@genesiscz/utils/recording-editor/camera";
-import { checkProject, fixOps } from "@genesiscz/utils/recording-editor/check";
+import {
+    canvasShape,
+    checkProject,
+    fixOps,
+    groupIssues,
+    issueSummary,
+    textBox,
+} from "@genesiscz/utils/recording-editor/check";
 import {
     addComment,
     commentsPathFor,
@@ -928,6 +935,68 @@ describe("edit project (edit.json)", () => {
         expect(looks.redactions?.[0]?.cell).toBeUndefined();
     });
 
+    // R6 9: check() gave 19 to 58 lines, mostly one "starts 0.3 s after a cut" per tracked part, and "same time, same
+    // place" for texts side by side.
+    test("check groups repeated issues per kind with a count and a severity, and texts overlap by their plates", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        let project = applyOp(wholeProject(source), { op: "cut", from: 2, to: 2.5 });
+
+        for (const x of [0.1, 0.3, 0.5, 0.7]) {
+            project = applyOp(project, {
+                op: "redact",
+                from: 2.8,
+                to: 3.8,
+                rect: { x, y: 0.4, width: 0.1, height: 0.05 },
+                style: "black",
+            });
+        }
+
+        // One part 0.1 s after the cut: the export closes that by itself, a note.
+        project = applyOp(project, {
+            op: "redact",
+            from: 2.6,
+            to: 3.8,
+            rect: { x: 0.1, y: 0.8, width: 0.1, height: 0.05 },
+            style: "black",
+        });
+        const issues = checkProject(project, facts);
+        const groups = groupIssues(issues);
+        expect(groups.map((group) => [group.kind, group.severity, group.count])).toEqual([
+            ["hiding-starts-after-cut", "check", 4],
+            ["hiding-starts-after-cut", "note", 1],
+        ]);
+        expect(groups[0]?.at).toEqual([2.5, 2.5, 2.5, 2.5]);
+        expect(groups[0]?.fixable).toBe(4);
+        const { counts, lines } = issueSummary(issues);
+        expect(counts).toEqual({ fix: 0, check: 4, note: 1 });
+        expect(lines[0]).toStartWith("check ×4 hiding-starts-after-cut: The hidden part at 2.8 s starts 0.3 s after");
+        expect(lines[0]).toEndWith("(and 3 more like it)");
+        expect(lines).toHaveLength(2);
+
+        // Side by side on one line: the old rule (anchors 0.25 apart) called them "same place"; the plates do not meet.
+        let side = applyOp(wholeProject(source), { op: "text", from: 1, to: 4, text: "Hi", x: 0.35, y: 0.5 });
+        side = applyOp(side, { op: "text", from: 1, to: 4, text: "Ok", x: 0.6, y: 0.5 });
+        expect(checkProject(side, facts).filter((issue) => issue.kind === "text-overlap")).toEqual([]);
+        // Long lines at the same anchors do meet.
+        let wide = applyOp(wholeProject(source), {
+            op: "text",
+            from: 1,
+            to: 4,
+            text: "Open the settings page",
+            x: 0.35,
+            y: 0.5,
+        });
+        wide = applyOp(wide, { op: "text", from: 1, to: 4, text: "Pick the account", x: 0.6, y: 0.5 });
+        expect(checkProject(wide, facts).filter((issue) => issue.kind === "text-overlap")).toHaveLength(1);
+        // The canvas's shape counts: 0.3 apart across a 9:16 canvas is less room than across 16:9.
+        const box = textBox({ text: "Hello", size: 0.05, x: 0.5, y: 0.5 }, canvasShape(wholeProject(source)));
+        expect(box.right - box.left).toBeCloseTo(5 * 0.58 * 0.05 + 2 * 0.7 * 0.05, 5);
+        expect(canvasShape(applyOp(wholeProject(source), { op: "frame", aspect: "9:16" }))).toEqual({
+            width: 1,
+            height: 16 / 9,
+        });
+    });
+
     // R5 4: a phone in 16:9 filled a quarter of the width, with no way to move it aside or zoom the whole canvas.
     test("a frame preset places a phone against one side, its own fields win, and a canvas zoom may overlap", () => {
         const phone = applyOp(wholeProject(source), { op: "frame", preset: "phone-left", layout: { scale: 1.1 } });
@@ -1025,6 +1094,7 @@ describe("edit project (edit.json)", () => {
         expect(checkProject(project, facts)).toEqual([
             {
                 severity: "fix",
+                kind: "marker-in-cut",
                 item: `marker ${marker}`,
                 message: 'The marker "Step two" at 6.2 s never plays: that time is cut, so it is no chapter',
                 fix: `movie.apply([{"op":"unmarker","id":"${marker}"},{"op":"marker","at":6.5,"label":"Step two"}])`,
@@ -1034,6 +1104,7 @@ describe("edit project (edit.json)", () => {
             },
             {
                 severity: "check",
+                kind: "cut-shortens-text",
                 item: `text ${text}`,
                 message: 'The text "Title" (1 to 4 s) loses 1 s of its 3 s to a cut',
                 at: 1,
@@ -1041,6 +1112,7 @@ describe("edit project (edit.json)", () => {
             },
             {
                 severity: "check",
+                kind: "marker-in-cut",
                 item: 'recorded marker "Recorded"',
                 message: 'The recorded marker "Recorded" at 5 s never plays: that time is cut, so it is no chapter',
                 fix: 'movie.marker(6.5, "Recorded")',
