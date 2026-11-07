@@ -35,10 +35,13 @@ enum RecorderRenders {
 
     /// `--export`: the movie, written by the editor's exporter. `onProgress` runs on the main actor every 0.25 s;
     /// `isCancelled` true stops the export, removes its partial file and throws a CancellationError.
-    static func export(source: String, out: String?, isCancelled: @escaping @MainActor () -> Bool = { false },
+    static func export(source: String, out: String?, size: EditProject.OutputSize? = nil,
+                       isCancelled: @escaping @MainActor () -> Bool = { false },
                        onProgress: @escaping @MainActor (Double) -> Void) async throws -> EditExporter.Result {
         var project = try await ProjectStore.load(path: source).project
         if let out { project.export.output = out }
+        // R5 3 export size: this export's own size, not saved in the edit.
+        if let size { project.export.size = size }
         return try await EditExporter.export(project: project, to: EditExporter.outputURL(for: project),
                                              isCancelled: isCancelled, onProgress: onProgress)
     }

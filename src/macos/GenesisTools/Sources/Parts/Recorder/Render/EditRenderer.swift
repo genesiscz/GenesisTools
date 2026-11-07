@@ -605,13 +605,25 @@ struct EditRenderer {
 
     /// The movie's picture and the canvas it sits on (the same size without an aspect). The canvas's short side is
     /// the picture's height; the H.264 budget applies to the canvas, which is what the encoder gets.
-    static func outputSizes(source: CGSize, maxHeight: Int, aspect: EditProject.CanvasAspect?, h264Fps: Double? = nil)
-        -> (picture: CGSize, canvas: CGSize) {
+    static func outputSizes(source: CGSize, maxHeight: Int, aspect: EditProject.CanvasAspect?, h264Fps: Double? = nil,
+                            fixed: EditProject.OutputSize? = nil) -> (picture: CGSize, canvas: CGSize) {
         var scale = maxHeight > 0 && source.height > CGFloat(maxHeight) ? CGFloat(maxHeight) / source.height : 1
         let ratio = aspect?.ratio
         func canvas(_ height: CGFloat) -> CGSize {
             guard let ratio else { return CGSize(width: source.width / source.height * height, height: height) }
             return ratio >= 1 ? CGSize(width: height * ratio, height: height) : CGSize(width: height, height: height / ratio)
+        }
+        // R5 3 export size: the asked side exactly (to even pixels), the other from the canvas's shape; no budget.
+        if let fixed, fixed.width != nil || fixed.height != nil {
+            func nearestEven(_ value: CGFloat) -> CGFloat { max(2, (value / 2).rounded() * 2) }
+            let shape = canvas(source.height)
+            let factor = fixed.height.map { CGFloat($0) / shape.height } ?? CGFloat(fixed.width ?? 0) / shape.width
+            let made = canvas(source.height * factor)
+            let size = CGSize(width: nearestEven(fixed.width.map { CGFloat($0) } ?? made.width),
+                              height: nearestEven(fixed.height.map { CGFloat($0) } ?? made.height))
+            // Without a canvas shape of its own the picture is the canvas, so no edge is left empty by rounding.
+            guard ratio != nil else { return (size, size) }
+            return (CGSize(width: nearestEven(source.width * factor), height: nearestEven(source.height * factor)), size)
         }
         if let h264Fps, h264Fps > 0 {
             let full = canvas(source.height * scale)
@@ -639,8 +651,20 @@ struct EditRenderer {
 
     /// `cards` (the export only) plays the intro card before the movie and the end card after it; every output time
     /// of the movie then sits `leadUs` later in the composition. The preview leaves them out, so its time is the edit's.
+    /// R5 3 export size: both sides asked must keep the canvas's shape (within 1 %), or the picture would be stretched.
+    static func checkSize(_ fixed: EditProject.OutputSize?, source: CGSize, aspect: EditProject.CanvasAspect?) throws {
+        guard let width = fixed?.width, let height = fixed?.height else { return }
+        let shape = aspect?.ratio ?? source.width / max(1, source.height)
+        let asked = CGFloat(width) / CGFloat(max(1, height))
+        guard abs(asked - shape) / shape <= 0.01 else {
+            throw RenderError.badComposition(
+                "the size \(width)×\(height) is not the canvas's shape (\(String(format: "%.3f", shape)) wide per high); "
+                    + "give one side, or set frame({ aspect }) to the shape you want")
+        }
+    }
+
     static func render(project: EditProject, asset: AVURLAsset, zoom: ZoomState, maxHeight: Int,
-                       cards: Bool = false) async throws -> Rendered {
+                       cards: Bool = false, size fixed: EditProject.OutputSize? = nil) async throws -> Rendered {
         guard let video = try await asset.loadTracks(withMediaType: .video).first else {
             throw RenderError.noVideoTrack(asset.url.path)
         }
@@ -700,8 +724,9 @@ struct EditRenderer {
         }
 
         let fps = Self.exportFps(nominal: Double(nominalFps))
+        try checkSize(fixed, source: natural, aspect: project.frame?.aspect)
         let (picture, size) = outputSizes(source: natural, maxHeight: maxHeight, aspect: project.frame?.aspect,
-                                          h264Fps: project.export.codec == .h264 ? fps : nil)
+                                          h264Fps: project.export.codec == .h264 ? fps : nil, fixed: fixed)
         let outputScale = picture.height / natural.height
         let cameraFeed = await CameraFeed.make(project: project)
         // Round 4 fx-render: the frames a transition blends with, read when a frame first needs them.
@@ -925,7 +950,7 @@ final class EditExporter {
         let zoom = ZoomState(project: project, cursor: CursorTrack.load(project.source.cursor))
         // R4 9 intro and end cards: only the export plays them.
         let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: project.export.maxHeight,
-                                                     cards: true)
+                                                     cards: true, size: project.export.size)
         let preset = project.export.codec == .hevc ? AVAssetExportPresetHEVCHighestQuality : AVAssetExportPresetHighestQuality
         guard let session = AVAssetExportSession(asset: rendered.composition, presetName: preset) else {
             throw ExportError.noSession(preset)

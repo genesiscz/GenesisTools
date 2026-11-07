@@ -86,6 +86,21 @@ final class RecorderFxExportTests: XCTestCase {
          block.height / Double(Self.size.height))
     }
 
+    /// R5 3 export size: a 2698×1516 export came out of the H.264 budget unasked; a size asks for exact pixels.
+    func testAnAskedSizeIsExactAndBothSidesMustKeepTheShape() throws {
+        let source = CGSize(width: 2940, height: 1912)
+        let height = EditRenderer.outputSizes(source: source, maxHeight: 0, aspect: nil, h264Fps: 60, fixed: .init(height: 1080))
+        XCTAssertEqual(height.canvas, CGSize(width: 1660, height: 1080), "the width follows the movie's shape, to even pixels")
+        XCTAssertEqual(height.picture, height.canvas, "no frame: the picture is the canvas")
+        let wide = EditRenderer.outputSizes(source: source, maxHeight: 0, aspect: .wide, h264Fps: 60, fixed: .init(width: 1920))
+        XCTAssertEqual(wide.canvas, CGSize(width: 1920, height: 1080))
+        let budget = EditRenderer.outputSizes(source: source, maxHeight: 0, aspect: .wide, h264Fps: 60)
+        XCTAssertLessThan(budget.canvas.width, 3400, "without a size the budget still decides")
+        XCTAssertNoThrow(try EditRenderer.checkSize(.init(width: 1920, height: 1080), source: source, aspect: .wide))
+        XCTAssertThrowsError(try EditRenderer.checkSize(.init(width: 1920, height: 1080), source: source, aspect: nil),
+                             "1920×1080 is not a 2940×1912 movie's shape")
+    }
+
     func testNoTransitionShowsACutOrRedactedSecretInTheExport() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("fx-secret-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

@@ -56,6 +56,9 @@ struct RecorderRequest {
     var picker = false
     /// `--shortcuts` with `--picker --snapshot`: the Shortcuts section open.
     var shortcuts = false
+    // R5 3 export size
+    /// `--size 1280x720` (or `1280x`, `x720`) with `--export`: the picture's exact pixels.
+    var exportSize: EditProject.OutputSize?
 
     static func parse(_ args: [String]) -> RecorderRequest {
         var request = RecorderRequest()
@@ -95,6 +98,10 @@ struct RecorderRequest {
             case "--picker": request.picker = true
             case "--shortcuts": request.shortcuts = true
             case "--times": request.times = (value() ?? "").split(separator: ",").compactMap { Double($0) }
+            // R5 3 export size: "1280x720", "1280x" or "x720".
+            case "--size":
+                let sides = (value() ?? "").split(separator: "x", omittingEmptySubsequences: false).map { Int($0) }
+                if sides.count == 2 { request.exportSize = EditProject.OutputSize(width: sides[0], height: sides[1]) }
             default: break
             }
             index += 1
@@ -110,7 +117,7 @@ struct RecorderRequest {
 package func runRecorder(_ args: [String]) -> Never {
     let request = RecorderRequest.parse(args)
     if let export = request.export {
-        runHeadlessExport(source: export, out: request.out, json: request.json)
+        runHeadlessExport(source: export, out: request.out, size: request.exportSize, json: request.json)
     }
     if let still = request.still {
         runHeadlessStill(source: still, atSeconds: request.atSeconds ?? 0, out: request.out, full: request.full)
@@ -581,14 +588,14 @@ enum ContactSheet {
     }
 }
 
-private func runHeadlessExport(source: String, out: String?, json: Bool) -> Never {
+private func runHeadlessExport(source: String, out: String?, size: EditProject.OutputSize?, json: Bool) -> Never {
     MainActor.assumeIsolated {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
         Task {
             do {
                 var lastTenth = -1
-                let result = try await RecorderRenders.export(source: source, out: out) { progress in
+                let result = try await RecorderRenders.export(source: source, out: out, size: size) { progress in
                     let tenth = Int(progress * 10)
                     if tenth != lastTenth, !json {
                         lastTenth = tenth

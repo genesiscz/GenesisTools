@@ -497,6 +497,16 @@ struct EditProject: Codable, Equatable {
         var subtitles: SubtitleFormat?
         /// The recording's markers as chapters inside an MP4; nil is on.
         var chapters: Bool?
+        // R5 3 export size
+        /// The exported picture's exact pixels (one side, the other following its shape, or both in its shape); nil
+        /// follows `maxHeight`. It wins over `maxHeight` and over the H.264 frame-rate budget.
+        var size: OutputSize?
+    }
+
+    // R5 3 export size
+    struct OutputSize: Codable, Equatable {
+        var width: Int?
+        var height: Int?
     }
 
     enum SubtitleFormat: String, Codable, CaseIterable {

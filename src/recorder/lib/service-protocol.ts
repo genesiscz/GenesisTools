@@ -274,7 +274,17 @@ export const hostApi = defineApi({
         }),
         defineMethod({
             name: "render.export",
-            params: z.object({ path, out: z.string().optional() }),
+            params: z.object({
+                path,
+                out: z.string().optional(),
+                // R5 3 export size: the picture's exact pixels, one side (the other follows its shape) or both.
+                size: z
+                    .object({
+                        width: z.number().int().min(16).max(8192).optional(),
+                        height: z.number().int().min(16).max(8192).optional(),
+                    })
+                    .optional(),
+            }),
             result: z.object({ ok: z.literal(true), path: z.string(), bytes: z.number(), seconds: z.number() }),
             doc: 'Renders the edit as a movie; the host sends $/progress { id, fraction, label: "export" } and stops on $/cancel.',
             effect: "reversible",

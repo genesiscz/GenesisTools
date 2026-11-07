@@ -481,6 +481,8 @@ extension EditOp {
         /// "srt", "vtt" or "none".
         var subtitles: String?
         var chapters: Bool?
+        // R5 3 export size: an empty object (no width, no height) goes back to `maxHeight`.
+        var size: EditProject.OutputSize?
         var op: EditOp { .exportSettings(self) }
     }
 

@@ -75,8 +75,10 @@ import {
     defaultExportName,
     EXPORT_FORMATS,
     type ExportFormat,
+    type ExportRun,
     editProject,
     exportAs,
+    exportProgressPrinter,
     openProject,
     previewTranscriptCuts,
     transcriptWords,
@@ -712,11 +714,21 @@ const movieMethods = [
                 from: outputTimeSchema.optional(),
                 to: outputTimeSchema.optional(),
                 subtitles: z.enum(SUBTITLE_FORMATS).optional(),
+                // R5 3 export overwrite, size, progress
+                overwrite: z.boolean().optional(),
+                size: z
+                    .object({
+                        width: z.number().int().min(16).max(8192).optional(),
+                        height: z.number().int().min(16).max(8192).optional(),
+                    })
+                    .strict()
+                    .optional(),
+                onProgress: z.custom<(fraction: number) => void>((value) => typeof value === "function").optional(),
             })
             .strict(),
         result: z.unknown(),
-        resultName: "{ path, bytes, outputSeconds, width, height, renderSeconds, subtitles? }",
-        doc: 'Renders the edit with the editor\'s renderer to format "mp4" (default), "gif" (10 fps, at most 960 wide) or "webm"; from/to (OUTPUT seconds, what plays) export only that part and leave the edit as it is. subtitles "srt" | "vtt" also writes the transcript beside it in the movie\'s time (default: the edit\'s export.subtitles). An MP4 gets the recording\'s markers as chapters (chapters: the count) unless exportSettings { chapters: false }. warnings also carries what check() says must be fixed (an item whose time is cut, missing music). Throws when the file exists (it never overwrites).',
+        resultName: "{ path, bytes, outputSeconds, width, height, renderSeconds, replaced?, subtitles? }",
+        doc: 'Renders the edit with the editor\'s renderer to format "mp4" (default), "gif" (10 fps, at most 960 wide) or "webm"; from/to (OUTPUT seconds, what plays) export only that part and leave the edit as it is. subtitles "srt" | "vtt" also writes the transcript beside it in the movie\'s time (default: the edit\'s export.subtitles). An MP4 gets the recording\'s markers as chapters (chapters: the count) unless exportSettings { chapters: false }. warnings also carries what check() says must be fixed (an item whose time is cut, missing music). Without overwrite it throws when the file exists; overwrite: true replaces out (or, without out, the usual "<title>.mp4" beside the movie) in one step, after the new movie is complete (replaced: true says it did). size { width } or { height } (or both, in the canvas\'s shape) sets the picture\'s exact pixels, e.g. { height: 1080 }; absent follows exportSettings({ maxHeight }) and keeps the frame rate H.264 can hold (a 2698×1516 export came from that budget). onProgress(fraction) is called about once a percent; the run also logs "export 30%" lines every 10 %. Example: await movie.export({ out: "/tmp/demo.mp4", overwrite: true, size: { height: 1080 } }).',
         effect: "reversible",
     }),
     defineMethod({
@@ -2115,7 +2127,7 @@ export class Movie {
             from?: z.infer<typeof timeSchema>;
             to?: z.infer<typeof timeSchema>;
             subtitles?: SubtitleFormat;
-        } = {}
+        } & ExportRun = {}
     ) {
         const opened = await openProject(this.recording);
 
@@ -2131,11 +2143,19 @@ export class Movie {
                       toUs: options.to === undefined ? outputDurationUs(opened.project) : timeToUs(options.to),
                   };
         requireRecorderPart("movie.export()");
+        // R5 3: progress lines in the run's log (stderr), and the caller's own callback.
+        const logged = exportProgressPrinter((line) => log.info({ recording: this.recording }, line));
         const answer = await exportAs(opened.path, {
             out: options.out,
             format: options.format,
             part,
             subtitles: options.subtitles,
+            overwrite: options.overwrite,
+            size: options.size,
+            onProgress: (fraction) => {
+                logged(fraction);
+                options.onProgress?.(fraction);
+            },
         });
 
         if (!answer.ok || !answer.path) {
@@ -2158,6 +2178,7 @@ export class Movie {
             width: info.width,
             height: info.height,
             renderSeconds: answer.seconds,
+            ...(answer.replaced ? { replaced: true } : {}),
             ...(answer.subtitles ? { subtitles: answer.subtitles } : {}),
             ...(answer.chapters ? { chapters: answer.chapters } : {}),
             ...(warnings.length ? { warnings } : {}),

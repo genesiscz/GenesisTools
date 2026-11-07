@@ -122,11 +122,29 @@ export async function hostSheet(request: { path: string; times: number[]; out?: 
     }
 }
 
-export async function hostExport(path: string, out?: string): Promise<ExportAnswer> {
+/**
+ * Renders an edit into `out` (absent: a free name beside the movie). R5 3: `size` fixes the picture's pixels (one
+ * side, or both in the movie's shape), and `onProgress` gets the share done as the host reports it.
+ */
+export async function hostExport({
+    path,
+    out,
+    size,
+    onProgress,
+}: {
+    path: string;
+    out?: string;
+    size?: { width?: number; height?: number };
+    onProgress?: (fraction: number) => void;
+}): Promise<ExportAnswer> {
     try {
-        return await recorderHost().call("render.export", { path, ...(out ? { out } : {}) });
+        return await recorderHost().call(
+            "render.export",
+            { path, ...(out ? { out } : {}), ...(size ? { size } : {}) },
+            onProgress ? { onProgress: (update) => onProgress(update.fraction ?? 0) } : {}
+        );
     } catch (error) {
-        log.debug({ error, path, out }, "the export was refused");
+        log.debug({ error, path, out, size }, "the export was refused");
         return { ok: false, error: message(error) };
     }
 }

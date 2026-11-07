@@ -229,6 +229,17 @@ export type EditRedaction = z.infer<typeof redactionSchema>;
 export const redactionJoinsSchema = z.object({ snapMs: z.number().int().min(0).max(2000).default(250) });
 export const REDACTION_SNAP_MS = 250;
 
+// R5 3 export size
+export const exportSizeSchema = z.object({
+    width: z.number().int().min(16).max(8192).optional(),
+    height: z.number().int().min(16).max(8192).optional(),
+});
+
+/** `{ size }` when it names a side, else nothing (an empty size is "follow maxHeight"). */
+function exportSizeOf(size: z.infer<typeof exportSizeSchema> | undefined) {
+    return size && (size.width !== undefined || size.height !== undefined) ? { size } : {};
+}
+
 /**
  * Corrections to the cached transcript, kept in the edit so a new transcription does not lose them: the fixed text
  * of a line by its start in source milliseconds; an empty text hides the line. Captions, `transcript()`, `find()`
@@ -428,6 +439,12 @@ export const editProjectSchema = z.object({
             subtitles: z.enum(["srt", "vtt"]).optional(),
             /** The recording's markers as chapters inside an MP4; absent is on. */
             chapters: z.boolean().optional(),
+            // R5 3 export size
+            /**
+             * The exported picture's exact pixels: one side (the other follows the canvas's shape) or both in that
+             * shape. It wins over maxHeight and the H.264 frame-rate budget; absent follows maxHeight.
+             */
+            size: exportSizeSchema.optional(),
         })
         .default({ codec: "h264", maxHeight: 0, output: "" }),
     clicks: clicksSchema.optional(),
@@ -1252,6 +1269,9 @@ export const editOpSchema = z.discriminatedUnion("op", [
             subtitles: z.enum(["srt", "vtt", "none"]).optional(),
             /** The markers as chapters inside an MP4 (on unless set to false). */
             chapters: z.boolean().optional(),
+            // R5 3 export size
+            /** The picture's exact pixels, one side or both in the canvas's shape; {} goes back to maxHeight. */
+            size: exportSizeSchema.optional(),
         })
         .strict(),
     z.object({ op: z.literal("reset") }).strict(),
@@ -2349,6 +2369,8 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                     ...((op.chapters ?? project.export.chapters) === undefined
                         ? {}
                         : { chapters: op.chapters ?? project.export.chapters }),
+                    // R5 3 export size: an empty size goes back to maxHeight.
+                    ...exportSizeOf(op.size ?? project.export.size),
                     ...(op.subtitles === "none"
                         ? {}
                         : (op.subtitles ?? project.export.subtitles)

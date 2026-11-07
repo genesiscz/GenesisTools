@@ -26,8 +26,10 @@ import {
     EXPORT_FORMATS,
     type ExportFormat,
     exportAs,
+    exportProgressPrinter,
     finishExport,
     openProject,
+    parseExportSize,
     transcriptWords,
     writeSubtitles,
 } from "./lib/edit";
@@ -1226,11 +1228,23 @@ program
     .option("--from <time>", "export only the part from this OUTPUT time (seconds or m:ss; what plays)")
     .option("--to <time>", "export only the part up to this OUTPUT time")
     .option("--subtitles <format>", "also write the transcript beside the movie: srt or vtt")
+    // R5 3 export overwrite, size, progress
+    .option("--overwrite", "replace the file at --out (or the usual name) instead of refusing it")
+    .option("--size <WxH>", "the picture's exact pixels: 1920x1080, 1920x (width) or x1080 (height)")
     .option("--json", "the result as JSON")
     .action(
         async (
             value: string,
-            flags: { out?: string; format?: string; from?: string; to?: string; subtitles?: string; json?: boolean }
+            flags: {
+                out?: string;
+                format?: string;
+                from?: string;
+                to?: string;
+                subtitles?: string;
+                json?: boolean;
+                overwrite?: boolean;
+                size?: string;
+            }
         ) => {
             try {
                 await ensureRecorderPart((line) => out.printlnErr(line));
@@ -1249,6 +1263,10 @@ program
                     format: flags.format === undefined ? undefined : parseFormat(flags.format),
                     part,
                     subtitles: flags.subtitles === undefined ? undefined : parseSubtitleFormat(flags.subtitles),
+                    overwrite: flags.overwrite,
+                    size: flags.size === undefined ? undefined : parseExportSize(flags.size),
+                    // Progress on stderr every 10 %, so a long export shows it is alive (stdout stays the result).
+                    onProgress: exportProgressPrinter((line) => out.printlnErr(line)),
                 });
 
                 if (flags.json) {
@@ -1256,7 +1274,7 @@ program
                 } else {
                     out.println(
                         answer.ok
-                            ? `${answer.path} (${answer.bytes} bytes, ${answer.seconds} s${answer.chapters ? `, ${answer.chapters} chapters` : ""})${answer.subtitles ? `\n${answer.subtitles}` : ""}`
+                            ? `${answer.path} (${answer.bytes} bytes, ${answer.seconds} s${answer.chapters ? `, ${answer.chapters} chapters` : ""}${answer.replaced ? ", replaced the old file" : ""})${answer.subtitles ? `\n${answer.subtitles}` : ""}`
                             : `error: ${answer.error}`
                     );
 

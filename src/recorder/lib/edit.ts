@@ -938,6 +938,95 @@ export function defaultExportName(video: string): string {
     return safe || `${basename(video, extname(video))}-edited`;
 }
 
+// R5 3 export overwrite, progress, size
+/** The export's own settings for one run, beside where it goes. */
+export interface ExportRun {
+    /** Replace the file at the target instead of refusing it; the new movie is written beside it and moved over it. */
+    overwrite?: boolean;
+    /** The exported picture's exact size in pixels: one side, the other follows the movie's (or the frame's) shape. */
+    size?: { width?: number; height?: number };
+    /** The share done (0 to 1), about once a percent while the movie renders. */
+    onProgress?: (fraction: number) => void;
+}
+
+/** "1920x1080", "1920x" (a width) or "x1080" (a height), as `--size` takes it. */
+export function parseExportSize(raw: string): { width?: number; height?: number } {
+    const match = /^\s*(\d*)\s*[xX×]\s*(\d*)\s*$/.exec(raw);
+    const width = match?.[1] ? Number(match[1]) : undefined;
+    const height = match?.[2] ? Number(match[2]) : undefined;
+
+    if (!match || (width === undefined && height === undefined)) {
+        throw new Error(`--size takes WIDTHxHEIGHT, WIDTHx or xHEIGHT in pixels (got "${raw}")`);
+    }
+
+    for (const side of [width, height]) {
+        if (side !== undefined && (side < 16 || side > 8192)) {
+            throw new Error(`a --size side is 16 to 8192 pixels (got "${raw}")`);
+        }
+    }
+
+    return { ...(width !== undefined ? { width } : {}), ...(height !== undefined ? { height } : {}) };
+}
+
+/** An onProgress that hands `print` one line per 10 % ("export 30%"). */
+export function exportProgressPrinter(print: (line: string) => void): (fraction: number) => void {
+    let shown = -1;
+    return (fraction) => {
+        const tenth = Math.floor(Math.min(1, Math.max(0, fraction)) * 10);
+
+        if (tenth > shown) {
+            shown = tenth;
+            print(`export ${tenth * 10}%`);
+        }
+    };
+}
+
+/** `<default name>.<ext>` beside the source movie: the name an overwriting export replaces. */
+function defaultOutput(video: string, extension: string): string {
+    return `${join(dirname(video), defaultExportName(video))}.${extension}`;
+}
+
+/**
+ * Renders into `target`. Without `overwrite` an existing target is refused before any work. With it the movie is
+ * rendered into a hidden file beside the target and moved over it in one step, so a failed render leaves the old file.
+ */
+export async function renderInto({
+    target,
+    overwrite,
+    render,
+}: {
+    target: string;
+    overwrite?: boolean;
+    render: (out: string) => Promise<ExportAnswer>;
+}): Promise<ExportAnswer & { replaced?: boolean }> {
+    const exists = existsSync(target);
+
+    if (exists && !overwrite) {
+        return {
+            ok: false,
+            error: `${target} exists already; the export never overwrites a file unless asked (overwrite: true, --overwrite)`,
+        };
+    }
+
+    if (!overwrite) {
+        return render(target);
+    }
+
+    const staging = join(dirname(target), `.${basename(target, extname(target))}.rendering${extname(target)}`);
+    // A staging file is only ever this function's own leftover from a run that died before its move.
+    await rm(staging, { force: true });
+    const answer = await render(staging);
+
+    if (!answer.ok || !answer.path) {
+        await rm(staging, { force: true });
+        return answer;
+    }
+
+    await rename(answer.path, target);
+    log.debug({ target, replaced: exists }, "the export moved over its target");
+    return { ...answer, path: target, ...(exists ? { replaced: true } : {}) };
+}
+
 /** `<default name>.<ext>` beside the source movie, or `-2`, `-3`…: an export never overwrites a file. */
 function freeOutput(video: string, extension: string): string {
     const stem = join(dirname(video), defaultExportName(video));
@@ -1180,8 +1269,8 @@ export async function exportAs(
         part?: { fromUs: number; toUs: number };
         /** A subtitle file beside the export; absent is the edit's export.subtitles. */
         subtitles?: SubtitleFormat;
-    } = {}
-): Promise<ExportAnswer & { subtitles?: string; chapters?: number; warnings?: string[] }> {
+    } & ExportRun = {}
+): Promise<ExportAnswer & { subtitles?: string; chapters?: number; warnings?: string[]; replaced?: boolean }> {
     if (options.part) {
         // A part is a trimmed copy of the edit in a scratch folder; the edit on disk stays as it is.
         const whole = await openProject(value);
@@ -1197,6 +1286,9 @@ export async function exportAs(
                 out: options.out,
                 format: options.format ?? whole.project.export.format,
                 subtitles: options.subtitles ?? whole.project.export.subtitles,
+                overwrite: options.overwrite,
+                size: options.size,
+                onProgress: options.onProgress,
             });
         } finally {
             await rm(scratch, { recursive: true, force: true });
@@ -1214,20 +1306,41 @@ export async function exportAs(
 
     const subtitles = options.subtitles ?? opened.project.export.subtitles;
 
+    const host = { size: options.size, onProgress: options.onProgress };
+
     if (asked === "mp4") {
+        const chosenMp4 = opened.project.export.output;
+        const chosenTarget = chosenMp4
+            ? join(dirname(chosenMp4), `${basename(chosenMp4, extname(chosenMp4))}.mp4`)
+            : "";
+        // Without out or overwrite the renderer picks a free name ("-2", "-3"); overwrite replaces the usual one.
+        const target = options.out
+            ? resolve(options.out)
+            : options.overwrite
+              ? chosenTarget || defaultOutput(opened.project.source.video, "mp4")
+              : undefined;
+
         if (opened.project.audio.denoise) {
-            const chosenMp4 = opened.project.export.output;
-            const out = options.out
-                ? resolve(options.out)
-                : chosenMp4 || freeOutput(opened.project.source.video, "mp4");
             return finishExport({
                 value,
-                answer: await withDenoisedSource(opened, (render) => hostExport(render, out)),
+                answer: await renderInto({
+                    target: target ?? (chosenTarget || freeOutput(opened.project.source.video, "mp4")),
+                    overwrite: options.overwrite,
+                    render: (to) => withDenoisedSource(opened, (edit) => hostExport({ path: edit, out: to, ...host })),
+                }),
                 subtitles,
             });
         }
 
-        return finishExport({ value, answer: await hostExport(resolveRecording(value), options.out), subtitles });
+        const recording = resolveRecording(value);
+        const answer = target
+            ? await renderInto({
+                  target,
+                  overwrite: options.overwrite,
+                  render: (to) => hostExport({ path: recording, out: to, ...host }),
+              })
+            : await hostExport({ path: recording, ...host });
+        return finishExport({ value, answer, subtitles });
     }
 
     const format = asked;
@@ -1244,31 +1357,40 @@ export async function exportAs(
           ? join(dirname(chosen), `${basename(chosen, extname(chosen))}.${format}`)
           : freeOutput(opened.project.source.video, format);
 
-    if (existsSync(output)) {
-        return { ok: false, error: `${output} exists already; the export never overwrites a file` };
+    if (existsSync(output) && !options.overwrite) {
+        return {
+            ok: false,
+            error: `${output} exists already; the export never overwrites a file unless asked (overwrite: true, --overwrite)`,
+        };
     }
 
     const started = performance.now();
     const scratch = await mkdtemp(join(tmpdir(), "recorder-export-"));
 
     try {
-        const movie = await withDenoisedSource(opened, (render) => hostExport(render, join(scratch, "render.mp4")));
+        const movie = await withDenoisedSource(opened, (render) =>
+            hostExport({ path: render, out: join(scratch, "render.mp4"), ...host })
+        );
+        const rendered = movie.path;
 
-        if (!movie.ok || !movie.path) {
+        if (!movie.ok || !rendered) {
             return movie;
         }
 
-        await runVideoCommand({
-            command: exportVideoArgv({ input: movie.path, output, format }),
-            timeoutMs: 30 * 60_000,
+        const answer = await renderInto({
+            target: output,
+            overwrite: options.overwrite,
+            render: async (to) => {
+                await runVideoCommand({
+                    command: exportVideoArgv({ input: rendered, output: to, format }),
+                    timeoutMs: 30 * 60_000,
+                });
+                const bytes = (await stat(to)).size;
+                log.debug({ output: to, format, bytes }, "converted the export");
+                return { ok: true, path: to, bytes, seconds: Math.round((performance.now() - started) / 10) / 100 };
+            },
         });
-        const bytes = (await stat(output)).size;
-        log.debug({ output, format, bytes }, "converted the export");
-        return finishExport({
-            value,
-            answer: { ok: true, path: output, bytes, seconds: Math.round((performance.now() - started) / 10) / 100 },
-            subtitles,
-        });
+        return finishExport({ value, answer, subtitles });
     } finally {
         await rm(scratch, { recursive: true, force: true });
     }

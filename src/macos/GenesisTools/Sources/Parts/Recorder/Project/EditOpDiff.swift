@@ -188,6 +188,8 @@ enum EditOpDiff {
         if a.format != b.format { op.format = b.format ?? .mp4 }
         if a.subtitles != b.subtitles { op.subtitles = b.subtitles?.rawValue ?? "none" }
         if a.chapters != b.chapters { op.chapters = b.chapters ?? true }
+        // R5 3 export size
+        if a.size != b.size { op.size = b.size ?? EditProject.OutputSize() }
         return op
     }
 

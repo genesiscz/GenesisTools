@@ -10,7 +10,7 @@ import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-
 import { applyOp, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
-import { withEditCancel } from "./edit";
+import { exportProgressPrinter, parseExportSize, renderInto, withEditCancel } from "./edit";
 import { EditSessions } from "./edit-session";
 import { displaySwitchDepth, keepingSwitchStep, keptPlan, stepDisplaySwitch } from "./frames-movie";
 import {
@@ -852,4 +852,56 @@ it("cancelled queued undo and redo preserve history and the project", async () =
     expect(session.current.project.audio.volume).toBe(0.4);
     sessions.release(path);
     expect(SafeJSON.parse(readFileSync(path, "utf8")).audio.volume).toBe(0.4);
+});
+
+// R5 3: an export retry needed a move-aside, which left an unredacted plain export in the project.
+describe("an export into a file that exists", () => {
+    const fakeRender = (bytes: string) => async (out: string) => {
+        writeFileSync(out, bytes);
+        return { ok: true, path: out, bytes: bytes.length, seconds: 0.1 };
+    };
+
+    it("is refused before any work without overwrite, and replaced in one step with it", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "r5-export-"));
+        const target = join(folder, "demo.mp4");
+        writeFileSync(target, "old");
+        let rendered = 0;
+        const refused = await renderInto({
+            target,
+            render: async (out) => {
+                rendered++;
+                return fakeRender("new")(out);
+            },
+        });
+        expect(refused.ok).toBe(false);
+        expect(refused.error).toContain("overwrite: true, --overwrite");
+        expect(rendered).toBe(0);
+        const replaced = await renderInto({ target, overwrite: true, render: fakeRender("new") });
+        expect(replaced).toMatchObject({ ok: true, path: target, replaced: true });
+        expect(readFileSync(target, "utf8")).toBe("new");
+        expect(existsSync(join(folder, ".demo.rendering.mp4"))).toBe(false);
+        // A failed render leaves the old file as it was.
+        const failed = await renderInto({
+            target,
+            overwrite: true,
+            render: async () => ({ ok: false, error: "boom" }),
+        });
+        expect(failed.ok).toBe(false);
+        expect(readFileSync(target, "utf8")).toBe("new");
+        rmSync(folder, { recursive: true, force: true });
+    });
+
+    it("reads --size as one side or both, and prints progress once per 10 %", () => {
+        expect(parseExportSize("1920x1080")).toEqual({ width: 1920, height: 1080 });
+        expect(parseExportSize("x1080")).toEqual({ height: 1080 });
+        expect(parseExportSize("1280x")).toEqual({ width: 1280 });
+        expect(() => parseExportSize("big")).toThrow("WIDTHxHEIGHT");
+        expect(() => parseExportSize("4x4")).toThrow("16 to 8192");
+        const lines: string[] = [];
+        const progress = exportProgressPrinter((line) => lines.push(line));
+        for (const fraction of [0, 0.01, 0.05, 0.1, 0.11, 0.5, 0.99, 1]) {
+            progress(fraction);
+        }
+        expect(lines).toEqual(["export 0%", "export 10%", "export 50%", "export 90%", "export 100%"]);
+    });
 });

@@ -656,8 +656,10 @@ export function sheetOfEdit(request: { path: string; times: number[]; out: strin
     return runRecorderFace({ argv: sheetArgv(request), schema: sheetAnswerSchema, what: "sheet" });
 }
 
-export function exportArgv(path: string, out?: string): string[] {
-    return ["--recorder", "--export", path, "--json", ...(out ? ["--out", resolve(out)] : [])];
+export function exportArgv(path: string, out?: string, size?: { width?: number; height?: number }): string[] {
+    // R5 3 export size: "--size 1280x720", "--size 1280x" or "--size x720".
+    const sized = size ? ["--size", `${size.width ?? ""}x${size.height ?? ""}`] : [];
+    return ["--recorder", "--export", path, "--json", ...(out ? ["--out", resolve(out)] : []), ...sized];
 }
 
 /**

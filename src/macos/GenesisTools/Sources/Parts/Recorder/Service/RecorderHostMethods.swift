@@ -71,8 +71,12 @@ enum RecorderHostMethods {
             "render.export": method { request in
                 let params = Params(request)
                 var percent = -1
+                // R5 3 export size
+                let size = (request.object["size"] as? [String: Any]).map {
+                    EditProject.OutputSize(width: ($0["width"] as? NSNumber)?.intValue, height: ($0["height"] as? NSNumber)?.intValue)
+                }
                 let result = try await RecorderRenders.export(source: try params.path("path"), out: try params.optionalPath("out"),
-                                                              isCancelled: { request.isCancelled }) { fraction in
+                                                              size: size, isCancelled: { request.isCancelled }) { fraction in
                     let now = Int(fraction * 100)
                     guard now != percent else { return }
                     percent = now
