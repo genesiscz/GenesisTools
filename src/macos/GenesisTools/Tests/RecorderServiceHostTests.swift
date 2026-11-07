@@ -406,6 +406,16 @@ final class RecorderServiceHostTests: XCTestCase {
         XCTAssertEqual(stopped["result"] as? [String: Bool], ["stopped": true])
     }
 
+    /// A sheet of portrait phone frames is a wide grid, not three tall columns (12 frames were 1952 x 5616 pixels).
+    func testContactSheetColumnsFollowTheFrameShape() {
+        XCTAssertEqual(ContactSheet.columns(count: 12, frameWidth: 496, frameHeight: 1080), 7)
+        XCTAssertEqual(ContactSheet.columns(count: 48, frameWidth: 496, frameHeight: 1080), 14)
+        XCTAssertEqual(ContactSheet.columns(count: 12, frameWidth: 1920, frameHeight: 1080), 3)
+        XCTAssertEqual(ContactSheet.columns(count: 1, frameWidth: 1920, frameHeight: 1080), 1)
+        XCTAssertEqual(ContactSheet.columns(count: 6, frameWidth: 496, frameHeight: 1080, requested: 2), 2)
+        XCTAssertEqual(ContactSheet.columns(count: 3, frameWidth: 496, frameHeight: 1080, requested: 10), 3)
+    }
+
     func testRenderStillAndSheetAnswerTheHeadlessFields() async throws {
         let movie = folder.appendingPathComponent("screen.mp4")
         try await makeMovie(at: movie, frames: 60)
@@ -420,9 +430,15 @@ final class RecorderServiceHostTests: XCTestCase {
         XCTAssertNotNil(NSImage(contentsOfFile: stillOut), "the still is a picture")
         let sheetOut = folder.appendingPathComponent("sheet.png").path
         let sheet = try await result(41, "render.sheet", ["path": movie.path, "times": [0.5, 1, 1.5], "out": sheetOut])
-        XCTAssertEqual(Set(sheet.keys), ["ok", "path", "width", "height", "times"])
-        XCTAssertEqual((sheet["width"] as? NSNumber)?.intValue, ContactSheet.columns * ContactSheet.tileWidth + (ContactSheet.columns + 1) * ContactSheet.gap)
+        XCTAssertEqual(Set(sheet.keys), ["ok", "path", "width", "height", "times", "columns"])
+        // Three 16:10 frames: two columns make the sheet closest to 16:9.
+        XCTAssertEqual((sheet["columns"] as? NSNumber)?.intValue, 2)
+        XCTAssertEqual((sheet["width"] as? NSNumber)?.intValue, 2 * ContactSheet.tileWidth + 3 * ContactSheet.gap)
         XCTAssertEqual(sheet["times"] as? [Double], [0.5, 1, 1.5])
+        let column = try await result(44, "render.sheet", ["path": movie.path, "times": [0.5, 1], "columns": 1,
+                                                           "out": folder.appendingPathComponent("column.png").path])
+        XCTAssertEqual((column["columns"] as? NSNumber)?.intValue, 1)
+        XCTAssertEqual((column["width"] as? NSNumber)?.intValue, ContactSheet.tileWidth + 2 * ContactSheet.gap)
         let noTimes = try await refusal(42, "render.sheet", ["path": movie.path, "times": []])
         XCTAssertEqual(noTimes, -32602)
         let missing = try await refusal(43, "render.still", ["path": folder.appendingPathComponent("none.mp4").path])

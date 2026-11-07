@@ -66,7 +66,8 @@ enum RecorderHostMethods {
                 let params = Params(request)
                 let times = (request.object["times"] as? [Any])?.compactMap { ($0 as? NSNumber)?.doubleValue } ?? []
                 guard !times.isEmpty else { throw invalid("render.sheet needs times: a list of output seconds") }
-                return try await RecorderRenders.sheet(source: try params.path("path"), times: times, out: try params.optionalPath("out"))
+                return try await RecorderRenders.sheet(source: try params.path("path"), times: times, out: try params.optionalPath("out"),
+                                                       columns: params.int("columns"))
             },
             "render.export": method { request in
                 let params = Params(request)

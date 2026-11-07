@@ -50,6 +50,8 @@ struct RecorderRequest {
     /// `--sheet <edit> --times <s,s,…> --out <png>`: those frames of the edit on one picture, each with its time.
     var sheet: String?
     var times: [Double] = []
+    /// `--columns <n>` with `--sheet`: the grid's columns (absent: by the frames' shape).
+    var columns: Int?
     /// `--full` with `--still`: the frame at the export's size (a poster), not the 1080 pixel preview.
     var full = false
     /// `--picker`: the capture picker (with `--snapshot`, a picture of it over made-up targets).
@@ -102,6 +104,7 @@ struct RecorderRequest {
             case "--size":
                 let sides = (value() ?? "").split(separator: "x", omittingEmptySubsequences: false).map { Int($0) }
                 if sides.count == 2 { request.exportSize = EditProject.OutputSize(width: sides[0], height: sides[1]) }
+            case "--columns": request.columns = value().flatMap { Int($0) }
             default: break
             }
             index += 1
@@ -123,7 +126,7 @@ package func runRecorder(_ args: [String]) -> Never {
         runHeadlessStill(source: still, atSeconds: request.atSeconds ?? 0, out: request.out, full: request.full)
     }
     if let sheet = request.sheet {
-        runHeadlessSheet(source: sheet, times: request.times, out: request.out)
+        runHeadlessSheet(source: sheet, times: request.times, out: request.out, columns: request.columns)
     }
     if let snapshot = request.snapshot {
         runSnapshot(request, to: snapshot)
@@ -517,10 +520,10 @@ private func runHeadlessStill(source: String, atSeconds: Double, out: String?, f
     runHeadlessJSON { try await RecorderRenders.still(source: source, atSeconds: atSeconds, out: out, full: full) }
 }
 
-/// Frames of the edit as it exports, on one picture in rows of three, each labelled with its output time: one look
-/// at a whole edit for an agent. The movie is built once and every frame comes from the same generator.
-private func runHeadlessSheet(source: String, times: [Double], out: String?) -> Never {
-    runHeadlessJSON { try await RecorderRenders.sheet(source: source, times: times, out: out) }
+/// Frames of the edit as it exports, on one grid picture, each labelled with its time: one look at a whole edit for
+/// an agent. The movie is built once and every frame comes from the same generator.
+private func runHeadlessSheet(source: String, times: [Double], out: String?, columns: Int?) -> Never {
+    runHeadlessJSON { try await RecorderRenders.sheet(source: source, times: times, out: out, columns: columns) }
 }
 
 /// Runs one render with no window, prints its answer (or `{ ok: false, error }`) as one JSON line, and exits.
@@ -542,17 +545,30 @@ private func runHeadlessJSON(_ render: @escaping () async throws -> [String: Any
     exit(0)
 }
 
-/// A grid of frames, each with its output time on a dark plate in its corner.
+/// A grid of frames, each with its time on a dark plate in its corner.
 enum ContactSheet {
-    static let columns = 3
-    /// Each tile's width; the height follows the movie's shape.
+    /// The widest a tile gets; a sheet of many cells uses smaller tiles so the whole sheet stays readable when scaled.
     static let tileWidth = 640
+    /// The narrowest a tile gets, so 48 cells still show their content.
+    static let minTileWidth = 240
+    /// The sheet's widest side in pixels: a viewer scales a larger picture down until its text is unreadable.
+    static let maxSheetWidth = 3840
     static let gap = 8
 
-    static func draw(frames: [(seconds: Double, image: CGImage)]) -> CGImage {
+    /// The columns of a sheet of `count` frames of this shape: `requested`, else as close to a 16:9 sheet as whole
+    /// rows allow. Three fixed columns made 12 portrait frames 1952 x 5616 pixels, unreadable once scaled (round 5).
+    static func columns(count: Int, frameWidth: Int, frameHeight: Int, requested: Int? = nil) -> Int {
+        if let requested { return min(count, max(1, requested)) }
+        let aspect = Double(max(1, frameHeight)) / Double(max(1, frameWidth))
+        let ideal = (16.0 / 9.0 * Double(count) * aspect).squareRoot()
+        return min(count, max(1, Int(ideal.rounded())))
+    }
+
+    static func draw(frames: [(seconds: Double, image: CGImage)], columns requested: Int? = nil) -> CGImage {
         let first = frames[0].image
+        let columns = Self.columns(count: frames.count, frameWidth: first.width, frameHeight: first.height, requested: requested)
+        let tileWidth = max(minTileWidth, min(Self.tileWidth, (maxSheetWidth - (columns + 1) * gap) / columns))
         let tileHeight = max(1, Int((Double(tileWidth) * Double(first.height) / Double(max(1, first.width))).rounded()))
-        let columns = min(columns, frames.count)
         let rows = (frames.count + columns - 1) / columns
         let width = columns * tileWidth + (columns + 1) * gap
         let height = rows * tileHeight + (rows + 1) * gap
