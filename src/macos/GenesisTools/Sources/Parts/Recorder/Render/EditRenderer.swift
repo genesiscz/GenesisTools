@@ -327,15 +327,26 @@ enum Declick {
     }
 
     /// Each cut as a ramp down to silence over the 25 ms before it and back up over the 25 ms after; cuts closer than
-    /// that share their silence. Volumes are factors of the track's own volume. Measured on a 440 Hz tone: a 10 ms
-    /// ramp left the cut at 65 % (the mix applies ramps coarsely), 25 ms brings it to 6 %.
+    /// 50 ms share one silence from the first to the last. Volumes are factors of the track's own volume. Measured on a
+    /// 440 Hz tone: a 10 ms ramp left the cut at 65 % (the mix applies ramps coarsely), 25 ms brings it to 6 %.
+    /// The ramps never overlap: AVFoundation raises an Objective-C exception for an overlapping ramp, which crashed the
+    /// editor on two cuts 10 ms apart (or a clip so short it plays for 0 µs, whose two cuts fall on one time).
     static func ramps(at cuts: [Int64], lengthUs: Int64) -> [(startUs: Int64, endUs: Int64, from: Double, to: Double)] {
+        var groups: [(start: Int64, end: Int64)] = []
+        for cut in Set(cuts.map { min(max(0, $0), lengthUs) }).sorted() {
+            if let last = groups.last, cut - last.end < halfUs * 2 {
+                groups[groups.count - 1].end = cut
+            } else {
+                groups.append((cut, cut))
+            }
+        }
         var ramps: [(startUs: Int64, endUs: Int64, from: Double, to: Double)] = []
-        for cut in cuts {
-            let down = max(ramps.last?.endUs ?? 0, cut - halfUs)
-            if cut > down { ramps.append((down, cut, 1, 0)) }
-            let up = min(lengthUs, cut + halfUs)
-            if up > cut { ramps.append((cut, up, 0, 1)) }
+        for group in groups {
+            let down = max(ramps.last?.endUs ?? 0, group.start - halfUs)
+            if group.start > down { ramps.append((down, group.start, 1, 0)) }
+            if group.end > group.start { ramps.append((group.start, group.end, 0, 0)) }
+            let up = min(lengthUs, group.end + halfUs)
+            if up > group.end { ramps.append((group.end, up, 0, 1)) }
         }
         return ramps
     }
