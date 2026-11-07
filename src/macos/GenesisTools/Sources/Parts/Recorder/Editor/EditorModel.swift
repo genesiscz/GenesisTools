@@ -206,8 +206,7 @@ final class EditorModel {
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.clock.outUs = Int64((time.seconds * 1_000_000).rounded())
-                self.isPlaying = self.player.rate != 0
+                self.playbackTick(outUs: Int64((time.seconds * 1_000_000).rounded()), playing: self.player.rate != 0)
             }
         }
         store.onExternalChange = { [weak self] next in self?.fileChanged(next) }
@@ -241,6 +240,25 @@ final class EditorModel {
     var durationUs: Int64 { project.outputDurationUs }
 
     // MARK: - Playback
+
+    /// The player's time, 30 times a second while it plays. Each write of `clock.outUs` runs a SwiftUI update and a
+    /// layout of the whole window, so a playing tick writes only when the screen would
+    /// show it: the clock's tenth of a second, or the playhead a point further at the timeline's scale. A fitted 37-minute
+    /// meeting moves its playhead a point every 1.7 s, so 2 ticks in 3 drew nothing. A pause, a seek and a stopped
+    /// player always write the exact time.
+    func playbackTick(outUs: Int64, playing: Bool) {
+        let scale = pointsPerSecond > 0 ? pointsPerSecond : fittedPointsPerSecond
+        if !playing || isPlaying != playing || Self.tickShows(from: clock.outUs, to: outUs, pointsPerSecond: scale) {
+            clock.outUs = outUs
+        }
+        isPlaying = playing
+    }
+
+    /// True when the clock label (tenths of a second, rounded down) or the playhead (a point at `pointsPerSecond`) moves.
+    nonisolated static func tickShows(from old: Int64, to new: Int64, pointsPerSecond: Double) -> Bool {
+        if max(0, old) / 100_000 != max(0, new) / 100_000 { return true }
+        return abs(Double(new - old)) / 1_000_000 * pointsPerSecond >= 1
+    }
 
     func togglePlay() {
         if player.rate != 0 {
