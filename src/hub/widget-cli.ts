@@ -1,4 +1,5 @@
 import { decisionFindArgv } from "@app/claude/lib/cmux/transcript-find";
+import { CODE_CHANGED_EXIT, onLoadedCodeChange } from "@genesiscz/utils/bun/loaded-modules";
 import { execToolInteractive, runTool } from "@genesiscz/utils/cli";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -176,12 +177,31 @@ widget
     .command("watch")
     .option("--selected <key>")
     .option("--stop-on-stdin")
+    .option(
+        "--restart-on-code-change",
+        `Exit with status ${CODE_CHANGED_EXIT} once the code this watch loaded changes, so the widget starts it again`
+    )
     .action(async (options, command) => {
         await withInterrupt(
             async (signal) => {
                 const owner = new AbortController();
                 const abort = () => owner.abort();
                 signal.addEventListener("abort", abort, { once: true });
+                // A resident watch runs the code it loaded: a later commit reaches it only through a restart. The
+                // widget passes the flag and starts the watch again on this status without an error; an older app
+                // never passes it, so it is never cut off (DECISION 47, 2026-11-07).
+                let codeChanged = false;
+                const stopCodeWatch = options.restartOnCodeChange
+                    ? onLoadedCodeChange({
+                          root: new URL("../../", import.meta.url).pathname,
+                          startedAt: Date.now(),
+                          onChanged: () => {
+                              logger.info("widget watch: its code changed since start; exiting for a restart");
+                              codeChanged = true;
+                              owner.abort();
+                          },
+                      })
+                    : () => {};
                 const selections = new Set<(key: string, decision?: { id: string; token: string }) => void>();
                 let pendingSelection: { key: string; decision?: { id: string; token: string } } | undefined;
                 const lines = new StdinLines((line) => {
@@ -223,12 +243,19 @@ widget
                         },
                     });
                 } finally {
+                    stopCodeWatch();
                     signal.removeEventListener("abort", abort);
                     process.stdin.removeListener("end", abort);
                     process.stdin.removeListener("data", lines.push);
                     if (options.stopOnStdin) {
                         process.stdin.pause();
                     }
+                }
+
+                // The widget keeps stdin open while it waits for the exit, and an open stdin keeps this process alive:
+                // measured 2026-11-07, the watch cleaned up and then waited 80 s for the pipe to close.
+                if (codeChanged) {
+                    process.exit(CODE_CHANGED_EXIT);
                 }
             },
             { handleTermination: true }
