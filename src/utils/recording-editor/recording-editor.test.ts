@@ -553,6 +553,18 @@ describe("edit project (edit.json)", () => {
         expect(project.zooms[0]).toMatchObject({ startUs: 3_000_000, endUs: 5_000_000, scale: 2, focusX: 0.3 });
     });
 
+    test("a new edit's clip has the same id every time, so an id printed before the first save still names it", () => {
+        expect(wholeProject(source).clips[0].id).toBe(wholeProject(source).clips[0].id);
+        const split = applyOp(wholeProject(source), { op: "split", at: 4 });
+        expect(new Set(split.clips.map((clip) => clip.id)).size).toBe(2);
+        const faster = applyOp(wholeProject(source), {
+            op: "clipSpeed",
+            clip: wholeProject(source).clips[0].id,
+            factor: 2,
+        });
+        expect(outputDurationUs(faster)).toBe(5_000_000);
+    });
+
     test("effect lanes: items find their lane, new lanes save in order, and a removed lane hands its items on", () => {
         const rect = { x: 0.1, y: 0.1, width: 0.2, height: 0.2 };
         let project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 2 });

@@ -376,9 +376,13 @@ extension EditProject {
     static func whole(video: String, durationUs: Int64, width: Int, height: Int, cursor: String?, recording: String?) -> EditProject {
         EditProject(
             source: Source(video: video, cursor: cursor, recording: recording, durationUs: durationUs, width: width, height: height),
-            clips: [Clip(id: newID("c"), fromUs: 0, toUs: durationUs)]
+            clips: [Clip(id: wholeClipID, fromUs: 0, toUs: durationUs)]
         )
     }
+
+    /// A new edit's one clip has the same id in every process (WHOLE_CLIP_ID in src/utils/recording-editor/project.ts),
+    /// so an op this window sends for an edit not saved yet names the clip the recorder service made for it too.
+    static let wholeClipID = "c00000000"
 
     static func newID(_ prefix: String) -> String {
         prefix + String(UUID().uuidString.prefix(8)).lowercased()

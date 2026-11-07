@@ -413,9 +413,16 @@ export function projectPathFor(video: string): string {
     return join(folder, `${basename(video, extname(video))}.edit.json`);
 }
 
+/**
+ * The id of a new edit's one clip. It is the same in every process (here and the editor's EditProject.whole), so a
+ * clip id that `tools recorder project` printed for an edit not saved yet still names that clip in the next command;
+ * a random one changed on every call ("clipSpeed refused: no clip c1…; clips: c2…"). Later clips get random ids.
+ */
+export const WHOLE_CLIP_ID = "c00000000";
+
 /** A project that keeps the whole movie, as a new edit starts. */
 export function wholeProject(source: EditProject["source"]): EditProject {
-    return editProjectSchema.parse({ source, clips: [{ id: newId("c"), fromUs: 0, toUs: source.durationUs }] });
+    return editProjectSchema.parse({ source, clips: [{ id: WHOLE_CLIP_ID, fromUs: 0, toUs: source.durationUs }] });
 }
 
 /** Reads an edit file; refuses a newer version instead of reading it wrongly. */
