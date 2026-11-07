@@ -34,6 +34,7 @@ import {
     wholeProject,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
+import { readFrameFolder } from "@genesiscz/utils/recording-editor/source";
 import { formatSubtitles, type SubtitleFormat, subtitleCues } from "@genesiscz/utils/recording-editor/subtitles";
 import {
     type CutMatch,
@@ -98,6 +99,16 @@ function recordedMovieName(folder: string): string | undefined {
     }
 }
 
+/** The frames `tools recorder proxy` would read (the same reader); undefined when they cannot be read. */
+function frameCountOf(folder: string): number | undefined {
+    try {
+        return readFrameFolder(folder).length;
+    } catch (error) {
+        logger.debug({ folder, error }, "the frames of a folder without a movie could not be read");
+        return undefined;
+    }
+}
+
 /** The movie a recording argument names: the folder's movie, or the movie an edit file points at. */
 function movieFor(path: string): string {
     if (path.endsWith(".json")) {
@@ -115,6 +126,11 @@ function movieFor(path: string): string {
                 throw new Error(
                     `${join(path, lost)} is missing: recording.json names it, but the file was moved or removed`
                 );
+            }
+
+            // No frames either: offering a proxy only led to "has no frames to make a movie of".
+            if (frameCountOf(path) === 0) {
+                throw new Error(`${path} has no movie and no frames: there is nothing to edit`);
             }
 
             throw new Error(`${path} has no movie yet; make one with ${toolCommand("recorder proxy", basename(path))}`);

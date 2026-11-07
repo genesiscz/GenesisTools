@@ -354,8 +354,12 @@ describe("a recording folder without its movie", () => {
         writeFileSync(join(folder, "recording.json"), '{"settings":{"kind":"video","video":{"file":"screen.mp4"}}}');
         await expect(edit.openProject(folder)).rejects.toThrow("screen.mp4 is missing: recording.json names it");
         const frames = mkdtempSync(join(tmpdir(), "frames-only-"));
-        writeFileSync(join(frames, "recording.json"), '{"settings":{"kind":"frames"}}');
+        writeFileSync(join(frames, "02-31-11-904-d1.jpg"), "a frame");
         await expect(edit.openProject(frames)).rejects.toThrow("has no movie yet; make one with");
+        // Neither a movie nor a frame: a proxy could make nothing, so it is not offered.
+        await expect(edit.openProject(mkdtempSync(join(tmpdir(), "empty-")))).rejects.toThrow(
+            "has no movie and no frames: there is nothing to edit"
+        );
     });
 });
 
