@@ -29,10 +29,10 @@ import { editProject, readUndoSteps, undoEdit } from "./edit";
 import { EditSession, EditSessions, type ProjectChanged } from "./edit-session";
 import type { HeadlessDeps } from "./host";
 import { EDITOR_TABS, shortRecordingId } from "./library";
-import { applyEdit, redoLastEdit, serviceRoutedMovie, undoLastEdit } from "./movie-client";
+import { applyEdit, redoLastEdit, sendOnce, serviceRoutedMovie, undoLastEdit } from "./movie-client";
 import { editorGolden, protocolJsonSchemas, screenHitOpsFixture } from "./protocol-fixtures";
 import { type RecorderService, type RecorderServiceOptions, startRecorderService } from "./service";
-import { hostCloseEditor, hostStill, ServiceHost } from "./service-client";
+import { hostCloseEditor, hostStill, ServiceConnectionLost, ServiceHost, withServiceClient } from "./service-client";
 import {
     HOST_METHODS,
     hostApi,
@@ -1337,3 +1337,112 @@ describe("the inspector tabs", () => {
 });
 
 export type { RecorderService };
+
+describe("a connection to the service that closes under a call", () => {
+    /** A server that answers hello, then closes the connection at the next request. */
+    function droppingServer(): { socket: string; stop: () => void } {
+        const socket = join(mkdtempSync(join(tmpdir(), "rs-drop-")), "s.sock");
+        const server = Bun.listen({
+            unix: socket,
+            socket: {
+                data: (connection, chunk) => {
+                    for (const line of chunk.toString().split("\n").filter(Boolean)) {
+                        const request = SafeJSON.parse(line, { strict: true }) as { id: number; method: string };
+
+                        if (request.method === "hello") {
+                            connection.write(`${SafeJSON.stringify({ jsonrpc: "2.0", id: request.id, result: {} })}\n`);
+                        } else {
+                            connection.end();
+                        }
+                    }
+                },
+            },
+        });
+        return { socket, stop: () => server.stop(true) };
+    }
+
+    function editFile(): string {
+        const folder = mkdtempSync(join(tmpdir(), "rs-drop-edit-"));
+        const path = join(folder, "screen.edit.json");
+        writeProject(
+            path,
+            wholeProject({ video: join(folder, "screen.mp4"), durationUs: 5_000_000, width: 64, height: 64 })
+        );
+        return path;
+    }
+
+    const entryOf = (socket: string) => ({ socket }) as Parameters<typeof withServiceClient>[0];
+
+    test("withServiceClient says whether the call left: a refused socket is not sent, a close under a call is", async () => {
+        const missing = await withServiceClient(entryOf(join(tmpdir(), "no-such.sock")), async () => 1).catch(
+            (error: unknown) => error
+        );
+        expect(missing).toBeInstanceOf(ServiceConnectionLost);
+        expect(missing).toMatchObject({ sent: false });
+        const server = droppingServer();
+
+        try {
+            const dropped = await withServiceClient(entryOf(server.socket), (client) => client.call("movie.cut")).catch(
+                (error: unknown) => error
+            );
+            expect(dropped).toBeInstanceOf(ServiceConnectionLost);
+            expect(dropped).toMatchObject({ sent: true });
+        } finally {
+            server.stop();
+        }
+    });
+
+    test("sendOnce sends an edit again when the edit did not move, and refuses with a clear error when it did", async () => {
+        const path = editFile();
+        const nowhere = mkdtempSync(join(tmpdir(), "rs-none-"));
+        const entry = entryOf(join(nowhere, "gone.sock"));
+        let localRuns = 0;
+        const again = await sendOnce({
+            what: "movie.cut",
+            recording: path,
+            dir: nowhere,
+            entry,
+            send: async () => {
+                throw new ServiceConnectionLost(true, "the recorder service closed the connection");
+            },
+            local: async () => {
+                localRuns++;
+                return "done here";
+            },
+        });
+        expect(again).toBe("done here");
+        expect(localRuns).toBe(1);
+
+        const moved = sendOnce({
+            what: "movie.cut",
+            recording: path,
+            dir: nowhere,
+            entry,
+            send: async () => {
+                // The service saved the edit, then the connection closed before its answer.
+                writeProject(path, readProject(path));
+                throw new ServiceConnectionLost(true, "the recorder service closed the connection");
+            },
+            local: async () => {
+                localRuns++;
+                return "twice";
+            },
+        });
+        await expect(moved).rejects.toThrow("so it was not sent again: info() shows whether it took effect");
+        expect(localRuns).toBe(1);
+
+        const twice = sendOnce({
+            what: "movie.cut",
+            recording: path,
+            dir: nowhere,
+            entry,
+            send: async () => {
+                throw new ServiceConnectionLost(false, "ECONNREFUSED");
+            },
+            local: async () => {
+                throw new ServiceConnectionLost(false, "ECONNREFUSED again");
+            },
+        });
+        await expect(twice).rejects.toThrow("closed twice (ECONNREFUSED; then ECONNREFUSED again)");
+    });
+});

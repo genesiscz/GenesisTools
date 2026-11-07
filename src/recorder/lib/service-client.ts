@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { RpcError } from "@genesiscz/utils/rpc/errors";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { HeadlessHost, type HostCallContext, hostAnswer, type RecorderHost } from "./host";
 import type { EditorPlace, ExportAnswer, SheetAnswer, SheetRequest, StillAnswer, StillRequest } from "./library";
@@ -7,6 +8,7 @@ import {
     type HostMethod,
     type HostParams,
     type HostResult,
+    hostMethod,
     readLiveService,
     SERVICE_PROTOCOL,
     type ServiceEntry,
@@ -14,20 +16,53 @@ import {
 
 const { log } = logger.scoped("recorder-service-client");
 
+/**
+ * The connection to the recorder service ended without an answer: `sent` false when the call never left (the socket
+ * did not take the connection, or it closed during `hello`), true when it closed while the call ran, so the call may
+ * or may not have taken effect. An error the service answered is an RpcError, never this.
+ */
+export class ServiceConnectionLost extends Error {
+    constructor(
+        readonly sent: boolean,
+        readonly reason: string
+    ) {
+        super(`the connection to the recorder service closed${sent ? " while the call ran" : ""}: ${reason}`);
+        this.name = "ServiceConnectionLost";
+    }
+}
+
 /** Connects to the service as a client (`hello`), runs `work`, and closes. */
 export async function withServiceClient<T>(
     entry: ServiceEntry,
     work: (client: RpcSocketClient) => Promise<T>
 ): Promise<T> {
-    const client = await RpcSocketClient.connect({
-        socket: entry.socket,
-        logScope: "recorder-service-client",
-        label: "recorder service",
-    });
+    let client: RpcSocketClient;
+
+    try {
+        client = await RpcSocketClient.connect({
+            socket: entry.socket,
+            logScope: "recorder-service-client",
+            label: "recorder service",
+        });
+    } catch (error) {
+        log.debug({ error, socket: entry.socket }, "the recorder service did not take the connection");
+        throw new ServiceConnectionLost(false, message(error));
+    }
+
+    let sent = false;
 
     try {
         await client.call("hello", { role: "client", protocol: SERVICE_PROTOCOL, pid: process.pid });
+        sent = true;
         return await work(client);
+    } catch (error) {
+        // An answer of the service is an RpcError; a call the closed connection rejected is not.
+        if (!(error instanceof RpcError) && client.closed) {
+            log.warn({ error, socket: entry.socket, sent }, "the recorder service connection closed under a call");
+            throw new ServiceConnectionLost(sent, message(error));
+        }
+
+        throw error;
     } finally {
         client.close();
     }
@@ -43,10 +78,35 @@ export class ServiceHost implements RecorderHost {
         return true;
     }
 
-    call<M extends HostMethod>(
+    /**
+     * One call; when the connection closes under it, once more on a fresh connection (a restarted service, or the
+     * headless face when none runs) if a second call cannot do it twice: a call that never left, or a read
+     * (`render.still`, `render.sheet`, `window.list`). An export or a window that may have started is not sent again.
+     */
+    async call<M extends HostMethod>(
         method: M,
         params: HostParams<M>,
         context: HostCallContext = {}
+    ): Promise<HostResult<M>> {
+        try {
+            return await this.send(method, params, context);
+        } catch (error) {
+            if (!(error instanceof ServiceConnectionLost) || (error.sent && hostMethod(method).effect !== "read")) {
+                throw error;
+            }
+
+            const entry = readLiveService();
+            log.warn({ method, sent: error.sent, again: entry ? "service" : "headless" }, "host call sent once more");
+            return entry
+                ? new ServiceHost(entry).send(method, params, context)
+                : new HeadlessHost().call(method, params, context);
+        }
+    }
+
+    private send<M extends HostMethod>(
+        method: M,
+        params: HostParams<M>,
+        context: HostCallContext
     ): Promise<HostResult<M>> {
         return withServiceClient(this.entry, async (client) =>
             hostAnswer(
