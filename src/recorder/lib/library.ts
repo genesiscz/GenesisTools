@@ -643,16 +643,34 @@ export const sheetAnswerSchema = z.object({
     width: z.number().optional(),
     height: z.number().optional(),
     times: z.array(z.number()).optional(),
+    /** The grid columns the face drew; absent from a face built before round 5. */
+    columns: z.number().optional(),
     error: z.string().optional(),
 });
 export type SheetAnswer = z.infer<typeof sheetAnswerSchema>;
 
-export function sheetArgv({ path, times, out }: { path: string; times: number[]; out?: string }): string[] {
-    return ["--recorder", "--sheet", path, "--times", times.join(","), ...(out ? ["--out", resolve(out)] : [])];
+export interface SheetRequest {
+    path: string;
+    times: number[];
+    out?: string;
+    /** The grid columns; absent: the face picks them by the frames' shape (as close to a 16:9 sheet as it can). */
+    columns?: number;
 }
 
-/** Several frames of an edit (OUTPUT seconds) on one picture in rows of three, each labelled with its time. */
-export function sheetOfEdit(request: { path: string; times: number[]; out: string }) {
+export function sheetArgv({ path, times, out, columns }: SheetRequest): string[] {
+    return [
+        "--recorder",
+        "--sheet",
+        path,
+        "--times",
+        times.join(","),
+        ...(out ? ["--out", resolve(out)] : []),
+        ...(columns ? ["--columns", String(columns)] : []),
+    ];
+}
+
+/** Several frames of an edit (OUTPUT seconds) on one grid picture, each labelled with its time. */
+export function sheetOfEdit(request: SheetRequest & { out: string }) {
     return runRecorderFace({ argv: sheetArgv(request), schema: sheetAnswerSchema, what: "sheet" });
 }
 

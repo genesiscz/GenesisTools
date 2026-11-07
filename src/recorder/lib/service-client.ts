@@ -1,7 +1,7 @@
 import { logger } from "@genesiscz/utils/logger";
 import { RpcSocketClient } from "@genesiscz/utils/rpc/socket-client";
 import { HeadlessHost, type HostCallContext, hostAnswer, type RecorderHost } from "./host";
-import type { EditorPlace, ExportAnswer, SheetAnswer, StillAnswer, StillRequest } from "./library";
+import type { EditorPlace, ExportAnswer, SheetAnswer, SheetRequest, StillAnswer, StillRequest } from "./library";
 import {
     HOST_TIMEOUT_MS,
     type HostMethod,
@@ -113,7 +113,7 @@ export async function hostStill(request: StillRequest): Promise<StillAnswer> {
     }
 }
 
-export async function hostSheet(request: { path: string; times: number[]; out?: string }): Promise<SheetAnswer> {
+export async function hostSheet(request: SheetRequest): Promise<SheetAnswer> {
     try {
         return await recorderHost().call("render.sheet", request);
     } catch (error) {

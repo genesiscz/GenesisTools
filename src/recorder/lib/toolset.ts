@@ -26,7 +26,7 @@ import {
     outputTimeSchema,
     sourceTimeSchema,
     type TimeValue,
-    type timeSchema,
+    timeSchema,
     timeToUs,
 } from "@genesiscz/utils/recording-editor/plan";
 import { type FractionBox, PRIVATE_KINDS, PRIVATE_STYLES } from "@genesiscz/utils/recording-editor/private-data";
@@ -58,6 +58,7 @@ import {
     type TranscriptLine,
     transcriptCachePath,
     transcriptLines,
+    wholeProject,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
 import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recording-editor/subtitles";
@@ -138,7 +139,11 @@ const START_GRACE_MS = 30_000;
 const START_GATE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const FINISH_TIMEOUT_MS = 120_000;
 const POLL_MS = 250;
+/** The most cells one sheet() draws: a 0.5 s survey of 24 s, still readable as one picture. */
+export const SHEET_MAX_CELLS = 48;
 
+/** A survey time: OUTPUT seconds, or SOURCE seconds with `source: true`. */
+const surveyTimeSchema = timeSchema.meta({ title: "Time" });
 const range = { from: sourceTimeSchema, to: sourceTimeSchema };
 const focusSchema = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) });
 const zoomSchema = z
@@ -785,16 +790,20 @@ const movieMethods = [
         name: "sheet",
         params: z
             .object({
-                from: outputTimeSchema.optional(),
-                to: outputTimeSchema.optional(),
-                count: z.number().int().min(1).max(12).optional(),
-                at: z.array(outputTimeSchema).min(1).max(12).optional(),
+                from: surveyTimeSchema.optional(),
+                to: surveyTimeSchema.optional(),
+                count: z.number().int().min(1).max(SHEET_MAX_CELLS).optional(),
+                at: z.array(surveyTimeSchema).min(1).max(SHEET_MAX_CELLS).optional(),
                 out: z.string().optional(),
+                // R5 survey: one time base, a dense grid
+                every: z.number().positive().optional(),
+                source: z.boolean().optional(),
+                columns: z.number().int().min(1).max(SHEET_MAX_CELLS).optional(),
             })
             .strict(),
         result: z.unknown(),
-        resultName: "{ path, width, height, times }",
-        doc: "One picture of several frames of the edit as it exports, in rows of three, each labelled with its OUTPUT time: count (6) frames spread over from…to (the whole edit), or the times in at. One call to check a whole edit after a change, instead of a still() per moment. out keeps the PNG at that path (the REPL's own copy goes when the run ends).",
+        resultName: '{ path, width, height, columns, labels: "output" | "source", cells: { source, output }[] }',
+        doc: "One picture of several frames on a grid, each labelled with its time: count (6, at most 48) frames spread over from…to, every (seconds) from…to (a dense survey: every: 0.5), or the times in at. Without source the frames are of the edit as it exports at OUTPUT seconds; with source: true they are of the recording as it was recorded (cut parts too, no effects) at SOURCE seconds, the seconds every op takes. Both come from the editor's own renderer, so a time read on a sheet is the time to put in an op; never survey with ffmpeg frame numbers. columns (default by the frames' shape, a near 16:9 grid). cells gives each cell's time on both clocks (output null where the edit cuts it). out keeps the PNG at that path (the REPL's own copy goes when the run ends).",
         effect: "reversible",
     }),
     defineMethod({
@@ -808,11 +817,16 @@ const movieMethods = [
     }),
     defineMethod({
         name: "still",
-        params: z.object({ at: outputTimeSchema.optional(), out: z.string().optional() }),
-        positional: ["at", "out"],
+        params: z.object({
+            at: surveyTimeSchema.optional(),
+            out: z.string().optional(),
+            full: z.boolean().optional(),
+            source: z.boolean().optional(),
+        }),
+        positional: ["at", "out", "full", "source"],
         result: z.unknown(),
-        resultName: "{ path, width, height }",
-        doc: "Shows one frame of the edit as it exports (zoom, clicks, cursor, captions, shortcuts, frame style) at OUTPUT seconds (what plays), so you can look at a change. Without `out` the PNG goes to the run's scratch folder and is gone after the run; give `out` (a .png path) to keep it. It renders at preview size (at most 1080 pixels on the short side), so its size can differ from export()'s, which follows the export settings; the picture is the same.",
+        resultName: "{ path, width, height, source, output }",
+        doc: "Shows one frame of the edit as it exports (zoom, clicks, cursor, captions, shortcuts, frame style) at OUTPUT seconds (what plays), so you can look at a change. source: true shows the recording as it was recorded at SOURCE seconds (the seconds ops take) instead. Without `out` the PNG goes to the run's scratch folder and is gone after the run; give `out` (a .png path) to keep it. It renders at preview size (at most 1080 pixels tall) unless full: true, which renders at the export's size (the source's own pixels when the export keeps them), for reading small text. The answer gives the time on both clocks. Call it with an object for the flags: still({ at: 12.5, source: true, full: true }).",
         effect: "reversible",
     }),
     defineMethod({
@@ -1462,8 +1476,9 @@ export const moviesApi = defineApi({
     ],
     notes: [
         'SourceTime is seconds (or "m:ss", "h:mm:ss") of the movie as recorded, before any cut or speed change: every edit op and every method that places an item takes it, and a cut never moves it.',
-        'OutputTime is seconds (or "m:ss") of the edited movie, what plays after cuts and speed changes: range(), itemsAt(), still(), poster(), sheet(), export({ from, to }) and comment() take it (comment({ source: true }) takes SourceTime).',
-        "In an answer, from, to, at, start and end are source seconds and plays is output seconds (null where that moment is cut). The exceptions say so: itemsAt() gives output and source, info() gives sourceSeconds and outputSeconds, sheet() times and chapters() are output seconds, and a comment's at is when it was written.",
+        'OutputTime is seconds (or "m:ss") of the edited movie, what plays after cuts and speed changes: range(), itemsAt(), poster(), export({ from, to }) and comment() take it (comment({ source: true }) takes SourceTime).',
+        "Time (still(), sheet()) is OutputTime, or SourceTime with source: true. Survey with these two, never with ffmpeg frame numbers: they read frames with the editor's own decoder, so a time read on a sheet is the time to put in an op. ffmpeg's fps filter picks the nearest frame, up to half a step later, and frame numbers of a variable-frame-rate screen recording drift by seconds.",
+        "In an answer, from, to, at, start and end are source seconds and plays is output seconds (null where that moment is cut). The exceptions say so: itemsAt() gives output and source, info() gives sourceSeconds and outputSeconds, still() and sheet() cells give source and output, chapters() are output seconds, and a comment's at is when it was written.",
         "Every edit reads the file fresh and saves once, so the open window and you never overwrite each other.",
         'The edit is a file: it stays after the worker ends, and the next run starts from it. apply([{ op: "reset" }]) starts over; undo() takes back the last change, one of an earlier run too (<edit>.undo.json, 30 steps).',
         "Limits: speed 0.25–16, zoom scale 1–4, focus x and y 0–1, volume 0–2.",
@@ -1570,6 +1585,42 @@ export function fixOutcome(
         fixed: fixable.filter((message) => !remaining.has(message)),
         unchanged: fixable.filter((message) => remaining.has(message)),
     };
+}
+
+/** `every` microseconds from `fromUs` up to `toUs` (both ends in), at most SHEET_MAX_CELLS of them. */
+export function everyTimes({ fromUs, toUs, everyUs }: { fromUs: number; toUs: number; everyUs: number }): number[] {
+    if (!(everyUs > 0)) {
+        throw new Error("every must be more than 0 seconds");
+    }
+
+    const count = Math.floor((toUs - fromUs) / everyUs + 1e-9) + 1;
+
+    if (count > SHEET_MAX_CELLS) {
+        throw new Error(
+            `every ${everyUs / 1_000_000} s from ${fromUs / 1_000_000} to ${toUs / 1_000_000} s is ${count} cells; a sheet takes at most ${SHEET_MAX_CELLS}, so narrow from…to or take a longer step`
+        );
+    }
+
+    return Array.from({ length: Math.max(1, count) }, (_, index) => fromUs + index * everyUs);
+}
+
+/**
+ * One picture's time on both clocks: `source` (the recording's own seconds, what ops take) and `output` (what plays
+ * in the export without intro card, null where the edit cuts that moment).
+ */
+export function cellTimes(
+    project: EditProject,
+    us: number,
+    base: "source" | "output"
+): { source: number; output: number | null } {
+    const seconds = (value: number) => Math.round(value / 1000) / 1000;
+
+    if (base === "output") {
+        return { source: seconds(sourceTimeOf(project, us)), output: seconds(us) };
+    }
+
+    const output = outputTimeOf(project, us);
+    return { source: seconds(us), output: output === undefined ? null : seconds(output) };
 }
 
 /**
@@ -2289,54 +2340,69 @@ export class Movie {
             from?: z.infer<typeof timeSchema>;
             to?: z.infer<typeof timeSchema>;
             count?: number;
+            every?: number;
             at?: z.infer<typeof timeSchema>[];
+            source?: boolean;
+            columns?: number;
             out?: string;
         } = {}
     ) {
-        // The REPL's schema keeps these to 1…12; `tools recorder sheet` calls here directly, and --count 100000 ran
+        // The REPL's schema keeps these in range; `tools recorder sheet` calls here directly, and --count 100000 ran
         // for minutes on 100000 frames.
         const count = options.count;
 
-        if (count !== undefined && (!Number.isInteger(count) || count < 1 || count > 12)) {
-            throw new Error(`the count must be a whole number from 1 to 12 (got ${count})`);
+        if (count !== undefined && (!Number.isInteger(count) || count < 1 || count > SHEET_MAX_CELLS)) {
+            throw new Error(`the count must be a whole number from 1 to ${SHEET_MAX_CELLS} (got ${count})`);
         }
 
-        if (options.at && (options.at.length < 1 || options.at.length > 12)) {
-            throw new Error(`a sheet takes 1 to 12 times (got ${options.at.length})`);
+        if (options.at && (options.at.length < 1 || options.at.length > SHEET_MAX_CELLS)) {
+            throw new Error(`a sheet takes 1 to ${SHEET_MAX_CELLS} times (got ${options.at.length})`);
         }
 
-        const opened = await openProject(this.recording);
-
-        if (opened.fresh) {
-            writeProject(opened.path, opened.project);
+        if (options.columns !== undefined && (!Number.isInteger(options.columns) || options.columns < 1)) {
+            throw new Error(`columns must be a whole number from 1 (got ${options.columns})`);
         }
 
-        const lengthUs = outputDurationUs(opened.project);
+        const opened = await this.openForPicture();
+        const base = options.source ? "source" : "output";
+        const lengthUs = base === "source" ? opened.project.source.durationUs : outputDurationUs(opened.project);
+        const fromUs = options.from === undefined ? 0 : timeToUs(options.from);
+        const toUs = options.to === undefined ? lengthUs : timeToUs(options.to);
         const times = options.at
             ? options.at.map((time) => timeToUs(time))
-            : spreadTimes({
-                  fromUs: options.from === undefined ? 0 : timeToUs(options.from),
-                  toUs: options.to === undefined ? lengthUs : timeToUs(options.to),
-                  count: options.count ?? 6,
-              });
+            : options.every !== undefined
+              ? everyTimes({ fromUs, toUs, everyUs: Math.round(options.every * 1_000_000) })
+              : spreadTimes({ fromUs, toUs, count: count ?? 6 });
         const late = times.find((us) => us > lengthUs);
 
         if (late !== undefined) {
             throw new Error(
-                `${late / 1_000_000} s is after the end of the edit (${Math.round(lengthUs / 1000) / 1000} s); sheet() takes OUTPUT seconds`
+                `${late / 1_000_000} s is after the end of the ${base === "source" ? "recording" : "edit"} (${Math.round(lengthUs / 1000) / 1000} s); sheet() takes ${base.toUpperCase()} seconds${base === "output" ? " (source: true takes the recording's own seconds)" : ""}`
             );
         }
 
         requireRecorderPart("movie.sheet()");
         const out = options.out ?? join(this.ctx?.scratchDir ?? tmpdir(), `sheet-${Date.now()}.png`);
-        const answer = await hostSheet({ path: opened.path, times: times.map((us) => us / 1_000_000), out });
+        const answer = await hostSheet({
+            path: base === "source" ? this.sourceEdit(opened.project) : opened.path,
+            times: times.map((us) => us / 1_000_000),
+            out,
+            ...(options.columns ? { columns: options.columns } : {}),
+        });
 
         if (!answer.ok || !answer.path) {
             throw new Error(answer.error ?? "the sheet failed without a reason");
         }
 
         await this.ctx?.show({ path: answer.path });
-        return { path: answer.path, width: answer.width, height: answer.height, times: answer.times };
+        return {
+            path: answer.path,
+            width: answer.width,
+            height: answer.height,
+            ...(answer.columns ? { columns: answer.columns } : {}),
+            labels: base,
+            cells: times.map((us) => cellTimes(opened.project, us, base)),
+        };
     }
 
     async itemsAt(at: z.infer<typeof timeSchema>) {
@@ -2385,32 +2451,60 @@ export class Movie {
         };
     }
 
-    async still(at: z.infer<typeof timeSchema> = 0, keep?: string) {
-        const opened = await openProject(this.recording);
-
-        if (opened.fresh) {
-            writeProject(opened.path, opened.project);
-        }
-
+    async still(at: z.infer<typeof timeSchema> = 0, keep?: string, full?: boolean, source?: boolean) {
+        const opened = await this.openForPicture();
+        const base = source ? "source" : "output";
         const atUs = timeToUs(at);
-        const lengthUs = outputDurationUs(opened.project);
+        const lengthUs = base === "source" ? opened.project.source.durationUs : outputDurationUs(opened.project);
 
         if (atUs > lengthUs) {
             throw new Error(
-                `at (${atUs / 1_000_000} s) is after the end of the edit (${Math.round(lengthUs / 1000) / 1000} s); still() takes OUTPUT seconds, 0 to the edit's length`
+                `at (${atUs / 1_000_000} s) is after the end of the ${base === "source" ? "recording" : "edit"} (${Math.round(lengthUs / 1000) / 1000} s); still() takes ${base.toUpperCase()} seconds, 0 to its length`
             );
         }
 
         requireRecorderPart("movie.still()");
         const out = keep ? resolve(keep) : join(this.ctx?.scratchDir ?? tmpdir(), `still-${Date.now()}.png`);
-        const answer = await hostStill({ path: opened.path, atSeconds: atUs / 1_000_000, out });
+        const answer = await hostStill({
+            path: base === "source" ? this.sourceEdit(opened.project) : opened.path,
+            atSeconds: atUs / 1_000_000,
+            out,
+            ...(full ? { full: true } : {}),
+        });
 
         if (!answer.ok || !answer.path) {
             throw new Error(answer.error ?? "the still failed without a reason");
         }
 
         await this.ctx?.show({ path: answer.path });
-        return { path: answer.path, width: answer.width, height: answer.height };
+        return {
+            path: answer.path,
+            width: answer.width,
+            height: answer.height,
+            ...cellTimes(opened.project, atUs, base),
+        };
+    }
+
+    /** The edit, saved first when it has no file yet: the renderer reads the file. */
+    private async openForPicture() {
+        const opened = await openProject(this.recording);
+
+        if (opened.fresh) {
+            writeProject(opened.path, opened.project);
+        }
+
+        return opened;
+    }
+
+    /**
+     * The recording as it was recorded (one clip, no effects) as an edit file in the scratch folder: a source-time
+     * still or sheet renders it, so its frames come from the editor's own decoder at the recording's own seconds, the
+     * time base every op takes. Never the recording's edit: that stays as it is.
+     */
+    private sourceEdit(project: EditProject): string {
+        const path = join(this.ctx?.scratchDir ?? tmpdir(), `source-${basename(project.source.video)}.edit.json`);
+        writeProject(path, wholeProject({ ...project.source, cursor: undefined }));
+        return path;
     }
 
     /** Reads the cached transcript only: a search must never start the paid transcription transcript() runs. */

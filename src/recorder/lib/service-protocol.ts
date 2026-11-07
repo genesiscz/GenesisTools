@@ -261,15 +261,21 @@ export const hostApi = defineApi({
         }),
         defineMethod({
             name: "render.sheet",
-            params: z.object({ path, times: z.array(z.number().nonnegative()).min(1), out: z.string().optional() }),
+            params: z.object({
+                path,
+                times: z.array(z.number().nonnegative()).min(1),
+                out: z.string().optional(),
+                columns: z.number().int().min(1).max(48).optional(),
+            }),
             result: z.object({
                 ok: z.literal(true),
                 path: z.string(),
                 width: z.number(),
                 height: z.number(),
                 times: z.array(z.number()).optional(),
+                columns: z.number().optional(),
             }),
-            doc: "Those frames of the edit (output seconds) on one picture.",
+            doc: "Those frames of the edit (output seconds) on one grid picture; columns (absent: by the frames' shape, as close to a 16:9 sheet as whole rows allow).",
             effect: "read",
         }),
         defineMethod({

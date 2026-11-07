@@ -1607,7 +1607,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
     test("movies: every time argument names its base, SourceTime or OutputTime, and the notes define both", () => {
         const docs = renderDocs(moviesApi);
         expect(docs).toContain("movie.cut(from: SourceTime, to: SourceTime) →");
-        expect(docs).toContain("movie.still(at?: OutputTime, out?: string) →");
+        expect(docs).toContain("movie.still(at?: Time, out?: string, full?: boolean, source?: boolean) →");
         expect(docs).toContain("movie.range(options: { from: OutputTime; to: OutputTime;");
         expect(docs).toContain('{ op: "cut"; from: SourceTime; to: SourceTime }');
         expect(docs).toContain('{ op: "range"; from: OutputTime; to: OutputTime;');
@@ -1615,6 +1615,7 @@ describe("live recording settings from the movies and meetings toolsets", () => 
         expect(docs).not.toContain("number (≥0) | string");
         expect(docs).toContain("Note: SourceTime is");
         expect(docs).toContain("Note: OutputTime is");
+        expect(docs).toContain("Note: Time (still(), sheet()) is OutputTime, or SourceTime with source: true.");
     });
 
     test("movies: the docs of a MovieRecording's settings name the keys a movie takes and the ones it keeps", async () => {

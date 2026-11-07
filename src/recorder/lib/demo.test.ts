@@ -6,6 +6,7 @@ import * as captureRunner from "@app/control/lib/capture-runner";
 import * as runner from "@app/control/lib/runner";
 import * as cli from "@genesiscz/utils/cli";
 import type { EditOp } from "@genesiscz/utils/recording-editor/project";
+import * as projectOps from "@genesiscz/utils/recording-editor/project";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
@@ -13,7 +14,8 @@ import { z } from "zod";
 import { type DemoDriver, demoEditOps, demoScriptSchema, runDemo, subtractRanges } from "./demo";
 import * as edit from "./edit";
 import * as library from "./library";
-import { Movie, movieDemoDriver } from "./toolset";
+import * as serviceClient from "./service-client";
+import { everyTimes, Movie, movieDemoDriver } from "./toolset";
 import { recordVideo } from "./video-recording";
 
 const steps = [
@@ -364,15 +366,109 @@ describe("a recording folder without its movie", () => {
 });
 
 describe("movie.sheet() bounds", () => {
-    test("a count or a list of times outside 1 to 12 is refused before any frame is drawn", async () => {
+    test("a count or a list of times outside 1 to 48 is refused before any frame is drawn", async () => {
         const movie = new Movie(join(tmpdir(), "no-such-recording"));
-        await expect(movie.sheet({ count: 0 })).rejects.toThrow("a whole number from 1 to 12 (got 0)");
+        await expect(movie.sheet({ count: 0 })).rejects.toThrow("a whole number from 1 to 48 (got 0)");
         await expect(movie.sheet({ count: 100_000 })).rejects.toThrow("(got 100000)");
         await expect(movie.sheet({ count: Number.NaN })).rejects.toThrow("(got NaN)");
-        await expect(movie.sheet({ at: Array.from({ length: 13 }, (_, index) => index) })).rejects.toThrow(
-            "1 to 12 times (got 13)"
+        await expect(movie.sheet({ at: Array.from({ length: 49 }, (_, index) => index) })).rejects.toThrow(
+            "1 to 48 times (got 49)"
         );
         // A valid count passes the bound and fails later, on the missing recording.
-        await expect(movie.sheet({ count: 6 })).rejects.not.toThrow("1 to 12");
+        await expect(movie.sheet({ count: 48 })).rejects.not.toThrow("1 to 48");
+    });
+
+    test("every spreads cells a fixed step apart, both ends in, and refuses more than a sheet holds", () => {
+        expect(everyTimes({ fromUs: 2_000_000, toUs: 4_000_000, everyUs: 500_000 })).toEqual([
+            2_000_000, 2_500_000, 3_000_000, 3_500_000, 4_000_000,
+        ]);
+        expect(() => everyTimes({ fromUs: 0, toUs: 30_000_000, everyUs: 500_000 })).toThrow("61 cells");
+    });
+});
+
+describe("movie survey on one time base", () => {
+    /** An edit of a 10 s movie with 2…4 s cut: source 5 s plays at output 3 s. */
+    function cutEdit(): string {
+        const folder = mkdtempSync(join(tmpdir(), "survey-"));
+        const path = join(folder, "screen.edit.json");
+        const project = projectOps.wholeProject({
+            video: join(folder, "screen.mp4"),
+            durationUs: 10_000_000,
+            width: 496,
+            height: 1080,
+        });
+        projectOps.writeProject(path, {
+            ...project,
+            clips: [
+                { id: "c1", fromUs: 0, toUs: 2_000_000, speed: 1 },
+                { id: "c2", fromUs: 4_000_000, toUs: 10_000_000, speed: 1 },
+            ],
+        });
+        return path;
+    }
+
+    test("a source sheet renders the recording as recorded at source seconds and names each cell on both clocks", async () => {
+        const path = cutEdit();
+        const part = spyOn(library, "requireRecorderPart").mockImplementation(() => undefined);
+        const sheet = spyOn(serviceClient, "hostSheet").mockImplementation(async (request) => ({
+            ok: true,
+            path: request.out,
+            width: 100,
+            height: 50,
+            times: request.times,
+            columns: request.columns ?? 3,
+        }));
+
+        try {
+            const answer = await new Movie(path).sheet({ source: true, at: [1, 3, 5], columns: 3 });
+            const request = sheet.mock.calls[0][0];
+            // Not the edit itself: a one-clip copy, so the cut 3 s still shows.
+            expect(request.path).not.toBe(path);
+            const rendered = projectOps.readProject(request.path);
+            expect(rendered.clips).toHaveLength(1);
+            expect(rendered.source.durationUs).toBe(10_000_000);
+            expect(request.times).toEqual([1, 3, 5]);
+            expect(request.columns).toBe(3);
+            expect(answer.labels).toBe("source");
+            expect(answer.cells).toEqual([
+                { source: 1, output: 1 },
+                { source: 3, output: null },
+                { source: 5, output: 3 },
+            ]);
+            // The edit is as it was.
+            expect(projectOps.readProject(path).clips).toHaveLength(2);
+
+            const output = await new Movie(path).sheet({ at: [3] });
+            expect(sheet.mock.calls[1][0].path).toBe(path);
+            expect(output.cells).toEqual([{ source: 5, output: 3 }]);
+            await expect(new Movie(path).sheet({ at: [9] })).rejects.toThrow(
+                "source: true takes the recording's own seconds"
+            );
+        } finally {
+            part.mockRestore();
+            sheet.mockRestore();
+        }
+    });
+
+    test("a full source still asks the renderer for the export's size and answers both clocks", async () => {
+        const path = cutEdit();
+        const part = spyOn(library, "requireRecorderPart").mockImplementation(() => undefined);
+        const still = spyOn(serviceClient, "hostStill").mockImplementation(async (request) => ({
+            ok: true,
+            path: request.out ?? "x.png",
+            width: 496,
+            height: 1080,
+        }));
+
+        try {
+            const answer = await new Movie(path).still(3, undefined, true, true);
+            expect(still.mock.calls[0][0].full).toBe(true);
+            expect(still.mock.calls[0][0].path).not.toBe(path);
+            expect(answer).toMatchObject({ source: 3, output: null });
+            expect((await new Movie(path).still(3)).source).toBe(5);
+        } finally {
+            part.mockRestore();
+            still.mockRestore();
+        }
     });
 });
