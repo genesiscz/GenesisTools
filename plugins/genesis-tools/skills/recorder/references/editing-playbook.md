@@ -57,7 +57,7 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
 | `m.hideText({ text \| pattern \| texts \| patterns, unit, style, exclude, excludeFixed })` | Hides each place a text shows, following it frame by frame through scrolls and slide-ins by the measured motion. `unit: "line"` hides the whole OCR line (the number beside a hidden name too). Read `hiding.uncertain` in the answer: stretches where the text could not be followed, covered by the band it may cross | `await m.hideText({ texts: ["Alice Example", "Main Street 1"], unit: "line", excludeFixed: true })` |
 | `m.unhide({ text \| pattern \| ids \| all })` | Takes back what `hideText`/`hidePrivate` hid, and forgets it, so the same hide can run again; hand-drawn boxes and spotlights stay. `all: true` with nothing hidden changes nothing and says "nothing hidden". `info().redactions[i].kind` is `hidden` or `spotlight`, `hide.request` names the hide that made a part | `await m.unhide({ text: "Alice Example" })` |
 | `m.hidePrivate({ kinds, ids })` | Hides what `privateData()` lists | `await m.hidePrivate({ kinds: ["email", "phone"] })` |
-| `m.verifyHidden({ text \| pattern \| texts \| patterns \| private })` | Exports, reads the OUTPUT and lists every leak with its `source` and `output` seconds (null inside a card), logging progress while it reads; all texts in one call | `(await m.verifyHidden({ private: true, texts: ["Alice Example"] })).ok` |
+| `m.verifyHidden({ text \| pattern \| texts \| patterns \| private, everySeconds, aroundSeconds })` | Exports, reads the OUTPUT and lists every leak; all texts in one call. Besides the even samples it reads EVERY frame within `aroundSeconds` (0.2) of each cut, transition, zoom and hidden-part edge and scene change, where leaks hide. A head or tail of a value at a screen edge counts ("part at an edge"). Each leak has `source`/`output` seconds, `box` (export frame fractions) and `sourceBox` (source fractions, the space `redact` takes); `fixOps` are ready `redact` ops that cover every leak | `const v = await m.verifyHidden({ private: true, texts: ["Alice Example"] }); if (!v.ok) await m.apply(v.fixOps)` |
 | `m.waits()` / `m.speedUpWaits({ ids })` | Typing and waiting stretches, sped up 4x to 8x with a badge | `await m.speedUpWaits({})` |
 | `m.cut(from, to)` / `m.speed(from, to, x)` | Cut or speed a source range; a factor from 0.25 to 16, below 1 is slow motion | `await m.cut(5.6, 9.8)`; `await m.speed(61, 62.5, 0.5)` |
 | `m.zoom({ from, to, scale, focus })` | Zoom inside the picture. A zoom crops the picture's edges: 1.2x on a phone already cuts the side labels. `check()` names a zoom whose view cuts screen text (a `zoom-cuts-text` issue with a setZoom that fits, once `findText` or `hideText` has read the screen) | `await m.zoom({ from: 49, to: 54, scale: 1.4, focus: { x: 0.5, y: 0.3 } })` |
@@ -101,7 +101,8 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
 7. Sound: voice lines with `say()` at source seconds, music with `ducking()` (section 8).
 8. `check()`, then `fix()` what it offers, then check every boundary (section 9).
 9. Export, then one `verifyHidden({ private: true, texts: [...every name you hid] })`. `ok: false` is a failed edit:
-   each leak names its `source` second, so fix the leak there and export again.
+   apply its `fixOps` (or place your own boxes from each leak's `sourceBox`, never from `box`), export and verify
+   again. It reads every frame around cuts, transitions and scene changes, so it takes minutes: log before it.
 10. Score it (section 10).
 
 ## 4. Place every effect on an event, never on a guess
@@ -131,7 +132,8 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
 - A box must never stay on after its text left: it then blurs the next screen's harmless content.
 - Verify the OUTPUT with `verifyHidden()` after the export. A leak found after delivery is a failed edit.
 - When `verifyHidden()` still names leaks in a scroll or a slide-in, do not cut the scroll and do not pixelate the
-  whole screen for seconds. Look at the leak times on a
+  whole screen for seconds. Apply its `fixOps` first: each covers one leak in source time and space. Otherwise look at
+  the leak times on a
   `sheet({ source: true, effects: true, from, to, every: 0.2 })`, then cover only that stretch: a `redact()` box over
   the band the text moves through, from the frame before the leak to the frame after it, joined to the tracked parts
   (`redactionJoins` closes holes up to 250 ms). Export and verify again.
