@@ -19,7 +19,10 @@ the order to use them in.
 
 🛑 Before you edit a recording into a cut for someone (effects, privacy, voiceover, music), read
 `references/editing-playbook.md` in full: work on a copy, survey first, place effects on screen events, hide text and
-not boxes of the screen, check every effect boundary, and score the cut before you hand it over. Its section 2 is the
+not boxes of the screen, check every effect boundary (on `sheet({ source: true, effects: true })`, which draws source
+seconds through the edit and marks cut ones), read `check()`'s `summary` lines, and score the cut before you hand it
+over. Run an edit script with `tools node-repl run --toolset movies --file edit.js`: its `console.log` lines print as
+they happen. Its section 2 is the
 table of the calls that exist today, one example each; section 3 is the recipe for a privacy-safe cut.
 
 ## Editing at a glance
