@@ -6,6 +6,15 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { recognizeTextBoxes } from "@genesiscz/utils/macos/ocr-boxes";
 import {
+    anchorTimeUs,
+    type EventAnchor,
+    type MovieEvent,
+    type MovieEventKind,
+    movieEvents,
+    nearestEvent,
+    type Tap,
+} from "@genesiscz/utils/recording-editor/events";
+import {
     type FractionBox,
     type LineMatcher,
     type PrivateHit,
@@ -717,4 +726,83 @@ export async function waits(
             region: wait.region ?? null,
         };
     });
+}
+
+// fx B (round 4): the events of a movie, so effects are placed on what happens on screen.
+
+/** An event as the REPL and the CLI list it: source seconds, and where it plays in the edit now. */
+export interface MovieEventOut {
+    kind: MovieEvent["kind"];
+    index: number;
+    at: number;
+    to?: number;
+    plays: number | null;
+    shift?: number;
+    x?: number;
+    y?: number;
+}
+
+/** The events of an edit's movie: scene changes, scrolls, still stretches, clicks, and `taps` the caller passes. */
+export async function eventsOf(project: EditProject, options: { taps?: readonly Tap[] } = {}): Promise<MovieEvent[]> {
+    const { steps, fps, height } = await changeStepsOf(project);
+    return movieEvents({
+        steps,
+        fps,
+        pictureHeight: height,
+        clicks: readCursorTrack(project.source.cursor).filter((sample) => sample.click),
+        taps: options.taps,
+    });
+}
+
+export function eventsOut(project: EditProject, events: readonly MovieEvent[]): MovieEventOut[] {
+    return events.map((event) => {
+        const plays = outputTimeOf(project, event.fromUs);
+        return {
+            kind: event.kind,
+            index: event.index,
+            at: seconds(event.fromUs),
+            ...(event.toUs === undefined ? {} : { to: seconds(event.toUs) }),
+            plays: plays === undefined ? null : seconds(plays),
+            ...(event.shift === undefined ? {} : { shift: event.shift }),
+            ...(event.x === undefined ? {} : { x: event.x, y: event.y }),
+        };
+    });
+}
+
+/**
+ * A source time on screen: `at` (seconds) moved to the nearest event of `kinds`, or an anchor's time
+ * (`{ event: "scene", index: 3, lead: -0.2 }`). Answers the seconds and the event it used.
+ */
+export async function snapOf(
+    project: EditProject,
+    options: { at?: number; anchor?: EventAnchor; kinds?: MovieEventKind[]; taps?: readonly Tap[] }
+): Promise<{ at: number; event: MovieEventOut; edge?: "start" | "end" }> {
+    const events = await eventsOf(project, { taps: options.taps });
+
+    if (options.anchor) {
+        const anchor = options.anchor;
+        const atUs = anchorTimeUs(events, anchor);
+        const ofKind = events.filter((item) => item.kind === anchor.event);
+        const event = ofKind.at(anchor.index > 0 ? anchor.index - 1 : anchor.index);
+
+        if (!event) {
+            throw new RangeError(`there is no ${anchor.event} event ${anchor.index}`);
+        }
+
+        return { at: seconds(atUs), event: eventsOut(project, [event])[0] };
+    }
+
+    if (options.at === undefined) {
+        throw new Error("snap needs at (seconds) or an event anchor ({ event, index, lead? })");
+    }
+
+    const nearest = nearestEvent(events, Math.round(options.at * 1_000_000), options.kinds);
+
+    if (!nearest) {
+        throw new RangeError(
+            `the movie has no ${options.kinds ? `${options.kinds.join(" or ")} ` : ""}event to snap to`
+        );
+    }
+
+    return { at: seconds(nearest.atUs), event: eventsOut(project, [nearest.event])[0], edge: nearest.edge };
 }

@@ -130,6 +130,8 @@
     "movie.speedUpWaits",
     "movie.speedBadge",
     "movie.duplicate",
+    "movie.events",
+    "movie.snap",
     "movies.list",
     "movies.search"
   ],

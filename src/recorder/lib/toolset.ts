@@ -10,6 +10,13 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { awaitStart, startGatePath, stopPassedChild, sweepStartGates } from "@genesiscz/utils/process/start-gate";
 import { checkProject, type EditFacts, type EditIssue, fixOps } from "@genesiscz/utils/recording-editor/check";
+import {
+    eventAnchorSchema,
+    MOVIE_EVENT_KINDS,
+    type MovieEventKind,
+    type Tap,
+    tapSchema,
+} from "@genesiscz/utils/recording-editor/events";
 import { TRANSITION_KINDS } from "@genesiscz/utils/recording-editor/fx";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { placedShape } from "@genesiscz/utils/recording-editor/item-ops";
@@ -78,7 +85,7 @@ import {
     writeSubtitles,
 } from "./edit";
 import { stepDisplaySwitch, switchDisplay } from "./frames-movie";
-import { findText, privateData, verifyHidden, waits } from "./fx-analysis";
+import { eventsOf, eventsOut, findText, privateData, snapOf, verifyHidden, waits } from "./fx-analysis";
 import {
     EDITOR_TABS,
     type EditorTab,
@@ -1275,6 +1282,35 @@ const movieMethods = [
         resultName: "{ path, folder, id?, title }",
         doc: 'A copy of the recording with its edit, so a before and an after live side by side: a new library recording titled "<title> (copy)" (or title), or the folder `to`. Its files are APFS clones (no disk until one side changes), every path in its edit points into the copy, and the undo history stays behind. movies.open(id) opens the copy.',
         effect: "reversible",
+    }),
+    // fx B (round 4): events, so effects land on what happens on screen instead of on guessed seconds.
+    defineMethod({
+        name: "events",
+        params: z
+            .object({ kinds: z.array(z.enum(MOVIE_EVENT_KINDS)).optional(), taps: z.array(tapSchema).optional() })
+            .strict(),
+        result: z.unknown(),
+        resultName: '{ kind: "scene" | "scroll" | "still" | "click" | "tap", index, at, to?, plays, shift?, x?, y? }[]',
+        doc: 'What happens on screen, at source seconds: scene changes (most of the picture changes at once), scrolls (shift: the share of the picture\'s height the content moved, down positive), still stretches (1 s or more), clicks from the cursor track, and taps you pass ({ at, x?, y? }, for a movie without a cursor track such as a simulator). index counts per kind from 1. Place an effect on one: zoom({ from: (await snap({ event: "scene", index: 3, lead: -0.2 })).at, … }). The picture is compared once and cached in waits.json.',
+        effect: "read",
+    }),
+    defineMethod({
+        name: "snap",
+        params: z
+            .object({
+                at: z.number().nonnegative().optional(),
+                event: z.enum(MOVIE_EVENT_KINDS).optional(),
+                index: z.number().int().optional(),
+                lead: z.number().min(-60).max(60).optional(),
+                end: z.boolean().optional(),
+                kinds: z.array(z.enum(MOVIE_EVENT_KINDS)).optional(),
+                taps: z.array(tapSchema).optional(),
+            })
+            .strict(),
+        result: z.unknown(),
+        resultName: "{ at, event, edge? }",
+        doc: "A source time on screen: { at } moves a guessed second to the nearest event (of kinds, when given; a stretch counts by its start or its end); { event, index, lead?, end? } names one (index 1 is the first, -1 the last; lead -0.2 starts 0.2 s before it; end: a stretch's end). Use the answer's at in zoom(), spotlight(), text(), shape() or hideText().",
+        effect: "read",
     }),
 ];
 
@@ -2624,6 +2660,38 @@ export class Movie {
     /** A copy of the recording and its edit (APFS clones), as a new library recording or in `to`. */
     async duplicate(options: { title?: string; to?: string } = {}) {
         return duplicateRecording(this.recording, options);
+    }
+
+    async events(options: { kinds?: MovieEventKind[]; taps?: Tap[] } = {}) {
+        const { project } = await openProject(this.recording);
+        const events = await eventsOf(project, { taps: options.taps });
+        return eventsOut(
+            project,
+            options.kinds ? events.filter((event) => options.kinds?.includes(event.kind)) : events
+        );
+    }
+
+    async snap(
+        options: {
+            at?: number;
+            event?: MovieEventKind;
+            index?: number;
+            lead?: number;
+            end?: boolean;
+            kinds?: MovieEventKind[];
+            taps?: Tap[];
+        } = {}
+    ) {
+        const { project } = await openProject(this.recording);
+        const anchor = options.event
+            ? eventAnchorSchema.parse({
+                  event: options.event,
+                  index: options.index ?? 1,
+                  ...(options.lead === undefined ? {} : { lead: options.lead }),
+                  ...(options.end ? { end: true } : {}),
+              })
+            : undefined;
+        return snapOf(project, { at: options.at, anchor, kinds: options.kinds, taps: options.taps });
     }
 }
 

@@ -1,8 +1,21 @@
+import { readFileSync } from "node:fs";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { eventAnchorSchema, MOVIE_EVENT_KINDS, type Tap, tapSchema } from "@genesiscz/utils/recording-editor/events";
 import type { Command } from "commander";
+import { z } from "zod";
 import { openProject } from "../lib/edit";
-import { findText, type PrivateHitOut, privateData, verifyHidden, waits } from "../lib/fx-analysis";
+import {
+    eventsOf,
+    eventsOut,
+    findText,
+    type PrivateHitOut,
+    privateData,
+    snapOf,
+    verifyHidden,
+    waits,
+} from "../lib/fx-analysis";
 
 const { log } = logger.scoped("recorder-fx-analysis");
 
@@ -100,6 +113,92 @@ export function registerFxAnalysisCommands(program: Command): void {
                 fail(error, "waits");
             }
         });
+
+    program
+        .command("events")
+        .description(
+            "List what happens on a recording's screen at source seconds: scene changes, scrolls, still stretches, clicks, and taps from --taps; place effects on them with snap"
+        )
+        .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+        .option("--kinds <list>", `only these kinds, comma-separated: ${MOVIE_EVENT_KINDS.join(", ")}`)
+        .option("--taps <file>", "a JSON file of taps [{ at, x?, y? }] for a movie without a cursor track")
+        .option("--json", "print JSON")
+        .action(async (value: string, flags: { kinds?: string; taps?: string; json?: boolean }) => {
+            try {
+                const { project } = await openProject(value);
+                const kinds = flags.kinds
+                    ? z.array(z.enum(MOVIE_EVENT_KINDS)).parse(flags.kinds.split(","))
+                    : undefined;
+                const all = eventsOut(project, await eventsOf(project, { taps: readTaps(flags.taps) }));
+                const events = kinds ? all.filter((event) => kinds.includes(event.kind)) : all;
+
+                if (flags.json) {
+                    out.result(events);
+                    return;
+                }
+
+                for (const event of events) {
+                    const span = event.to === undefined ? clock(event.at) : `${clock(event.at)}-${clock(event.to)}`;
+                    const detail = event.shift === undefined ? "" : ` shift ${event.shift}`;
+                    out.println(`${event.kind.padEnd(6)} ${String(event.index).padStart(3)}  ${span}${detail}`);
+                }
+            } catch (error) {
+                fail(error, "events");
+            }
+        });
+
+    program
+        .command("snap")
+        .description(
+            "A source time on screen: --at <s> moves to the nearest event, --event <kind> --index <n> [--lead <s>] [--end] names one"
+        )
+        .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+        .option("--at <seconds>", "a guessed source second")
+        .option("--event <kind>", MOVIE_EVENT_KINDS.join(" | "))
+        .option("--index <n>", "1 is the first, -1 the last", "1")
+        .option("--lead <seconds>", "move the time by this much (-0.2: before it)")
+        .option("--end", "a stretch's end instead of its start")
+        .option("--kinds <list>", "with --at: only these kinds")
+        .option("--taps <file>", "a JSON file of taps [{ at, x?, y? }]")
+        .action(
+            async (
+                value: string,
+                flags: {
+                    at?: string;
+                    event?: string;
+                    index?: string;
+                    lead?: string;
+                    end?: boolean;
+                    kinds?: string;
+                    taps?: string;
+                }
+            ) => {
+                try {
+                    const { project } = await openProject(value);
+                    const anchor = flags.event
+                        ? eventAnchorSchema.parse({
+                              event: flags.event,
+                              index: Number(flags.index ?? 1),
+                              ...(flags.lead === undefined ? {} : { lead: Number(flags.lead) }),
+                              ...(flags.end ? { end: true } : {}),
+                          })
+                        : undefined;
+                    const kinds = flags.kinds
+                        ? z.array(z.enum(MOVIE_EVENT_KINDS)).parse(flags.kinds.split(","))
+                        : undefined;
+                    out.result(
+                        await snapOf(project, {
+                            at: flags.at === undefined ? undefined : Number(flags.at),
+                            anchor,
+                            kinds,
+                            taps: readTaps(flags.taps),
+                        })
+                    );
+                } catch (error) {
+                    fail(error, "snap");
+                }
+            }
+        );
 }
 
 /** One hit as a line: id, source span, label, the masked value and what it is now. */
@@ -213,4 +312,9 @@ export function registerHideTextCommands(program: Command): void {
                 }
             }
         );
+}
+
+/** A taps file: `[{ at, x?, y? }]` in source seconds and picture fractions. */
+function readTaps(path: string | undefined): Tap[] | undefined {
+    return path ? z.array(tapSchema).parse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true })) : undefined;
 }

@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { anchorTimeUs, movieEvents, nearestEvent } from "./events";
 import {
     findPrivateText,
     ibanValid,
@@ -194,7 +195,7 @@ describe("smooth cursor and old files", () => {
     });
 });
 
-describe("tracked text and exclusions", () => {
+describe("tracked text, exclusions and events", () => {
     const frame = (ms: number, lines: ScreenTextFrame["lines"]): ScreenTextFrame => ({
         atUs: ms * 1000,
         untilUs: (ms + 200) * 1000,
@@ -251,7 +252,7 @@ describe("tracked text and exclusions", () => {
         ).toThrow(/does not show/);
     });
 
-    test("a toast that stays still while the list scrolls is a fixed area", () => {
+    test("a toast that stays still while the list scrolls is a fixed area; a scroll and a scene are events", () => {
         const grid = { columns: 4, rows: 3 };
         // Every cell changes while it scrolls but cell 5 (row 1, column 1): the toast.
         const allBut5 = (() => {
@@ -265,6 +266,25 @@ describe("tracked text and exclusions", () => {
         const steps = [still, still, still, still, still, scrolling, scrolling, scrolling, still, scene, still];
         const areas = fixedAreas({ steps, fps: 4, grid, fromUs: 1_250_000, toUs: 2_000_000 });
         expect(areas.map((area) => [Math.round(area.x * 100), Math.round(area.y * 100)])).toEqual([[29, 38]]);
+        const events = movieEvents({
+            steps,
+            fps: 4,
+            pictureHeight: 30,
+            clicks: [{ ms: 500, x: 0.5, y: 0.5 }],
+            taps: [{ at: 2.6, x: 0.2, y: 0.8 }],
+        });
+        expect(events.map((event) => [event.kind, event.index, event.fromUs, event.toUs ?? null])).toEqual([
+            ["still", 1, 0, 1_250_000],
+            ["click", 1, 500_000, null],
+            ["scroll", 1, 1_250_000, 2_000_000],
+            ["scene", 1, 2_500_000, null],
+            ["tap", 1, 2_600_000, null],
+        ]);
+        expect(events.find((event) => event.kind === "scroll")?.shift).toBe(-0.3);
+        expect(anchorTimeUs(events, { event: "scene", index: 1, lead: -0.2 })).toBe(2_300_000);
+        expect(anchorTimeUs(events, { event: "scroll", index: -1, end: true })).toBe(2_000_000);
+        expect(() => anchorTimeUs(events, { event: "scene", index: 2 })).toThrow(/has 1/);
+        expect(nearestEvent(events, 2_450_000, ["scene", "scroll"])?.atUs).toBe(2_500_000);
     });
 
     test("a shifted picture is a scroll; a new blob is not", () => {
