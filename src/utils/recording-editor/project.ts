@@ -600,6 +600,15 @@ export function wholeProject(source: EditProject["source"]): EditProject {
     return editProjectSchema.parse({ source, clips: [{ id: WHOLE_CLIP_ID, fromUs: 0, toUs: source.durationUs }] });
 }
 
+// R6 10 effects sheet
+/**
+ * The edit with every effect kept and its clips replaced by the whole recording at speed 1, so an output second is
+ * the same source second: a sheet of source times drawn through the edit's zooms, hidden parts, texts and frame.
+ */
+export function effectsOnSourceTime(project: EditProject): EditProject {
+    return { ...project, clips: [{ id: WHOLE_CLIP_ID, fromUs: 0, toUs: project.source.durationUs, speed: 1 }] };
+}
+
 /** Reads an edit file; refuses a newer version instead of reading it wrongly. */
 export function readProject(path: string): EditProject {
     return parseProject(readFileSync(path, "utf8"), path);

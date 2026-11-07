@@ -439,6 +439,21 @@ final class RecorderServiceHostTests: XCTestCase {
                                                            "out": folder.appendingPathComponent("column.png").path])
         XCTAssertEqual((column["columns"] as? NSNumber)?.intValue, 1)
         XCTAssertEqual((column["width"] as? NSNumber)?.intValue, ContactSheet.tileWidth + 2 * ContactSheet.gap)
+        // R6 10 effects sheet: a cell the edit cuts has a red border; the others none.
+        let cutOut = folder.appendingPathComponent("cut.png").path
+        _ = try await result(45, "render.sheet", ["path": movie.path, "times": [0.5, 1], "columns": 2, "cut": [false, true],
+                                                  "out": cutOut])
+        let picture = try XCTUnwrap(NSImage(contentsOfFile: cutOut)?.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        let bitmap = NSBitmapImageRep(cgImage: picture)
+        let edge = ContactSheet.gap + 2
+        let kept = try XCTUnwrap(bitmap.colorAt(x: ContactSheet.gap + ContactSheet.tileWidth / 2, y: edge))
+        let cut = try XCTUnwrap(bitmap.colorAt(x: 2 * ContactSheet.gap + ContactSheet.tileWidth + ContactSheet.tileWidth / 2, y: edge))
+        XCTAssertGreaterThan(cut.redComponent, 0.9, "the cut cell's border is red")
+        XCTAssertLessThan(cut.greenComponent, 0.5)
+        XCTAssertFalse(kept.redComponent > 0.9 && kept.greenComponent < 0.5, "a kept cell has no red border")
+        if let proof = ProcessInfo.processInfo.environment["RECORDER_PROOF_DIR"] {
+            try FileManager.default.copyItem(atPath: cutOut, toPath: proof + "/r6-10-cut-cell.png")
+        }
         let noTimes = try await refusal(42, "render.sheet", ["path": movie.path, "times": []])
         XCTAssertEqual(noTimes, -32602)
         let missing = try await refusal(43, "render.still", ["path": folder.appendingPathComponent("none.mp4").path])

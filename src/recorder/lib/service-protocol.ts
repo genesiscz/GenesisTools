@@ -266,6 +266,8 @@ export const hostApi = defineApi({
                 times: z.array(z.number().nonnegative()).min(1),
                 out: z.string().optional(),
                 columns: z.number().int().min(1).max(48).optional(),
+                // R6 10 effects sheet
+                cut: z.array(z.boolean()).optional(),
             }),
             result: z.object({
                 ok: z.literal(true),
@@ -275,7 +277,7 @@ export const hostApi = defineApi({
                 times: z.array(z.number()).optional(),
                 columns: z.number().optional(),
             }),
-            doc: "Those frames of the edit (output seconds) on one grid picture; columns (absent: by the frames' shape, as close to a 16:9 sheet as whole rows allow).",
+            doc: "Those frames of the edit (output seconds) on one grid picture; columns (absent: by the frames' shape, as close to a 16:9 sheet as whole rows allow); cut (one per time) marks the cells whose time the edit cuts.",
             effect: "read",
         }),
         defineMethod({

@@ -52,6 +52,9 @@ struct RecorderRequest {
     var times: [Double] = []
     /// `--columns <n>` with `--sheet`: the grid's columns (absent: by the frames' shape).
     var columns: Int?
+    // R6 10 effects sheet
+    /// `--cut-cells 2,5` with `--sheet`: those cells (0-based) show a time the edit cuts, marked as cut.
+    var cutCells: Set<Int> = []
     /// `--full` with `--still`: the frame at the export's size (a poster), not the 1080 pixel preview.
     var full = false
     /// `--picker`: the capture picker (with `--snapshot`, a picture of it over made-up targets).
@@ -105,6 +108,7 @@ struct RecorderRequest {
                 let sides = (value() ?? "").split(separator: "x", omittingEmptySubsequences: false).map { Int($0) }
                 if sides.count == 2 { request.exportSize = EditProject.OutputSize(width: sides[0], height: sides[1]) }
             case "--columns": request.columns = value().flatMap { Int($0) }
+            case "--cut-cells": request.cutCells = Set((value() ?? "").split(separator: ",").compactMap { Int($0) })
             default: break
             }
             index += 1
@@ -126,7 +130,7 @@ package func runRecorder(_ args: [String]) -> Never {
         runHeadlessStill(source: still, atSeconds: request.atSeconds ?? 0, out: request.out, full: request.full)
     }
     if let sheet = request.sheet {
-        runHeadlessSheet(source: sheet, times: request.times, out: request.out, columns: request.columns)
+        runHeadlessSheet(source: sheet, times: request.times, out: request.out, columns: request.columns, cut: request.cutCells)
     }
     if let snapshot = request.snapshot {
         runSnapshot(request, to: snapshot)
@@ -522,8 +526,8 @@ private func runHeadlessStill(source: String, atSeconds: Double, out: String?, f
 
 /// Frames of the edit as it exports, on one grid picture, each labelled with its time: one look at a whole edit for
 /// an agent. The movie is built once and every frame comes from the same generator.
-private func runHeadlessSheet(source: String, times: [Double], out: String?, columns: Int?) -> Never {
-    runHeadlessJSON { try await RecorderRenders.sheet(source: source, times: times, out: out, columns: columns) }
+private func runHeadlessSheet(source: String, times: [Double], out: String?, columns: Int?, cut: Set<Int>) -> Never {
+    runHeadlessJSON { try await RecorderRenders.sheet(source: source, times: times, out: out, columns: columns, cut: cut) }
 }
 
 /// Runs one render with no window, prints its answer (or `{ ok: false, error }`) as one JSON line, and exits.
@@ -564,7 +568,8 @@ enum ContactSheet {
         return min(count, max(1, Int(ideal.rounded())))
     }
 
-    static func draw(frames: [(seconds: Double, image: CGImage)], columns requested: Int? = nil) -> CGImage {
+    /// `cut` (R6 10): the cells whose time the edit cuts; each gets a red border and "cut" after its time.
+    static func draw(frames: [(seconds: Double, image: CGImage)], columns requested: Int? = nil, cut: Set<Int> = []) -> CGImage {
         let first = frames[0].image
         let columns = Self.columns(count: frames.count, frameWidth: first.width, frameHeight: first.height, requested: requested)
         let tileWidth = max(minTileWidth, min(Self.tileWidth, (maxSheetWidth - (columns + 1) * gap) / columns))
@@ -586,7 +591,16 @@ enum ContactSheet {
             let rect = CGRect(x: gap + column * (tileWidth + gap), y: height - (row + 1) * (tileHeight + gap),
                               width: tileWidth, height: tileHeight)
             context.draw(frame.image, in: rect)
-            let text = NSAttributedString(string: formatClock(Int64((frame.seconds * 1_000_000).rounded()), tenths: true), attributes: [
+            let isCut = cut.contains(index)
+            if isCut {
+                context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.45))
+                context.fill(rect)
+                context.setStrokeColor(CGColor(red: 1, green: 0.27, blue: 0.27, alpha: 1))
+                context.setLineWidth(6)
+                context.stroke(rect.insetBy(dx: 3, dy: 3))
+            }
+            let clock = formatClock(Int64((frame.seconds * 1_000_000).rounded()), tenths: true)
+            let text = NSAttributedString(string: isCut ? "\(clock)  cut" : clock, attributes: [
                 NSAttributedString.Key(kCTFontAttributeName as String): font,
                 NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 1, alpha: 1),
             ])
@@ -594,7 +608,7 @@ enum ContactSheet {
             var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
             let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
             let plate = CGRect(x: rect.minX + 8, y: rect.minY + 8, width: width + 14, height: ascent + descent + leading + 6)
-            context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.7))
+            context.setFillColor(isCut ? CGColor(red: 0.75, green: 0.1, blue: 0.1, alpha: 0.9) : CGColor(red: 0, green: 0, blue: 0, alpha: 0.7))
             context.addPath(CGPath(roundedRect: plate, cornerWidth: 5, cornerHeight: 5, transform: nil))
             context.fillPath()
             context.textPosition = CGPoint(x: plate.minX + 7, y: plate.minY + 3 + descent + leading)

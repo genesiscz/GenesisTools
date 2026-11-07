@@ -450,6 +450,49 @@ describe("movie survey on one time base", () => {
         }
     });
 
+    // R6 10: a source sheet drew the raw recording, so an effect's boundary could not be checked on source time.
+    test("a source sheet with effects draws source seconds through the edit and marks the cut ones", async () => {
+        const path = cutEdit();
+        const withText = projectOps.applyOp(projectOps.readProject(path), {
+            op: "text",
+            from: 1,
+            to: 5,
+            text: "Hello",
+        });
+        projectOps.writeProject(path, withText);
+        const part = spyOn(library, "requireRecorderPart").mockImplementation(() => undefined);
+        const sheet = spyOn(serviceClient, "hostSheet").mockImplementation(async (request) => ({
+            ok: true,
+            path: request.out,
+            width: 100,
+            height: 50,
+            times: request.times,
+        }));
+
+        try {
+            const answer = await new Movie(path).sheet({ source: true, effects: true, at: [1, 3, 5] });
+            const request = sheet.mock.calls[0][0];
+            const rendered = projectOps.readProject(request.path);
+            expect(rendered.clips).toEqual([{ id: "c00000000", fromUs: 0, toUs: 10_000_000, speed: 1 }]);
+            expect(rendered.texts?.map((note) => note.text)).toEqual(["Hello"]);
+            expect(request.cut).toEqual([false, true, false]);
+            expect(answer.effects).toBe(true);
+            expect(answer.cells).toEqual([
+                { source: 1, output: 1, export: 1 },
+                { source: 3, output: null, export: null, cut: true },
+                { source: 5, output: 3, export: 3 },
+            ]);
+            expect(library.sheetArgv({ path: "/x.json", times: [1, 3], cut: [false, true] })).toContain("--cut-cells");
+            // Without effects the source sheet stays the raw recording, and no cell is marked.
+            await new Movie(path).sheet({ source: true, at: [3] });
+            expect(projectOps.readProject(sheet.mock.calls[1][0].path).texts ?? []).toEqual([]);
+            expect(sheet.mock.calls[1][0].cut).toBeUndefined();
+        } finally {
+            part.mockRestore();
+            sheet.mockRestore();
+        }
+    });
+
     test("an edit call's summary is the edit after it, and changed names what that call did", async () => {
         const path = cutEdit();
         const movie = new Movie(path);

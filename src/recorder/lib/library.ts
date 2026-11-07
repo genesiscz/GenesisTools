@@ -655,9 +655,13 @@ export interface SheetRequest {
     out?: string;
     /** The grid columns; absent: the face picks them by the frames' shape (as close to a 16:9 sheet as it can). */
     columns?: number;
+    // R6 10 effects sheet
+    /** Per time: true where the edit cuts it, so the cell is marked as cut. */
+    cut?: boolean[];
 }
 
-export function sheetArgv({ path, times, out, columns }: SheetRequest): string[] {
+export function sheetArgv({ path, times, out, columns, cut }: SheetRequest): string[] {
+    const cutCells = (cut ?? []).flatMap((isCut, index) => (isCut ? [index] : []));
     return [
         "--recorder",
         "--sheet",
@@ -666,6 +670,7 @@ export function sheetArgv({ path, times, out, columns }: SheetRequest): string[]
         times.join(","),
         ...(out ? ["--out", resolve(out)] : []),
         ...(columns ? ["--columns", String(columns)] : []),
+        ...(cutCells.length > 0 ? ["--cut-cells", cutCells.join(",")] : []),
     ];
 }
 

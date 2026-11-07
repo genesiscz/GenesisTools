@@ -50,6 +50,7 @@ import {
     type EditOp,
     type EditProject,
     editOpSchema,
+    effectsOnSourceTime,
     FRAME_ALIGNS,
     FRAME_PRESETS,
     findInTranscript,
@@ -816,12 +817,14 @@ const movieMethods = [
                 every: z.number().positive().optional(),
                 source: z.boolean().optional(),
                 columns: z.number().int().min(1).max(SHEET_MAX_CELLS).optional(),
+                // R6 10 effects sheet
+                effects: z.boolean().optional(),
             })
             .strict(),
         result: z.unknown(),
         resultName:
-            '{ path, width, height, columns, labels: "output" | "source", cells: { source, output, export }[] }',
-        doc: "One picture of several frames on a grid, each labelled with its time: count (6, at most 48) frames spread over from…to, every (seconds) from…to (a dense survey: every: 0.5), or the times in at. Without source the frames are of the edit as it exports at OUTPUT seconds; with source: true they are of the recording as it was recorded (cut parts too, no effects) at SOURCE seconds, the seconds every op takes. Both come from the editor's own renderer, so a time read on a sheet is the time to put in an op; never survey with ffmpeg frame numbers. columns (default by the frames' shape, a near 16:9 grid). cells gives each cell's time on every clock: source, output (null where the edit cuts it) and export (the exported file's, after an intro card). out keeps the PNG at that path (the REPL's own copy goes when the run ends).",
+            '{ path, width, height, columns, labels: "output" | "source", effects?: true, cells: { source, output, export, cut? }[] }',
+        doc: "One picture of several frames on a grid, each labelled with its time: count (6, at most 48) frames spread over from…to, every (seconds) from…to (a dense survey: every: 0.5), or the times in at. Without source the frames are of the edit as it exports at OUTPUT seconds; with source: true they are of the recording as it was recorded (cut parts too, no effects) at SOURCE seconds, the seconds every op takes. source: true with effects: true draws those SOURCE seconds through the edit (zooms, hidden parts, texts, frame, cursor; no cuts or speeds, so every source moment has a cell), and a cell whose time the edit cuts gets a red border and the word cut after its time (its cells entry has cut: true): the check of an effect's boundary (does the blur start before the text shows, does a zoom end where it should). Both come from the editor's own renderer, so a time read on a sheet is the time to put in an op; never survey with ffmpeg frame numbers. columns (default by the frames' shape, a near 16:9 grid). cells gives each cell's time on every clock: source, output (null where the edit cuts it) and export (the exported file's, after an intro card). out keeps the PNG at that path (the REPL's own copy goes when the run ends).",
         effect: "reversible",
     }),
     defineMethod({
@@ -2405,6 +2408,7 @@ export class Movie {
             source?: boolean;
             columns?: number;
             out?: string;
+            effects?: boolean;
         } = {}
     ) {
         // The REPL's schema keeps these in range; `tools recorder sheet` calls here directly, and --count 100000 ran
@@ -2443,11 +2447,20 @@ export class Movie {
 
         requireRecorderPart("movie.sheet()");
         const out = options.out ?? join(this.ctx?.scratchDir ?? tmpdir(), `sheet-${Date.now()}.png`);
+        // R6 10: source time through the edit's effects, cut moments marked.
+        const effects = base === "source" && options.effects === true;
+        const cut = effects ? times.map((us) => outputTimeOf(opened.project, us) === undefined) : undefined;
         const answer = await hostSheet({
-            path: base === "source" ? this.sourceEdit(opened.project) : opened.path,
+            path:
+                base === "source"
+                    ? effects
+                        ? this.effectsSourceEdit(opened.project)
+                        : this.sourceEdit(opened.project)
+                    : opened.path,
             times: times.map((us) => us / 1_000_000),
             out,
             ...(options.columns ? { columns: options.columns } : {}),
+            ...(cut?.some(Boolean) ? { cut } : {}),
         });
 
         if (!answer.ok || !answer.path) {
@@ -2461,7 +2474,11 @@ export class Movie {
             height: answer.height,
             ...(answer.columns ? { columns: answer.columns } : {}),
             labels: base,
-            cells: times.map((us) => cellTimes(opened.project, us, base)),
+            ...(effects ? { effects: true as const } : {}),
+            cells: times.map((us, index) => ({
+                ...cellTimes(opened.project, us, base),
+                ...(cut?.[index] ? { cut: true } : {}),
+            })),
         };
     }
 
@@ -2561,6 +2578,14 @@ export class Movie {
      * still or sheet renders it, so its frames come from the editor's own decoder at the recording's own seconds, the
      * time base every op takes. Never the recording's edit: that stays as it is.
      */
+    // R6 10 effects sheet
+    /** The edit with every effect and one whole clip at speed 1, so its output seconds are the source's. */
+    private effectsSourceEdit(project: EditProject): string {
+        const path = join(this.ctx?.scratchDir ?? tmpdir(), `effects-${basename(project.source.video)}.edit.json`);
+        writeProject(path, effectsOnSourceTime(project));
+        return path;
+    }
+
     private sourceEdit(project: EditProject): string {
         const path = join(this.ctx?.scratchDir ?? tmpdir(), `source-${basename(project.source.video)}.edit.json`);
         writeProject(path, wholeProject({ ...project.source, cursor: undefined }));

@@ -437,6 +437,12 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 48
+          },
+          "cut": {
+            "type": "array",
+            "items": {
+              "type": "boolean"
+            }
           }
         },
         "required": [
