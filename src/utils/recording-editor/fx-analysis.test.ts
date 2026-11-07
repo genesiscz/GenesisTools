@@ -19,6 +19,7 @@ import {
     privateMatcher,
     redactionBoxAt,
     type ScreenTextFrame,
+    sweptBand,
     type TrackKey,
     textHits,
     textMatcher,
@@ -842,6 +843,20 @@ describe("a hidden part stays on its text through a slide-in (round 8)", () => {
         // The content behind the title scrolls up; the blocks carry the title with it.
         const hits = textHits(frames, matcher, { motion: slide({ x: 0, y: -0.3 }) });
         expect(covered(hits, 300_000, { x: 0.6, y: 0.09, width: 0.2, height: 0.02 })).toBe(true);
+    });
+
+    test("a band where a sideways slide was lost stays in the text's row, though the read drifted a pixel up", () => {
+        // A banner lost while it slid left at a tenth of the picture per 0.1 s, drifting 0.0002 up meanwhile.
+        const band = sweptBand({
+            box: { x: 0.4, y: 0.5, width: 0.2, height: 0.045 },
+            velocity: { x: -1e-6, y: -2e-9 },
+            travelUs: 300_000,
+            area: { x: 0, y: 0, width: 1, height: 1 },
+        });
+        // Along its slide it sweeps to the edge of the moving area; across it, it stays in its row.
+        expect(band.x).toBe(0);
+        expect(band.y).toBeGreaterThan(0.45);
+        expect(band.y + band.height).toBeLessThan(0.6);
     });
 
     test("a part whose first read is a sliver at the edge holds that place before it, never a negative width", () => {

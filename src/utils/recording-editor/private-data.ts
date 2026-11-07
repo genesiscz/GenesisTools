@@ -806,7 +806,7 @@ function brokeAway(options: { edge: TrackKey; keys: readonly TrackKey[]; inner: 
  * the part of the picture that changed (so a status bar or a tab bar that stood still is never covered). With no
  * measured travel, its own place.
  */
-function sweptBand(options: {
+export function sweptBand(options: {
     box: FractionBox;
     /** Fractions of the picture per microsecond, in the direction it travels. */
     velocity: { x: number; y: number };
@@ -838,16 +838,26 @@ function sweptBand(options: {
 
     // On along its direction to where the picture stopped changing (a follow that failed under-measured its speed), and
     // past that as far as its speed carries it: the quarter-second change steps miss a text that only crossed a cell
-    // between two of them (a banner that slid in from the edge).
-    const left = velocity.x < 0 ? Math.min(box.x - reach.x, lo.x) : box.x;
-    const right = velocity.x > 0 ? Math.max(box.x + box.width + reach.x, hi.x) : box.x + box.width;
-    const top = velocity.y < 0 ? Math.min(box.y - reach.y, lo.y) : box.y;
-    const bottom = velocity.y > 0 ? Math.max(box.y + box.height + reach.y, hi.y) : box.y + box.height;
+    // between two of them (a banner that slid in from the edge). R8 3: only along a direction it really travels (half a
+    // line or more in that time); a drift of a few pixels across a scroll swept the band over the whole picture.
+    const travels = (distance: number) => distance >= Math.max(0.005, box.height * 0.5);
+    // Along its main direction to the moving area's edge; across it (a slide that also drifts) only as far as it went.
+    const main = Math.abs(velocity.x) >= Math.abs(velocity.y) ? "x" : "y";
+    const left = velocity.x < 0 && travels(reach.x) ? Math.min(box.x - reach.x, main === "x" ? lo.x : 1) : box.x;
+    const right =
+        velocity.x > 0 && travels(reach.x)
+            ? Math.max(box.x + box.width + reach.x, main === "x" ? hi.x : 0)
+            : box.x + box.width;
+    const top = velocity.y < 0 && travels(reach.y) ? Math.min(box.y - reach.y, main === "y" ? lo.y : 1) : box.y;
+    const bottom =
+        velocity.y > 0 && travels(reach.y)
+            ? Math.max(box.y + box.height + reach.y, main === "y" ? hi.y : 0)
+            : box.y + box.height;
     const band = clampBox(left - pad, top - pad, right + pad, bottom + pad);
-    const x = velocity.x < 0 ? clamp01(left - pad) : band.x;
-    const y = velocity.y < 0 ? clamp01(top - pad) : band.y;
-    const r = velocity.x > 0 ? clamp01(right + pad) : band.x + band.width;
-    const b = velocity.y > 0 ? clamp01(bottom + pad) : band.y + band.height;
+    const x = velocity.x < 0 && travels(reach.x) ? clamp01(left - pad) : band.x;
+    const y = velocity.y < 0 && travels(reach.y) ? clamp01(top - pad) : band.y;
+    const r = velocity.x > 0 && travels(reach.x) ? clamp01(right + pad) : band.x + band.width;
+    const b = velocity.y > 0 && travels(reach.y) ? clamp01(bottom + pad) : band.y + band.height;
     return { x, y, width: Math.max(0.012, r - x), height: Math.max(0.012, b - y) };
 }
 
@@ -1073,7 +1083,16 @@ export function textHits(
         heldPlaces(done);
 
         for (const track of done) {
-            track.keys = track.keys.map((key) => (track.reads.has(key) ? key : withMargin(key)));
+            // R8 3: a carried place that stands where the last read was (a still screen between reads) needs no margin.
+            let read: TrackKey | undefined;
+            track.keys = track.keys.map((key) => {
+                if (track.reads.has(key)) {
+                    read = key;
+                    return key;
+                }
+
+                return read && sameBox(read, key) ? key : withMargin(key);
+            });
         }
     }
 
