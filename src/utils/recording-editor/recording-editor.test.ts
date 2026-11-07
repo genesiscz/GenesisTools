@@ -862,6 +862,12 @@ describe("edit project (edit.json)", () => {
             },
         ]);
 
+        // A recorded marker the movie never had (a recording.json written by hand) is named as outside, not as cut.
+        const outside = checkProject(project, { ...facts, recordedMarkers: [{ atMs: 99_000, label: "Late" }] });
+        expect(outside.at(-1)?.message).toBe(
+            'The recorded marker "Late" at 99 s never plays: that time is outside the 10 s movie, so it is no chapter'
+        );
+
         // fix() moves the edit marker onto the kept movie once; the recorded one has no fix it could make twice.
         const fixed = fixOps(project, facts).ops.reduce((next, op) => applyOp(next, op), project);
         expect(fixed.markers?.map((one) => [one.atUs, one.label])).toEqual([[6_500_000, "Step two"]]);

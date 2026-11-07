@@ -221,6 +221,15 @@ function playsAt(project: EditProject, atUs: number): boolean {
     return project.clips.some((clip) => atUs >= clip.fromUs && atUs <= clip.toUs);
 }
 
+/** Why a moment that does not play is gone: a cut, or a time the movie never had (a negative or late marker). */
+function whyNotPlayed(project: EditProject, atUs: number): string {
+    if (atUs < 0 || atUs > project.source.durationUs) {
+        return `that time is outside the ${tenths(project.source.durationUs)} s movie`;
+    }
+
+    return "that time is cut";
+}
+
 /** The kept moment nearest a cut one (source microseconds): the next clip's start, or the last clip's end before it. */
 function nearestKeptUs(project: EditProject, atUs: number): number | undefined {
     const edges = project.clips.flatMap((clip) => [clip.fromUs, clip.toUs]);
@@ -287,7 +296,7 @@ export function cutIssues(
         issues.push({
             severity: "fix",
             item: `marker ${marker.id}`,
-            message: `The marker "${marker.label}" at ${tenths(marker.atUs)} s never plays: that time is cut, so it is no chapter`,
+            message: `The marker "${marker.label}" at ${tenths(marker.atUs)} s never plays: ${whyNotPlayed(project, marker.atUs)}, so it is no chapter`,
             fix: `movie.apply(${SafeJSON.stringify(ops)})`,
             at: tenths(marker.atUs),
             target: { list: "markers", id: marker.id },
@@ -308,7 +317,7 @@ export function cutIssues(
         issues.push({
             severity: "check",
             item: `recorded marker "${marker.label}"`,
-            message: `The recorded marker "${marker.label}" at ${tenths(atUs)} s never plays: that time is cut, so it is no chapter`,
+            message: `The recorded marker "${marker.label}" at ${tenths(atUs)} s never plays: ${whyNotPlayed(project, atUs)}, so it is no chapter`,
             fix: `movie.marker(${nearest / 1_000_000}, ${SafeJSON.stringify(marker.label)})`,
             at: tenths(atUs),
         });
