@@ -9,6 +9,11 @@ before you edit any recording that you did not just record with demo mode.
 - Put the edit in a script file and run it in one process with a long budget:
   `tools node-repl run --toolset movies --file edit.js` (a run with `movies` gets 10 minutes; `--timeout 1800000`
   gives 30). For many small steps, use the MCP server (`tools node-repl mcp --toolset movies`), which keeps bindings.
+- 🛑 Never pipe a run into `head` or `tail`: the pipe holds every line until the run ends (`tail` waits for the end,
+  `head` can stop the run early), so a 10-minute edit shows nothing. Write it to a file and read the file:
+  `tools node-repl run --toolset movies --file edit.js > edit.log 2>&1`, or start it as a background task of your
+  harness (Claude Code: Bash `run_in_background`) and read `edit.log` as it grows. A trailing `&` in a shell call is
+  no background task: the run dies with that shell.
 - `help("movies")` lists every method in one line each. `describe("movies.Movie.<name>")` prints one in full: its
   types, its whole doc, its parameters. Read the describe of a method before you use it the first time.
 - `describe()`, `help()` and `search()` RETURN their text. A bare call on its own line prints it (and so does the last
@@ -39,7 +44,7 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
 
 | Call | What it does | Example |
 |---|---|---|
-| `m.duplicate({ title })` | A copy of the recording and its edit (APFS clones) | `const copy = await movies.open((await m.duplicate({ title: "cut-r2" })).folder)` |
+| `m.duplicate({ title })` | A copy of the recording and its edit (APFS clones) IN THE RECORDING LIBRARY. Removing it later asks the user (`tools rm` does not delete a library folder by itself), so duplicate only a copy you keep; for a throwaway try, `undo()` or `reset()` the edit instead | `const copy = await movies.open((await m.duplicate({ title: "cut-r2" })).folder)` |
 | `m.info()` | The edit now, with `exportTime` and each voiceover's `plays` and `exportPlays` | `(await m.info()).outputSeconds` |
 | `m.sheet({ source, every, from, to, columns })` | Up to 48 frames on one grid; `cells` give each time on every clock | `await m.sheet({ source: true, from: 40, to: 52, every: 0.5 })` |
 | `m.sheet({ source: true, effects: true, ... })` | Source seconds drawn THROUGH the edit (blurs, zooms, texts, frame); a cell whose time is cut gets a red border and "cut" (`cells[i].cut`). The tool for boundary checks (section 9) | `await m.sheet({ source: true, effects: true, at: [41.9, 42, 43.5, 43.6] })` |
@@ -47,15 +52,15 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
 | `m.itemsAt(t)` | What plays at an OUTPUT second, in words | `await m.itemsAt(12.5)` |
 | `m.events({ kinds, taps })` | Scene changes, scrolls, still stretches, clicks, at source seconds | `await m.events({ kinds: ["scene", "scroll"] })` |
 | `m.snap({ event, index, lead })` | One event's source time, to place an effect on | `(await m.snap({ event: "scene", index: 3, lead: -0.3 })).at` |
-| `m.findText({ text \| pattern \| texts \| patterns, unit })` | Where texts show, tracked through scrolls; several texts and patterns in ONE scan (each scan costs 10 to 60 s, so pass them together). A pattern matches each OCR line on its own, case-insensitive; `^` and `$` anchor to that line | `await m.findText({ texts: ["Alice Example"], patterns: ["\\d{4} \\d{4}"] })` |
+| `m.findText({ text \| pattern \| texts \| patterns, unit, from, to })` | Where texts show, tracked through scrolls; several texts and patterns in ONE scan (each scan costs 10 to 60 s, so pass them together); `from`/`to` (source seconds) limit the scan as in `hideText`. A pattern matches each OCR line on its own, case-insensitive; `^` and `$` anchor to that line | `await m.findText({ texts: ["Alice Example"], patterns: ["\\d{4} \\d{4}"] })` |
 | `m.privateData()` | Emails, tokens, phone numbers, IBANs, card numbers on screen | `await m.privateData({ names: ["Alice Example"] })` |
 | `m.hideText({ text \| pattern \| texts \| patterns, unit, style, exclude, excludeFixed })` | Hides each place a text shows, following it frame by frame through scrolls and slide-ins by the measured motion. `unit: "line"` hides the whole OCR line (the number beside a hidden name too). Read `hiding.uncertain` in the answer: stretches where the text could not be followed, covered by the band it may cross | `await m.hideText({ texts: ["Alice Example", "Main Street 1"], unit: "line", excludeFixed: true })` |
-| `m.unhide({ text \| pattern \| ids \| all })` | Takes back what `hideText`/`hidePrivate` hid, and forgets it, so the same hide can run again; hand-drawn boxes and spotlights stay. `info().redactions[i].kind` is `hidden` or `spotlight`, `hide.request` names the hide that made a part | `await m.unhide({ text: "Alice Example" })` |
+| `m.unhide({ text \| pattern \| ids \| all })` | Takes back what `hideText`/`hidePrivate` hid, and forgets it, so the same hide can run again; hand-drawn boxes and spotlights stay. `all: true` with nothing hidden changes nothing and says "nothing hidden". `info().redactions[i].kind` is `hidden` or `spotlight`, `hide.request` names the hide that made a part | `await m.unhide({ text: "Alice Example" })` |
 | `m.hidePrivate({ kinds, ids })` | Hides what `privateData()` lists | `await m.hidePrivate({ kinds: ["email", "phone"] })` |
 | `m.verifyHidden({ text \| pattern \| texts \| patterns \| private })` | Exports, reads the OUTPUT and lists every leak with its `source` and `output` seconds (null inside a card), logging progress while it reads; all texts in one call | `(await m.verifyHidden({ private: true, texts: ["Alice Example"] })).ok` |
 | `m.waits()` / `m.speedUpWaits({ ids })` | Typing and waiting stretches, sped up 4x to 8x with a badge | `await m.speedUpWaits({})` |
 | `m.cut(from, to)` / `m.speed(from, to, x)` | Cut or speed a source range; a factor from 0.25 to 16, below 1 is slow motion | `await m.cut(5.6, 9.8)`; `await m.speed(61, 62.5, 0.5)` |
-| `m.zoom({ from, to, scale, focus })` | Zoom inside the picture | `await m.zoom({ from: 49, to: 54, scale: 1.4, focus: { x: 0.5, y: 0.3 } })` |
+| `m.zoom({ from, to, scale, focus })` | Zoom inside the picture. A zoom crops the picture's edges: 1.2x on a phone already cuts the side labels. `check()` names a zoom whose view cuts screen text (a `zoom-cuts-text` issue with a setZoom that fits, once `findText` or `hideText` has read the screen) | `await m.zoom({ from: 49, to: 54, scale: 1.4, focus: { x: 0.5, y: 0.3 } })` |
 | `m.spotlight({ from, to, rect })` / `m.lens(...)` | Point at a part; a lens keeps the context | `await m.lens({ from: 61, to: 64, at: { x: 0.3, y: 0.9 } })` |
 | `m.text({ from, to, text, x, y, animate })` | A title or a callout on the canvas | `await m.text({ from: 10, to: 16, text: "1. Sign in", x: 0.17, y: 0.12 })` |
 | `m.frame({ aspect, background, padding })` | The canvas around the movie | `await m.frame({ aspect: "9:16", padding: 0.04 })` |
@@ -68,7 +73,7 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
 | `m.export({ out })` | Renders the movie | `await m.export({ out: "/tmp/cc/<project>/<session>/cut.mp4" })` |
 | `m.undo()` / `m.reset()` | Takes back the last change; starts over (music, voiceovers and cards go too) | `await m.undo()` |
 
-| `m.frame({ preset })` | A phone layout: `phone-left` / `phone-right` (16:9, the phone takes about the left or right quarter; the rest, x 0.27 to 1 or 0 to 0.73, is free for text), `phone-portrait` (9:16, the phone from the top; the bottom 0.135 of the height, y 0.865 to 1, is free for captions and chapter names); `layout: { align, scale }` for your own | `await m.frame({ preset: "phone-left" })` |
+| `m.frame({ preset })` | A phone layout: `phone-left` / `phone-right` (16:9, the phone takes about the left or right quarter; the rest, x 0.27 to 1 or 0 to 0.73, is free for text), `phone-portrait` (9:16, the phone from the top; the bottom 0.135 of the height, y 0.865 to 1, is free for captions and chapter names); `layout: { align, scale, focus }` for your own. A whole phone is at most about 0.27 of a 16:9 width; `layout.scale` above 1 grows it inside the padding and crops its height, and `layout.focus` (0..1 of the phone from its top left) keeps that part in view | `await m.frame({ preset: "phone-left", layout: { scale: 1.5, focus: { x: 0.5, y: 1 } } })` (0.36 wide, the tab bar in view, the top third out) |
 | `m.zoom({ ..., target: "canvas" })` | Zooms the whole framed picture, not only inside the phone | `await m.zoom({ from: 52, to: 58, scale: 1.4, target: "canvas" })` |
 | `m.redact({ ..., cell })` / `m.redactionJoins({ snapMs })` | Pixelate block size in source pixels; boxes up to 250 ms apart (or from a cut) meet, so no frame shows between them | `await m.redact({ from, to, rect, style: "pixelate", cell: 24 })` |
 | `m.text({ text: "a\nb", block })` | Several lines (up to 500 characters), wrapped in a block of `width`, `align` | `await m.text({ from, to, text: "Step 1\nOpen the inbox", x: 0.72, block: { width: 0.4, align: "left" } })` |
@@ -101,13 +106,17 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
 
 ## 4. Place every effect on an event, never on a guess
 
-- `events()` finds scene changes when most of the picture changes. A tab tap that changes only part of the screen, or
-  a quick screen change, can fall between its samples or below its threshold: find those on a dense source sheet
-  (`sheet({ source: true, from, to, every: 0.2 })`) and read the exact second there.
+- `events()` names each scene change at the frame it starts on, a tab tap that swaps the content above a fixed tab bar
+  included, and a slide that spreads over half a second is one scene at its start. Take scene times from it, with
+  `snap({ event: "scene", index, lead: -0.3 })`. Look at a dense source sheet
+  (`sheet({ source: true, effects: true, from, to, every: 0.2 })`) when a change is small (a toggle, one row) or
+  when you place an effect's END on a moment events() does not name.
 - A zoom, spotlight or callout starts 0.2 to 0.4 s BEFORE the moment it explains (the tap, the screen change) and ends
   after the viewer had time to read it. `snap({ event, index, lead: -0.3 })` gives that second.
 - The zoom's focus is the thing you talk about, measured from a still at that time (the rect of the element), not the
-  centre of the screen. Check the zoomed still: the thing must be inside the view with margin.
+  centre of the screen. Check the zoomed still: the thing must be inside the view with margin, and no text may be cut
+  at the view's edge (a half label reads as a mistake). Lower the scale or move the focus until the lines are whole;
+  `check()` lists the zooms that cut text it has read.
 - Prefer a lens or a spotlight to a zoom when the context around the thing matters.
 
 ## 5. Privacy: hide the text, not a box of the screen
@@ -135,7 +144,9 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
   phone. `text()` takes x and y on the CANVAS, so a title in the padding stays there through a zoom.
 - The free bands of the presets: `phone-portrait` leaves y 0.865 to 1 (the bottom 0.135); put captions and one-line
   callouts there (y about 0.93). `phone-left` leaves x 0.27 to 1 (texts at x 0.62, `block: { width: 0.6 }`),
-  `phone-right` x 0 to 0.73 (texts at x 0.38). The progress bar's chapter names go into the same free area by
+  `phone-right` x 0 to 0.73 (texts at x 0.38). A bigger phone: `layout: { scale: 1.5 }` makes it about 0.36 wide and
+  leaves x 0.38 to 1 free (a 0.4 wide block at x 0.7 fits); it crops a third of the phone's height, so set
+  `layout.focus` to keep what the cut is about (y 1 keeps the tab bar, y 0 the header). The progress bar's chapter names go into the same free area by
   themselves; two texts at the same time must not overlap there (`check()` compares their drawn plates).
 
 ## 7. Do not point at failures

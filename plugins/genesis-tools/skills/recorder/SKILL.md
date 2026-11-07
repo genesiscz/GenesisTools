@@ -22,7 +22,8 @@ the order to use them in.
 not boxes of the screen, check every effect boundary (on `sheet({ source: true, effects: true })`, which draws source
 seconds through the edit and marks cut ones), read `check()`'s `summary` lines, and score the cut before you hand it
 over. Run an edit script with `tools node-repl run --toolset movies --file edit.js`: its `console.log` lines print as
-they happen. Its section 2 is the
+they happen. Write that output to a file (`> edit.log 2>&1`) or run it as a background task; never pipe it into
+`head` or `tail`, which hold it until the end. Its section 2 is the
 table of the calls that exist today, one example each; section 3 is the recipe for a privacy-safe cut.
 
 ## Editing at a glance
