@@ -9,7 +9,7 @@ import {
     Server,
 } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { ReplEngine, resultMessage } from "../lib/engine";
+import { mcpTimeoutHint, ReplEngine, resultMessage } from "../lib/engine";
 import { createToolsets, parseToolsetList } from "../lib/toolsets";
 
 // stdio MCP server: stdout carries JSON-RPC frames, so every diagnostic goes through the
@@ -210,7 +210,7 @@ export async function startMcpServer(
     options: { toolsets?: readonly string[]; name?: string; maxOutputChars?: number } = {}
 ): Promise<void> {
     const toolsets = parseToolsetList(options.toolsets ?? []);
-    const engine = new ReplEngine({ toolsets, maxOutputChars: options.maxOutputChars });
+    const engine = new ReplEngine({ toolsets, maxOutputChars: options.maxOutputChars, timeoutHint: mcpTimeoutHint });
     const toolsetLines = (await createToolsets(toolsets)).map((toolset) => toolset.oneLine());
     await serveStdio({
         name: options.name ?? "node-repl",

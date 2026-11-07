@@ -10,7 +10,14 @@ import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
 import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { jsDescription, jsResetDescription, parseJsArguments } from "../mcp/server";
-import { capOutput, DEFAULT_MAX_OUTPUT_CHARS, ReplEngine, resultMessage } from "./engine";
+import {
+    capOutput,
+    DEFAULT_MAX_OUTPUT_CHARS,
+    ReplEngine,
+    resultMessage,
+    runTimeoutFor,
+    runTimeoutHint,
+} from "./engine";
 import {
     createToolsets,
     parseToolsetList,
@@ -25,6 +32,20 @@ import { githubPrRef } from "./toolsets/github";
 
 // NR24: --help used to render every method of all ten toolsets, 535 lines. It now lists each toolset's one line and
 // says how to print one toolset's API.
+it("a run's timeout error names --timeout and --file, and a movies run gets 10 minutes by default", async () => {
+    expect(runTimeoutFor([])).toBe(30_000);
+    expect(runTimeoutFor(["computer", "movies"])).toBe(600_000);
+    const engine = new ReplEngine({ timeoutHint: runTimeoutHint });
+    try {
+        const stuck = await engine.run("await sleep(5000)", 300);
+        expect(stuck.error).toContain("exceeded 300 ms");
+        expect(stuck.error).toContain("--timeout 600000");
+        expect(stuck.error).toContain("--file script.js");
+    } finally {
+        await engine.shutdown();
+    }
+});
+
 it("CLI help lists every toolset with its one line and how to print one's API", () => {
     const help = toolsetCliHelp();
     for (const id of REPL_TOOLSET_IDS) {

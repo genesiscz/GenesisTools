@@ -192,6 +192,35 @@ export interface ReplEngineOptions {
     recordingStartupTimeoutMs?: number;
     /** The most characters a turn's text returns (`DEFAULT_MAX_OUTPUT_CHARS`); the rest goes to a file. 0 is no limit. */
     maxOutputChars?: number;
+    /**
+     * How the caller gives a turn more time, added to a turn's timeout error: `run` names --timeout and --file, the MCP
+     * server timeout_ms. An agent whose script died at 30 s had no hint that either existed (round 5, item 8).
+     */
+    timeoutHint?: (timeoutMs: number) => string;
+}
+
+/** `tools node-repl run`'s turn budget without --timeout. */
+export const RUN_TIMEOUT_MS = 30_000;
+/** The budget with a toolset whose calls render, export or record: an edit script ran past 30 s every time (round 5). */
+export const LONG_RUN_TIMEOUT_MS = 600_000;
+export const LONG_RUN_TOOLSETS = ["movies", "recorder", "editor"] as const;
+
+/** A run's default budget: 10 minutes when a toolset that renders or records is loaded, else 30 s. */
+export function runTimeoutFor(toolsets: readonly string[]): number {
+    return toolsets.some((id) => (LONG_RUN_TOOLSETS as readonly string[]).includes(id))
+        ? LONG_RUN_TIMEOUT_MS
+        : RUN_TIMEOUT_MS;
+}
+
+/** What `run` adds to a turn's timeout error: the two flags that let a long script finish. */
+export function runTimeoutHint(timeoutMs: number): string {
+    const longer = Math.max(LONG_RUN_TIMEOUT_MS, timeoutMs * 4);
+    return `Give the turn more time with --timeout <ms> (--timeout ${longer} is ${Math.round(longer / 60_000)} min), and put a long script in a file: tools node-repl run --file script.js --timeout ${longer}. The mcp server keeps bindings between calls and takes timeout_ms per call.`;
+}
+
+/** The MCP server's line for a turn's timeout error. */
+export function mcpTimeoutHint(timeoutMs: number): string {
+    return `Pass timeout_ms for a longer turn (timeout_ms: ${Math.max(LONG_RUN_TIMEOUT_MS, timeoutMs * 4)}); the bindings are gone, so define them again.`;
 }
 
 /** About 5,000 tokens: one careless `big.join()` must not fill an agent's context (NR4, 2026-11-06). */
@@ -242,6 +271,7 @@ export class ReplEngine {
     private readonly recordingFailures: unknown[] = [];
     private readonly recordingStarts = new Set<Promise<void>>();
     readonly defaultTimeoutMs: number;
+    private readonly timeoutHint?: (timeoutMs: number) => string;
     readonly preloadTimeoutMs: number;
     readonly recordingStartupTimeoutMs: number;
     readonly toolsets: readonly string[];
@@ -255,6 +285,7 @@ export class ReplEngine {
 
     constructor(private readonly options: ReplEngineOptions = {}) {
         this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
+        this.timeoutHint = options.timeoutHint;
         this.preloadTimeoutMs = options.preloadTimeoutMs ?? 120_000;
         this.recordingStartupTimeoutMs = options.recordingStartupTimeoutMs ?? this.preloadTimeoutMs;
         this.toolsets = options.toolsets ?? [];
@@ -630,7 +661,7 @@ export class ReplEngine {
             { op: "run", code },
             {
                 timeoutMs,
-                onTimeout: `turn exceeded ${timeoutMs} ms; the worker was killed and every binding is gone`,
+                onTimeout: `turn exceeded ${timeoutMs} ms; the worker was killed and every binding is gone${this.timeoutHint ? `. ${this.timeoutHint(timeoutMs)}` : ""}`,
             }
         );
         const { fullStack, ...answer } = response;

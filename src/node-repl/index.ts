@@ -7,7 +7,15 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { Command } from "commander";
-import { DEFAULT_MAX_OUTPUT_CHARS, ReplEngine } from "./lib/engine";
+import {
+    DEFAULT_MAX_OUTPUT_CHARS,
+    LONG_RUN_TIMEOUT_MS,
+    LONG_RUN_TOOLSETS,
+    ReplEngine,
+    RUN_TIMEOUT_MS,
+    runTimeoutFor,
+    runTimeoutHint,
+} from "./lib/engine";
 import { coerceParam, listPresets, readPreset, removePreset, resolveParams, savePreset } from "./lib/presets";
 import { parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp, toolsetOverlap } from "./lib/toolsets";
 
@@ -141,7 +149,10 @@ program
     .command("run [code]")
     .description("Run one turn and print its output; reads code from --file or stdin when omitted")
     .option("--file <path>", "read the code from a file")
-    .option("--timeout <ms>", "wall-clock budget in milliseconds (30000 is 30 s)", "30000")
+    .option(
+        "--timeout <ms>",
+        `wall-clock budget in milliseconds (default ${RUN_TIMEOUT_MS} = 30 s; ${LONG_RUN_TIMEOUT_MS} = 10 min with the ${LONG_RUN_TOOLSETS.join(" or ")} toolset)`
+    )
     .option("--toolset [list]", `comma-separated toolsets to preload: ${REPL_TOOLSET_IDS.join(", ")}`)
     .option("--max-output <chars>", MAX_OUTPUT_HELP, String(DEFAULT_MAX_OUTPUT_CHARS))
     .addHelpText(
@@ -159,11 +170,12 @@ program
     .action(
         async (
             code: string | undefined,
-            opts: { file?: string; timeout: string; toolset?: string | boolean; maxOutput: string }
+            opts: { file?: string; timeout?: string; toolset?: string | boolean; maxOutput: string }
         ) => {
+            const toolsets = toolsetsOption(opts.toolset, "run");
             // Bun fires a timer scheduled with NaN or a negative delay immediately, so an unchecked
             // --timeout reports "the turn overran" for what is a bad argument.
-            const timeout = Number(opts.timeout);
+            const timeout = opts.timeout === undefined ? runTimeoutFor(toolsets ?? []) : Number(opts.timeout);
 
             if (!Number.isFinite(timeout) || timeout <= 0) {
                 logger.error(`--timeout must be a positive number of milliseconds, got "${opts.timeout}"`);
@@ -178,7 +190,6 @@ program
                 );
             }
 
-            const toolsets = toolsetsOption(opts.toolset, "run");
             const maxOutputChars = maxOutputOption(opts.maxOutput);
 
             if (!toolsets || maxOutputChars === undefined) {
@@ -199,7 +210,7 @@ program
                 return;
             }
 
-            const engine = new ReplEngine({ toolsets, maxOutputChars });
+            const engine = new ReplEngine({ toolsets, maxOutputChars, timeoutHint: runTimeoutHint });
 
             try {
                 const result = await engine.run(source, timeout);
