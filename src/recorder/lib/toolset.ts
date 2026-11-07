@@ -1262,6 +1262,8 @@ const movieMethods = [
             .object({
                 text: z.string().trim().min(1).max(200).optional(),
                 pattern: z.string().min(1).max(200).optional(),
+                texts: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
+                patterns: z.array(z.string().min(1).max(200)).max(50).optional(),
                 exclude: z.array(boxParamSchema).max(20).optional(),
                 excludeFixed: z.boolean().optional(),
                 unit: z.enum(HIDE_UNITS).optional(),
@@ -1269,7 +1271,7 @@ const movieMethods = [
             .strict(),
         result: z.unknown(),
         resultName: "{ id, label, masked, from, to, plays, box, moves, exclude?, uncertain?, hidden }[]",
-        doc: 'Every place a text (without case) or a pattern (a regular expression) shows on the screen, tracked as privateData() tracks a hit: what hideText() will hide, so you never guess coordinates or seconds. Each OCR line (a run of text Vision reads on one baseline; a column far away is its own line) is matched on its own: ^ and $ anchor to that line, the match ignores case, a space OCR reads next to . @ _ - is dropped first, and a literal text also matches with spaces OCR adds or drops between its letters. unit: "line" covers the whole OCR line of a match (a name and the number beside it); "match" (the default) only the matched words.',
+        doc: 'Every place a text (without case) or a pattern (a regular expression) shows on the screen, tracked as privateData() tracks a hit: what hideText() will hide, so you never guess coordinates or seconds. texts and patterns (arrays) look for several in one scan of the screen, each its own hit. Each OCR line (a run of text Vision reads on one baseline; a column far away is its own line) is matched on its own: ^ and $ anchor to that line, the match ignores case, a space OCR reads next to . @ _ - is dropped first, and a literal text also matches with spaces OCR adds or drops between its letters. unit: "line" covers the whole OCR line of a match (a name and the number beside it); "match" (the default) only the matched words.',
         effect: "read",
     }),
     edit(
@@ -1278,6 +1280,8 @@ const movieMethods = [
             .object({
                 text: z.string().trim().min(1).max(200).optional(),
                 pattern: z.string().min(1).max(200).optional(),
+                texts: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
+                patterns: z.array(z.string().min(1).max(200)).max(50).optional(),
                 from: sourceTimeSchema.optional(),
                 to: sourceTimeSchema.optional(),
                 style: z.enum(PRIVATE_STYLES).optional(),
@@ -1287,7 +1291,7 @@ const movieMethods = [
                 unit: z.enum(HIDE_UNITS).optional(),
             })
             .strict(),
-        'Hides every place a text or a pattern shows (between from and to, source seconds; absent: all): one hidden part per place, found by OCR, that starts and ends when the text shows and follows it through a scroll or a slide frame by frame (the content\'s measured motion, also where OCR cannot read the blurred text). Where a moving text cannot be followed, the band it may cross is hidden for that time instead. unit: "line" hides the whole OCR line of each match (how a pattern matches: findText()). hiding in the answer says how sure it is: parts, moving { parts, seconds, minKeysPerSecond } and uncertain [{ from, to }] (source seconds of the bands; check() lists them too). exclude and excludeFixed leave a toast or a tab bar over it visible. Refused when the screen never shows it. Check with verifyHidden({ text }).'
+        'Hides every place a text or a pattern shows (between from and to, source seconds; absent: all): one hidden part per place, found by OCR, that starts and ends when the text shows and follows it through a scroll or a slide frame by frame (the content\'s measured motion, also where OCR cannot read the blurred text). Where a moving text cannot be followed, the band it may cross is hidden for that time instead. unit: "line" hides the whole OCR line of each match (how a pattern matches: findText()); texts and patterns (arrays) hide several in one scan. hiding in the answer says how sure it is: parts, moving { parts, seconds, minKeysPerSecond } and uncertain [{ from, to }] (source seconds of the bands; check() lists them too). exclude and excludeFixed leave a toast or a tab bar over it visible. Refused when the screen never shows it. Check with verifyHidden({ text }).'
     ),
     defineMethod({
         name: "verifyHidden",
@@ -1295,6 +1299,8 @@ const movieMethods = [
             .object({
                 text: z.string().trim().min(1).max(200).optional(),
                 pattern: z.string().min(1).max(200).optional(),
+                texts: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
+                patterns: z.array(z.string().min(1).max(200)).max(50).optional(),
                 private: z.boolean().optional(),
                 names: z.array(z.string().trim().min(2).max(120)).max(50).optional(),
                 everySeconds: z.number().min(0.1).max(5).optional(),
@@ -1303,7 +1309,7 @@ const movieMethods = [
             .strict(),
         result: z.unknown(),
         resultName: "{ ok, movie, frames, leaks: { at, until, label, masked, box }[] }",
-        doc: "Checks the OUTPUT: exports the edit (or reads movie, an export you made), reads its frames with Vision every everySeconds (0.25) and lists every moment (output seconds) where text, pattern or the private data (private: true, the default without text or pattern; names too) is still readable. ok: true means nothing leaked. Run it before you hand an export over.",
+        doc: "Checks the OUTPUT: exports the edit (or reads movie, an export you made), reads its frames with Vision every everySeconds (0.25) and lists every moment (output seconds) where text, pattern, texts, patterns (several in one read) or the private data (private: true, the default without text or pattern; names too) is still readable. ok: true means nothing leaked. Run it before you hand an export over.",
         effect: "read",
     }),
     edit(
@@ -2875,6 +2881,8 @@ export class Movie {
         options: {
             text?: string;
             pattern?: string;
+            texts?: string[];
+            patterns?: string[];
             private?: boolean;
             names?: string[];
             everySeconds?: number;

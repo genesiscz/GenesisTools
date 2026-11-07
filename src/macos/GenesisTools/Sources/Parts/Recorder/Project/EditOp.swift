@@ -960,6 +960,9 @@ extension EditOp {
         var label: String?
         // R6 2: "line" hides the whole OCR line of a match; nil is "match".
         var unit: String?
+        // R6 3: several texts and patterns in one scan.
+        var texts: [String]?
+        var patterns: [String]?
         var op: EditOp { .hideText(self) }
     }
 

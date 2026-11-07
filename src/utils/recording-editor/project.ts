@@ -54,7 +54,14 @@ import {
     textAnimateSchema,
 } from "./overlays";
 import { outputTimeSchema, sourceTimeSchema, timeSchema, timeToUs } from "./plan";
-import { HIDE_UNITS, PRIVATE_KINDS, PRIVATE_STYLES, type PrivateHit, privacySchema } from "./private-data";
+import {
+    describeTextQuery,
+    HIDE_UNITS,
+    PRIVATE_KINDS,
+    PRIVATE_STYLES,
+    type PrivateHit,
+    privacySchema,
+} from "./private-data";
 import {
     cutRanges,
     FILLER_LEVELS,
@@ -1772,6 +1779,9 @@ export const editOpSchema = z.discriminatedUnion("op", [
             label: z.string().max(60).optional(),
             // R6 2: "line" hides the whole OCR line that holds a match (a name and the number beside it); absent is "match".
             unit: z.enum(HIDE_UNITS).optional(),
+            // R6 3: several texts and patterns in one scan of the screen.
+            texts: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
+            patterns: z.array(z.string().min(1).max(200)).max(50).optional(),
         })
         .strict(),
     /** The smooth cursor: strength (0.6), jitterPx (3), idleFadeSeconds (2); enabled: false turns it off. */
@@ -2862,7 +2872,7 @@ function hideText(
 
     if (picked.length === 0) {
         throw new Error(
-            `the screen does not show "${op.text ?? op.pattern}"${op.from === undefined && op.to === undefined ? "" : " in that range"}; nothing was hidden`
+            `the screen does not show ${describeTextQuery(op)}${op.from === undefined && op.to === undefined ? "" : " in that range"}; nothing was hidden`
         );
     }
 

@@ -217,21 +217,21 @@ export function registerHideTextCommands(program: Command): void {
             "Every place a text (or --pattern, a regular expression) shows on a recording's screen, tracked through scrolls; hide them with the hideText op"
         )
         .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
-        .argument("[text]", "the words to find, without case")
-        .option("--pattern <regex>", "a regular expression instead of the text")
+        .argument("[texts...]", "the words to find, without case (several: one scan finds them all)")
+        .option("--pattern <regex>", "a regular expression instead of the text (repeat it for several)", collect, [])
         .option("--exclude-fixed", "leave out what stays still while the content scrolls")
         .option("--line", "each place covers the whole OCR line of the match (a name and the number beside it)")
         .option("--json", "print JSON")
         .action(
             async (
                 value: string,
-                text: string | undefined,
-                flags: { pattern?: string; excludeFixed?: boolean; line?: boolean; json?: boolean }
+                texts: string[],
+                flags: { pattern: string[]; excludeFixed?: boolean; line?: boolean; json?: boolean }
             ) => {
                 try {
                     const hits = await findText((await openProject(value)).project, {
-                        text,
-                        pattern: flags.pattern,
+                        texts,
+                        patterns: flags.pattern,
                         excludeFixed: flags.excludeFixed,
                         unit: flags.line ? "line" : "match",
                     });
@@ -260,8 +260,8 @@ export function registerHideTextCommands(program: Command): void {
             "Export the edit (or read --movie), OCR its frames and list every output moment where a text, a pattern or the private data is still readable; exit 1 on a leak"
         )
         .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
-        .option("--text <text>", "the words that must not be readable")
-        .option("--pattern <regex>", "a regular expression that must not match")
+        .option("--text <text>", "the words that must not be readable (repeat it for several)", collect, [])
+        .option("--pattern <regex>", "a regular expression that must not match (repeat it for several)", collect, [])
         .option("--private", "the private data (the default without --text or --pattern)")
         .option("--names <list>", "with --private: names too, comma-separated")
         .option("--every <seconds>", "seconds between the frames read", "0.25")
@@ -271,8 +271,8 @@ export function registerHideTextCommands(program: Command): void {
             async (
                 value: string,
                 flags: {
-                    text?: string;
-                    pattern?: string;
+                    text: string[];
+                    pattern: string[];
                     private?: boolean;
                     names?: string;
                     every?: string;
@@ -282,8 +282,8 @@ export function registerHideTextCommands(program: Command): void {
             ) => {
                 try {
                     const answer = await verifyHidden(value, {
-                        text: flags.text,
-                        pattern: flags.pattern,
+                        texts: flags.text,
+                        patterns: flags.pattern,
                         private: flags.private,
                         names: flags.names?.split(",").map((name) => name.trim()),
                         everySeconds: Number(flags.every ?? 0.25),
@@ -314,6 +314,11 @@ export function registerHideTextCommands(program: Command): void {
                 }
             }
         );
+}
+
+/** A repeatable option's values, in the order given. */
+function collect(value: string, previous: string[]): string[] {
+    return [...previous, value];
 }
 
 /** A taps file: `[{ at, x?, y? }]` in source seconds and picture fractions. */

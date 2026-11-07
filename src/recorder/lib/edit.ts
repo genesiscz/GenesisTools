@@ -668,6 +668,8 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
                 text: op.text,
                 pattern: op.pattern,
                 unit: op.unit,
+                texts: op.texts,
+                patterns: op.patterns,
                 exclude: op.exclude,
                 excludeFixed: op.excludeFixed,
             }),

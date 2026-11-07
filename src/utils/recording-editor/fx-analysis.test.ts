@@ -417,6 +417,22 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
         ).toBeGreaterThan(0.39);
     });
 
+    test("texts and patterns find several in one pass, each its own hit, and a refusal names them all", () => {
+        const frames = [
+            frame(0, [row("Orla Fictive", 0.2), row("Bram Sample", 0.4), row("call 606 000 111", 0.6)]),
+            frame(200, [row("Orla Fictive", 0.2), row("Bram Sample", 0.4), row("call 606 000 111", 0.6)]),
+        ];
+        const several = textMatcher({ texts: ["orla fictive", "bram sample"], patterns: ["\\d{3} \\d{3} \\d{3}"] });
+        const hits = textHits(frames, several);
+        expect(hits.map((hit) => Math.round(hit.keys[0].y * 10) / 10)).toEqual([0.2, 0.4, 0.6]);
+        expect(() =>
+            applyOp(wholeProject(source), op({ op: "hideText", texts: ["Nobody Here"], patterns: ["^zzz"] }), {
+                textHits: [],
+            })
+        ).toThrow(/"Nobody Here" or \/\^zzz\//);
+        expect(() => textMatcher({ texts: [], patterns: [] })).toThrow(/give text/);
+    });
+
     test("block matching finds a scroll's shift and leaves a still picture still", () => {
         const width = 96;
         const height = 96;

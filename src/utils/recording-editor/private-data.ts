@@ -353,22 +353,29 @@ export type HideUnit = (typeof HIDE_UNITS)[number];
  * A literal text (without case) or a regular expression's source, as hideText asks for it. Each OCR line is matched on
  * its own (Vision reads a run of text on one baseline as a line): `^` and `$` are the line's start and end, the match
  * is without case, and a space OCR reads next to . @ _ - is left out first. A literal text also matches with spaces
- * OCR reads in or leaves out between its letters. `unit: "line"` makes each match cover its whole OCR line.
+ * OCR reads in or leaves out between its letters. `unit: "line"` makes each match cover its whole OCR line. `texts` and
+ * `patterns` look for several at once.
  */
-export function textMatcher(options: { text?: string; pattern?: string; unit?: HideUnit }): LineMatcher {
-    const source = options.pattern ?? (options.text ? escapeRegExp(options.text.trim()) : undefined);
+export function textMatcher(options: TextMatcherOptions): LineMatcher {
+    const sources = [
+        ...[options.text, ...(options.texts ?? [])]
+            .map((text) => text?.trim())
+            .filter((text): text is string => Boolean(text))
+            // A literal text matches with the spaces OCR leaves out or reads in: "alice@example.com" finds
+            // "alice@example. com".
+            .map((text) => [...text.replace(/\s+/g, "")].map(escapeRegExp).join("\\s*")),
+        ...[options.pattern, ...(options.patterns ?? [])].filter((pattern): pattern is string => Boolean(pattern)),
+    ];
 
-    if (!source) {
-        throw new Error("give text (the words to hide) or pattern (a regular expression)");
+    if (sources.length === 0) {
+        throw new Error("give text (the words to hide) or pattern (a regular expression), or texts and patterns");
     }
 
-    // A literal text matches with the spaces OCR leaves out or reads in: "alice@example.com" finds "alice@example. com".
-    const regex = new RegExp(
-        options.pattern ?? [...(options.text ?? "").replace(/\s+/g, "")].map(escapeRegExp).join("\\s*"),
-        "gi"
-    );
+    const regexes = sources.map((source) => new RegExp(source, "gi"));
+    // R6 3: every text and pattern in one pass over the screen text; each value is its own hit.
     const matches = compacting((text) =>
-        [...text.matchAll(regex)]
+        regexes
+            .flatMap((regex) => [...text.matchAll(regex)])
             .filter((match) => match[0].length > 0)
             .map((match) => ({
                 kind: "text" as const,
@@ -377,6 +384,7 @@ export function textMatcher(options: { text?: string; pattern?: string; unit?: H
                 start: match.index ?? 0,
                 end: (match.index ?? 0) + match[0].length,
             }))
+            .sort((a, b) => a.start - b.start)
     );
     return options.unit === "line"
         ? (text) => {
@@ -385,6 +393,24 @@ export function textMatcher(options: { text?: string; pattern?: string; unit?: H
               return found.length > 0 ? [{ ...found[0], start: 0, end: text.length }] : [];
           }
         : matches;
+}
+
+/** What textMatcher looks for: one text or pattern, or several (R6 3), and how much of its line a match covers. */
+export interface TextMatcherOptions {
+    text?: string;
+    pattern?: string;
+    texts?: readonly string[];
+    patterns?: readonly string[];
+    unit?: HideUnit;
+}
+
+/** The words a text request names, for a message: `"a", "b" or /c/`. */
+export function describeTextQuery(options: Omit<TextMatcherOptions, "unit">): string {
+    const said = [
+        ...[options.text, ...(options.texts ?? [])].filter(Boolean).map((text) => `"${text}"`),
+        ...[options.pattern, ...(options.patterns ?? [])].filter(Boolean).map((pattern) => `/${pattern}/`),
+    ];
+    return said.length > 1 ? `${said.slice(0, -1).join(", ")} or ${said.at(-1)}` : (said[0] ?? "the text");
 }
 
 function overlap(a: FractionBox, b: FractionBox): number {

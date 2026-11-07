@@ -298,6 +298,8 @@ const EXAMPLE_OPS: readonly unknown[] = [
     { op: "setText", id: "t1", block: { align: "right" } },
     // R6 2 a match's whole OCR line
     { op: "hideText", text: "Orla Fictive", unit: "line" },
+    // R6 3 several texts and patterns in one scan
+    { op: "hideText", texts: ["Orla Fictive", "Bram Sample"], patterns: ["\\d{3} \\d{3} \\d{3}"] },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */

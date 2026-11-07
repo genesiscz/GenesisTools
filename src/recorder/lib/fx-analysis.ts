@@ -26,11 +26,11 @@ import {
 } from "@genesiscz/utils/recording-editor/motion";
 import {
     type FractionBox,
-    type HideUnit,
     type LineMatcher,
     type PrivateHit,
     privateMatcher,
     type ScreenTextFrame,
+    type TextMatcherOptions,
     textHits,
     textMatcher,
 } from "@genesiscz/utils/recording-editor/private-data";
@@ -638,12 +638,11 @@ export async function privateData(
     return hitsOut(project, await privateHitsOf(project, options));
 }
 
-/** What findText and hideText look for: a text or a pattern, and how much of its OCR line a match covers (R6 2). */
-export interface TextQuery {
-    text?: string;
-    pattern?: string;
-    unit?: HideUnit;
-}
+/**
+ * What findText, hideText and verifyHidden look for: a text or a pattern, or several (R6 3, one scan), and how much of
+ * its OCR line a match covers (R6 2).
+ */
+export type TextQuery = TextMatcherOptions;
 
 /** Every place of a text (or a pattern) on the screen, the input of the `hideText` op. */
 export function textHitsOf(project: EditProject, options: TrackOptions & TextQuery): Promise<PrivateHit[]> {
@@ -671,17 +670,20 @@ export interface Leak {
  */
 export async function verifyHidden(
     value: string,
-    options: {
-        text?: string;
-        pattern?: string;
+    options: Omit<TextQuery, "unit"> & {
         private?: boolean;
         names?: readonly string[];
         everySeconds?: number;
         movie?: string;
     }
 ): Promise<{ ok: boolean; movie: string; frames: number; leaks: Leak[] }> {
-    const matcher =
-        options.private || (!options.text && !options.pattern) ? privateMatcher(options.names) : textMatcher(options);
+    const asked = Boolean(options.text || options.pattern || options.texts?.length || options.patterns?.length);
+    // R6 3: every text and pattern (and the private data, when asked or when nothing else is) in one read.
+    const matchers = [
+        ...(asked ? [textMatcher(options)] : []),
+        ...(options.private || !asked ? [privateMatcher(options.names)] : []),
+    ];
+    const matcher: LineMatcher = (text) => matchers.flatMap((one) => one(text));
     let movie = options.movie;
 
     if (!movie) {

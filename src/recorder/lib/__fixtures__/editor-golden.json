@@ -971,6 +971,16 @@
       "op": "hideText",
       "text": "Orla Fictive",
       "unit": "line"
+    },
+    {
+      "op": "hideText",
+      "texts": [
+        "Orla Fictive",
+        "Bram Sample"
+      ],
+      "patterns": [
+        "\\d{3} \\d{3} \\d{3}"
+      ]
     }
   ],
   "projects": [
