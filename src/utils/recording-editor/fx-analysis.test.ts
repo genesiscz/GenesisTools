@@ -710,6 +710,45 @@ describe("a few digits of a hidden value at the picture's edge are a leak (round
     });
 });
 
+describe("a part of a hidden value that a box edge cut is a leak anywhere in the line (round 8)", () => {
+    // Invented: a contract number and a name hideText was asked to hide.
+    const matcher = textMatcher({ texts: ["4071-8263", "Alena Kovářová"] });
+    const values = ["4071-8263", "alenakovářová"];
+    const fragments = edgeFragments(matcher, values);
+
+    test("the tail digits or the end of a name beside other words count, with a box on the fragment only", () => {
+        expect(fragments("Smlouva (...8263) aktivní")).toMatchObject([
+            { label: "Text (part of a hidden value)", value: "4071-8263", start: 12, end: 16 },
+        ]);
+        expect(fragments("ena Kovářová · Platby")).toMatchObject([
+            { label: "Text (part of a hidden value)", value: "alenakovářová" },
+        ]);
+        // Both in one line: one part each.
+        expect(fragments("71-8263 Kovářová").length).toBe(2);
+    });
+
+    test("short runs, other numbers and other words do not", () => {
+        expect(fragments("Battery 82 %")).toEqual([]);
+        expect(fragments("12:41")).toEqual([]);
+        expect(fragments("Platby 2026")).toEqual([]);
+        expect(fragments("Kontakt a nová platba")).toEqual([]);
+        expect(fragments("8263")).toMatchObject([{ value: "4071-8263" }]);
+    });
+
+    test("a box over only the left part of a line leaves the tail readable, and verifyHidden's read finds it", () => {
+        const frames: ScreenTextFrame[] = [
+            {
+                atUs: 0,
+                untilUs: 33_000,
+                lines: [{ text: "(...8263) Kovářová", x: 0.5, y: 0.3, width: 0.3, height: 0.03 }],
+            },
+        ];
+        const hits = textHits(frames, edgeFragments(matcher, values), { gapUs: 0 });
+        expect(hits.length).toBe(2);
+        expect(textHits(frames, matcher, { gapUs: 0 }).length).toBe(0);
+    });
+});
+
 describe("unhide everything when nothing is hidden (round 7)", () => {
     test("is a no-op that says nothing is hidden, instead of an error", () => {
         const drawn = applyOp(

@@ -398,33 +398,89 @@ export function textMatcher(options: TextMatcherOptions): LineMatcher {
         : matches;
 }
 
+/** R8: the shortest run of a hidden value's digits, or of its letters, that counts as a leak of it. */
+const FRAGMENT_DIGITS = 4;
+const FRAGMENT_LETTERS = 4;
+/** A word of a value's letters from its middle (not its head or tail) counts only from this length. */
+const FRAGMENT_INNER_LETTERS = 6;
+
 /**
- * R7: `matcher`, and also a line that is only the head or the tail of one of `values` (what the matcher found in the
- * source): a heading that slid out at the edge shows a few of its digits, and those are a leak of the whole value. A
- * fragment needs 3 characters with a digit in them, or 5 without. The values stay in memory; a hit shows them masked.
+ * R7 and R8: `matcher`, and also a part of one of `values` (what the matcher found in the source) that a box edge or
+ * the picture's edge cut: a line that is only the head or the tail of a value (3 characters with a digit, or 5), and
+ * anywhere in a line a run of 4 or more of a value's digits ("(...8263)" of "4071-8263"), or a word of 4 or more
+ * letters that starts or ends the value's letters (6 or more from its middle), so a box that covers only the left part
+ * of a line is a leak of the right part. Each part is its own hit on the fragment's characters. The values stay in
+ * memory; a hit shows them masked.
  */
 export function edgeFragments(matcher: LineMatcher, values: readonly string[]): LineMatcher {
-    const known = [...new Set(values.map((value) => value.replace(/\s+/g, "").toLowerCase()))];
+    const known = [...new Set(values.map((value) => value.replace(/\s+/g, "").toLowerCase()))].map((value) => ({
+        value,
+        digits: value.replace(/\D/g, ""),
+        letters: value.replace(/[^\p{L}]/gu, ""),
+    }));
+    const partOf = (found: TextMatch, value: string): TextMatch => ({
+        ...found,
+        kind: "text",
+        label: "Text (part of a hidden value)",
+        value,
+    });
     return (text) => {
         const own = matcher(text);
-
-        if (own.length > 0) {
-            return own;
-        }
-
         const line = text.replace(/\s+/g, "").toLowerCase();
         const enough = line.length >= 5 || (line.length >= 3 && /\d/.test(line));
 
-        if (!enough) {
-            return [];
+        if (own.length === 0 && enough) {
+            const whole = known.find(
+                ({ value }) => value.length > line.length && (value.startsWith(line) || value.endsWith(line))
+            );
+
+            if (whole) {
+                return [
+                    { kind: "text", label: "Text (part at an edge)", value: whole.value, start: 0, end: text.length },
+                ];
+            }
         }
 
-        const whole = known.find(
-            (value) => value.length > line.length && (value.startsWith(line) || value.endsWith(line))
-        );
-        return whole
-            ? [{ kind: "text" as const, label: "Text (part at an edge)", value: whole, start: 0, end: text.length }]
-            : [];
+        const parts: TextMatch[] = [];
+        // A run of digits, with - . / between them as a number is written ("71-8263").
+        for (const run of text.matchAll(/\d(?:[-./]?\d)*/g)) {
+            const digits = run[0].replace(/\D/g, "");
+            const owner =
+                digits.length >= FRAGMENT_DIGITS
+                    ? known.find((one) => one.digits.length > 0 && one.digits.includes(digits))
+                    : undefined;
+
+            if (owner) {
+                const start = run.index ?? 0;
+                parts.push(
+                    partOf({ kind: "text", label: "", value: "", start, end: start + run[0].length }, owner.value)
+                );
+            }
+        }
+
+        for (const run of text.matchAll(/\p{L}+/gu)) {
+            const word = run[0].toLowerCase();
+            const owner =
+                word.length >= FRAGMENT_LETTERS
+                    ? known.find(
+                          (one) =>
+                              one.letters.length > word.length &&
+                              (one.letters.startsWith(word) ||
+                                  one.letters.endsWith(word) ||
+                                  (word.length >= FRAGMENT_INNER_LETTERS && one.letters.includes(word)))
+                      )
+                    : undefined;
+
+            if (owner) {
+                const start = run.index ?? 0;
+                parts.push(
+                    partOf({ kind: "text", label: "", value: "", start, end: start + run[0].length }, owner.value)
+                );
+            }
+        }
+
+        const free = parts.filter((part) => !own.some((match) => part.start < match.end && part.end > match.start));
+        return [...own, ...free].sort((a, b) => a.start - b.start);
     };
 }
 
