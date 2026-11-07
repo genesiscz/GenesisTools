@@ -57,12 +57,16 @@ enum TransitionLook {
         return joins
     }
 
-    static func mark(atOutputUs us: Int64, project: EditProject, track: CursorTrack?) -> Mark? {
+    /// `drawn` is the hidden parts as the renderer draws them (RedactionEdges.effective): R7 5, a part that ends just
+    /// before the cut or starts just after the incoming clip's start is drawn up to the cut, so it must cover the still of
+    /// that side on a blended frame too. Absent, the project's own parts.
+    static func mark(atOutputUs us: Int64, project: EditProject, track: CursorTrack?,
+                     drawn: [EditProject.Redaction]? = nil) -> Mark? {
         guard let join = joins(in: project).first(where: { us >= $0.atUs - $0.halfUs && us < $0.atUs + $0.halfUs }) else { return nil }
         let progress = Double(us - (join.atUs - join.halfUs)) / Double(2 * join.halfUs)
         let incoming = us >= join.atUs
         let other = incoming ? join.outgoingSourceUs : join.incomingSourceUs
-        let redactions = (project.redactions ?? []).filter { other >= $0.startUs && other < $0.endUs }
+        let redactions = (drawn ?? project.redactions ?? []).filter { other >= $0.startUs && other < $0.endUs }
             .map { ZoomState.placed($0, atSourceUs: other, track: track) }
         return Mark(kind: join.transition.kind, progress: min(1, max(0, progress)), incoming: incoming, otherSourceUs: other,
                     otherRedactions: redactions)

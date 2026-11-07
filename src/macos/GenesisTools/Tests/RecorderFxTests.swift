@@ -53,6 +53,22 @@ final class RecorderFxTests: XCTestCase {
         XCTAssertTrue(TransitionLook.joins(in: cutProject(own)).isEmpty)
     }
 
+    /// R7 5: a blended frame hides what the other side's still shows, by the parts as they are drawn there. A part that
+    /// ends 200 ms before the cut, or starts 150 ms after the incoming clip's start, is drawn up to the cut (snapMs), so
+    /// the still of that side must be covered by it too.
+    func testATransitionStillIsHiddenByThePartsAsDrawnAtItsSide() throws {
+        var project = cutProject(EditProject.Transitions(default: .init(kind: .crossfade, ms: 400)))
+        let part = { (id: String, from: Int64, to: Int64) in
+            EditProject.Redaction(id: id, startUs: from, endUs: to, x: 0.1, y: 0.1, width: 0.3, height: 0.2, style: .black)
+        }
+        project.redactions = [part("outgoing", 2_000_000, 3_800_000), part("incoming", 5_150_000, 6_000_000)]
+        let zoom = ZoomState(project: project, cursor: nil)
+        let before = try XCTUnwrap(zoom.look(atOutput: 3_900_000).transition)
+        XCTAssertEqual(before.otherRedactions.map(\.id), ["incoming"], "the incoming clip's first frame is hidden on the blend")
+        let after = try XCTUnwrap(zoom.look(atOutput: 4_100_000).transition)
+        XCTAssertEqual(after.otherRedactions.map(\.id), ["outgoing"], "the outgoing clip's last frame is hidden on the blend")
+    }
+
     func testEachTransitionBlendsBothSidesAtTheJoin() {
         let extent = CGRect(x: 0, y: 0, width: 200, height: 100)
         let black = CIImage(color: .black).cropped(to: extent)

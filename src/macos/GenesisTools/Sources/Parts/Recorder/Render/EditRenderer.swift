@@ -172,6 +172,7 @@ final class ZoomState: @unchecked Sendable {
             marks = Looks.marks(atSourceMs: Double(sourceUs) / 1000, clicks: cursor.clicks, durationMs: clicks.durationMs)
         }
         let view = ZoomCurve.view(atSource: sourceUs, zooms: project.zooms, cursor: cursor)
+        let drawn = redactions(for: project)
         let motionBlur = (project.motion ?? .init()).blur
         var previousView: ZoomCurve.View?
         if motionBlur > 0, outUs >= Self.frameUs, !project.zooms.isEmpty {
@@ -203,7 +204,7 @@ final class ZoomState: @unchecked Sendable {
                              guard settings.show, let shown = cursor?.key(atMs: Double(sourceUs) / 1000, durationMs: settings.durationMs) else { return nil }
                              return KeyMark(label: shown.label, opacity: shown.opacity, settings: settings)
                          },
-                         redactions: redactions(for: project).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
+                         redactions: drawn.filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
                              .map { Self.placed($0, atSourceUs: sourceUs, track: cursor) },
                          texts: Self.texts(atSourceUs: sourceUs, project: project))
         look.previousView = previousView
@@ -218,7 +219,7 @@ final class ZoomState: @unchecked Sendable {
             Self.spotlightFade(spot, atSourceUs: sourceUs)
         }.max() ?? 1
         // Round 4 fx-render.
-        look.transition = TransitionLook.mark(atOutputUs: outUs, project: project, track: cursor)
+        look.transition = TransitionLook.mark(atOutputUs: outUs, project: project, track: cursor, drawn: drawn)
         look.lenses = LensLook.marks(atSourceUs: sourceUs, project: project, track: cursor)
         look.tilt = project.tilt.flatMap { TiltLook.pose(atOutputUs: outUs, lengthUs: project.outputDurationUs, tilt: $0) }
         // R5 4 canvas zoom
