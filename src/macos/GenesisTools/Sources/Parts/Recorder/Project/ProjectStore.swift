@@ -21,6 +21,7 @@ final class ProjectStore {
         case missing(String)
         case noMovie(String)
         case unplayable(String, String)
+        case lostMovie(String)
 
         var errorDescription: String? {
             switch self {
@@ -28,6 +29,7 @@ final class ProjectStore {
             case let .noMovie(path):
                 "\(path) has no movie (screen.mp4). A frames-only recording opens after `tools recorder proxy \(path)` makes one."
             case let .unplayable(path, why): "\(path) is not a movie the editor can play (\(why))"
+            case let .lostMovie(path): "\(path) is missing: recording.json names it, but the file was moved or removed"
             }
         }
     }
@@ -50,7 +52,10 @@ final class ProjectStore {
         }
         let video: URL
         if isFolder.boolValue {
-            guard let movie = RecordingMovie.own(in: target) else { throw OpenError.noMovie(target.path) }
+            guard let movie = RecordingMovie.own(in: target) else {
+                if let lost = recordedMovieName(in: target) { throw OpenError.lostMovie(target.appendingPathComponent(lost).path) }
+                throw OpenError.noMovie(target.path)
+            }
             video = movie
         } else {
             video = target
@@ -60,6 +65,16 @@ final class ProjectStore {
             return (projectURL, try EditProject.decode(data, at: projectURL), true)
         }
         return (projectURL, try await newProject(video: video), false)
+    }
+
+    /// The movie a movie recording's recording.json names (`settings.video.file`); nil for a frames recording. A proxy
+    /// cannot help such a folder, so the error must not offer one (the TypeScript side reads the same key).
+    nonisolated static func recordedMovieName(in folder: URL) -> String? {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("recording.json")),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let file = ((root["settings"] as? [String: Any])?["video"] as? [String: Any])?["file"] as? String,
+              !file.isEmpty else { return nil }
+        return URL(fileURLWithPath: file).lastPathComponent
     }
 
     nonisolated static func newProject(video: URL) async throws -> EditProject {

@@ -84,6 +84,26 @@ final class RecorderRobustnessTests: XCTestCase {
         XCTAssertEqual(EditProject.Clip(id: "a", fromUs: 0, toUs: 1_000_000, speed: 2).outputDurationUs, 500_000)
     }
 
+    func testAMovieRecordingWhoseMovieWentAwaySaysSoInsteadOfOfferingAProxy() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lost-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try Data(#"{"settings":{"kind":"video","video":{"file":"screen.mp4"}}}"#.utf8).write(to: folder.appendingPathComponent("recording.json"))
+        do {
+            _ = try await ProjectStore.load(path: folder.path)
+            XCTFail("a folder without its movie opened")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("screen.mp4 is missing"), error.localizedDescription)
+        }
+        try Data(#"{"settings":{"kind":"frames"}}"#.utf8).write(to: folder.appendingPathComponent("recording.json"))
+        do {
+            _ = try await ProjectStore.load(path: folder.path)
+            XCTFail("a frames folder without a proxy opened")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("tools recorder proxy"), "a frames recording still gets the proxy hint")
+        }
+    }
+
     func testAnEmptyOrUnfinishedMovieOpensWithAnErrorNotATrap() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("robust-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
