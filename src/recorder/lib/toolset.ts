@@ -21,7 +21,7 @@ import { TRANSITION_KINDS } from "@genesiscz/utils/recording-editor/fx";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { placedShape } from "@genesiscz/utils/recording-editor/item-ops";
 import { DEFAULT_LANES, EFFECT_KINDS, type EffectLane } from "@genesiscz/utils/recording-editor/lanes";
-import { CAPTION_KINDS, TEXT_ANIMATIONS } from "@genesiscz/utils/recording-editor/overlays";
+import { CAPTION_KINDS, cardsLeadUs, TEXT_ANIMATIONS } from "@genesiscz/utils/recording-editor/overlays";
 import {
     outputTimeSchema,
     sourceTimeSchema,
@@ -802,8 +802,9 @@ const movieMethods = [
             })
             .strict(),
         result: z.unknown(),
-        resultName: '{ path, width, height, columns, labels: "output" | "source", cells: { source, output }[] }',
-        doc: "One picture of several frames on a grid, each labelled with its time: count (6, at most 48) frames spread over from…to, every (seconds) from…to (a dense survey: every: 0.5), or the times in at. Without source the frames are of the edit as it exports at OUTPUT seconds; with source: true they are of the recording as it was recorded (cut parts too, no effects) at SOURCE seconds, the seconds every op takes. Both come from the editor's own renderer, so a time read on a sheet is the time to put in an op; never survey with ffmpeg frame numbers. columns (default by the frames' shape, a near 16:9 grid). cells gives each cell's time on both clocks (output null where the edit cuts it). out keeps the PNG at that path (the REPL's own copy goes when the run ends).",
+        resultName:
+            '{ path, width, height, columns, labels: "output" | "source", cells: { source, output, export }[] }',
+        doc: "One picture of several frames on a grid, each labelled with its time: count (6, at most 48) frames spread over from…to, every (seconds) from…to (a dense survey: every: 0.5), or the times in at. Without source the frames are of the edit as it exports at OUTPUT seconds; with source: true they are of the recording as it was recorded (cut parts too, no effects) at SOURCE seconds, the seconds every op takes. Both come from the editor's own renderer, so a time read on a sheet is the time to put in an op; never survey with ffmpeg frame numbers. columns (default by the frames' shape, a near 16:9 grid). cells gives each cell's time on every clock: source, output (null where the edit cuts it) and export (the exported file's, after an intro card). out keeps the PNG at that path (the REPL's own copy goes when the run ends).",
         effect: "reversible",
     }),
     defineMethod({
@@ -825,7 +826,7 @@ const movieMethods = [
         }),
         positional: ["at", "out", "full", "source"],
         result: z.unknown(),
-        resultName: "{ path, width, height, source, output }",
+        resultName: "{ path, width, height, source, output, export }",
         doc: "Shows one frame of the edit as it exports (zoom, clicks, cursor, captions, shortcuts, frame style) at OUTPUT seconds (what plays), so you can look at a change. source: true shows the recording as it was recorded at SOURCE seconds (the seconds ops take) instead. Without `out` the PNG goes to the run's scratch folder and is gone after the run; give `out` (a .png path) to keep it. It renders at preview size (at most 1080 pixels tall) unless full: true, which renders at the export's size (the source's own pixels when the export keeps them), for reading small text. The answer gives the time on both clocks. Call it with an object for the flags: still({ at: 12.5, source: true, full: true }).",
         effect: "reversible",
     }),
@@ -1478,7 +1479,7 @@ export const moviesApi = defineApi({
         'SourceTime is seconds (or "m:ss", "h:mm:ss") of the movie as recorded, before any cut or speed change: every edit op and every method that places an item takes it, and a cut never moves it.',
         'OutputTime is seconds (or "m:ss") of the edited movie, what plays after cuts and speed changes: range(), itemsAt(), poster(), export({ from, to }) and comment() take it (comment({ source: true }) takes SourceTime).',
         "Time (still(), sheet()) is OutputTime, or SourceTime with source: true. Survey with these two, never with ffmpeg frame numbers: they read frames with the editor's own decoder, so a time read on a sheet is the time to put in an op. ffmpeg's fps filter picks the nearest frame, up to half a step later, and frame numbers of a variable-frame-rate screen recording drift by seconds.",
-        "In an answer, from, to, at, start and end are source seconds and plays is output seconds (null where that moment is cut). The exceptions say so: itemsAt() gives output and source, info() gives sourceSeconds and outputSeconds, still() and sheet() cells give source and output, chapters() are output seconds, and a comment's at is when it was written.",
+        "In an answer, from, to, at, start and end are source seconds and plays is output seconds (null where that moment is cut). The exceptions say so: itemsAt() gives output and source, info() gives sourceSeconds and outputSeconds, still() and sheet() cells give source and output, chapters() are output seconds, and a comment's at is when it was written. Output time is the movie without its cards: the exported file plays an intro card first, so info().exportTime gives introSeconds, endSeconds and exportSeconds, a voiceover's exportPlays and a cell's export are times in the exported file.",
         "Every edit reads the file fresh and saves once, so the open window and you never overwrite each other.",
         'The edit is a file: it stays after the worker ends, and the next run starts from it. apply([{ op: "reset" }]) starts over; undo() takes back the last change, one of an earlier run too (<edit>.undo.json, 30 steps).',
         "Limits: speed 0.25–16, zoom scale 1–4, focus x and y 0–1, volume 0–2.",
@@ -1605,22 +1606,24 @@ export function everyTimes({ fromUs, toUs, everyUs }: { fromUs: number; toUs: nu
 }
 
 /**
- * One picture's time on both clocks: `source` (the recording's own seconds, what ops take) and `output` (what plays
- * in the export without intro card, null where the edit cuts that moment).
+ * One picture's time on every clock: `source` (the recording's own seconds, what ops take), `output` (the edited
+ * movie's, what still() and sheet() take) and `export` (the exported file's, after the intro card); output and export
+ * are null where the edit cuts that moment.
  */
 export function cellTimes(
     project: EditProject,
     us: number,
     base: "source" | "output"
-): { source: number; output: number | null } {
+): { source: number; output: number | null; export: number | null } {
     const seconds = (value: number) => Math.round(value / 1000) / 1000;
-
-    if (base === "output") {
-        return { source: seconds(sourceTimeOf(project, us)), output: seconds(us) };
-    }
-
-    const output = outputTimeOf(project, us);
-    return { source: seconds(us), output: output === undefined ? null : seconds(output) };
+    const outUs = base === "output" ? us : outputTimeOf(project, us);
+    const sourceUs = base === "output" ? sourceTimeOf(project, us) : us;
+    return {
+        source: seconds(sourceUs),
+        output: outUs === undefined ? null : seconds(outUs),
+        // R5 7: the exported file plays the intro card first.
+        export: outUs === undefined ? null : seconds(outUs + cardsLeadUs(project)),
+    };
 }
 
 /**

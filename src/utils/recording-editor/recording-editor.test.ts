@@ -1290,6 +1290,23 @@ describe("edit project (edit.json)", () => {
         const once = applyOp(voiced, { op: "unvoiceover", id: clips[0]?.id ?? "" });
         expect(applyOp(once, { op: "unvoiceover", id: clips[1]?.id ?? "" }).audio.voiceovers).toBeUndefined();
         expect(describeProject(voiced, "/x/edit.json").voiceovers[0]).toMatchObject({ at: 1, seconds: 2, plays: 1 });
+        // R5 7: with an intro card the export plays the movie later; the export's own time is in the answer.
+        const exportCarded = {
+            ...voiced,
+            cards: { intro: { title: "Demo", seconds: 3 }, end: { text: "Bye", qr: false, seconds: 2 } },
+        };
+        const described = describeProject(exportCarded, "/x/edit.json");
+        expect(described.voiceovers[0]).toMatchObject({ plays: 1, exportPlays: 4 });
+        expect(described.exportTime).toEqual({
+            introSeconds: 3,
+            endSeconds: 2,
+            exportSeconds: described.outputSeconds + 5,
+        });
+        expect(describeProject(voiced, "/x/edit.json").exportTime).toEqual({
+            introSeconds: 0,
+            endSeconds: 0,
+            exportSeconds: describeProject(voiced, "/x/edit.json").outputSeconds,
+        });
         // R4 8 music ducking: the dB object with its defaults, merged by later ops, removed by enabled: false.
         const ducked = applyOp(project, { op: "ducking", voiceovers: false });
         expect(ducked.audio.ducking).toEqual({ db: 12, fadeMs: 300, transcript: true, voiceovers: false });

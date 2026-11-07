@@ -45,6 +45,7 @@ import {
     applyProgress,
     CAPTION_KINDS,
     captionsStyleSchema,
+    cardsLeadUs,
     cardsSchema,
     progressSchema,
     TEXT_ANIMATIONS,
@@ -2673,6 +2674,8 @@ export function describeProject(project: EditProject, path: string) {
                 at: seconds(clip.atUs),
                 seconds: seconds(clip.durationUs),
                 plays: plays === undefined ? null : seconds(plays),
+                // R5 7: where it plays in the exported file, after the intro card.
+                exportPlays: plays === undefined ? null : seconds(plays + cardsLeadUs(project)),
                 file: clip.file,
                 volume: clip.volume,
                 ...(clip.label ? { label: clip.label } : {}),
@@ -2752,6 +2755,15 @@ export function describeProject(project: EditProject, path: string) {
         privateHidden: project.privacy?.applied.length ?? 0,
         // R5 5 redaction edges
         redactionJoins: { snapMs: project.redactionJoins?.snapMs ?? REDACTION_SNAP_MS },
+        // R5 7 export time: the export plays the intro card before the movie and the end card after it, so a moment
+        // at output time t is at t + introSeconds in the exported file; outputSeconds and plays are the movie alone.
+        exportTime: {
+            introSeconds: seconds(cardsLeadUs(project)),
+            endSeconds: project.cards?.end?.seconds ?? 0,
+            exportSeconds: seconds(
+                outputDurationUs(project) + cardsLeadUs(project) + Math.round((project.cards?.end?.seconds ?? 0) * 1e6)
+            ),
+        },
     };
 }
 

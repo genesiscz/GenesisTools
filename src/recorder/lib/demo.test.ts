@@ -431,16 +431,16 @@ describe("movie survey on one time base", () => {
             expect(request.columns).toBe(3);
             expect(answer.labels).toBe("source");
             expect(answer.cells).toEqual([
-                { source: 1, output: 1 },
-                { source: 3, output: null },
-                { source: 5, output: 3 },
+                { source: 1, output: 1, export: 1 },
+                { source: 3, output: null, export: null },
+                { source: 5, output: 3, export: 3 },
             ]);
             // The edit is as it was.
             expect(projectOps.readProject(path).clips).toHaveLength(2);
 
             const output = await new Movie(path).sheet({ at: [3] });
             expect(sheet.mock.calls[1][0].path).toBe(path);
-            expect(output.cells).toEqual([{ source: 5, output: 3 }]);
+            expect(output.cells).toEqual([{ source: 5, output: 3, export: 3 }]);
             await expect(new Movie(path).sheet({ at: [9] })).rejects.toThrow(
                 "source: true takes the recording's own seconds"
             );
