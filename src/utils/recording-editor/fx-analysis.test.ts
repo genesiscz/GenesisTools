@@ -23,10 +23,12 @@ import {
     applyOp,
     editOpSchema,
     editProjectSchema,
+    exportToOutputUs,
     hidingOf,
     type OpFacts,
     opPlacementWarnings,
     parseProject,
+    sourceTimeOf,
     wholeProject,
 } from "./project";
 import {
@@ -431,6 +433,19 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
             })
         ).toThrow(/"Nobody Here" or \/\^zzz\//);
         expect(() => textMatcher({ texts: [], patterns: [] })).toThrow(/give text/);
+    });
+
+    test("an export moment maps to output seconds after the intro card, and to source seconds across a cut", () => {
+        // A 3 s intro card, and source 10 to 20 s cut out: export 15 s is output 12 s is source 22 s.
+        const edited = applyOp(
+            applyOp(wholeProject(source), op({ op: "cut", from: 10, to: 20 })),
+            op({ op: "introCard", title: "Demo", seconds: 3 })
+        );
+        expect(exportToOutputUs(edited, 1_000_000)).toBeUndefined();
+        const out = exportToOutputUs(edited, 15_000_000);
+        expect(out).toBe(12_000_000);
+        expect(sourceTimeOf(edited, out ?? 0)).toBe(22_000_000);
+        expect(exportToOutputUs(edited, 3_000_000 + 50_000_001)).toBeUndefined();
     });
 
     test("block matching finds a scroll's shift and leaves a still picture still", () => {

@@ -288,6 +288,7 @@ export function registerHideTextCommands(program: Command): void {
                         names: flags.names?.split(",").map((name) => name.trim()),
                         everySeconds: Number(flags.every ?? 0.25),
                         movie: flags.movie,
+                        onProgress: (line) => out.printlnErr(line),
                     });
 
                     if (flags.json) {
@@ -295,7 +296,7 @@ export function registerHideTextCommands(program: Command): void {
                     } else {
                         for (const leak of answer.leaks) {
                             out.println(
-                                `leak  ${clock(leak.at)}-${clock(leak.until)}  ${leak.label.padEnd(13)} ${leak.masked}`
+                                `leak  ${clock(leak.at)}-${clock(leak.until)}  ${leak.label.padEnd(13)} ${leak.masked}${leak.source ? `  (source ${clock(leak.source.at)}-${clock(leak.source.until)})` : "  (in a card)"}`
                             );
                         }
 

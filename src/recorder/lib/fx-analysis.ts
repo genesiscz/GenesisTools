@@ -24,6 +24,7 @@ import {
     motionWindowFromJson,
     motionWindowToJson,
 } from "@genesiscz/utils/recording-editor/motion";
+import { cardsLeadUs } from "@genesiscz/utils/recording-editor/overlays";
 import {
     type FractionBox,
     type LineMatcher,
@@ -36,8 +37,11 @@ import {
 } from "@genesiscz/utils/recording-editor/private-data";
 import {
     type EditProject,
+    exportToOutputUs,
+    outputDurationUs,
     outputTimeOf,
     readCursorTrack,
+    sourceTimeOf,
     transcriptCachePath,
 } from "@genesiscz/utils/recording-editor/project";
 import {
@@ -53,7 +57,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
-import { exportAs, readTranscriptSegments } from "./edit";
+import { exportAs, exportProgressPrinter, openProject, readTranscriptSegments } from "./edit";
 import { boxInProxy, proxyCanvas, readDisplayPlan } from "./proxy";
 import { displaySizes, frameTexts, visibleSpans } from "./screen-search";
 
@@ -201,6 +205,8 @@ export async function ocrVideo(options: {
     fromUs?: number;
     toUs: number;
     fps: number;
+    /** Called after each frame is read (done of total). */
+    onFrame?: (done: number, total: number) => void;
 }): Promise<ScreenTextFrame[]> {
     const fromUs = options.fromUs ?? 0;
     const stepUs = 1_000_000 / options.fps;
@@ -235,10 +241,9 @@ export async function ocrVideo(options: {
         let previousDigest = "";
         let previousLines: ScreenTextFrame["lines"] = [];
 
-        for (const file of files) {
+        for (const [index, file] of files.entries()) {
             const path = join(folder, file);
             const digest = createHash("sha1").update(readFileSync(path)).digest("hex");
-
             const atUs = Math.round(fromUs + Number(file.replace(".png", "")) * stepUs);
 
             if (digest !== previousDigest) {
@@ -258,6 +263,7 @@ export async function ocrVideo(options: {
             }
 
             frames.push({ atUs, untilUs: Math.min(options.toUs, Math.round(atUs + stepUs)), lines: previousLines });
+            options.onFrame?.(index + 1, files.length);
         }
 
         log.debug(
@@ -658,20 +664,26 @@ export async function findText(project: EditProject, options: TrackOptions & Tex
     return hitsOut(project, await textHitsOf(project, options));
 }
 
-/** A moment of the OUTPUT where the text is still readable. */
+/** A moment of the export where the text is still readable. */
 export interface Leak {
-    /** Output seconds. */
+    /** Seconds of the export file (an intro card included). */
     at: number;
     until: number;
+    /** R6 5: the same moment in output seconds (what plays, without the intro card); null inside a card. */
+    output: { at: number; until: number } | null;
+    /** R6 5: where it starts and ends in the source movie (seconds), the time an op takes; null inside a card. */
+    source: { at: number; until: number } | null;
     label: string;
     masked: string;
     box: FractionBox;
 }
 
 /**
- * Whether a text is still readable in the edit's OUTPUT: the edit is exported (or `movie`, an export already made, is
- * read), its frames are read with Vision every `everySeconds` (0.25), and every run of frames where `text`, `pattern`
- * or the private data (`private: true`, with `names`) can still be read is a leak. ok is true without one.
+ * Whether a text is still readable in the edit's OUTPUT: the edit is exported (or `movie`, an export of it already
+ * made, is read), its frames are read with Vision every `everySeconds` (0.25), and every run of frames where `text`,
+ * `pattern`, `texts`, `patterns` or the private data (`private: true`, with `names`) can still be read is a leak, at
+ * export, output and source seconds. ok is true without one. `onProgress` gets a line per tenth of the export and of
+ * the frames read ("read 40 of 150 frames").
  */
 export async function verifyHidden(
     value: string,
@@ -680,6 +692,7 @@ export async function verifyHidden(
         names?: readonly string[];
         everySeconds?: number;
         movie?: string;
+        onProgress?: (line: string) => void;
     }
 ): Promise<{ ok: boolean; movie: string; frames: number; leaks: Leak[] }> {
     const asked = Boolean(options.text || options.pattern || options.texts?.length || options.patterns?.length);
@@ -689,11 +702,17 @@ export async function verifyHidden(
         ...(options.private || !asked ? [privateMatcher(options.names)] : []),
     ];
     const matcher: LineMatcher = (text) => matchers.flatMap((one) => one(text));
+    const { project } = await openProject(value);
+    const progress = options.onProgress ?? (() => undefined);
     let movie = options.movie;
 
     if (!movie) {
         const scratch = mkdtempSync(join(tmpdir(), "gt-verify-hidden-"));
-        const answer = await exportAs(value, { out: join(scratch, "verify.mp4"), format: "mp4" });
+        const answer = await exportAs(value, {
+            out: join(scratch, "verify.mp4"),
+            format: "mp4",
+            onProgress: exportProgressPrinter((line) => progress(`verifyHidden: ${line}`)),
+        });
 
         if (!answer.ok || !answer.path) {
             throw new Error(`the export to check failed: ${answer.error ?? "no file"}`);
@@ -703,14 +722,42 @@ export async function verifyHidden(
     }
 
     const { durationUs } = await probeVideo({ input: movie });
-    const frames = await ocrVideo({ video: movie, toUs: durationUs, fps: 1 / (options.everySeconds ?? 0.25) });
-    const leaks = textHits(frames, matcher, { gapUs: 0 }).map((hit) => ({
-        at: seconds(hit.keys[0]?.atUs ?? hit.fromUs),
-        until: seconds(hit.toUs),
-        label: hit.label,
-        masked: hit.masked,
-        box: hit.box,
-    }));
+    let shown = -1;
+    const frames = await ocrVideo({
+        video: movie,
+        toUs: durationUs,
+        fps: 1 / (options.everySeconds ?? 0.25),
+        onFrame: (done, total) => {
+            const tenth = Math.floor((done / Math.max(1, total)) * 10);
+
+            if (tenth > shown) {
+                shown = tenth;
+                progress(`verifyHidden: read ${done} of ${total} frames`);
+            }
+        },
+    });
+    // R6 5: an export starts with the intro card; what plays after it is the output, and each output moment a source one.
+    const endUs = cardsLeadUs(project) + outputDurationUs(project);
+    const leaks = textHits(frames, matcher, { gapUs: 0 }).map((hit) => {
+        const atUs = hit.keys[0]?.atUs ?? hit.fromUs;
+        const from = exportToOutputUs(project, atUs);
+        const to = exportToOutputUs(project, Math.min(hit.toUs, endUs));
+        return {
+            at: seconds(atUs),
+            until: seconds(hit.toUs),
+            output: from === undefined || to === undefined ? null : { at: seconds(from), until: seconds(to) },
+            source:
+                from === undefined || to === undefined
+                    ? null
+                    : {
+                          at: seconds(sourceTimeOf(project, from)),
+                          until: seconds(sourceTimeOf(project, Math.max(from, to - 1))),
+                      },
+            label: hit.label,
+            masked: hit.masked,
+            box: hit.box,
+        };
+    });
     return { ok: leaks.length === 0, movie, frames: frames.length, leaks };
 }
 

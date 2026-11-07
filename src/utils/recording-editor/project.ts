@@ -748,6 +748,13 @@ export function keepRange(project: EditProject, fromUs: number, toUs: number): E
     return next;
 }
 
+// R6 5 export time
+/** A moment of the export file as output microseconds (what plays, after the intro card); undefined inside a card. */
+export function exportToOutputUs(project: EditProject, exportUs: number): number | undefined {
+    const outUs = exportUs - cardsLeadUs(project);
+    return outUs >= 0 && outUs <= outputDurationUs(project) ? outUs : undefined;
+}
+
 /** The source time that plays at an output time; the end of the edit maps to the last clip's end. */
 export function sourceTimeOf(project: EditProject, outUs: number): number {
     let start = 0;
