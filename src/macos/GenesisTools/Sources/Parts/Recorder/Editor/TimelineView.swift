@@ -796,7 +796,7 @@ private struct DisplayBand: View {
 
 // MARK: - Playhead
 
-private struct PlayheadView: View {
+struct PlayheadView: View {
     let clock: PlayheadClock
     let scale: TimelineScale
     let model: EditorModel
@@ -811,15 +811,30 @@ private struct PlayheadView: View {
                 .frame(width: 1.5, height: layout.lanesBottom - TimelineView.rulerHeight + 8)
                 .offset(x: x - 0.75, y: TimelineView.rulerHeight - 4)
                 .allowsHitTesting(false)
+            // The knob draws 13 × 16 pt; its grip is 23 × 22 pt round it, so a press beside the knob still takes it.
             PlayheadKnob()
                 .fill(RecorderPalette.playhead)
                 .frame(width: 13, height: 16)
-                .offset(x: x - 6.5, y: TimelineView.rulerHeight - 10)
+                .frame(width: PlayheadView.grip.width, height: PlayheadView.grip.height, alignment: .top)
+                .contentShape(Rectangle())
+                .offset(x: x - PlayheadView.grip.width / 2, y: TimelineView.rulerHeight - 10)
                 .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("timeline")).onChanged { value in
                     model.player.pause()
                     model.seek(scale.us(value.location.x))
                 })
-                .accessibilityLabel("Playhead at \(formatClock(clock.outUs, tenths: true))")
+                // VoiceOver moves it too: a swipe up or down steps one second, as the arrow keys step the time.
+                .accessibilityElement()
+                .accessibilityLabel("Playhead")
+                .accessibilityValue(PlayheadView.spoken(clock.outUs, of: model.durationUs))
+                .accessibilityAdjustableAction { direction in
+                    model.player.pause()
+                    switch direction {
+                    case .increment: model.seek(min(model.durationUs, clock.outUs + 1_000_000))
+                    case .decrement: model.seek(max(0, clock.outUs - 1_000_000))
+                    @unknown default: break
+                    }
+                }
+                .accessibilityIdentifier("recorder.playhead")
             // On the clip lane's top edge beside the playhead, where the cut lands; greyed at a clip edge.
             IconButton(systemName: "scissors", tooltip: canSplit ? "Split the clip at the playhead (S)" : "No cut here: the playhead is at a clip edge",
                        size: 11) {
@@ -834,6 +849,14 @@ private struct PlayheadView: View {
             .accessibilityIdentifier("recorder.split")
         }
         .coordinateSpace(name: "timeline")
+    }
+
+    /// The knob's hit area: at least 22 pt each way.
+    nonisolated static let grip = CGSize(width: 23, height: 22)
+
+    /// "00:12.5 of 00:44.8", as the clock reads.
+    nonisolated static func spoken(_ atUs: Int64, of durationUs: Int64) -> String {
+        "\(formatClock(atUs, tenths: true)) of \(formatClock(durationUs, tenths: true))"
     }
 }
 

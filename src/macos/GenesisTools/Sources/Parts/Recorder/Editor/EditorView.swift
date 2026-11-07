@@ -2286,6 +2286,10 @@ private struct ClockLabel: View {
             Text(verbatim: formatClock(durationUs, tenths: true)).foregroundStyle(RecorderPalette.dim)
         }
         .font(.system(size: 13, weight: .medium).monospacedDigit())
+        // One element, "Time, 00:12.5 of 00:44.8", not three texts with a bare slash between them.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Time")
+        .accessibilityValue(PlayheadView.spoken(clock.outUs, of: durationUs))
         .accessibilityIdentifier("recorder.clock")
     }
 }

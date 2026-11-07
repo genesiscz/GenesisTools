@@ -1408,6 +1408,14 @@ final class RecorderEditTests: XCTestCase {
                                                   fileExists: true).title, "The preview cannot show this movie")
     }
 
+    // Regression test: deep test 2026-11-07 R3-RX3. VoiceOver read the clock as three texts ("00:00.0", "/", "00:44.8"),
+    // and the playhead as "Playhead at 00:00.0" with no way to move it; its knob took presses on 13 × 16 pt only.
+    func testThePlayheadAndTheClockReadAsOneTimeOfTheLength() {
+        XCTAssertEqual(PlayheadView.spoken(12_500_000, of: 44_800_000), "00:12.5 of 00:44.8")
+        XCTAssertGreaterThanOrEqual(PlayheadView.grip.width, 22)
+        XCTAssertGreaterThanOrEqual(PlayheadView.grip.height, 22)
+    }
+
     func testRenderSizeIsEvenAndCapped() {
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 4112, height: 2570), maxHeight: 1080), CGSize(width: 1728, height: 1080))
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 1919, height: 1200), maxHeight: 720), CGSize(width: 1150, height: 720))
