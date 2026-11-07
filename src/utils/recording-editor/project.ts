@@ -781,6 +781,166 @@ export function exportToOutputUs(project: EditProject, exportUs: number): number
     return outUs >= 0 && outUs <= outputDurationUs(project) ? outUs : undefined;
 }
 
+// R7 3 verifyHidden fixes
+/**
+ * Where a text verifyHidden read on the export sits in the SOURCE picture (fractions of the source movie's picture) from
+ * `fromUs` to `toUs` (SOURCE microseconds): the source's own tracked hits of the same kind that show then (the same
+ * masked value first), as one rectangle over their places in that time. With none, the export's box itself when the
+ * export shows the source picture as it is (no frame, no zoom then); else null.
+ */
+export function leakSourceBox(
+    project: EditProject,
+    options: {
+        fromUs: number;
+        toUs: number;
+        label: string;
+        masked: string;
+        /** The leak's box on the export frame (fractions of the export's picture). */
+        canvasBox: { x: number; y: number; width: number; height: number };
+        sourceHits: readonly PrivateHit[];
+    }
+): { x: number; y: number; width: number; height: number } | null {
+    const slackUs = 300_000;
+    const showing = options.sourceHits.filter(
+        (hit) =>
+            hit.label === options.label && hit.fromUs <= options.toUs + slackUs && hit.toUs >= options.fromUs - slackUs
+    );
+    const same = showing.filter((hit) => hit.masked === options.masked);
+    const chosen = same.length > 0 ? same : showing;
+
+    if (chosen.length > 0) {
+        const boxes = chosen.flatMap((hit) => {
+            const keys = hit.keys.filter(
+                (key) => key.atUs >= options.fromUs - slackUs && key.atUs <= options.toUs + slackUs
+            );
+            return keys.length > 0 ? keys : [hit.box];
+        });
+        const x = Math.min(...boxes.map((box) => box.x));
+        const y = Math.min(...boxes.map((box) => box.y));
+        const right = Math.max(...boxes.map((box) => box.x + box.width));
+        const bottom = Math.max(...boxes.map((box) => box.y + box.height));
+        return { x, y, width: right - x, height: bottom - y };
+    }
+
+    const zoomed = project.zooms.some((zoom) => zoom.startUs < options.toUs && zoom.endUs > options.fromUs);
+    return !project.frame && !zoomed ? { ...options.canvasBox } : null;
+}
+
+/**
+ * The redact ops that cover each leak in SOURCE time and space: its source stretch with 0.1 s on each side, its
+ * source box with a margin of half its height (kept inside the picture). A leak with no source time (inside a card)
+ * or no source box gets none.
+ */
+export function leakFixOps(
+    leaks: ReadonlyArray<{
+        label: string;
+        /** Source seconds. */
+        source: { at: number; until: number } | null;
+        /** Source fractions. */
+        sourceBox: { x: number; y: number; width: number; height: number } | null;
+    }>
+): EditOp[] {
+    return leaks.flatMap((leak) => {
+        if (!leak.source || !leak.sourceBox) {
+            return [];
+        }
+
+        const box = leak.sourceBox;
+        const pad = box.height * 0.5;
+        const x = Math.max(0, box.x - pad);
+        const y = Math.max(0, box.y - pad);
+        const rect = {
+            x,
+            y,
+            width: Math.max(0.005, Math.min(1, box.x + box.width + pad) - x),
+            height: Math.max(0.005, Math.min(1, box.y + box.height + pad) - y),
+        };
+        const round = (value: number) => Math.round(value * 1000) / 1000;
+        return [
+            editOpSchema.parse({
+                op: "redact",
+                from: round(Math.max(0, leak.source.at - 0.1)),
+                to: round(Math.max(leak.source.at + 0.05, leak.source.until + 0.1)),
+                rect,
+                label: `${leak.label} (verifyHidden)`.slice(0, 60),
+            }),
+        ];
+    });
+}
+
+// R7 4 verifyHidden sampling
+/**
+ * The stretches of the export (EXPORT microseconds, the intro card included) where verifyHidden reads every frame:
+ * `aroundUs` (0.2 s) on each side of every cut, of every transition (its whole span), of the start and end of every
+ * zoom and hidden part that plays, and of every scene change in `sceneUs` (SOURCE microseconds). Sorted and merged.
+ */
+export function boundaryWindows(
+    project: EditProject,
+    options: { aroundUs?: number; sceneUs?: readonly number[] } = {}
+): Array<[number, number]> {
+    const aroundUs = options.aroundUs ?? 200_000;
+    const leadUs = cardsLeadUs(project);
+    const endUs = leadUs + outputDurationUs(project);
+    const windows: Array<[number, number]> = [];
+    const add = (fromOutUs: number, toOutUs: number) => {
+        const from = Math.max(0, leadUs + fromOutUs - aroundUs);
+        const to = Math.min(endUs, leadUs + toOutUs + aroundUs);
+
+        if (to > from) {
+            windows.push([from, to]);
+        }
+    };
+    const transitions = transitionsSchema.parse(project.transitions ?? {});
+    let at = 0;
+    let previous: EditProject["clips"][number] | undefined;
+
+    for (const clip of project.clips) {
+        const length = clipOutputUs(clip);
+
+        if (length <= 0) {
+            continue;
+        }
+
+        if (previous && previous.toUs !== clip.fromUs) {
+            const chosen = transitions.joins?.[clip.id] ?? transitions.default;
+            const halfUs = chosen.kind === "none" ? 0 : chosen.ms * 500;
+            add(at - halfUs, at + halfUs);
+        }
+
+        at += length;
+        previous = clip;
+    }
+
+    const sourcePoints = [
+        ...project.zooms.flatMap((zoom) => [zoom.startUs, zoom.endUs]),
+        ...(project.redactions ?? []).flatMap((part) => [part.startUs, part.endUs]),
+        ...(options.sceneUs ?? []),
+    ];
+
+    for (const sourceUs of sourcePoints) {
+        const outUs = outputTimeOf(project, sourceUs);
+
+        if (outUs !== undefined) {
+            add(outUs, outUs);
+        }
+    }
+
+    windows.sort((a, b) => a[0] - b[0]);
+    const merged: Array<[number, number]> = [];
+
+    for (const window of windows) {
+        const last = merged.at(-1);
+
+        if (last && window[0] <= last[1]) {
+            last[1] = Math.max(last[1], window[1]);
+        } else {
+            merged.push([...window]);
+        }
+    }
+
+    return merged;
+}
+
 /** The source time that plays at an output time; the end of the edit maps to the last clip's end. */
 export function sourceTimeOf(project: EditProject, outUs: number): number {
     let start = 0;

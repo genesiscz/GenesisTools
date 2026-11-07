@@ -1330,14 +1330,15 @@ const movieMethods = [
                 private: z.boolean().optional(),
                 names: z.array(z.string().trim().min(2).max(120)).max(50).optional(),
                 everySeconds: z.number().min(0.1).max(5).optional(),
+                aroundSeconds: z.number().min(0).max(1).optional(),
                 movie: z.string().min(1).optional(),
                 onProgress: z.custom<(line: string) => void>((value) => typeof value === "function").optional(),
             })
             .strict(),
         result: z.unknown(),
         resultName:
-            "{ ok, movie, frames, leaks: { at, until, output: { at, until } | null, source: { at, until } | null, label, masked, box }[] }",
-        doc: 'Checks the OUTPUT: exports the edit (or reads movie, an export you made), reads its frames with Vision every everySeconds (0.25) and lists every moment where text, pattern, texts, patterns (several in one read) or the private data (private: true, the default without text or pattern; names too) is still readable. Each leak has at/until (seconds of the export file, an intro card included), output { at, until } (what plays) and source { at, until } (the movie, the time hideText({ from, to }) takes); both null inside a card. It logs "verifyHidden: export 30%" and "verifyHidden: read 40 of 150 frames" lines as it goes (onProgress(line) gets them too). ok: true means nothing leaked. Run it before you hand an export over.',
+            "{ ok, movie, frames, leaks: { at, until, output: { at, until } | null, source: { at, until } | null, label, masked, box, sourceBox }[], fixOps }",
+        doc: 'Checks the OUTPUT: exports the edit (or reads movie, an export you made), reads its frames with Vision every everySeconds (0.25) and lists every moment where text, pattern, texts, patterns (several in one read) or the private data (private: true, the default without text or pattern; names too) is still readable. Each leak has at/until (seconds of the export file, an intro card included), output { at, until } (what plays) and source { at, until } (the movie, the time hideText({ from, to }) takes); both null inside a card. box is where it was read on the EXPORT frame (fractions of the export picture, a frame and zoom included); sourceBox is the same text in the SOURCE picture (fractions of the movie, what redact() takes), null when it cannot be placed. fixOps are redact ops in source time and space that cover every leak: apply them with apply(fixOps), or hide the text better and check again. Besides every everySeconds it reads every frame within aroundSeconds (0.2) of each cut, transition, zoom and hidden part edge and scene change. It logs "verifyHidden: export 30%" and "verifyHidden: read 40 of 150 frames" lines as it goes (onProgress(line) gets them too). ok: true means nothing leaked. Run it before you hand an export over.',
         effect: "read",
     }),
     edit(
@@ -2948,6 +2949,7 @@ export class Movie {
             private?: boolean;
             names?: string[];
             everySeconds?: number;
+            aroundSeconds?: number;
             movie?: string;
             onProgress?: (line: string) => void;
         } = {}

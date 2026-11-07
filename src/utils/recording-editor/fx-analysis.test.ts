@@ -22,11 +22,14 @@ import {
 } from "./private-data";
 import {
     applyOp,
+    boundaryWindows,
     describeProject,
     editOpSchema,
     editProjectSchema,
     exportToOutputUs,
     hidingOf,
+    leakFixOps,
+    leakSourceBox,
     type OpFacts,
     opPlacementWarnings,
     parseProject,
@@ -610,6 +613,73 @@ describe("uncertain bands stay small (round 7)", () => {
         const [hit] = hits;
         expect(bands[0].box.height).toBeLessThanOrEqual(2 * hit.box.height + 0.001);
         expect(bands[0].box.width).toBeLessThanOrEqual(hit.box.width + hit.box.height + 0.001);
+    });
+});
+
+describe("verifyHidden reads every frame at the edges and says how to fix a leak (round 7)", () => {
+    test("every frame within 0.2 s of a cut, a whole transition, a hidden part's edges and a scene change", () => {
+        let project = applyOp(wholeProject(source), op({ op: "cut", from: 10, to: 12 }));
+        project = applyOp(project, op({ op: "transition", kind: "crossfade", ms: 400 }));
+        project = applyOp(
+            project,
+            op({ op: "redact", from: 20, to: 25, rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.1 } })
+        );
+        const windows = boundaryWindows(project, { sceneUs: [40_000_000, 11_000_000] }).map(([from, to]) => [
+            from / 1e6,
+            to / 1e6,
+        ]);
+        // The cut at output 10 s with its 0.4 s crossfade, the part's start (source 20 = output 18) and end (output 23),
+        // and the scene change at source 40 (output 38); the one inside the cut plays nowhere.
+        expect(windows).toEqual([
+            [9.6, 10.4],
+            [17.8, 18.2],
+            [22.8, 23.2],
+            [37.8, 38.2],
+        ]);
+    });
+
+    test("a leak gets its source box from the source's own read, and a redact op that covers it", () => {
+        const project = wholeProject(source);
+        const read: PrivateHit = {
+            id: "h1",
+            kind: "text",
+            label: "Text",
+            masked: "or•••ve",
+            fromUs: 9_000_000,
+            toUs: 14_000_000,
+            box: { x: 0.2, y: 0.3, width: 0.3, height: 0.5 },
+            keys: [
+                { atUs: 9_000_000, x: 0.2, y: 0.7, width: 0.3, height: 0.05 },
+                { atUs: 12_000_000, x: 0.2, y: 0.3, width: 0.3, height: 0.05 },
+            ],
+        };
+        // Read on the export in a frame (somewhere else on the canvas): the source's own read places it.
+        const framed = applyOp(project, op({ op: "frame", aspect: "16:9" }));
+        const box = leakSourceBox(framed, {
+            fromUs: 11_900_000,
+            toUs: 12_100_000,
+            label: "Text",
+            masked: "or•••ve",
+            canvasBox: { x: 0.5, y: 0.5, width: 0.1, height: 0.02 },
+            sourceHits: [read],
+        });
+        expect(box?.x).toBe(0.2);
+        expect(box?.y).toBe(0.3);
+        expect(box?.height).toBeCloseTo(0.05, 6);
+        // No source read and a frame: it cannot be placed. No frame and no zoom: the export shows the source as it is.
+        const unplaced = { fromUs: 30_000_000, toUs: 31_000_000, label: "Text", masked: "x", sourceHits: [read] };
+        const canvasBox = { x: 0.5, y: 0.5, width: 0.1, height: 0.02 };
+        expect(leakSourceBox(framed, { ...unplaced, canvasBox })).toBeNull();
+        expect(leakSourceBox(project, { ...unplaced, canvasBox })).toEqual(canvasBox);
+        const [fix, ...rest] = leakFixOps([
+            { label: "Text", source: { at: 11.9, until: 12.1 }, sourceBox: box },
+            { label: "Text", source: null, sourceBox: box },
+        ]);
+        expect(rest).toEqual([]);
+        expect(fix).toMatchObject({ op: "redact", from: 11.8, to: 12.2, label: "Text (verifyHidden)" });
+        const rect = fix.op === "redact" ? fix.rect : undefined;
+        expect(rect?.x).toBeCloseTo(0.175, 5);
+        expect(rect?.height).toBeCloseTo(0.1, 5);
     });
 });
 

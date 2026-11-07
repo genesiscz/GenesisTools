@@ -37,8 +37,12 @@ import {
     textMatcher,
 } from "@genesiscz/utils/recording-editor/private-data";
 import {
+    boundaryWindows,
+    type EditOp,
     type EditProject,
     exportToOutputUs,
+    leakFixOps,
+    leakSourceBox,
     outputDurationUs,
     outputTimeOf,
     readCursorTrack,
@@ -709,7 +713,13 @@ export interface Leak {
     source: { at: number; until: number } | null;
     label: string;
     masked: string;
+    /** Where it was read on the EXPORT frame: fractions of the export's picture (the canvas, a frame and zoom included). */
     box: FractionBox;
+    /**
+     * R7 3: the same text in the SOURCE picture (fractions of the source movie's picture, what `redact` takes), from the
+     * source's own reads at that time; null when it cannot be placed there (inside a card, or not read in the source).
+     */
+    sourceBox: FractionBox | null;
 }
 
 /**
@@ -726,9 +736,11 @@ export async function verifyHidden(
         names?: readonly string[];
         everySeconds?: number;
         movie?: string;
+        /** R7 4: every frame this close to a cut, a transition, a zoom's or a hidden part's edge or a scene change (0.2). */
+        aroundSeconds?: number;
         onProgress?: (line: string) => void;
     }
-): Promise<{ ok: boolean; movie: string; frames: number; leaks: Leak[] }> {
+): Promise<{ ok: boolean; movie: string; frames: number; leaks: Leak[]; fixOps: EditOp[] }> {
     const asked = Boolean(options.text || options.pattern || options.texts?.length || options.patterns?.length);
     // R6 3: every text and pattern (and the private data, when asked or when nothing else is) in one read.
     const matchers = [
@@ -755,9 +767,10 @@ export async function verifyHidden(
         movie = answer.path;
     }
 
-    const { durationUs } = await probeVideo({ input: movie });
+    const info = await probeVideo({ input: movie });
+    const durationUs = info.durationUs;
     let shown = -1;
-    const frames = await ocrVideo({
+    const even = await ocrVideo({
         video: movie,
         toUs: durationUs,
         fps: 1 / (options.everySeconds ?? 0.25),
@@ -770,6 +783,22 @@ export async function verifyHidden(
             }
         },
     });
+    // R7 4: every frame around each cut, transition, zoom and hidden part's edge and scene change, where one frame is
+    // enough to show a text (a blended frame at a join, the frame before a part starts, a slide at a screen change).
+    const windows = boundaryWindows(project, {
+        aroundUs: Math.round((options.aroundSeconds ?? 0.2) * 1_000_000),
+        sceneUs: await sceneChangesOf(project),
+    });
+    // Every frame: the export runs at 60 fps at most, and a repeated frame is read once (ocrVideo compares them).
+    const exportFps = 60;
+    const dense: ScreenTextFrame[] = [];
+
+    for (const [index, [fromUs, toUs]] of windows.entries()) {
+        progress(`verifyHidden: every frame around edge ${index + 1} of ${windows.length}`);
+        dense.push(...(await ocrVideo({ video: movie, fromUs, toUs: Math.min(durationUs, toUs), fps: exportFps })));
+    }
+
+    const frames = mergeFrames(even, dense);
     // R6 5: an export starts with the intro card; what plays after it is the output, and each output moment a source one.
     const endUs = cardsLeadUs(project) + outputDurationUs(project);
     const leaks = textHits(frames, matcher, { gapUs: 0 }).map((hit) => {
@@ -792,7 +821,43 @@ export async function verifyHidden(
             box: hit.box,
         };
     });
-    return { ok: leaks.length === 0, movie, frames: frames.length, leaks };
+    // R7 3: each leak's place in the source picture, from the source's own reads, and the redact ops that cover it.
+    const sourceHits = leaks.some((leak) => leak.source) ? await trackedHits(project, matcher) : [];
+    const placed: Leak[] = leaks.map((leak) => ({
+        ...leak,
+        sourceBox: leak.source
+            ? leakSourceBox(project, {
+                  fromUs: Math.round(leak.source.at * 1_000_000),
+                  toUs: Math.round(leak.source.until * 1_000_000),
+                  label: leak.label,
+                  masked: leak.masked,
+                  canvasBox: leak.box,
+                  sourceHits,
+              })
+            : null,
+    }));
+    return { ok: placed.length === 0, movie, frames: frames.length, leaks: placed, fixOps: leakFixOps(placed) };
+}
+
+/** Two reads of one movie merged in time order; a dense read wins over an even one within 5 ms of it. */
+function mergeFrames(even: readonly ScreenTextFrame[], dense: readonly ScreenTextFrame[]): ScreenTextFrame[] {
+    const kept = even.filter((frame) => !dense.some((other) => Math.abs(other.atUs - frame.atUs) < 5000));
+    const all = [...kept, ...dense].sort((a, b) => a.atUs - b.atUs);
+    // Each frame shows until the next one read.
+    return all.map((frame, index) => ({ ...frame, untilUs: all[index + 1]?.atUs ?? frame.untilUs }));
+}
+
+/** R7 4: the source times where the screen changes at once (a new screen, a tab): over a third of the picture in a step. */
+async function sceneChangesOf(project: EditProject): Promise<number[]> {
+    try {
+        const { steps, fps } = await changeStepsOf(project);
+        return steps.flatMap((step, index) =>
+            step.changed / Math.max(1, step.cells) > 1 / 3 ? [Math.round((index * 1_000_000) / fps)] : []
+        );
+    } catch (error) {
+        logger.debug({ error }, "verifyHidden: no change steps, so no scene changes to read around");
+        return [];
+    }
 }
 
 const stepsSchema = z.array(
