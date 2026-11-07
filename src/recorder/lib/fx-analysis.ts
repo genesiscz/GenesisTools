@@ -346,50 +346,80 @@ const denseSchema = z.record(z.string(), screenFramesSchema.element.shape.lines)
 
 /**
  * Vision OCR of the movie at `DENSE_FPS` inside `windows` (source microseconds), cached by frame time in
- * `screen-text-dense.json`, so a second search reads only the frames it has not read yet.
+ * `screen-text-dense.json`, so a second search reads only the frames it has not read yet. `twice` (R8 2) reads the
+ * frames half way between those too, at twice the rate.
  */
 async function denseScreenText(
     project: EditProject,
-    windows: ReadonlyArray<[number, number]>
+    windows: ReadonlyArray<[number, number]>,
+    { twice = false }: { twice?: boolean } = {}
 ): Promise<ScreenTextFrame[]> {
     const video = project.source.video;
     const stepUs = 1_000_000 / DENSE_FPS;
-    const spans = windows.map(([fromUs, toUs]) => {
-        const start = Math.floor(fromUs / stepUs) * stepUs;
-        const times: number[] = [];
+    let read = false;
 
-        for (let atUs = start; atUs < toUs; atUs += stepUs) {
-            times.push(Math.round(atUs));
-        }
+    const times = new Set<number>();
 
-        return { start, toUs, times };
-    });
-    const cache = await cachedAnalysis({
-        ...analysisOf(video, "screen-text-dense", `dense=${DENSE_FPS}`, denseSchema),
-        complete: (cached) => spans.every(({ times }) => times.every((atUs) => cached[String(atUs)])),
-        compute: async (cached) => {
-            const known: Record<string, ScreenTextFrame["lines"]> = { ...(cached ?? {}) };
+    for (const [fromUs, toUs] of windows) {
+        // Each grid is read on its own, so the half-way frames of a window read before at DENSE_FPS add only themselves.
+        for (const offset of twice ? [0, stepUs / 2] : [0]) {
+            const start = Math.floor((fromUs - offset) / stepUs) * stepUs + offset;
+            const grid: number[] = [];
 
-            for (const { start, toUs, times } of spans) {
-                if (times.some((atUs) => !known[String(atUs)])) {
-                    for (const frame of await ocrVideo({ video, fromUs: start, toUs, fps: DENSE_FPS })) {
-                        const atUs = Math.round(Math.round((frame.atUs - start) / stepUs) * stepUs + start);
-                        known[String(atUs)] = frame.lines;
-                    }
-                }
+            for (let atUs = start; atUs < toUs; atUs += stepUs) {
+                grid.push(Math.round(atUs));
             }
 
-            return known;
-        },
-    });
+            if (grid.some((atUs) => !cache[String(atUs)])) {
+                for (const frame of await ocrVideo({ video, fromUs: start, toUs, fps: DENSE_FPS })) {
+                    const atUs = Math.round(Math.round((frame.atUs - start) / stepUs) * stepUs + start);
+                    cache[String(atUs)] = frame.lines;
+                }
 
-    return spans.flatMap(({ times }) =>
-        times.map((atUs) => ({
-            atUs,
-            untilUs: Math.min(project.source.durationUs, atUs + stepUs),
-            lines: cache[String(atUs)] ?? [],
-        }))
-    );
+                read = true;
+            }
+
+            for (const atUs of grid) {
+                times.add(atUs);
+            }
+        }
+    }
+
+    if (read) {
+        writeCache(path, key, cache);
+    }
+
+    // A time ffmpeg gave no picture for (past the last frame) is not a frame that shows nothing.
+    const ordered = [...times].filter((atUs) => cache[String(atUs)]).sort((a, b) => a - b);
+    return ordered.map((atUs, index) => ({
+        atUs,
+        untilUs: Math.min(project.source.durationUs, ordered[index + 1] ?? atUs + stepUs, atUs + stepUs),
+        lines: cache[String(atUs)] ?? [],
+    }));
+}
+
+/** The parts of `window` that none of `taken` (joined, in order) covers. */
+function windowsMinus(window: [number, number], taken: ReadonlyArray<[number, number]>): Array<[number, number]> {
+    const left: Array<[number, number]> = [];
+    let from = window[0];
+
+    for (const [start, end] of taken) {
+        if (end <= from || start >= window[1]) {
+            continue;
+        }
+
+        if (start > from) {
+            left.push([from, start]);
+        }
+
+        from = Math.max(from, end);
+    }
+
+    if (from < window[1]) {
+        left.push([from, window[1]]);
+    }
+
+    return left;
 }
 
 /** Joins overlapping [from, to) ranges. */
@@ -543,16 +573,45 @@ export async function trackedHits(
         }
     }
 
+    const follow = async (read: Array<[number, number]>, fast: Array<[number, number]> = []) => {
+        const byTime = new Map<number, ScreenTextFrame>();
+
+        for (const frame of [
+            ...(await denseScreenText(project, read)),
+            ...(await denseScreenText(project, fast, { twice: true })),
+        ]) {
+            byTime.set(frame.atUs, frame);
+        }
+
+        const ordered = [...byTime.values()].sort((a, b) => a.atUs - b.atUs);
+        const dense = ordered.map((frame, index) => ({
+            ...frame,
+            untilUs: Math.min(frame.untilUs, ordered[index + 1]?.atUs ?? frame.untilUs),
+        }));
+        const outside = coarse.filter((frame) => !read.some(([from, to]) => frame.atUs >= from && frame.atUs < to));
+        const seen = [...outside, ...dense].filter((frame) => matches(frame)).map((frame) => frame.atUs);
+        const motion = new MotionField(await motionWindows(project, movingStretches({ steps, fps }, seen)), {
+            steps,
+            fps,
+            grid,
+        });
+        return textHits([...outside, ...dense], matcher, { exclude, motion });
+    };
     const merged = mergeWindows(windows);
-    const dense = await denseScreenText(project, merged);
-    const outside = coarse.filter((frame) => !merged.some(([from, to]) => frame.atUs >= from && frame.atUs < to));
-    const seen = [...outside, ...dense].filter((frame) => matches(frame)).map((frame) => frame.atUs);
-    const motion = new MotionField(await motionWindows(project, movingStretches({ steps, fps }, seen)), {
-        steps,
-        fps,
-        grid,
-    });
-    const hits = textHits([...outside, ...dense], matcher, { exclude, motion });
+    let hits = await follow(merged);
+    // R8 2: a hit that moves is read at DENSE_FPS over its whole life, not only around the coarse samples that showed
+    // it: between those the motion alone carried it, and a line that slid under a bar or read short went off its part.
+    const moving = mergeWindows(
+        hits.filter((hit) => (hit.follow?.movingUs ?? 0) > 0).map((hit): [number, number] => [hit.fromUs, hit.toUs])
+    );
+    const more = moving.flatMap((window) => windowsMinus(window, merged));
+
+    // A row that slides in at an edge during a scroll can read short or run into its neighbour on every 0.2 s frame
+    // (the bottom row under a tab bar); a hit that moves is read at 10 frames a second.
+    if (moving.length > 0) {
+        log.debug({ windows: more.length, moving: moving.length }, "trackedHits: a second read over the moving hits");
+        hits = await follow(mergeWindows([...merged, ...more]), moving);
+    }
 
     if (!options.excludeFixed) {
         return hits;

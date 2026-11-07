@@ -8,6 +8,7 @@ import { anchorTimeUs, movieEvents, nearestEvent } from "./events";
 import { blockShifts } from "./motion";
 import {
     edgeFragments,
+    type FractionBox,
     findPrivateText,
     ibanValid,
     luhnValid,
@@ -379,7 +380,10 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
         // Halfway through the move the part is where the motion put the text, not on a straight line between reads.
         const placed = redactionBoxAt({ ...hit.box, track: hit.keys }, 400_000);
         const read = hit.keys[0];
-        expect(Math.abs(placed.y - (read.y - 0.6 * (1 - (1 - 1 / 3) ** 2)))).toBeLessThan(0.01);
+        // R8 2: a carried place has half a line of margin each way, so its centre is where the motion put the text.
+        const centre = (box: { y: number; height: number }) => box.y + box.height / 2;
+        expect(Math.abs(centre(placed) - (centre(read) - 0.6 * (1 - (1 - 1 / 3) ** 2)))).toBeLessThan(0.01);
+        expect(placed.height).toBeGreaterThan(read.height);
         // Without the motion the 0.6 jump is two hits and the move between them is not hidden.
         expect(textHits(frames, matcher).length).toBe(2);
     });
@@ -725,6 +729,8 @@ describe("a part of a hidden value that a box edge cut is a leak anywhere in the
         ]);
         // Both in one line: one part each.
         expect(fragments("71-8263 Kovářová").length).toBe(2);
+        // A digit of a moving number read as a sign: the part on either side of it still counts.
+        expect(fragments("Číslo účtu: 407182/3")).toMatchObject([{ value: "4071-8263", start: 12, end: 18 }]);
     });
 
     test("short runs, other numbers and other words do not", () => {
@@ -746,6 +752,109 @@ describe("a part of a hidden value that a box edge cut is a leak anywhere in the
         const hits = textHits(frames, edgeFragments(matcher, values), { gapUs: 0 });
         expect(hits.length).toBe(2);
         expect(textHits(frames, matcher, { gapUs: 0 }).length).toBe(0);
+    });
+});
+
+describe("a hidden part stays on its text through a slide-in (round 8)", () => {
+    const frame = (ms: number, lines: ScreenTextFrame["lines"]): ScreenTextFrame => ({
+        atUs: ms * 1000,
+        untilUs: (ms + 200) * 1000,
+        lines,
+    });
+    /** Content that moves by `travel` (x and y) from 0.2 s to 0.8 s, evenly; `error` is what the blocks miss of it. */
+    const slide = (travel: { x: number; y: number }, error = { x: 0, y: 0 }): MotionModel => {
+        const share = (us: number) => Math.min(1, Math.max(0, (us - 200_000) / 600_000));
+        return {
+            moving: (fromUs, toUs) => Math.max(fromUs, toUs) > 200_000 && Math.min(fromUs, toUs) < 800_000,
+            movingArea: () => ({ x: 0, y: 0, width: 1, height: 1 }),
+            changeEdge: (_box, atUs) => atUs,
+            carry: (box, fromUs, toUs) => {
+                const keys: TrackKey[] = [];
+                const step = toUs >= fromUs ? 33_333 : -33_333;
+
+                for (let at = fromUs + step; step > 0 ? at <= toUs : at >= toUs; at += step) {
+                    const moved = share(at) - share(fromUs);
+                    keys.push({
+                        ...box,
+                        atUs: Math.round(at),
+                        x: box.x + (travel.x - error.x) * moved,
+                        y: box.y + (travel.y - error.y) * moved,
+                    });
+                }
+
+                const last = keys.at(-1) ?? { ...box, atUs: fromUs };
+                return { keys, reachedUs: toUs, box: last, end: "reached" };
+            },
+        };
+    };
+    /** Whether a hit's part (or a band it got) covers `box` at `atUs`. */
+    const covered = (hits: readonly PrivateHit[], atUs: number, box: FractionBox) =>
+        hits.some((hit) => {
+            const parts = [
+                ...(hit.fromUs <= atUs && hit.toUs > atUs
+                    ? [redactionBoxAt({ ...hit.box, track: hit.keys }, atUs)]
+                    : []),
+                ...(hit.uncertain ?? [])
+                    .filter((band) => band.fromUs <= atUs && band.toUs > atUs)
+                    .map((band) => band.box),
+            ];
+            return parts.some(
+                (part) =>
+                    part.x <= box.x + 0.001 &&
+                    part.y <= box.y + 0.001 &&
+                    part.x + part.width >= box.x + box.width - 0.001 &&
+                    part.y + part.height >= box.y + box.height - 0.001
+            );
+        });
+
+    test("a line that reads wider at the next read (it slid in further) is covered whole on the way there", () => {
+        const matcher = textMatcher({ text: "Orla Fictive", unit: "line" });
+        // At 0.2 s OCR reads only the name at the right edge; at 0.8 s the whole line, 0.3 further left.
+        const frames = [
+            frame(0, [{ text: "Orla Fictive", x: 0.7, y: 0.5, width: 0.25, height: 0.03 }]),
+            frame(200, [{ text: "Orla Fictive", x: 0.7, y: 0.5, width: 0.25, height: 0.03 }]),
+            frame(800, [{ text: "Orla Fictive · 4071-8263", x: 0.4, y: 0.5, width: 0.5, height: 0.03 }]),
+        ];
+        const hits = textHits(frames, matcher, { motion: slide({ x: -0.3, y: 0 }) });
+        expect(hits.length).toBe(1);
+        // At 0.5 s the whole line is half way: x 0.55, 0.5 wide.
+        expect(covered(hits, 500_000, { x: 0.55, y: 0.5, width: 0.5 - 0.06, height: 0.03 })).toBe(true);
+    });
+
+    test("a cut-short read of a part of the value where the motion leads keeps the part on the text", () => {
+        const matcher = textMatcher({ text: "4071-8263" });
+        // The blocks measure 0.06 less of the upward travel than the text makes; at 0.5 s OCR reads only the tail.
+        const at = (ms: number) => 0.8 - 0.4 * Math.min(1, Math.max(0, (ms - 200) / 600));
+        const frames = [
+            frame(0, [{ text: "4071-8263", x: 0.3, y: at(0), width: 0.2, height: 0.03 }]),
+            frame(200, [{ text: "4071-8263", x: 0.3, y: at(200), width: 0.2, height: 0.03 }]),
+            frame(500, [{ text: "(...8263)", x: 0.4, y: at(500), width: 0.1, height: 0.03 }]),
+        ];
+        const hits = textHits(frames, matcher, { motion: slide({ x: 0, y: -0.4 }, { x: 0, y: -0.06 }) });
+        expect(covered(hits, 500_000, { x: 0.4, y: at(500), width: 0.1, height: 0.03 })).toBe(true);
+    });
+
+    test("a fixed title the motion carried away while OCR reads it in place again stays hidden there", () => {
+        const matcher = textMatcher({ text: "Orla Fictive" });
+        const title = { text: "Orla Fictive", x: 0.6, y: 0.09, width: 0.2, height: 0.02 };
+        const frames = [frame(0, [title]), frame(200, [title]), frame(600, [title])];
+        // The content behind the title scrolls up; the blocks carry the title with it.
+        const hits = textHits(frames, matcher, { motion: slide({ x: 0, y: -0.3 }) });
+        expect(covered(hits, 300_000, { x: 0.6, y: 0.09, width: 0.2, height: 0.02 })).toBe(true);
+    });
+
+    test("a part whose first read is a sliver at the edge holds that place before it, never a negative width", () => {
+        const matcher = textMatcher({ text: "Orla Fictive" });
+        const frames = [
+            frame(0, []),
+            frame(200, [{ text: "Orla Fictive", x: 0, y: 0.5, width: 0.005, height: 0.03 }]),
+            frame(400, [{ text: "Orla Fictive", x: 0, y: 0.5, width: 0.3, height: 0.03 }]),
+        ];
+        const [hit] = textHits(frames, matcher, { motion: slide({ x: 0, y: 0 }) });
+        expect(hit.fromUs).toBeLessThan(200_000);
+        const before = redactionBoxAt({ ...hit.box, track: hit.keys }, hit.fromUs);
+        expect(before.width).toBeGreaterThan(0.005);
+        expect(before.height).toBeGreaterThan(0.03);
     });
 });
 

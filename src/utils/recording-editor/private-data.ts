@@ -442,19 +442,32 @@ export function edgeFragments(matcher: LineMatcher, values: readonly string[]): 
         }
 
         const parts: TextMatch[] = [];
-        // A run of digits, with - . / between them as a number is written ("71-8263").
+        // A run of digits, with - . / between them as a number is written ("71-8263"); or a part of it between those
+        // signs, since OCR reads a digit of a moving number as one of them ("407182/3").
         for (const run of text.matchAll(/\d(?:[-./]?\d)*/g)) {
-            const digits = run[0].replace(/\D/g, "");
-            const owner =
-                digits.length >= FRAGMENT_DIGITS
-                    ? known.find((one) => one.digits.length > 0 && one.digits.includes(digits))
-                    : undefined;
+            const start = run.index ?? 0;
+            const pieces = [
+                { at: 0, text: run[0] },
+                ...[...run[0].matchAll(/\d+/g)].map((piece) => ({ at: piece.index ?? 0, text: piece[0] })),
+            ];
 
-            if (owner) {
-                const start = run.index ?? 0;
-                parts.push(
-                    partOf({ kind: "text", label: "", value: "", start, end: start + run[0].length }, owner.value)
-                );
+            for (const piece of pieces) {
+                const digits = piece.text.replace(/\D/g, "");
+                const owner =
+                    digits.length >= FRAGMENT_DIGITS
+                        ? known.find((one) => one.digits.length > 0 && one.digits.includes(digits))
+                        : undefined;
+
+                if (owner) {
+                    const from = start + piece.at;
+                    parts.push(
+                        partOf(
+                            { kind: "text", label: "", value: "", start: from, end: from + piece.text.length },
+                            owner.value
+                        )
+                    );
+                    break;
+                }
             }
         }
 
@@ -572,6 +585,23 @@ function samePlace(a: FractionBox, b: FractionBox): boolean {
     const dx = Math.abs(a.x + a.width / 2 - (b.x + b.width / 2));
     const dy = Math.abs(a.y + a.height / 2 - (b.y + b.height / 2));
     return dy <= Math.max(0.6 * b.height, 0.008) && dx <= Math.max(0.25 * b.width, 0.015);
+}
+
+/**
+ * R8 2: a carried place with half a line of margin on each side: the motion that carries it is measured on blocks
+ * coarser than a line, and a read box (matchBox) is a line and a half high, so a third of it is half a line.
+ */
+function withMargin<T extends FractionBox>(box: T): T {
+    const pad = box.height / 3;
+    const x = clamp01(box.x - pad);
+    const y = clamp01(box.y - pad);
+    return {
+        ...box,
+        x,
+        y,
+        width: Math.min(1, box.x + box.width + pad) - x,
+        height: Math.min(1, box.y + box.height + pad) - y,
+    };
 }
 
 /** A rest whose picture keeps changing under it for less than this is the end of a scroll settling, not a lost text. */
@@ -782,6 +812,8 @@ export function textHits(
         /** Its first and last place OCR read (the other keys were carried by the motion). */
         firstRead: TrackKey;
         lastRead: TrackKey;
+        /** R8 2: every place OCR read it (the others are carried and get half a line of margin). */
+        reads: Set<TrackKey>;
         /** How the motion carry ended before its first read and after its last (R7 2: a text that left needs no band). */
         ends?: { before?: Carried["end"]; after?: Carried["end"] };
         uncertain: UncertainStretch[];
@@ -817,19 +849,42 @@ export function textHits(
             width: box.width - carried.box.width,
             height: box.height - carried.box.height,
         };
+        // R8 2: a carried place covers both the last read carried on and the next read moved back by the same motion,
+        // so a line that reads wider at the next read (it slid in further) is covered on the way there too.
         return carried.keys
             .filter((key) => key.atUs < atUs)
             .map((key) => {
                 const share = (key.atUs - last.atUs) / span;
-                return {
-                    atUs: key.atUs,
+                const spread = {
                     x: key.x + off.x * share,
                     y: key.y + off.y * share,
                     width: key.width + off.width * share,
                     height: key.height + off.height * share,
                 };
+                const next = {
+                    x: key.x + off.x,
+                    y: key.y + off.y,
+                    width: key.width + off.width,
+                    height: key.height + off.height,
+                };
+                return { atUs: key.atUs, ...union(spread, { ...next, y: spread.y, height: spread.height }) };
             });
     };
+
+    /** R8 2: the place a track's motion carries it to at `atUs`, or its last place when the picture under it rests. */
+    const carryTo = (track: Open, atUs: number): { keys: TrackKey[]; box: FractionBox } | undefined => {
+        const last = track.keys[track.keys.length - 1];
+
+        if (!motion?.moving(last.atUs, atUs)) {
+            return { keys: [], box: last };
+        }
+
+        const carried = motion.carry(last, last.atUs, atUs);
+        return carried.end === "reached"
+            ? { keys: carried.keys.filter((key) => key.atUs < atUs), box: carried.box }
+            : undefined;
+    };
+    const fragmentsOf = new Map<string, LineMatcher>();
 
     for (const [index, frame] of ordered.entries()) {
         for (const track of open.splice(0)) {
@@ -838,9 +893,11 @@ export function textHits(
 
         const previous = ordered[index - 1];
         const taken = new Set<Open>();
+        const matchedLines = new Set<ScreenLine>();
 
         for (const line of frame.lines) {
             for (const match of matcher(line.text)) {
+                matchedLines.add(line);
                 const box = matchBox(line, match);
 
                 if (exclude.some((area) => inside(box, area))) {
@@ -861,6 +918,7 @@ export function textHits(
                     linked.track.toUs = Math.max(linked.track.toUs, frame.untilUs);
                     linked.track.keys.push(...linked.keys, key);
                     linked.track.lastRead = key;
+                    linked.track.reads.add(key);
                     taken.add(linked.track);
                 } else {
                     // Half way back to the sample without it, at most half a second early.
@@ -876,11 +934,55 @@ export function textHits(
                         keys: [key],
                         firstRead: key,
                         lastRead: key,
+                        reads: new Set([key]),
                         uncertain: [],
                     };
                     open.push(started);
                     taken.add(started);
                 }
+            }
+        }
+
+        // R8 2: OCR reads a sliding or half-covered line cut short or run into its neighbour, so the matcher misses it;
+        // a line that holds a part of a moving track's value where its motion carries it is still that text: the track
+        // goes on there (the carried place and the read part together) instead of being carried blind.
+        for (const track of motion ? open : []) {
+            if (taken.has(track) || track.keys[track.keys.length - 1].atUs >= frame.atUs) {
+                continue;
+            }
+
+            let fragments = fragmentsOf.get(track.value);
+
+            if (!fragments) {
+                fragments = edgeFragments(() => [], [track.value]);
+                fragmentsOf.set(track.value, fragments);
+            }
+
+            for (const line of frame.lines) {
+                const found = matchedLines.has(line) ? [] : fragments(line.text);
+
+                if (found.length === 0) {
+                    continue;
+                }
+
+                const read = found.map((part) => matchBox(line, part)).reduce((all, box) => union(all, box));
+                const carried = carryTo(track, frame.atUs);
+                const centre = (box: FractionBox) => box.y + box.height / 2;
+
+                if (
+                    !carried ||
+                    Math.abs(centre(carried.box) - centre(read)) > Math.max(read.height, 0.008) ||
+                    read.x > carried.box.x + carried.box.width ||
+                    read.x + read.width < carried.box.x
+                ) {
+                    continue;
+                }
+
+                track.keys.push(...carried.keys, { atUs: frame.atUs, ...union(carried.box, read) });
+                track.toUs = Math.max(track.toUs, frame.untilUs);
+                taken.add(track);
+                matchedLines.add(line);
+                break;
             }
         }
     }
@@ -893,6 +995,11 @@ export function textHits(
         }
 
         bridgeGaps(done, motion);
+        heldPlaces(done);
+
+        for (const track of done) {
+            track.keys = track.keys.map((key) => (track.reads.has(key) ? key : withMargin(key)));
+        }
     }
 
     return done
@@ -910,6 +1017,22 @@ export function textHits(
                 atUs: key.atUs,
                 ...rounded(clipped(key)),
             }));
+
+            // R8 2: the renderer runs a part on past its first and last key at their speed; a followed hit already has
+            // keys for its whole motion, and running on from a sliver read at the edge to a whole line made a box of
+            // negative width (nothing hidden), so it holds its first and last place instead.
+            if (motion && keys.length > 1) {
+                if (track.fromUs < keys[0].atUs) {
+                    keys.unshift({ ...keys[0], atUs: Math.round(track.fromUs) });
+                }
+
+                const last = keys[keys.length - 1];
+
+                if (track.toUs > last.atUs) {
+                    keys.push({ ...last, atUs: Math.round(track.toUs) });
+                }
+            }
+
             const still = keys.every((key) => sameBox(key, keys[0]));
             const box = rounded(keys.reduce<FractionBox>((all, key) => union(all, key), keys[0]));
             const follow = motion ? followOf(track, motion) : undefined;
@@ -1098,6 +1221,46 @@ export function textHits(
                     width: Math.min(inside.x + inside.width, band.x + band.width + pad) - x,
                     height: Math.min(inside.y + inside.height, band.y + band.height + pad) - y,
                 },
+            });
+        }
+    }
+
+    /**
+     * R8 2: the motion carried a track off a place where OCR then reads its value again (a fixed title over a scroll
+     * behind it, a header the blocks under it took for the content): the text stood there, so its read place stays
+     * hidden until that read, beside the carried path.
+     */
+    function heldPlaces(tracks: Open[]): void {
+        const reads = tracks.flatMap((track) => [...track.reads].map((key) => ({ track, key })));
+
+        for (const track of tracks) {
+            const last = track.lastRead;
+            const again = reads
+                .filter(
+                    ({ track: other, key }) =>
+                        other.kind === track.kind &&
+                        other.value === track.value &&
+                        key.atUs > last.atUs &&
+                        key.atUs - last.atUs <= EXTEND_US &&
+                        samePlace(last, key)
+                )
+                .sort((a, b) => a.key.atUs - b.key.atUs)[0];
+
+            if (!again) {
+                continue;
+            }
+
+            const between = track.keys.filter((key) => key.atUs > last.atUs && key.atUs < again.key.atUs);
+
+            if (between.every((key) => samePlace(last, key))) {
+                continue;
+            }
+
+            track.uncertain.push({
+                fromUs: last.atUs,
+                toUs: again.key.atUs,
+                why: "rest",
+                box: withMargin(union(last, again.key)),
             });
         }
     }
