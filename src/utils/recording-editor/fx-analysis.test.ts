@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { checkProject, issueSummary } from "./check";
 import { anchorTimeUs, movieEvents, nearestEvent } from "./events";
 import { blockShifts } from "./motion";
 import {
@@ -749,6 +750,29 @@ describe("hidden parts keep whole microseconds (round 7)", () => {
             },
         ],
     };
+
+    test("check() says the bands it could not follow in one line with a count, of their own kind", () => {
+        const long = { ...source, durationUs: 120_000_000 };
+        const bands = [0, 1, 2].map((index) => ({
+            ...hit,
+            id: `pband00${index}`,
+            uncertain: [
+                {
+                    ...(hit.uncertain?.[0] ?? hit),
+                    why: "lost" as const,
+                    fromUs: 20_000_000 * (index + 1),
+                    toUs: 20_000_000 * (index + 1) + 400_000,
+                },
+            ],
+        }));
+        const edited = applyOp(wholeProject(long), op({ op: "hideText", text: "Orla Fictive" }), { textHits: bands });
+        const facts = { hasTranscript: false, hasCursorTrack: false, musicFileExists: false };
+        const { lines } = issueSummary(checkProject(edited, facts));
+        const followed = lines.filter((line) => line.includes("could not follow"));
+        expect(followed).toHaveLength(1);
+        expect(followed[0]).toStartWith("check ×3 hidden-band:");
+        expect(followed[0]).toEndWith("(and 2 more like it)");
+    });
 
     test("a hide after a cut and a speed saves whole microseconds, and the edit loads again", () => {
         const long = { ...source, durationUs: 120_000_000 };

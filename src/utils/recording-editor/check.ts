@@ -722,6 +722,8 @@ function uncertainHideIssues(project: EditProject): EditIssue[] {
         .filter((part) => part.hide?.uncertain && keptUs(project, part.startUs, part.endUs) > 0)
         .map((part) => ({
             severity: "check" as const,
+            // R7 7: one group line for every band ("check ×12 hidden-band: ..."), apart from other hidden part issues.
+            kind: "hidden-band",
             item: `hidden part ${part.id}`,
             message: `${part.hide?.by ?? "hideText"} could not follow a moving text from ${tenths(part.startUs)} to ${tenths(part.endUs)} s, so it hides the band the text may cross there (a larger box than the text)`,
             fix: `movie.sheet({ from: ${tenths(part.startUs)}, to: ${tenths(part.endUs)}, source: true }) shows it; unredact("${part.id}") drops the band`,
