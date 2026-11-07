@@ -13,7 +13,7 @@ import { z } from "zod";
 import { type DemoDriver, demoEditOps, demoScriptSchema, runDemo, subtractRanges } from "./demo";
 import * as edit from "./edit";
 import * as library from "./library";
-import { movieDemoDriver } from "./toolset";
+import { Movie, movieDemoDriver } from "./toolset";
 import { recordVideo } from "./video-recording";
 
 const steps = [
@@ -346,4 +346,18 @@ describe.skipIf(!hasFfmpeg)("movieDemoDriver on a recording session", () => {
             }
         }
     }, 60_000);
+});
+
+describe("movie.sheet() bounds", () => {
+    test("a count or a list of times outside 1 to 12 is refused before any frame is drawn", async () => {
+        const movie = new Movie(join(tmpdir(), "no-such-recording"));
+        await expect(movie.sheet({ count: 0 })).rejects.toThrow("a whole number from 1 to 12 (got 0)");
+        await expect(movie.sheet({ count: 100_000 })).rejects.toThrow("(got 100000)");
+        await expect(movie.sheet({ count: Number.NaN })).rejects.toThrow("(got NaN)");
+        await expect(movie.sheet({ at: Array.from({ length: 13 }, (_, index) => index) })).rejects.toThrow(
+            "1 to 12 times (got 13)"
+        );
+        // A valid count passes the bound and fails later, on the missing recording.
+        await expect(movie.sheet({ count: 6 })).rejects.not.toThrow("1 to 12");
+    });
 });

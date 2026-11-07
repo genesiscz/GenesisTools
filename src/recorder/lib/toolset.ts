@@ -1775,6 +1775,18 @@ export class Movie {
             out?: string;
         } = {}
     ) {
+        // The REPL's schema keeps these to 1…12; `tools recorder sheet` calls here directly, and --count 100000 ran
+        // for minutes on 100000 frames.
+        const count = options.count;
+
+        if (count !== undefined && (!Number.isInteger(count) || count < 1 || count > 12)) {
+            throw new Error(`the count must be a whole number from 1 to 12 (got ${count})`);
+        }
+
+        if (options.at && (options.at.length < 1 || options.at.length > 12)) {
+            throw new Error(`a sheet takes 1 to 12 times (got ${options.at.length})`);
+        }
+
         const opened = await openProject(this.recording);
 
         if (opened.fresh) {
