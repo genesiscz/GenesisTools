@@ -1179,6 +1179,13 @@ private struct RedactionEditor: View {
                     model.updateRedaction(id) { $0.dim = abs(value - Looks.spotlightDim) < 0.005 ? nil : (value * 100).rounded() / 100 }
                 }), in: 0.2...0.95)
                     .accessibilityLabel("How dark the rest of the picture gets")
+                // R8 11: a soft edge keeps the frame around the lit shape readable.
+                let around = redaction.dimAround ?? 0
+                SectionLabel(text: "Soft edge", value: around == 0 ? "Sharp" : "\(Int((around * 100).rounded()))%")
+                Slider(value: Binding(get: { around }, set: { value in
+                    model.updateRedaction(id) { $0.dimAround = value < 0.005 ? nil : (value * 100).rounded() / 100 }
+                }), in: 0...0.3)
+                    .accessibilityLabel("How far the dim fades in from the lit shape")
             }
             SectionLabel(text: "Width", value: "\(Int((redaction.width * 100).rounded()))%")
             Slider(value: Binding(get: { redaction.width }, set: { value in model.updateRedaction(id) { $0.width = (value * 200).rounded() / 200 } }), in: 0.02...1)

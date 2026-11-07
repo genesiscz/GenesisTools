@@ -350,6 +350,10 @@ struct EditProject: Codable, Equatable {
         // R6 1 moving text, R6 7 the request
         /// A part hideText or hidePrivate made: its hit, how sure its place is and the request; nil on a hand-made part.
         var hide: Hide?
+        // R8 11
+        /// A spotlight's soft edge: the dim rises from none at the lit shape to full at this distance (a share of the
+        /// picture's short side, 0...0.5); nil or 0 is a sharp edge.
+        var dimAround: Double?
     }
 
     /// R6 1, R6 7: where a hidden part came from (hideText or hidePrivate) and how sure its place is. The editor keeps

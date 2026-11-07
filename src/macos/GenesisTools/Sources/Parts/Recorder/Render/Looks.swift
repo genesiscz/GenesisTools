@@ -157,9 +157,9 @@ enum Looks {
         return result
     }
 
-    /// How much black a spotlight lays over the picture around its rectangle (in linear light: 0.7 leaves white at
-    /// about 58 % of sRGB white, which reads as clearly dimmed while the picture stays readable).
-    static let spotlightDim = 0.7
+    /// How much black a spotlight lays over the picture around its rectangle. R8 11: 0.5 (0.7 before greyed the whole
+    /// screen until nothing around the rectangle could be read); a part's `dim` sets its own.
+    static let spotlightDim = 0.5
 
     /// Hides each rectangle with a blur, big pixels or black, or dims everything around a spotlight's rectangle. The
     /// blur reads the picture clamped at the rectangle's edges, so nothing from outside bleeds in and its edge stays sharp.
@@ -203,6 +203,13 @@ enum Looks {
             var mask = CIImage(color: .clear).cropped(to: extent)
             for (spot, rect) in lit {
                 mask = spotlightMask(spot.cutout ?? .rounded, in: rect).composited(over: mask)
+                // R8 11: a soft edge lights a ring around the shape that fades out over dimAround.
+                if let around = spot.dimAround, around > 0 {
+                    let reach = around * min(extent.width, extent.height)
+                    let soft = spotlightMask(spot.cutout ?? .rounded, in: rect.insetBy(dx: -reach / 2, dy: -reach / 2))
+                        .applyingGaussianBlur(sigma: reach / 4).cropped(to: extent)
+                    mask = soft.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: mask])
+                }
             }
             result = result.applyingFilter("CIBlendWithAlphaMask", parameters: [kCIInputBackgroundImageKey: dimmed, kCIInputMaskImageKey: mask])
                 .cropped(to: extent)

@@ -1537,7 +1537,22 @@ describe("edit project (edit.json)", () => {
             rect: { x: 0, y: 0, width: 0.2, height: 0.2 },
         });
         expect(lit.redactions?.[0]?.style).toBe("spotlight");
-        expect(describeProject(lit, "/p/edit.json").redactions[0]).toMatchObject({ dim: 0.7, cutout: "rounded" });
+        // R8 11: the default dim is 0.5 (0.7 greyed the whole screen), and dimAround gives it a soft edge.
+        expect(describeProject(lit, "/p/edit.json").redactions[0]).toMatchObject({ dim: 0.5, cutout: "rounded" });
+        const soft = applyOp(project, {
+            op: "spotlight",
+            from: 1,
+            to: 3,
+            rect: { x: 0, y: 0, width: 0.2, height: 0.2 },
+            dimAround: 0.1,
+        });
+        expect(soft.redactions?.[0]).toMatchObject({ dimAround: 0.1 });
+        expect(describeProject(soft, "/p/edit.json").redactions[0]).toMatchObject({ dimAround: 0.1 });
+        const softId = soft.redactions?.[0]?.id ?? "";
+        expect(applyOp(soft, { op: "setRedaction", id: softId, dimAround: 0.2 }).redactions?.[0]?.dimAround).toBe(0.2);
+        expect(applyOp(soft, { op: "setRedaction", id: softId, dimAround: 0 }).redactions?.[0]).not.toHaveProperty(
+            "dimAround"
+        );
         const circle = applyOp(project, {
             op: "spotlight",
             from: 1,
@@ -1764,12 +1779,12 @@ describe("the editor window's item ops", () => {
             op: "setRedaction",
             id,
             label: "token",
-            dim: 0.5,
+            dim: 0.6,
             cutout: "circle",
             follow: true,
         });
-        expect(project.redactions?.[0]).toMatchObject({ label: "token", dim: 0.5, cutout: "circle", follow: true });
-        project = applyOp(project, { op: "setRedaction", id, label: " ", dim: 0.702, follow: false });
+        expect(project.redactions?.[0]).toMatchObject({ label: "token", dim: 0.6, cutout: "circle", follow: true });
+        project = applyOp(project, { op: "setRedaction", id, label: " ", dim: 0.502, follow: false });
         expect(project.redactions?.[0]).not.toHaveProperty("label");
         expect(project.redactions?.[0]).not.toHaveProperty("dim");
         expect(project.redactions?.[0]).not.toHaveProperty("follow");

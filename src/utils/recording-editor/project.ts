@@ -269,7 +269,7 @@ export const redactionSchema = z.object({
     label: z.string().max(60).optional(),
     /** The rectangle keeps its size and moves with the drawn cursor (centred on it, inside the picture). */
     follow: z.boolean().optional(),
-    /** A spotlight's dim around it, 0.2 to 0.95 black; absent is 0.7. */
+    /** A spotlight's dim around it, 0.2 to 0.95 black; absent is 0.5 (R8 11; 0.7 before). */
     dim: z.number().min(0.2).max(0.95).optional(),
     cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
     /** The effect lane it sits on (lanes.ts); absent is the first lane that holds its kind. */
@@ -317,6 +317,9 @@ export const redactionSchema = z.object({
                 .optional(),
         })
         .optional(),
+    // R8 11
+    /** A spotlight's soft edge: the dim rises from none at the lit shape to full at this distance (a share of the picture's short side, 0 to 0.5); absent or 0 is a sharp edge. */
+    dimAround: z.number().min(0).max(0.5).optional(),
 });
 export type EditRedaction = z.infer<typeof redactionSchema>;
 
@@ -1075,6 +1078,8 @@ export function addRedaction(
         // R5 5 redaction edges
         fadeMs?: number;
         cell?: number;
+        // R8 11
+        dimAround?: number;
     }
 ): EditProject {
     checkRange(project, options.fromUs, options.toUs);
@@ -1107,6 +1112,7 @@ export function addRedaction(
             : {}),
         ...(options.style === "spotlight" && options.fadeMs !== undefined ? { fadeMs: options.fadeMs } : {}),
         ...(options.style === "pixelate" && options.cell !== undefined ? { cell: options.cell } : {}),
+        ...(options.style === "spotlight" && options.dimAround ? { dimAround: options.dimAround } : {}),
     };
     return { ...project, redactions: [...(project.redactions ?? []), redaction] };
 }
@@ -1411,7 +1417,7 @@ export const editOpSchema = z.discriminatedUnion("op", [
             label: z.string().max(60).optional(),
             /** Moves with the drawn cursor, centred on it; rect gives its size. */
             follow: z.boolean().optional(),
-            /** Style "spotlight" only: the dim around it (0.7) and its lit shape ("rounded"). */
+            /** Style "spotlight" only: the dim around it (0.5) and its lit shape ("rounded"). */
             dim: z.number().min(0.2).max(0.95).optional(),
             cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
             /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
@@ -1430,7 +1436,7 @@ export const editOpSchema = z.discriminatedUnion("op", [
             rect: rectSchema,
             label: z.string().max(60).optional(),
             follow: z.boolean().optional(),
-            /** How dark the rest gets, 0.2 to 0.95 black (0.7). */
+            /** How dark the rest gets, 0.2 to 0.95 black (0.5). */
             dim: z.number().min(0.2).max(0.95).optional(),
             /** The lit shape: "rounded" (default), "rect" or "circle". */
             cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
@@ -1439,6 +1445,9 @@ export const editOpSchema = z.discriminatedUnion("op", [
             // R5 5 redaction edges
             /** The dim's fade in and out in ms (200; at most a third of its length); 0 is a hard cut. */
             fadeMs: z.number().int().min(0).max(2000).optional(),
+            // R8 11
+            /** A spotlight's soft edge: the dim rises from none at the lit shape to full at this distance (a share of the picture's short side, 0 to 0.5); absent or 0 is a sharp edge. */
+            dimAround: z.number().min(0).max(0.5).optional(),
         })
         .strict(),
     z.object({ op: z.literal("unredact"), id: z.string() }).strict(),
@@ -1800,6 +1809,9 @@ export const editOpSchema = z.discriminatedUnion("op", [
             fadeMs: z.number().int().min(-1).max(2000).optional(),
             /** A pixelate block's side in source pixels (2 to 256); 0 goes back to the default. */
             cell: z.number().min(0).max(256).optional(),
+            // R8 11
+            /** A spotlight's soft edge (0 to 0.5 of the picture's short side); 0 makes it sharp again. */
+            dimAround: z.number().min(0).max(0.5).optional(),
         })
         .strict(),
     /** Changes a text that exists: its words, its centre (0...1 of the canvas), its size and its style. */
@@ -2476,6 +2488,7 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 dim: op.dim,
                 cutout: op.cutout,
                 fadeMs: op.fadeMs,
+                dimAround: op.dimAround,
             });
         case "unredact": {
             const list = project.redactions ?? [];
@@ -3047,7 +3060,11 @@ export function describeProject(project: EditProject, path: string) {
             ...(redaction.label ? { label: redaction.label } : {}),
             ...(redaction.follow ? { follow: true } : {}),
             ...(redaction.style === "spotlight"
-                ? { dim: redaction.dim ?? 0.7, cutout: redaction.cutout ?? "rounded" }
+                ? {
+                      dim: redaction.dim ?? 0.5,
+                      cutout: redaction.cutout ?? "rounded",
+                      ...(redaction.dimAround ? { dimAround: redaction.dimAround } : {}),
+                  }
                 : {}),
             // fx B (round 4): how many keyframes it follows, and the areas it leaves visible.
             ...(redaction.track ? { keyframes: redaction.track.length } : {}),

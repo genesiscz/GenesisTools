@@ -104,6 +104,8 @@ enum EditOpDiff {
         // R5 5 redaction edges
         if a.fadeMs != b.fadeMs { op.fadeMs = b.fadeMs ?? -1 }
         if a.cell != b.cell { op.cell = b.cell ?? 0 }
+        // R8 11
+        if a.dimAround != b.dimAround { op.dimAround = b.dimAround ?? 0 }
         let set: [EditOp] = op == EditOp.SetRedaction(id: b.id) ? [] : [.setRedaction(op)]
         return set + retime(b.id, from: (a.startUs, a.endUs), to: (b.startUs, b.endUs))
     }

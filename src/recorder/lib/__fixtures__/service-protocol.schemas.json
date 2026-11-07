@@ -868,6 +868,11 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 2000
+              },
+              "dimAround": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 0.5
               }
             },
             "required": [
@@ -2249,6 +2254,11 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 256
+              },
+              "dimAround": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 0.5
               }
             },
             "required": [
@@ -4986,6 +4996,11 @@
                     "hit"
                   ],
                   "additionalProperties": false
+                },
+                "dimAround": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 0.5
                 }
               },
               "required": [

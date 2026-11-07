@@ -522,9 +522,11 @@ const movieMethods = [
                 lane: z.string().optional(),
                 // R5 5 redaction edges
                 fadeMs: z.number().int().min(0).max(2000).optional(),
+                // R8 11
+                dimAround: z.number().min(0).max(0.5).optional(),
             })
             .strict(),
-        'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims; follow: true moves it with the cursor (a light on the pointer); dim 0.2 to 0.95 is how much black covers the rest (0.7; 0.5 leaves it at half), cutout "rounded" (default), "rect" or "circle" its lit shape (a circle is the ellipse inside rect, so give a square rect in pixels for a round one). The dim fades in after `from` and out before `to` over fadeMs (200, at most a third of its length, linear); fadeMs: 0 is a hard cut. The same as redact with style "spotlight" (op "spotlight" in apply); unredact(id) removes it.'
+        'Points at a part of the picture from `from` to `to` (source seconds or "m:ss"): rect { x, y, width, height } (0...1 of the picture from its top left) stays as it is and everything around it dims; follow: true moves it with the cursor (a light on the pointer); dim 0.2 to 0.95 is how much black covers the rest (0.5, so the rest stays readable; 0.7 is a strong dim), dimAround 0 to 0.5 (a share of the shorter side of the picture) makes the dim rise softly from the lit shape to full at that distance, so the frame around it stays readable (0.1 is a good start; absent is a sharp edge), cutout "rounded" (default), "rect" or "circle" its lit shape (a circle is the ellipse inside rect, so give a square rect in pixels for a round one). The dim fades in after `from` and out before `to` over fadeMs (200, at most a third of its length, linear); fadeMs: 0 is a hard cut. The same as redact with style "spotlight" (op "spotlight" in apply); unredact(id) removes it.'
     ),
     edit(
         "addLane",
@@ -1262,7 +1264,7 @@ const movieMethods = [
         result: z.unknown(),
         resultName:
             "{ id, kind, label, masked, from, to, plays, box: { x, y, width, height }, moves, exclude?, hidden }[]",
-        doc: 'The private data on the screen: emails, tokens and keys, phone numbers, IBANs and card numbers (and names you pass) in the text of its frames, read with Vision on this Mac (a movie: one frame a second, then five a second around each hit\'s edges and while it moves; cached beside the edit; the first scan of a long movie takes minutes). One hit per value while it shows, at source seconds, tracked through a scroll (moves: true; its hidden part follows the text). masked shows only the first and last two characters. exclude: areas never searched and left visible (a toast); excludeFixed: true finds what stays still while the content scrolls and leaves it visible. hidePrivate({ ids }) hides them; kind is "email" | "token" | "phone" | "iban" | "card" | "name".',
+        doc: 'The private data on the screen: emails, tokens and keys, phone numbers, IBANs and card numbers (and names you pass) in the text of its frames, read with Vision on this Mac (a movie: one frame a second, then five a second around each hit\'s edges and while it moves; cached once per movie content, so a copy of the movie reuses it; the first scan of a long movie takes minutes). One hit per value while it shows, at source seconds, tracked through a scroll (moves: true; its hidden part follows the text). masked shows only the first and last two characters. exclude: areas never searched and left visible (a toast); excludeFixed: true finds what stays still while the content scrolls and leaves it visible. hidePrivate({ ids }) hides them; kind is "email" | "token" | "phone" | "iban" | "card" | "name".',
         effect: "read",
     }),
     edit(

@@ -15,7 +15,7 @@ type Op<K extends EditOp["op"]> = Extract<EditOp, { op: K }>;
 const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
 
 /** A spotlight's dim that equals the default is not written (the window's rule). */
-const SPOTLIGHT_DIM = 0.7;
+const SPOTLIGHT_DIM = 0.5;
 
 /** The shortest a hidden part, text, shape or camera part may last. */
 const MINIMUM_ITEM_US = 100_000;
@@ -71,6 +71,7 @@ export function setRedaction(project: EditProject, op: Op<"setRedaction">): Edit
         cutout: oldCutout,
         fadeMs: oldFadeMs,
         cell: oldCell,
+        dimAround: oldDimAround,
         ...rest
     } = item;
     // R5 5 redaction edges: -1 and 0 go back to the defaults.
@@ -81,6 +82,8 @@ export function setRedaction(project: EditProject, op: Op<"setRedaction">): Edit
     const dim =
         op.dim === undefined ? oldDim : Math.abs(op.dim - SPOTLIGHT_DIM) < 0.005 ? undefined : clamp(op.dim, 0.2, 0.95);
     const cutout = op.cutout ?? oldCutout;
+    // R8 11: 0 makes the edge sharp again.
+    const dimAround = op.dimAround === undefined ? oldDimAround : op.dimAround || undefined;
     const next = {
         ...rest,
         x: clamp(rect.x, 0, 1 - width),
@@ -94,6 +97,7 @@ export function setRedaction(project: EditProject, op: Op<"setRedaction">): Edit
         ...(cutout === undefined ? {} : { cutout }),
         ...(fadeMs === undefined ? {} : { fadeMs }),
         ...(cell === undefined ? {} : { cell }),
+        ...(dimAround === undefined ? {} : { dimAround }),
     };
     return { ...project, redactions: list.map((redaction) => (redaction.id === op.id ? next : redaction)) };
 }

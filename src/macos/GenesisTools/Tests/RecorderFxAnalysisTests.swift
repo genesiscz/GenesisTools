@@ -207,4 +207,37 @@ final class RecorderFxAnalysisTests: XCTestCase {
         XCTAssertGreaterThan(shownRep.colorAt(x: 100, y: 5)?.brightnessComponent ?? 0, 0.9, "excluded by both: shown")
         XCTAssertLessThan(shownRep.colorAt(x: 100, y: 15)?.brightnessComponent ?? 1, 0.1, "excluded by one only: hidden")
     }
+
+    // R8 11: a spotlight's dim greyed the whole screen (0.7). The default is softer, and dimAround fades the dim in
+    // from the lit shape, so the frame around it stays readable.
+    private func spotGray(_ image: CIImage, _ x: Int, _ yFromTop: Int, height: Int) -> UInt8 {
+        var pixel = [UInt8](repeating: 0, count: 4)
+        CIContext().render(image, toBitmap: &pixel, rowBytes: 4, bounds: CGRect(x: x, y: height - 1 - yFromTop, width: 1, height: 1),
+                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+        return pixel[0]
+    }
+
+    func testTheDefaultSpotlightDimLeavesTheRestReadable() {
+        let white = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 100))
+        let spot = EditProject.Redaction(id: "s", startUs: 0, endUs: 1, x: 0.25, y: 0.25, width: 0.5, height: 0.5, style: .spotlight)
+        let dimmed = spotGray(Looks.redact([spot], on: white), 10, 10, height: 100)
+        XCTAssertGreaterThan(dimmed, 170, "white around the spotlight stays light enough to read")
+        XCTAssertLessThan(dimmed, 215, "and still reads as dimmed")
+    }
+
+    func testDimAroundFadesTheDimInFromTheLitShape() {
+        let size = 400
+        let white = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: size, height: size))
+        var spot = EditProject.Redaction(id: "s", startUs: 0, endUs: 1, x: 0.4, y: 0.4, width: 0.2, height: 0.2, style: .spotlight)
+        spot.cutout = .rect
+        let sharp = Looks.redact([spot], on: white)
+        spot.dimAround = 0.1
+        let soft = Looks.redact([spot], on: white)
+        // The shape spans 160 to 240; dimAround 0.1 of 400 is 40 px.
+        XCTAssertGreaterThan(spotGray(soft, 200, 200, height: size), 240, "inside stays lit")
+        XCTAssertGreaterThan(spotGray(soft, 248, 200, height: size), spotGray(sharp, 248, 200, height: size) + 20,
+                             "8 px outside the shape the soft edge is clearly lighter than the sharp one")
+        XCTAssertEqual(Int(spotGray(soft, 380, 200, height: size)), Int(spotGray(sharp, 380, 200, height: size)), accuracy: 2,
+                       "far away both dim the same")
+    }
 }

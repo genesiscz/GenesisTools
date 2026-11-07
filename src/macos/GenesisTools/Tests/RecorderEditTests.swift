@@ -1021,9 +1021,9 @@ final class RecorderEditTests: XCTestCase {
             return pixel[0]
         }
         XCTAssertGreaterThan(gray(100, 10), 240, "inside the spotlight stays as it was")
-        XCTAssertLessThan(gray(20, 10), 160, "outside it is dimmed")
+        XCTAssertLessThan(gray(20, 10), 215, "outside it is dimmed (R8 11: the default dim is 0.5)")
         XCTAssertGreaterThan(gray(20, 10), 60, "dimmed, not black")
-        XCTAssertLessThan(gray(100, 80), 160)
+        XCTAssertLessThan(gray(100, 80), 215)
     }
 
     func testTwoSpotlightsBothStayLitAndTheRestDimsOnce() {

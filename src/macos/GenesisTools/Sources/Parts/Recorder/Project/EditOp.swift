@@ -342,6 +342,8 @@ extension EditOp {
         var lane: String?
         // R5 5 redaction edges
         var fadeMs: Int?
+        // R8 11
+        var dimAround: Double?
         var op: EditOp { .spotlight(self) }
     }
 
@@ -726,6 +728,8 @@ extension EditOp {
         // R5 5 redaction edges: fadeMs -1 and cell 0 go back to the defaults.
         var fadeMs: Int?
         var cell: Double?
+        // R8 11: 0 makes the edge sharp again.
+        var dimAround: Double?
         var op: EditOp { .setRedaction(self) }
     }
 

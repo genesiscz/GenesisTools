@@ -304,6 +304,9 @@ const EXAMPLE_OPS: readonly unknown[] = [
     { op: "unhide", text: "Orla Fictive" },
     { op: "unhide", ids: ["r12", "p5e6f7a8b"] },
     { op: "unhide", all: true },
+    // R8 11 a spotlight's soft edge
+    { op: "spotlight", from: 2, to: 3, rect: { x: 0.3, y: 0.3, width: 0.2, height: 0.2 }, dimAround: 0.1 },
+    { op: "setRedaction", id: "r1", dimAround: 0 },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */
