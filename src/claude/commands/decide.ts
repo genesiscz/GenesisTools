@@ -33,7 +33,10 @@ export function registerDecideCommand(program: Command): void {
         .description("Type one DECISION answer into the cmux pane running that Claude session")
         .option("--session <id>", "Claude session id (links: defaults to the session running this command)")
         .option("--decision <n>", "Decision number")
-        .option("--option <letter>", "One letter, a-z (required unless --links)")
+        .option(
+            "--option <letters>",
+            'One letter a-z, or a set ("ac") for a decision that takes several (required unless --links)'
+        )
         .option(
             "--question <formId>",
             `Also answer this pending \`${toolCommand("question")}\` form, so /qa keeps the answer`

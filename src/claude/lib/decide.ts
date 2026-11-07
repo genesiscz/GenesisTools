@@ -8,6 +8,8 @@ import { logger } from "@genesiscz/utils/logger";
 
 const SESSION = /^[A-Za-z0-9_-]+$/;
 const OPTION = /^[a-z]$/;
+/** A decision that takes a set of its options is answered with several different letters ("ac"). */
+const OPTIONS = /^[a-z]{1,26}$/;
 const FORM_ID = /^[A-Za-z0-9_-]{1,80}$/;
 
 export interface DecideInput {
@@ -46,12 +48,16 @@ export function validateDecide(input: {
 }): DecideInput {
     const target = validateTarget(input);
 
-    if (!input.option || !OPTION.test(input.option)) {
-        throw new Error("option must be a single letter a-z");
+    if (!input.option || !OPTIONS.test(input.option) || new Set(input.option).size !== input.option.length) {
+        throw new Error('option must be one letter a-z, or different letters for a set ("ac")');
     }
 
     // A route passes `--question ""` when the link carries no form id.
     const question = input.question?.trim() ? input.question.trim() : undefined;
+
+    if (question !== undefined && !OPTION.test(input.option)) {
+        throw new Error("a question form takes a single letter");
+    }
 
     if (question !== undefined && !FORM_ID.test(question)) {
         throw new Error("question must be a form id (letters, numbers, _ or -)");

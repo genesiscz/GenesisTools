@@ -48,6 +48,13 @@ describe("decide", () => {
 
         expect(sent.text).toBe("DECISION 3: a)");
         expect(calls).toEqual([`${SESSION} DECISION 3: a)`]);
+
+        // A set types the line the decision Stop hook's chat reader takes as a set (`15 ac)`).
+        const set = await answerDecision(
+            { session: SESSION, decision: "15", option: "ac" },
+            { sessionExists: () => true, send: () => true }
+        );
+        expect(set.text).toBe("DECISION 15: ac)");
     });
 
     test("an unknown session, a non-integer decision, or a multi-letter option never reach the send primitive", async () => {
@@ -62,12 +69,16 @@ describe("decide", () => {
         await expect(answerDecision({ session: SESSION, decision: "x", option: "a" }, known)).rejects.toThrow(
             "integer"
         );
-        await expect(answerDecision({ session: SESSION, decision: "3", option: "ab" }, known)).rejects.toThrow(
-            "single letter"
+        // A set of letters answers a decision that takes several; a letter twice or a capital is no answer.
+        await expect(answerDecision({ session: SESSION, decision: "3", option: "aa" }, known)).rejects.toThrow(
+            "one letter a-z, or different letters"
         );
         await expect(answerDecision({ session: SESSION, decision: "3", option: "B" }, known)).rejects.toThrow(
-            "single letter"
+            "one letter a-z, or different letters"
         );
+        await expect(
+            answerDecision({ session: SESSION, decision: "3", option: "ab", question: "ask_1" }, known)
+        ).rejects.toThrow("a question form takes a single letter");
         await expect(
             answerDecision({ session: SESSION, decision: "3", option: "a", question: "ask_1; rm" }, known)
         ).rejects.toThrow("form id");
@@ -87,7 +98,7 @@ describe("decide", () => {
         expect(() => validateTarget({ session: "abc", decision: "x" })).toThrow(/integer/);
         expect(() => validateTarget({ session: "abc", decision: "9007199254740993" })).toThrow(/integer/);
         expect(() => validateTarget({ session: "a b)", decision: "1" })).toThrow(/session id/);
-        expect(() => validateDecide({ session: "abc", decision: "1" })).toThrow(/single letter/);
+        expect(() => validateDecide({ session: "abc", decision: "1" })).toThrow(/one letter a-z/);
         expect(validateDecide({ session: "abc", decision: "1", option: "a", question: "" })).toEqual({
             session: "abc",
             decision: 1,
