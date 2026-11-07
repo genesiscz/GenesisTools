@@ -38,26 +38,53 @@ enum RedactionTrack {
         return moved
     }
 
-    /// Puts the original picture back over the parts of each hiding rectangle its `exclude` areas cover.
+    /// Puts the original picture back over the parts of each hiding rectangle its `exclude` areas cover, but only where
+    /// no other hiding part covers them without excluding them too (R8 9: a tracked line's excluded bar showed sharp text
+    /// through a band that hid the whole screen).
     static func leaveVisible(_ redactions: [EditProject.Redaction], original: CIImage, on image: CIImage) -> CIImage {
         let extent = original.extent
         let rect = { (x: Double, y: Double, width: Double, height: Double) in
             CGRect(x: extent.minX + x * extent.width, y: extent.minY + (1 - y - height) * extent.height,
                    width: width * extent.width, height: height * extent.height)
         }
-        var result = image
-        for redaction in redactions where redaction.style != .spotlight {
-            guard let areas = redaction.exclude, !areas.isEmpty else { continue }
+        let parts: [(hidden: CGRect, holes: [CGRect])] = redactions.filter { $0.style != .spotlight }.map { redaction in
             let hidden = rect(redaction.x, redaction.y, redaction.width, redaction.height).integral
-            for area in areas {
+            let holes = (redaction.exclude ?? []).compactMap { area -> CGRect? in
                 // Inward to whole pixels, so an edge pixel of the text never shows.
                 let r = rect(area.x, area.y, area.width, area.height)
                 let hole = CGRect(x: ceil(r.minX), y: ceil(r.minY), width: floor(r.maxX) - ceil(r.minX),
                                   height: floor(r.maxY) - ceil(r.minY)).intersection(hidden)
-                guard hole.width >= 1, hole.height >= 1 else { continue }
-                result = original.cropped(to: hole).composited(over: result)
+                return hole.isNull || hole.width < 1 || hole.height < 1 ? nil : hole
+            }
+            return (hidden, holes)
+        }
+        var result = image
+        for (index, part) in parts.enumerated() {
+            var pieces = part.holes
+            for (other, cover) in parts.enumerated() where other != index {
+                pieces = pieces.flatMap { piece -> [CGRect] in
+                    let inside = piece.intersection(cover.hidden)
+                    guard !inside.isNull, inside.width >= 1, inside.height >= 1 else { return [piece] }
+                    let open = cover.holes.map { $0.intersection(inside) }.filter { !$0.isNull && $0.width >= 1 && $0.height >= 1 }
+                    return subtract(cover.hidden, from: piece) + open
+                }
+            }
+            for piece in pieces {
+                result = original.cropped(to: piece).composited(over: result)
             }
         }
         return result
+    }
+
+    /// `rect` without `cut`: up to four rectangles (below, above, left and right of their overlap).
+    static func subtract(_ cut: CGRect, from rect: CGRect) -> [CGRect] {
+        let overlap = rect.intersection(cut)
+        guard !overlap.isNull, overlap.width > 0, overlap.height > 0 else { return [rect] }
+        return [
+            CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: overlap.minY - rect.minY),
+            CGRect(x: rect.minX, y: overlap.maxY, width: rect.width, height: rect.maxY - overlap.maxY),
+            CGRect(x: rect.minX, y: overlap.minY, width: overlap.minX - rect.minX, height: overlap.height),
+            CGRect(x: overlap.maxX, y: overlap.minY, width: rect.maxX - overlap.maxX, height: overlap.height),
+        ].filter { $0.width >= 1 && $0.height >= 1 }
     }
 }

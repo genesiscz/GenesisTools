@@ -1,5 +1,6 @@
 import AppKit
 import CoreImage
+import CoreImage.CIFilterBuiltins
 import XCTest
 @testable import GenesisToolsRecorder
 
@@ -146,5 +147,64 @@ final class RecorderFxAnalysisTests: XCTestCase {
         let rep = NSBitmapImageRep(cgImage: cg)
         XCTAssertGreaterThan(rep.colorAt(x: 70, y: 50)?.brightnessComponent ?? 0, 0.9, "the excluded half shows the picture")
         XCTAssertLessThan(rep.colorAt(x: 130, y: 50)?.brightnessComponent ?? 1, 0.1, "the rest stays hidden")
+    }
+
+    // R8 9: r4a saw sharp text inside a whole-screen blur where hidden parts overlapped. Overlapping blurs alone keep
+    // the text hidden; the cause was one part's excluded area (a fixed bar) put back over another part that hides it.
+    private func stripes(_ size: CGSize) -> CIImage {
+        let generator = CIFilter.stripesGenerator()
+        generator.color0 = CIColor(red: 1, green: 1, blue: 1)
+        generator.color1 = CIColor(red: 0, green: 0, blue: 0)
+        generator.width = 2
+        generator.center = .zero
+        return generator.outputImage!.cropped(to: CGRect(origin: .zero, size: size))
+    }
+
+    /// The spread of brightness in a square of 9 px around (x, y): about 0.5 on sharp stripes, near 0 on a blur.
+    private func spread(_ rep: NSBitmapImageRep, x: Int, y: Int) -> Double {
+        let values = (x - 4 ... x + 4).compactMap { rep.colorAt(x: $0, y: y)?.brightnessComponent }.map(Double.init)
+        let mean = values.reduce(0, +) / Double(values.count)
+        return (values.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(values.count)).squareRoot()
+    }
+
+    func testOverlappingBlursKeepTheirOverlapBlurred() throws {
+        let size = CGSize(width: 400, height: 200)
+        let picture = stripes(size)
+        let parts = [
+            EditProject.Redaction(id: "a", startUs: 0, endUs: 1, x: 0, y: 0, width: 1, height: 1, style: .blur),
+            EditProject.Redaction(id: "b", startUs: 0, endUs: 1, x: 0.2, y: 0.2, width: 0.5, height: 0.5, style: .blur),
+            EditProject.Redaction(id: "c", startUs: 0, endUs: 1, x: 0.4, y: 0.3, width: 0.4, height: 0.4, style: .blur),
+        ]
+        let hidden = RedactionTrack.leaveVisible(parts, original: picture, on: Looks.redact(parts, on: picture))
+        let cg = try XCTUnwrap(CIContext().createCGImage(hidden, from: CGRect(origin: .zero, size: size)))
+        let rep = NSBitmapImageRep(cgImage: cg)
+        let sharp = NSBitmapImageRep(cgImage: try XCTUnwrap(CIContext().createCGImage(picture, from: CGRect(origin: .zero, size: size))))
+        XCTAssertGreaterThan(spread(sharp, x: 200, y: 100), 0.3, "the stripes are sharp before")
+        for (x, y) in [(50, 50), (120, 80), (200, 100), (260, 100), (300, 140)] {
+            XCTAssertLessThan(spread(rep, x: x, y: y), 0.1, "blurred at \(x), \(y), in one, two and three parts")
+        }
+    }
+
+    func testAnExcludedAreaOfOnePartStaysHiddenUnderAnotherPart() throws {
+        let size = CGSize(width: 200, height: 100)
+        let white = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: CGRect(origin: .zero, size: size))
+        // A tracked line that leaves a fixed bar at the top visible, inside a band that hides the whole picture.
+        var line = EditProject.Redaction(id: "line", startUs: 0, endUs: 1, x: 0, y: 0, width: 1, height: 0.5, style: .black)
+        line.exclude = [EditProject.Box(x: 0, y: 0, width: 1, height: 0.2)]
+        let band = EditProject.Redaction(id: "band", startUs: 0, endUs: 1, x: 0, y: 0, width: 1, height: 1, style: .black)
+        let parts = [line, band]
+        let drawn = RedactionTrack.leaveVisible(parts, original: white, on: Looks.redact(parts, on: white))
+        let rep = NSBitmapImageRep(cgImage: try XCTUnwrap(CIContext().createCGImage(drawn, from: CGRect(origin: .zero, size: size))))
+        // The bitmap's rows count from the top: the bar is rows 0 to 20.
+        XCTAssertLessThan(rep.colorAt(x: 100, y: 10)?.brightnessComponent ?? 1, 0.1, "the band hides the line's excluded bar")
+
+        // The control: when every part that covers the bar excludes it, the bar shows.
+        var wide = band
+        wide.exclude = [EditProject.Box(x: 0, y: 0, width: 1, height: 0.1)]
+        let both = [line, wide]
+        let shown = RedactionTrack.leaveVisible(both, original: white, on: Looks.redact(both, on: white))
+        let shownRep = NSBitmapImageRep(cgImage: try XCTUnwrap(CIContext().createCGImage(shown, from: CGRect(origin: .zero, size: size))))
+        XCTAssertGreaterThan(shownRep.colorAt(x: 100, y: 5)?.brightnessComponent ?? 0, 0.9, "excluded by both: shown")
+        XCTAssertLessThan(shownRep.colorAt(x: 100, y: 15)?.brightnessComponent ?? 1, 0.1, "excluded by one only: hidden")
     }
 }
