@@ -4,6 +4,16 @@ function seconds(us: number): string {
     return (us / 1_000_000).toFixed(6);
 }
 
+/**
+ * The ffmpeg filter that samples a movie `fps` times a second on the editor's time base: slot n is the frame the editor
+ * shows at n / fps, the latest frame whose time is at or before it. ffmpeg's default (`round=near`) takes the nearest
+ * frame instead, up to half a step LATER, so a 1 fps survey of a variable-frame-rate movie placed screen text up to
+ * 0.5 s early (round 5, item 1). `start_time=0` keeps slot 0 at the start of the input (or of its `-ss` seek point).
+ */
+export function sampleFpsFilter(fps: number): string {
+    return `fps=${fps}:round=up:start_time=0`;
+}
+
 /** `atempo` takes 0.5 to 2 per instance, so a larger change is a chain of them. */
 export function atempoChain(factor: number): string {
     const parts: number[] = [];

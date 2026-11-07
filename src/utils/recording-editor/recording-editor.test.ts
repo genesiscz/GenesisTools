@@ -59,7 +59,7 @@ import legacyEvidence from "./__fixtures__/legacy-evidence.json";
 import transcriptCuts from "./__fixtures__/transcript-cuts.json";
 import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema } from "./denoise";
 import { MAX_SAMPLE_TIMES, RecordingEditor, sampleTimes } from "./editor";
-import { atempoChain, concatList, exportVideoArgv, speedArgv, trimArgv } from "./ffmpeg";
+import { atempoChain, concatList, exportVideoArgv, sampleFpsFilter, speedArgv, trimArgv } from "./ffmpeg";
 import { parseEditPlan, timeToUs } from "./plan";
 import * as projectOps from "./project";
 import { locateSource } from "./source";
@@ -389,6 +389,83 @@ test("trimmed stills sample through the transformed endpoint", async () => {
 });
 
 describe.skipIf(skip.integration)("the editor on a video, and the frame review over it", () => {
+    test("a survey's sampled frame at t is the frame the editor shows at t on a variable-frame-rate movie", async () => {
+        const root = workspace();
+        const movie = join(root, "vfr.mp4");
+        // Frame N is grey level N*4; frames 0..19 at N*0.1 s, then a gap to 2 s and 0.37 s steps (variable rate).
+        await runVideoCommand({
+            command: [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=32x32:r=10:d=4",
+                "-vf",
+                "geq=lum='min(250,N*4)':cb=128:cr=128,setpts='if(lt(N,20),N*0.1,2+(N-20)*0.37)/TB'",
+                "-fps_mode",
+                "vfr",
+                "-c:v",
+                "libx264",
+                "-qp",
+                "0",
+                "-pix_fmt",
+                "yuv444p",
+                movie,
+            ],
+        });
+        const sampled = async (filter: string) => {
+            const stdout = await runVideoCommand({
+                command: [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-i",
+                    movie,
+                    "-vf",
+                    `${filter},signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-`,
+                    "-f",
+                    "null",
+                    "-",
+                ],
+            });
+            return [...stdout.matchAll(/pts_time:([0-9.]+)[\s\S]*?YAVG=([0-9.]+)/g)].map(
+                (match) => [Number(match[1]), Math.round(Number(match[2]) / 4)] as const
+            );
+        };
+        // The frames as stored (the stream rounds each time to its time base).
+        const times = (
+            await runVideoCommand({
+                command: [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v",
+                    "-show_entries",
+                    "frame=pts_time",
+                    "-of",
+                    "csv=p=0",
+                    movie,
+                ],
+            })
+        )
+            .trim()
+            .split("\n")
+            .map((line) => Number.parseFloat(line) || 0);
+        // The editor shows the latest frame whose time is at or before t (AVFoundation, zero tolerance).
+        const shownAt = (t: number) => times.findLastIndex((time) => time <= t + 1e-6);
+        const editorFrames = await sampled(sampleFpsFilter(2));
+        expect(editorFrames.length).toBeGreaterThan(8);
+        expect(editorFrames.filter(([t, frame]) => frame !== shownAt(t))).toEqual([]);
+        // ffmpeg's default rounding picks the nearest frame, up to half a step LATER than the editor shows.
+        const plain = await sampled("fps=2");
+        expect(plain.some(([t, frame]) => frame !== shownAt(t))).toBe(true);
+    });
+
     test("expanded extraction filenames cannot overwrite a video input", async () => {
         const root = workspace();
         const source = join(root, "source-00000.png");

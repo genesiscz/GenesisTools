@@ -14,6 +14,7 @@ import {
     nearestEvent,
     type Tap,
 } from "@genesiscz/utils/recording-editor/events";
+import { sampleFpsFilter } from "@genesiscz/utils/recording-editor/ffmpeg";
 import {
     type FractionBox,
     type LineMatcher,
@@ -210,7 +211,7 @@ export async function ocrVideo(options: {
                 "-map",
                 "0:v:0",
                 "-vf",
-                `fps=${options.fps}`,
+                sampleFpsFilter(options.fps),
                 "-start_number",
                 "0",
                 join(folder, "%06d.png"),
@@ -283,7 +284,8 @@ export async function screenTextOf(
     }
 
     const path = cachePath(video, "screen-text");
-    const key = movieKey(video, `every=${screenTextEverySeconds(project.source.durationUs)}`);
+    // editor-time: sampled on the editor time base (sampleFpsFilter); older caches took the nearest frame.
+    const key = movieKey(video, `every=${screenTextEverySeconds(project.source.durationUs)},editor-time`);
     const cached = readCache(path, key, screenFramesSchema);
 
     if (cached) {
@@ -622,7 +624,8 @@ export async function changeStepsOf(
     }
 
     const path = cachePath(video, "waits");
-    const key = movieKey(video, `fps=${WAIT_SAMPLE_FPS},v2`);
+    // v3: sampled on the editor time base (sampleFpsFilter); v2 caches took the nearest frame.
+    const key = movieKey(video, `fps=${WAIT_SAMPLE_FPS},v3`);
     const cached = readCache(path, key, stepsCacheSchema);
 
     if (cached) {

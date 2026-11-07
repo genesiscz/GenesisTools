@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
+import { sampleFpsFilter } from "./ffmpeg";
 
 const { log } = logger.scoped("recording-editor-waits");
 
@@ -305,7 +306,7 @@ export async function measureChangeSteps(options: {
         "-map",
         "0:v:0",
         "-vf",
-        `fps=${WAIT_SAMPLE_FPS},scale=${width}:${height}:flags=area,format=gray`,
+        `${sampleFpsFilter(WAIT_SAMPLE_FPS)},scale=${width}:${height}:flags=area,format=gray`,
         "-f",
         "rawvideo",
         "-pix_fmt",
