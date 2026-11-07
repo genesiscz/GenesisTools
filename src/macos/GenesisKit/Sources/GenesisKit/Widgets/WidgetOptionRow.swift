@@ -293,3 +293,19 @@ struct WidgetSetSendBar: View {
         }
     }
 }
+
+/// "Asked in Review of the cache PR, a sub-agent of Overnight lead": the asking session of a decision another agent's
+/// thread started. Each session numbers its own decisions, so a lead and its sub-agents can each show a DECISION 1, and
+/// this line tells them apart in the widget and the hub (DECISION 46 b, 2026-11-07).
+public struct WidgetAskedInLine: View {
+    let askedIn: String
+
+    public init(_ askedIn: String) { self.askedIn = askedIn }
+
+    public var body: some View {
+        Label("Asked in " + askedIn, systemImage: "arrow.turn.down.right")
+            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
+            .labelStyle(.titleAndIcon)
+            .accessibilityLabel("Asked in " + askedIn)
+    }
+}

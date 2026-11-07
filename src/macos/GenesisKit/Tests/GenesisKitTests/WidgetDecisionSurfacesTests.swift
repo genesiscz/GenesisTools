@@ -832,6 +832,34 @@ final class WidgetDecisionSurfacesTests: XCTestCase {
         return card
     }
 
+    /// A sub-agent's decision carries the session it was asked in on its card and its inbox row; an older hub sends
+    /// none (DECISION 46 b).
+    func testASubagentDecisionNamesTheSessionItWasAskedIn() throws {
+        var json = Self.contextCard(key + "0", status: "waiting")
+        var details = try XCTUnwrap(json["decision"] as? [String: Any])
+        details["askedIn"] = "Review of the cache PR, a sub-agent of Overnight lead"
+        json["decision"] = details
+        let card = try JSONDecoder().decode(WidgetCard.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(card.decision?.askedIn, "Review of the cache PR, a sub-agent of Overnight lead")
+        let old = try JSONDecoder().decode(WidgetCard.self, from: JSONSerialization.data(
+            withJSONObject: Self.contextCard(key + "1", status: "waiting")))
+        XCTAssertNil(old.decision?.askedIn)
+    }
+
+    /// A watch that exits because its code changed is started again at once, three times in two minutes at most, so
+    /// one that dies on start shows Reconnect instead of spinning (DECISION 47).
+    func testACodeChangeExitRestartsTheWatchAtMostThreeTimesInTwoMinutes() {
+        var restarts: [Date] = []
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertEqual(WidgetModel.codeChangedStatus, 75)
+        XCTAssertTrue(WidgetModel.restartsForCodeChange(&restarts, now: start))
+        XCTAssertTrue(WidgetModel.restartsForCodeChange(&restarts, now: start.addingTimeInterval(10)))
+        XCTAssertTrue(WidgetModel.restartsForCodeChange(&restarts, now: start.addingTimeInterval(20)))
+        XCTAssertFalse(WidgetModel.restartsForCodeChange(&restarts, now: start.addingTimeInterval(30)))
+        // Two minutes after the first, the oldest no longer counts.
+        XCTAssertTrue(WidgetModel.restartsForCodeChange(&restarts, now: start.addingTimeInterval(125)))
+    }
+
     /// A card and preferences from a hub older than the decision details still decode: no details, no reasons, and the
     /// card's text is its body.
     func testACardFromAnOlderHubDecodesWithoutDetails() throws {

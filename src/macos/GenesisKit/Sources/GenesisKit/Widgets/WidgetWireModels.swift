@@ -113,6 +113,9 @@ public struct WidgetDecisionDetails: Codable, Equatable, Sendable {
     /// The recommended option's letter.
     public var recommended: String? = nil
     public var blocking: Bool? = nil
+    /// The asking session, when another agent's thread started it ("Review of the cache PR, a sub-agent of Overnight
+    /// lead"; `decisionAskedIn` in src/question/lib/decisions/store.ts), so its DECISION 1 reads apart from its lead's.
+    public var askedIn: String? = nil
     /// The cited `file:line` refs: the lines read from disk, or a file that could not be found.
     public var refs: [DecisionRef]? = nil
     /// Where the last send took the answer ("Sent 18:31 to …").
@@ -621,6 +624,8 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
     public var tag: String? = nil
     /// A decision that takes any set of its options; see `WidgetCard.multiple`. Absent means one option.
     public var multiple: Bool? = nil
+    /// The asking session, when another agent's thread started it; see `WidgetDecisionDetails.askedIn`.
+    public var askedIn: String? = nil
     /// `multiple`, false when the hub left it out.
     public var takesSeveral: Bool { kind == "decision" && multiple == true }
     public var isStaged: Bool { kind == "decision" && needsAnswer && (draftOption != nil || draft != nil) }

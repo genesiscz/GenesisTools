@@ -100,6 +100,8 @@ struct InboxItem: Decodable, Identifiable, Hashable {
     /// src/question/lib/decisions/option-labels.ts): check boxes, a click ticks or unticks a letter, one Send answers
     /// the set. Nil from an older `tools`, read as one option.
     var multiple: Bool? = nil
+    /// The asking session, when another agent's thread started it (`InboxDecision.askedIn`, DECISION 46 b).
+    var askedIn: String? = nil
 
     var isForm: Bool { kind == "form" }
     var isDialog: Bool { kind == "dialog" || source == "dialog" }
@@ -2224,6 +2226,10 @@ struct InboxDecisionCard: View, Equatable {
         let _ = RenderProbe.hit("inbox.decisionCard.body")
         VStack(alignment: .leading, spacing: 9) {
             headerRow
+            // A sub-agent's decision names its thread and lead: each session numbers its own (DECISION 46 b).
+            if let askedIn = item.askedIn, !askedIn.isEmpty {
+                WidgetAskedInLine(askedIn)
+            }
             if let prompt = item.shownPrompt {
                 FindText(inlineMarkdown(prompt), field: "prompt")
                     .font(.system(size: 12.5))

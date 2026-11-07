@@ -421,6 +421,9 @@ struct WidgetInboxOverviewRow: View, Equatable {
             VStack(alignment: .leading, spacing: 3) {
                 Text(WidgetInboxOverview.title(item)).font(.system(size: 12.5, weight: open ? .semibold : .medium))
                     .lineLimit(open ? 6 : 2).fixedSize(horizontal: false, vertical: true)
+                if let askedIn = item.askedIn, !askedIn.isEmpty {
+                    WidgetAskedInLine(askedIn)
+                }
                 if let stagedLine {
                     Text("Staged: " + stagedLine).font(.system(size: 11)).foregroundStyle(SessionPalette.blue)
                         .lineLimit(1)

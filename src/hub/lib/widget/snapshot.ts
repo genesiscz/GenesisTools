@@ -7,6 +7,7 @@ import {
     type AnsweredVia,
     awaitsAnswer,
     type DecisionRecord,
+    decisionAskedIn,
     kindOf,
     readDecisionsWithIntegrity,
 } from "@app/question/lib/decisions/store";
@@ -330,6 +331,8 @@ export interface WidgetInboxItem {
     recommended?: string;
     /** A decision that takes any set of its options (`takesSeveral`): a click toggles a letter, one Send answers. */
     multiple?: true;
+    /** The asking session, when another agent's thread started it (`decisionAskedIn`, DECISION 46 b). */
+    askedIn?: string;
     revision?: number;
     /**
      * A decision row's last write (epoch ms): the widget drops its optimistic pick once the row changed after the
@@ -1433,6 +1436,7 @@ export async function widgetSnapshot({
             ...(takesSeveral({ ...row, options: decisionOptionLabels(row.prompt, row.options) })
                 ? { multiple: true as const }
                 : {}),
+            ...(decisionAskedIn(row) ? { askedIn: decisionAskedIn(row) ?? undefined } : {}),
             revision: row.revision ?? 1,
             updatedAt: timeOf(row.updatedTs),
             ...stagedOf(row),

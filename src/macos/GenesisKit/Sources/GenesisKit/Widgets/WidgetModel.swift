@@ -420,6 +420,8 @@ public final class WidgetModel: ObservableObject {
     private let stateRoot: String?
     private let journal: URL
     private var watcher: ToolsLineStream?
+    /// When the watch last asked to be started again because its code changed (`restartsForCodeChange`).
+    private var codeRestarts: [Date] = []
     private let snapshotDecoder = WidgetSnapshotDecoder()
     private var voice: ToolsLineStream?
     private var tail: TranscriptLiveTail?
@@ -801,6 +803,19 @@ public final class WidgetModel: ObservableObject {
     /// What the widget says when its watch process ends by itself; the process's stderr is `errorDetail`.
     public static let connectionLostMessage = "Lost the connection to the hub. Reconnect to try again."
 
+    /// The watch's exit status when the code it loaded changed (`CODE_CHANGED_EXIT`, src/utils/bun/loaded-modules.ts):
+    /// it asks to be started again on the new code, so the widget reconnects with no error (DECISION 47, 2026-11-07).
+    nonisolated static let codeChangedStatus: Int32 = 75
+
+    /// Whether a code-change exit starts the watch again at once: at most three in two minutes, so a watch that dies
+    /// on start in a loop shows Reconnect instead of spinning. `restarts` keeps the recent ones.
+    nonisolated static func restartsForCodeChange(_ restarts: inout [Date], now: Date = Date()) -> Bool {
+        restarts.removeAll { now.timeIntervalSince($0) > 120 }
+        guard restarts.count < 3 else { return false }
+        restarts.append(now)
+        return true
+    }
+
     public func start() {
         guard watcher == nil else { return }
         stopping = false
@@ -809,7 +824,8 @@ public final class WidgetModel: ObservableObject {
             snapshotDecoder.reset()
             let decoder = snapshotDecoder
             watcher = try ToolsLineStream(
-                bridge: bridge, subcommand: "hub", args: widgetArgs + ["watch", "--stop-on-stdin"],
+                bridge: bridge, subcommand: "hub",
+                args: widgetArgs + ["watch", "--stop-on-stdin", "--restart-on-code-change"],
                 onLines: { [weak self] lines in
                     // A snapshot is about 1 MB of JSON with ~1000 sessions: decoding it on the main thread
                     // stalled panel transitions. Decode on a queue, apply here.
@@ -818,6 +834,12 @@ public final class WidgetModel: ObservableObject {
                 onExit: { [weak self] exit in
                     guard let self, !self.stopping, !exit.stopped else { return }
                     self.watcher = nil
+                    // New code was committed under the watch: start it again on that code, with no error on screen.
+                    if exit.status == Self.codeChangedStatus, Self.restartsForCodeChange(&self.codeRestarts) {
+                        PerfLog.mark("widget.watch restart: its code changed")
+                        self.start()
+                        return
+                    }
                     self.connectionLost = true
                     // One sentence on screen; the process's own words go behind Details (ux checklist, Errors).
                     self.fail(Self.connectionLostMessage, detail: String(exit.stderr.suffix(4000)))

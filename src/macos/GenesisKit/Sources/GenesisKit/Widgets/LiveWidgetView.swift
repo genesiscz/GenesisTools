@@ -1571,6 +1571,10 @@ struct WidgetInboxCardRow: View, Equatable {
                 (isPrompt ? Text(.init(card.title)) : Text(WidgetWords.numbered(card.title, number: card.number)))
                     .font(.system(size: 12.5, weight: open ? .semibold : .medium))
                     .lineLimit(open ? (isPrompt ? nil : 4) : 2).fixedSize(horizontal: false, vertical: true)
+                // A sub-agent's decision names its thread and lead: each session numbers its own (DECISION 46 b).
+                if let askedIn = card.decision?.askedIn, !askedIn.isEmpty {
+                    WidgetAskedInLine(askedIn)
+                }
                 // Open, the facts the hub's card shows beside its title: blocking, and how sure the agent is.
                 if open, let details = card.decision, details.blocking == true || details.confidence != nil {
                     HStack(spacing: 6) {
