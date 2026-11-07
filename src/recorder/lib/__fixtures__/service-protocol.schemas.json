@@ -3012,6 +3012,13 @@
               "label": {
                 "type": "string",
                 "maxLength": 60
+              },
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "match",
+                  "line"
+                ]
               }
             },
             "required": [

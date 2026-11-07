@@ -26,6 +26,7 @@ import {
 } from "@genesiscz/utils/recording-editor/motion";
 import {
     type FractionBox,
+    type HideUnit,
     type LineMatcher,
     type PrivateHit,
     privateMatcher,
@@ -637,18 +638,19 @@ export async function privateData(
     return hitsOut(project, await privateHitsOf(project, options));
 }
 
+/** What findText and hideText look for: a text or a pattern, and how much of its OCR line a match covers (R6 2). */
+export interface TextQuery {
+    text?: string;
+    pattern?: string;
+    unit?: HideUnit;
+}
+
 /** Every place of a text (or a pattern) on the screen, the input of the `hideText` op. */
-export function textHitsOf(
-    project: EditProject,
-    options: TrackOptions & { text?: string; pattern?: string }
-): Promise<PrivateHit[]> {
+export function textHitsOf(project: EditProject, options: TrackOptions & TextQuery): Promise<PrivateHit[]> {
     return trackedHits(project, textMatcher(options), options);
 }
 
-export async function findText(
-    project: EditProject,
-    options: TrackOptions & { text?: string; pattern?: string }
-): Promise<PrivateHitOut[]> {
+export async function findText(project: EditProject, options: TrackOptions & TextQuery): Promise<PrivateHitOut[]> {
     return hitsOut(project, await textHitsOf(project, options));
 }
 

@@ -958,6 +958,8 @@ extension EditOp {
         var exclude: [EditProject.Box]?
         var excludeFixed: Bool?
         var label: String?
+        // R6 2: "line" hides the whole OCR line of a match; nil is "match".
+        var unit: String?
         var op: EditOp { .hideText(self) }
     }
 

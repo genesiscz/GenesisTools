@@ -41,7 +41,12 @@ import {
     timeSchema,
     timeToUs,
 } from "@genesiscz/utils/recording-editor/plan";
-import { type FractionBox, PRIVATE_KINDS, PRIVATE_STYLES } from "@genesiscz/utils/recording-editor/private-data";
+import {
+    type FractionBox,
+    HIDE_UNITS,
+    PRIVATE_KINDS,
+    PRIVATE_STYLES,
+} from "@genesiscz/utils/recording-editor/private-data";
 import {
     BACKGROUND_KINDS,
     CANVAS_ASPECTS,
@@ -106,7 +111,7 @@ import {
     writeSubtitles,
 } from "./edit";
 import { stepDisplaySwitch, switchDisplay } from "./frames-movie";
-import { eventsOf, eventsOut, findText, privateData, snapOf, verifyHidden, waits } from "./fx-analysis";
+import { eventsOf, eventsOut, findText, privateData, snapOf, type TextQuery, verifyHidden, waits } from "./fx-analysis";
 import {
     EDITOR_TABS,
     type EditorTab,
@@ -1259,11 +1264,12 @@ const movieMethods = [
                 pattern: z.string().min(1).max(200).optional(),
                 exclude: z.array(boxParamSchema).max(20).optional(),
                 excludeFixed: z.boolean().optional(),
+                unit: z.enum(HIDE_UNITS).optional(),
             })
             .strict(),
         result: z.unknown(),
         resultName: "{ id, label, masked, from, to, plays, box, moves, exclude?, uncertain?, hidden }[]",
-        doc: "Every place a text (without case) or a pattern (a regular expression) shows on the screen, tracked as privateData() tracks a hit: what hideText() will hide, so you never guess coordinates or seconds.",
+        doc: 'Every place a text (without case) or a pattern (a regular expression) shows on the screen, tracked as privateData() tracks a hit: what hideText() will hide, so you never guess coordinates or seconds. Each OCR line (a run of text Vision reads on one baseline; a column far away is its own line) is matched on its own: ^ and $ anchor to that line, the match ignores case, a space OCR reads next to . @ _ - is dropped first, and a literal text also matches with spaces OCR adds or drops between its letters. unit: "line" covers the whole OCR line of a match (a name and the number beside it); "match" (the default) only the matched words.',
         effect: "read",
     }),
     edit(
@@ -1278,9 +1284,10 @@ const movieMethods = [
                 exclude: z.array(boxParamSchema).max(20).optional(),
                 excludeFixed: z.boolean().optional(),
                 label: z.string().max(60).optional(),
+                unit: z.enum(HIDE_UNITS).optional(),
             })
             .strict(),
-        "Hides every place a text or a pattern shows (between from and to, source seconds; absent: all): one hidden part per place, found by OCR, that starts and ends when the text shows and follows it through a scroll or a slide frame by frame (the content's measured motion, also where OCR cannot read the blurred text). Where a moving text cannot be followed, the band it may cross is hidden for that time instead. hiding in the answer says how sure it is: parts, moving { parts, seconds, minKeysPerSecond } and uncertain [{ from, to }] (source seconds of the bands; check() lists them too). exclude and excludeFixed leave a toast or a tab bar over it visible. Refused when the screen never shows it. Check with verifyHidden({ text })."
+        'Hides every place a text or a pattern shows (between from and to, source seconds; absent: all): one hidden part per place, found by OCR, that starts and ends when the text shows and follows it through a scroll or a slide frame by frame (the content\'s measured motion, also where OCR cannot read the blurred text). Where a moving text cannot be followed, the band it may cross is hidden for that time instead. unit: "line" hides the whole OCR line of each match (how a pattern matches: findText()). hiding in the answer says how sure it is: parts, moving { parts, seconds, minKeysPerSecond } and uncertain [{ from, to }] (source seconds of the bands; check() lists them too). exclude and excludeFixed leave a toast or a tab bar over it visible. Refused when the screen never shows it. Check with verifyHidden({ text }).'
     ),
     defineMethod({
         name: "verifyHidden",
@@ -2848,7 +2855,7 @@ export class Movie {
         return privateData((await openProject(this.recording)).project, options);
     }
 
-    async findText(options: { text?: string; pattern?: string; exclude?: FractionBox[]; excludeFixed?: boolean }) {
+    async findText(options: TextQuery & { exclude?: FractionBox[]; excludeFixed?: boolean }) {
         return findText((await openProject(this.recording)).project, options);
     }
 

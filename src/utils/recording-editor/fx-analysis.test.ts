@@ -400,6 +400,23 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
         );
     });
 
+    test('unit "line" hides the whole OCR line of a match; "match" only the matched words; a pattern is per line', () => {
+        const line = { text: "Orla Fictive   777 123 456", x: 0.1, y: 0.5, width: 0.4, height: 0.03 };
+        const [word] = textHits([frame(0, [line])], textMatcher({ text: "orla fictive" }));
+        const [whole] = textHits([frame(0, [line])], textMatcher({ text: "orla fictive", unit: "line" }));
+        expect(word.box.x + word.box.width).toBeLessThan(0.35);
+        expect(whole.box.x).toBeLessThanOrEqual(0.1);
+        expect(whole.box.x + whole.box.width).toBeGreaterThanOrEqual(0.5);
+        // ^ anchors to the OCR line, not to the screen: the number starts no line here.
+        expect(textMatcher({ pattern: "^\\d{3} \\d{3}" })(line.text)).toEqual([]);
+        expect(textMatcher({ pattern: "^orla" })(line.text).length).toBe(1);
+        expect(
+            applyOp(wholeProject(source), op({ op: "hideText", text: "Orla Fictive", unit: "line" }), {
+                textHits: [whole],
+            }).redactions?.[0].width
+        ).toBeGreaterThan(0.39);
+    });
+
     test("block matching finds a scroll's shift and leaves a still picture still", () => {
         const width = 96;
         const height = 96;

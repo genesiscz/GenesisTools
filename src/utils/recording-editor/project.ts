@@ -54,7 +54,7 @@ import {
     textAnimateSchema,
 } from "./overlays";
 import { outputTimeSchema, sourceTimeSchema, timeSchema, timeToUs } from "./plan";
-import { PRIVATE_KINDS, PRIVATE_STYLES, type PrivateHit, privacySchema } from "./private-data";
+import { HIDE_UNITS, PRIVATE_KINDS, PRIVATE_STYLES, type PrivateHit, privacySchema } from "./private-data";
 import {
     cutRanges,
     FILLER_LEVELS,
@@ -1770,6 +1770,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             exclude: z.array(boxSchema).max(20).optional(),
             excludeFixed: z.boolean().optional(),
             label: z.string().max(60).optional(),
+            // R6 2: "line" hides the whole OCR line that holds a match (a name and the number beside it); absent is "match".
+            unit: z.enum(HIDE_UNITS).optional(),
         })
         .strict(),
     /** The smooth cursor: strength (0.6), jitterPx (3), idleFadeSeconds (2); enabled: false turns it off. */

@@ -296,6 +296,8 @@ const EXAMPLE_OPS: readonly unknown[] = [
     // R5 10 multi-line texts
     { op: "text", from: 1, to: 3, text: "Step 1\nOpen the inbox", x: 0.62, block: { width: 0.35, align: "left" } },
     { op: "setText", id: "t1", block: { align: "right" } },
+    // R6 2 a match's whole OCR line
+    { op: "hideText", text: "Orla Fictive", unit: "line" },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */

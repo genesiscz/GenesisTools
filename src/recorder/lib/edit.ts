@@ -667,6 +667,7 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
             textHits: await textHitsOf(project, {
                 text: op.text,
                 pattern: op.pattern,
+                unit: op.unit,
                 exclude: op.exclude,
                 excludeFixed: op.excludeFixed,
             }),

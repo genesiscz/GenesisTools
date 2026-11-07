@@ -220,18 +220,20 @@ export function registerHideTextCommands(program: Command): void {
         .argument("[text]", "the words to find, without case")
         .option("--pattern <regex>", "a regular expression instead of the text")
         .option("--exclude-fixed", "leave out what stays still while the content scrolls")
+        .option("--line", "each place covers the whole OCR line of the match (a name and the number beside it)")
         .option("--json", "print JSON")
         .action(
             async (
                 value: string,
                 text: string | undefined,
-                flags: { pattern?: string; excludeFixed?: boolean; json?: boolean }
+                flags: { pattern?: string; excludeFixed?: boolean; line?: boolean; json?: boolean }
             ) => {
                 try {
                     const hits = await findText((await openProject(value)).project, {
                         text,
                         pattern: flags.pattern,
                         excludeFixed: flags.excludeFixed,
+                        unit: flags.line ? "line" : "match",
                     });
 
                     if (flags.json) {

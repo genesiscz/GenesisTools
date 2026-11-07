@@ -345,8 +345,17 @@ export function privateMatcher(names: readonly string[] = []): LineMatcher {
     });
 }
 
-/** A literal text (without case) or a regular expression's source, as hideText asks for it. */
-export function textMatcher(options: { text?: string; pattern?: string }): LineMatcher {
+/** What a hideText hides of an OCR line that holds a match: the match only, or the whole line (a name and its number). */
+export const HIDE_UNITS = ["match", "line"] as const;
+export type HideUnit = (typeof HIDE_UNITS)[number];
+
+/**
+ * A literal text (without case) or a regular expression's source, as hideText asks for it. Each OCR line is matched on
+ * its own (Vision reads a run of text on one baseline as a line): `^` and `$` are the line's start and end, the match
+ * is without case, and a space OCR reads next to . @ _ - is left out first. A literal text also matches with spaces
+ * OCR reads in or leaves out between its letters. `unit: "line"` makes each match cover its whole OCR line.
+ */
+export function textMatcher(options: { text?: string; pattern?: string; unit?: HideUnit }): LineMatcher {
     const source = options.pattern ?? (options.text ? escapeRegExp(options.text.trim()) : undefined);
 
     if (!source) {
@@ -358,7 +367,7 @@ export function textMatcher(options: { text?: string; pattern?: string }): LineM
         options.pattern ?? [...(options.text ?? "").replace(/\s+/g, "")].map(escapeRegExp).join("\\s*"),
         "gi"
     );
-    return compacting((text) =>
+    const matches = compacting((text) =>
         [...text.matchAll(regex)]
             .filter((match) => match[0].length > 0)
             .map((match) => ({
@@ -369,6 +378,13 @@ export function textMatcher(options: { text?: string; pattern?: string }): LineM
                 end: (match.index ?? 0) + match[0].length,
             }))
     );
+    return options.unit === "line"
+        ? (text) => {
+              const found = matches(text);
+              // One part per line however many matches it holds: the whole line, named by its first match.
+              return found.length > 0 ? [{ ...found[0], start: 0, end: text.length }] : [];
+          }
+        : matches;
 }
 
 function overlap(a: FractionBox, b: FractionBox): number {
