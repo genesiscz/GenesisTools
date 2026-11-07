@@ -133,7 +133,7 @@ final class RecorderFxTests: XCTestCase {
 final class RecorderFrameLayoutTests: XCTestCase {
     /// A phone (590×1278) in a 1920×1080 canvas: centred it fills about a quarter of the width; against the left edge
     /// it starts at the padding and leaves the right three quarters free; scale 1.2 makes it taller than the canvas.
-    func testAPhoneSitsAgainstTheEdgeTheLayoutNamesAtItsScale() {
+    func testAPhoneSitsAgainstTheEdgeTheLayoutNamesAtItsScale() throws {
         let phone = CGSize(width: 590, height: 1278), canvas = CGSize(width: 1920, height: 1080)
         var frame = EditProject.Frame(aspect: .wide, padding: 0.04)
         let centred = Looks.framePlacement(frame, picture: phone, canvas: canvas).inner
@@ -143,11 +143,32 @@ final class RecorderFrameLayoutTests: XCTestCase {
         let left = Looks.framePlacement(frame, picture: phone, canvas: canvas).inner
         XCTAssertEqual(left.minX, 1080 * 0.04, accuracy: 0.5)
         XCTAssertGreaterThan(canvas.width - left.maxX, canvas.width * 0.7, "three quarters free for texts")
+        // R7 9: scale 1.2 grows the phone inside the room (wider, the free side smaller) and crops its height to it.
         frame.layout = .init(align: .right, scale: 1.2)
-        let right = Looks.framePlacement(frame, picture: phone, canvas: canvas).inner
+        let grown = Looks.framePlacement(frame, picture: phone, canvas: canvas)
+        let right = grown.inner
         XCTAssertEqual(right.maxX, 1920 - 1080 * 0.04, accuracy: 0.5)
-        XCTAssertEqual(right.height, 1080 * 0.92 * 1.2, accuracy: 0.5)
-        XCTAssertEqual(right.midY, 540, accuracy: 0.5, "the canvas cuts top and bottom alike")
+        XCTAssertEqual(right.height, 1080 * 0.92, accuracy: 0.5, "the phone stays inside the padding")
+        XCTAssertEqual(right.width, left.width * 1.2, accuracy: 0.5, "and is 1.2 times as wide")
+        let crop = try XCTUnwrap(grown.crop)
+        XCTAssertEqual(crop.width, phone.width, accuracy: 0.5, "the whole width shows")
+        XCTAssertEqual(crop.height, phone.height / 1.2, accuracy: 0.5, "a sixth of the height is out of view")
+        XCTAssertEqual(crop.midY, phone.height / 2, accuracy: 0.5, "the centre by default")
+    }
+
+    // R7 9 phone layouts: a phone at 0.36 of a 16:9 canvas, its bottom (the tab bar) kept in view by the focus.
+    func testAGrownPhoneKeepsTheFocusedPartInView() throws {
+        let phone = CGSize(width: 590, height: 1278), canvas = CGSize(width: 1920, height: 1080)
+        var frame = EditProject.Frame(aspect: .wide, padding: 0.04)
+        frame.layout = .init(align: .left, scale: 1.5, focus: .init(x: 0.5, y: 1))
+        let placement = Looks.framePlacement(frame, picture: phone, canvas: canvas)
+        XCTAssertEqual(placement.inner.width / canvas.width, 0.358, accuracy: 0.005)
+        XCTAssertGreaterThan(canvas.width - placement.inner.maxX, canvas.width * 0.6, "the free side holds a 0.4 wide block")
+        let crop = try XCTUnwrap(placement.crop)
+        XCTAssertEqual(crop.minY, 0, accuracy: 0.5, "focus y 1 keeps the bottom (Core Image y 0) in view")
+        // The mapping of a source point follows the crop: the phone's bottom edge lands on the box's bottom edge.
+        let map = Looks.sourceToCanvas(view: .whole, frame: frame, picture: phone, canvas: canvas)
+        XCTAssertEqual(map.point(CGPoint(x: 0.5, y: 1)).y, 1 - 1080 * 0.04 / 1080, accuracy: 0.002)
     }
 
     /// A canvas zoom never moves the picture's own view, and a picture zoom never moves the canvas.

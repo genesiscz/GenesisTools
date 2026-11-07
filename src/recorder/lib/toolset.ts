@@ -668,13 +668,21 @@ const movieMethods = [
                 shadow: z.boolean().optional(),
                 // R5 4 frame layouts
                 layout: z
-                    .object({ align: z.enum(FRAME_ALIGNS).optional(), scale: z.number().min(0.5).max(3).optional() })
+                    .object({
+                        align: z.enum(FRAME_ALIGNS).optional(),
+                        scale: z.number().min(0.5).max(3).optional(),
+                        // R7 9 phone layouts
+                        focus: z
+                            .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+                            .strict()
+                            .optional(),
+                    })
                     .strict()
                     .optional(),
                 preset: z.enum(FRAME_PRESETS).optional(),
             })
             .strict(),
-        'Puts the movie on a background: aspect (the canvas: "16:9", "4:3", "1:1", "9:16" or "source"; its short side is the movie height), fit ("contain" the whole movie, or "cover": cropped to fill the room inside the padding, following the cursor; padding 0 for edge to edge), padding (0.06 of the short side), cornerRadius (0.012), shadow, background { kind: "gradient" | "color" | "image" | "none", colors, image (a picture file; kind image), blur (0–1) }; enabled: false removes it. layout { align: "center" | "left" | "right" | "top" | "bottom", scale: 0.5–3 } places the picture against one edge (inside the padding) and sizes it (above 1 the canvas cuts what does not fit). preset sets aspect, padding, corner radius and layout for a phone recording, and the call\'s own fields win: "phone-left" / "phone-right" (16:9, the phone against one side, the other three quarters free for texts at x 0.62 or 0.38), "phone-portrait" (9:16, the phone from the top with the bottom eighth free for captions, for Shorts). Example: frame({ preset: "phone-left", layout: { scale: 1.1 } }), then text({ from, to, text: "Line one\\nLine two", x: 0.64 }).'
+        'Puts the movie on a background: aspect (the canvas: "16:9", "4:3", "1:1", "9:16" or "source"; its short side is the movie height), fit ("contain" the whole movie, or "cover": cropped to fill the room inside the padding, following the cursor; padding 0 for edge to edge), padding (0.06 of the short side), cornerRadius (0.012), shadow, background { kind: "gradient" | "color" | "image" | "none", colors, image (a picture file; kind image), blur (0–1) }; enabled: false removes it. layout { align: "center" | "left" | "right" | "top" | "bottom", scale: 0.5–3 } places the picture against one edge (inside the padding) and sizes it. Above 1 the picture grows inside the padding and is cropped to it, and layout.focus { x, y } (0..1 of the picture from its top left, the centre by default) picks the part that stays in view: a whole phone is at most about 0.27 of a 16:9 width, so layout { scale: 1.5, focus: { x: 0.5, y: 1 } } makes it about 0.36 wide and keeps its bottom (a tab bar) in view while a third of its top is out. preset sets aspect, padding, corner radius and layout for a phone recording, and the call\'s own fields win: "phone-left" / "phone-right" (16:9, the whole phone against one side, about 0.24 to 0.27 of the width, the rest free for texts at x 0.62 or 0.38), "phone-portrait" (9:16, the phone from the top with the bottom eighth free for captions, for Shorts). Example: frame({ preset: "phone-left", layout: { scale: 1.1 } }), then text({ from, to, text: "Line one\\nLine two", x: 0.64 }).'
     ),
     edit(
         "removeIdle",

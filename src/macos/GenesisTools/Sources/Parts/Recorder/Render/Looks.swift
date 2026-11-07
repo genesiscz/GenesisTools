@@ -352,12 +352,26 @@ enum Looks {
         let unit = min(size.width, size.height)
         let padding = frame.padding * unit
         let room = CGSize(width: max(2, size.width - 2 * padding), height: max(2, size.height - 2 * padding))
-        let crop = frame.fit == .cover ? coverCrop(picture: picture, room: room, focus: focus) : nil
+        var crop = frame.fit == .cover ? coverCrop(picture: picture, room: room, focus: focus) : nil
         let shown = crop?.size ?? picture
         // R5 4 frame layouts: the fitted size times the layout's scale, against the edge it names (Core Image y up).
         let layout = frame.layout ?? .init()
         let scale = max(0.05, min(room.width / shown.width, room.height / shown.height)) * CGFloat(min(3, max(0.5, layout.scale)))
-        let width = shown.width * scale, height = shown.height * scale
+        var width = shown.width * scale, height = shown.height * scale
+        // R7 9: a picture grown past the room stays inside it, cropped around the layout's focus (its centre by
+        // default), so a phone gets wider while the free side shrinks; before, the canvas cut its top and bottom.
+        if width > room.width + 0.5 || height > room.height + 0.5 {
+            let boxWidth = min(width, room.width), boxHeight = min(height, room.height)
+            let base = crop ?? CGRect(origin: .zero, size: picture)
+            let visible = CGSize(width: boxWidth / scale, height: boxHeight / scale)
+            let keep = layout.focus ?? .init()
+            let centerX = min(max(base.minX + CGFloat(keep.x) * base.width, base.minX + visible.width / 2), base.maxX - visible.width / 2)
+            // Core Image counts y from the bottom; the focus counts it from the top.
+            let centerY = min(max(base.maxY - CGFloat(keep.y) * base.height, base.minY + visible.height / 2), base.maxY - visible.height / 2)
+            crop = CGRect(x: centerX - visible.width / 2, y: centerY - visible.height / 2, width: visible.width, height: visible.height)
+            width = boxWidth
+            height = boxHeight
+        }
         var x = (size.width - width) / 2, y = (size.height - height) / 2
         switch layout.align {
         case .center: break

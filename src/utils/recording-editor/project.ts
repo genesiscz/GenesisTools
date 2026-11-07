@@ -172,10 +172,13 @@ export const frameSchema = z.object({
              */
             align: z.enum(FRAME_ALIGNS).default("center"),
             /**
-             * Times the fitted size (0.5 to 3): above 1 the picture grows past the padding and the canvas cuts what
-             * does not fit, so a phone fills more of the height (its top and bottom are cut first).
+             * Times the fitted size (0.5 to 3). Above 1 the picture grows inside the room within the padding and is
+             * cropped to it (round 7: a phone grows wider, its free side shrinks, and `focus` picks the part in view).
              */
             scale: z.number().min(0.5).max(3).default(1),
+            // R7 9 phone layouts
+            /** The part of a grown picture that stays in view, 0..1 of the picture from its top left; absent: centre. */
+            focus: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).optional(),
         })
         .optional(),
 });
@@ -1477,7 +1480,15 @@ export const editOpSchema = z.discriminatedUnion("op", [
             // R5 4 frame layouts
             /** Where the picture sits ("center", "left", "right", "top", "bottom") and its size (0.5 to 3 times fitted). */
             layout: z
-                .object({ align: z.enum(FRAME_ALIGNS).optional(), scale: z.number().min(0.5).max(3).optional() })
+                .object({
+                    align: z.enum(FRAME_ALIGNS).optional(),
+                    scale: z.number().min(0.5).max(3).optional(),
+                    // R7 9 phone layouts
+                    focus: z
+                        .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+                        .strict()
+                        .optional(),
+                })
                 .strict()
                 .optional(),
             /** A ready frame for a phone recording ("phone-left", "phone-right", "phone-portrait"); fields here win. */
@@ -2685,7 +2696,9 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 ...project,
                 frame: {
                     ...rest,
-                    ...(placed && (placed.align !== "center" || placed.scale !== 1) ? { layout: placed } : {}),
+                    ...(placed && (placed.align !== "center" || placed.scale !== 1 || placed.focus)
+                        ? { layout: placed }
+                        : {}),
                     ...(aspect && aspect !== "source" ? { aspect } : {}),
                     ...(fit === "cover" ? { fit } : {}),
                 },

@@ -210,7 +210,7 @@ enum EditOpDiff {
         let layout = frame.layout ?? .init()
         return EditOp.Frame(enabled: true, aspect: frame.aspect ?? .source, fit: frame.fit ?? .contain, background: background,
                             padding: frame.padding, cornerRadius: frame.cornerRadius, shadow: frame.shadow,
-                            layout: EditOp.Frame.Layout(align: layout.align, scale: layout.scale))
+                            layout: EditOp.Frame.Layout(align: layout.align, scale: layout.scale, focus: layout.focus))
     }
 
     private static func cursor(_ cursor: EditProject.Cursor) -> EditOp.Cursor {

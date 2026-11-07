@@ -546,8 +546,17 @@ struct EditProject: Codable, Equatable {
     struct FrameLayout: Codable, Equatable {
         /// Against one edge of the room inside the padding, or centred.
         var align = FrameAlign.center
-        /// Times the fitted size (0.5 to 3); above 1 the canvas cuts what does not fit.
+        /// Times the fitted size (0.5 to 3); above 1 the picture grows inside the room and is cropped to it.
         var scale = 1.0
+        // R7 9 phone layouts: the part of a grown picture that stays in view.
+        /// 0...1 of the picture from its top left; nil is its centre.
+        var focus: FocusPoint?
+    }
+
+    // R7 9 phone layouts
+    struct FocusPoint: Codable, Equatable {
+        var x = 0.5
+        var y = 0.5
     }
 
     enum Codec: String, Codable, CaseIterable {

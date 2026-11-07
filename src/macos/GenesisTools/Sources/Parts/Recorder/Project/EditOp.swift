@@ -560,6 +560,8 @@ extension EditOp {
         struct Layout: Codable, Equatable {
             var align: EditProject.FrameAlign?
             var scale: Double?
+            // R7 9 phone layouts
+            var focus: EditProject.FocusPoint?
         }
 
         struct Background: Codable, Equatable {

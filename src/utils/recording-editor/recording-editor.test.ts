@@ -1006,6 +1006,12 @@ describe("edit project (edit.json)", () => {
         expect(portrait.frame?.layout).toEqual({ align: "top", scale: 0.88 });
         const right = applyOp(phone, { op: "frame", layout: { align: "right" } });
         expect(right.frame?.layout).toEqual({ align: "right", scale: 1.1 });
+        // R7 9: a grown phone keeps the part the focus names in view; a centred unscaled picture with a focus keeps it.
+        const bottom = applyOp(phone, { op: "frame", layout: { scale: 1.5, focus: { x: 0.5, y: 1 } } });
+        expect(bottom.frame?.layout).toEqual({ align: "left", scale: 1.5, focus: { x: 0.5, y: 1 } });
+        const centred = applyOp(wholeProject(source), { op: "frame", layout: { focus: { x: 0.5, y: 0.2 } } });
+        expect(centred.frame?.layout?.focus).toEqual({ x: 0.5, y: 0.2 });
+        expect(() => applyOp(phone, { op: "frame", layout: { focus: { x: 2, y: 0 } } })).toThrow();
         let zoomed = applyOp(phone, { op: "zoom", from: 1, to: 3, scale: 2 });
         zoomed = applyOp(zoomed, {
             op: "zoom",
