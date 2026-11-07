@@ -348,7 +348,7 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
         .option("--cwd <path>", "The session's folder, kept on a decision stored from its transcript")
         .option("--decision <n>", "The decision number")
         .option("--expected-revision <number>", "Refuse an answer if the question has been revised")
-        .option("--option <letter>", "The chosen option, a-z")
+        .option("--option <letters>", 'The chosen option letters, e.g. "b", or "ac" for a decision that takes a set')
         .option("--text <answer>", "A free-text answer, or a note after the option")
         .option("--form <id>", "Answer this pending form instead")
         .option(

@@ -40,4 +40,6 @@ Some Macs run the native GenesisTools widget, whose inbox shows these entries as
 
 ## Decisions you posted: record the answer
 
+A decision where the user may pick several options is posted with `allowMultiple: true` (and `recommended: "ac"` for a recommended set); every inbox then shows check boxes and one Send, and its answer is a set of letters (`option: "ac"`).
+
 When the user answers a ❓ DECISION in chat, or it is settled another way, record it in the same turn: `question_update { id, state: "acknowledged", option, answer: "<the user's words or a short copy>" }` (CLI: `tools question update`, the same JSON on stdin). When a later decision replaces it: `question_update { id, state: "superseded", supersededBy: "<new id>", comment: "<why>" }`. Never leave an answered decision open.

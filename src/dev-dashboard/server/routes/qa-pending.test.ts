@@ -472,6 +472,8 @@ describe("qa decision routes", () => {
     it("POST answer refuses a malformed body, a wrong letter and an unknown number, and never reaches the runner", async () => {
         expect(asJson(await answer({ session: SESSION })).status).toBe(400);
         expect(asJson(await answer({ session: SESSION, answers: [{ number: 3, option: "z" }] })).status).toBe(400);
+        // A malformed option is the caller's mistake too, not a 500 (the refusal reads "one or more letters").
+        expect(asJson(await answer({ session: SESSION, answers: [{ number: 3, option: "a1" }] })).status).toBe(400);
         expect(asJson(await answer({ session: SESSION, answers: [{ number: 9, option: "a" }] })).status).toBe(400);
         expect(runs).toEqual([]);
         expect(readDecisions(scratchFiles().file)).toEqual([]);
