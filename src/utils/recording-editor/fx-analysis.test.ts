@@ -515,6 +515,104 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
     });
 });
 
+describe("uncertain bands stay small (round 7)", () => {
+    const matcher = textMatcher({ text: "Orla Fictive" });
+    const name = (atMs: number, x: number, y = 0.85): ScreenTextFrame => ({
+        atUs: atMs * 1000,
+        untilUs: (atMs + 33) * 1000,
+        lines: [{ text: "Orla Fictive", x, y, width: 0.2, height: 0.06 }],
+    });
+    /**
+     * A model whose carry back from a track's start follows `path` (its shift in x from the read, per picture going back), with the
+     * given end, and whose picture under every place keeps changing for `changingUs` (a spinner, a settle). Past the
+     * track's end nothing moves.
+     */
+    const model = (options: {
+        path: number[];
+        end: "still" | "scene" | "lost";
+        changingUs: number;
+        area?: { x: number; y: number; width: number; height: number };
+    }): MotionModel => ({
+        moving: () => true,
+        movingArea: () => options.area ?? { x: 0, y: 0.75, width: 1, height: 0.2 },
+        changeEdge: (_box, atUs, direction) => atUs + direction * options.changingUs,
+        carry: (box, fromUs, toUs) => {
+            if (toUs >= fromUs) {
+                return { keys: [], reachedUs: toUs, box, end: "reached" };
+            }
+
+            const keys = options.path.map((shift, index) => ({
+                ...box,
+                x: box.x + shift,
+                atUs: fromUs - (index + 1) * 33_333,
+            }));
+            const last = keys.at(-1) ?? { ...box, atUs: fromUs };
+            return { keys, reachedUs: last.atUs, box: last, end: options.end };
+        },
+    });
+
+    test("a text that rests where it never moved makes no band, though the picture beside it changes", () => {
+        const frames = [name(1000, 0.4), name(1200, 0.4)];
+        const hits = textHits(frames, matcher, {
+            motion: model({ path: [0, 0, 0], end: "still", changingUs: 900_000 }),
+        });
+        expect(hits.flatMap((hit) => hit.uncertain ?? [])).toEqual([]);
+    });
+
+    test("a text a new screen replaced makes no band, and neither does the gap to its next read", () => {
+        const frames = [name(1000, 0.4), name(1100, 0.4), name(1500, 0.4, 0.5), name(1600, 0.4, 0.5)];
+        const hits = textHits(frames, matcher, { motion: model({ path: [], end: "scene", changingUs: 900_000 }) });
+        expect(hits.flatMap((hit) => hit.uncertain ?? [])).toEqual([]);
+    });
+
+    test("a move that eases in or out while the picture settles makes no band", () => {
+        // Back from its read the steps shrink to nothing: it started moving gently, as a scroll does.
+        const path = [-0.03, -0.05, -0.06, -0.065, -0.065, -0.065, -0.065];
+        const hits = textHits([name(1000, 0.4)], matcher, {
+            motion: model({ path, end: "still", changingUs: 200_000 }),
+        });
+        expect(hits.flatMap((hit) => hit.uncertain ?? [])).toEqual([]);
+    });
+
+    test("a banner that slid in faster than the follow gets a band to the picture's edge, in its own row only", () => {
+        // Going back from its first read the steps grow (it slid in fast), then the follow stops dead: a uniform banner
+        // matches as still. The quarter-second change steps saw nothing at the right edge.
+        const path = [0.04, 0.09, 0.15, 0.15, 0.15, 0.15];
+        const hits = textHits([name(1000, 0.4)], matcher, {
+            motion: model({
+                path,
+                end: "still",
+                changingUs: 150_000,
+                area: { x: 0.2, y: 0.8, width: 0.6, height: 0.15 },
+            }),
+        });
+        const bands = hits.flatMap((hit) => hit.uncertain ?? []);
+        expect(bands.length).toBe(1);
+        const [band] = bands;
+        expect(band.box.x + band.box.width).toBeGreaterThan(0.99);
+        // Never the status bar or the rows above: only the banner's row (0.85 + 0.06), with a margin.
+        expect(band.box.y).toBeGreaterThan(0.75);
+        expect(band.box.y + band.box.height).toBeLessThan(0.97);
+    });
+
+    test("a lost follow is banded only as far as the text could travel, inside the part that moved", () => {
+        const hits = textHits([name(1000, 0.4, 0.5)], matcher, {
+            motion: model({
+                path: [0],
+                end: "lost",
+                changingUs: 300_000,
+                area: { x: 0, y: 0.1, width: 1, height: 0.8 },
+            }),
+        });
+        const bands = hits.flatMap((hit) => hit.uncertain ?? []);
+        expect(bands.length).toBe(1);
+        // No measured travel: its own place with half its height around it, never the whole moving part.
+        const [hit] = hits;
+        expect(bands[0].box.height).toBeLessThanOrEqual(2 * hit.box.height + 0.001);
+        expect(bands[0].box.width).toBeLessThanOrEqual(hit.box.width + hit.box.height + 0.001);
+    });
+});
+
 describe("unhide everything when nothing is hidden (round 7)", () => {
     test("is a no-op that says nothing is hidden, instead of an error", () => {
         const drawn = applyOp(
@@ -547,7 +645,12 @@ describe("hidden parts keep whole microseconds (round 7)", () => {
             { atUs: third + 33_333.333, x: 0.2, y: 0.45, width: 0.2, height: 0.05 },
         ],
         uncertain: [
-            { fromUs: third + 66_666.667, toUs: third + 500_000.5, box: { x: 0.1, y: 0, width: 0.4, height: 0.6 } },
+            {
+                fromUs: third + 66_666.667,
+                toUs: third + 500_000.5,
+                box: { x: 0.1, y: 0, width: 0.4, height: 0.6 },
+                why: "lost",
+            },
         ],
     };
 

@@ -32,6 +32,8 @@ const MAX_BLIND_PAIRS = 3;
 /** A block's state in a pair: 0 (left unset) its shift is unknown, it stood still, or it moved by its shift. */
 const STILL = 1;
 const MOVED = 2;
+/** R7 2: a block with detail that changed and was found nowhere near: new content, as a screen change brings. */
+const UNMATCHED = 3;
 /** A block with less detail than this cannot be followed (an even background). */
 const MIN_TEXTURE = 3;
 
@@ -57,7 +59,7 @@ export interface MotionWindow {
     pairs: number;
     dx: Float32Array;
     dy: Float32Array;
-    /** Per block: 0 its shift is unknown, 1 it stood still, 2 it moved by dx, dy. */
+    /** Per block: 0 its shift is unknown (no detail), 1 it stood still, 2 it moved by dx, dy, 3 it changed to new content. */
     ok: Uint8Array;
 }
 
@@ -251,15 +253,18 @@ export function blockShifts(options: {
         }
 
         moved[index] = 1;
-        const own = guess?.ok[index]
-            ? { x: Math.round(guess.dx[index]), y: Math.round(guess.dy[index]) }
-            : { x: 0, y: 0 };
+        const own =
+            guess?.ok[index] === MOVED || guess?.ok[index] === STILL
+                ? { x: Math.round(guess.dx[index]), y: Math.round(guess.dy[index]) }
+                : { x: 0, y: 0 };
         const found = solve(index, [own]);
 
         if (found) {
             dx[index] = found.x;
             dy[index] = found.y;
             ok[index] = MOVED;
+        } else {
+            ok[index] = UNMATCHED;
         }
     }
 
@@ -292,12 +297,15 @@ export function blockShifts(options: {
             }
 
             const own = ok[index] === MOVED ? { x: Math.round(dx[index]), y: Math.round(dy[index]) } : common;
+            const was = ok[index];
             const found = solve(index, [common, own]);
 
             if (found) {
                 dx[index] = found.x;
                 dy[index] = found.y;
                 ok[index] = MOVED;
+            } else {
+                ok[index] = was;
             }
         }
     }
@@ -527,27 +535,9 @@ export class MotionField implements MotionModel {
     /** Where the picture under `box` stops changing from `atUs` on in `direction` (the change steps' cells). */
     changeEdge(box: FractionBox, atUs: number, direction: 1 | -1, limitUs: number): number {
         const stepUs = 1_000_000 / this.steps.fps;
-        const { columns, rows } = this.steps.grid;
-        const c0 = Math.max(0, Math.floor(box.x * columns));
-        const c1 = Math.min(columns - 1, Math.floor((box.x + box.width) * columns));
-        const r0 = Math.max(0, Math.floor(box.y * rows));
-        const r1 = Math.min(rows - 1, Math.floor((box.y + box.height) * rows));
-        const changedUnder = (index: number): boolean => {
-            const cells = maskCells(this.steps.steps[index]?.mask);
-
-            for (let row = r0; row <= r1; row++) {
-                for (let column = c0; column <= c1; column++) {
-                    if (cells.has(row * columns + column)) {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
-        };
         let index = direction > 0 ? Math.floor(atUs / stepUs) : Math.ceil(atUs / stepUs) - 1;
 
-        while (index >= 0 && changedUnder(index)) {
+        while (index >= 0 && this.stepChangedUnder(index, box)) {
             const edge = direction > 0 ? (index + 1) * stepUs : index * stepUs;
 
             if (Math.abs(edge - atUs) >= limitUs) {
@@ -559,6 +549,81 @@ export class MotionField implements MotionModel {
 
         const edge = direction > 0 ? index * stepUs : (index + 1) * stepUs;
         return direction > 0 ? Math.max(atUs, edge) : Math.min(atUs, edge);
+    }
+
+    /** Whether change step `index` changed a grid cell under `box`. */
+    private stepChangedUnder(index: number, box: FractionBox): boolean {
+        const { columns, rows } = this.steps.grid;
+        const c0 = Math.max(0, Math.floor(box.x * columns));
+        const c1 = Math.min(columns - 1, Math.floor((box.x + box.width) * columns));
+        const r0 = Math.max(0, Math.floor(box.y * rows));
+        const r1 = Math.min(rows - 1, Math.floor((box.y + box.height) * rows));
+        const cells = maskCells(this.steps.steps[index]?.mask);
+
+        for (let row = r0; row <= r1; row++) {
+            for (let column = c0; column <= c1; column++) {
+                if (cells.has(row * columns + column)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /** R7 2: whether the picture under `box` changes anywhere between the two times (a clock elsewhere does not count). */
+    changingUnder(box: FractionBox, fromUs: number, toUs: number): boolean {
+        const stepUs = 1_000_000 / this.steps.fps;
+        const low = Math.min(fromUs, toUs);
+        const high = Math.max(fromUs, toUs);
+
+        for (
+            let index = Math.floor(low / stepUs);
+            index <= Math.max(Math.floor(low / stepUs), Math.ceil(high / stepUs) - 1);
+            index++
+        ) {
+            if (this.stepChangedUnder(index, box)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * R7 2: whether pair `pair` of `window` is a screen change under `box`: the blocks under it changed into new content
+     * (found nowhere near), and across the picture more blocks did that than moved as one. A scroll or a slide moves its
+     * blocks; a new screen (a tab, a push without a slide, a fade) replaces them.
+     */
+    private sceneUnder(window: MotionWindow, pair: number, box: FractionBox): boolean {
+        const { columns, rows, width, height } = window;
+        const base = pair * columns * rows;
+        let moved = 0;
+        let replaced = 0;
+
+        for (let index = 0; index < columns * rows; index++) {
+            if (window.ok[base + index] === MOVED) {
+                moved++;
+            } else if (window.ok[base + index] === UNMATCHED) {
+                replaced++;
+            }
+        }
+
+        const c0 = Math.max(0, Math.floor((box.x * width) / BLOCK));
+        const c1 = Math.min(columns - 1, Math.floor(((box.x + box.width) * width - 0.001) / BLOCK));
+        const r0 = Math.max(0, Math.floor((box.y * height) / BLOCK));
+        const r1 = Math.min(rows - 1, Math.floor(((box.y + box.height) * height - 0.001) / BLOCK));
+        let under = 0;
+        let all = 0;
+
+        for (let row = r0; row <= r1; row++) {
+            for (let column = c0; column <= c1; column++) {
+                all++;
+                under += window.ok[base + row * columns + column] === UNMATCHED ? 1 : 0;
+            }
+        }
+
+        return all > 0 && under * 2 >= all && replaced > moved;
     }
 
     /** The window that measured the pair starting at picture time `atUs` (forward) or ending at it (backward). */
@@ -656,7 +721,8 @@ export class MotionField implements MotionModel {
                     .sort((a, b) => direction * (a - b))[0];
                 const until = next === undefined ? toUs : direction > 0 ? Math.min(next, toUs) : Math.max(next, toUs);
 
-                if (this.moving(at, until)) {
+                // R7 2: only a change under the part itself counts; a clock or a spinner elsewhere does not.
+                if (this.changingUnder(place, at, until)) {
                     return done("lost");
                 }
 
@@ -685,7 +751,8 @@ export class MotionField implements MotionModel {
             const shift = blind > MAX_BLIND_PAIRS ? undefined : (measured ?? lastShift);
 
             if (!shift) {
-                return done("lost");
+                // R7 2: a new screen replaced what was under it: the text is gone, the new screen gets its own reads.
+                return done(this.sceneUnder(window, pair, place) ? "scene" : "lost");
             }
 
             lastShift = shift;
@@ -701,7 +768,8 @@ export class MotionField implements MotionModel {
 
             quiet = Math.abs(shift.x) * window.width < 0.1 && Math.abs(shift.y) * window.height < 0.1 ? quiet + 1 : 0;
 
-            if (options.untilStill && quiet >= 3) {
+            // R7 2: a pause before the content starts to move is no rest: it rests when the picture under it rests too.
+            if (options.untilStill && quiet >= 3 && !this.changingUnder(place, at, at + direction * 250_000)) {
                 return done("still");
             }
         }

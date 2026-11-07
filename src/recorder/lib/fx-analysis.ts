@@ -464,7 +464,7 @@ async function motionWindows(
 ): Promise<MotionWindow[]> {
     const video = project.source.video;
     const path = cachePath(video, "motion");
-    const key = movieKey(video, `motion=${MOTION_FPS},v1`);
+    const key = movieKey(video, `motion=${MOTION_FPS},v2`);
     const cache = { ...(readCache(path, key, motionCacheSchema) ?? {}) };
     const windows: MotionWindow[] = [];
     let measured = false;

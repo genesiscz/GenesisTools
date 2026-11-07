@@ -260,6 +260,8 @@ export interface UncertainStretch {
     toUs: number;
     /** The band the text may have crossed meanwhile, as fractions of the picture. */
     box: FractionBox;
+    /** Why: the motion was lost, the text seemed to rest while the picture under it changed, or two reads did not join. */
+    why: "lost" | "rest" | "gap";
 }
 
 /** The content's motion carried a box this far: one key per picture, and why it stopped. */
@@ -268,7 +270,8 @@ export interface Carried {
     /** Where it got to: the asked time, or where it was lost, left the picture or the picture stood still. */
     reachedUs: number;
     box: FractionBox;
-    end: "reached" | "lost" | "left" | "still";
+    /** R7 2: "scene" is a new screen that replaced what was under it (the text is gone, not lost). */
+    end: "reached" | "lost" | "left" | "still" | "scene";
 }
 
 /**
@@ -485,6 +488,15 @@ function samePlace(a: FractionBox, b: FractionBox): boolean {
     return dy <= Math.max(0.6 * b.height, 0.008) && dx <= Math.max(0.25 * b.width, 0.015);
 }
 
+/** A rest whose picture keeps changing under it for less than this is the end of a scroll settling, not a lost text. */
+const REST_SETTLE_US = 300_000;
+/**
+ * A rest is checked as a possible failed follow only when it is abrupt: the text moved half a line or more in this
+ * time just before it. A scroll that slows to a stop (its last tenth of a second barely moves) simply ended.
+ */
+const REST_LOOKBACK_US = 200_000;
+/** How long after its last read a carry must keep up with the read speed (brokeAway). */
+const BROKE_AWAY_US = 100_000;
 /** A band hidden where a text could not be followed starts and ends this much wider: its edges are guessed. */
 const BAND_MARGIN_US = 100_000;
 /** Two reads of the same value this close, with motion between that did not join them, get the band between hidden. */
@@ -536,43 +548,116 @@ function simplifyKeys(keys: readonly TrackKey[], tolerance = 0.002): TrackKey[] 
 }
 
 /**
- * The band a text may have crossed while it could not be followed: from its last known place on to the picture's edge
- * in the direction it was moving, as wide as the text across the motion; all that moved around it when the direction
- * is unknown.
+ * A track's speed where OCR read it, next to its `direction` end (-1 its start, 1 its end), as fractions of the picture
+ * per microsecond in the direction of an extension past that end (so the way it came from, or the way it went on). Each
+ * step between its keys there must go the same way, and the slowest step counts: a read that jitters has no speed.
+ */
+function innerVelocity(keys: readonly TrackKey[], direction: -1 | 1): { x: number; y: number } {
+    const edge = direction < 0 ? keys[0] : keys[keys.length - 1];
+    const near = keys.filter((key) => Math.abs(key.atUs - edge.atUs) <= REST_LOOKBACK_US);
+    const steps: Array<{ x: number; y: number }> = [];
+
+    for (let index = 1; index < near.length; index++) {
+        const span = Math.max(1, near[index].atUs - near[index - 1].atUs);
+        steps.push({
+            x: (direction * (near[index].x - near[index - 1].x)) / span,
+            y: (direction * (near[index].y - near[index - 1].y)) / span,
+        });
+    }
+
+    if (steps.length < 2) {
+        return { x: 0, y: 0 };
+    }
+
+    const mean = {
+        x: steps.reduce((sum, step) => sum + step.x, 0) / steps.length,
+        y: steps.reduce((sum, step) => sum + step.y, 0) / steps.length,
+    };
+    const length = Math.hypot(mean.x, mean.y);
+
+    if (length === 0) {
+        return { x: 0, y: 0 };
+    }
+
+    const unit = { x: mean.x / length, y: mean.y / length };
+    const slowest = Math.min(...steps.map((step) => step.x * unit.x + step.y * unit.y));
+    return slowest > 0 ? { x: unit.x * slowest, y: unit.y * slowest } : { x: 0, y: 0 };
+}
+
+/**
+ * A carry broke away from a text that OCR read moving fast (R7 2): in its first tenth of a second it covered less than
+ * half of what the read speed predicts (a uniform banner matches as still, a slide outruns the search).
+ */
+function brokeAway(options: { edge: TrackKey; keys: readonly TrackKey[]; inner: { x: number; y: number } }): boolean {
+    const { edge, keys, inner } = options;
+    const speed = Math.hypot(inner.x, inner.y);
+
+    // Fast: at least half its own height in a tenth of a second.
+    if (speed * BROKE_AWAY_US < edge.height * 0.5) {
+        return false;
+    }
+
+    const within = keys.filter((key) => Math.abs(key.atUs - edge.atUs) <= BROKE_AWAY_US);
+    const last = within[within.length - 1];
+
+    if (!last) {
+        return true;
+    }
+
+    const covered = Math.hypot(last.x - edge.x, last.y - edge.y);
+    return covered < 0.5 * speed * Math.abs(last.atUs - edge.atUs);
+}
+
+/**
+ * The band a text may have crossed while it could not be followed (R7 2: never wider than the text's own column or row
+ * plus its travel): from its last known place along its direction of motion to the edge of what changed meanwhile (or
+ * as far as its speed carries it in `travelUs`, when that is further), as wide as the text across the motion, and inside
+ * the part of the picture that changed (so a status bar or a tab bar that stood still is never covered). With no
+ * measured travel, its own place.
  */
 function sweptBand(options: {
     box: FractionBox;
+    /** Fractions of the picture per microsecond, in the direction it travels. */
     velocity: { x: number; y: number };
+    travelUs: number;
     area: FractionBox | undefined;
 }): FractionBox {
     const { box, velocity } = options;
-    const pad = Math.max(0.01, box.height * 0.5);
+    const pad = Math.max(0.005, box.height * 0.5);
+    const area = options.area ?? { x: 0, y: 0, width: 1, height: 1 };
+    // The moving part, but never smaller than the text itself.
+    const lo = { x: Math.min(area.x, box.x), y: Math.min(area.y, box.y) };
+    const hi = {
+        x: Math.max(area.x + area.width, box.x + box.width),
+        y: Math.max(area.y + area.height, box.y + box.height),
+    };
+    const reach = { x: Math.abs(velocity.x) * options.travelUs, y: Math.abs(velocity.y) * options.travelUs };
     const clampBox = (left: number, top: number, right: number, bottom: number): FractionBox => {
-        const x = clamp01(left);
-        const y = clamp01(top);
-        return { x, y, width: Math.max(0.012, clamp01(right) - x), height: Math.max(0.012, clamp01(bottom) - y) };
+        const x = Math.max(lo.x, clamp01(left));
+        const y = Math.max(lo.y, clamp01(top));
+        const r = Math.min(hi.x, clamp01(right));
+        const b = Math.min(hi.y, clamp01(bottom));
+        return { x, y, width: Math.max(0.012, r - x), height: Math.max(0.012, b - y) };
     };
 
-    // The direction is known: on to the picture's edge that way (the change steps, 4 a second, can miss a fast slide).
-    if (Math.abs(velocity.y) >= Math.abs(velocity.x) && velocity.y !== 0) {
-        return velocity.y > 0
-            ? clampBox(box.x - pad, box.y - pad, box.x + box.width + pad, 1)
-            : clampBox(box.x - pad, 0, box.x + box.width + pad, box.y + box.height + pad);
+    // No measured travel: only its own place (the picture under it changed, nothing says it went anywhere).
+    if (velocity.x === 0 && velocity.y === 0) {
+        return clampBox(box.x - pad, box.y - pad, box.x + box.width + pad, box.y + box.height + pad);
     }
 
-    if (velocity.x !== 0) {
-        return velocity.x > 0
-            ? clampBox(box.x - pad, box.y - pad, 1, box.y + box.height + pad)
-            : clampBox(0, box.y - pad, box.x + box.width + pad, box.y + box.height + pad);
-    }
-
-    const area = options.area ?? { x: 0, y: 0, width: 1, height: 1 };
-    return clampBox(
-        Math.min(box.x, area.x) - pad,
-        Math.min(box.y, area.y) - pad,
-        Math.max(box.x + box.width, area.x + area.width) + pad,
-        Math.max(box.y + box.height, area.y + area.height) + pad
-    );
+    // On along its direction to where the picture stopped changing (a follow that failed under-measured its speed), and
+    // past that as far as its speed carries it: the quarter-second change steps miss a text that only crossed a cell
+    // between two of them (a banner that slid in from the edge).
+    const left = velocity.x < 0 ? Math.min(box.x - reach.x, lo.x) : box.x;
+    const right = velocity.x > 0 ? Math.max(box.x + box.width + reach.x, hi.x) : box.x + box.width;
+    const top = velocity.y < 0 ? Math.min(box.y - reach.y, lo.y) : box.y;
+    const bottom = velocity.y > 0 ? Math.max(box.y + box.height + reach.y, hi.y) : box.y + box.height;
+    const band = clampBox(left - pad, top - pad, right + pad, bottom + pad);
+    const x = velocity.x < 0 ? clamp01(left - pad) : band.x;
+    const y = velocity.y < 0 ? clamp01(top - pad) : band.y;
+    const r = velocity.x > 0 ? clamp01(right + pad) : band.x + band.width;
+    const b = velocity.y > 0 ? clamp01(bottom + pad) : band.y + band.height;
+    return { x, y, width: Math.max(0.012, r - x), height: Math.max(0.012, b - y) };
 }
 
 /**
@@ -611,6 +696,8 @@ export function textHits(
         /** Its first and last place OCR read (the other keys were carried by the motion). */
         firstRead: TrackKey;
         lastRead: TrackKey;
+        /** How the motion carry ended before its first read and after its last (R7 2: a text that left needs no band). */
+        ends?: { before?: Carried["end"]; after?: Carried["end"] };
         uncertain: UncertainStretch[];
     }
 
@@ -755,6 +842,7 @@ export function textHits(
                               fromUs: Math.round(stretch.fromUs),
                               toUs: Math.round(stretch.toUs),
                               box: rounded(stretch.box),
+                              why: stretch.why,
                           })),
                       }
                     : {}),
@@ -769,6 +857,9 @@ export function textHits(
     function extendWithMotion(track: Open, model: MotionModel): void {
         for (const direction of [-1, 1] as const) {
             const edge = direction < 0 ? track.keys[0] : track.keys[track.keys.length - 1];
+            // Its own speed where OCR read it, in the direction of the extension (R7 2: a text that slid in fast from the
+            // edge was read moving; a carry that then finds it standing still lost it).
+            const inner = innerVelocity(track.keys, direction);
             const limitUs = direction < 0 ? Math.max(0, edge.atUs - EXTEND_US) : edge.atUs + EXTEND_US;
             const carried = model.carry(edge, edge.atUs, limitUs, { untilStill: true });
             const keys = carried.keys;
@@ -781,43 +872,79 @@ export function textHits(
                 track.toUs = Math.max(track.toUs, carried.reachedUs);
             }
 
+            track.ends = { ...track.ends, [direction < 0 ? "before" : "after"]: carried.end };
+
             if (carried.end !== "lost" && carried.end !== "still") {
                 continue;
             }
 
             // Lost, or taken as resting while the picture under it still changes (a smear too heavy to match, a slide
-            // faster than the search): hide the band it may cross until the picture under it rests. A rest is checked from
-            // where it began, the first carried place it no longer moves from.
+            // faster than the search): hide the band it may cross until the picture under it rests. A new screen
+            // ("scene") or a text that left the picture needs no band: the text is gone, and what comes next gets its own
+            // reads.
+            const broken = brokeAway({ edge, keys, inner });
             let rest = keys.length - 1;
-            const resting = (key: FractionBox) =>
-                Math.abs(key.x - carried.box.x) < 0.004 && Math.abs(key.y - carried.box.y) < 0.004;
+            // Back from the end while each picture's step is under a tenth of the text's height: where its rest began.
+            const crept = (a: FractionBox, b: FractionBox) => Math.hypot(a.x - b.x, a.y - b.y) < a.height * 0.1;
 
-            while (carried.end === "still" && rest > 0 && resting(keys[rest - 1])) {
+            while (carried.end === "still" && rest > 0 && crept(keys[rest - 1], keys[rest])) {
                 rest--;
             }
 
-            const start =
-                carried.end === "still" && keys.length > 0 ? keys[rest] : { ...carried.box, atUs: carried.reachedUs };
+            const start = broken
+                ? edge
+                : carried.end === "still" && keys.length > 0
+                  ? keys[rest]
+                  : { ...carried.box, atUs: carried.reachedUs };
+            const travelled = [edge, ...keys].filter((key) => Math.abs(key.atUs - start.atUs) <= REST_LOOKBACK_US);
+            const before = travelled[0] ?? edge;
+            const moved = Math.hypot(start.x - before.x, start.y - before.y);
+
+            // R7 2: a text that rests where it never moved is still: no band.
+            if (!broken && carried.end === "still" && moved < start.height * 0.5) {
+                continue;
+            }
+
             const stopUs = model.changeEdge(start, start.atUs, direction, EXTEND_US);
-            const before = (carried.end === "still" ? keys[rest - 1] : keys[keys.length - 2]) ?? edge;
-            const span = Math.max(1, Math.abs(start.atUs - before.atUs));
-            const velocity = {
-                x: (direction * (start.x - before.x)) / span,
-                y: (direction * (start.y - before.y)) / span,
+            // Content slows down before it stops (a scroll, a sheet). A follow whose steps grew to more than half a line
+            // and then stopped dead lost a text that went on (a uniform banner matches as still).
+            const step = (index: number) => {
+                const a = keys[index - 1] ?? edge;
+                const b = keys[index] ?? edge;
+                return Math.hypot(a.x - b.x, a.y - b.y);
             };
+            const stalled =
+                rest > 0 &&
+                step(rest) >= start.height * 0.5 &&
+                step(rest - 1) >= start.height * 0.25 &&
+                step(rest) > 1.1 * step(rest - 1);
+
+            // R7 2: the end of a scroll slows below what the blocks measure while the picture still settles (the change
+            // steps run to the end of their quarter second). A rest is a failed follow only when the picture under it
+            // keeps changing past that, or when the follow broke away from the speed OCR read or stalled.
+            if (!broken && !stalled && carried.end === "still" && Math.abs(stopUs - start.atUs) < REST_SETTLE_US) {
+                continue;
+            }
+
             if (Math.abs(stopUs - start.atUs) < 1000) {
                 continue;
             }
 
+            // Its speed in the direction of the extension: what OCR read when the follow broke away, else over the last
+            // tenth of a second of the follow.
+            const span = Math.max(1, Math.abs(start.atUs - before.atUs));
+            const velocity = broken ? inner : { x: (start.x - before.x) / span, y: (start.y - before.y) / span };
             const fromUs = Math.max(0, Math.min(start.atUs, stopUs) - BAND_MARGIN_US);
             const toUs = Math.max(start.atUs, stopUs) + BAND_MARGIN_US;
 
             track.uncertain.push({
                 fromUs,
                 toUs,
+                why: carried.end === "lost" ? "lost" : "rest",
                 box: sweptBand({
                     box: start,
-                    velocity: { x: direction * velocity.x, y: direction * velocity.y },
+                    velocity,
+                    travelUs: Math.abs(stopUs - start.atUs) + BAND_MARGIN_US,
                     area: model.movingArea(fromUs, toUs),
                 }),
             });
@@ -851,18 +978,39 @@ export function textHits(
             }
 
             const to = next.firstRead;
-            const pad = Math.max(0.01, Math.max(from.height, to.height) * 0.5);
+            const share = (a0: number, a1: number, b0: number, b1: number) =>
+                (Math.min(a1, b1) - Math.max(a0, b0)) / Math.max(1e-6, Math.min(a1 - a0, b1 - b0));
+            const sameColumn = share(from.x, from.x + from.width, to.x, to.x + to.width) >= 0.5;
+            const sameRow = share(from.y, from.y + from.height, to.y, to.y + to.height) >= 0.5;
+
+            // R7 2: followed all the way (the two hits meet in time), or two places in neither the same column nor the
+            // same row (another copy of the value, not this one moved): no band.
+            const gone = (end: Carried["end"] | undefined) => end === "left" || end === "scene";
+
+            if (
+                track.toUs >= next.fromUs ||
+                (!sameColumn && !sameRow) ||
+                gone(track.ends?.after) ||
+                gone(next.ends?.before)
+            ) {
+                continue;
+            }
+
+            const pad = Math.max(0.005, Math.max(from.height, to.height) * 0.5);
+            const area = model.movingArea(from.atUs, to.atUs);
             const band = union(from, to);
-            const x = clamp01(band.x - pad);
-            const y = clamp01(band.y - pad);
+            const inside = area ? union(area, band) : band;
+            const x = Math.max(inside.x, clamp01(band.x - pad));
+            const y = Math.max(inside.y, clamp01(band.y - pad));
             track.uncertain.push({
                 fromUs: Math.max(0, from.atUs - BAND_MARGIN_US),
                 toUs: to.atUs + BAND_MARGIN_US,
+                why: "gap",
                 box: {
                     x,
                     y,
-                    width: Math.min(1, band.x + band.width + pad) - x,
-                    height: Math.min(1, band.y + band.height + pad) - y,
+                    width: Math.min(inside.x + inside.width, band.x + band.width + pad) - x,
+                    height: Math.min(inside.y + inside.height, band.y + band.height + pad) - y,
                 },
             });
         }
