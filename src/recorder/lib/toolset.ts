@@ -1290,11 +1290,14 @@ const movieMethods = [
                 exclude: z.array(boxParamSchema).max(20).optional(),
                 excludeFixed: z.boolean().optional(),
                 unit: z.enum(HIDE_UNITS).optional(),
+                // R7 6
+                from: sourceTimeSchema.optional(),
+                to: sourceTimeSchema.optional(),
             })
             .strict(),
         result: z.unknown(),
         resultName: "{ id, label, masked, from, to, plays, box, moves, exclude?, uncertain?, hidden }[]",
-        doc: 'Every place a text (without case) or a pattern (a regular expression) shows on the screen, tracked as privateData() tracks a hit: what hideText() will hide, so you never guess coordinates or seconds. texts and patterns (arrays) look for several in one scan of the screen, each its own hit. Each OCR line (a run of text Vision reads on one baseline; a column far away is its own line) is matched on its own: ^ and $ anchor to that line, the match ignores case, a space OCR reads next to . @ _ - is dropped first, and a literal text also matches with spaces OCR adds or drops between its letters. unit: "line" covers the whole OCR line of a match (a name and the number beside it); "match" (the default) only the matched words.',
+        doc: 'Every place a text (without case) or a pattern (a regular expression) shows on the screen, tracked as privateData() tracks a hit: what hideText() will hide, so you never guess coordinates or seconds. from/to (source seconds) keep the places that show between them, as hideText() takes them. texts and patterns (arrays) look for several in one scan of the screen, each its own hit. Each OCR line (a run of text Vision reads on one baseline; a column far away is its own line) is matched on its own: ^ and $ anchor to that line, the match ignores case, a space OCR reads next to . @ _ - is dropped first, and a literal text also matches with spaces OCR adds or drops between its letters. unit: "line" covers the whole OCR line of a match (a name and the number beside it); "match" (the default) only the matched words.',
         effect: "read",
     }),
     edit(
@@ -2913,7 +2916,14 @@ export class Movie {
         return privateData((await openProject(this.recording)).project, options);
     }
 
-    async findText(options: TextQuery & { exclude?: FractionBox[]; excludeFixed?: boolean }) {
+    async findText(
+        options: TextQuery & {
+            exclude?: FractionBox[];
+            excludeFixed?: boolean;
+            from?: z.infer<typeof sourceTimeSchema>;
+            to?: z.infer<typeof sourceTimeSchema>;
+        }
+    ) {
         return findText((await openProject(this.recording)).project, options);
     }
 

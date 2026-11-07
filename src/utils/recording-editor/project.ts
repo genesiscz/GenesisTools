@@ -1961,6 +1961,11 @@ export function opPlacementWarnings(op: EditOp, before: EditProject, after: Edit
         );
     }
 
+    // R7 6
+    if (op.op === "unhide" && op.all && !(before.redactions ?? []).some((part) => part.hide)) {
+        return ["unhide: nothing hidden (no part was made by hideText or hidePrivate)"];
+    }
+
     if (op.op !== "zoom") {
         return [];
     }
@@ -2759,6 +2764,11 @@ function unhide(project: EditProject, op: Extract<EditOp, { op: "unhide" }>): Ed
 
     const fold = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
     const made = (project.redactions ?? []).filter((part) => part.hide);
+
+    // R7 6: taking back everything when nothing is hidden is done already (the answer says "nothing hidden").
+    if (op.all && made.length === 0) {
+        return project;
+    }
     const picked = made.filter((part) => {
         const request = part.hide?.request;
 

@@ -221,12 +221,21 @@ export function registerHideTextCommands(program: Command): void {
         .option("--pattern <regex>", "a regular expression instead of the text (repeat it for several)", collect, [])
         .option("--exclude-fixed", "leave out what stays still while the content scrolls")
         .option("--line", "each place covers the whole OCR line of the match (a name and the number beside it)")
+        .option("--from <seconds>", "only places that show after this source time")
+        .option("--to <seconds>", "only places that show before this source time")
         .option("--json", "print JSON")
         .action(
             async (
                 value: string,
                 texts: string[],
-                flags: { pattern: string[]; excludeFixed?: boolean; line?: boolean; json?: boolean }
+                flags: {
+                    pattern: string[];
+                    excludeFixed?: boolean;
+                    line?: boolean;
+                    from?: string;
+                    to?: string;
+                    json?: boolean;
+                }
             ) => {
                 try {
                     const hits = await findText((await openProject(value)).project, {
@@ -234,6 +243,8 @@ export function registerHideTextCommands(program: Command): void {
                         patterns: flags.pattern,
                         excludeFixed: flags.excludeFixed,
                         unit: flags.line ? "line" : "match",
+                        ...(flags.from === undefined ? {} : { from: flags.from }),
+                        ...(flags.to === undefined ? {} : { to: flags.to }),
                     });
 
                     if (flags.json) {

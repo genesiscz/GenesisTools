@@ -515,6 +515,22 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
     });
 });
 
+describe("unhide everything when nothing is hidden (round 7)", () => {
+    test("is a no-op that says nothing is hidden, instead of an error", () => {
+        const drawn = applyOp(
+            wholeProject(source),
+            op({ op: "redact", from: 1, to: 2, rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.1 } })
+        );
+        const unhideAll = op({ op: "unhide", all: true });
+        const after = applyOp(drawn, unhideAll);
+        expect(after).toBe(drawn);
+        expect(opPlacementWarnings(unhideAll, drawn, after)).toEqual([
+            "unhide: nothing hidden (no part was made by hideText or hidePrivate)",
+        ]);
+        expect(() => applyOp(drawn, op({ op: "unhide", text: "nobody" }))).toThrow(/no hidden part was made/);
+    });
+});
+
 describe("hidden parts keep whole microseconds (round 7)", () => {
     // The motion carries a hit at 30 pictures a second, so its times fall on thirds of a millisecond.
     const third = 39_133_333.333;

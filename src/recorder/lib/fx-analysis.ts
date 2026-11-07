@@ -25,6 +25,7 @@ import {
     motionWindowToJson,
 } from "@genesiscz/utils/recording-editor/motion";
 import { cardsLeadUs } from "@genesiscz/utils/recording-editor/overlays";
+import { type TimeValue, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
     type FractionBox,
     type LineMatcher,
@@ -683,8 +684,18 @@ export function textHitsOf(project: EditProject, options: TrackOptions & TextQue
     return trackedHits(project, textMatcher(options), options);
 }
 
-export async function findText(project: EditProject, options: TrackOptions & TextQuery): Promise<PrivateHitOut[]> {
-    return hitsOut(project, await textHitsOf(project, options));
+export async function findText(
+    project: EditProject,
+    options: TrackOptions & TextQuery & { from?: TimeValue; to?: TimeValue }
+): Promise<PrivateHitOut[]> {
+    // R7 6: from/to (source seconds) as hideText takes them; a place that shows at any moment between them counts.
+    const fromUs = options.from === undefined ? 0 : timeToUs(options.from);
+    const toUs = options.to === undefined ? Number.POSITIVE_INFINITY : timeToUs(options.to);
+    const hits = await textHitsOf(project, options);
+    return hitsOut(
+        project,
+        hits.filter((hit) => hit.toUs > fromUs && hit.fromUs < toUs)
+    );
 }
 
 /** A moment of the export where the text is still readable. */
