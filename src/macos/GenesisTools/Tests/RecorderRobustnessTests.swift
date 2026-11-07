@@ -83,4 +83,23 @@ final class RecorderRobustnessTests: XCTestCase {
         XCTAssertEqual(EditProject.Clip(id: "a", fromUs: 0, toUs: 1_000_000, speed: .nan).outputDurationUs, 1_000_000)
         XCTAssertEqual(EditProject.Clip(id: "a", fromUs: 0, toUs: 1_000_000, speed: 2).outputDurationUs, 500_000)
     }
+
+    func testAnEmptyOrUnfinishedMovieOpensWithAnErrorNotATrap() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("robust-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let empty = folder.appendingPathComponent("empty.mp4")
+        FileManager.default.createFile(atPath: empty.path, contents: Data())
+        let garbage = folder.appendingPathComponent("unfinished.mp4")
+        // The first bytes of an MP4 whose recorder died before it wrote the index (no moov atom).
+        FileManager.default.createFile(atPath: garbage.path, contents: Data([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70] + Array(repeating: 7, count: 4096)))
+        for (movie, words) in [(empty, "empty"), (garbage, "not a movie")] {
+            do {
+                _ = try await ProjectStore.newProject(video: movie)
+                XCTFail("\(movie.lastPathComponent) opened")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains(words), "\(error.localizedDescription) says \(words)")
+            }
+        }
+    }
 }

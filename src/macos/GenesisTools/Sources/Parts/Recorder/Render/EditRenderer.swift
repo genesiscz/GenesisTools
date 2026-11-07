@@ -522,6 +522,10 @@ struct EditRenderer {
         }
         let audio = project.audio.include ? try await asset.loadTracks(withMediaType: .audio) : []
         let (natural, nominalFps) = try await video.load(.naturalSize, .nominalFrameRate)
+        // A picture of 0 pixels made the output scale infinite (every frame's transform), so refuse it with its size.
+        guard natural.width.isFinite, natural.height.isFinite, natural.width >= 1, natural.height >= 1 else {
+            throw RenderError.badComposition("the movie's picture is \(natural.width)×\(natural.height)")
+        }
         let composition = AVMutableComposition()
         guard let videoOut = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
             throw RenderError.emptyEdit
