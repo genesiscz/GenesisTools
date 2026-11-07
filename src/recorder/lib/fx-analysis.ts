@@ -525,6 +525,57 @@ export interface TrackOptions {
     excludeFixed?: boolean;
     /** R8 7: gets every frame of screen text the hits were found in. */
     onRead?: (frames: readonly ScreenTextFrame[]) => void;
+    /** R8 6: read the screen only between these source microseconds (a findText or hideText with from/to). */
+    scan?: { fromUs: number; toUs: number };
+}
+
+/** R8 6: how far past a from/to the screen is read, so a text that shows across the edge is followed into it. */
+const SCAN_MARGIN_US = 1_000_000;
+
+/** R8 6: the part of the movie a from/to (source seconds) asks to read, with SCAN_MARGIN_US each side; all without. */
+export function scanOf(from?: TimeValue, to?: TimeValue): { fromUs: number; toUs: number } | undefined {
+    if (from === undefined && to === undefined) {
+        return undefined;
+    }
+
+    return {
+        fromUs: from === undefined ? 0 : Math.max(0, timeToUs(from) - SCAN_MARGIN_US),
+        toUs: to === undefined ? Number.POSITIVE_INFINITY : timeToUs(to) + SCAN_MARGIN_US,
+    };
+}
+
+/**
+ * R8 6: the screen text of `scan` only: the whole movie's when it was read before (a frames recording's own, or the
+ * cache), else a Vision read of that range alone at the same rate, so a 2 s findText reads 4 s of the movie, not all.
+ */
+async function screenTextIn(
+    project: EditProject,
+    scan: { fromUs: number; toUs: number } | undefined
+): Promise<{ frames: ScreenTextFrame[]; source: "frames" | "movie" }> {
+    if (!scan) {
+        return screenTextOf(project);
+    }
+
+    const inside = (frame: ScreenTextFrame) => frame.untilUs > scan.fromUs && frame.atUs < scan.toUs;
+    const whole = cachedScreenText(project);
+
+    if (whole) {
+        return { frames: whole.filter(inside), source: framesFolderOf(project) ? "frames" : "movie" };
+    }
+
+    if (!existsSync(project.source.video)) {
+        throw new Error(`the movie ${project.source.video} is not there, so its screen text cannot be read`);
+    }
+
+    const toUs = Math.min(project.source.durationUs, scan.toUs);
+    log.debug({ video: project.source.video, fromUs: scan.fromUs, toUs }, "screen text of a range only");
+    const frames = await ocrVideo({
+        video: project.source.video,
+        fromUs: scan.fromUs,
+        toUs,
+        fps: 1 / screenTextEverySeconds(project.source.durationUs),
+    });
+    return { frames, source: "movie" };
 }
 
 /**
@@ -538,7 +589,7 @@ export async function trackedHits(
     matcher: LineMatcher,
     options: TrackOptions = {}
 ): Promise<PrivateHit[]> {
-    const { frames: coarse, source } = await screenTextOf(project);
+    const { frames: coarse, source } = await screenTextIn(project, options.scan);
     const exclude = options.exclude ?? [];
 
     if (source === "frames") {
@@ -740,13 +791,14 @@ export async function textHitsOf(project: EditProject, options: TrackOptions & T
         ...options,
         onRead: (frames) => {
             read = frames;
+            options.onRead?.(frames);
         },
     });
 
     // R8 7: a pattern that never matched is said, not silently dropped (a \w that did not take Czech letters did).
     for (const query of unmatchedQueries(read, options)) {
         log.out.warn(
-            `no screen text of the whole movie matches ${query}: each OCR line is matched on its own, without case; \\w and \\b take letters of any language, \\p{L} is any letter`
+            `no screen text ${options.scan ? "of the range read" : "of the whole movie"} matches ${query}: each OCR line is matched on its own, without case; \\w and \\b take letters of any language, \\p{L} is any letter`
         );
     }
 
@@ -760,7 +812,7 @@ export async function findText(
     // R7 6: from/to (source seconds) as hideText takes them; a place that shows at any moment between them counts.
     const fromUs = options.from === undefined ? 0 : timeToUs(options.from);
     const toUs = options.to === undefined ? Number.POSITIVE_INFINITY : timeToUs(options.to);
-    const hits = await textHitsOf(project, options);
+    const hits = await textHitsOf(project, { ...options, scan: options.scan ?? scanOf(options.from, options.to) });
     return hitsOut(
         project,
         hits.filter((hit) => hit.toUs > fromUs && hit.fromUs < toUs)

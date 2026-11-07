@@ -56,7 +56,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { probeVideo, type VideoProbeLimits } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
-import { privateHitsOf, textHitsOf, waitsOf } from "./fx-analysis";
+import { privateHitsOf, scanOf, textHitsOf, waitsOf } from "./fx-analysis";
 import { type ExportAnswer, movieOf, resolveRecording } from "./library";
 import { chapterMetadata, chapterPoints, chaptersOfPart, markersOf, recordedMarkersOf } from "./moments";
 import { hostExport } from "./service-client";
@@ -672,6 +672,8 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
                 patterns: op.patterns,
                 exclude: op.exclude,
                 excludeFixed: op.excludeFixed,
+                // R8 6: from/to read only that part of the screen.
+                scan: scanOf(op.from, op.to),
             }),
         };
     }

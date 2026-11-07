@@ -6,7 +6,7 @@ import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { type FractionBox, redactionBoxAt } from "@genesiscz/utils/recording-editor/private-data";
 import { applyOp, editOpSchema, wholeProject } from "@genesiscz/utils/recording-editor/project";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
-import { textHitsOf } from "./fx-analysis";
+import { scanOf, textHitsOf } from "./fx-analysis";
 
 /**
  * Round 6 item 1: hidden text must stay hidden while the screen scrolls or slides. The movie is generated from two
@@ -168,4 +168,42 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         },
         240_000
     );
+
+    test("a hide with from and to reads the screen of that range only (round 8)", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-scan-range-"));
+        const movie = join(folder, "still-list.mp4");
+        await runVideoCommand({
+            command: [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                `color=c=0x5a6070:s=${W}x${H}:r=10:d=8`,
+                "-loop",
+                "1",
+                "-i",
+                join(moduleDir(import.meta), "__fixtures__", "moving-list.png"),
+                "-filter_complex",
+                `[0][1]overlay=x=${LIST_X}:y=0:shortest=1,format=yuv420p`,
+                "-t",
+                "8",
+                movie,
+            ],
+        });
+        const project = wholeProject({ video: movie, durationUs: 8_000_000, width: W, height: H });
+        const read: number[] = [];
+        const hits = await textHitsOf(project, {
+            text: "Orla Fictive",
+            scan: scanOf(4, 5),
+            onRead: (frames) => read.push(...frames.map((frame) => frame.atUs)),
+        });
+        expect(hits.length).toBeGreaterThan(0);
+        expect(read.length).toBeGreaterThan(0);
+        // One second each side of 4 to 5 s, nothing else.
+        expect(Math.min(...read)).toBeGreaterThanOrEqual(3_000_000);
+        expect(Math.max(...read)).toBeLessThan(6_000_000);
+    }, 120_000);
 });
