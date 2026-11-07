@@ -59,3 +59,35 @@ export function textAnimateOf(
 
     return textAnimateSchema.parse(animate);
 }
+
+// R4 10 progress bar and chapter strip
+/**
+ * A thin bar along the bottom of the export showing the share played, divided at the markers (the recording's and
+ * the edit's), and the name of each chapter for `chapterMs` when it starts. `height` is a share of the canvas's short
+ * side.
+ */
+export const progressSchema = z.object({
+    show: z.boolean().default(true),
+    color: hexColor.default("#FFFFFF"),
+    height: z.number().min(0.002).max(0.03).default(0.008),
+    chapters: z.boolean().default(true),
+    chapterMs: z.number().int().min(500).max(10_000).default(2000),
+});
+export type EditProgress = z.infer<typeof progressSchema>;
+
+export function applyProgress(
+    project: EditProject,
+    op: { show?: boolean; color?: string; height?: number; chapters?: boolean; chapterMs?: number; enabled?: boolean }
+): EditProject {
+    if (op.enabled === false) {
+        const { progress: _progress, ...rest } = project;
+        return rest;
+    }
+
+    const { enabled: _enabled, ...change } = op;
+    const progress = progressSchema.parse({
+        ...project.progress,
+        ...Object.fromEntries(Object.entries(change).filter(([, value]) => value !== undefined)),
+    });
+    return { ...project, progress };
+}

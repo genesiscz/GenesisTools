@@ -1015,6 +1015,21 @@ const movieMethods = [
             .strict(),
         'How the captions animate: kind "karaoke" (the default once set) colours each word as it is said, in color ("#FFD60A"), from the transcript\'s word times (cut-words uses the same; estimated from the letters when the transcription has none); "line" shows each line at once. Captions themselves are captions({ show: true }). enabled: false goes back to plain lines.'
     ),
+    // R4 10 progress bar and chapter strip
+    edit(
+        "progress",
+        z
+            .object({
+                show: z.boolean().optional(),
+                color: hexColor.optional(),
+                height: z.number().min(0.002).max(0.03).optional(),
+                chapters: z.boolean().optional(),
+                chapterMs: z.number().int().min(500).max(10_000).optional(),
+                enabled: z.boolean().optional(),
+            })
+            .strict(),
+        "A thin bar along the bottom of the movie (preview and export) showing how much has played, in color (\"#FFFFFF\"), height a share of the short side (0.008), divided at the markers (the recording's and the edit's, markers()); with chapters (true) each marker's label shows at the top left for chapterMs (2000) when it starts. show: false hides it and keeps the settings; enabled: false removes it."
+    ),
 ];
 
 const recordingMethods = [
@@ -1451,6 +1466,11 @@ export class Movie {
     // R4 6 animated captions
     async captionsStyle(options: Omit<Extract<EditOp, { op: "captionsStyle" }>, "op"> = {}) {
         return this.change([{ op: "captionsStyle", ...options }]);
+    }
+
+    // R4 10 progress bar and chapter strip
+    async progress(options: Omit<Extract<EditOp, { op: "progress" }>, "op"> = {}) {
+        return this.change([{ op: "progress", ...options }]);
     }
 
     // R4 8 music ducking

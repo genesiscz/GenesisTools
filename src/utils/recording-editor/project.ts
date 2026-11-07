@@ -39,8 +39,10 @@ import {
 } from "./lanes";
 import {
     applyCaptionsStyle,
+    applyProgress,
     CAPTION_KINDS,
     captionsStyleSchema,
+    progressSchema,
     TEXT_ANIMATIONS,
     textAnimateOf,
     textAnimateSchema,
@@ -413,6 +415,9 @@ export const editProjectSchema = z.object({
     // R4 6 animated captions
     /** How the captions animate (overlays.ts); absent shows each line at once. */
     captionsStyle: captionsStyleSchema.optional(),
+    // R4 10 progress bar and chapter strip
+    /** A bar along the bottom showing the share played, divided at the markers (overlays.ts); absent is none. */
+    progress: progressSchema.optional(),
 });
 
 export type EditProject = z.infer<typeof editProjectSchema>;
@@ -1453,6 +1458,19 @@ export const editOpSchema = z.discriminatedUnion("op", [
             enabled: z.boolean().optional(),
         })
         .strict(),
+    // R4 10 progress bar and chapter strip
+    z
+        .object({
+            op: z.literal("progress"),
+            show: z.boolean().optional(),
+            color: hexColor.optional(),
+            height: z.number().min(0.002).max(0.03).optional(),
+            chapters: z.boolean().optional(),
+            chapterMs: z.number().int().min(500).max(10_000).optional(),
+            /** false removes it. */
+            enabled: z.boolean().optional(),
+        })
+        .strict(),
     /**
      * What the editor's range popover does to a range dragged on the frames lane, over OUTPUT times (what plays, as
      * the ruler shows them): cut it, play it at `factor` (2), zoom over it (`scale`), hide or spotlight the middle of
@@ -1796,6 +1814,11 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         case "captionsStyle": {
             const { op: _op, ...change } = op;
             return applyCaptionsStyle(project, change);
+        }
+        // R4 10 progress bar and chapter strip
+        case "progress": {
+            const { op: _op, ...change } = op;
+            return applyProgress(project, change);
         }
         case "removeIdle": {
             if (!facts.idleUs) {
@@ -2355,6 +2378,8 @@ export function describeProject(project: EditProject, path: string) {
         })),
         // R4 6 animated captions
         captionsStyle: project.captionsStyle ?? null,
+        // R4 10 progress bar and chapter strip
+        progress: project.progress ?? null,
         /** The timeline's effect lanes top to bottom, each with the ids of the items on it. */
         lanes: resolveLanes(project).map(({ lane, items, automatic }) => ({
             id: lane.id,

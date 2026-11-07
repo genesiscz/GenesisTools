@@ -34,6 +34,12 @@ enum EditOpDiff {
             ops.append(.captionsStyle(new.captionsStyle.map { EditOp.CaptionsStyle(kind: $0.kind, color: $0.color, enabled: true) }
                 ?? EditOp.CaptionsStyle(enabled: false)))
         }
+        // R4 10 progress bar
+        if old.progress != new.progress {
+            ops.append(.progress(new.progress.map {
+                EditOp.ProgressBar(show: $0.show, color: $0.color, height: $0.height, chapters: $0.chapters, chapterMs: $0.chapterMs, enabled: true)
+            } ?? EditOp.ProgressBar(enabled: false)))
+        }
         return ops
     }
 

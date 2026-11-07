@@ -58,3 +58,79 @@ enum Karaoke {
         return spoken
     }
 }
+
+// R4 10 progress bar and chapter strip
+
+/// What the progress bar draws on one output frame: the share played, where the chapters divide it, and the name of
+/// a chapter that started less than `chapterMs` ago with its fade.
+struct ProgressMark: Equatable {
+    var share: Double
+    var dividers: [Double]
+    var color: String
+    var height: Double
+    var chapter: String?
+    var chapterOpacity = 1.0
+
+    static let fadeUs: Int64 = 200_000
+
+    /// The markers (the recording's and the edit's) at their output times, inside the movie, in order; one per time.
+    static func chapters(project: EditProject, recorded: [(us: Int64, label: String)]) -> [(outUs: Int64, label: String)] {
+        let lengthUs = project.outputDurationUs
+        let all = recorded + (project.markers ?? []).map { (us: $0.atUs, label: $0.label) }
+        var seen = Set<Int64>()
+        return all.compactMap { marker -> (outUs: Int64, label: String)? in
+            guard let outUs = TimelineMap.outputTime(ofSource: marker.us, in: project), outUs >= 0, outUs < lengthUs else { return nil }
+            return (outUs, marker.label)
+        }
+        .sorted { $0.outUs < $1.outUs }
+        .filter { seen.insert($0.outUs).inserted }
+    }
+
+    static func at(outUs: Int64, project: EditProject, recorded: [(us: Int64, label: String)],
+                   settings: EditProject.ProgressBar) -> ProgressMark? {
+        let lengthUs = project.outputDurationUs
+        guard settings.show, lengthUs > 0 else { return nil }
+        let chapters = chapters(project: project, recorded: recorded)
+        var mark = ProgressMark(share: min(1, max(0, Double(outUs) / Double(lengthUs))),
+                                dividers: chapters.filter { $0.outUs > 0 }.map { Double($0.outUs) / Double(lengthUs) },
+                                color: settings.color, height: settings.height)
+        let showUs = Int64(settings.chapterMs) * 1000
+        if settings.chapters, let current = chapters.last(where: { $0.outUs <= outUs }), outUs - current.outUs < showUs {
+            let into = outUs - current.outUs
+            mark.chapter = current.label
+            mark.chapterOpacity = min(1, Double(into) / Double(fadeUs), Double(showUs - into) / Double(fadeUs))
+        }
+        return mark
+    }
+}
+
+extension Looks {
+    /// The bar along the bottom edge (a dim track, the played part in its colour, a dark gap at each chapter) and the
+    /// starting chapter's name at the top left.
+    static func drawProgress(_ mark: ProgressMark, plates: TextPlates, on image: CIImage, size: CGSize) -> CIImage {
+        let unit = min(size.width, size.height)
+        let barHeight = max(2, (mark.height * unit).rounded())
+        let color = Looks.color(mark.color)
+        let rect = { (x: CGFloat, width: CGFloat, ink: CIColor) in
+            CIImage(color: ink).cropped(to: CGRect(x: x.rounded(), y: 0, width: max(1, width.rounded()), height: barHeight))
+        }
+        var result = rect(0, size.width, CIColor(red: color.red, green: color.green, blue: color.blue, alpha: 0.12)).composited(over: image)
+        if mark.share > 0 {
+            result = rect(0, size.width * mark.share, color).composited(over: result)
+        }
+        let gap = max(2, (barHeight * 0.6).rounded())
+        for divider in mark.dividers {
+            result = rect(size.width * divider - gap / 2, gap, CIColor(red: 0, green: 0, blue: 0, alpha: 0.9)).composited(over: result)
+        }
+        if let chapter = mark.chapter, mark.chapterOpacity > 0.01,
+           var plate = plates.plate(chapter, fontSize: max(8, (unit * 0.034).rounded()), maxWidth: size.width * 0.5, weight: .semibold) {
+            if mark.chapterOpacity < 0.999 {
+                plate = plate.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(mark.chapterOpacity))])
+            }
+            let margin = (unit * 0.035).rounded()
+            result = plate.transformed(by: CGAffineTransform(translationX: margin, y: size.height - margin - plate.extent.height))
+                .composited(over: result)
+        }
+        return result
+    }
+}

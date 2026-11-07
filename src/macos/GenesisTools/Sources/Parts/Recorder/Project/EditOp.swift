@@ -70,6 +70,8 @@ enum EditOp: Equatable {
     case ducking(Ducking)
     // R4 6 animated captions
     case captionsStyle(CaptionsStyle)
+    // R4 10 progress bar
+    case progress(ProgressBar)
 
     /// Every payload type, so the decoder finds one by its tag and the tag test lists them.
     static let payloads: [any EditOpPayload.Type] = [
@@ -82,7 +84,7 @@ enum EditOp: Equatable {
         SetZoom.self, SetRedaction.self, SetText.self, SetShape.self, Trim.self, DeleteClip.self, ClipSpeed.self,
         Duplicate.self, RemoveClickCircles.self, RenameLane.self,
         // R4 voiceover clips, 8 music ducking
-        Voiceover.self, Unvoiceover.self, Ducking.self, CaptionsStyle.self,
+        Voiceover.self, Unvoiceover.self, Ducking.self, CaptionsStyle.self, ProgressBar.self,
     ]
 
     static var tags: [String] { payloads.map { $0.tag } }
@@ -150,6 +152,7 @@ enum EditOp: Equatable {
         case let .unvoiceover(op): op
         case let .ducking(op): op
         case let .captionsStyle(op): op
+        case let .progress(op): op
         }
     }
 
@@ -756,6 +759,18 @@ extension EditOp {
         var color: String?
         var enabled: Bool?
         var op: EditOp { .captionsStyle(self) }
+    }
+
+    // R4 10 progress bar and chapter strip
+    struct ProgressBar: EditOpPayload {
+        static let tag = "progress"
+        var show: Bool?
+        var color: String?
+        var height: Double?
+        var chapters: Bool?
+        var chapterMs: Int?
+        var enabled: Bool?
+        var op: EditOp { .progress(self) }
     }
 
     // R4 8 music ducking

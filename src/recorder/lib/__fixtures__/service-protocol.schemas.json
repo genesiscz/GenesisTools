@@ -2457,6 +2457,41 @@
             "properties": {
               "op": {
                 "type": "string",
+                "const": "progress"
+              },
+              "show": {
+                "type": "boolean"
+              },
+              "color": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "height": {
+                "type": "number",
+                "minimum": 0.002,
+                "maximum": 0.03
+              },
+              "chapters": {
+                "type": "boolean"
+              },
+              "chapterMs": {
+                "type": "integer",
+                "minimum": 500,
+                "maximum": 10000
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
                 "const": "range"
               },
               "from": {
@@ -2808,7 +2843,7 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema4"
+            "$ref": "#/$defs/__schema5"
           },
           "undoDepth": {
             "type": "integer",
@@ -2836,7 +2871,7 @@
         "additionalProperties": false
       },
       "edit.apply": {
-        "$ref": "#/$defs/__schema5"
+        "$ref": "#/$defs/__schema6"
       },
       "edit.undo": {
         "type": "object",
@@ -2845,16 +2880,16 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema4"
+            "$ref": "#/$defs/__schema5"
           },
           "warnings": {
-            "$ref": "#/$defs/__schema6"
-          },
-          "removedIdleUs": {
             "$ref": "#/$defs/__schema7"
           },
-          "loudness": {
+          "removedIdleUs": {
             "$ref": "#/$defs/__schema8"
+          },
+          "loudness": {
+            "$ref": "#/$defs/__schema9"
           },
           "undone": {
             "type": "array",
@@ -2877,16 +2912,16 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema4"
+            "$ref": "#/$defs/__schema5"
           },
           "warnings": {
-            "$ref": "#/$defs/__schema6"
-          },
-          "removedIdleUs": {
             "$ref": "#/$defs/__schema7"
           },
-          "loudness": {
+          "removedIdleUs": {
             "$ref": "#/$defs/__schema8"
+          },
+          "loudness": {
+            "$ref": "#/$defs/__schema9"
           },
           "redone": {
             "type": "array",
@@ -2909,7 +2944,7 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema4"
+            "$ref": "#/$defs/__schema5"
           }
         },
         "required": [
@@ -2935,7 +2970,7 @@
         "additionalProperties": false
       },
       "gesture.commit": {
-        "$ref": "#/$defs/__schema5"
+        "$ref": "#/$defs/__schema6"
       },
       "gesture.cancel": {
         "type": "object",
@@ -2944,7 +2979,7 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema4"
+            "$ref": "#/$defs/__schema5"
           }
         },
         "required": [
@@ -3125,12 +3160,12 @@
         "type": "object",
         "properties": {
           "front": {
-            "$ref": "#/$defs/__schema9"
+            "$ref": "#/$defs/__schema10"
           },
           "open": {
             "type": "array",
             "items": {
-              "$ref": "#/$defs/__schema9"
+              "$ref": "#/$defs/__schema10"
             }
           }
         },
@@ -4400,13 +4435,49 @@
               },
               "color": {
                 "default": "#FFD60A",
-                "type": "string",
-                "pattern": "^#[0-9a-fA-F]{6}$"
+                "$ref": "#/$defs/__schema4"
               }
             },
             "required": [
               "kind",
               "color"
+            ],
+            "additionalProperties": false
+          },
+          "progress": {
+            "type": "object",
+            "properties": {
+              "show": {
+                "default": true,
+                "type": "boolean"
+              },
+              "color": {
+                "default": "#FFFFFF",
+                "$ref": "#/$defs/__schema4"
+              },
+              "height": {
+                "default": 0.008,
+                "type": "number",
+                "minimum": 0.002,
+                "maximum": 0.03
+              },
+              "chapters": {
+                "default": true,
+                "type": "boolean"
+              },
+              "chapterMs": {
+                "default": 2000,
+                "type": "integer",
+                "minimum": 500,
+                "maximum": 10000
+              }
+            },
+            "required": [
+              "show",
+              "color",
+              "height",
+              "chapters",
+              "chapterMs"
             ],
             "additionalProperties": false
           }
@@ -4470,27 +4541,31 @@
         ]
       },
       "__schema4": {
+        "type": "string",
+        "pattern": "^#[0-9a-fA-F]{6}$"
+      },
+      "__schema5": {
         "type": "integer",
         "minimum": 0,
         "maximum": 9007199254740991
       },
-      "__schema5": {
+      "__schema6": {
         "type": "object",
         "properties": {
           "project": {
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema4"
+            "$ref": "#/$defs/__schema5"
           },
           "warnings": {
-            "$ref": "#/$defs/__schema6"
-          },
-          "removedIdleUs": {
             "$ref": "#/$defs/__schema7"
           },
-          "loudness": {
+          "removedIdleUs": {
             "$ref": "#/$defs/__schema8"
+          },
+          "loudness": {
+            "$ref": "#/$defs/__schema9"
           }
         },
         "required": [
@@ -4499,13 +4574,13 @@
         ],
         "additionalProperties": false
       },
-      "__schema6": {
+      "__schema7": {
         "type": "array",
         "items": {
           "type": "string"
         }
       },
-      "__schema7": {
+      "__schema8": {
         "type": "array",
         "items": {
           "type": "array",
@@ -4522,7 +4597,7 @@
           "maxItems": 2
         }
       },
-      "__schema8": {
+      "__schema9": {
         "type": "object",
         "properties": {
           "measuredLufs": {
@@ -4541,7 +4616,7 @@
         ],
         "additionalProperties": false
       },
-      "__schema9": {
+      "__schema10": {
         "type": "object",
         "properties": {
           "path": {

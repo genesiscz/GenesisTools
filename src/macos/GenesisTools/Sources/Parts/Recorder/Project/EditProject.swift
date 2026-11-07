@@ -47,6 +47,18 @@ struct EditProject: Codable, Equatable {
     // R4 6 animated captions
     /// How the captions animate (karaoke colours each word as it is said); nil shows each line at once.
     var captionsStyle: CaptionsStyle?
+    // R4 10 progress bar and chapter strip
+    /// A bar along the bottom showing the share played, divided at the markers; nil is none.
+    var progress: ProgressBar?
+
+    /// `height` is a share of the canvas's short side; each chapter's name shows for `chapterMs` when it starts.
+    struct ProgressBar: Codable, Equatable {
+        var show = true
+        var color = "#FFFFFF"
+        var height = 0.008
+        var chapters = true
+        var chapterMs = 2000
+    }
 
     // R4 6 animated captions and texts
     enum CaptionKind: String, Codable, CaseIterable {

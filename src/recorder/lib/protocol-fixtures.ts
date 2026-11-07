@@ -219,6 +219,9 @@ const EXAMPLE_OPS: readonly unknown[] = [
     { op: "captionsStyle", enabled: false },
     { op: "text", from: 1, to: 3, text: "Typed", animate: { kind: "typewriter", ms: 800 } },
     { op: "setText", id: "t1", animate: { kind: "slideUp" } },
+    // R4 10 progress bar and chapter strip
+    { op: "progress", show: true, color: "#FF375F", height: 0.01, chapters: true, chapterMs: 2500 },
+    { op: "progress", enabled: false },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */
@@ -352,6 +355,9 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
                         { op: "text", from: 1, to: 3, text: "Typed", animate: { kind: "typewriter", ms: 900 } },
                         { op: "text", from: 4, to: 6, text: "Risen", animate: { kind: "slideUp" } },
                         { op: "captionsStyle", kind: "karaoke" },
+                        // R4 10 progress bar and chapter strip
+                        { op: "marker", at: 4, label: "Second step" },
+                        { op: "progress", color: "#0A84FF", chapterMs: 1500 },
                     ],
                     editProjectSchema.parse({ ...wholeProject(source), captions: { show: true } })
                 )

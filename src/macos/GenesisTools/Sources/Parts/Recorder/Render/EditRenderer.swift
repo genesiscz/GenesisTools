@@ -17,7 +17,12 @@ final class ZoomState: @unchecked Sendable {
         self.project = project
         self.cursor = cursor
         captions = CaptionTrack.load(video: project.source.video)
+        // R4 10 progress bar: the chapters the recording marked (the edit's own come with each project).
+        recordedMarkers = EditorModel.readMarkers(video: project.source.video)
     }
+
+    // R4 10 progress bar
+    private let recordedMarkers: [(us: Int64, label: String)]
 
     func update(_ project: EditProject) {
         lock.lock()
@@ -97,6 +102,8 @@ final class ZoomState: @unchecked Sendable {
         // R4 overlays (fx-overlay): the frame's times, for the texts' animations and the progress bar.
         var sourceUs: Int64 = 0
         var outUs: Int64 = 0
+        // R4 10 progress bar
+        var progress: ProgressMark?
     }
 
     /// Every frame the renderer drew; the editor compares it with the frames a playback should have shown.
@@ -159,6 +166,7 @@ final class ZoomState: @unchecked Sendable {
         // R4 overlays (fx-overlay)
         look.sourceUs = sourceUs
         look.outUs = outUs
+        look.progress = project.progress.flatMap { ProgressMark.at(outUs: outUs, project: project, recorded: recordedMarkers, settings: $0) }
         look.shapes = Self.shapes(atSourceUs: sourceUs, project: project)
         look.spotlightFade = look.redactions.filter { $0.style == .spotlight }.map { spot in
             let fade = Double(min(200_000, max(1, (spot.endUs - spot.startUs) / 3)))
@@ -666,6 +674,11 @@ struct EditRenderer {
             }
             if let cursor {
                 result = cursor.composited(over: result).cropped(to: CGRect(origin: .zero, size: size))
+            }
+            // R4 10 progress bar: over everything, as the player's own chrome would be.
+            if let progress = look.progress {
+                result = Looks.drawProgress(progress, plates: zoom.keyPlates, on: result, size: size)
+                    .cropped(to: CGRect(origin: .zero, size: size))
             }
             request.finish(with: result, context: nil)
         }

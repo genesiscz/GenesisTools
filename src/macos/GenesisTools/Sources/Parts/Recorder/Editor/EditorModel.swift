@@ -823,7 +823,7 @@ final class EditorModel {
     }
 
     /// Reads the markers the recorder wrote into the recording's manifest; a plain movie has none.
-    static func readMarkers(video: String) -> [(us: Int64, label: String)] {
+    nonisolated static func readMarkers(video: String) -> [(us: Int64, label: String)] {
         let manifest = URL(fileURLWithPath: video).deletingLastPathComponent().appendingPathComponent("recording.json")
         guard let data = try? Data(contentsOf: manifest),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

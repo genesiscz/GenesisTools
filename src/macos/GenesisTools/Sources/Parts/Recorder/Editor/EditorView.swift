@@ -756,6 +756,8 @@ private struct CaptionsInspector: View {
                 }
             }
         }
+        // R4 10 progress bar and chapter strip
+        ProgressBarSection(model: model)
     }
 
 }

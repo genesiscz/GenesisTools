@@ -106,6 +106,43 @@ final class RecorderOverlayTests: XCTestCase {
         XCTAssertGreaterThan(Double(all), Double(said) * 1.6, "both words are yellow once both are said")
     }
 
+    // R4 10 progress bar and chapter strip
+    func testTheProgressBarFollowsThePlayheadAndNamesEachChapterAsItStarts() throws {
+        var project = edit([.init(id: "a", fromUs: 0, toUs: 3_000_000), .init(id: "b", fromUs: 5_000_000, toUs: 10_000_000)])
+        project.markers = [.init(id: "m1", atUs: 6_000_000, label: "Export"), .init(id: "m2", atUs: 4_000_000, label: "Cut away")]
+        let recorded: [(us: Int64, label: String)] = [(1_000_000, "Open")]
+        let settings = EditProject.ProgressBar(color: "#FF375F", chapterMs: 2000)
+        XCTAssertEqual(ProgressMark.chapters(project: project, recorded: recorded).map(\.label), ["Open", "Export"], "a marker in a cut has no chapter")
+        let early = try XCTUnwrap(ProgressMark.at(outUs: 2_000_000, project: project, recorded: recorded, settings: settings))
+        XCTAssertEqual(early.share, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(early.dividers, [0.125, 0.5], "Open at 1 s and Export at 4 s of an 8 s movie")
+        XCTAssertEqual(early.chapter, "Open")
+        XCTAssertEqual(early.chapterOpacity, 1, accuracy: 0.001)
+        XCTAssertNil(ProgressMark.at(outUs: 3_500_000, project: project, recorded: recorded, settings: settings)?.chapter, "after 2 s it goes")
+        XCTAssertEqual(ProgressMark.at(outUs: 4_100_000, project: project, recorded: recorded, settings: settings)?.chapterOpacity ?? 0, 0.5, accuracy: 0.001)
+        var hidden = settings
+        hidden.show = false
+        XCTAssertNil(ProgressMark.at(outUs: 0, project: project, recorded: recorded, settings: hidden))
+
+        let size = CGSize(width: 400, height: 200)
+        let black = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: size))
+        let drawn = Looks.drawProgress(ProgressMark(share: 0.5, dividers: [0.25], color: "#FF375F", height: 0.02), plates: TextPlates(),
+                                       on: black, size: size)
+        var bytes = [UInt8](repeating: 0, count: 400 * 200 * 4)
+        CIContext().render(drawn, toBitmap: &bytes, rowBytes: 400 * 4, bounds: CGRect(origin: .zero, size: size), format: .RGBA8,
+                           colorSpace: CGColorSpaceCreateDeviceRGB())
+        // Row 0 of the bitmap is the top of the picture; the bar is the bottom 4 rows.
+        let pixel = { (x: Int, y: Int) -> (Int, Int, Int) in
+            let at = ((199 - y) * 400 + x) * 4
+            return (Int(bytes[at]), Int(bytes[at + 1]), Int(bytes[at + 2]))
+        }
+        XCTAssertGreaterThan(pixel(50, 1).0, 200, "the played part is in its colour")
+        XCTAssertLessThan(pixel(300, 1).0, 120, "the rest is the dim track")
+        XCTAssertGreaterThan(pixel(300, 1).0, 30)
+        XCTAssertLessThan(pixel(100, 1).0, 120, "a dark gap at the chapter")
+        XCTAssertEqual(pixel(50, 10).0, 0, "nothing above the bar")
+    }
+
     /// Pixels that are clearly yellow (red and green high, blue low).
     private func yellowPixels(_ image: CIImage, size: CGSize) throws -> Int {
         let width = Int(size.width), height = Int(size.height)

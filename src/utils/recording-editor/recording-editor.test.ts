@@ -1123,6 +1123,18 @@ describe("edit project (edit.json)", () => {
             applyOp(typed, { op: "setText", id: typedNote?.id ?? "", animate: { kind: "slideUp", ms: 900 } }).texts?.[0]
                 ?.animate
         ).toEqual({ kind: "slideUp", ms: 900 });
+        // R4 10 progress bar: the defaults, merged by later ops, removed by enabled: false.
+        const barred = applyOp(project, { op: "progress", color: "#FF375F" });
+        expect(barred.progress).toEqual({
+            show: true,
+            color: "#FF375F",
+            height: 0.008,
+            chapters: true,
+            chapterMs: 2000,
+        });
+        expect(applyOp(barred, { op: "progress", show: false }).progress?.color).toBe("#FF375F");
+        expect(applyOp(barred, { op: "progress", enabled: false }).progress).toBeUndefined();
+        expect(() => applyOp(project, { op: "progress", color: "red" })).toThrow();
         // Shapes: an arrow in source space with its defaults, a point-sized one refused, unshape removes it.
         const pointed = applyOp(project, {
             op: "shape",

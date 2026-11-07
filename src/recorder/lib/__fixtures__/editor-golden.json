@@ -112,6 +112,7 @@
     "movie.say",
     "movie.ducking",
     "movie.captionsStyle",
+    "movie.progress",
     "movies.list",
     "movies.search"
   ],
@@ -175,6 +176,7 @@
     "unvoiceover",
     "ducking",
     "captionsStyle",
+    "progress",
     "range"
   ],
   "ops": [
@@ -691,6 +693,18 @@
       "animate": {
         "kind": "slideUp"
       }
+    },
+    {
+      "op": "progress",
+      "show": true,
+      "color": "#FF375F",
+      "height": 0.01,
+      "chapters": true,
+      "chapterMs": 2500
+    },
+    {
+      "op": "progress",
+      "enabled": false
     }
   ],
   "projects": [
@@ -1215,6 +1229,20 @@
         "captionsStyle": {
           "kind": "karaoke",
           "color": "#FFD60A"
+        },
+        "markers": [
+          {
+            "id": "m1",
+            "atUs": 4000000,
+            "label": "Second step"
+          }
+        ],
+        "progress": {
+          "show": true,
+          "color": "#0A84FF",
+          "height": 0.008,
+          "chapters": true,
+          "chapterMs": 1500
         }
       }
     }
