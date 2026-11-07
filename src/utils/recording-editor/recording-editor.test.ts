@@ -142,6 +142,9 @@ describe("edit plans", () => {
         expect(timeToUs("1:02:03.5")).toBe(3_723_500_000);
         expect(timeToUs(0.25)).toBe(250_000);
         expect(timeToUs("12s")).toBe(12_000_000);
+        expect(() => timeToUs("nope")).toThrow('"nope" is not a time');
+        expect(() => timeToUs("1::2")).toThrow("is not a time");
+        expect(() => timeToUs(Number.NaN)).toThrow("is not a time");
         expect(atempoChain(4)).toBe("atempo=2,atempo=2");
         expect(atempoChain(0.3)).toBe("atempo=0.5,atempo=0.6");
         expect(
