@@ -327,7 +327,18 @@ extension EditOp {
         var lane: String?
         // R5 5 redaction edges
         var cell: Double?
+        // R8 4 fixOps: keyframes
+        var track: [Key]?
         var op: EditOp { .redact(self) }
+
+        /// Its place at a source time (`at`, seconds); between two keys it moves straight from one to the next.
+        struct Key: Codable, Equatable {
+            var at: Double
+            var x: Double
+            var y: Double
+            var width: Double
+            var height: Double
+        }
     }
 
     struct Spotlight: EditOpPayload {

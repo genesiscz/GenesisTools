@@ -35,6 +35,7 @@ import {
     hidingOf,
     leakFixOps,
     leakSourceBox,
+    leakSourceKeys,
     type OpFacts,
     opPlacementWarnings,
     parseProject,
@@ -686,8 +687,51 @@ describe("verifyHidden reads every frame at the edges and says how to fix a leak
         expect(rest).toEqual([]);
         expect(fix).toMatchObject({ op: "redact", from: 11.8, to: 12.2, label: "Text (verifyHidden)" });
         const rect = fix.op === "redact" ? fix.rect : undefined;
-        expect(rect?.x).toBeCloseTo(0.175, 5);
-        expect(rect?.height).toBeCloseTo(0.1, 5);
+        // R8 4: half a line of margin (a read box is a line and a half high).
+        expect(rect?.x).toBeCloseTo(0.2 - 0.05 / 3, 3);
+        expect(rect?.height).toBeCloseTo(0.05 + 0.1 / 3, 3);
+    });
+
+    test("a moving leak gets one op that follows it frame by frame, never a box over its whole path (round 8)", () => {
+        const project = wholeProject(source);
+        const read: PrivateHit = {
+            id: "h1",
+            kind: "text",
+            label: "Text",
+            masked: "or•••ve",
+            fromUs: 9_000_000,
+            toUs: 14_000_000,
+            box: { x: 0.2, y: 0.3, width: 0.3, height: 0.45 },
+            keys: [
+                { atUs: 9_000_000, x: 0.2, y: 0.7, width: 0.3, height: 0.05 },
+                { atUs: 12_000_000, x: 0.2, y: 0.3, width: 0.3, height: 0.05 },
+            ],
+        };
+        // Read on the export in a frame at three frames while it scrolls: each frame takes the source read's place then.
+        const framed = applyOp(project, op({ op: "frame", aspect: "16:9" }));
+        const keys = [10_000_000, 10_500_000, 11_000_000].map((atUs) => ({
+            atUs,
+            x: 0.5,
+            y: 0.5,
+            width: 0.1,
+            height: 0.02,
+        }));
+        const sourceKeys = leakSourceKeys(framed, { keys, label: "Text", masked: "or•••ve", sourceHits: [read] });
+        expect(sourceKeys.map((key) => key.at)).toEqual([10, 10.5, 11]);
+        expect(sourceKeys[0].y).toBeCloseTo(0.7 - 0.4 / 3, 3);
+        const [fix, ...rest] = leakFixOps([
+            { label: "Text", source: { at: 10, until: 11 }, sourceKeys, sourceBox: read.box },
+            // Read in the export but nowhere in the source: no op, never the whole frame.
+            { label: "Text", source: { at: 20, until: 21 }, sourceKeys: [], sourceBox: null },
+        ]);
+        expect(rest).toEqual([]);
+        expect(fix).toMatchObject({ op: "redact", from: 9.9, to: 11.1 });
+        const redact = fix.op === "redact" ? fix : undefined;
+        expect(redact?.rect.height).toBeLessThan(0.1);
+        expect(redact?.track?.length).toBe(3);
+        // Applied, the part follows the keys.
+        const part = applyOp(framed, fix).redactions?.at(-1);
+        expect(part?.track?.map((key) => key.atUs)).toEqual([10_000_000, 10_500_000, 11_000_000]);
     });
 });
 

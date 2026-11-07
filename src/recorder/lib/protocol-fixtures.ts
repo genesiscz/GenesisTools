@@ -304,9 +304,17 @@ const EXAMPLE_OPS: readonly unknown[] = [
     { op: "unhide", text: "Orla Fictive" },
     { op: "unhide", ids: ["r12", "p5e6f7a8b"] },
     { op: "unhide", all: true },
-    // R8 11 a spotlight's soft edge
-    { op: "spotlight", from: 2, to: 3, rect: { x: 0.3, y: 0.3, width: 0.2, height: 0.2 }, dimAround: 0.1 },
-    { op: "setRedaction", id: "r1", dimAround: 0 },
+    // R8 4 a redaction with keys (verifyHidden's fixOps)
+    {
+        op: "redact",
+        from: 1,
+        to: 2,
+        rect: { x: 0.1, y: 0.6, width: 0.3, height: 0.05 },
+        track: [
+            { at: 1, x: 0.1, y: 0.6, width: 0.3, height: 0.05 },
+            { at: 2, x: 0.1, y: 0.4, width: 0.3, height: 0.05 },
+        ],
+    },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */

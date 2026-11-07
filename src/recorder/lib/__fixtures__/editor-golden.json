@@ -1000,21 +1000,31 @@
       "all": true
     },
     {
-      "op": "spotlight",
-      "from": 2,
-      "to": 3,
+      "op": "redact",
+      "from": 1,
+      "to": 2,
       "rect": {
-        "x": 0.3,
-        "y": 0.3,
-        "width": 0.2,
-        "height": 0.2
+        "x": 0.1,
+        "y": 0.6,
+        "width": 0.3,
+        "height": 0.05
       },
-      "dimAround": 0.1
-    },
-    {
-      "op": "setRedaction",
-      "id": "r1",
-      "dimAround": 0
+      "track": [
+        {
+          "at": 1,
+          "x": 0.1,
+          "y": 0.6,
+          "width": 0.3,
+          "height": 0.05
+        },
+        {
+          "at": 2,
+          "x": 0.1,
+          "y": 0.4,
+          "width": 0.3,
+          "height": 0.05
+        }
+      ]
     }
   ],
   "projects": [

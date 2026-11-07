@@ -61,6 +61,7 @@ import {
     PRIVATE_STYLES,
     type PrivateHit,
     privacySchema,
+    redactionBoxAt,
 } from "./private-data";
 import {
     cutRanges,
@@ -830,42 +831,106 @@ export function leakSourceBox(
 }
 
 /**
- * The redact ops that cover each leak in SOURCE time and space: its source stretch with 0.1 s on each side, its
- * source box with a margin of half its height (kept inside the picture). A leak with no source time (inside a card)
- * or no source box gets none.
+ * R8 4: a leak's place in the SOURCE picture at each export frame it was read (`keys`: EXPORT microseconds and boxes on
+ * the export frame): the export's own box where the export shows the source picture as it is (no frame, no zoom then),
+ * else the place then of the source's own hit of the same value (the same masked value first, else the same label)
+ * nearest to it. A frame inside a card, or with no such hit, has no key. Source seconds and fractions, in time order.
+ */
+export function leakSourceKeys(
+    project: EditProject,
+    options: {
+        keys: ReadonlyArray<{ atUs: number; x: number; y: number; width: number; height: number }>;
+        label: string;
+        masked: string;
+        sourceHits: readonly PrivateHit[];
+    }
+): Array<{ at: number; x: number; y: number; width: number; height: number }> {
+    const slackUs = 300_000;
+    const centre = (box: { x: number; y: number; width: number; height: number }) => ({
+        x: box.x + box.width / 2,
+        y: box.y + box.height / 2,
+    });
+    return options.keys.flatMap((key) => {
+        const outUs = exportToOutputUs(project, key.atUs);
+
+        if (outUs === undefined) {
+            return [];
+        }
+
+        const sourceUs = sourceTimeOf(project, outUs);
+        const at = Math.round(sourceUs / 1000) / 1000;
+        const { atUs: _atUs, ...canvas } = key;
+        const zoomed = project.zooms.some((zoom) => zoom.startUs <= sourceUs && zoom.endUs > sourceUs);
+
+        if (!project.frame && !zoomed) {
+            return [{ at, ...canvas }];
+        }
+
+        const showing = options.sourceHits.filter(
+            (hit) => hit.fromUs <= sourceUs + slackUs && hit.toUs >= sourceUs - slackUs
+        );
+        const same = showing.filter((hit) => hit.masked === options.masked);
+        const chosen = same.length > 0 ? same : showing.filter((hit) => hit.label === options.label);
+        const read = centre(canvas);
+        const nearest = chosen
+            .map((hit) => redactionBoxAt({ ...hit.box, track: hit.keys }, sourceUs))
+            .sort(
+                (a, b) =>
+                    Math.hypot(centre(a).x - read.x, centre(a).y - read.y) -
+                    Math.hypot(centre(b).x - read.x, centre(b).y - read.y)
+            )[0];
+        return nearest ? [{ at, ...nearest }] : [];
+    });
+}
+
+/**
+ * R8 4: the redact op that covers each leak in SOURCE time and space, one per leak: `sourceKeys` (its place in the source
+ * picture at each frame it was read) as the op's track, each with half a line of margin (kept inside the picture), from
+ * 0.1 s before its first read to 0.1 s after its last; one key is a still box. A leak with no source time (inside a
+ * card) or no place in the source gets no op: verifyHidden notes it instead, never a box over the whole frame.
  */
 export function leakFixOps(
     leaks: ReadonlyArray<{
         label: string;
         /** Source seconds. */
         source: { at: number; until: number } | null;
+        /** Source seconds and source fractions, one per frame it was read. */
+        sourceKeys?: ReadonlyArray<{ at: number; x: number; y: number; width: number; height: number }>;
         /** Source fractions. */
         sourceBox: { x: number; y: number; width: number; height: number } | null;
     }>
 ): EditOp[] {
+    const round = (value: number) => Math.round(value * 1000) / 1000;
+    const margin = (box: { x: number; y: number; width: number; height: number }) => {
+        const pad = box.height / 3;
+        const x = Math.max(0, box.x - pad);
+        const y = Math.max(0, box.y - pad);
+        return {
+            x: round(x),
+            y: round(y),
+            width: round(Math.max(0.005, Math.min(1, box.x + box.width + pad) - x)),
+            height: round(Math.max(0.005, Math.min(1, box.y + box.height + pad) - y)),
+        };
+    };
     return leaks.flatMap((leak) => {
-        if (!leak.source || !leak.sourceBox) {
+        const keys =
+            leak.sourceKeys ?? (leak.source && leak.sourceBox ? [{ at: leak.source.at, ...leak.sourceBox }] : []);
+
+        if (!leak.source || keys.length === 0) {
             return [];
         }
 
-        const box = leak.sourceBox;
-        const pad = box.height * 0.5;
-        const x = Math.max(0, box.x - pad);
-        const y = Math.max(0, box.y - pad);
-        const rect = {
-            x,
-            y,
-            width: Math.max(0.005, Math.min(1, box.x + box.width + pad) - x),
-            height: Math.max(0.005, Math.min(1, box.y + box.height + pad) - y),
-        };
-        const round = (value: number) => Math.round(value * 1000) / 1000;
+        const first = keys[0];
+        const last = keys[keys.length - 1];
+        const track = keys.length > 1 ? keys.map((key) => ({ at: round(key.at), ...margin(key) })) : undefined;
         return [
             editOpSchema.parse({
                 op: "redact",
-                from: round(Math.max(0, leak.source.at - 0.1)),
-                to: round(Math.max(leak.source.at + 0.05, leak.source.until + 0.1)),
-                rect,
+                from: round(Math.max(0, Math.min(first.at, leak.source.at) - 0.1)),
+                to: round(Math.max(first.at + 0.05, last.at, leak.source.until) + 0.1),
+                rect: margin(first),
                 label: `${leak.label} (verifyHidden)`.slice(0, 60),
+                ...(track && new Set(track.map((key) => key.at)).size === track.length ? { track } : {}),
             }),
         ];
     });
@@ -1425,6 +1490,25 @@ export const editOpSchema = z.discriminatedUnion("op", [
             // R5 5 redaction edges
             /** Style "pixelate" only: a block's side in source pixels (2 to 256); absent is 1.8 % of the height. */
             cell: z.number().min(2).max(256).optional(),
+            // R8 4 fixOps: keyframes
+            /**
+             * Its place at source times (`at`, seconds), in order: between two keys it moves straight from one to the
+             * next, before the first and after the last it holds (verifyHidden's fixOps follow a leak frame by frame).
+             */
+            track: z
+                .array(
+                    z
+                        .object({
+                            at: sourceTimeSchema,
+                            x: z.number().min(0).max(1),
+                            y: z.number().min(0).max(1),
+                            width: z.number().positive().max(1),
+                            height: z.number().positive().max(1),
+                        })
+                        .strict()
+                )
+                .min(2)
+                .optional(),
         })
         .strict(),
     z
@@ -2467,8 +2551,8 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             }).project;
         case "unzoom":
             return removeZoom(project, op.id);
-        case "redact":
-            return addRedaction(project, {
+        case "redact": {
+            const added = addRedaction(project, {
                 fromUs: timeToUs(op.from),
                 toUs: timeToUs(op.to),
                 rect: op.rect,
@@ -2477,6 +2561,18 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 follow: op.follow,
                 cell: op.cell,
             });
+            const part = added.redactions?.at(-1);
+
+            // R8 4: a part with keys follows them, as a hide's part does.
+            if (!op.track || !part) {
+                return added;
+            }
+
+            const track = op.track
+                .map(({ at, ...box }) => ({ atUs: timeToUs(at), ...box }))
+                .sort((a, b) => a.atUs - b.atUs);
+            return { ...added, redactions: [...(added.redactions ?? []).slice(0, -1), { ...part, track }] };
+        }
         case "spotlight":
             return addRedaction(project, {
                 fromUs: timeToUs(op.from),

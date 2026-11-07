@@ -49,6 +49,7 @@ import {
     exportToOutputUs,
     leakFixOps,
     leakSourceBox,
+    leakSourceKeys,
     outputDurationUs,
     outputTimeOf,
     readCursorTrack,
@@ -837,6 +838,8 @@ export interface Leak {
      * source's own reads at that time; null when it cannot be placed there (inside a card, or not read in the source).
      */
     sourceBox: FractionBox | null;
+    /** R8 4: its place in the SOURCE picture at each frame it was read (source seconds and fractions); fixOps follow it. */
+    sourceKeys: Array<{ at: number; x: number; y: number; width: number; height: number }>;
 }
 
 /**
@@ -857,7 +860,7 @@ export async function verifyHidden(
         aroundSeconds?: number;
         onProgress?: (line: string) => void;
     }
-): Promise<{ ok: boolean; movie: string; frames: number; leaks: Leak[]; fixOps: EditOp[] }> {
+): Promise<{ ok: boolean; movie: string; frames: number; leaks: Leak[]; fixOps: EditOp[]; notes?: string[] }> {
     const asked = Boolean(options.text || options.pattern || options.texts?.length || options.patterns?.length);
     // R6 3: every text and pattern (and the private data, when asked or when nothing else is) in one read.
     const matchers = [
@@ -941,12 +944,17 @@ export async function verifyHidden(
             label: hit.label,
             masked: hit.masked,
             box: hit.box,
+            keys: hit.keys,
         };
     });
     // R7 3: each leak's place in the source picture, from the source's own reads, and the redact ops that cover it.
     const sourceHits = leaks.some((leak) => leak.source) ? await trackedHits(project, matcher) : [];
-    const placed: Leak[] = leaks.map((leak) => ({
+    const placed: Leak[] = leaks.map(({ keys, ...leak }) => ({
         ...leak,
+        // R8 4: its place in the source at every frame it was read, the track of its fix.
+        sourceKeys: leak.source
+            ? leakSourceKeys(project, { keys, label: leak.label, masked: leak.masked, sourceHits })
+            : [],
         sourceBox: leak.source
             ? leakSourceBox(project, {
                   fromUs: Math.round(leak.source.at * 1_000_000),
@@ -958,7 +966,21 @@ export async function verifyHidden(
               })
             : null,
     }));
-    return { ok: placed.length === 0, movie, frames: frames.length, leaks: placed, fixOps: leakFixOps(placed) };
+    // R8 4: a leak with no place in the source gets no fix op (never a box over the whole frame), but a note.
+    const notes = placed
+        .filter((leak) => leak.source && leak.sourceKeys.length === 0)
+        .map(
+            (leak) =>
+                `the leak at ${leak.source?.at} to ${leak.source?.until} s (source) has no place in the source picture (the source never read it there): hide it by hand from its export box, or with still({ source: true, full: true }) at that time`
+        );
+    return {
+        ok: placed.length === 0,
+        movie,
+        frames: frames.length,
+        leaks: placed,
+        fixOps: leakFixOps(placed),
+        ...(notes.length > 0 ? { notes } : {}),
+    };
 }
 
 /** Two reads of one movie merged in time order; a dense read wins over an even one within 5 ms of it. */
