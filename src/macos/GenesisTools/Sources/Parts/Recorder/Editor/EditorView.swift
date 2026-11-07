@@ -472,6 +472,7 @@ struct ClipInspector: View {
                 WideButton(title: "Split at Playhead", systemImage: "scissors") { model.splitAtPlayhead() }
                     .instantTooltip("Splits the clip under the playhead in two (S)")
                 StillPartsSection(model: model)
+                WaitsSection(model: model) // fx B (round 4)
             }
         }
     }
@@ -658,25 +659,29 @@ struct CursorInspector: View {
                     }), in: 0.5...3)
                         .accessibilityLabel("Cursor size")
                         .accessibilityIdentifier("recorder.style.cursorSize")
-                    SectionLabel(text: "Smoothing", value: "\(Int((cursor.smoothing * 100).rounded()))%")
-                    Slider(value: Binding(get: { cursor.smoothing }, set: { value in
-                        model.setCursor { $0.smoothing = (value * 20).rounded() / 20 }
-                    }), in: 0...1)
-                        .accessibilityLabel("Cursor smoothing")
-                        .accessibilityIdentifier("recorder.style.cursorSmoothing")
-                    SwitchRow("Hide when still", isOn: Binding(get: { (cursor.hideAfterMs ?? 0) > 0 }, set: { on in
-                        model.setCursor { $0.hideAfterMs = on ? 1500 : 0 }
-                    }))
-                    .accessibilityIdentifier("recorder.style.cursorHide")
-                    if let hide = cursor.hideAfterMs, hide > 0 {
-                        SectionLabel(text: "Hide after", value: String(format: "%.1f s", Double(hide) / 1000))
-                        Slider(value: Binding(get: { Double(hide) }, set: { value in
-                            model.setCursor { $0.hideAfterMs = Int((value / 250).rounded() * 250) }
-                        }), in: 500...5000)
-                            .accessibilityLabel("Hide the cursor after")
-                            .accessibilityIdentifier("recorder.style.cursorHideAfter")
+                    // fx B (round 4): the smooth cursor, when on, replaces these two.
+                    if model.project.cursorSmooth == nil {
+                        SectionLabel(text: "Smoothing", value: "\(Int((cursor.smoothing * 100).rounded()))%")
+                        Slider(value: Binding(get: { cursor.smoothing }, set: { value in
+                            model.setCursor { $0.smoothing = (value * 20).rounded() / 20 }
+                        }), in: 0...1)
+                            .accessibilityLabel("Cursor smoothing")
+                            .accessibilityIdentifier("recorder.style.cursorSmoothing")
+                        SwitchRow("Hide when still", isOn: Binding(get: { (cursor.hideAfterMs ?? 0) > 0 }, set: { on in
+                            model.setCursor { $0.hideAfterMs = on ? 1500 : 0 }
+                        }))
+                        .accessibilityIdentifier("recorder.style.cursorHide")
+                        if let hide = cursor.hideAfterMs, hide > 0 {
+                            SectionLabel(text: "Hide after", value: String(format: "%.1f s", Double(hide) / 1000))
+                            Slider(value: Binding(get: { Double(hide) }, set: { value in
+                                model.setCursor { $0.hideAfterMs = Int((value / 250).rounded() * 250) }
+                            }), in: 500...5000)
+                                .accessibilityLabel("Hide the cursor after")
+                                .accessibilityIdentifier("recorder.style.cursorHideAfter")
+                        }
                     }
                 }
+                if cursor.show { SmoothCursorSection(model: model) } // fx B (round 4)
             } else if model.cursor != nil {
                 Text("This recording has the system cursor in its picture. Record without --system-cursor to draw a smoothed cursor of any size.")
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
@@ -1123,6 +1128,7 @@ private struct HideInspector: View {
                 if selected { RedactionEditor(model: model, redaction: redaction) }
             }
         }
+        PrivateDataSection(model: model) // fx B (round 4)
     }
 }
 

@@ -51,6 +51,16 @@ enum EditOpDiff {
                 EditOp.EndCard(text: $0.text, link: $0.link ?? "", qr: $0.qr, seconds: $0.seconds)
             } ?? EditOp.EndCard(enabled: false)))
         }
+        // fx B (round 4): the smooth cursor and the speed badge (nil is off; the badge has no op that removes it).
+        if old.cursorSmooth != new.cursorSmooth {
+            ops.append(.cursorSmooth(new.cursorSmooth.map {
+                EditOp.CursorSmooth(enabled: true, strength: $0.strength, jitterPx: $0.jitterPx, idleFadeSeconds: $0.idleFadeSeconds)
+            } ?? EditOp.CursorSmooth(enabled: false)))
+        }
+        if old.autoSpeed != new.autoSpeed {
+            let speed = new.autoSpeed ?? EditProject.AutoSpeed(badge: false)
+            ops.append(.autoSpeed(EditOp.AutoSpeed(badge: speed.badge, position: speed.position)))
+        }
         return ops
     }
 

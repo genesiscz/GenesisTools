@@ -81,6 +81,11 @@ enum EditOp: Equatable {
     case setLens(SetLens)
     case unlens(Unlens)
     case tilt(Tilt)
+    // fx B (round 4): private data, smooth cursor, typing and waiting speed-ups.
+    case hidePrivate(HidePrivate)
+    case cursorSmooth(CursorSmooth)
+    case speedUpWaits(SpeedUpWaits)
+    case autoSpeed(AutoSpeed)
 
     /// Every payload type, so the decoder finds one by its tag and the tag test lists them.
     static let payloads: [any EditOpPayload.Type] = [
@@ -97,6 +102,8 @@ enum EditOp: Equatable {
         IntroCard.self, EndCard.self,
         // Round 4 fx-render.
         Transition.self, Lens.self, SetLens.self, Unlens.self, Tilt.self,
+        // fx B (round 4)
+        HidePrivate.self, CursorSmooth.self, SpeedUpWaits.self, AutoSpeed.self,
     ]
 
     static var tags: [String] { payloads.map { $0.tag } }
@@ -172,6 +179,10 @@ enum EditOp: Equatable {
         case let .setLens(op): op
         case let .unlens(op): op
         case let .tilt(op): op
+        case let .hidePrivate(op): op
+        case let .cursorSmooth(op): op
+        case let .speedUpWaits(op): op
+        case let .autoSpeed(op): op
         }
     }
 
@@ -885,5 +896,44 @@ extension EditOp {
         var inMs: Int?
         var outMs: Int?
         var op: EditOp { .tilt(self) }
+    }
+}
+
+// fx B (round 4): the ops of private data, the smooth cursor and the typing and waiting speed-ups
+// (src/utils/recording-editor/project.ts). The TypeScript side finds the hits and stretches; these only name them.
+extension EditOp {
+    /// Hides the private data on the screen; `ids` from `tools recorder private-data` (nil: all).
+    struct HidePrivate: EditOpPayload {
+        static let tag = "hidePrivate"
+        var ids: [String]?
+        var kinds: [String]?
+        var style: EditProject.RedactionStyle?
+        var op: EditOp { .hidePrivate(self) }
+    }
+
+    struct CursorSmooth: EditOpPayload {
+        static let tag = "cursorSmooth"
+        var enabled: Bool?
+        var strength: Double?
+        var jitterPx: Double?
+        var idleFadeSeconds: Double?
+        var op: EditOp { .cursorSmooth(self) }
+    }
+
+    /// Speeds up the typing and waiting stretches `tools recorder waits` lists; `ids` nil is all of them.
+    struct SpeedUpWaits: EditOpPayload {
+        static let tag = "speedUpWaits"
+        var ids: [String]?
+        var minSeconds: Double?
+        var maxArea: Double?
+        var speed: Double?
+        var op: EditOp { .speedUpWaits(self) }
+    }
+
+    struct AutoSpeed: EditOpPayload {
+        static let tag = "autoSpeed"
+        var badge: Bool?
+        var position: EditProject.SpeedBadgePosition?
+        var op: EditOp { .autoSpeed(self) }
     }
 }

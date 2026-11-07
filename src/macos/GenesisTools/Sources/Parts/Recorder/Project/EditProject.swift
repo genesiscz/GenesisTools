@@ -47,6 +47,14 @@ struct EditProject: Codable, Equatable {
     var lens: Lens?
     /// Round 4 fx-render: the 3D tilt of the framed picture; nil is flat.
     var tilt: Tilt?
+    // fx B (round 4): private data, smooth cursor, typing and waiting speed-ups (private-data.ts, cursor-smooth.ts and
+    // waits.ts in src/utils/recording-editor). Optional, so an older file decodes; nil is off.
+    /// The private hits a `hidePrivate` op already hid.
+    var privacy: Privacy?
+    /// The smooth cursor; nil keeps `cursor.smoothing` and `cursor.hideAfterMs`.
+    var cursorSmooth: CursorSmooth?
+    /// The "⏩ 6x" badge over sped-up parts; nil is no badge.
+    var autoSpeed: AutoSpeed?
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
@@ -617,5 +625,29 @@ extension EditProject {
             case let .badValue(detail): "the edit file is not valid: \(detail)"
             }
         }
+    }
+}
+
+// fx B (round 4)
+extension EditProject {
+    struct Privacy: Codable, Equatable {
+        var applied: [String] = []
+    }
+
+    /// The drawn cursor glides along an average up to ±400 ms × `strength`, moves under `jitterPx` points are dropped,
+    /// and it fades after `idleFadeSeconds` without a move (0 keeps it). Clicks stay exact.
+    struct CursorSmooth: Codable, Equatable {
+        var strength = 0.6
+        var jitterPx = 3.0
+        var idleFadeSeconds = 2.0
+    }
+
+    struct AutoSpeed: Codable, Equatable {
+        var badge = true
+        var position = SpeedBadgePosition.topRight
+    }
+
+    enum SpeedBadgePosition: String, Codable, CaseIterable {
+        case topRight = "top-right", topLeft = "top-left", bottomRight = "bottom-right", bottomLeft = "bottom-left"
     }
 }

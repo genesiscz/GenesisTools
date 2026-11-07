@@ -109,6 +109,9 @@ final class ZoomState: @unchecked Sendable {
         var transition: TransitionLook.Mark?
         var lenses: [LensLook.Mark] = []
         var tilt: TiltLook.Pose?
+        // fx B (round 4)
+        /// The speed of the part playing, when the speed badge is on and it plays at 1.5x or faster.
+        var speedBadge: SpeedBadge.Mark?
     }
 
     /// Every frame the renderer drew; the editor compares it with the frames a playback should have shown.
@@ -145,7 +148,8 @@ final class ZoomState: @unchecked Sendable {
         var look = FrameLook(view: view,
                          marks: marks, clicks: project.clicks,
                          cursor: Self.cursorMark(atSourceUs: sourceUs, track: cursor, settings: project.cursor ?? .init(),
-                                                 videoWidth: Double(project.source.width)),
+                                                 videoWidth: Double(project.source.width), smooth: project.cursorSmooth,
+                                                 aspect: Double(project.source.height) / Double(max(1, project.source.width))),
                          coverFocus: Self.coverFocus(atSourceUs: sourceUs, project: project, track: cursor, view: view),
                          frame: project.frame,
                          caption: project.captions.flatMap { settings in
@@ -173,6 +177,7 @@ final class ZoomState: @unchecked Sendable {
         look.outUs = outUs
         look.progress = project.progress.flatMap { ProgressMark.at(outUs: outUs, project: project, recorded: recordedMarkers, settings: $0) }
         look.shapes = Self.shapes(atSourceUs: sourceUs, project: project)
+        look.speedBadge = SpeedBadge.badge(atOutput: outUs, project: project)
         look.spotlightFade = look.redactions.filter { $0.style == .spotlight }.map { spot in
             let fade = Double(min(200_000, max(1, (spot.endUs - spot.startUs) / 3)))
             return min(1, Double(sourceUs - spot.startUs) / fade, Double(spot.endUs - sourceUs) / fade)
@@ -238,13 +243,24 @@ final class ZoomState: @unchecked Sendable {
         return CGPoint(x: (point.x - rect.minX) / rect.width, y: (point.y - rect.minY) / rect.height)
     }
 
-    static func cursorMark(atSourceUs us: Int64, track: CursorTrack?, settings: EditProject.Cursor, videoWidth: Double) -> Looks.CursorMark? {
+    static func cursorMark(atSourceUs us: Int64, track: CursorTrack?, settings: EditProject.Cursor, videoWidth: Double,
+                           smooth: EditProject.CursorSmooth? = nil, aspect: Double = 9.0 / 16) -> Looks.CursorMark? {
         guard settings.show, let track, track.drawsCursor else { return nil }
         let ms = Double(us) / 1000
-        guard let shape = track.shape(atMs: ms), let point = track.drawnPoint(atMs: ms, smoothing: settings.smoothing) else { return nil }
+        // fx B (round 4): the smooth cursor, when on, takes the place of the cursor's own smoothing and hiding.
+        let placed: (x: Double, y: Double, opacity: Double)?
+        if let smooth {
+            placed = track.smoothMark(atMs: ms, settings: smooth, aspect: aspect)
+        } else {
+            placed = track.drawnPoint(atMs: ms, smoothing: settings.smoothing).map {
+                (x: $0.x, y: $0.y, opacity: track.visibility(atMs: ms, hideAfterMs: settings.hideAfterMs ?? 0))
+            }
+        }
+        guard let shape = track.shape(atMs: ms), let placed else { return nil }
+        let point = (x: placed.x, y: placed.y)
         // A recording without the width in points is taken as a Retina display.
         let perPoint = track.pointWidth.map { videoWidth / $0 } ?? 2
-        let opacity = track.visibility(atMs: ms, hideAfterMs: settings.hideAfterMs ?? 0)
+        let opacity = placed.opacity
         guard opacity > 0.001 else { return nil }
         return Looks.CursorMark(shape: shape, x: point.x, y: point.y, pixelsPerPoint: perPoint * max(0.5, min(3, settings.size)),
                                 opacity: opacity)
@@ -728,6 +744,11 @@ struct EditRenderer {
             for text in look.texts {
                 result = Looks.drawText(text.note, opacity: text.opacity, plates: zoom.keyPlates, on: result, size: size,
                                         sinceUs: look.sourceUs - text.note.startUs)
+                    .cropped(to: CGRect(origin: .zero, size: size))
+            }
+            // fx B (round 4)
+            if let badge = look.speedBadge {
+                result = SpeedBadge.draw(badge, plates: zoom.keyPlates, on: result, size: size)
                     .cropped(to: CGRect(origin: .zero, size: size))
             }
             if let cameraFeed, let camera = zoom.camera {
