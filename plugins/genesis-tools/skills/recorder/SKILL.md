@@ -17,6 +17,10 @@ the order to use them in.
 | A recording the person makes by hand | the capture picker: ⌘7 (or the menu bar item → Capture Picker…) |
 | Edit an existing recording | `movies.open(id)` in the REPL, or `tools recorder apply <recording> '<ops>'` |
 
+🛑 Before you edit a recording into a cut for someone (effects, privacy, voiceover, music), read
+`references/editing-playbook.md` in full: work on a copy, survey first, place effects on screen events, hide text and
+not boxes of the screen, check every effect boundary, and score the cut before you hand it over.
+
 ## Demo mode (one call, a finished demo)
 
 1. Write the steps as `{ caption, run, holdSeconds? }`. `run` does the step (a `computer.*` call, a click, a page
