@@ -842,6 +842,11 @@ describe("edit project (edit.json)", () => {
             [undefined, 0],
         ]);
         const pixelId = looks.redactions?.[0]?.id ?? "";
+        // A cell under the default (19 px at 1080p) may leave text readable; check() says so.
+        const small = applyOp(looks, { op: "setRedaction", id: pixelId, cell: 6 });
+        expect(
+            checkProject(small, facts).find((issue) => issue.target?.id === pixelId && issue.message.includes("6 px"))
+        ).toBeDefined();
         looks = applyOp(looks, { op: "setRedaction", id: pixelId, cell: 0 });
         expect(looks.redactions?.[0]?.cell).toBeUndefined();
     });

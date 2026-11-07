@@ -310,6 +310,20 @@ function redactionEdgeIssues(project: EditProject): EditIssue[] {
             });
         }
 
+        // A pixelate block smaller than the default can leave the text under it readable (6 px over a 48 px heading).
+        const defaultCell = Math.max(8, project.source.height * 0.018);
+
+        if (part.style === "pixelate" && part.cell !== undefined && part.cell < defaultCell) {
+            issues.push({
+                severity: "check",
+                item,
+                message: `The ${said(part)} pixelates in ${part.cell} px blocks, smaller than the default ${Math.round(defaultCell)} px; text under it may stay readable`,
+                fix: `movie.apply([{ op: "setRedaction", id: "${part.id}", cell: 0 }])`,
+                at: tenths(part.startUs),
+                target,
+            });
+        }
+
         const cut = edges.ends.find((end) => end > part.endUs && end - part.endUs <= HIDING_HOLE_US);
 
         if (cut !== undefined && keptUs(project, part.endUs, cut) > 0) {
