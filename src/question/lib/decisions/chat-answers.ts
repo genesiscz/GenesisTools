@@ -74,13 +74,37 @@ const IMAGE_ONLY = /^\[Image(?: #\d+)?: source: [^\]\n]*\]$/;
 /** Where a second answer starts on the same line: `D14 b, D15 a` or `14 b); 15 a)`. */
 const NEXT_ANSWER = /\s*[,;]\s*(?=(?:D|DECISION\s*)?#?\d+\s*[:.)\-–—]?\s*\(?[a-z]{1,4}\b)/i;
 const LEAD = /^\s*[-–—:,]\s*/;
+/**
+ * The letters of an answer: one (`b`), a run (`ac`, `abcdef`), or single letters with separators (`a, c`, `a+c`,
+ * `a c`, `a and c`, `a, b and f`), as a decision that takes a set of letters is answered. `lettersOf` refuses a run of
+ * more than four letters that does not rise, so a word is never read as letters.
+ */
+const LETTER_SET = String.raw`[a-z]{1,26}(?:(?:\s*[,+&/]\s*|\s+and\s+|\s+)[a-z](?![a-z]))*`;
+
+/** The letters a `LETTER_SET` match names, or undefined when a long run is a word rather than letters. */
+function lettersOf(set: string): string | undefined {
+    const runs = set
+        .toLowerCase()
+        .replace(/\s+and\s+/g, " ")
+        .split(/[^a-z]+/)
+        .filter(Boolean);
+    const rises = (run: string) => [...run].every((char, index) => index === 0 || char > (run[index - 1] ?? ""));
+
+    return runs.every((run) => run.length <= 4 || rises(run)) ? runs.join("") : undefined;
+}
 
 function asksIn(text: string): number[] {
     return [...new Set([...answerLines(text).join("\n").matchAll(ASK)].map((match) => Number(match[1])))];
 }
 
-function found(letters: string, rest: string, allowed: readonly string[]): Found {
-    const option = [...new Set(letters.toLowerCase())].join("");
+function found(letters: string, rest: string, allowed: readonly string[]): Found | undefined {
+    const named = lettersOf(letters);
+
+    if (named === undefined) {
+        return undefined;
+    }
+
+    const option = [...new Set(named)].join("");
 
     return {
         option,
@@ -92,10 +116,11 @@ function found(letters: string, rest: string, allowed: readonly string[]): Found
 /** What one segment of a user line says about decision `n` (digits only, so it goes into the patterns as it is). */
 function answerIn(segment: string, n: number, allowed: readonly string[]): Found | undefined {
     const head = `^\\s*(?:[-*]\\s+)?`;
-    // `D14 b)`, `14 b)`, `DECISION 14 - (b)`, `D14 ac)`: the letters close with `)`.
-    const closed = new RegExp(`${head}(?:D|DECISION\\s*)?#?${n}\\s*[:.)\\-–—]?\\s*\\(?([a-z]{1,4})\\)(.*)$`, "i").exec(
-        segment
-    );
+    // `D14 b)`, `14 b)`, `DECISION 14 - (b)`, `D14 ac)`, `14 (a, c)`: the letters close with `)`.
+    const closed = new RegExp(
+        `${head}(?:D|DECISION\\s*)?#?${n}\\s*[:.)\\-–—]?\\s*\\(?(${LETTER_SET})\\)(.*)$`,
+        "i"
+    ).exec(segment);
 
     if (closed) {
         return found(closed[1] ?? "", closed[2] ?? "", allowed);
@@ -106,16 +131,19 @@ function answerIn(segment: string, n: number, allowed: readonly string[]): Found
 
     if (own?.[1]) {
         const answer = own[1].trim();
-        const choice = /^([a-z])(?:\s*[-–—:]\s*(.*))?$/i.exec(answer);
+        const choice = new RegExp(`^(${LETTER_SET})(?:\\s*[-–—:]\\s*(.*))?$`, "i").exec(answer);
+        const letters = choice && allowed.length > 0 ? found(choice[1] ?? "", choice[2] ?? "", allowed) : undefined;
 
-        return allowed.length > 0 && choice
-            ? found(choice[1] ?? "", choice[2] ?? "", allowed)
+        // Own words that only look like letters ("D14: ok") stay words: a set must name the decision's letters. One
+        // letter past the options ("D14: z") is still a letter, so it reads as an unknown option.
+        return letters && (!letters.invalid || (letters.option ?? "").length === 1)
+            ? letters
             : { answer, invalid: false };
     }
 
-    // `D14 b`, `D14 b - because`: prose after an option requires `)`, `-`, `–`, `—` or `:`.
+    // `D14 b`, `D14 b - because`, `D14 a, c`: prose after the letters requires `)`, `-`, `–`, `—` or `:`.
     const prefixed = new RegExp(
-        `${head}(?:D|DECISION\\s*)#?${n}\\s*[.\\-–—]?\\s*([a-z])(?:\\s*[-–—:]\\s*(.*)|\\s*)$`,
+        `${head}(?:D|DECISION\\s*)#?${n}\\s*[.\\-–—]?\\s*(${LETTER_SET})(?:\\s*[-–—:]\\s*(.*)|\\s*)$`,
         "i"
     ).exec(segment);
 
@@ -123,8 +151,8 @@ function answerIn(segment: string, n: number, allowed: readonly string[]): Found
         return found(prefixed[1] ?? "", prefixed[2] ?? "", allowed);
     }
 
-    // `14 b` alone on its line or segment.
-    const bare = new RegExp(`${head}#?${n}\\s*[:.\\-–—]?\\s*([a-z]{1,4})\\s*$`, "i").exec(segment);
+    // `14 b`, `14 ac`, `14 a, c` alone on its line or segment.
+    const bare = new RegExp(`${head}#?${n}\\s*[:.\\-–—]?\\s*(${LETTER_SET})\\s*$`, "i").exec(segment);
 
     if (bare) {
         return found(bare[1] ?? "", "", allowed);
@@ -274,10 +302,15 @@ export function chatAnswers(entries: readonly NativeHistoryEntry[], open: readon
             }
 
             const first = lines.find((line) => line.trim() !== "") ?? "";
-            const bare = /^\s*\(?([a-z]{1,4})\)(.*)$/i.exec(first);
+            // `b)`, `ac)`, `(a, c)` alone answer the one decision the last reply asked.
+            const bare = new RegExp(`^\\s*\\(?(${LETTER_SET})\\)(.*)$`, "i").exec(first);
+            const bareHit =
+                bare && alone && !/DECISION/.test(text)
+                    ? found(bare[1] ?? "", bare[2] ?? "", decision.letters)
+                    : undefined;
 
-            if (!answered && bare && alone && !/DECISION/.test(text)) {
-                hits.push({ found: found(bare[1] ?? "", bare[2] ?? "", decision.letters), evidence: evidence(first) });
+            if (!answered && bareHit) {
+                hits.push({ found: bareHit, evidence: evidence(first) });
                 answered = true;
             }
 

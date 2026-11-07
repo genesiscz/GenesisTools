@@ -2078,6 +2078,31 @@ describe("chatAnswers", () => {
         ]);
     });
 
+    test("reads a set of letters in the forms people type, and leaves words and prose alone", () => {
+        const six = ["a", "b", "c", "d", "e", "f"];
+        const answerTo = (text: string) =>
+            chatAnswers(
+                [entry("assistant", "❓ DECISION 15 — Which cleanup steps may run now?", 1), entry("user", text, 2)],
+                [{ number: 15, letters: six, askedAt: at(1) }]
+            );
+        const options = (text: string) => answerTo(text).unambiguous.map((answer) => answer.option ?? null);
+
+        expect(options("15 a, b, c")).toEqual(["abc"]);
+        expect(options("15 a+c")).toEqual(["ac"]);
+        expect(options("15 a c d")).toEqual(["acd"]);
+        expect(options("15 a, b and f")).toEqual(["abf"]);
+        expect(options("15 abcdef")).toEqual(["abcdef"]);
+        expect(options("D15: a, d")).toEqual(["ad"]);
+        expect(options("(a, c)")).toEqual(["ac"]);
+        expect(answerTo("D15 a, c - the rest later").unambiguous[0]?.answer).toBe("the rest later");
+        // Own words after a colon stay words; a long run of letters that does not rise is a word, not a set.
+        expect(answerTo("D15: ok").unambiguous.map((answer) => [answer.option ?? null, answer.answer])).toEqual([
+            [null, "ok"],
+        ]);
+        expect(options("15 a but not c")).toEqual([]);
+        expect(options("15 abcfed")).toEqual([]);
+    });
+
     test("calls two answers, a letter past the options, or a bare mention ambiguous", () => {
         const found = chatAnswers(
             [

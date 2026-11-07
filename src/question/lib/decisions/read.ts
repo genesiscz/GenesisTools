@@ -5,7 +5,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { json2md } from "@genesiscz/utils/json2md";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import { waitsOnHuman } from "../waiting/set";
-import { decisionOptionLabels, shownDecisionText } from "./option-labels";
+import { decisionOptionLabels, recommendedLetters, shownDecisionText, takesSeveral } from "./option-labels";
 import {
     boundContext,
     cleanBlock,
@@ -173,6 +173,9 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
             const meta = [
                 row.for ? `for: ${row.for}` : null,
                 row.blocking ? "blocking" : null,
+                !todo && takesSeveral({ ...row, options: decisionOptionLabels(row.prompt, row.options) })
+                    ? "pick any set of letters (ac)"
+                    : null,
                 row.reevaluateWhen ? `reevaluate when: ${row.reevaluateWhen}` : null,
                 (row.revision ?? 1) > 1
                     ? `revision ${row.revision} (earlier text: ${toolCommand("question show")} ${row.id} --versions)`
@@ -195,7 +198,7 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
                           {
                               ul: shown.options.map(
                                   (option, index) =>
-                                      `${letter(index)}) ${optionLabel(option, letter(index))}${row.recommended === letter(index) ? " (recommended)" : ""}`
+                                      `${letter(index)}) ${optionLabel(option, letter(index))}${recommendedLetters(row.recommended).has(letter(index)) ? " (recommended)" : ""}`
                               ),
                           },
                       ]
@@ -539,7 +542,10 @@ function finish(block: OpenBlock, context: string): HarvestedDecision {
         options: block.options,
         ...(block.title ? { title: block.title } : {}),
         ...(rationales.some((text) => text !== null) ? { rationales } : {}),
-        ...(recommended && recommended.charCodeAt(0) - 97 < block.options.length ? { recommended } : {}),
+        ...(recommended &&
+        [...recommendedLetters(recommended)].every((each) => each.charCodeAt(0) - 97 < block.options.length)
+            ? { recommended }
+            : {}),
         ...(notes ? { notes } : {}),
         ...(context ? { context: boundContext(context, CONTEXT_MAX) } : {}),
     };
@@ -604,8 +610,9 @@ export function parseDecisionBlocks(reply: string): HarvestedDecision[] {
             current.options.push(mark.label);
             current.rationales.push(mark.rationale);
 
+            // Two options marked "(recommended)" recommend the pair ("ac"): such a decision takes a set of letters.
             if (mark.recommended) {
-                current.recommended = letterAt(current.options.length - 1);
+                current.recommended = `${current.recommended ?? ""}${letterAt(current.options.length - 1)}`;
             }
 
             current.end = index;

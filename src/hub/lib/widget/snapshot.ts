@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { sessionChangesPath } from "@app/agents/lib/changes/log";
 import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
-import { decisionOptionLabels, shownDecisionText } from "@app/question/lib/decisions/option-labels";
+import { decisionOptionLabels, shownDecisionText, takesSeveral } from "@app/question/lib/decisions/option-labels";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import {
     type AnsweredVia,
@@ -128,6 +128,8 @@ export interface WidgetCard {
     number?: number;
     /** `rationale`: a decision option's reason, when the agent gave one (the hub's `InboxChoice.rationale`). */
     choices: { id: string; title: string; recommended: boolean; rationale?: string }[];
+    /** Decision cards that take any set of the options (`takesSeveral`): check boxes, a click toggles, one Send. */
+    multiple?: true;
     /** Decision cards: what the hub's Inbox card shows besides the question, from the same source (`fromRecord`). */
     decision?: WidgetDecisionDetails;
     formItems?: AskItem[];
@@ -321,6 +323,8 @@ export interface WidgetInboxItem {
     /** A decision: its options, so the inbox of every session can stage a pick without opening the session. */
     options?: string[];
     recommended?: string;
+    /** A decision that takes any set of its options (`takesSeveral`): a click toggles a letter, one Send answers. */
+    multiple?: true;
     revision?: number;
     /**
      * A decision row's last write (epoch ms): the widget drops its optimistic pick once the row changed after the
@@ -1421,6 +1425,9 @@ export async function widgetSnapshot({
             // A bare letter ("a") takes the words of its line in the prompt, as the session's card shows it.
             options: decisionOptionLabels(row.prompt, row.options),
             ...(row.recommended ? { recommended: row.recommended } : {}),
+            ...(takesSeveral({ ...row, options: decisionOptionLabels(row.prompt, row.options) })
+                ? { multiple: true as const }
+                : {}),
             revision: row.revision ?? 1,
             updatedAt: timeOf(row.updatedTs),
             ...stagedOf(row),
@@ -1754,6 +1761,7 @@ export async function widgetSnapshot({
                 recommended: choice.recommended,
                 ...(choice.rationale?.trim() ? { rationale: choice.rationale } : {}),
             })),
+            ...(inbox.multiple ? { multiple: true as const } : {}),
             ...(Object.keys(details).length > 0 ? { decision: details } : {}),
             attachments: decisionImages.attachments,
             refs: (row.refs ?? []).map((ref) => ({ type: "file", value: ref.path })),

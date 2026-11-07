@@ -157,6 +157,31 @@ export function recommendedLetters(recommended: string | null | undefined): Set<
     return new Set(letters);
 }
 
+/** The words of a prompt that ask for a set of letters: "Pick any set of letters", "choose several", "all that apply". */
+const ASKS_FOR_SEVERAL =
+    /\b(?:any set of (?:the )?(?:letters|options)|(?:pick|choose|select|tick) (?:several|multiple|one or more|any number)|all that apply|several letters|multiple letters)\b/i;
+
+/**
+ * Whether a decision takes any set of its options (`"ac"`) instead of one: it was posted with `multiple`
+ * (`allowMultiple`), its recommendation names two or more letters (`"abc"`, "a + b"), or its prompt asks for a set.
+ * DECISION 15 of 2026-11-07 asked "Pick any set of letters" and recommended `abc`, and every surface answered one
+ * letter per click. Every reader asks this one rule, and the apps read its result (`multiple`) from the snapshot.
+ */
+export function takesSeveral(row: {
+    multiple?: boolean;
+    recommended?: string | null;
+    prompt?: string | null;
+    options?: readonly string[];
+}): boolean {
+    if (row.options !== undefined && row.options.length < 2) {
+        return false;
+    }
+
+    return (
+        row.multiple === true || recommendedLetters(row.recommended).size > 1 || ASKS_FOR_SEVERAL.test(row.prompt ?? "")
+    );
+}
+
 /** Whether `label` names nothing beyond its letter: "", "a", "a)", "(a)", "a.", "**a)**". */
 export function isBareOptionLabel(label: string, letter: string): boolean {
     const plain = label

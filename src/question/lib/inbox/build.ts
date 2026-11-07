@@ -2,7 +2,7 @@ import { type OpenQuestion, openQuestionKey } from "@genesiscz/utils/agents/dial
 import { isTaskReport } from "@genesiscz/utils/ai/transcripts/prompt-parts";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { looksLikeDump, whySentence } from "../decisions/delivery-text";
-import { recommendedLetters, shownDecisionText } from "../decisions/option-labels";
+import { recommendedLetters, shownDecisionText, takesSeveral } from "../decisions/option-labels";
 import { parseDecisionBlocks } from "../decisions/read";
 import { findRefs } from "../decisions/reply-text";
 import {
@@ -73,6 +73,11 @@ export interface InboxDecision {
     prompt: string;
     choices: InboxChoice[];
     recommended: string | null;
+    /**
+     * The user may pick any set of the options (`takesSeveral`): every surface shows check boxes, a click adds or
+     * removes a letter, and one Send answers the set ("ac").
+     */
+    multiple: boolean;
     blocking: boolean;
     status: InboxStatus;
     /** The chosen letters once answered. */
@@ -412,6 +417,7 @@ export function fromRecord(row: DecisionRecord): InboxDecision {
         prompt: shown.prompt,
         choices: choicesOf(shown.options, row.rationales, row.recommended ?? null),
         recommended: row.recommended ?? null,
+        multiple: takesSeveral({ ...row, options: shown.options }),
         blocking: row.blocking === true,
         status: STATUS[row.state],
         option: row.option ?? null,
@@ -475,6 +481,11 @@ function fromBlock(sessionId: string, block: HarvestedDecision, at: string): Inb
         prompt: shown.prompt,
         choices: choicesOf(shown.options, block.rationales, block.recommended ?? null),
         recommended: block.recommended ?? null,
+        multiple: takesSeveral({
+            recommended: block.recommended,
+            prompt: [block.prompt, block.notes].filter(Boolean).join("\n"),
+            options: block.options,
+        }),
         blocking: false,
         status: "waiting",
         option: null,
@@ -517,6 +528,7 @@ function merged(row: DecisionRecord, block: HarvestedDecision): InboxDecision {
         context: item.context ?? fresh.context,
         notes: item.notes ?? fresh.notes,
         recommended: item.recommended ?? fresh.recommended,
+        multiple: item.multiple || fresh.multiple,
         choices: item.choices.map((choice, index) => ({
             ...choice,
             rationale: choice.rationale ?? fresh.choices[index]?.rationale ?? null,

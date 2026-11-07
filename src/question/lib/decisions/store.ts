@@ -78,6 +78,11 @@ export interface DecisionRecord {
     confidence?: "high" | "medium" | "low";
     refs?: DecisionRef[];
     blocking?: boolean;
+    /**
+     * The user may pick any set of the options (`"ac"`), posted as `allowMultiple`. Every surface asks `takesSeveral`
+     * (option-labels.ts), which also reads a several-letter recommendation, so rows from before the field count too.
+     */
+    multiple?: boolean;
     provider?: string;
     cwd?: string;
     repoRoot?: string;
@@ -162,6 +167,7 @@ const VERSIONED_KEYS = [
     "confidence",
     "refs",
     "blocking",
+    "multiple",
     "source",
     "transclusions",
     "draft",
@@ -729,6 +735,7 @@ function contentOf(decision: PostedDecision, excerpt: string | undefined): Conte
         ...(decision.confidence ? { confidence: decision.confidence } : {}),
         ...(decision.refs ? { refs: decision.refs } : {}),
         ...(decision.blocking === undefined ? {} : { blocking: decision.blocking }),
+        ...(decision.multiple ? { multiple: true } : {}),
         ...(decision.source ? { source: decision.source } : {}),
         ...(decision.transclusions?.length ? { transclusions: decision.transclusions } : {}),
     };
