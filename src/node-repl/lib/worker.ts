@@ -152,7 +152,7 @@ async function showImages(input: ShowInput | ShowInput[]): Promise<void> {
 
 const CORE_HELP = [
     "search(query) finds methods across loaded toolsets; describe(name) prints a method's complete descriptor.",
-    "help(name?) prints the docs of a loaded toolset; show(image | path | Buffer) returns an image to the model.",
+    "help(name?) lists a loaded toolset, one line per method (describe(name) prints one in full); show(image | path | Buffer) returns an image to the model.",
     "nodeRepl.write(value) adds output; nodeRepl.emitImage({ bytes }) is show() for one image's bytes, checked the same way; await sleep(ms) waits.",
     "Each method says what it does: [read] changes nothing and reaches no one; [reversible] or [destructive] change state; · user means the user meets it (a dialog, a window, focus, the clipboard, the inbox), · paid means a run billed to an account. A call that would reach someone it does not declare is refused.",
 ];

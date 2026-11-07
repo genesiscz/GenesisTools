@@ -554,7 +554,8 @@ describe("toolsets", () => {
             expect((await engine.run('search("path")')).text).toContain("counter.logTo");
             expect((await engine.run('describe("counter.logTo")')).text).toContain("Parameters:");
             const docs = await engine.run('help("counter")');
-            expect(docs.text).toContain("- counter.logTo(path: string) → unknown [reversible]");
+            expect(docs.text).toContain("- counter.logTo(path) [reversible]: ");
+            expect(docs.text).toContain(`describe("counter.logTo") prints one in full`);
             expect((await engine.run('help("nope")')).error).toContain('No toolset "nope" is loaded');
 
             const shown = await engine.run(

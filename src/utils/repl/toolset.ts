@@ -1,6 +1,7 @@
 import type { ApiDescriptor, MethodDescriptor } from "@genesiscz/utils/api-descriptor";
-import { methodSignature, renderDocs, runInMethodScope } from "@genesiscz/utils/api-descriptor";
+import { methodSignature, runInMethodScope } from "@genesiscz/utils/api-descriptor";
 import { levenshteinDistance } from "@genesiscz/utils/fuzzy-match";
+import { renderBrief } from "./discovery";
 import type { ShowInput } from "./show";
 
 /** What a toolset gets from the kernel when it is preloaded into a fresh worker. */
@@ -48,9 +49,9 @@ export abstract class ReplToolset {
         return this.api.summary;
     }
 
-    /** The full API, as `help(id)` prints it. */
+    /** The API in one line per method, as `help(id)` prints it; describe(name) prints a method in full. */
     docs(): string {
-        return renderDocs(this.api);
+        return renderBrief(this.api);
     }
 
     /** The one line the `js` tool description carries. */

@@ -25,17 +25,28 @@ function saysNothing(schema: unknown): boolean {
     return typeof schema === "object" && schema !== null && Object.keys(schema).every((key) => key === "$schema");
 }
 
+/** A JSON schema on one line without its `$schema` key: the signature above it already spells the types out. */
+function compactSchema(schema: Record<string, unknown>): string {
+    const { $schema: _dialect, ...rest } = schema;
+    return SafeJSON.stringify(rest);
+}
+
+/**
+ * One method in full. The doc comes right under the signature and the parameters' JSON schema last, on one line: the
+ * pretty-printed schema ran to 80 lines for frame(), and an agent that read the first lines of several describe()
+ * calls saw only signatures (round 5, item 8).
+ */
 function fullDescriptor(owner: string, method: MethodDescriptor): string {
     const result = jsonSchemaOf(method.result, "output");
     const resultLine = saysNothing(result)
         ? `Result: ${method.resultName ?? "unknown"}`
-        : `Result: ${method.resultName ? `${method.resultName} ` : ""}${SafeJSON.stringify(result, null, 2)}`;
+        : `Result: ${method.resultName ? `${method.resultName} ` : ""}${compactSchema(result)}`;
     return [
         methodSignature(owner, method),
-        method.doc,
+        `Doc: ${method.doc}`,
         `Effect: ${effectLabel(method)}`,
-        `Parameters: ${SafeJSON.stringify(jsonSchemaOf(method.params), null, 2)}`,
         resultLine,
+        `Parameters: ${compactSchema(jsonSchemaOf(method.params))}`,
         ...(method.mcp && Object.keys(method.mcp).length ? [`MCP: ${SafeJSON.stringify(method.mcp)}`] : []),
     ].join("\n");
 }
@@ -58,16 +69,80 @@ const SEARCH_LINES = 10;
 /** A search line's doc is its first sentence, cut at a word to this length; describe(name) prints all of it. */
 const SEARCH_DOC_MAX = 200;
 
-function docStart(doc: string): string {
+/** help(name) lists every method, so its lines are shorter than search's. */
+const BRIEF_DOC_MAX = 120;
+
+function docStart(doc: string, max = SEARCH_DOC_MAX): string {
     const end = doc.search(/[.!?](\s|$)/);
     const sentence = end === -1 ? doc : doc.slice(0, end + 1);
 
-    if (sentence.length <= SEARCH_DOC_MAX) {
+    if (sentence.length <= max) {
         return sentence;
     }
 
-    const cut = sentence.slice(0, SEARCH_DOC_MAX);
+    const cut = sentence.slice(0, max);
     return `${cut.slice(0, cut.lastIndexOf(" "))} …`;
+}
+
+/**
+ * A call's shape in names only: `movie.cut(from, to)`, `movie.frame(options?: { enabled, aspect, fit, … })`. The full
+ * types are describe()'s; help(name) with them was 55,000 characters for movies (round 5, item 8).
+ */
+function briefSignature(owner: string, method: MethodDescriptor): string {
+    const schema = jsonSchemaOf(method.params);
+    const required = new Set(Array.isArray(schema.required) ? schema.required.map(String) : []);
+    const properties = typeof schema.properties === "object" && schema.properties !== null ? schema.properties : {};
+    const keys = Object.keys(properties);
+    const named = (key: string) => `${key}${required.has(key) ? "" : "?"}`;
+    const params = method.positional
+        ? method.positional.map(named).join(", ")
+        : keys.length === 0
+          ? ""
+          : `${required.size === 0 ? "options?" : "options"}: { ${keys.map(named).join(", ")} }`;
+    return `${owner}.${method.name}(${params})`;
+}
+
+/** One line per method: names, effect and the doc's first sentence. */
+function briefLines(owner: string, methods: readonly MethodDescriptor[]): string[] {
+    return methods.map(
+        (method) =>
+            `- ${briefSignature(owner, method)} [${effectLabel(method)}]: ${docStart(method.doc, BRIEF_DOC_MAX)}`
+    );
+}
+
+/**
+ * A toolset as `help(name)` prints it: one line per method (names, effect, the doc's first sentence) and the notes.
+ * describe("<owner>.<method>") prints one in full.
+ */
+export function renderBrief(api: ApiDescriptor): string {
+    const lines = [`${api.title} (global \`${api.global}\`): ${api.summary}`, ...briefLines(api.global, api.methods)];
+
+    for (const handle of api.handles ?? []) {
+        const owner = handle.name.charAt(0).toLowerCase() + handle.name.slice(1);
+        lines.push("", `${handle.name}: ${handle.summary}`, ...briefLines(owner, handle.methods));
+    }
+
+    if (api.notes?.length) {
+        lines.push("", ...api.notes.map((note) => `Note: ${note}`));
+    }
+
+    const methods = [...api.methods, ...(api.handles ?? []).flatMap((handle) => handle.methods)];
+    const positional = methods.find((method) => (method.positional?.length ?? 0) > 1);
+
+    if (positional?.positional) {
+        const names = positional.positional.join(", ");
+        lines.push(
+            `Note: a method with positional parameters also takes one object of their names: ${positional.name}(${names}) or ${positional.name}({ ${names} }).`
+        );
+    }
+
+    const example = api.handles?.[0]?.methods[0] ?? api.methods[0];
+    const exampleOwner = api.handles?.[0] ? `${api.global}.${api.handles[0].name}` : api.global;
+    lines.push(
+        "",
+        `Each line is the method's names and the first sentence of its doc. describe("${example ? `${exampleOwner}.${example.name}` : api.global}") prints one in full: its types, its whole doc, its parameters and its result; search("words") finds methods by what they do.`
+    );
+    return lines.join("\n");
 }
 
 /** One line per method of an owner (`movies`, `movies.Movie`, or its alias `movie`), like search's lines. */

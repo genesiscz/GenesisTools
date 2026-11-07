@@ -40,7 +40,7 @@ export const REPL_TOOLSET_IDS = Object.keys(REPL_TOOLSETS) as ReplToolsetId[];
 
 /**
  * The toolsets for `--help`: one line each and the command that prints one's whole API. Every method of all of them
- * was 535 lines (NR24); `help(name)` inside a turn prints the same docs `renderDocs` did.
+ * was 535 lines (NR24); `help(name)` inside a turn lists one line per method (`renderBrief`), describe(name) the rest.
  */
 export function toolsetCliHelp(): string {
     const lines = REPL_TOOLSET_IDS.map((id) => {
