@@ -5,7 +5,15 @@ import { basename, dirname, extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { recognizeTextBoxes } from "@genesiscz/utils/macos/ocr-boxes";
-import { type PrivateHit, privateHits, type ScreenTextFrame } from "@genesiscz/utils/recording-editor/private-data";
+import {
+    type FractionBox,
+    type LineMatcher,
+    type PrivateHit,
+    privateMatcher,
+    type ScreenTextFrame,
+    textHits,
+    textMatcher,
+} from "@genesiscz/utils/recording-editor/private-data";
 import {
     type EditProject,
     outputTimeOf,
@@ -14,6 +22,7 @@ import {
 } from "@genesiscz/utils/recording-editor/project";
 import {
     type ChangeStep,
+    fixedAreas,
     measureChangeSteps,
     WAIT_SAMPLE_FPS,
     type WaitStretch,
@@ -21,9 +30,10 @@ import {
 } from "@genesiscz/utils/recording-editor/waits";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
-import { readTranscriptSegments } from "./edit";
+import { exportAs, readTranscriptSegments } from "./edit";
 import { boxInProxy, proxyCanvas, readDisplayPlan } from "./proxy";
 import { displaySizes, frameTexts, visibleSpans } from "./screen-search";
 
@@ -161,12 +171,19 @@ export function screenTextEverySeconds(durationUs: number): number {
  * A movie's screen text: one frame every `everySec` (ffmpeg), each read with Vision. A frame whose picture is the same
  * file as the one before reuses its text, so a still stretch costs one read.
  */
-async function movieScreenText(
-    project: EditProject,
-    onProgress?: (done: number, total: number) => void
-): Promise<ScreenTextFrame[]> {
-    const video = project.source.video;
-    const everySec = screenTextEverySeconds(project.source.durationUs);
+/**
+ * Vision OCR of a movie's frames from `fromUs` to `toUs`, `fps` a second (ffmpeg writes them, Vision reads them on
+ * this Mac). A frame whose picture is the same file as the one before reuses its text, so a still stretch costs one
+ * read. Each frame lasts until the next.
+ */
+export async function ocrVideo(options: {
+    video: string;
+    fromUs?: number;
+    toUs: number;
+    fps: number;
+}): Promise<ScreenTextFrame[]> {
+    const fromUs = options.fromUs ?? 0;
+    const stepUs = 1_000_000 / options.fps;
     const folder = mkdtempSync(join(tmpdir(), "gt-screen-text-"));
 
     try {
@@ -176,12 +193,15 @@ async function movieScreenText(
                 "-nostdin",
                 "-v",
                 "error",
+                ...(fromUs > 0 ? ["-ss", String(fromUs / 1_000_000)] : []),
                 "-i",
-                video,
+                options.video,
+                "-t",
+                String(Math.max(0.05, (options.toUs - fromUs) / 1_000_000)),
                 "-map",
                 "0:v:0",
                 "-vf",
-                `fps=1/${everySec}`,
+                `fps=${options.fps}`,
                 "-start_number",
                 "0",
                 join(folder, "%06d.png"),
@@ -195,7 +215,7 @@ async function movieScreenText(
         let previousDigest = "";
         let previousLines: ScreenTextFrame["lines"] = [];
 
-        for (const [index, file] of files.entries()) {
+        for (const file of files) {
             const path = join(folder, file);
             const digest = createHash("sha1").update(readFileSync(path)).digest("hex");
 
@@ -211,19 +231,27 @@ async function movieScreenText(
                 previousDigest = digest;
             }
 
-            const atUs = Number(file.replace(".png", "")) * everySec * 1_000_000;
-            frames.push({
-                atUs,
-                untilUs: Math.min(project.source.durationUs, atUs + everySec * 1_000_000),
-                lines: previousLines,
-            });
-            onProgress?.(index + 1, files.length);
+            const atUs = Math.round(fromUs + Number(file.replace(".png", "")) * stepUs);
+            frames.push({ atUs, untilUs: Math.min(options.toUs, Math.round(atUs + stepUs)), lines: previousLines });
         }
 
+        log.debug(
+            { video: options.video, fromUs, toUs: options.toUs, fps: options.fps, frames: frames.length },
+            "frames read with Vision"
+        );
         return frames;
     } finally {
         rmSync(folder, { recursive: true, force: true });
     }
+}
+
+/** One movie frame every `screenTextEverySeconds`, read with Vision. */
+function movieScreenText(project: EditProject): Promise<ScreenTextFrame[]> {
+    return ocrVideo({
+        video: project.source.video,
+        toUs: project.source.durationUs,
+        fps: 1 / screenTextEverySeconds(project.source.durationUs),
+    });
 }
 
 /**
@@ -231,8 +259,7 @@ async function movieScreenText(
  * of sampled movie frames, cached in `screen-text.json` beside the edit.
  */
 export async function screenTextOf(
-    project: EditProject,
-    options: { onProgress?: (done: number, total: number) => void } = {}
+    project: EditProject
 ): Promise<{ frames: ScreenTextFrame[]; source: "frames" | "movie"; cached: boolean }> {
     const framesFolder = framesFolderOf(project);
 
@@ -255,13 +282,187 @@ export async function screenTextOf(
     }
 
     const started = Date.now();
-    const frames = await movieScreenText(project, options.onProgress);
+    const frames = await movieScreenText(project);
     log.debug({ video, frames: frames.length, ms: Date.now() - started }, "movie screen text read with Vision");
     writeCache(path, key, frames);
     return { frames, source: "movie", cached: false };
 }
 
-/** A private hit as the REPL, the CLI and the editor list it: source seconds, where it plays, the box. */
+/** Frames a second around a hit's edges and while it moves: a scrolling line is placed every 0.2 s. */
+const DENSE_FPS = 5;
+
+const denseSchema = z.record(z.string(), screenFramesSchema.element.shape.lines);
+
+/**
+ * Vision OCR of the movie at `DENSE_FPS` inside `windows` (source microseconds), cached by frame time in
+ * `screen-text-dense.json`, so a second search reads only the frames it has not read yet.
+ */
+async function denseScreenText(
+    project: EditProject,
+    windows: ReadonlyArray<[number, number]>
+): Promise<ScreenTextFrame[]> {
+    const video = project.source.video;
+    const path = cachePath(video, "screen-text-dense");
+    const key = movieKey(video, `dense=${DENSE_FPS}`);
+    const cache: Record<string, ScreenTextFrame["lines"]> = { ...(readCache(path, key, denseSchema) ?? {}) };
+    const stepUs = 1_000_000 / DENSE_FPS;
+    const frames: ScreenTextFrame[] = [];
+    let read = false;
+
+    for (const [fromUs, toUs] of windows) {
+        const start = Math.floor(fromUs / stepUs) * stepUs;
+        const times: number[] = [];
+
+        for (let atUs = start; atUs < toUs; atUs += stepUs) {
+            times.push(Math.round(atUs));
+        }
+
+        if (times.some((atUs) => !cache[String(atUs)])) {
+            for (const frame of await ocrVideo({ video, fromUs: start, toUs, fps: DENSE_FPS })) {
+                const atUs = Math.round(Math.round((frame.atUs - start) / stepUs) * stepUs + start);
+                cache[String(atUs)] = frame.lines;
+            }
+
+            read = true;
+        }
+
+        for (const atUs of times) {
+            frames.push({
+                atUs,
+                untilUs: Math.min(project.source.durationUs, atUs + stepUs),
+                lines: cache[String(atUs)] ?? [],
+            });
+        }
+    }
+
+    if (read) {
+        writeCache(path, key, cache);
+    }
+
+    return frames;
+}
+
+/** Joins overlapping [from, to) ranges. */
+function mergeWindows(ranges: Array<[number, number]>): Array<[number, number]> {
+    const merged: Array<[number, number]> = [];
+
+    for (const [from, to] of [...ranges].sort((a, b) => a[0] - b[0])) {
+        const last = merged.at(-1);
+
+        if (last && from <= last[1]) {
+            last[1] = Math.max(last[1], to);
+        } else {
+            merged.push([from, to]);
+        }
+    }
+
+    return merged;
+}
+
+export interface TrackOptions {
+    exclude?: readonly FractionBox[];
+    /** Leave visible what stays still while the content under it moves. */
+    excludeFixed?: boolean;
+}
+
+/**
+ * Where `matcher` finds text on the screen, tracked over time. A movie is read once a second (cached), then again
+ * five times a second around each hit's first and last second and wherever the picture moves while it shows, so a
+ * hit starts and ends within 0.2 s of when the text shows and follows a scroll. `excludeFixed` adds, to a hit that
+ * moved, the areas that stayed still meanwhile (a toast over the scroll), which its hidden part leaves visible.
+ */
+export async function trackedHits(
+    project: EditProject,
+    matcher: LineMatcher,
+    options: TrackOptions = {}
+): Promise<PrivateHit[]> {
+    const { frames: coarse, source } = await screenTextOf(project);
+    const exclude = options.exclude ?? [];
+
+    if (source === "frames") {
+        return textHits(coarse, matcher, { exclude });
+    }
+
+    const { steps, fps, grid } = await changeStepsOf(project);
+    const stepUs = 1_000_000 / fps;
+    const matches = (frame: ScreenTextFrame | undefined) =>
+        frame?.lines.some((line) => matcher(line.text).length > 0) ?? false;
+    const moves = (fromUs: number, toUs: number) =>
+        steps
+            .slice(Math.floor(fromUs / stepUs), Math.ceil(toUs / stepUs))
+            .some((step) => step.changed / Math.max(1, step.cells) > 0.02);
+    const windows: Array<[number, number]> = [];
+
+    for (const [index, frame] of coarse.entries()) {
+        if (!matches(frame)) {
+            continue;
+        }
+
+        const before = coarse[index - 1];
+        const after = coarse[index + 1];
+
+        if (!matches(before)) {
+            windows.push([before?.atUs ?? frame.atUs, frame.untilUs]);
+        }
+
+        if (!matches(after)) {
+            windows.push([frame.atUs, after?.untilUs ?? frame.untilUs]);
+        }
+
+        if (moves(frame.atUs, frame.untilUs)) {
+            windows.push([frame.atUs, frame.untilUs]);
+        }
+    }
+
+    const merged = mergeWindows(windows);
+    const dense = await denseScreenText(project, merged);
+    const outside = coarse.filter((frame) => !merged.some(([from, to]) => frame.atUs >= from && frame.atUs < to));
+    const hits = textHits([...outside, ...dense], matcher, { exclude });
+
+    if (!options.excludeFixed) {
+        return hits;
+    }
+
+    return hits.map((hit) => {
+        if (hit.keys.length < 2) {
+            return hit;
+        }
+
+        const centres = hit.keys.map((key) => ({ x: key.x + key.width / 2, y: key.y + key.height / 2 }));
+        const areas = fixedAreas({ steps, fps, grid, fromUs: hit.fromUs, toUs: hit.toUs }).filter(
+            (area) =>
+                // The text itself standing still is not something to leave visible.
+                !centres.some(
+                    (centre) =>
+                        centre.x >= area.x &&
+                        centre.x <= area.x + area.width &&
+                        centre.y >= area.y &&
+                        centre.y <= area.y + area.height
+                ) &&
+                area.x < hit.box.x + hit.box.width &&
+                area.x + area.width > hit.box.x &&
+                area.y < hit.box.y + hit.box.height &&
+                area.y + area.height > hit.box.y
+        );
+        // Only the part inside the hit's path matters to its hidden part.
+        const clipped = areas
+            .map((area) => {
+                const x = Math.max(area.x, hit.box.x);
+                const y = Math.max(area.y, hit.box.y);
+                const round = (value: number) => Math.round(value * 10_000) / 10_000;
+                return {
+                    x: round(x),
+                    y: round(y),
+                    width: round(Math.min(area.x + area.width, hit.box.x + hit.box.width) - x),
+                    height: round(Math.min(area.y + area.height, hit.box.y + hit.box.height) - y),
+                };
+            })
+            .filter((area) => area.width > 0.005 && area.height > 0.005);
+        return clipped.length > 0 ? { ...hit, exclude: clipped } : hit;
+    });
+}
+
+/** A hit as the REPL, the CLI and the editor list it: source seconds, where it plays, the box and how it moves. */
 export interface PrivateHitOut {
     id: string;
     kind: PrivateHit["kind"];
@@ -272,21 +473,19 @@ export interface PrivateHitOut {
     /** Output seconds where it first shows in the edit now; null when that moment is cut. */
     plays: number | null;
     box: PrivateHit["box"];
-    /** Already hidden by an earlier hidePrivate. */
+    /** It moves (a scroll): its hidden part follows these keyframes. */
+    moves: boolean;
+    /** Areas its hidden part leaves visible (excludeFixed). */
+    exclude?: FractionBox[];
+    /** Already hidden by an earlier hidePrivate or hideText. */
     hidden: boolean;
 }
 
 const seconds = (us: number): number => Math.round(us / 1000) / 1000;
 
-/** The private hits of an edit's movie (Vision OCR, local), the input of the `hidePrivate` op. */
-export async function privateHitsOf(project: EditProject): Promise<PrivateHit[]> {
-    const { frames } = await screenTextOf(project);
-    return privateHits(frames);
-}
-
-export async function privateData(project: EditProject): Promise<PrivateHitOut[]> {
+function hitsOut(project: EditProject, hits: readonly PrivateHit[]): PrivateHitOut[] {
     const applied = new Set(project.privacy?.applied ?? []);
-    return (await privateHitsOf(project)).map((hit) => {
+    return hits.map((hit) => {
         const plays = outputTimeOf(project, hit.fromUs);
         return {
             id: hit.id,
@@ -297,9 +496,94 @@ export async function privateData(project: EditProject): Promise<PrivateHitOut[]
             to: seconds(hit.toUs),
             plays: plays === undefined ? null : seconds(plays),
             box: hit.box,
+            moves: hit.keys.length > 1,
+            ...(hit.exclude ? { exclude: hit.exclude } : {}),
             hidden: applied.has(hit.id),
         };
     });
+}
+
+/** The private hits of an edit's movie (Vision OCR, local), the input of the `hidePrivate` op. */
+export function privateHitsOf(
+    project: EditProject,
+    options: TrackOptions & { names?: readonly string[] } = {}
+): Promise<PrivateHit[]> {
+    return trackedHits(project, privateMatcher(options.names), options);
+}
+
+export async function privateData(
+    project: EditProject,
+    options: TrackOptions & { names?: readonly string[] } = {}
+): Promise<PrivateHitOut[]> {
+    return hitsOut(project, await privateHitsOf(project, options));
+}
+
+/** Every place of a text (or a pattern) on the screen, the input of the `hideText` op. */
+export function textHitsOf(
+    project: EditProject,
+    options: TrackOptions & { text?: string; pattern?: string }
+): Promise<PrivateHit[]> {
+    return trackedHits(project, textMatcher(options), options);
+}
+
+export async function findText(
+    project: EditProject,
+    options: TrackOptions & { text?: string; pattern?: string }
+): Promise<PrivateHitOut[]> {
+    return hitsOut(project, await textHitsOf(project, options));
+}
+
+/** A moment of the OUTPUT where the text is still readable. */
+export interface Leak {
+    /** Output seconds. */
+    at: number;
+    until: number;
+    label: string;
+    masked: string;
+    box: FractionBox;
+}
+
+/**
+ * Whether a text is still readable in the edit's OUTPUT: the edit is exported (or `movie`, an export already made, is
+ * read), its frames are read with Vision every `everySeconds` (0.25), and every run of frames where `text`, `pattern`
+ * or the private data (`private: true`, with `names`) can still be read is a leak. ok is true without one.
+ */
+export async function verifyHidden(
+    value: string,
+    options: {
+        text?: string;
+        pattern?: string;
+        private?: boolean;
+        names?: readonly string[];
+        everySeconds?: number;
+        movie?: string;
+    }
+): Promise<{ ok: boolean; movie: string; frames: number; leaks: Leak[] }> {
+    const matcher =
+        options.private || (!options.text && !options.pattern) ? privateMatcher(options.names) : textMatcher(options);
+    let movie = options.movie;
+
+    if (!movie) {
+        const scratch = mkdtempSync(join(tmpdir(), "gt-verify-hidden-"));
+        const answer = await exportAs(value, { out: join(scratch, "verify.mp4"), format: "mp4" });
+
+        if (!answer.ok || !answer.path) {
+            throw new Error(`the export to check failed: ${answer.error ?? "no file"}`);
+        }
+
+        movie = answer.path;
+    }
+
+    const { durationUs } = await probeVideo({ input: movie });
+    const frames = await ocrVideo({ video: movie, toUs: durationUs, fps: 1 / (options.everySeconds ?? 0.25) });
+    const leaks = textHits(frames, matcher, { gapUs: 0 }).map((hit) => ({
+        at: seconds(hit.keys[0]?.atUs ?? hit.fromUs),
+        until: seconds(hit.toUs),
+        label: hit.label,
+        masked: hit.masked,
+        box: hit.box,
+    }));
+    return { ok: leaks.length === 0, movie, frames: frames.length, leaks };
 }
 
 const stepsSchema = z.array(
@@ -307,18 +591,21 @@ const stepsSchema = z.array(
         changed: z.number(),
         cells: z.number(),
         box: z.object({ x0: z.number(), y0: z.number(), x1: z.number(), y1: z.number() }).optional(),
+        mask: z.string().optional(),
+        dy: z.number().optional(),
     })
 );
 const stepsCacheSchema = z.object({
     steps: stepsSchema,
     grid: z.object({ columns: z.number(), rows: z.number() }),
     fps: z.number(),
+    height: z.number(),
 });
 
 /** The movie's change steps, cached in `waits.json` beside the edit. */
-async function changeStepsOf(
+export async function changeStepsOf(
     project: EditProject
-): Promise<{ steps: ChangeStep[]; grid: { columns: number; rows: number }; fps: number }> {
+): Promise<{ steps: ChangeStep[]; grid: { columns: number; rows: number }; fps: number; height: number }> {
     const video = project.source.video;
 
     if (!existsSync(video)) {
@@ -326,7 +613,7 @@ async function changeStepsOf(
     }
 
     const path = cachePath(video, "waits");
-    const key = movieKey(video, `fps=${WAIT_SAMPLE_FPS}`);
+    const key = movieKey(video, `fps=${WAIT_SAMPLE_FPS},v2`);
     const cached = readCache(path, key, stepsCacheSchema);
 
     if (cached) {

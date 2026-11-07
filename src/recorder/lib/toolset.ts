@@ -22,7 +22,7 @@ import {
     type timeSchema,
     timeToUs,
 } from "@genesiscz/utils/recording-editor/plan";
-import { PRIVATE_KINDS, PRIVATE_STYLES } from "@genesiscz/utils/recording-editor/private-data";
+import { type FractionBox, PRIVATE_KINDS, PRIVATE_STYLES } from "@genesiscz/utils/recording-editor/private-data";
 import {
     BACKGROUND_KINDS,
     CANVAS_ASPECTS,
@@ -78,7 +78,7 @@ import {
     writeSubtitles,
 } from "./edit";
 import { stepDisplaySwitch, switchDisplay } from "./frames-movie";
-import { privateData, waits } from "./fx-analysis";
+import { findText, privateData, verifyHidden, waits } from "./fx-analysis";
 import {
     EDITOR_TABS,
     type EditorTab,
@@ -177,6 +177,16 @@ function cutsOut(cuts: ReadonlyArray<CutMatch & { plays: number | null }>) {
         plays: cut.plays,
     }));
 }
+
+/** A rectangle as fractions of the picture from its top left (fx B: areas a hidden part leaves visible). */
+const boxParamSchema = z
+    .object({
+        x: z.number().min(0).max(1),
+        y: z.number().min(0).max(1),
+        width: z.number().min(0).max(1),
+        height: z.number().min(0).max(1),
+    })
+    .strict();
 
 const edit = (name: string, params: z.ZodType, doc: string, positional?: string[]) =>
     defineMethod({ name, params, positional, result: z.unknown(), resultName: editResult, doc, effect: "reversible" });
@@ -1134,10 +1144,17 @@ const movieMethods = [
     // fx B (round 4): private data, smooth cursor, typing and waiting speed-ups.
     defineMethod({
         name: "privateData",
-        params: z.object({}).strict(),
+        params: z
+            .object({
+                names: z.array(z.string().trim().min(2).max(120)).max(50).optional(),
+                exclude: z.array(boxParamSchema).max(20).optional(),
+                excludeFixed: z.boolean().optional(),
+            })
+            .strict(),
         result: z.unknown(),
-        resultName: "{ id, kind, label, masked, from, to, plays, box: { x, y, width, height }, hidden }[]",
-        doc: 'The private data on the screen: emails, tokens and keys, phone numbers, IBANs and card numbers in the text of its frames (a frames recording\'s own OCR, else Vision OCR of one movie frame a second, read on this Mac and cached in screen-text.json; the first scan of a long movie takes minutes). One hit per value for as long as it shows, at source seconds; masked shows only its first and last two characters. hidePrivate({ ids }) hides them. kind is "email" | "token" | "phone" | "iban" | "card".',
+        resultName:
+            "{ id, kind, label, masked, from, to, plays, box: { x, y, width, height }, moves, exclude?, hidden }[]",
+        doc: 'The private data on the screen: emails, tokens and keys, phone numbers, IBANs and card numbers (and names you pass) in the text of its frames, read with Vision on this Mac (a movie: one frame a second, then five a second around each hit\'s edges and while it moves; cached beside the edit; the first scan of a long movie takes minutes). One hit per value while it shows, at source seconds, tracked through a scroll (moves: true; its hidden part follows the text). masked shows only the first and last two characters. exclude: areas never searched and left visible (a toast); excludeFixed: true finds what stays still while the content scrolls and leaves it visible. hidePrivate({ ids }) hides them; kind is "email" | "token" | "phone" | "iban" | "card" | "name".',
         effect: "read",
     }),
     edit(
@@ -1145,12 +1162,63 @@ const movieMethods = [
         z
             .object({
                 ids: z.array(z.string()).optional(),
-                kinds: z.array(z.enum(PRIVATE_KINDS)).optional(),
+                kinds: z.array(z.enum([...PRIVATE_KINDS, "name"])).optional(),
                 style: z.enum(PRIVATE_STYLES).optional(),
+                names: z.array(z.string().trim().min(2).max(120)).max(50).optional(),
+                exclude: z.array(boxParamSchema).max(20).optional(),
+                excludeFixed: z.boolean().optional(),
             })
             .strict(),
-        'Hides the private data privateData() lists: one blurred part per hit while it shows (style "pixelate" or "black" instead). ids picks hits (absent: all), kinds picks kinds; a hit hidden before is skipped. One undo() puts it back.'
+        'Hides the private data privateData() lists (pass the same names, exclude and excludeFixed): one blurred part per hit that starts and ends when the value shows and follows it through a scroll (style "pixelate" or "black" instead). ids picks hits (absent: all), kinds picks kinds; a hit hidden before is skipped. Check the result with verifyHidden({ private: true }). One undo() puts it back.'
     ),
+    defineMethod({
+        name: "findText",
+        params: z
+            .object({
+                text: z.string().trim().min(1).max(200).optional(),
+                pattern: z.string().min(1).max(200).optional(),
+                exclude: z.array(boxParamSchema).max(20).optional(),
+                excludeFixed: z.boolean().optional(),
+            })
+            .strict(),
+        result: z.unknown(),
+        resultName: "{ id, label, masked, from, to, plays, box, moves, exclude?, hidden }[]",
+        doc: "Every place a text (without case) or a pattern (a regular expression) shows on the screen, tracked as privateData() tracks a hit: what hideText() will hide, so you never guess coordinates or seconds.",
+        effect: "read",
+    }),
+    edit(
+        "hideText",
+        z
+            .object({
+                text: z.string().trim().min(1).max(200).optional(),
+                pattern: z.string().min(1).max(200).optional(),
+                from: sourceTimeSchema.optional(),
+                to: sourceTimeSchema.optional(),
+                style: z.enum(PRIVATE_STYLES).optional(),
+                exclude: z.array(boxParamSchema).max(20).optional(),
+                excludeFixed: z.boolean().optional(),
+                label: z.string().max(60).optional(),
+            })
+            .strict(),
+        "Hides every place a text or a pattern shows (between from and to, source seconds; absent: all): one hidden part per place, found by OCR, that starts and ends when the text shows and follows it through a scroll. exclude and excludeFixed leave a toast or a tab bar over it visible. Refused when the screen never shows it. Check with verifyHidden({ text })."
+    ),
+    defineMethod({
+        name: "verifyHidden",
+        params: z
+            .object({
+                text: z.string().trim().min(1).max(200).optional(),
+                pattern: z.string().min(1).max(200).optional(),
+                private: z.boolean().optional(),
+                names: z.array(z.string().trim().min(2).max(120)).max(50).optional(),
+                everySeconds: z.number().min(0.1).max(5).optional(),
+                movie: z.string().min(1).optional(),
+            })
+            .strict(),
+        result: z.unknown(),
+        resultName: "{ ok, movie, frames, leaks: { at, until, label, masked, box }[] }",
+        doc: "Checks the OUTPUT: exports the edit (or reads movie, an export you made), reads its frames with Vision every everySeconds (0.25) and lists every moment (output seconds) where text, pattern or the private data (private: true, the default without text or pattern; names too) is still readable. ok: true means nothing leaked. Run it before you hand an export over.",
+        effect: "read",
+    }),
     edit(
         "smoothCursor",
         z
@@ -2508,8 +2576,29 @@ export class Movie {
 
     // fx B (round 4): private data, smooth cursor, typing and waiting speed-ups.
 
-    async privateData() {
-        return privateData((await openProject(this.recording)).project);
+    async privateData(options: { names?: string[]; exclude?: FractionBox[]; excludeFixed?: boolean } = {}) {
+        return privateData((await openProject(this.recording)).project, options);
+    }
+
+    async findText(options: { text?: string; pattern?: string; exclude?: FractionBox[]; excludeFixed?: boolean }) {
+        return findText((await openProject(this.recording)).project, options);
+    }
+
+    async hideText(options: Omit<Extract<EditOp, { op: "hideText" }>, "op">) {
+        return this.change([{ op: "hideText", ...options }]);
+    }
+
+    async verifyHidden(
+        options: {
+            text?: string;
+            pattern?: string;
+            private?: boolean;
+            names?: string[];
+            everySeconds?: number;
+            movie?: string;
+        } = {}
+    ) {
+        return verifyHidden(this.recording, options);
     }
 
     async hidePrivate(options: Omit<Extract<EditOp, { op: "hidePrivate" }>, "op"> = {}) {

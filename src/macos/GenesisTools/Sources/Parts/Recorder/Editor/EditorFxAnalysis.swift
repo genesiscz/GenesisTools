@@ -85,9 +85,22 @@ struct PrivateDataSection: View {
     @State private var picked: Set<String> = []
     @State private var busy = false
     @State private var failure: String?
+    @State private var phrase = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(text: "Hide a text everywhere")
+            HStack(spacing: 6) {
+                TextField("Words on the screen", text: $phrase)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { hideText() }
+                    .accessibilityIdentifier("recorder.hide.textField")
+                Button("Hide") { hideText() }
+                    .disabled(busy || phrase.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .buttonStyle(.genHoverPlain())
+                    .instantTooltip("Finds every place the words show (OCR on this Mac) and blurs each one while it shows; the blur follows a scroll and leaves a toast over it visible")
+                    .accessibilityIdentifier("recorder.hide.textButton")
+            }
             SectionLabel(text: "Private data", value: hits.map { Plural.count($0.count, "hit") })
             Text("Emails, tokens and keys, phone numbers, IBANs and card numbers on the screen. The text is read on this Mac with Vision; nothing leaves it.")
                 .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
@@ -151,6 +164,22 @@ struct PrivateDataSection: View {
                 picked = Set(rows.filter { !$0.hidden }.map(\.id))
             case let .failure(problem):
                 failure = "The screen text was not read: \(problem.reason)"
+            }
+        }
+    }
+
+    private func hideText() {
+        let text = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !busy else { return }
+        busy = true
+        model.applyOps(EditOp.json([.hideText(EditOp.HideText(text: text, excludeFixed: true))])) { result in
+            busy = false
+            switch result {
+            case .success:
+                model.show("Hid every place “\(text)” shows. ⌘Z brings it back.", error: false)
+                phrase = ""
+            case let .failure(failure):
+                model.show("Nothing was hidden: \(failure.reason)", error: true)
             }
         }
     }

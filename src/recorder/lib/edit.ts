@@ -56,7 +56,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { probeVideo, type VideoProbeLimits } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
-import { privateHitsOf, waitsOf } from "./fx-analysis";
+import { privateHitsOf, textHitsOf, waitsOf } from "./fx-analysis";
 import { type ExportAnswer, movieOf, resolveRecording } from "./library";
 import { chapterMetadata, chapterPoints, chaptersOfPart, markersOf, recordedMarkersOf } from "./moments";
 import { hostExport } from "./service-client";
@@ -647,7 +647,24 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
 
     // fx B (round 4): the screen text's private data, and the typing and waiting stretches (both cached).
     if (op.op === "hidePrivate") {
-        return { privateHits: await privateHitsOf(project) };
+        return {
+            privateHits: await privateHitsOf(project, {
+                names: op.names,
+                exclude: op.exclude,
+                excludeFixed: op.excludeFixed,
+            }),
+        };
+    }
+
+    if (op.op === "hideText") {
+        return {
+            textHits: await textHitsOf(project, {
+                text: op.text,
+                pattern: op.pattern,
+                exclude: op.exclude,
+                excludeFixed: op.excludeFixed,
+            }),
+        };
     }
 
     if (op.op === "speedUpWaits") {

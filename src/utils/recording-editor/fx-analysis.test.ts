@@ -3,9 +3,27 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { findPrivateText, ibanValid, luhnValid, maskPrivate, privateHits, type ScreenTextFrame } from "./private-data";
+import {
+    findPrivateText,
+    ibanValid,
+    luhnValid,
+    maskPrivate,
+    privateHits,
+    privateMatcher,
+    type ScreenTextFrame,
+    textHits,
+    textMatcher,
+} from "./private-data";
 import { applyOp, editOpSchema, editProjectSchema, type OpFacts, parseProject, wholeProject } from "./project";
-import { type ChangeStep, compareFrames, proposedSpeed, subtractRanges, waitStretches } from "./waits";
+import {
+    type ChangeStep,
+    compareFrames,
+    fixedAreas,
+    proposedSpeed,
+    subtractRanges,
+    verticalShift,
+    waitStretches,
+} from "./waits";
 
 // Every value here is invented: example.com mail, test card and IBAN numbers, made-up tokens.
 const source = { video: "/movies/screen.mp4", durationUs: 60_000_000, width: 1920, height: 1080 };
@@ -56,7 +74,7 @@ describe("private hits over time", () => {
         const hits = privateHits(frames);
         expect(hits.map((hit) => [hit.kind, hit.fromUs, hit.toUs])).toEqual([
             ["email", 0, 4_000_000],
-            ["email", 10_000_000, 11_000_000],
+            ["email", 9_500_000, 11_000_000],
         ]);
         // The box covers the address, not the words before it.
         expect(hits[0].box.x).toBeGreaterThan(0.2);
@@ -71,7 +89,7 @@ describe("private hits over time", () => {
         const once = applyOp(wholeProject(source), op({ op: "hidePrivate" }), facts);
         expect(once.redactions?.map((part) => [part.style, part.label, part.startUs])).toEqual([
             ["blur", "Email (auto)", 2_000_000],
-            ["blur", "Card number (auto)", 5_000_000],
+            ["blur", "Card number (auto)", 4_500_000],
         ]);
         expect(once.privacy?.applied).toEqual(hits.map((hit) => hit.id));
         expect(applyOp(once, op({ op: "hidePrivate" }), facts)).toBe(once);
@@ -102,6 +120,7 @@ describe("typing and waiting stretches", () => {
             changed: 1,
             cells: 8,
             box: { x0: 2, y0: 0, x1: 2, y1: 0 },
+            mask: "40",
         });
     });
 
@@ -172,5 +191,92 @@ describe("smooth cursor and old files", () => {
             badge: true,
             position: "top-right",
         });
+    });
+});
+
+describe("tracked text and exclusions", () => {
+    const frame = (ms: number, lines: ScreenTextFrame["lines"]): ScreenTextFrame => ({
+        atUs: ms * 1000,
+        untilUs: (ms + 200) * 1000,
+        lines,
+    });
+    const row = (text: string, y: number) => ({ text, x: 0.1, y, width: 0.3, height: 0.03 });
+
+    test("a value OCR read with a space still matches, and a scrolling one is one hit with keyframes", () => {
+        const matcher = textMatcher({ text: "alice@example.com" });
+        expect(matcher("Contact alice@example. com").map((match) => [match.start, match.end])).toEqual([[8, 26]]);
+        expect(privateMatcher()("alice@example. com").map((match) => match.kind)).toEqual(["email"]);
+        expect(privateMatcher(["Bob Builder"])("call bob builder now").map((match) => match.kind)).toEqual(["name"]);
+        // It scrolls up 0.1 of the picture per 0.2 s sample, then rests.
+        const frames = [
+            frame(0, []),
+            frame(200, [row("alice@example.com", 0.9)]),
+            frame(400, [row("alice@example.com", 0.8)]),
+            frame(600, [row("alice@example. com", 0.7)]),
+            frame(800, [row("alice@example.com", 0.7)]),
+            frame(1000, [row("alice@example.com", 0.7)]),
+            frame(1200, []),
+        ];
+        const [hit, ...rest] = textHits(frames, matcher);
+        expect(rest).toEqual([]);
+        expect([hit.fromUs, hit.toUs]).toEqual([100_000, 1_200_000]);
+        expect(hit.keys.map((key) => [key.atUs, Math.round(key.y * 100) / 100])).toEqual([
+            [200_000, 0.89],
+            [400_000, 0.79],
+            [600_000, 0.69],
+            [1_000_000, 0.69],
+        ]);
+        // An excluded area is never searched.
+        expect(textHits(frames, matcher, { exclude: [{ x: 0, y: 0.6, width: 1, height: 0.4 }] })).toEqual([]);
+    });
+
+    test("hideText adds a part that follows its keyframes and leaves the excluded area visible", () => {
+        const hits = textHits(
+            [frame(2000, [row("alice@example.com", 0.9)]), frame(2200, [row("alice@example.com", 0.6)])],
+            textMatcher({ text: "alice@example.com" })
+        );
+        const edited = applyOp(
+            wholeProject(source),
+            op({ op: "hideText", text: "alice@example.com", exclude: [{ x: 0.4, y: 0.75, width: 0.2, height: 0.1 }] }),
+            { textHits: hits }
+        );
+        const [part] = edited.redactions ?? [];
+        expect(part.track?.map((key) => key.atUs)).toEqual([2_000_000, 2_200_000]);
+        expect(part.exclude).toEqual([{ x: 0.4, y: 0.75, width: 0.2, height: 0.1 }]);
+        expect(part.label).toBe("Text (auto)");
+        expect(() =>
+            applyOp(wholeProject(source), op({ op: "hideText", text: "alice@example.com", from: 30 }), {
+                textHits: hits,
+            })
+        ).toThrow(/does not show/);
+    });
+
+    test("a toast that stays still while the list scrolls is a fixed area", () => {
+        const grid = { columns: 4, rows: 3 };
+        // Every cell changes while it scrolls but cell 5 (row 1, column 1): the toast.
+        const allBut5 = (() => {
+            const digits = [0xf, 0xf, 0xf];
+            digits[1] &= ~(1 << 1);
+            return digits.map((digit) => digit.toString(16)).join("");
+        })();
+        const scrolling: ChangeStep = { changed: 11, cells: 12, mask: allBut5, dy: -3 };
+        const still: ChangeStep = { changed: 0, cells: 12 };
+        const scene: ChangeStep = { changed: 12, cells: 12, mask: "fff" };
+        const steps = [still, still, still, still, still, scrolling, scrolling, scrolling, still, scene, still];
+        const areas = fixedAreas({ steps, fps: 4, grid, fromUs: 1_250_000, toUs: 2_000_000 });
+        expect(areas.map((area) => [Math.round(area.x * 100), Math.round(area.y * 100)])).toEqual([[29, 38]]);
+    });
+
+    test("a shifted picture is a scroll; a new blob is not", () => {
+        const width = 40;
+        const height = 40;
+        const stripes = (offset: number) =>
+            Uint8Array.from({ length: width * height }, (_, index) =>
+                Math.floor(index / width + offset) % 7 < 3 ? 220 : 20
+            );
+        expect(verticalShift(stripes(0), stripes(2), width, height)).toBe(-2);
+        const blob = new Uint8Array(width * height);
+        blob.fill(200, 20 * width, 22 * width);
+        expect(verticalShift(new Uint8Array(width * height), blob, width, height)).toBe(0);
     });
 });

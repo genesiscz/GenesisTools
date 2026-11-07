@@ -110,5 +110,41 @@ final class RecorderFxAnalysisTests: XCTestCase {
         let off = try XCTUnwrap(EditOpDiff.ops(from: after, to: before))
         XCTAssertEqual(off, [.cursorSmooth(EditOp.CursorSmooth(enabled: false)), .autoSpeed(EditOp.AutoSpeed(badge: false, position: .topRight))])
         XCTAssertEqual(EditOp.json([.hidePrivate(EditOp.HidePrivate(ids: ["p1"]))]), #"[{"ids":["p1"],"op":"hidePrivate"}]"#)
+        XCTAssertEqual(EditOp.json([.hideText(EditOp.HideText(text: "alice@example.com", excludeFixed: true))]),
+                       #"[{"excludeFixed":true,"op":"hideText","text":"alice@example.com"}]"#)
+    }
+
+    private func trackedRedaction() -> EditProject.Redaction {
+        EditProject.Redaction(id: "r1", startUs: 0, endUs: 4_000_000, x: 0.1, y: 0.8, width: 0.4, height: 0.1,
+                              track: [EditProject.TrackKey(atUs: 1_000_000, x: 0.1, y: 0.8, width: 0.4, height: 0.1),
+                                      EditProject.TrackKey(atUs: 3_000_000, x: 0.1, y: 0.2, width: 0.4, height: 0.1)])
+    }
+
+    func testATrackedPartMovesBetweenItsKeyframesAndKeepsItsSpeedOutsideThem() {
+        let part = trackedRedaction()
+        // 0.3 of the picture a second upwards: before the first key it was lower, after the last higher.
+        XCTAssertEqual(ZoomState.placed(part, atSourceUs: 500_000, track: nil).y, 0.95, accuracy: 1e-9)
+        XCTAssertEqual(ZoomState.placed(part, atSourceUs: 2_000_000, track: nil).y, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(ZoomState.placed(part, atSourceUs: 3_500_000, track: nil).y, 0.05, accuracy: 1e-9)
+        var single = part
+        single.track = [EditProject.TrackKey(atUs: 1_000_000, x: 0.1, y: 0.6, width: 0.4, height: 0.1)]
+        XCTAssertEqual(ZoomState.placed(single, atSourceUs: 3_000_000, track: nil).y, 0.6, accuracy: 1e-9)
+        var still = part
+        still.track = nil
+        XCTAssertEqual(ZoomState.placed(still, atSourceUs: 2_000_000, track: nil).y, 0.8)
+    }
+
+    func testAnExcludedAreaShowsThePictureInsideTheHiddenPart() throws {
+        let size = CGSize(width: 200, height: 100)
+        // A white picture; the part hides its middle in black, and leaves its left half visible.
+        let white = CIImage(color: CIColor(red: 1, green: 1, blue: 1)).cropped(to: CGRect(origin: .zero, size: size))
+        var part = EditProject.Redaction(id: "r1", startUs: 0, endUs: 1, x: 0.2, y: 0.2, width: 0.6, height: 0.6, style: .black)
+        part.exclude = [EditProject.Box(x: 0, y: 0, width: 0.5, height: 1)]
+        let hidden = Looks.redact([part], on: white)
+        let drawn = RedactionTrack.leaveVisible([part], original: white, on: hidden)
+        let cg = try XCTUnwrap(CIContext().createCGImage(drawn, from: CGRect(origin: .zero, size: size)))
+        let rep = NSBitmapImageRep(cgImage: cg)
+        XCTAssertGreaterThan(rep.colorAt(x: 70, y: 50)?.brightnessComponent ?? 0, 0.9, "the excluded half shows the picture")
+        XCTAssertLessThan(rep.colorAt(x: 130, y: 50)?.brightnessComponent ?? 1, 0.1, "the rest stays hidden")
     }
 }

@@ -214,6 +214,8 @@ final class ZoomState: @unchecked Sendable {
     /// A redaction that follows the cursor, centred on it (averaged over ±150 ms, so it glides) and kept inside the
     /// picture; any other one as it is.
     static func placed(_ redaction: EditProject.Redaction, atSourceUs us: Int64, track: CursorTrack?) -> EditProject.Redaction {
+        // fx B (round 4): a part with keyframes follows its text.
+        if redaction.track?.isEmpty == false { return RedactionTrack.placed(redaction, atSourceUs: us) }
         guard redaction.follow == true, let track,
               let point = track.averagedPoint(atMs: Double(us) / 1000, halfMs: 150) else { return redaction }
         var moved = redaction
@@ -674,6 +676,7 @@ struct EditRenderer {
                 image = TransitionLook.blend(live: image, still: other, mark: mark)
             }
             var result = Looks.redact(look.redactions, on: image, spotlightFade: look.spotlightFade).cropped(to: extent)
+            result = RedactionTrack.leaveVisible(look.redactions, original: image, on: result).cropped(to: extent) // fx B
             for drawn in look.shapes {
                 result = Looks.drawShape(drawn.shape, drawn: drawn.drawn, opacity: drawn.opacity, on: result).cropped(to: extent)
             }

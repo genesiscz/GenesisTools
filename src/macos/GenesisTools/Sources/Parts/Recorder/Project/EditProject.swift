@@ -312,6 +312,28 @@ struct EditProject: Codable, Equatable {
         var cutout: SpotlightCutout?
         /// The effect lane it sits on (EffectLanes.swift); nil is the first lane that holds its kind.
         var lane: String?
+        // fx B (round 4)
+        /// Keyframes of the rectangle (a part that follows its text through a scroll); nil keeps x, y, width, height.
+        var track: [TrackKey]?
+        /// Areas the part leaves visible (a toast over the text); nil is none.
+        var exclude: [Box]?
+    }
+
+    /// fx B (round 4): a rectangle as fractions of the picture from its top left.
+    struct Box: Codable, Equatable {
+        var x: Double
+        var y: Double
+        var width: Double
+        var height: Double
+    }
+
+    /// fx B (round 4): one keyframe of a tracked hidden part, at SOURCE microseconds.
+    struct TrackKey: Codable, Equatable {
+        var atUs: Int64
+        var x: Double
+        var y: Double
+        var width: Double
+        var height: Double
     }
 
     /// The fixed words of a transcript line by its start in source milliseconds; an empty text hides the line.

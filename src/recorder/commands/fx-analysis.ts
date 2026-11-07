@@ -2,7 +2,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { openProject } from "../lib/edit";
-import { privateData, waits } from "../lib/fx-analysis";
+import { findText, type PrivateHitOut, privateData, verifyHidden, waits } from "../lib/fx-analysis";
 
 const { log } = logger.scoped("recorder-fx-analysis");
 
@@ -25,10 +25,15 @@ export function registerFxAnalysisCommands(program: Command): void {
             "List the private data on a recording's screen (emails, tokens and keys, phone numbers, IBANs, card numbers), read with Vision OCR on this Mac; hide them with the hidePrivate op"
         )
         .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+        .option("--names <list>", "people or company names to find as well, comma-separated")
+        .option("--exclude-fixed", "leave out what stays still while the content scrolls (a toast, a tab bar)")
         .option("--json", "print JSON")
-        .action(async (value: string, flags: { json?: boolean }) => {
+        .action(async (value: string, flags: { names?: string; excludeFixed?: boolean; json?: boolean }) => {
             try {
-                const hits = await privateData((await openProject(value)).project);
+                const hits = await privateData((await openProject(value)).project, {
+                    names: flags.names?.split(",").map((name) => name.trim()),
+                    excludeFixed: flags.excludeFixed,
+                });
 
                 if (flags.json) {
                     out.result(hits);
@@ -36,9 +41,7 @@ export function registerFxAnalysisCommands(program: Command): void {
                 }
 
                 for (const hit of hits) {
-                    out.println(
-                        `${hit.id}  ${clock(hit.from)}-${clock(hit.to)}  ${hit.label.padEnd(13)} ${hit.masked}${hit.hidden ? "  (hidden)" : ""}${hit.plays === null ? "  (cut)" : ""}`
-                    );
+                    out.println(hitLine(hit));
                 }
 
                 if (hits.length === 0) {
@@ -97,4 +100,117 @@ export function registerFxAnalysisCommands(program: Command): void {
                 fail(error, "waits");
             }
         });
+}
+
+/** One hit as a line: id, source span, label, the masked value and what it is now. */
+function hitLine(hit: PrivateHitOut): string {
+    const notes = [hit.moves ? "moves" : "", hit.hidden ? "hidden" : "", hit.plays === null ? "cut" : ""].filter(
+        Boolean
+    );
+    return `${hit.id}  ${clock(hit.from)}-${clock(hit.to)}  ${hit.label.padEnd(13)} ${hit.masked}${notes.length ? `  (${notes.join(", ")})` : ""}`;
+}
+
+/** `tools recorder find-text` and `verify-hidden`: find a text by OCR, and check that the output hides it. */
+export function registerHideTextCommands(program: Command): void {
+    program
+        .command("find-text")
+        .description(
+            "Every place a text (or --pattern, a regular expression) shows on a recording's screen, tracked through scrolls; hide them with the hideText op"
+        )
+        .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+        .argument("[text]", "the words to find, without case")
+        .option("--pattern <regex>", "a regular expression instead of the text")
+        .option("--exclude-fixed", "leave out what stays still while the content scrolls")
+        .option("--json", "print JSON")
+        .action(
+            async (
+                value: string,
+                text: string | undefined,
+                flags: { pattern?: string; excludeFixed?: boolean; json?: boolean }
+            ) => {
+                try {
+                    const hits = await findText((await openProject(value)).project, {
+                        text,
+                        pattern: flags.pattern,
+                        excludeFixed: flags.excludeFixed,
+                    });
+
+                    if (flags.json) {
+                        out.result(hits);
+                        return;
+                    }
+
+                    for (const hit of hits) {
+                        out.println(hitLine(hit));
+                    }
+
+                    if (hits.length === 0) {
+                        out.printlnErr("The screen never shows it.");
+                    }
+                } catch (error) {
+                    fail(error, "find-text");
+                }
+            }
+        );
+
+    program
+        .command("verify-hidden")
+        .description(
+            "Export the edit (or read --movie), OCR its frames and list every output moment where a text, a pattern or the private data is still readable; exit 1 on a leak"
+        )
+        .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+        .option("--text <text>", "the words that must not be readable")
+        .option("--pattern <regex>", "a regular expression that must not match")
+        .option("--private", "the private data (the default without --text or --pattern)")
+        .option("--names <list>", "with --private: names too, comma-separated")
+        .option("--every <seconds>", "seconds between the frames read", "0.25")
+        .option("--movie <file>", "an export already made, instead of exporting again")
+        .option("--json", "print JSON")
+        .action(
+            async (
+                value: string,
+                flags: {
+                    text?: string;
+                    pattern?: string;
+                    private?: boolean;
+                    names?: string;
+                    every?: string;
+                    movie?: string;
+                    json?: boolean;
+                }
+            ) => {
+                try {
+                    const answer = await verifyHidden(value, {
+                        text: flags.text,
+                        pattern: flags.pattern,
+                        private: flags.private,
+                        names: flags.names?.split(",").map((name) => name.trim()),
+                        everySeconds: Number(flags.every ?? 0.25),
+                        movie: flags.movie,
+                    });
+
+                    if (flags.json) {
+                        out.result(answer);
+                    } else {
+                        for (const leak of answer.leaks) {
+                            out.println(
+                                `leak  ${clock(leak.at)}-${clock(leak.until)}  ${leak.label.padEnd(13)} ${leak.masked}`
+                            );
+                        }
+
+                        out.printlnErr(
+                            answer.ok
+                                ? `Nothing readable in ${answer.frames} frames of ${answer.movie}.`
+                                : `${answer.leaks.length} leak(s) in ${answer.movie}.`
+                        );
+                    }
+
+                    if (!answer.ok) {
+                        process.exitCode = 1;
+                    }
+                } catch (error) {
+                    fail(error, "verify-hidden");
+                }
+            }
+        );
 }

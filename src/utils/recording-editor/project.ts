@@ -171,6 +171,15 @@ export const REDACTION_STYLES = ["blur", "pixelate", "black", "spotlight"] as co
 /** A spotlight's lit shape: "rounded" (absent means this), "rect" or "circle" (an ellipse in its rectangle). */
 export const SPOTLIGHT_CUTOUTS = ["rounded", "rect", "circle"] as const;
 
+// fx B (round 4): a rectangle as fractions of the picture, and one keyframe of a tracked hidden part.
+const boxSchema = z.object({
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    width: z.number().min(0).max(1),
+    height: z.number().min(0).max(1),
+});
+const trackKeySchema = boxSchema.extend({ atUs: z.number().int().nonnegative() });
+
 /** A part of the SOURCE picture hidden for a time: an address, a token, a notification. It moves with a zoom. */
 export const redactionSchema = z.object({
     id: z.string(),
@@ -191,6 +200,14 @@ export const redactionSchema = z.object({
     cutout: z.enum(SPOTLIGHT_CUTOUTS).optional(),
     /** The effect lane it sits on (lanes.ts); absent is the first lane that holds its kind. */
     lane: z.string().optional(),
+    // fx B (round 4): a hidden part that follows its text, and the areas it leaves visible.
+    /**
+     * Keyframes of the rectangle at SOURCE microseconds, in time order: between two the rectangle moves straight from
+     * one to the next, before the first and after the last it holds. Absent is the fixed x, y, width, height.
+     */
+    track: z.array(trackKeySchema).optional(),
+    /** Areas of the picture (fractions from its top left) the part leaves visible: a toast, a tab bar over the text. */
+    exclude: z.array(boxSchema).optional(),
 });
 export type EditRedaction = z.infer<typeof redactionSchema>;
 
@@ -1547,8 +1564,32 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .object({
             op: z.literal("hidePrivate"),
             ids: z.array(z.string()).optional(),
-            kinds: z.array(z.enum(PRIVATE_KINDS)).optional(),
+            kinds: z.array(z.enum([...PRIVATE_KINDS, "name"])).optional(),
             style: z.enum(PRIVATE_STYLES).optional(),
+            /** People or company names to hide as well, matched without case. */
+            names: z.array(z.string().trim().min(2).max(120)).max(50).optional(),
+            /** Areas left visible and never searched: a toast, a tab bar over the content. */
+            exclude: z.array(boxSchema).max(20).optional(),
+            /** Leaves visible what stays still while the content under it scrolls (found from the picture). */
+            excludeFixed: z.boolean().optional(),
+        })
+        .strict(),
+    /**
+     * Hides every place a text is on the screen (OCR, local): `text` (without case) or `pattern` (a regular
+     * expression), between `from` and `to` (source seconds; absent: all), each as a hidden part that follows the text
+     * while it scrolls and starts and ends when it shows. exclude and excludeFixed as for hidePrivate.
+     */
+    z
+        .object({
+            op: z.literal("hideText"),
+            text: z.string().trim().min(1).max(200).optional(),
+            pattern: z.string().min(1).max(200).optional(),
+            from: sourceTimeSchema.optional(),
+            to: sourceTimeSchema.optional(),
+            style: z.enum(PRIVATE_STYLES).optional(),
+            exclude: z.array(boxSchema).max(20).optional(),
+            excludeFixed: z.boolean().optional(),
+            label: z.string().max(60).optional(),
         })
         .strict(),
     /** The smooth cursor: strength (0.6), jitterPx (3), idleFadeSeconds (2); enabled: false turns it off. */
@@ -1649,6 +1690,8 @@ export interface OpFacts {
     // fx B (round 4)
     /** The private data on the screen (`hidePrivate`), from the screen text scan. */
     privateHits?: readonly PrivateHit[];
+    /** The places of a text on the screen (`hideText`), tracked over time. */
+    textHits?: readonly PrivateHit[];
     /** The typing and waiting stretches (`speedUpWaits`), from the picture's change steps. */
     waits?: readonly WaitStretch[];
 }
@@ -1929,6 +1972,8 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         // fx B (round 4)
         case "hidePrivate":
             return hidePrivate(project, op, facts.privateHits);
+        case "hideText":
+            return hideText(project, op, facts.textHits);
         case "cursorSmooth":
             return smoothCursor(project, op);
         case "speedUpWaits":
@@ -2471,6 +2516,9 @@ export function describeProject(project: EditProject, path: string) {
             ...(redaction.style === "spotlight"
                 ? { dim: redaction.dim ?? 0.7, cutout: redaction.cutout ?? "rounded" }
                 : {}),
+            // fx B (round 4): how many keyframes it follows, and the areas it leaves visible.
+            ...(redaction.track ? { keyframes: redaction.track.length } : {}),
+            ...(redaction.exclude ? { exclude: redaction.exclude } : {}),
         })),
         /** null: the system cursor is in the picture, so there is nothing to change. */
         cursor: trackDrawsCursor(project.source.cursor) ? cursorSchema.parse(project.cursor ?? {}) : null,
@@ -2554,22 +2602,72 @@ function hidePrivate(
         throw new Error("hidePrivate needs the screen text's private data; run it through editProject or the CLI");
     }
 
-    const applied = new Set(project.privacy?.applied ?? []);
     const picked = pickById(hits, op.ids, "private hit").filter(
-        (hit) => !applied.has(hit.id) && (!op.kinds || op.kinds.includes(hit.kind))
+        (hit) => !op.kinds || (hit.kind !== "text" && op.kinds.includes(hit.kind))
     );
+    return hideHits(project, picked, { style: op.style, exclude: op.exclude });
+}
+
+function hideText(
+    project: EditProject,
+    op: Extract<EditOp, { op: "hideText" }>,
+    hits: readonly PrivateHit[] | undefined
+): EditProject {
+    if (!hits) {
+        throw new Error("hideText needs the screen text's places of the text; run it through editProject or the CLI");
+    }
+
+    const fromUs = op.from === undefined ? 0 : timeToUs(op.from);
+    const toUs = op.to === undefined ? project.source.durationUs : timeToUs(op.to);
+    const picked = hits.filter((hit) => hit.toUs > fromUs && hit.fromUs < toUs);
+
+    if (picked.length === 0) {
+        throw new Error(
+            `the screen does not show "${op.text ?? op.pattern}"${op.from === undefined && op.to === undefined ? "" : " in that range"}; nothing was hidden`
+        );
+    }
+
+    return hideHits(project, picked, { style: op.style, exclude: op.exclude, label: op.label });
+}
+
+/**
+ * One hidden part per hit for as long as it shows: a hit that moved keeps its keyframes (`track`), so the part follows
+ * the text; the areas to leave visible are the op's and the hit's own. A hit hidden before is skipped.
+ */
+function hideHits(
+    project: EditProject,
+    hits: readonly PrivateHit[],
+    options: { style?: EditRedaction["style"]; exclude?: ReadonlyArray<z.infer<typeof boxSchema>>; label?: string }
+): EditProject {
+    const applied = new Set(project.privacy?.applied ?? []);
+    const picked = hits.filter((hit) => !applied.has(hit.id));
     let next = project;
 
     for (const hit of picked) {
         const fromUs = Math.max(0, Math.min(hit.fromUs, project.source.durationUs - MINIMUM_CLIP_US));
         const toUs = Math.min(project.source.durationUs, Math.max(hit.toUs, fromUs + MINIMUM_CLIP_US));
+        const first = hit.keys[0] ?? hit.box;
         next = addRedaction(next, {
             fromUs,
             toUs,
-            rect: hit.box,
-            style: op.style ?? "blur",
-            label: `${hit.label} (auto)`,
+            rect: { x: first.x, y: first.y, width: first.width, height: first.height },
+            style: options.style ?? "blur",
+            label: options.label ?? `${hit.label} (auto)`,
         });
+        const exclude = [...(options.exclude ?? []), ...(hit.exclude ?? [])];
+        const added = next.redactions?.at(-1);
+
+        if (added && (hit.keys.length > 1 || exclude.length > 0)) {
+            const tracked: EditRedaction = {
+                ...added,
+                ...(hit.keys.length > 1
+                    ? { track: hit.keys.map((key) => ({ ...key, atUs: Math.round(key.atUs) })) }
+                    : {}),
+                ...(exclude.length > 0 ? { exclude } : {}),
+            };
+            next = { ...next, redactions: [...(next.redactions ?? []).slice(0, -1), tracked] };
+        }
+
         applied.add(hit.id);
     }
 

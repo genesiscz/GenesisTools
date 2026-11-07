@@ -19,7 +19,7 @@ import { FRAME_FLUSHES } from "@genesiscz/utils/screen-recorder/start";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { Command } from "commander";
 import { registerDuplicateCommand } from "./commands/duplicate";
-import { registerFxAnalysisCommands } from "./commands/fx-analysis";
+import { registerFxAnalysisCommands, registerHideTextCommands } from "./commands/fx-analysis";
 import { registerServeCommand } from "./commands/serve";
 import { demoScriptSchema, runDemo, scriptSteps } from "./lib/demo";
 import {
@@ -1564,6 +1564,7 @@ program
 
 registerDuplicateCommand(program);
 registerFxAnalysisCommands(program);
+registerHideTextCommands(program);
 registerServeCommand(program);
 
 /** The commands an unknown one may be told it meant: they change nothing (no stop, start or undo). */

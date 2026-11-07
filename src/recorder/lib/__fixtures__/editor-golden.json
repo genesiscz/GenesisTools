@@ -122,6 +122,9 @@
     "movie.tilt",
     "movie.privateData",
     "movie.hidePrivate",
+    "movie.findText",
+    "movie.hideText",
+    "movie.verifyHidden",
     "movie.smoothCursor",
     "movie.waits",
     "movie.speedUpWaits",
@@ -200,6 +203,7 @@
     "unlens",
     "tilt",
     "hidePrivate",
+    "hideText",
     "cursorSmooth",
     "speedUpWaits",
     "autoSpeed"
@@ -820,6 +824,42 @@
         "token"
       ],
       "style": "pixelate"
+    },
+    {
+      "op": "hidePrivate",
+      "names": [
+        "Alice Example"
+      ],
+      "exclude": [
+        {
+          "x": 0.4,
+          "y": 0.8,
+          "width": 0.2,
+          "height": 0.08
+        }
+      ],
+      "excludeFixed": true
+    },
+    {
+      "op": "hideText",
+      "text": "alice@example.com",
+      "from": 2,
+      "to": 9,
+      "style": "black",
+      "exclude": [
+        {
+          "x": 0.4,
+          "y": 0.8,
+          "width": 0.2,
+          "height": 0.08
+        }
+      ],
+      "excludeFixed": true,
+      "label": "Contact"
+    },
+    {
+      "op": "hideText",
+      "pattern": "sk-[a-z0-9]+"
     },
     {
       "op": "cursorSmooth",
@@ -1566,6 +1606,41 @@
             "style": "spotlight",
             "dim": 0.6,
             "cutout": "circle"
+          },
+          {
+            "id": "r9",
+            "startUs": 3500000,
+            "endUs": 7400000,
+            "x": 0.16,
+            "y": 0.9,
+            "width": 0.3,
+            "height": 0.05,
+            "style": "blur",
+            "label": "Text (auto)",
+            "track": [
+              {
+                "x": 0.16,
+                "y": 0.9,
+                "width": 0.3,
+                "height": 0.05,
+                "atUs": 3600000
+              },
+              {
+                "x": 0.16,
+                "y": 0.02,
+                "width": 0.3,
+                "height": 0.05,
+                "atUs": 7200000
+              }
+            ],
+            "exclude": [
+              {
+                "x": 0.38,
+                "y": 0.79,
+                "width": 0.08,
+                "height": 0.08
+              }
+            ]
           }
         ],
         "texts": [

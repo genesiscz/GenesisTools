@@ -86,6 +86,7 @@ enum EditOp: Equatable {
     case cursorSmooth(CursorSmooth)
     case speedUpWaits(SpeedUpWaits)
     case autoSpeed(AutoSpeed)
+    case hideText(HideText)
 
     /// Every payload type, so the decoder finds one by its tag and the tag test lists them.
     static let payloads: [any EditOpPayload.Type] = [
@@ -103,7 +104,7 @@ enum EditOp: Equatable {
         // Round 4 fx-render.
         Transition.self, Lens.self, SetLens.self, Unlens.self, Tilt.self,
         // fx B (round 4)
-        HidePrivate.self, CursorSmooth.self, SpeedUpWaits.self, AutoSpeed.self,
+        HidePrivate.self, CursorSmooth.self, SpeedUpWaits.self, AutoSpeed.self, HideText.self,
     ]
 
     static var tags: [String] { payloads.map { $0.tag } }
@@ -183,6 +184,7 @@ enum EditOp: Equatable {
         case let .cursorSmooth(op): op
         case let .speedUpWaits(op): op
         case let .autoSpeed(op): op
+        case let .hideText(op): op
         }
     }
 
@@ -908,7 +910,24 @@ extension EditOp {
         var ids: [String]?
         var kinds: [String]?
         var style: EditProject.RedactionStyle?
+        var names: [String]?
+        var exclude: [EditProject.Box]?
+        var excludeFixed: Bool?
         var op: EditOp { .hidePrivate(self) }
+    }
+
+    /// Hides every place a text (or a pattern) shows, found by OCR; each part follows its text.
+    struct HideText: EditOpPayload {
+        static let tag = "hideText"
+        var text: String?
+        var pattern: String?
+        var from: Double?
+        var to: Double?
+        var style: EditProject.RedactionStyle?
+        var exclude: [EditProject.Box]?
+        var excludeFixed: Bool?
+        var label: String?
+        var op: EditOp { .hideText(self) }
     }
 
     struct CursorSmooth: EditOpPayload {
