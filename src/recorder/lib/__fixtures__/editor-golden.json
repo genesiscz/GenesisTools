@@ -126,6 +126,7 @@
     "movie.waits",
     "movie.speedUpWaits",
     "movie.speedBadge",
+    "movie.duplicate",
     "movies.list",
     "movies.search"
   ],

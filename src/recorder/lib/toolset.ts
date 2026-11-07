@@ -62,6 +62,7 @@ import { probeVideo } from "@genesiscz/utils/video/probe";
 import { z } from "zod";
 import { cameraRefusal, recorderFaceState } from "./camera-recorder";
 import { type DemoDriver, type DemoStep, demoEditSchema, runDemo } from "./demo";
+import { duplicateRecording } from "./duplicate";
 import {
     collapseUndo,
     defaultExportName,
@@ -1197,6 +1198,16 @@ const movieMethods = [
             .strict(),
         'The "⏩ 6x" badge drawn while a part plays at 1.5x or faster: badge false hides it, position "top-right" (default), "top-left", "bottom-right" or "bottom-left".'
     ),
+    defineMethod({
+        name: "duplicate",
+        params: z
+            .object({ title: z.string().trim().min(1).max(120).optional(), to: z.string().min(1).optional() })
+            .strict(),
+        result: z.unknown(),
+        resultName: "{ path, folder, id?, title }",
+        doc: 'A copy of the recording with its edit, so a before and an after live side by side: a new library recording titled "<title> (copy)" (or title), or the folder `to`. Its files are APFS clones (no disk until one side changes), every path in its edit points into the copy, and the undo history stays behind. movies.open(id) opens the copy.',
+        effect: "reversible",
+    }),
 ];
 
 const recordingMethods = [
@@ -2519,6 +2530,11 @@ export class Movie {
 
     async speedBadge(options: Omit<Extract<EditOp, { op: "autoSpeed" }>, "op"> = {}) {
         return this.change([{ op: "autoSpeed", ...options }]);
+    }
+
+    /** A copy of the recording and its edit (APFS clones), as a new library recording or in `to`. */
+    async duplicate(options: { title?: string; to?: string } = {}) {
+        return duplicateRecording(this.recording, options);
     }
 }
 

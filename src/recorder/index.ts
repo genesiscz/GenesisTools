@@ -18,6 +18,7 @@ import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/uti
 import { FRAME_FLUSHES } from "@genesiscz/utils/screen-recorder/start";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { Command } from "commander";
+import { registerDuplicateCommand } from "./commands/duplicate";
 import { registerFxAnalysisCommands } from "./commands/fx-analysis";
 import { registerServeCommand } from "./commands/serve";
 import { demoScriptSchema, runDemo, scriptSteps } from "./lib/demo";
@@ -1561,6 +1562,7 @@ program
         }
     });
 
+registerDuplicateCommand(program);
 registerFxAnalysisCommands(program);
 registerServeCommand(program);
 
