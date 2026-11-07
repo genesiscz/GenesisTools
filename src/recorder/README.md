@@ -42,7 +42,10 @@ tools recorder rename <recording> <title>        # a new title for the library, 
 tools recorder undo <recording>                  # back one step of apply, the REPL or the window (30 steps in <edit>.undo.json)
 tools recorder redo <recording>                  # make the step undo took back again, while nothing changed since
 tools recorder search <text> [--json]            # titles, marker labels and cached transcript lines across the library
-tools recorder sheet <recording> [--count N] [--from T] [--to T] [--at T,T] [--out PNG]  # frames on one labelled PNG
+tools recorder sheet <recording> [--count N | --every S | --at T,T] [--from T] [--to T] [--source] [--columns N] [--out PNG]
+                                                 # up to 48 frames on one grid PNG; --source: the recording as
+                                                 # recorded at SOURCE seconds (the seconds ops take)
+tools recorder still <recording> [at] [--source] [--full] [--out PNG]  # one frame; --full at the export's size
 tools recorder list [--live] [--limit N] [--json]  # local start times, length, outcome and a short id that every
                                                  # command takes (--json has the full ids, folders and reasons)
 tools recorder show|info <recording>             # one recording's row of list --json (every command takes --json;
@@ -341,6 +344,7 @@ await m.zoom({ from: 3, to: 6, scale: 1.8, follow: true });
 await m.frame({ padding: 0.08 });
 await m.still(2.5);                         // shows the frame as it will export
 await m.sheet({ count: 6 });                // six frames over the whole edit on one picture, each with its time
+await m.sheet({ source: true, from: 40, to: 52, every: 0.5 }); // a survey of the recording at SOURCE seconds
 await m.poster({ at: 4 });                  // that frame at the export's full size: <name>-poster.png
 await m.show({ at: 2.5, tab: "text" });     // opens the editor window there, behind the front window
 await m.closeEditor();                      // closes it again: { closed, window }
