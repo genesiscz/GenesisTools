@@ -1181,7 +1181,18 @@ program
     .action(async (value: string, text: string) => {
         try {
             const raw = text === "-" ? await Bun.stdin.text() : text;
-            const ops = parseEditOps(SafeJSON.parse(raw, { strict: true }));
+            let parsed: unknown;
+            try {
+                parsed = SafeJSON.parse(raw, { strict: true });
+            } catch (error) {
+                // A bare "JSON Parse error: Unexpected identifier" did not say which argument was wrong.
+                const why = error instanceof Error ? error.message : String(error);
+                throw new Error(
+                    `the ops are not JSON (${why}); give one op or an array of them, e.g. '{"op":"cut","from":4,"to":"0:09"}'`
+                );
+            }
+
+            const ops = parseEditOps(parsed);
             const edited = await applyEdit(value, ops);
             // A normalize op also answers the loudness it measured, which the editor shows beside its button.
             out.result({
