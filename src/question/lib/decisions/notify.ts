@@ -5,11 +5,12 @@ import { CHANNEL_NAMES, notificationsConfig } from "@genesiscz/utils/notificatio
 import { MAX_ANSWER_LETTERS, REPLY_TOKEN_KEY } from "@genesiscz/utils/notifications/phone-wire";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import { clipOneLine } from "@genesiscz/utils/string";
-import { type ActTokenStore, issueActTokens, issueReplyToken } from "../act/tokens";
+import { decisionChoice } from "../act/act";
+import { type ActTokenStore, issueActTokens, issueAnswerToken, issueReplyToken } from "../act/tokens";
 import { hubItemClickCommand } from "../hub-link";
 import { NOTICE_IDS, type NoticeDeps, noticeItem, postNotice } from "../notices/notices";
 import { waitsOnHuman } from "../waiting/set";
-import { shownDecisionText } from "./option-labels";
+import { recommendedLetters, shownDecisionText } from "./option-labels";
 import { type DecisionRecord, kindOf } from "./store";
 
 const log = logger.child({ component: "question:decision-notify" });
@@ -56,6 +57,17 @@ function letterTitle(letter: string, recommended?: string): string {
     return letter === recommended?.trim().toLowerCase() ? `${letter} ★` : letter;
 }
 
+/**
+ * The recommended letters of a decision that takes several, when every one of them is an option it shows ("abc"), else
+ * undefined. One banner button answers with that set.
+ */
+export function recommendedSet(row: DecisionRecord): string | undefined {
+    const letters = [...recommendedLetters(row.recommended)];
+    const { count } = decisionChoice(row);
+    const fits = letters.length > 0 && letters.every((letter) => letter.charCodeAt(0) - 97 < count);
+    return fits ? letters.join("") : undefined;
+}
+
 export interface DecisionNoticeDeps {
     notices?: NoticeDeps;
     tokens?: ActTokenStore;
@@ -67,8 +79,10 @@ export interface DecisionNoticeDeps {
 
 /**
  * The grouped Mac banner of a post: its click and "Open in hub" open the hub's Inbox at the first decision, and a post
- * of one answerable decision gets one button per letter that answers through the act door (`tools question act`). It
- * goes to every channel but the phone, only when GenesisTools.app is installed.
+ * of one answerable decision gets one button per letter that answers through the act door (`tools question act`). A
+ * decision that takes several letters gets no letter buttons (one would answer one letter), only "Send a + b ★" with
+ * its recommended set when it names one. It goes to every channel but the phone, only when GenesisTools.app is
+ * installed.
  */
 async function postGroupedBanner(waiting: DecisionRecord[], deps: DecisionNoticeDeps): Promise<boolean> {
     const [first] = waiting;
@@ -81,8 +95,25 @@ async function postGroupedBanner(waiting: DecisionRecord[], deps: DecisionNotice
 
     const id = NOTICE_IDS.post(first.id);
     const letters: NotificationAction[] = [];
+    const several = decisionChoice(first).several;
+    const set = several ? recommendedSet(first) : undefined;
 
-    if (waiting.length === 1 && answerable(first)) {
+    // One button, so the bound on the number of letter buttons (`answerable`) does not apply to it.
+    if (waiting.length === 1 && kindOf(first) === "decision" && set) {
+        const token = await issueAnswerToken({
+            row: first,
+            option: set,
+            surface: "banner",
+            ...(deps.tokens ? { store: deps.tokens } : {}),
+        });
+        letters.push({
+            id: `answer-${set}`,
+            title: `Send ${[...set].join(" + ")} ★`,
+            execute: shellCommandLine(["tools", "question", "act", token, "--key", `banner:${id}:${set}`]),
+        });
+    }
+
+    if (waiting.length === 1 && answerable(first) && !several) {
         const issued = await issueActTokens({
             row: first,
             surface: "banner",
@@ -120,15 +151,18 @@ async function postGroupedBanner(waiting: DecisionRecord[], deps: DecisionNotice
 
 /**
  * One push per waiting row, so each carries its own letter buttons on the lock screen. The answer tokens are issued
- * for the phone surface and sealed to each device by the phone channel.
+ * for the phone surface and sealed to each device by the phone channel. A decision that takes several letters goes
+ * without buttons and without a Reply field: a lock-screen button answers one letter, and every category the phone app
+ * registers carries letter buttons (`answerCategories`), so a Reply-only one needs a new app build.
  */
 async function postPhonePushes(waiting: DecisionRecord[], deps: DecisionNoticeDeps): Promise<number> {
     let posted = 0;
 
     for (const row of waiting) {
-        const issued = answerable(row)
-            ? await issueActTokens({ row, surface: "phone", ...(deps.tokens ? { store: deps.tokens } : {}) })
-            : [];
+        const issued =
+            answerable(row) && !decisionChoice(row).several
+                ? await issueActTokens({ row, surface: "phone", ...(deps.tokens ? { store: deps.tokens } : {}) })
+                : [];
         const sent = await postNotice(
             {
                 event: {

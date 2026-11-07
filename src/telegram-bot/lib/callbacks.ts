@@ -1,5 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
-import type { TelegramMessagesApi } from "@genesiscz/utils/telegram-bot/lib/messages";
+import type { TelegramButton, TelegramMessagesApi } from "@genesiscz/utils/telegram-bot/lib/messages";
 import type { ParseMode } from "@genesiscz/utils/telegram-bot/lib/types";
 import type { Bot } from "grammy";
 
@@ -14,10 +14,13 @@ export interface CallbackPress {
     messageId?: number;
 }
 
-/** What the press answers: a short toast on the phone, and optionally a new text for the message (buttons dropped). */
+/**
+ * What the press answers: a short toast on the phone, and optionally a new text for the message with the keyboard it
+ * keeps (`buttons`; absent drops every button).
+ */
 export interface CallbackReply {
     toast?: string;
-    edit?: { text: string; parseMode?: ParseMode };
+    edit?: { text: string; parseMode?: ParseMode; buttons?: readonly (readonly TelegramButton[])[] };
     /**
      * Runs when the edit fails: a handler that took its message out of the notice memory gives it back here, so a
      * later retraction can still drop the buttons.
@@ -77,7 +80,11 @@ export async function answerPress({
         await api
             .editMessageText(press.chatId, press.messageId, reply.edit.text, {
                 ...(reply.edit.parseMode ? { parse_mode: reply.edit.parseMode } : {}),
-                reply_markup: { inline_keyboard: [] },
+                reply_markup: {
+                    inline_keyboard: (reply.edit.buttons ?? []).map((row) =>
+                        row.map((button) => ({ text: button.text, callback_data: button.data }))
+                    ),
+                },
             })
             .catch(async (err: unknown) => {
                 log.debug({ err }, "could not edit a pressed message");

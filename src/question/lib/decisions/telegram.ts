@@ -9,11 +9,18 @@ import {
     type TelegramMessagesApi,
 } from "@genesiscz/utils/telegram-bot/lib/messages";
 import type { TelegramBotConfig, TelegramDecisionProject } from "@genesiscz/utils/telegram-bot/lib/types";
-import { type ActTokenStore, issueActTokens } from "../act/tokens";
+import { decisionChoice } from "../act/act";
+import {
+    type ActTokenStore,
+    issueActTokens,
+    issueToggleTokens,
+    type ToggleTokens,
+    toggleTokensOf,
+} from "../act/tokens";
 import { NOTICE_IDS, type NoticeDeps, noticeItem, postNotice } from "../notices/notices";
 import { needsHuman } from "./notify";
-import { shownDecisionText } from "./option-labels";
-import { type DecisionRecord, kindOf } from "./store";
+import { recommendedLetters, shownDecisionText } from "./option-labels";
+import { awaitsAnswer, type DecisionRecord, kindOf } from "./store";
 
 const log = logger.child({ component: "question:decision-telegram" });
 
@@ -40,12 +47,13 @@ export function decisionTelegramText(row: DecisionRecord, project: TelegramDecis
     const head = `${kindOf(row) === "todo" ? "TODO" : "❓ DECISION"} ${row.number}${row.title ? `: ${row.title}` : ""}`;
     const where = [row.project, row.sessionTitle].filter(Boolean).join(" · ");
     const recommended = row.recommended ? `Recommended: ${row.recommended}` : undefined;
+    const { several } = decisionChoice(row);
 
     if (!project.text) {
-        return clip(
-            [head, where, "Pick a letter here, or open the hub for the text.", recommended].filter(Boolean).join("\n"),
-            TEXT_MAX
-        );
+        const how = several
+            ? "Tick any set of letters here and press Send, or open the hub for the text."
+            : "Pick a letter here, or open the hub for the text.";
+        return clip([head, where, how, recommended].filter(Boolean).join("\n"), TEXT_MAX);
     }
 
     const shown = shownDecisionText({ prompt: row.prompt, options: row.options, type: kindOf(row) });
@@ -54,19 +62,17 @@ export function decisionTelegramText(row: DecisionRecord, project: TelegramDecis
         (option, index) => `${String.fromCharCode(97 + index)}) ${clip(option, OPTION_MAX)}`
     );
 
+    const how = several ? ["", "Tick any set of letters, then press Send."] : [];
+
     return clip(
-        [head, where, "", prompt, "", ...options, ...(recommended ? ["", recommended] : [])]
+        [head, where, "", prompt, "", ...options, ...how, ...(recommended ? ["", recommended] : [])]
             .filter((line, index) => line !== undefined && (line !== "" || index > 1))
             .join("\n"),
         TEXT_MAX
     );
 }
 
-function keyboard(letters: { letter: string; token: string }[], recommended?: string): TelegramButton[][] {
-    const buttons = letters.map(({ letter, token }) => ({
-        text: letter === recommended?.trim().toLowerCase() ? `${letter} ★` : letter,
-        data: `${DECISION_CALLBACK_PREFIX}:${token}`,
-    }));
+function inRows(buttons: TelegramButton[]): TelegramButton[][] {
     const rows: TelegramButton[][] = [];
 
     for (let index = 0; index < buttons.length; index += BUTTONS_PER_ROW) {
@@ -74,6 +80,95 @@ function keyboard(letters: { letter: string; token: string }[], recommended?: st
     }
 
     return rows;
+}
+
+/** "a + c": the letters of a pick as a button and an outcome line name them. */
+export function pickLabel(pick: string): string {
+    return [...pick].join(" + ");
+}
+
+function keyboard(letters: { letter: string; token: string }[], recommended?: string): TelegramButton[][] {
+    return inRows(
+        letters.map(({ letter, token }) => ({
+            text: letter === recommended?.trim().toLowerCase() ? `${letter} ★` : letter,
+            data: `${DECISION_CALLBACK_PREFIX}:${token}`,
+        }))
+    );
+}
+
+/**
+ * The keyboard of a decision that takes several letters: one toggle per letter ("✓ a" while it is staged, "★" on a
+ * recommended one), and under them "Send a + c" with the staged letters. Nothing staged: no Send button, since it
+ * would answer nothing.
+ */
+export function toggleKeyboard(tokens: ToggleTokens, staged: string, recommended?: string): TelegramButton[][] {
+    const ticked = new Set(staged);
+    const starred = recommendedLetters(recommended);
+    const letters = inRows(
+        tokens.letters.map(({ letter, token }) => ({
+            text: `${ticked.has(letter) ? "✓ " : ""}${letter}${starred.has(letter) ? " ★" : ""}`,
+            data: `${DECISION_CALLBACK_PREFIX}:${token}`,
+        }))
+    );
+    const pick = tokens.letters.map(({ letter }) => letter).filter((letter) => ticked.has(letter));
+
+    return pick.length > 0
+        ? [
+              ...letters,
+              [{ text: `Send ${pickLabel(pick.join(""))}`, data: `${DECISION_CALLBACK_PREFIX}:${tokens.send}` }],
+          ]
+        : letters;
+}
+
+/**
+ * The keyboard after a press on one of its toggles: the same buttons, ticked by the decision's staged pick now (`staged`
+ * when the log has no row yet). Null when the keyboard's tokens are gone or the decision no longer waits.
+ */
+export async function redrawnToggleKeyboard({
+    token,
+    staged,
+    store,
+    rows,
+}: {
+    token: string;
+    staged: string;
+    store: ActTokenStore;
+    rows: () => DecisionRecord[];
+}): Promise<TelegramButton[][] | null> {
+    const tokens = await store.read();
+    const group = tokens[token]?.group;
+    const buttons = group ? toggleTokensOf(tokens, group) : null;
+
+    if (!buttons) {
+        return null;
+    }
+
+    const row = rows().find((entry) => entry.id === tokens[token]?.decisionId);
+
+    if (row && !awaitsAnswer(row)) {
+        return null;
+    }
+
+    return toggleKeyboard(buttons, row ? (row.draftOption ?? "") : staged, row?.recommended);
+}
+
+/** The buttons of one posted decision: a letter each, or the toggles and Send of a decision that takes several. */
+async function decisionKeyboard(row: DecisionRecord, deps: DecisionTelegramDeps): Promise<TelegramButton[][]> {
+    const common = {
+        row,
+        surface: "telegram" as const,
+        ...(deps.store ? { store: deps.store } : {}),
+        ...(deps.now === undefined ? {} : { now: deps.now }),
+    };
+
+    const choice = decisionChoice(row);
+
+    if (!choice.several) {
+        return keyboard(await issueActTokens(common), row.recommended);
+    }
+
+    const tokens = await issueToggleTokens({ ...common, count: choice.count });
+    return toggleKeyboard(tokens, row.draftOption ?? "", row.recommended);
 }
 
 export interface DecisionTelegramDeps {
@@ -85,8 +180,8 @@ export interface DecisionTelegramDeps {
 }
 
 /**
- * Posts each decision that waits for the human to Telegram, one message with one button per option letter, when its
- * project opted in (`tools telegram-bot decisions enable <project>`). The message is remembered by the banner's id,
+ * Posts each decision that waits for the human to Telegram, one message with one button per option letter (a toggle
+ * per letter and a Send button for a decision that takes several), when its project opted in (`tools telegram-bot decisions enable <project>`). The message is remembered by the banner's id,
  * so the write that closes the decision edits it. Never throws: the rows are stored, and a post that cannot go out
  * must not fail it. Returns how many messages went out.
  */
@@ -120,12 +215,7 @@ export async function postDecisionsToTelegram(
             // One row that Telegram refuses must not stop the rows after it.
             try {
                 const project = projects[row.project as string];
-                const letters = await issueActTokens({
-                    row,
-                    surface: "telegram",
-                    ...(deps.store ? { store: deps.store } : {}),
-                    ...(deps.now === undefined ? {} : { now: deps.now }),
-                });
+                const buttons = await decisionKeyboard(row, deps);
                 const delivered = await postNotice(
                     {
                         event: {
@@ -140,7 +230,7 @@ export async function postDecisionsToTelegram(
                                 api,
                                 chatId,
                                 text: decisionTelegramText(row, project),
-                                buttons: keyboard(letters, row.recommended),
+                                buttons,
                                 noticeId: NOTICE_IDS.decision(row.id),
                                 ...(deps.now === undefined ? {} : { now: deps.now }),
                             });

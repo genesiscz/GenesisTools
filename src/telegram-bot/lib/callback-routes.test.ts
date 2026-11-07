@@ -8,6 +8,7 @@ import {
     retractDecisionTelegramMessages,
 } from "@app/question/lib/decisions/telegram";
 import type { AnswerDecisionInput } from "@app/question/lib/inbox/answer";
+import type { DraftInput } from "@app/question/lib/inbox/drafts";
 import { setNoticeDeps } from "@app/question/lib/notices/notices";
 import { memoryNoticeStore } from "@app/question/lib/notices/store";
 import { FakeTelegramMessagesApi } from "@genesiscz/utils/telegram-bot/lib/fake-messages-api";
@@ -269,5 +270,112 @@ describe("F11: decisions answered in Telegram", () => {
         expect(api.messages[0].text.endsWith(CLOSED_ELSEWHERE)).toBe(true);
         expect(api.messages[0].buttons).toEqual([]);
         expect(await retractDecisionTelegramMessages(["d_6_s-six"], { bot, api, now: NOW + 2 })).toBe(0);
+    });
+
+    it("a decision that takes several letters: letters tick the staged pick, the keyboard shows it, and Send answers with it", async () => {
+        const own = { ...bot, chats: { commands: 7012 } };
+        const api = new FakeTelegramMessagesApi();
+        const store = memoryActTokenStore();
+        let row = decision({
+            id: "d_12_s-twelve",
+            number: 12,
+            sessionId: "s-twelve",
+            prompt: "Which caches?\n\na) memory\nb) disk\nc) network",
+            options: ["memory", "disk", "network"],
+            recommended: "ac",
+            multiple: true,
+        });
+        await postDecisionsToTelegram([row], { bot: own, api, store, now: NOW });
+
+        const staged: DraftInput[] = [];
+        const calls: AnswerDecisionInput[] = [];
+        const actDeps: ActDeps = {
+            store,
+            rows: () => [row],
+            answer: async (input) => {
+                calls.push(input);
+                return { session: "s-twelve", text: "12ac", channel: "cmux", delivered: true, detail: "cmux" };
+            },
+            stage: async (input) => {
+                staged.push(input);
+                row = { ...row, state: input.option ? "drafted" : "open", draftOption: input.option ?? "" };
+                return row;
+            },
+        };
+        const router = createCallbackRouter({
+            d: decisionPressHandler({ actDeps: async () => actDeps, now: () => NOW + 1 }),
+        });
+        const [message] = api.messages;
+        const posted = message.text;
+        const labels = () => message.buttons.map((buttons) => buttons.map((button) => button.text));
+        const [a, , c] = message.buttons[0].map((button) => button.data);
+        const tap = (id: string, data: string) =>
+            answerPress({ api, router, press: { id, data, chatId: 7012, messageId: message.message } });
+
+        expect(posted).toContain("Tick any set of letters, then press Send.");
+        expect(labels()).toEqual([["a ★", "b", "c ★"]]);
+
+        await tap("cbq-12a", a);
+        expect(labels()).toEqual([["✓ a ★", "b", "c ★"], ["Send a"]]);
+        expect(message.text).toBe(posted);
+
+        await tap("cbq-12c", c);
+        // Telegram's retry of the first press returns its receipt: a stays ticked.
+        await tap("cbq-12a", a);
+        expect(labels()).toEqual([["✓ a ★", "b", "✓ c ★"], ["Send a + c"]]);
+        expect(staged.map((input) => input.option)).toEqual(["a", "ac"]);
+        expect(staged[0]).toMatchObject({ session: "s-twelve", number: 12, expectedRevision: 1 });
+
+        await tap("cbq-12a2", a);
+        expect(labels()).toEqual([["a ★", "b", "✓ c ★"], ["Send c"]]);
+        await tap("cbq-12a3", a);
+        expect(api.answered.at(-1)).toEqual({ id: "cbq-12a3", text: "Ticked a + c" });
+        expect(calls).toEqual([]);
+
+        await tap("cbq-12send", message.buttons[1][0].data);
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0]).toMatchObject({
+            session: "s-twelve",
+            number: 12,
+            option: "ac",
+            deliveryKey: "telegram:cbq-12send",
+        });
+        expect(message.text).toContain("Which caches?");
+        expect(message.text).toContain("→ a + c sent to the agent (cmux)");
+        expect(message.buttons).toEqual([]);
+    });
+
+    it("a toggle on a decision that closed meanwhile refuses and drops the buttons", async () => {
+        const own = { ...bot, chats: { commands: 7013 } };
+        const api = new FakeTelegramMessagesApi();
+        const store = memoryActTokenStore();
+        const row = decision({ id: "d_13_s-thirteen", number: 13, sessionId: "s-thirteen", multiple: true });
+        await postDecisionsToTelegram([row], { bot: own, api, store, now: NOW });
+
+        const staged: DraftInput[] = [];
+        const actDeps: ActDeps = {
+            store,
+            rows: () => [{ ...row, state: "sent" }],
+            answer: async () => ({ session: "s-thirteen", text: "13a", channel: "cmux", delivered: true }),
+            stage: async (input) => {
+                staged.push(input);
+                return row;
+            },
+        };
+        const router = createCallbackRouter({
+            d: decisionPressHandler({ actDeps: async () => actDeps, now: () => NOW + 1 }),
+        });
+        const [message] = api.messages;
+        const reply = await answerPress({
+            api,
+            router,
+            press: { id: "cbq-13", data: message.buttons[0][0].data, chatId: 7013, messageId: message.message },
+        });
+
+        expect(staged).toEqual([]);
+        expect(reply.toast).toBe("Not sent");
+        expect(message.text).toContain("Not sent: DECISION 13 is sent already.");
+        expect(message.buttons).toEqual([]);
     });
 });

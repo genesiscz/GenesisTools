@@ -200,6 +200,44 @@ describe("decision notices", () => {
         expect(posted[0].actions?.map((action) => action.id)).toEqual(["open-hub"]);
     });
 
+    test("a decision that takes several letters: the banner sends the recommended set, no letters anywhere", async () => {
+        const { deps, posted } = fakeDeps();
+        const tokens = memoryActTokenStore();
+        const row = decision({ options: ["memory", "disk", "network"], recommended: "abc" });
+
+        await postDecisionNotices([row], { notices: deps, tokens, bundle: tmpdir(), phoneEnabled: true });
+
+        // The banner and the push go out side by side; the push, with no token to issue, may go first.
+        const banner = posted.find((event) => event.id === NOTICE_IDS.post(row.id));
+        const push = posted.find((event) => event.id === NOTICE_IDS.decision(row.id));
+        expect(banner?.actions?.map((action) => action.title)).toEqual(["Open in hub", "Send a + b + c ★"]);
+        expect(banner?.actions?.[1].execute).toContain(`banner:${NOTICE_IDS.post(row.id)}:abc`);
+        expect(Object.values(tokens.tokens).filter((token) => token.surface === "banner")).toMatchObject([
+            { option: "abc", decisionId: row.id },
+        ]);
+
+        // A lock-screen button answers one letter, and no category carries a Reply field alone.
+        expect(push?.phone?.thread).toBe("s-one");
+        expect(push?.phone?.answers).toBeUndefined();
+        expect(push?.message).toContain("c) network");
+        expect(Object.values(tokens.tokens).some((token) => token.surface === "phone")).toBe(false);
+    });
+
+    test("a decision that takes several letters and recommends none: the banner opens the hub only", async () => {
+        const { deps, posted } = fakeDeps();
+        const tokens = memoryActTokenStore();
+
+        await postDecisionNotices([decision({ multiple: true, recommended: undefined })], {
+            notices: deps,
+            tokens,
+            bundle: tmpdir(),
+            phoneEnabled: false,
+        });
+
+        expect(posted[0].actions?.map((action) => action.id)).toEqual(["open-hub"]);
+        expect(tokens.tokens).toEqual({});
+    });
+
     test("the phone channel off: no push and no phone tokens", async () => {
         const { deps, posted } = fakeDeps();
         const tokens = memoryActTokenStore();

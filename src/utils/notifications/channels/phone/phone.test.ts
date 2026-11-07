@@ -99,6 +99,22 @@ describe("phone channel", () => {
         expect(openOnDevice(data.sealed!, macKeys.publicKey, keyPair().secretKey)).toBeNull();
     });
 
+    test("an alert without answers (a decision that takes several letters) goes with no category and no tokens", async () => {
+        const store = memoryPhoneDeviceStore({ "phone-1": device({ kind: "simctl", udid: "SIM-1" }) });
+        const { sent, transports } = fakeTransports();
+        const keys = async () => {
+            throw new Error("no answers, so no tokens to seal");
+        };
+        const channel = createPhoneChannel({ devices: store, transports, keys, presence: AWAY });
+
+        const receipt = await channel.post({ ...decisionEvent, phone: { thread: "session-1" } }, { enabled: true });
+
+        expect(receipt.ok).toBe(true);
+        const aps = sent[0].message.payload.aps as Record<string, unknown>;
+        expect(aps.category).toBeUndefined();
+        expect(sent[0].message.payload[PUSH_DATA_KEY]).toEqual({ v: 1, kind: "notice", noticeId: "qa-decision-d3" });
+    });
+
     test("text off keeps the message off the lock screen", async () => {
         const store = memoryPhoneDeviceStore({ "phone-1": device({ kind: "simctl", udid: "SIM-1" }) });
         const { sent, transports } = fakeTransports();
