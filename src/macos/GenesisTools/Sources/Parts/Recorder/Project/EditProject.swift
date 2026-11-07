@@ -41,6 +41,12 @@ struct EditProject: Codable, Equatable {
     /// Moments marked while editing (the range popover's Add Marker), in source order; nil is none. The recording's
     /// own markers stay in recording.json. Written by the `marker` op (src/utils/recording-editor/project.ts).
     var markers: [Marker]?
+    /// Round 4 fx-render: transitions at the joins of two clips (Render/RenderFx.swift); nil is a hard cut everywhere.
+    var transitions: Transitions?
+    /// Round 4 fx-render: magnifier lenses over source ranges; nil is none.
+    var lens: Lens?
+    /// Round 4 fx-render: the 3D tilt of the framed picture; nil is flat.
+    var tilt: Tilt?
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
@@ -463,6 +469,53 @@ struct EditProject: Codable, Equatable {
             case .webm: "WebM"
             }
         }
+    }
+
+    // MARK: Round 4 fx-render (src/utils/recording-editor/fx.ts)
+
+    enum TransitionKind: String, Codable, CaseIterable {
+        case none, crossfade, zoom, blur
+    }
+
+    /// One join's transition: `ms` is its whole length, centred on the join.
+    struct Transition: Codable, Equatable {
+        var kind: TransitionKind = .none
+        var ms = 300
+    }
+
+    /// Every join takes `default` unless `joins` has its own, keyed by the id of the clip that starts there.
+    struct Transitions: Codable, Equatable {
+        var `default` = Transition()
+        var joins: [String: Transition]?
+    }
+
+    /// A round loupe from `startUs` to `endUs` of the source: it follows the cursor, or stays at x/y (0...1 of the
+    /// source picture). `radius` is a fraction of the picture's short side.
+    struct LensItem: Codable, Equatable, Identifiable {
+        var id: String
+        var startUs: Int64
+        var endUs: Int64
+        var radius = 0.12
+        var magnification = 2.0
+        var follow = true
+        var x = 0.5
+        var y = 0.5
+        /// #RRGGBB.
+        var ring = "#FFFFFF"
+    }
+
+    struct Lens: Codable, Equatable {
+        var items: [LensItem] = []
+    }
+
+    /// The framed picture tilts slightly in 3D (strength 0...1), drifts slowly, tilts in at the start and out at the end.
+    struct Tilt: Codable, Equatable {
+        var strength = 0.5
+        var drift = true
+        var tiltIn = true
+        var tiltOut = true
+        var inMs = 1200
+        var outMs = 1200
     }
 }
 

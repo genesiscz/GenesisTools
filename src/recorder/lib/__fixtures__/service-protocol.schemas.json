@@ -389,10 +389,10 @@
         "type": "object",
         "properties": {
           "path": {
-            "$ref": "#/$defs/__schema15"
+            "$ref": "#/$defs/__schema17"
           },
           "window": {
-            "$ref": "#/$defs/__schema16"
+            "$ref": "#/$defs/__schema18"
           }
         }
       },
@@ -427,7 +427,7 @@
             "minItems": 1,
             "type": "array",
             "items": {
-              "$ref": "#/$defs/__schema17"
+              "$ref": "#/$defs/__schema19"
             }
           },
           "out": {
@@ -457,52 +457,52 @@
         "type": "object",
         "properties": {
           "out": {
-            "$ref": "#/$defs/__schema18"
-          },
-          "path": {
-            "$ref": "#/$defs/__schema19"
-          },
-          "edit": {
             "$ref": "#/$defs/__schema20"
           },
-          "library": {
+          "path": {
             "$ref": "#/$defs/__schema21"
           },
-          "picker": {
+          "edit": {
             "$ref": "#/$defs/__schema22"
           },
-          "shortcuts": {
+          "library": {
             "$ref": "#/$defs/__schema23"
           },
-          "filter": {
+          "picker": {
             "$ref": "#/$defs/__schema24"
           },
-          "width": {
+          "shortcuts": {
             "$ref": "#/$defs/__schema25"
           },
-          "height": {
+          "filter": {
             "$ref": "#/$defs/__schema26"
           },
-          "atSeconds": {
+          "width": {
             "$ref": "#/$defs/__schema27"
           },
-          "tab": {
+          "height": {
             "$ref": "#/$defs/__schema28"
           },
-          "selectZoom": {
+          "atSeconds": {
             "$ref": "#/$defs/__schema29"
           },
-          "selectClip": {
+          "tab": {
             "$ref": "#/$defs/__schema30"
           },
-          "part": {
+          "selectZoom": {
             "$ref": "#/$defs/__schema31"
           },
-          "range": {
+          "selectClip": {
+            "$ref": "#/$defs/__schema32"
+          },
+          "part": {
             "$ref": "#/$defs/__schema33"
           },
+          "range": {
+            "$ref": "#/$defs/__schema35"
+          },
           "comment": {
-            "$ref": "#/$defs/__schema34"
+            "$ref": "#/$defs/__schema36"
           }
         },
         "required": [
@@ -2609,6 +2609,176 @@
               "action"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "transition"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "crossfade",
+                  "zoom",
+                  "blur",
+                  "default"
+                ]
+              },
+              "ms": {
+                "type": "integer",
+                "minimum": 50,
+                "maximum": 2000
+              },
+              "clip": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "lens"
+              },
+              "from": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "to": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "radius": {
+                "type": "number",
+                "minimum": 0.04,
+                "maximum": 0.4
+              },
+              "magnification": {
+                "type": "number",
+                "minimum": 1.5,
+                "maximum": 4
+              },
+              "follow": {
+                "type": "boolean"
+              },
+              "at": {
+                "$ref": "#/$defs/__schema15"
+              },
+              "ring": {
+                "$ref": "#/$defs/__schema16"
+              }
+            },
+            "required": [
+              "op",
+              "from",
+              "to"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "setLens"
+              },
+              "id": {
+                "type": "string"
+              },
+              "from": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "to": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "radius": {
+                "type": "number",
+                "minimum": 0.04,
+                "maximum": 0.4
+              },
+              "magnification": {
+                "type": "number",
+                "minimum": 1.5,
+                "maximum": 4
+              },
+              "follow": {
+                "type": "boolean"
+              },
+              "at": {
+                "$ref": "#/$defs/__schema15"
+              },
+              "ring": {
+                "$ref": "#/$defs/__schema16"
+              }
+            },
+            "required": [
+              "op",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "unlens"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "tilt"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "strength": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "drift": {
+                "type": "boolean"
+              },
+              "tiltIn": {
+                "type": "boolean"
+              },
+              "tiltOut": {
+                "type": "boolean"
+              },
+              "inMs": {
+                "type": "integer",
+                "minimum": 100,
+                "maximum": 5000
+              },
+              "outMs": {
+                "type": "integer",
+                "minimum": 100,
+                "maximum": 5000
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
           }
         ]
       },
@@ -2739,52 +2909,76 @@
         "$ref": "#/$defs/__schema7"
       },
       "__schema15": {
-        "$ref": "#/$defs/__schema0"
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "y": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "additionalProperties": false
       },
       "__schema16": {
+        "type": "string",
+        "pattern": "^#[0-9a-fA-F]{6}$"
+      },
+      "__schema17": {
+        "$ref": "#/$defs/__schema0"
+      },
+      "__schema18": {
         "type": "integer",
         "exclusiveMinimum": 0,
         "maximum": 9007199254740991
       },
-      "__schema17": {
+      "__schema19": {
         "type": "number",
         "minimum": 0
       },
-      "__schema18": {
+      "__schema20": {
         "type": "string",
         "minLength": 1
       },
-      "__schema19": {
-        "type": "string"
-      },
-      "__schema20": {
-        "type": "string"
-      },
       "__schema21": {
-        "type": "boolean"
+        "type": "string"
       },
       "__schema22": {
-        "type": "boolean"
+        "type": "string"
       },
       "__schema23": {
         "type": "boolean"
       },
       "__schema24": {
-        "type": "string"
+        "type": "boolean"
       },
       "__schema25": {
-        "type": "number",
-        "exclusiveMinimum": 0
+        "type": "boolean"
       },
       "__schema26": {
-        "type": "number",
-        "exclusiveMinimum": 0
+        "type": "string"
       },
       "__schema27": {
         "type": "number",
-        "minimum": 0
+        "exclusiveMinimum": 0
       },
       "__schema28": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "__schema29": {
+        "type": "number",
+        "minimum": 0
+      },
+      "__schema30": {
         "type": "string",
         "enum": [
           "zoom",
@@ -2799,20 +2993,20 @@
           "find"
         ]
       },
-      "__schema29": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 9007199254740991
-      },
-      "__schema30": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 9007199254740991
-      },
       "__schema31": {
-        "$ref": "#/$defs/__schema32"
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
       },
       "__schema32": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "__schema33": {
+        "$ref": "#/$defs/__schema34"
+      },
+      "__schema34": {
         "anyOf": [
           {
             "type": "object",
@@ -2849,10 +3043,10 @@
           }
         ]
       },
-      "__schema33": {
-        "$ref": "#/$defs/__schema32"
+      "__schema35": {
+        "$ref": "#/$defs/__schema34"
       },
-      "__schema34": {
+      "__schema36": {
         "type": "integer",
         "minimum": 0,
         "maximum": 9007199254740991
@@ -2913,7 +3107,7 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema5"
+            "$ref": "#/$defs/__schema6"
           },
           "undoDepth": {
             "type": "integer",
@@ -2941,7 +3135,7 @@
         "additionalProperties": false
       },
       "edit.apply": {
-        "$ref": "#/$defs/__schema6"
+        "$ref": "#/$defs/__schema7"
       },
       "edit.undo": {
         "type": "object",
@@ -2950,16 +3144,16 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema5"
+            "$ref": "#/$defs/__schema6"
           },
           "warnings": {
-            "$ref": "#/$defs/__schema7"
-          },
-          "removedIdleUs": {
             "$ref": "#/$defs/__schema8"
           },
-          "loudness": {
+          "removedIdleUs": {
             "$ref": "#/$defs/__schema9"
+          },
+          "loudness": {
+            "$ref": "#/$defs/__schema10"
           },
           "undone": {
             "type": "array",
@@ -2982,16 +3176,16 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema5"
+            "$ref": "#/$defs/__schema6"
           },
           "warnings": {
-            "$ref": "#/$defs/__schema7"
-          },
-          "removedIdleUs": {
             "$ref": "#/$defs/__schema8"
           },
-          "loudness": {
+          "removedIdleUs": {
             "$ref": "#/$defs/__schema9"
+          },
+          "loudness": {
+            "$ref": "#/$defs/__schema10"
           },
           "redone": {
             "type": "array",
@@ -3014,7 +3208,7 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema5"
+            "$ref": "#/$defs/__schema6"
           }
         },
         "required": [
@@ -3040,7 +3234,7 @@
         "additionalProperties": false
       },
       "gesture.commit": {
-        "$ref": "#/$defs/__schema6"
+        "$ref": "#/$defs/__schema7"
       },
       "gesture.cancel": {
         "type": "object",
@@ -3049,7 +3243,7 @@
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema5"
+            "$ref": "#/$defs/__schema6"
           }
         },
         "required": [
@@ -3230,12 +3424,12 @@
         "type": "object",
         "properties": {
           "front": {
-            "$ref": "#/$defs/__schema10"
+            "$ref": "#/$defs/__schema11"
           },
           "open": {
             "type": "array",
             "items": {
-              "$ref": "#/$defs/__schema10"
+              "$ref": "#/$defs/__schema11"
             }
           }
         },
@@ -4483,6 +4677,151 @@
               "additionalProperties": false
             }
           },
+          "transitions": {
+            "type": "object",
+            "properties": {
+              "default": {
+                "default": {
+                  "kind": "none",
+                  "ms": 300
+                },
+                "$ref": "#/$defs/__schema4"
+              },
+              "joins": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "$ref": "#/$defs/__schema4"
+                }
+              }
+            },
+            "required": [
+              "default"
+            ],
+            "additionalProperties": false
+          },
+          "lens": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "startUs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "endUs": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "radius": {
+                      "default": 0.12,
+                      "type": "number",
+                      "minimum": 0.04,
+                      "maximum": 0.4
+                    },
+                    "magnification": {
+                      "default": 2,
+                      "type": "number",
+                      "minimum": 1.5,
+                      "maximum": 4
+                    },
+                    "follow": {
+                      "default": true,
+                      "type": "boolean"
+                    },
+                    "x": {
+                      "default": 0.5,
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "y": {
+                      "default": 0.5,
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "ring": {
+                      "default": "#FFFFFF",
+                      "type": "string",
+                      "pattern": "^#[0-9a-fA-F]{6}$"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "startUs",
+                    "endUs",
+                    "radius",
+                    "magnification",
+                    "follow",
+                    "x",
+                    "y",
+                    "ring"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "tilt": {
+            "type": "object",
+            "properties": {
+              "strength": {
+                "default": 0.5,
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "drift": {
+                "default": true,
+                "type": "boolean"
+              },
+              "tiltIn": {
+                "default": true,
+                "type": "boolean"
+              },
+              "tiltOut": {
+                "default": true,
+                "type": "boolean"
+              },
+              "inMs": {
+                "default": 1200,
+                "type": "integer",
+                "minimum": 100,
+                "maximum": 5000
+              },
+              "outMs": {
+                "default": 1200,
+                "type": "integer",
+                "minimum": 100,
+                "maximum": 5000
+              }
+            },
+            "required": [
+              "strength",
+              "drift",
+              "tiltIn",
+              "tiltOut",
+              "inMs",
+              "outMs"
+            ],
+            "additionalProperties": false
+          },
           "revision": {
             "default": 0,
             "type": "integer",
@@ -4505,7 +4844,7 @@
               },
               "color": {
                 "default": "#FFD60A",
-                "$ref": "#/$defs/__schema4"
+                "$ref": "#/$defs/__schema5"
               }
             },
             "required": [
@@ -4523,7 +4862,7 @@
               },
               "color": {
                 "default": "#FFFFFF",
-                "$ref": "#/$defs/__schema4"
+                "$ref": "#/$defs/__schema5"
               },
               "height": {
                 "default": 0.008,
@@ -4679,31 +5018,57 @@
         ]
       },
       "__schema4": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "default": "none",
+            "type": "string",
+            "enum": [
+              "none",
+              "crossfade",
+              "zoom",
+              "blur"
+            ]
+          },
+          "ms": {
+            "default": 300,
+            "type": "integer",
+            "minimum": 50,
+            "maximum": 2000
+          }
+        },
+        "required": [
+          "kind",
+          "ms"
+        ],
+        "additionalProperties": false
+      },
+      "__schema5": {
         "type": "string",
         "pattern": "^#[0-9a-fA-F]{6}$"
       },
-      "__schema5": {
+      "__schema6": {
         "type": "integer",
         "minimum": 0,
         "maximum": 9007199254740991
       },
-      "__schema6": {
+      "__schema7": {
         "type": "object",
         "properties": {
           "project": {
             "$ref": "#/$defs/__schema0"
           },
           "revision": {
-            "$ref": "#/$defs/__schema5"
+            "$ref": "#/$defs/__schema6"
           },
           "warnings": {
-            "$ref": "#/$defs/__schema7"
-          },
-          "removedIdleUs": {
             "$ref": "#/$defs/__schema8"
           },
-          "loudness": {
+          "removedIdleUs": {
             "$ref": "#/$defs/__schema9"
+          },
+          "loudness": {
+            "$ref": "#/$defs/__schema10"
           }
         },
         "required": [
@@ -4712,13 +5077,13 @@
         ],
         "additionalProperties": false
       },
-      "__schema7": {
+      "__schema8": {
         "type": "array",
         "items": {
           "type": "string"
         }
       },
-      "__schema8": {
+      "__schema9": {
         "type": "array",
         "items": {
           "type": "array",
@@ -4735,7 +5100,7 @@
           "maxItems": 2
         }
       },
-      "__schema9": {
+      "__schema10": {
         "type": "object",
         "properties": {
           "measuredLufs": {
@@ -4754,7 +5119,7 @@
         ],
         "additionalProperties": false
       },
-      "__schema10": {
+      "__schema11": {
         "type": "object",
         "properties": {
           "path": {

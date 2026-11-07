@@ -75,6 +75,12 @@ enum EditOp: Equatable {
     // R4 9 intro and end cards
     case introCard(IntroCard)
     case endCard(EndCard)
+    // Round 4 fx-render (src/utils/recording-editor/fx.ts).
+    case transition(Transition)
+    case lens(Lens)
+    case setLens(SetLens)
+    case unlens(Unlens)
+    case tilt(Tilt)
 
     /// Every payload type, so the decoder finds one by its tag and the tag test lists them.
     static let payloads: [any EditOpPayload.Type] = [
@@ -89,6 +95,8 @@ enum EditOp: Equatable {
         // R4 voiceover clips, 8 music ducking
         Voiceover.self, Unvoiceover.self, Ducking.self, CaptionsStyle.self, ProgressBar.self,
         IntroCard.self, EndCard.self,
+        // Round 4 fx-render.
+        Transition.self, Lens.self, SetLens.self, Unlens.self, Tilt.self,
     ]
 
     static var tags: [String] { payloads.map { $0.tag } }
@@ -159,6 +167,11 @@ enum EditOp: Equatable {
         case let .progress(op): op
         case let .introCard(op): op
         case let .endCard(op): op
+        case let .transition(op): op
+        case let .lens(op): op
+        case let .setLens(op): op
+        case let .unlens(op): op
+        case let .tilt(op): op
         }
     }
 
@@ -811,5 +824,66 @@ extension EditOp {
         var voiceovers: Bool?
         var enabled: Bool?
         var op: EditOp { .ducking(self) }
+    }
+
+    // MARK: Round 4 fx-render: transitions, lens, tilt
+
+    /// A transition kind, or `default` to give one join the edit-wide transition back.
+    enum TransitionChoice: String, Codable, CaseIterable {
+        case none, crossfade, zoom, blur
+        case `default`
+    }
+
+    /// Without `clip` the edit-wide default; with `clip` the join where that clip starts.
+    struct Transition: EditOpPayload {
+        static let tag = "transition"
+        var kind: TransitionChoice?
+        var ms: Int?
+        var clip: String?
+        var op: EditOp { .transition(self) }
+    }
+
+    /// A magnifier lens over SOURCE seconds; `at` holds it still.
+    struct Lens: EditOpPayload {
+        static let tag = "lens"
+        var from: Double
+        var to: Double
+        var radius: Double?
+        var magnification: Double?
+        var follow: Bool?
+        var at: Point?
+        var ring: String?
+        var op: EditOp { .lens(self) }
+    }
+
+    struct SetLens: EditOpPayload {
+        static let tag = "setLens"
+        var id: String
+        var from: Double?
+        var to: Double?
+        var radius: Double?
+        var magnification: Double?
+        var follow: Bool?
+        var at: Point?
+        var ring: String?
+        var op: EditOp { .setLens(self) }
+    }
+
+    struct Unlens: EditOpPayload {
+        static let tag = "unlens"
+        var id: String
+        var op: EditOp { .unlens(self) }
+    }
+
+    struct Tilt: EditOpPayload {
+        static let tag = "tilt"
+        var enabled: Bool?
+        var strength: Double?
+        var drift: Bool?
+        var tiltIn: Bool?
+        var tiltOut: Bool?
+        var inMs: Int?
+        var outMs: Int?
+        var op: EditOp { .tilt(self) }
     }
 }

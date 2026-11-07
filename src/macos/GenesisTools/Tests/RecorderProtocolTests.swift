@@ -158,7 +158,8 @@ final class RecorderGoldenTests: XCTestCase {
 
     func testEveryGoldenEditDecodesAndWritesBackUnchanged() throws {
         let projects = try XCTUnwrap(golden()["projects"] as? [[String: Any]])
-        XCTAssertEqual(projects.count, 4)
+        // At least the four first edits; round 4's effects add their own.
+        XCTAssertGreaterThanOrEqual(projects.count, 4)
         for entry in projects {
             let name = try XCTUnwrap(entry["name"] as? String)
             let written = try JSONSerialization.data(withJSONObject: try XCTUnwrap(entry["project"]))

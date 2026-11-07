@@ -234,6 +234,33 @@ const EXAMPLE_OPS: readonly unknown[] = [
     { op: "introCard", enabled: false },
     { op: "endCard", text: "Thanks for watching", link: "https://example.com/demo", qr: true, seconds: 4 },
     { op: "endCard", enabled: false },
+    // Round 4 fx-render: transitions, lens, tilt.
+    { op: "transition", kind: "crossfade", ms: 400 },
+    { op: "transition", clip: "c2", kind: "blur" },
+    { op: "transition", clip: "c2", kind: "default" },
+    {
+        op: "lens",
+        from: 1,
+        to: 3,
+        radius: 0.15,
+        magnification: 2.5,
+        follow: false,
+        at: { x: 0.3, y: 0.6 },
+        ring: "#FFCC00",
+    },
+    {
+        op: "setLens",
+        id: "l1",
+        from: 1.5,
+        to: 4,
+        radius: 0.1,
+        magnification: 3,
+        follow: true,
+        at: { x: 0.5, y: 0.5 },
+        ring: "#FFFFFF",
+    },
+    { op: "unlens", id: "l1" },
+    { op: "tilt", enabled: true, strength: 0.6, drift: false, tiltIn: true, tiltOut: false, inMs: 900, outMs: 1500 },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */
@@ -271,6 +298,8 @@ function stableIds(project: EditProject): EditProject {
         ...(project.shapes ? { shapes: renumber(project.shapes, "s") } : {}),
         ...(project.markers ? { markers: renumber(project.markers, "m") } : {}),
         ...(camera ? { camera } : {}),
+        // Round 4 fx-render.
+        ...(project.lens ? { lens: { items: renumber(project.lens.items, "l") ?? [] } } : {}),
     };
 }
 
@@ -335,8 +364,19 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
         ],
         withCamera
     );
+    // Round 4 fx-render: a cut with a default and an own transition, a placed lens, and a tilt.
+    const fx = apply([
+        { op: "frame", padding: 0.08 },
+        { op: "cut", from: 4, to: 5 },
+        { op: "transition", kind: "crossfade" },
+        { op: "lens", from: 1, to: 3, magnification: 2.5, at: { x: 0.3, y: 0.6 } },
+        { op: "tilt", strength: 0.6 },
+    ]);
+    const fxJoin = fx.clips[1]?.id ?? "";
+    const fxWithJoin = apply([{ op: "transition", clip: fxJoin, kind: "zoom", ms: 500 }], fx);
     return [
         { name: "every item, a split and a speed-up", project: items },
+        { name: "transitions, a lens and a tilt", project: fxWithJoin },
         { name: "the looks, the export and the sound", project: looks },
         { name: "the looks a recorded track turns on, and music", project: stableIds(tracked) },
         { name: "a camera with two hidden parts and lanes", project: camera },

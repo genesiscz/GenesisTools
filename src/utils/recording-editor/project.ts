@@ -7,6 +7,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
 import { CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
+import { applyFxOp, describeFx, fxOpSchemas, lensSchema, tiltSchema, transitionsSchema } from "./fx";
 import { recordingItemId, withItemIds } from "./item-ids";
 import {
     clipSpeed,
@@ -412,6 +413,12 @@ export const editProjectSchema = z.object({
     camera: cameraBubbleSchema.optional(),
     /** Moments marked while editing, in source order; absent is none (the recording's own are in recording.json). */
     markers: z.array(editMarkerSchema).optional(),
+    /** Round 4 fx-render: transitions at the joins of two clips (fx.ts); absent is a hard cut everywhere. */
+    transitions: transitionsSchema.optional(),
+    /** Round 4 fx-render: magnifier lenses over source ranges (fx.ts); absent is none. */
+    lens: lensSchema.optional(),
+    /** Round 4 fx-render: the 3D tilt of the framed picture (fx.ts); absent is flat. */
+    tilt: tiltSchema.optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
     // R4 6 animated captions
@@ -1518,6 +1525,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             lane: z.string().optional(),
         })
         .strict(),
+    // Round 4 fx-render: transition, lens, setLens, unlens, tilt (fx.ts).
+    ...fxOpSchemas,
 ]);
 export type EditOp = z.infer<typeof editOpSchema>;
 
@@ -2313,6 +2322,13 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 },
             };
         }
+        // Round 4 fx-render (fx.ts).
+        case "transition":
+        case "lens":
+        case "setLens":
+        case "unlens":
+        case "tilt":
+            return applyFxOp(project, op);
     }
 }
 
@@ -2426,6 +2442,8 @@ export function describeProject(project: EditProject, path: string) {
             ...(automatic ? { automatic: true } : {}),
             items: items.map((item) => item.id),
         })),
+        // Round 4 fx-render: transitions (with every join), lenses, tilt.
+        ...describeFx(project),
     };
 }
 

@@ -10,6 +10,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { awaitStart, startGatePath, stopPassedChild, sweepStartGates } from "@genesiscz/utils/process/start-gate";
 import { checkProject, type EditFacts, type EditIssue, fixOps } from "@genesiscz/utils/recording-editor/check";
+import { TRANSITION_KINDS } from "@genesiscz/utils/recording-editor/fx";
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { placedShape } from "@genesiscz/utils/recording-editor/item-ops";
 import { DEFAULT_LANES, EFFECT_KINDS, type EffectLane } from "@genesiscz/utils/recording-editor/lanes";
@@ -156,7 +157,7 @@ const demoParamsSchema = z
     .strict();
 
 const movieDoc =
-    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, camera, captions, keys, transcriptFixes, motion, shapes, texts, lanes, warnings? }";
+    "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, camera, captions, keys, transcriptFixes, motion, shapes, texts, lanes, transitions, lenses, tilt, warnings? }";
 
 /** What every edit method returns, short: the full field list once, on info(), keeps describe()'s lines readable. */
 const editResult = "{ summary, path, revision, outputSeconds, warnings? } (info() lists the whole edit)";
@@ -1060,6 +1061,71 @@ const movieMethods = [
             })
             .strict(),
         "A card the export plays AFTER the movie for seconds (3): text (needed the first time), a link under it and, with qr: true, a QR code of the link, on the frame's background. enabled: false removes it."
+    ),
+    // Round 4 fx-render: transitions at cuts, the magnifier lens, the 3D tilt (src/utils/recording-editor/fx.ts).
+    edit(
+        "transition",
+        z
+            .object({
+                kind: z.enum([...TRANSITION_KINDS, "default"]).optional(),
+                ms: z.number().int().min(50).max(2000).optional(),
+                clip: z.string().optional(),
+            })
+            .strict(),
+        'The transition at the joins of two clips (a cut; a split alone joins nothing): kind "none" (a hard cut, the default), "crossfade", "zoom" (zooms through) or "blur" (a blurred wipe), ms its whole length centred on the join (300). Without clip it sets the edit-wide default; with clip (the id of the clip that starts at the join, from info().transitions.joins) only that join, and kind "default" gives it the default back. Every duration stays: the transition blends each side with a still of the other.'
+    ),
+    edit(
+        "lens",
+        z
+            .object({
+                from: sourceTimeSchema,
+                to: sourceTimeSchema,
+                radius: z.number().min(0.04).max(0.4).optional(),
+                magnification: z.number().min(1.5).max(4).optional(),
+                follow: z.boolean().optional(),
+                at: z
+                    .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+                    .strict()
+                    .optional(),
+                ring: z.string().optional(),
+            })
+            .strict(),
+        'A round magnifier lens from `from` to `to` (SOURCE seconds): radius (a fraction of the picture\'s short side, 0.12), magnification 1.5 to 4 (2), ring "#RRGGBB" (white). It follows the cursor (a movie without a cursor track holds the middle) unless `at` { x, y } (0 to 1 of the source picture) or follow: false. A ring and a soft shadow; the rest of the picture stays visible. info().lenses lists them with their ids.'
+    ),
+    edit(
+        "setLens",
+        z
+            .object({
+                id: z.string(),
+                from: sourceTimeSchema.optional(),
+                to: sourceTimeSchema.optional(),
+                radius: z.number().min(0.04).max(0.4).optional(),
+                magnification: z.number().min(1.5).max(4).optional(),
+                follow: z.boolean().optional(),
+                at: z
+                    .object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+                    .strict()
+                    .optional(),
+                ring: z.string().optional(),
+            })
+            .strict(),
+        "Changes a lens by its id: its range, radius, magnification, ring, or where it stays (`at` stops it following the cursor unless follow: true)."
+    ),
+    edit("unlens", z.object({ id: z.string() }).strict(), "Removes a lens by its id.", ["id"]),
+    edit(
+        "tilt",
+        z
+            .object({
+                enabled: z.boolean().optional(),
+                strength: z.number().min(0).max(1).optional(),
+                drift: z.boolean().optional(),
+                tiltIn: z.boolean().optional(),
+                tiltOut: z.boolean().optional(),
+                inMs: z.number().int().min(100).max(5000).optional(),
+                outMs: z.number().int().min(100).max(5000).optional(),
+            })
+            .strict(),
+        "The 3D tilt camera: a slight perspective tilt of the framed picture and its shadow (strength 0 to 1, 0.5), drifting slowly (drift, on), tilting in over the first inMs (1200) and out over the last outMs (1200). Best with a frame (frame()); without one the picture tilts over black. enabled: false removes it."
     ),
 ];
 
@@ -2336,6 +2402,27 @@ export class Movie {
 
     async closeEditor() {
         return hostCloseEditor({ path: (await openProject(this.recording)).path });
+    }
+
+    // Round 4 fx-render: transitions at cuts, the magnifier lens, the 3D tilt.
+    async transition(options: Omit<Extract<EditOp, { op: "transition" }>, "op"> = {}) {
+        return this.change([{ op: "transition", ...options }]);
+    }
+
+    async lens(options: Omit<Extract<EditOp, { op: "lens" }>, "op">) {
+        return this.change([{ op: "lens", ...options }]);
+    }
+
+    async setLens(options: Omit<Extract<EditOp, { op: "setLens" }>, "op">) {
+        return this.change([{ op: "setLens", ...options }]);
+    }
+
+    async unlens(id: string) {
+        return this.change([{ op: "unlens", id }]);
+    }
+
+    async tilt(options: Omit<Extract<EditOp, { op: "tilt" }>, "op"> = {}) {
+        return this.change([{ op: "tilt", ...options }]);
     }
 }
 

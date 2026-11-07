@@ -115,6 +115,11 @@
     "movie.progress",
     "movie.introCard",
     "movie.endCard",
+    "movie.transition",
+    "movie.lens",
+    "movie.setLens",
+    "movie.unlens",
+    "movie.tilt",
     "movies.list",
     "movies.search"
   ],
@@ -181,7 +186,12 @@
     "progress",
     "introCard",
     "endCard",
-    "range"
+    "range",
+    "transition",
+    "lens",
+    "setLens",
+    "unlens",
+    "tilt"
   ],
   "ops": [
     {
@@ -732,6 +742,62 @@
     {
       "op": "endCard",
       "enabled": false
+    },
+    {
+      "op": "transition",
+      "kind": "crossfade",
+      "ms": 400
+    },
+    {
+      "op": "transition",
+      "kind": "blur",
+      "clip": "c2"
+    },
+    {
+      "op": "transition",
+      "kind": "default",
+      "clip": "c2"
+    },
+    {
+      "op": "lens",
+      "from": 1,
+      "to": 3,
+      "radius": 0.15,
+      "magnification": 2.5,
+      "follow": false,
+      "at": {
+        "x": 0.3,
+        "y": 0.6
+      },
+      "ring": "#FFCC00"
+    },
+    {
+      "op": "setLens",
+      "id": "l1",
+      "from": 1.5,
+      "to": 4,
+      "radius": 0.1,
+      "magnification": 3,
+      "follow": true,
+      "at": {
+        "x": 0.5,
+        "y": 0.5
+      },
+      "ring": "#FFFFFF"
+    },
+    {
+      "op": "unlens",
+      "id": "l1"
+    },
+    {
+      "op": "tilt",
+      "enabled": true,
+      "strength": 0.6,
+      "drift": false,
+      "tiltIn": true,
+      "tiltOut": false,
+      "inMs": 900,
+      "outMs": 1500
     }
   ],
   "projects": [
@@ -858,6 +924,91 @@
           "fixes": {
             "4200": "The fixed words"
           }
+        }
+      }
+    },
+    {
+      "name": "transitions, a lens and a tilt",
+      "project": {
+        "version": 1,
+        "source": {
+          "video": "/movies/screen.mp4",
+          "durationUs": 10000000,
+          "width": 1920,
+          "height": 1080
+        },
+        "clips": [
+          {
+            "id": "c1",
+            "fromUs": 0,
+            "toUs": 4000000,
+            "speed": 1
+          },
+          {
+            "id": "c2",
+            "fromUs": 5000000,
+            "toUs": 10000000,
+            "speed": 1
+          }
+        ],
+        "zooms": [],
+        "audio": {
+          "include": true,
+          "volume": 1,
+          "mutedTracks": []
+        },
+        "export": {
+          "codec": "h264",
+          "maxHeight": 0,
+          "output": ""
+        },
+        "revision": 0,
+        "frame": {
+          "background": {
+            "kind": "gradient",
+            "colors": [
+              "#4F46E5",
+              "#DB2777"
+            ]
+          },
+          "padding": 0.08,
+          "cornerRadius": 0.012,
+          "shadow": true
+        },
+        "transitions": {
+          "default": {
+            "kind": "crossfade",
+            "ms": 300
+          },
+          "joins": {
+            "c2": {
+              "kind": "zoom",
+              "ms": 500
+            }
+          }
+        },
+        "lens": {
+          "items": [
+            {
+              "id": "l1",
+              "startUs": 1000000,
+              "endUs": 3000000,
+              "radius": 0.12,
+              "magnification": 2.5,
+              "follow": false,
+              "x": 0.3,
+              "y": 0.6,
+              "ring": "#FFFFFF"
+            }
+          ]
+        },
+        "tilt": {
+          "strength": 0.6,
+          "drift": true,
+          "tiltIn": true,
+          "tiltOut": true,
+          "inMs": 1200,
+          "outMs": 1200
         }
       }
     },
