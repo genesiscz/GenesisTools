@@ -132,5 +132,6 @@ private struct VoiceoverRow: View {
             .accessibilityValue("\(Int((clip.volume * 100).rounded())) percent")
         }
         .accessibilityElement(children: .contain)
+        .liveRow()
     }
 }

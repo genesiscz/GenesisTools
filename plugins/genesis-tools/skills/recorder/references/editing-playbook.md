@@ -62,8 +62,11 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
 | `m.export({ out })` | Renders the movie | `await m.export({ out: "/tmp/cc/<project>/<session>/cut.mp4" })` |
 | `m.undo()` / `m.reset()` | Takes back the last change; starts over (music, voiceovers and cards go too) | `await m.undo()` |
 
-Not there yet: a layout with the phone on one side and text on the other, a zoom of the whole canvas, a portrait phone
-preset, and a pixelate cell size. Use `frame({ aspect })` and texts in the padding instead (section 6).
+| `m.frame({ preset })` | A phone layout: `phone-left` / `phone-right` (16:9, three quarters free for text), `phone-portrait` (9:16, bottom eighth free for captions); `layout: { align, scale }` for your own | `await m.frame({ preset: "phone-left" })` |
+| `m.zoom({ ..., target: "canvas" })` | Zooms the whole framed picture, not only inside the phone | `await m.zoom({ from: 52, to: 58, scale: 1.4, target: "canvas" })` |
+| `m.redact({ ..., cell })` / `m.redactionJoins({ snapMs })` | Pixelate block size in source pixels; boxes up to 250 ms apart (or from a cut) meet, so no frame shows between them | `await m.redact({ from, to, rect, style: "pixelate", cell: 24 })` |
+| `m.text({ text: "a\nb", block })` | Several lines (up to 500 characters), wrapped in a block of `width`, `align` | `await m.text({ from, to, text: "Step 1\nOpen the inbox", x: 0.72, block: { width: 0.4, align: "left" } })` |
+| `m.export({ out, overwrite, size })` | Replaces an older export in one step; an explicit size (`{ height: 1080 }`) | `await m.export({ out, overwrite: true, size: { height: 1080 } })` |
 
 ## 3. Recipe: a privacy-safe cut of a phone recording
 
