@@ -82,21 +82,32 @@ const { log } = logger.scoped("recording-editor-project");
  * SOURCE movie, so a cut never moves a zoom. The window watches the file and takes an agent's save as it lands.
  */
 export const EDIT_PROJECT_VERSION = 1;
+/**
+ * Microseconds as an edit file keeps them: whole numbers. A fraction (a build before round 7 saved 39133333.333 for a
+ * part the motion placed at 30 frames a second) is rounded when the file loads, instead of refusing the whole edit.
+ */
+function wholeUs<T extends z.ZodType<number>>(schema: T) {
+    return z.preprocess(
+        (value) => (typeof value === "number" && Number.isFinite(value) ? Math.round(value) : value),
+        schema
+    );
+}
+
 /** The shortest clip a split or a cut leaves: one frame at 60 fps (TimelineMap.minimumClipUs). */
 export const MINIMUM_CLIP_US = 16_667;
 const MINIMUM_ZOOM_US = 200_000;
 
 const clipSchema = z.object({
     id: z.string(),
-    fromUs: z.number().int().nonnegative(),
-    toUs: z.number().int().nonnegative(),
+    fromUs: wholeUs(z.number().int().nonnegative()),
+    toUs: wholeUs(z.number().int().nonnegative()),
     speed: z.number().min(0.25).max(16).default(1),
 });
 
 const zoomSchema = z.object({
     id: z.string(),
-    startUs: z.number().int().nonnegative(),
-    endUs: z.number().int().nonnegative(),
+    startUs: wholeUs(z.number().int().nonnegative()),
+    endUs: wholeUs(z.number().int().nonnegative()),
     scale: z.number().min(1).max(4).default(1.5),
     mode: z.enum(["manual", "follow"]).default("manual"),
     focusX: z.number().min(0).max(1).default(0.5),
@@ -241,13 +252,13 @@ const boxSchema = z.object({
     width: z.number().min(0).max(1),
     height: z.number().min(0).max(1),
 });
-const trackKeySchema = boxSchema.extend({ atUs: z.number().int().nonnegative() });
+const trackKeySchema = boxSchema.extend({ atUs: wholeUs(z.number().int().nonnegative()) });
 
 /** A part of the SOURCE picture hidden for a time: an address, a token, a notification. It moves with a zoom. */
 export const redactionSchema = z.object({
     id: z.string(),
-    startUs: z.number().int().nonnegative(),
-    endUs: z.number().int().positive(),
+    startUs: wholeUs(z.number().int().nonnegative()),
+    endUs: wholeUs(z.number().int().positive()),
     /** The rectangle, 0...1 of the source picture from its top left. */
     x: z.number().min(0).max(1),
     y: z.number().min(0).max(1),
@@ -380,7 +391,7 @@ export function replaceWordsInLines(
  */
 export const editMarkerSchema = z.object({
     id: z.string(),
-    atUs: z.number().int().nonnegative(),
+    atUs: wholeUs(z.number().int().nonnegative()),
     label: z.string().trim().min(1).max(80),
 });
 export type EditMarker = z.infer<typeof editMarkerSchema>;
@@ -403,8 +414,8 @@ export const textBlockSchema = z.object({
 
 export const textNoteSchema = z.object({
     id: z.string(),
-    startUs: z.number().int().nonnegative(),
-    endUs: z.number().int().positive(),
+    startUs: wholeUs(z.number().int().nonnegative()),
+    endUs: wholeUs(z.number().int().positive()),
     text: z.string().min(1).max(TEXT_MAX_CHARS),
     x: z.number().min(0).max(1).default(0.5),
     y: z.number().min(0).max(1).default(0.12),
@@ -435,8 +446,8 @@ export const SHAPE_APPEARS = ["draw", "fade", "none"] as const;
  */
 export const shapeSchema = z.object({
     id: z.string(),
-    startUs: z.number().int().nonnegative(),
-    endUs: z.number().int().positive(),
+    startUs: wholeUs(z.number().int().nonnegative()),
+    endUs: wholeUs(z.number().int().positive()),
     kind: z.enum(SHAPE_KINDS),
     x1: z.number().min(0).max(1),
     y1: z.number().min(0).max(1),
@@ -508,7 +519,7 @@ export const editProjectSchema = z.object({
         video: z.string(),
         cursor: z.string().optional(),
         recording: z.string().optional(),
-        durationUs: z.number().int().positive(),
+        durationUs: wholeUs(z.number().int().positive()),
         width: z.number().int().positive(),
         height: z.number().int().positive(),
     }),
@@ -918,10 +929,11 @@ export function addRedaction(
         );
     }
 
+    // R7 1: the one place a hidden part's times are written; the motion places parts on thirds of a millisecond.
     const redaction: EditRedaction = {
         id: newId("r"),
-        startUs: options.fromUs,
-        endUs: Math.min(project.source.durationUs, options.toUs),
+        startUs: Math.round(options.fromUs),
+        endUs: Math.round(Math.min(project.source.durationUs, options.toUs)),
         x,
         y,
         width,

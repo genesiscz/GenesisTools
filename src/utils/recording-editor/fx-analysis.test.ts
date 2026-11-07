@@ -11,6 +11,7 @@ import {
     luhnValid,
     type MotionModel,
     maskPrivate,
+    type PrivateHit,
     privateHits,
     privateMatcher,
     redactionBoxAt,
@@ -511,5 +512,66 @@ describe("moving text: the content's motion carries a hit (round 6)", () => {
         expect(found.every((dy) => Math.abs(dy + 9) < 0.6)).toBe(true);
         const still = blockShifts({ previous: rows(0), current: rows(0), width, height });
         expect([...still.ok].every((state) => state === 1)).toBe(true);
+    });
+});
+
+describe("hidden parts keep whole microseconds (round 7)", () => {
+    // The motion carries a hit at 30 pictures a second, so its times fall on thirds of a millisecond.
+    const third = 39_133_333.333;
+    const hit: PrivateHit = {
+        id: "pthird001",
+        kind: "text",
+        label: "Text",
+        masked: "or••ve",
+        fromUs: third,
+        toUs: third + 1_533_333.333,
+        box: { x: 0.2, y: 0.3, width: 0.2, height: 0.05 },
+        keys: [
+            { atUs: third, x: 0.2, y: 0.5, width: 0.2, height: 0.05 },
+            { atUs: third + 33_333.333, x: 0.2, y: 0.45, width: 0.2, height: 0.05 },
+        ],
+        uncertain: [
+            { fromUs: third + 66_666.667, toUs: third + 500_000.5, box: { x: 0.1, y: 0, width: 0.4, height: 0.6 } },
+        ],
+    };
+
+    test("a hide after a cut and a speed saves whole microseconds, and the edit loads again", () => {
+        const long = { ...source, durationUs: 120_000_000 };
+        const cutAndSped = applyOp(
+            applyOp(wholeProject(long), op({ op: "cut", from: 10, to: 12 })),
+            op({ op: "speed", from: 50, to: 60, factor: 2 })
+        );
+        const edited = applyOp(cutAndSped, op({ op: "hideText", text: "Orla Fictive" }), { textHits: [hit] });
+        const times = (edited.redactions ?? []).flatMap((part) => [
+            part.startUs,
+            part.endUs,
+            ...(part.track ?? []).map((key) => key.atUs),
+        ]);
+        expect(times.length).toBeGreaterThan(3);
+        expect(times.every(Number.isInteger)).toBe(true);
+        expect(() => parseProject(SafeJSON.stringify(edited), "edit.json")).not.toThrow();
+    });
+
+    test("an edit saved with a fraction of a microsecond loads, rounded, instead of refusing the whole file", () => {
+        const project = applyOp(
+            wholeProject(source),
+            op({ op: "redact", from: 1, to: 2, rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.1 } })
+        );
+        const [part] = project.redactions ?? [];
+        const broken = {
+            ...project,
+            redactions: [
+                {
+                    ...part,
+                    startUs: 1_133_333.333,
+                    endUs: 2_000_000.5,
+                    track: [{ atUs: 1_500_000.4, x: 0.1, y: 0.1, width: 0.2, height: 0.1 }],
+                },
+            ],
+        };
+        const loaded = parseProject(SafeJSON.stringify(broken), "edit.json");
+        expect(loaded.redactions?.[0].startUs).toBe(1_133_333);
+        expect(loaded.redactions?.[0].endUs).toBe(2_000_001);
+        expect(loaded.redactions?.[0].track?.[0].atUs).toBe(1_500_000);
     });
 });

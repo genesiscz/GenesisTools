@@ -745,8 +745,8 @@ export function textHits(
                 kind: track.kind,
                 label: track.label,
                 masked: maskPrivate(track.value),
-                fromUs: track.fromUs,
-                toUs: track.toUs,
+                fromUs: Math.round(track.fromUs),
+                toUs: Math.round(track.toUs),
                 box,
                 keys: still ? [keys[0]] : keys,
                 ...(track.uncertain.length > 0
