@@ -96,6 +96,13 @@ const zoomSchema = z.object({
     easeOutMs: z.number().int().nonnegative().default(450),
     /** The effect lane it sits on (lanes.ts); absent is the first lane that holds its kind. */
     lane: z.string().optional(),
+    // R5 4 canvas zoom
+    /**
+     * What it zooms: "picture" (absent) zooms inside the movie, the frame and its background staying still; "canvas"
+     * zooms the whole framed export (picture, frame, background), so a phone placed in a 16:9 frame can fill it.
+     * Its focus is then 0...1 of the canvas. A canvas zoom may overlap a picture zoom; two of one kind may not.
+     */
+    target: z.enum(["picture", "canvas"]).optional(),
 });
 
 export const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "a color is #RRGGBB");
@@ -121,6 +128,10 @@ export const clicksSchema = z.object({
  */
 export const CANVAS_ASPECTS = ["source", "16:9", "4:3", "1:1", "9:16"] as const;
 
+// R5 4 frame layouts
+/** Where a framed picture sits on its canvas. */
+export const FRAME_ALIGNS = ["center", "left", "right", "top", "bottom"] as const;
+
 export const BACKGROUND_KINDS = ["none", "color", "gradient", "image"] as const;
 
 /** The movie on a background, scaled in by `padding`, with rounded corners and a shadow. Absent is the plain movie. */
@@ -142,7 +153,47 @@ export const frameSchema = z.object({
     /** As a fraction of the output height. */
     cornerRadius: z.number().min(0).max(0.1).default(0.012),
     shadow: z.boolean().default(true),
+    // R5 4 frame layouts
+    /** Where the picture sits on the canvas and how big; absent is centred at its fitted size. */
+    layout: z
+        .object({
+            /**
+             * "center", or against one edge (inside the padding): "left" or "right" leaves the other side of a wide
+             * canvas free for texts beside a phone; "top" or "bottom" does the same on a tall canvas.
+             */
+            align: z.enum(FRAME_ALIGNS).default("center"),
+            /**
+             * Times the fitted size (0.5 to 3): above 1 the picture grows past the padding and the canvas cuts what
+             * does not fit, so a phone fills more of the height (its top and bottom are cut first).
+             */
+            scale: z.number().min(0.5).max(3).default(1),
+        })
+        .optional(),
 });
+
+// R5 4 frame layouts
+/**
+ * Ready frames for a phone recording: "phone-left" and "phone-right" put the phone against one side of a 16:9 canvas
+ * with the other side (about three quarters of it) free for texts, and layout.scale above 1 makes the phone bigger;
+ * "phone-portrait" fills a 9:16 canvas (Shorts, Reels) from the top and leaves its bottom eighth for captions. Each
+ * sets the aspect, padding, corner radius and layout; the op's own fields still win.
+ */
+export const FRAME_PRESETS = ["phone-left", "phone-right", "phone-portrait"] as const;
+export type FramePreset = (typeof FRAME_PRESETS)[number];
+
+export const FRAME_PRESET_VALUES: Record<
+    FramePreset,
+    {
+        aspect: (typeof CANVAS_ASPECTS)[number];
+        padding: number;
+        cornerRadius: number;
+        layout: { align: (typeof FRAME_ALIGNS)[number]; scale: number };
+    }
+> = {
+    "phone-left": { aspect: "16:9", padding: 0.04, cornerRadius: 0.035, layout: { align: "left", scale: 1 } },
+    "phone-right": { aspect: "16:9", padding: 0.04, cornerRadius: 0.035, layout: { align: "right", scale: 1 } },
+    "phone-portrait": { aspect: "9:16", padding: 0.04, cornerRadius: 0.03, layout: { align: "top", scale: 0.88 } },
+};
 
 /**
  * The cursor the editor draws for a movie recorded without the system cursor (`tools recorder start` does that by
@@ -702,6 +753,9 @@ export interface ZoomOptions {
     follow?: boolean;
     easeInMs?: number;
     easeOutMs?: number;
+    // R5 4 canvas zoom
+    /** "canvas" zooms the whole framed export; absent zooms inside the picture. */
+    target?: "picture" | "canvas";
 }
 
 /** Adds a zoom over a source range; one that overlaps another zoom is refused with the zoom it meets. */
@@ -712,19 +766,22 @@ export interface ZoomOptions {
 export function placeZoom(
     project: EditProject,
     fromUs: number,
-    toUs: number
+    toUs: number,
+    // R5 4 canvas zoom: a zoom only moves past zooms of its own target.
+    target: "picture" | "canvas" = "picture"
 ): { startUs: number; endUs: number } | undefined {
     const length = Math.max(toUs - fromUs, 500_000);
     let startUs = Math.max(0, fromUs);
+    const same = project.zooms.filter((zoom) => (zoom.target ?? "picture") === target);
 
-    for (const zoom of [...project.zooms].sort((a, b) => a.startUs - b.startUs)) {
+    for (const zoom of [...same].sort((a, b) => a.startUs - b.startUs)) {
         if (startUs < zoom.endUs && startUs + length > zoom.startUs) {
             startUs = zoom.endUs;
         }
     }
 
     const endUs = Math.min(project.source.durationUs, startUs + length);
-    const meets = project.zooms.some((zoom) => startUs < zoom.endUs && endUs > zoom.startUs);
+    const meets = same.some((zoom) => startUs < zoom.endUs && endUs > zoom.startUs);
     return endUs - startUs >= MINIMUM_ZOOM_US && !meets ? { startUs, endUs } : undefined;
 }
 
@@ -735,7 +792,7 @@ export function addZoom(
     options: ZoomOptions = {}
 ): { project: EditProject; zoom: EditZoom } {
     checkRange(project, fromUs, toUs);
-    const span = placeZoom(project, fromUs, toUs);
+    const span = placeZoom(project, fromUs, toUs, options.target);
 
     if (!span) {
         throw new RangeError("no room for a zoom here; zooms cannot overlap");
@@ -752,6 +809,7 @@ export function addZoom(
         focusY: options.focus?.y,
         easeInMs: options.easeInMs,
         easeOutMs: options.easeOutMs,
+        ...(options.target === "canvas" ? { target: "canvas" } : {}),
     });
     const zooms = [...project.zooms, zoom].sort((a, b) => a.startUs - b.startUs);
     return { project: { ...project, zooms }, zoom };
@@ -1089,6 +1147,9 @@ export const editOpSchema = z.discriminatedUnion("op", [
             follow: z.boolean().optional(),
             /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
             lane: z.string().optional(),
+            // R5 4 canvas zoom
+            /** "canvas" zooms the whole framed export (focus is 0...1 of the canvas); absent zooms the picture. */
+            target: z.enum(["picture", "canvas"]).optional(),
         })
         .strict(),
     z.object({ op: z.literal("unzoom"), id: z.string() }).strict(),
@@ -1338,6 +1399,14 @@ export const editOpSchema = z.discriminatedUnion("op", [
             padding: z.number().min(0).max(0.3).optional(),
             cornerRadius: z.number().min(0).max(0.1).optional(),
             shadow: z.boolean().optional(),
+            // R5 4 frame layouts
+            /** Where the picture sits ("center", "left", "right", "top", "bottom") and its size (0.5 to 3 times fitted). */
+            layout: z
+                .object({ align: z.enum(FRAME_ALIGNS).optional(), scale: z.number().min(0.5).max(3).optional() })
+                .strict()
+                .optional(),
+            /** A ready frame for a phone recording ("phone-left", "phone-right", "phone-portrait"); fields here win. */
+            preset: z.enum(FRAME_PRESETS).optional(),
         })
         .strict(),
     cameraOpSchema,
@@ -2087,6 +2156,7 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 scale: op.scale,
                 focus: op.focus,
                 follow: op.follow,
+                target: op.target,
             }).project;
         case "unzoom":
             return removeZoom(project, op.id);
@@ -2488,8 +2558,16 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 );
             }
 
+            // R5 4 frame layouts: a preset first, then the op's own fields.
+            const preset = op.preset ? FRAME_PRESET_VALUES[op.preset] : undefined;
+            const layout =
+                preset || op.layout ? { ...current.layout, ...preset?.layout, ...op.layout } : current.layout;
             const { aspect, fit, ...frame } = frameSchema.parse({
                 ...current,
+                ...(preset
+                    ? { aspect: preset.aspect, padding: preset.padding, cornerRadius: preset.cornerRadius }
+                    : {}),
+                ...(layout ? { layout } : {}),
                 ...(op.aspect === undefined ? {} : { aspect: op.aspect }),
                 ...(op.fit === undefined ? {} : { fit: op.fit }),
                 ...(op.padding === undefined ? {} : { padding: op.padding }),
@@ -2497,11 +2575,14 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 ...(op.shadow === undefined ? {} : { shadow: op.shadow }),
                 background,
             });
-            // The editor window's JSON: the source shape and the whole movie (`contain`) are written as absent.
+            // The editor window's JSON: the source shape and the whole movie (`contain`) are written as absent, and
+            // so is a centred picture at its fitted size.
+            const { layout: placed, ...rest } = frame;
             return {
                 ...project,
                 frame: {
-                    ...frame,
+                    ...rest,
+                    ...(placed && (placed.align !== "center" || placed.scale !== 1) ? { layout: placed } : {}),
                     ...(aspect && aspect !== "source" ? { aspect } : {}),
                     ...(fit === "cover" ? { fit } : {}),
                 },
@@ -2543,6 +2624,8 @@ export function describeProject(project: EditProject, path: string) {
             scale: zoom.scale,
             mode: zoom.mode,
             focus: { x: zoom.focusX, y: zoom.focusY },
+            // R5 4 canvas zoom
+            ...(zoom.target === "canvas" ? { target: "canvas" as const } : {}),
         })),
         audio: project.audio.music
             ? {

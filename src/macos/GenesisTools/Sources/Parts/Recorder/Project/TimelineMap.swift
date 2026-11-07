@@ -125,7 +125,19 @@ enum ZoomCurve {
         second.startUs > first.startUs && second.startUs - first.endUs < Int64(first.easeOutMs + second.easeInMs) * 1000
     }
 
+    /// The picture's view: the zooms inside the movie (R5 4: a canvas zoom is `canvasView`'s, never this one's).
     static func view(atSource sourceUs: Int64, zooms: [EditProject.Zoom], cursor: CursorTrack?) -> View {
+        curve(atSource: sourceUs, zooms: zooms.filter { $0.target != .canvas }, cursor: cursor)
+    }
+
+    // R5 4 canvas zoom
+    /// The whole framed canvas's view: the canvas zooms, eased the same way, focused where they were placed (0...1 of
+    /// the canvas; a canvas zoom does not follow the cursor, which moves inside the picture).
+    static func canvasView(atSource sourceUs: Int64, zooms: [EditProject.Zoom]) -> View {
+        curve(atSource: sourceUs, zooms: zooms.filter { $0.target == .canvas }, cursor: nil)
+    }
+
+    private static func curve(atSource sourceUs: Int64, zooms: [EditProject.Zoom], cursor: CursorTrack?) -> View {
         let ordered = zooms.sorted { $0.startUs < $1.startUs }
         for (first, second) in zip(ordered, ordered.dropFirst()) where linked(first, second) {
             // The glide runs from where the first zoom would start to leave to where the second would have arrived.

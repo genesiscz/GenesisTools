@@ -145,6 +145,9 @@ final class ZoomState: @unchecked Sendable {
         // fx B (round 4)
         /// The speed of the part playing, when the speed badge is on and it plays at 1.5x or faster.
         var speedBadge: SpeedBadge.Mark?
+        // R5 4 canvas zoom
+        /// The whole framed canvas's zoom; `.whole` without a canvas zoom.
+        var canvasView = ZoomCurve.View.whole
     }
 
     /// Every frame the renderer drew; the editor compares it with the frames a playback should have shown.
@@ -218,6 +221,8 @@ final class ZoomState: @unchecked Sendable {
         look.transition = TransitionLook.mark(atOutputUs: outUs, project: project, track: cursor)
         look.lenses = LensLook.marks(atSourceUs: sourceUs, project: project, track: cursor)
         look.tilt = project.tilt.flatMap { TiltLook.pose(atOutputUs: outUs, lengthUs: project.outputDurationUs, tilt: $0) }
+        // R5 4 canvas zoom
+        look.canvasView = ZoomCurve.canvasView(atSource: sourceUs, zooms: project.zooms)
         return look
     }
 
@@ -801,6 +806,12 @@ struct EditRenderer {
                 result = TiltLook.apply(TiltLook.pin(result, to: bounds), rect: bounds, pose: pose, canvas: size)
                     .composited(over: CIImage(color: .black).cropped(to: bounds)).cropped(to: bounds)
                 cursor = cursor.map { TiltLook.apply(TiltLook.pin($0, to: bounds), rect: bounds, pose: pose, canvas: size) }
+            }
+            // R5 4 canvas zoom: the framed canvas (picture, frame, background) and the cursor on it, before the
+            // captions, keys and texts, which stay where they are on the export.
+            if look.canvasView.scale > 1.0005 {
+                result = Looks.zoomCanvas(result, view: look.canvasView, size: size)
+                cursor = cursor.map { Looks.zoomCanvas($0, view: look.canvasView, size: size) }
             }
             var captionUsed: CGFloat = 0
             if let caption = look.caption {

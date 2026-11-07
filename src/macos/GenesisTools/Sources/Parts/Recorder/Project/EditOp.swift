@@ -298,6 +298,8 @@ extension EditOp {
         var focus: Point?
         var follow: Bool?
         var lane: String?
+        // R5 4 canvas zoom
+        var target: EditProject.ZoomTarget?
         var op: EditOp { .zoom(self) }
     }
 
@@ -542,7 +544,16 @@ extension EditOp {
         var padding: Double?
         var cornerRadius: Double?
         var shadow: Bool?
+        // R5 4 frame layouts
+        var layout: Layout?
+        /// "phone-left", "phone-right" or "phone-portrait" (src/utils/recording-editor/project.ts FRAME_PRESETS).
+        var preset: String?
         var op: EditOp { .frame(self) }
+
+        struct Layout: Codable, Equatable {
+            var align: EditProject.FrameAlign?
+            var scale: Double?
+        }
 
         struct Background: Codable, Equatable {
             var kind: EditProject.BackgroundKind?

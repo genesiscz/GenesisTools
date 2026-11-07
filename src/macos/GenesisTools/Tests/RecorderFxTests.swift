@@ -128,3 +128,53 @@ final class RecorderFxTests: XCTestCase {
         XCTAssertEqual(layers.picture.extent, layers.rect)
     }
 }
+
+// R5 4 frame layouts and canvas zoom
+final class RecorderFrameLayoutTests: XCTestCase {
+    /// A phone (590×1278) in a 1920×1080 canvas: centred it fills about a quarter of the width; against the left edge
+    /// it starts at the padding and leaves the right three quarters free; scale 1.2 makes it taller than the canvas.
+    func testAPhoneSitsAgainstTheEdgeTheLayoutNamesAtItsScale() {
+        let phone = CGSize(width: 590, height: 1278), canvas = CGSize(width: 1920, height: 1080)
+        var frame = EditProject.Frame(aspect: .wide, padding: 0.04)
+        let centred = Looks.framePlacement(frame, picture: phone, canvas: canvas).inner
+        XCTAssertEqual(centred.midX, 960, accuracy: 0.5)
+        XCTAssertEqual(centred.height, 1080 * 0.92, accuracy: 0.5)
+        frame.layout = .init(align: .left, scale: 1)
+        let left = Looks.framePlacement(frame, picture: phone, canvas: canvas).inner
+        XCTAssertEqual(left.minX, 1080 * 0.04, accuracy: 0.5)
+        XCTAssertGreaterThan(canvas.width - left.maxX, canvas.width * 0.7, "three quarters free for texts")
+        frame.layout = .init(align: .right, scale: 1.2)
+        let right = Looks.framePlacement(frame, picture: phone, canvas: canvas).inner
+        XCTAssertEqual(right.maxX, 1920 - 1080 * 0.04, accuracy: 0.5)
+        XCTAssertEqual(right.height, 1080 * 0.92 * 1.2, accuracy: 0.5)
+        XCTAssertEqual(right.midY, 540, accuracy: 0.5, "the canvas cuts top and bottom alike")
+    }
+
+    /// A canvas zoom never moves the picture's own view, and a picture zoom never moves the canvas.
+    func testACanvasZoomZoomsTheCanvasAndNotThePicture() {
+        let canvasZoom = EditProject.Zoom(id: "c", startUs: 1_000_000, endUs: 3_000_000, scale: 2, focusX: 0.25, focusY: 0.5,
+                                          easeInMs: 0, easeOutMs: 0, target: .canvas)
+        let pictureZoom = EditProject.Zoom(id: "p", startUs: 1_000_000, endUs: 3_000_000, scale: 1.5, easeInMs: 0, easeOutMs: 0)
+        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, zooms: [canvasZoom], cursor: nil), .whole)
+        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, zooms: [canvasZoom, pictureZoom]).scale, 2)
+        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, zooms: [canvasZoom]).centerX, 0.25, accuracy: 0.001)
+        XCTAssertEqual(ZoomCurve.view(atSource: 2_000_000, zooms: [canvasZoom, pictureZoom], cursor: nil).scale, 1.5)
+        XCTAssertEqual(ZoomCurve.canvasView(atSource: 2_000_000, zooms: [pictureZoom]), .whole)
+    }
+
+    /// The zoomed canvas shows the left half (white) over the whole output.
+    func testZoomCanvasFillsTheOutputWithTheFocusedPart() {
+        let size = CGSize(width: 200, height: 100)
+        let canvas = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 100, height: 100))
+            .composited(over: CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: size)))
+        let zoomed = Looks.zoomCanvas(canvas, view: ZoomCurve.View(scale: 2, centerX: 0.25, centerY: 0.5), size: size)
+        XCTAssertEqual(zoomed.extent, CGRect(origin: .zero, size: size))
+        let context = CIContext()
+        var pixel = [UInt8](repeating: 0, count: 4)
+        for x in [5, 100, 195] {
+            context.render(zoomed, toBitmap: &pixel, rowBytes: 4, bounds: CGRect(x: x, y: 50, width: 1, height: 1),
+                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+            XCTAssertGreaterThan(pixel[0], 200, "x \(x) shows the white left half")
+        }
+    }
+}

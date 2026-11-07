@@ -846,6 +846,34 @@ describe("edit project (edit.json)", () => {
         expect(looks.redactions?.[0]?.cell).toBeUndefined();
     });
 
+    // R5 4: a phone in 16:9 filled a quarter of the width, with no way to move it aside or zoom the whole canvas.
+    test("a frame preset places a phone against one side, its own fields win, and a canvas zoom may overlap", () => {
+        const phone = applyOp(wholeProject(source), { op: "frame", preset: "phone-left", layout: { scale: 1.1 } });
+        expect(phone.frame).toMatchObject({ aspect: "16:9", padding: 0.04, layout: { align: "left", scale: 1.1 } });
+        const portrait = applyOp(phone, { op: "frame", preset: "phone-portrait" });
+        expect(portrait.frame?.aspect).toBe("9:16");
+        expect(portrait.frame?.layout).toEqual({ align: "top", scale: 0.88 });
+        const right = applyOp(phone, { op: "frame", layout: { align: "right" } });
+        expect(right.frame?.layout).toEqual({ align: "right", scale: 1.1 });
+        let zoomed = applyOp(phone, { op: "zoom", from: 1, to: 3, scale: 2 });
+        zoomed = applyOp(zoomed, {
+            op: "zoom",
+            from: 1,
+            to: 3,
+            scale: 2.5,
+            focus: { x: 0.2, y: 0.5 },
+            target: "canvas",
+        });
+        expect(zoomed.zooms.map((zoom) => [zoom.startUs, zoom.target])).toEqual([
+            [1_000_000, undefined],
+            [1_000_000, "canvas"],
+        ]);
+        expect(describeProject(zoomed, "/x/edit.json").zooms[1]).toMatchObject({ scale: 2.5, target: "canvas" });
+        // A second canvas zoom over the first moves past it, as a picture zoom moves past a picture zoom.
+        const second = applyOp(zoomed, { op: "zoom", from: 1.5, to: 2.5, target: "canvas" }).zooms.at(-1);
+        expect([second?.startUs, second?.target]).toEqual([3_000_000, "canvas"]);
+    });
+
     // Regression test: deep test 2026-11-06 RE5 — Lengthen on a circle that ends at the movie's end changed nothing.
     test("a too-short item at the movie's end is lengthened by starting earlier", () => {
         const project = applyOp(wholeProject(source), { op: "shape", kind: "circle", from: 9.83, to: 10 });

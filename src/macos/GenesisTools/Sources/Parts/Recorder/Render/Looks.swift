@@ -210,6 +210,18 @@ enum Looks {
         return result
     }
 
+    // R5 4 canvas zoom
+    /// The part of the canvas `view` shows (0...1 from the top left), scaled up to the whole canvas.
+    static func zoomCanvas(_ image: CIImage, view: ZoomCurve.View, size: CGSize) -> CIImage {
+        let rect = view.rect
+        let crop = CGRect(x: rect.minX * size.width, y: (1 - rect.maxY) * size.height, width: rect.width * size.width,
+                          height: rect.height * size.height)
+        return image.cropped(to: crop)
+            .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
+            .transformed(by: CGAffineTransform(scaleX: size.width / crop.width, y: size.height / crop.height))
+            .cropped(to: CGRect(origin: .zero, size: size))
+    }
+
     // R5 5 redaction edges
     /// A pixelate block's side in source pixels: the part's `cell` (2 to 256), else 1.8 % of the picture's height and at
     /// least 8 (about 19 px on a 1080 p movie, 39 px on a 2160 p one).
@@ -342,10 +354,19 @@ enum Looks {
         let room = CGSize(width: max(2, size.width - 2 * padding), height: max(2, size.height - 2 * padding))
         let crop = frame.fit == .cover ? coverCrop(picture: picture, room: room, focus: focus) : nil
         let shown = crop?.size ?? picture
-        let scale = max(0.05, min(room.width / shown.width, room.height / shown.height))
-        let inner = CGRect(x: (size.width - shown.width * scale) / 2, y: (size.height - shown.height * scale) / 2,
-                           width: shown.width * scale, height: shown.height * scale)
-        return FramePlacement(crop: crop, scale: scale, inner: inner)
+        // R5 4 frame layouts: the fitted size times the layout's scale, against the edge it names (Core Image y up).
+        let layout = frame.layout ?? .init()
+        let scale = max(0.05, min(room.width / shown.width, room.height / shown.height)) * CGFloat(min(3, max(0.5, layout.scale)))
+        let width = shown.width * scale, height = shown.height * scale
+        var x = (size.width - width) / 2, y = (size.height - height) / 2
+        switch layout.align {
+        case .center: break
+        case .left: x = padding
+        case .right: x = size.width - padding - width
+        case .top: y = size.height - padding - height
+        case .bottom: y = padding
+        }
+        return FramePlacement(crop: crop, scale: scale, inner: CGRect(x: x, y: y, width: width, height: height))
     }
 
     /// The picture fitted inside the canvas less the padding, centred, masked to a rounded rectangle, over a shadow

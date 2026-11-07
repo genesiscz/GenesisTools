@@ -289,6 +289,10 @@ const EXAMPLE_OPS: readonly unknown[] = [
     { op: "spotlight", from: 2, to: 3, rect: { x: 0.3, y: 0.3, width: 0.2, height: 0.2 }, fadeMs: 0 },
     { op: "setRedaction", id: "r1", fadeMs: -1, cell: 12 },
     { op: "redactionJoins", snapMs: 120 },
+    // R5 4 frame layouts and canvas zoom
+    { op: "frame", preset: "phone-left", layout: { scale: 1.1 } },
+    { op: "frame", layout: { align: "right", scale: 1 } },
+    { op: "zoom", from: 1, to: 3, scale: 2, focus: { x: 0.2, y: 0.5 }, target: "canvas" },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */
@@ -507,6 +511,14 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
                 ],
                 redactionJoins: { snapMs: 120 },
             }),
+        },
+        // R5 4 frame layouts and canvas zoom: a phone on the left of a 16:9 frame, zoomed into by a canvas zoom.
+        {
+            name: "a phone frame with a canvas zoom",
+            project: apply([
+                { op: "frame", preset: "phone-left", layout: { scale: 1.1 } },
+                { op: "zoom", from: 1, to: 3, scale: 2, focus: { x: 0.2, y: 0.5 }, target: "canvas" },
+            ]),
         },
     ];
 }

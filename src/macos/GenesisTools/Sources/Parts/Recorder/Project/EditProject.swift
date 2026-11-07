@@ -184,6 +184,14 @@ struct EditProject: Codable, Equatable {
         var easeOutMs = 450
         /// The effect lane it sits on (EffectLanes.swift); nil is the first lane that holds its kind.
         var lane: String?
+        // R5 4 canvas zoom
+        /// `.canvas` zooms the whole framed export (its focus is 0...1 of the canvas); nil zooms inside the picture.
+        var target: ZoomTarget?
+    }
+
+    // R5 4 canvas zoom
+    enum ZoomTarget: String, Codable, CaseIterable {
+        case picture, canvas
     }
 
     struct AudioSettings: Codable, Equatable {
@@ -479,6 +487,21 @@ struct EditProject: Codable, Equatable {
         /// As a fraction of the output height.
         var cornerRadius = 0.012
         var shadow = true
+        // R5 4 frame layouts
+        /// Where the picture sits and how big; nil is centred at its fitted size.
+        var layout: FrameLayout?
+    }
+
+    // R5 4 frame layouts
+    enum FrameAlign: String, Codable, CaseIterable {
+        case center, left, right, top, bottom
+    }
+
+    struct FrameLayout: Codable, Equatable {
+        /// Against one edge of the room inside the padding, or centred.
+        var align = FrameAlign.center
+        /// Times the fitted size (0.5 to 3); above 1 the canvas cuts what does not fit.
+        var scale = 1.0
     }
 
     enum Codec: String, Codable, CaseIterable {

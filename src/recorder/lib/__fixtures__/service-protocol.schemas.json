@@ -719,6 +719,13 @@
               },
               "lane": {
                 "type": "string"
+              },
+              "target": {
+                "type": "string",
+                "enum": [
+                  "picture",
+                  "canvas"
+                ]
               }
             },
             "required": [
@@ -1652,6 +1659,35 @@
               },
               "shadow": {
                 "type": "boolean"
+              },
+              "layout": {
+                "type": "object",
+                "properties": {
+                  "align": {
+                    "type": "string",
+                    "enum": [
+                      "center",
+                      "left",
+                      "right",
+                      "top",
+                      "bottom"
+                    ]
+                  },
+                  "scale": {
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": 3
+                  }
+                },
+                "additionalProperties": false
+              },
+              "preset": {
+                "type": "string",
+                "enum": [
+                  "phone-left",
+                  "phone-right",
+                  "phone-portrait"
+                ]
               }
             },
             "required": [
@@ -4029,6 +4065,13 @@
                 },
                 "lane": {
                   "type": "string"
+                },
+                "target": {
+                  "type": "string",
+                  "enum": [
+                    "picture",
+                    "canvas"
+                  ]
                 }
               },
               "required": [
@@ -4425,6 +4468,33 @@
               "shadow": {
                 "default": true,
                 "type": "boolean"
+              },
+              "layout": {
+                "type": "object",
+                "properties": {
+                  "align": {
+                    "default": "center",
+                    "type": "string",
+                    "enum": [
+                      "center",
+                      "left",
+                      "right",
+                      "top",
+                      "bottom"
+                    ]
+                  },
+                  "scale": {
+                    "default": 1,
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": 3
+                  }
+                },
+                "required": [
+                  "align",
+                  "scale"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [

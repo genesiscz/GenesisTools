@@ -222,7 +222,7 @@ export function duplicateItem(project: EditProject, id: string): EditProject {
     const zoom = project.zooms.find((item) => item.id === id);
 
     if (zoom) {
-        const span = placeZoom(project, zoom.endUs, zoom.endUs + (zoom.endUs - zoom.startUs));
+        const span = placeZoom(project, zoom.endUs, zoom.endUs + (zoom.endUs - zoom.startUs), zoom.target);
 
         if (!span) {
             throw new RangeError("no room after this zoom for a copy; zooms cannot overlap");

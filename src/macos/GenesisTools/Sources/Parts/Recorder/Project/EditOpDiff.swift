@@ -203,8 +203,11 @@ enum EditOpDiff {
         guard let frame else { return EditOp.Frame(enabled: false) }
         let background = EditOp.Frame.Background(kind: frame.background.kind, colors: frame.background.colors,
                                                  image: frame.background.image, blur: frame.background.blur)
+        // R5 4 frame layouts: always sent, so a layout taken away goes back to centred at the fitted size.
+        let layout = frame.layout ?? .init()
         return EditOp.Frame(enabled: true, aspect: frame.aspect ?? .source, fit: frame.fit ?? .contain, background: background,
-                            padding: frame.padding, cornerRadius: frame.cornerRadius, shadow: frame.shadow)
+                            padding: frame.padding, cornerRadius: frame.cornerRadius, shadow: frame.shadow,
+                            layout: EditOp.Frame.Layout(align: layout.align, scale: layout.scale))
     }
 
     private static func cursor(_ cursor: EditProject.Cursor) -> EditOp.Cursor {

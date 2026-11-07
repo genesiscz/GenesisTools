@@ -38,6 +38,8 @@ import {
     type EditOp,
     type EditProject,
     editOpSchema,
+    FRAME_ALIGNS,
+    FRAME_PRESETS,
     findInTranscript,
     hexColor,
     outputDurationUs,
@@ -144,6 +146,8 @@ const zoomSchema = z
         focus: focusSchema.optional(),
         follow: z.boolean().optional(),
         lane: z.string().optional(),
+        // R5 4 canvas zoom
+        target: z.enum(["picture", "canvas"]).optional(),
     })
     .strict();
 
@@ -239,7 +243,7 @@ const movieMethods = [
     edit(
         "zoom",
         zoomSchema,
-        "Zooms over a source range: scale 1–4, focus {x,y} 0..1 from the top left, or follow: true for the cursor."
+        'Zooms over a source range: scale 1–4, focus {x,y} 0..1 from the top left, or follow: true for the cursor. target "canvas" zooms the whole framed export instead of the picture inside it (focus is then 0..1 of the canvas): a phone on the left of a 16:9 frame fills it with zoom({ from, to, scale: 2.5, focus: { x: 0.15, y: 0.5 }, target: "canvas" }). A canvas zoom may overlap a picture zoom; texts, captions and keys stay where they are.'
     ),
     edit("unzoom", z.object({ id: z.string() }), "Removes a zoom by its id.", ["id"]),
     edit(
@@ -618,9 +622,15 @@ const movieMethods = [
                 padding: z.number().min(0).max(0.3).optional(),
                 cornerRadius: z.number().min(0).max(0.1).optional(),
                 shadow: z.boolean().optional(),
+                // R5 4 frame layouts
+                layout: z
+                    .object({ align: z.enum(FRAME_ALIGNS).optional(), scale: z.number().min(0.5).max(3).optional() })
+                    .strict()
+                    .optional(),
+                preset: z.enum(FRAME_PRESETS).optional(),
             })
             .strict(),
-        'Puts the movie on a background: aspect (the canvas: "16:9", "4:3", "1:1", "9:16" or "source"; its short side is the movie height), fit ("contain" the whole movie, or "cover": cropped to fill the room inside the padding, following the cursor; padding 0 for edge to edge), padding (0.06 of the short side), cornerRadius (0.012), shadow, background { kind: "gradient" | "color" | "image" | "none", colors, image (a picture file; kind image), blur (0–1) }; enabled: false removes it.'
+        'Puts the movie on a background: aspect (the canvas: "16:9", "4:3", "1:1", "9:16" or "source"; its short side is the movie height), fit ("contain" the whole movie, or "cover": cropped to fill the room inside the padding, following the cursor; padding 0 for edge to edge), padding (0.06 of the short side), cornerRadius (0.012), shadow, background { kind: "gradient" | "color" | "image" | "none", colors, image (a picture file; kind image), blur (0–1) }; enabled: false removes it. layout { align: "center" | "left" | "right" | "top" | "bottom", scale: 0.5–3 } places the picture against one edge (inside the padding) and sizes it (above 1 the canvas cuts what does not fit). preset sets aspect, padding, corner radius and layout for a phone recording, and the call\'s own fields win: "phone-left" / "phone-right" (16:9, the phone against one side, the other three quarters free for texts at x 0.62 or 0.38), "phone-portrait" (9:16, the phone from the top with the bottom eighth free for captions, for Shorts). Example: frame({ preset: "phone-left", layout: { scale: 1.1 } }), then text({ from, to, text: "Line one\\nLine two", x: 0.64 }).'
     ),
     edit(
         "removeIdle",

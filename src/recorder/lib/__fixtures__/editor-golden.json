@@ -923,6 +923,31 @@
     {
       "op": "redactionJoins",
       "snapMs": 120
+    },
+    {
+      "op": "frame",
+      "layout": {
+        "scale": 1.1
+      },
+      "preset": "phone-left"
+    },
+    {
+      "op": "frame",
+      "layout": {
+        "align": "right",
+        "scale": 1
+      }
+    },
+    {
+      "op": "zoom",
+      "from": 1,
+      "to": 3,
+      "scale": 2,
+      "focus": {
+        "x": 0.2,
+        "y": 0.5
+      },
+      "target": "canvas"
     }
   ],
   "projects": [
@@ -1886,6 +1911,68 @@
         "revision": 0,
         "redactionJoins": {
           "snapMs": 120
+        }
+      }
+    },
+    {
+      "name": "a phone frame with a canvas zoom",
+      "project": {
+        "version": 1,
+        "source": {
+          "video": "/movies/screen.mp4",
+          "durationUs": 10000000,
+          "width": 1920,
+          "height": 1080
+        },
+        "clips": [
+          {
+            "id": "c1",
+            "fromUs": 0,
+            "toUs": 10000000,
+            "speed": 1
+          }
+        ],
+        "zooms": [
+          {
+            "id": "z1",
+            "startUs": 1000000,
+            "endUs": 3000000,
+            "scale": 2,
+            "mode": "manual",
+            "focusX": 0.2,
+            "focusY": 0.5,
+            "easeInMs": 450,
+            "easeOutMs": 450,
+            "target": "canvas"
+          }
+        ],
+        "audio": {
+          "include": true,
+          "volume": 1,
+          "mutedTracks": []
+        },
+        "export": {
+          "codec": "h264",
+          "maxHeight": 0,
+          "output": ""
+        },
+        "revision": 0,
+        "frame": {
+          "background": {
+            "kind": "gradient",
+            "colors": [
+              "#4F46E5",
+              "#DB2777"
+            ]
+          },
+          "padding": 0.04,
+          "cornerRadius": 0.035,
+          "shadow": true,
+          "layout": {
+            "align": "left",
+            "scale": 1.1
+          },
+          "aspect": "16:9"
         }
       }
     }
