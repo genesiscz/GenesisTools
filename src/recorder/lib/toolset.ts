@@ -1363,7 +1363,7 @@ const movieMethods = [
             .strict(),
         result: z.unknown(),
         resultName: '{ id, kind: "still" | "typing", from, to, seconds, speed, saves, plays, region }[]',
-        doc: "The typing and waiting stretches: where only a small part of the picture changes (at most maxArea of it per quarter second, 0.06: typing, a spinner, a progress bar) or nothing does, for at least minSeconds (4), inside the kept parts at normal speed and away from clicks, cursor moves and speech. Each has a proposed speed (4x to 8x, longer is faster), the seconds it saves and the region that changed. The picture is compared once and cached in waits.json. speedUpWaits({ ids }) applies them.",
+        doc: "The typing and waiting stretches: where only a small part of the picture changes (at most maxArea of it per quarter second, 0.06: typing, a spinner, a progress bar) or nothing does, for at least minSeconds (4), inside the kept parts at normal speed and away from clicks, cursor moves and speech. Each has a proposed speed (4x to 8x, longer is faster), the seconds it saves and the region that changed. The picture is compared once per movie and cached by its content, so a copy of the movie reuses it. speedUpWaits({ ids }) applies them.",
         effect: "read",
     }),
     edit(
@@ -1406,7 +1406,7 @@ const movieMethods = [
             .strict(),
         result: z.unknown(),
         resultName: '{ kind: "scene" | "scroll" | "still" | "click" | "tap", index, at, to?, plays, shift?, x?, y? }[]',
-        doc: 'What happens on screen, at source seconds: scene changes (most of the picture changes at once), scrolls (shift: the share of the picture\'s height the content moved, down positive), still stretches (1 s or more), clicks from the cursor track, and taps you pass ({ at, x?, y? }, for a movie without a cursor track such as a simulator). index counts per kind from 1. Place an effect on one: zoom({ from: (await snap({ event: "scene", index: 3, lead: -0.2 })).at, … }). The picture is compared once and cached in waits.json.',
+        doc: 'What happens on screen, at source seconds: scene changes (most of the picture changes at once), scrolls (shift: the share of the picture\'s height the content moved, down positive), still stretches (1 s or more), clicks from the cursor track, and taps you pass ({ at, x?, y? }, for a movie without a cursor track such as a simulator). index counts per kind from 1. Place an effect on one: zoom({ from: (await snap({ event: "scene", index: 3, lead: -0.2 })).at, … }). The picture is compared once per movie and cached by its content, so a copy of the movie reuses it.',
         effect: "read",
     }),
     defineMethod({

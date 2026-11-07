@@ -2,9 +2,13 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { recognizeTextBoxesQueued } from "@genesiscz/utils/macos/ocr-queue";
+import {
+    type AnalysisCacheRequest,
+    cachedAnalysis,
+    readAnalysis,
+} from "@genesiscz/utils/recording-editor/analysis-cache";
 import {
     anchorTimeUs,
     type EventAnchor,
@@ -60,7 +64,6 @@ import {
     waitStretches,
 } from "@genesiscz/utils/recording-editor/waits";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
@@ -72,11 +75,12 @@ const { log } = logger.scoped("recorder-fx-analysis");
 
 /**
  * The analysis behind three editor effects: the screen text of a movie (for private data), and the picture's change
- * steps (for typing and waiting speed-ups). Both are slow, so each is cached beside the edit and reused while the
- * movie stays the same file. The screen text is read with Vision on this Mac (darwinkit); nothing is sent anywhere.
+ * steps (for typing and waiting speed-ups). Both are slow, so each is cached under the movie's content key in one
+ * shared folder (analysis-cache.ts), and every copy of the same movie reuses it. The screen text is read with Vision on
+ * this Mac (darwinkit); nothing is sent anywhere.
  */
 
-/** Where an analysis of `video` is cached: `<folder>/<name>.json` for a recording folder, `<movie>.<name>.json` else. */
+/** Where an analysis was cached before R8 8: `<folder>/<name>.json` for a recording folder, `<movie>.<name>.json` else. */
 function cachePath(video: string, name: string): string {
     const folder = dirname(video);
     return existsSync(join(folder, "recording.json"))
@@ -84,34 +88,15 @@ function cachePath(video: string, name: string): string {
         : join(folder, `${basename(video, extname(video))}.${name}.json`);
 }
 
-/** What makes a cache stale: another movie file, or another way of reading it. */
+/** The key of a cache from before R8 8: the movie file's size and time, then how it was read. */
 function movieKey(video: string, extra: string): string {
     const stat = statSync(video);
     return `${stat.size}:${Math.round(stat.mtimeMs)}:${extra}`;
 }
 
-function readCache<T>(path: string, key: string, schema: z.ZodType<T>): T | undefined {
-    if (!existsSync(path)) {
-        return undefined;
-    }
-
-    try {
-        const parsed = z
-            .object({ key: z.string(), data: schema })
-            .safeParse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
-        return parsed.success && parsed.data.key === key ? parsed.data.data : undefined;
-    } catch (error) {
-        log.debug({ error, path }, "an analysis cache does not read; it is made again");
-        return undefined;
-    }
-}
-
-function writeCache(path: string, key: string, data: unknown): void {
-    try {
-        atomicWriteFileSync(path, SafeJSON.stringify({ key, data }));
-    } catch (error) {
-        log.warn({ error, path }, "an analysis cache could not be written; the next call reads the movie again");
-    }
+/** The shared cache request of the analysis `name` read as `key`, with the old cache beside the movie to move over. */
+function analysisOf<T>(video: string, name: string, key: string, schema: z.ZodType<T>): AnalysisCacheRequest<T> {
+    return { video, name, key, schema, legacy: { path: cachePath(video, name), key: movieKey(video, key) } };
 }
 
 const boxSchema = z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() });
@@ -310,13 +295,17 @@ export function cachedScreenText(project: EditProject): ScreenTextFrame[] | unde
         return undefined;
     }
 
-    const key = movieKey(video, `every=${screenTextEverySeconds(project.source.durationUs)},editor-time`);
-    return readCache(cachePath(video, "screen-text"), key, screenFramesSchema);
+    return readAnalysis(analysisOf(video, "screen-text", screenTextKey(project), screenFramesSchema));
+}
+
+/** How the screen text is read. editor-time: sampled on the editor time base (sampleFpsFilter). */
+function screenTextKey(project: EditProject): string {
+    return `every=${screenTextEverySeconds(project.source.durationUs)},editor-time`;
 }
 
 /**
  * The movie's screen text as frames of OCR lines over its picture. A frames recording's own OCR, else a Vision read
- * of sampled movie frames, cached in `screen-text.json` beside the edit.
+ * of sampled movie frames, cached once per movie content (analysis-cache.ts).
  */
 export async function screenTextOf(
     project: EditProject
@@ -333,20 +322,21 @@ export async function screenTextOf(
         throw new Error(`the movie ${video} is not there, so its screen text cannot be read`);
     }
 
-    const path = cachePath(video, "screen-text");
-    // editor-time: sampled on the editor time base (sampleFpsFilter); older caches took the nearest frame.
-    const key = movieKey(video, `every=${screenTextEverySeconds(project.source.durationUs)},editor-time`);
-    const cached = readCache(path, key, screenFramesSchema);
-
-    if (cached) {
-        return { frames: cached, source: "movie", cached: true };
-    }
-
-    const started = Date.now();
-    const frames = await movieScreenText(project);
-    log.debug({ video, frames: frames.length, ms: Date.now() - started }, "movie screen text read with Vision");
-    writeCache(path, key, frames);
-    return { frames, source: "movie", cached: false };
+    let read = false;
+    const frames = await cachedAnalysis({
+        ...analysisOf(video, "screen-text", screenTextKey(project), screenFramesSchema),
+        compute: async () => {
+            const started = Date.now();
+            const movieFrames = await movieScreenText(project);
+            log.debug(
+                { video, frames: movieFrames.length, ms: Date.now() - started },
+                "movie screen text read with Vision"
+            );
+            read = true;
+            return movieFrames;
+        },
+    });
+    return { frames, source: "movie", cached: !read };
 }
 
 /** Frames a second around a hit's edges and while it moves: a scrolling line is placed every 0.2 s. */
@@ -363,14 +353,8 @@ async function denseScreenText(
     windows: ReadonlyArray<[number, number]>
 ): Promise<ScreenTextFrame[]> {
     const video = project.source.video;
-    const path = cachePath(video, "screen-text-dense");
-    const key = movieKey(video, `dense=${DENSE_FPS}`);
-    const cache: Record<string, ScreenTextFrame["lines"]> = { ...(readCache(path, key, denseSchema) ?? {}) };
     const stepUs = 1_000_000 / DENSE_FPS;
-    const frames: ScreenTextFrame[] = [];
-    let read = false;
-
-    for (const [fromUs, toUs] of windows) {
+    const spans = windows.map(([fromUs, toUs]) => {
         const start = Math.floor(fromUs / stepUs) * stepUs;
         const times: number[] = [];
 
@@ -378,29 +362,34 @@ async function denseScreenText(
             times.push(Math.round(atUs));
         }
 
-        if (times.some((atUs) => !cache[String(atUs)])) {
-            for (const frame of await ocrVideo({ video, fromUs: start, toUs, fps: DENSE_FPS })) {
-                const atUs = Math.round(Math.round((frame.atUs - start) / stepUs) * stepUs + start);
-                cache[String(atUs)] = frame.lines;
+        return { start, toUs, times };
+    });
+    const cache = await cachedAnalysis({
+        ...analysisOf(video, "screen-text-dense", `dense=${DENSE_FPS}`, denseSchema),
+        complete: (cached) => spans.every(({ times }) => times.every((atUs) => cached[String(atUs)])),
+        compute: async (cached) => {
+            const known: Record<string, ScreenTextFrame["lines"]> = { ...(cached ?? {}) };
+
+            for (const { start, toUs, times } of spans) {
+                if (times.some((atUs) => !known[String(atUs)])) {
+                    for (const frame of await ocrVideo({ video, fromUs: start, toUs, fps: DENSE_FPS })) {
+                        const atUs = Math.round(Math.round((frame.atUs - start) / stepUs) * stepUs + start);
+                        known[String(atUs)] = frame.lines;
+                    }
+                }
             }
 
-            read = true;
-        }
+            return known;
+        },
+    });
 
-        for (const atUs of times) {
-            frames.push({
-                atUs,
-                untilUs: Math.min(project.source.durationUs, atUs + stepUs),
-                lines: cache[String(atUs)] ?? [],
-            });
-        }
-    }
-
-    if (read) {
-        writeCache(path, key, cache);
-    }
-
-    return frames;
+    return spans.flatMap(({ times }) =>
+        times.map((atUs) => ({
+            atUs,
+            untilUs: Math.min(project.source.durationUs, atUs + stepUs),
+            lines: cache[String(atUs)] ?? [],
+        }))
+    );
 }
 
 /** Joins overlapping [from, to) ranges. */
@@ -468,39 +457,35 @@ async function motionWindows(
     stretches: ReadonlyArray<[number, number]>
 ): Promise<MotionWindow[]> {
     const video = project.source.video;
-    const path = cachePath(video, "motion");
-    const key = movieKey(video, `motion=${MOTION_FPS},v2`);
-    const cache = { ...(readCache(path, key, motionCacheSchema) ?? {}) };
-    const windows: MotionWindow[] = [];
-    let measured = false;
+    const names = stretches.map(([fromUs, toUs]) => `${Math.round(fromUs)}-${Math.round(toUs)}`);
+    const cache = await cachedAnalysis({
+        ...analysisOf(video, "motion", `motion=${MOTION_FPS},v2`, motionCacheSchema),
+        complete: (cached) => names.every((name) => cached[name]),
+        compute: async (cached) => {
+            const known = { ...(cached ?? {}) };
 
-    for (const [fromUs, toUs] of stretches) {
-        const name = `${Math.round(fromUs)}-${Math.round(toUs)}`;
-        const known = cache[name];
+            for (const [index, [fromUs, toUs]] of stretches.entries()) {
+                const name = names[index];
 
-        if (known) {
-            windows.push(motionWindowFromJson(known));
-            continue;
-        }
+                if (known[name]) {
+                    continue;
+                }
 
-        const window = await measureMotion({
-            video,
-            sourceWidth: project.source.width,
-            sourceHeight: project.source.height,
-            fromUs,
-            toUs,
-        });
-        cache[name] = motionWindowSchema.parse(motionWindowToJson(window));
-        windows.push(window);
-        measured = true;
-    }
+                const window = await measureMotion({
+                    video,
+                    sourceWidth: project.source.width,
+                    sourceHeight: project.source.height,
+                    fromUs,
+                    toUs,
+                });
+                known[name] = motionWindowSchema.parse(motionWindowToJson(window));
+            }
 
-    if (measured) {
-        writeCache(path, key, cache);
-    }
+            return known;
+        },
+    });
 
-    log.debug({ video, stretches: stretches.length, measured }, "the content's motion is ready");
-    return windows;
+    return names.map((name) => motionWindowFromJson(cache[name]));
 }
 
 export interface TrackOptions {
@@ -882,7 +867,7 @@ const stepsCacheSchema = z.object({
     height: z.number(),
 });
 
-/** The movie's change steps, cached in `waits.json` beside the edit. */
+/** The movie's change steps, cached once per movie content (analysis-cache.ts). */
 export async function changeStepsOf(
     project: EditProject
 ): Promise<{ steps: ChangeStep[]; grid: { columns: number; rows: number }; fps: number; height: number }> {
@@ -892,22 +877,11 @@ export async function changeStepsOf(
         throw new Error(`the movie ${video} is not there, so its picture cannot be compared`);
     }
 
-    const path = cachePath(video, "waits");
     // v3: sampled on the editor time base (sampleFpsFilter); v2 caches took the nearest frame.
-    const key = movieKey(video, `fps=${WAIT_SAMPLE_FPS},v3`);
-    const cached = readCache(path, key, stepsCacheSchema);
-
-    if (cached) {
-        return cached;
-    }
-
-    const measured = await measureChangeSteps({
-        video,
-        width: project.source.width,
-        height: project.source.height,
+    return cachedAnalysis({
+        ...analysisOf(video, "waits", `fps=${WAIT_SAMPLE_FPS},v3`, stepsCacheSchema),
+        compute: () => measureChangeSteps({ video, width: project.source.width, height: project.source.height }),
     });
-    writeCache(path, key, measured);
-    return measured;
 }
 
 /** The moments the viewer must see at normal speed: clicks (±0.5 s), cursor moves, and speech (±0.2 s). */
@@ -1032,22 +1006,22 @@ export async function eventsOf(project: EditProject, options: { taps?: readonly 
     }
 
     const video = project.source.video;
-    const path = cachePath(video, "scenes");
-    const key = movieKey(video, `scenes,v1,${scenes.map((scene) => scene.fromUs).join(",")}`);
-    let refined = readCache(path, key, z.array(z.number()));
-
-    if (!refined) {
-        refined = await refineSceneTimes({
+    const times = await cachedAnalysis({
+        ...analysisOf(
             video,
-            width: project.source.width,
-            height: project.source.height,
-            scenesUs: scenes.map((scene) => scene.fromUs),
-            stepUs: 1_000_000 / fps,
-        });
-        writeCache(path, key, refined);
-    }
-
-    const times = refined;
+            "scenes",
+            `scenes,v1,${scenes.map((scene) => scene.fromUs).join(",")}`,
+            z.array(z.number())
+        ),
+        compute: () =>
+            refineSceneTimes({
+                video,
+                width: project.source.width,
+                height: project.source.height,
+                scenesUs: scenes.map((scene) => scene.fromUs),
+                stepUs: 1_000_000 / fps,
+            }),
+    });
     const moved = new Map(scenes.map((scene, index) => [scene, times[index] ?? scene.fromUs]));
     return events
         .map((event) => ({ ...event, fromUs: moved.get(event) ?? event.fromUs }))
