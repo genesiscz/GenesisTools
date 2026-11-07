@@ -255,7 +255,7 @@ describe("toolset method names", () => {
         const cut = Reflect.get(opened, "cut") as (...args: unknown[]) => Promise<Record<string, unknown>>;
         // NR23: an edit answers one summary line and where it is, not the whole edit (about 1,500 characters); info() has it.
         const answer = await cut({ from: 1, to: 2 });
-        expect(Object.keys(answer).sort()).toEqual(["outputSeconds", "path", "revision", "summary"]);
+        expect(Object.keys(answer).sort()).toEqual(["changed", "outputSeconds", "path", "revision", "summary"]);
         expect(String(answer.summary)).toContain("2 clips");
         const info = Reflect.get(opened, "info") as () => Promise<{ clips: unknown[] }>;
         expect((await info()).clips).toHaveLength(2);

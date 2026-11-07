@@ -15,7 +15,7 @@ import { type DemoDriver, demoEditOps, demoScriptSchema, runDemo, subtractRanges
 import * as edit from "./edit";
 import * as library from "./library";
 import * as serviceClient from "./service-client";
-import { everyTimes, Movie, movieDemoDriver } from "./toolset";
+import { changedParts, everyTimes, Movie, movieDemoDriver } from "./toolset";
 import { recordVideo } from "./video-recording";
 
 const steps = [
@@ -448,6 +448,18 @@ describe("movie survey on one time base", () => {
             part.mockRestore();
             sheet.mockRestore();
         }
+    });
+
+    test("an edit call's summary is the edit after it, and changed names what that call did", async () => {
+        const path = cutEdit();
+        const movie = new Movie(path);
+        const texted = await movie.apply([{ op: "text", from: 0, to: 1, text: "Hello" }]);
+        expect(texted.summary).toContain("1 text,");
+        expect(texted.changed).toBe("0 texts → 1 text");
+        const framed = await movie.frame({ aspect: "16:9" });
+        expect(framed.summary).toContain("1 text,");
+        expect(framed.changed).toBe("frame off → frame 16:9");
+        expect(changedParts(projectOps.readProject(path), projectOps.readProject(path))).toBe("nothing");
     });
 
     test("a full source still asks the renderer for the export's size and answers both clocks", async () => {

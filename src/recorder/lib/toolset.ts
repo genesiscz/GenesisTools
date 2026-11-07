@@ -184,7 +184,8 @@ const movieDoc =
     "{ path, revision, updatedBy, video, sourceSeconds, outputSeconds, clips, zooms, redactions, audio, export, clicks, frame, cursor, camera, captions, keys, transcriptFixes, motion, shapes, texts, lanes, transitions, lenses, tilt, warnings? }";
 
 /** What every edit method returns, short: the full field list once, on info(), keeps describe()'s lines readable. */
-const editResult = "{ summary, path, revision, outputSeconds, warnings? } (info() lists the whole edit)";
+const editResult =
+    '{ summary (the edit after this call), changed (what this call changed: "0 texts → 16 texts", or "nothing"), path, revision, outputSeconds, warnings? } (info() lists the whole edit)';
 
 /** A transcript cut as an agent reads it: source seconds, not microseconds. */
 function cutsOut(cuts: ReadonlyArray<CutMatch & { plays: number | null }>) {
@@ -1486,13 +1487,14 @@ export const moviesApi = defineApi({
     ],
 });
 
-/** One line a reader takes in at a glance: the length and what the edit holds. */
-function summarize(project: EditProject, title: string | undefined): string {
+/** The parts of the one-line summary, in order: the length and what the edit holds. */
+function summaryParts(project: EditProject): string[] {
     const seconds = (us: number) => `${Math.round(us / 100_000) / 10} s`;
     const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
     const redactions = project.redactions ?? [];
     const spotlights = redactions.filter((redaction) => redaction.style === "spotlight").length;
-    const parts = [
+    const cards = [project.cards?.intro ? "intro" : "", project.cards?.end ? "end" : ""].filter(Boolean);
+    return [
         `${seconds(outputDurationUs(project))} long (source ${seconds(project.source.durationUs)})`,
         count(project.clips.length, "clip"),
         count(project.zooms.length, "zoom"),
@@ -1505,8 +1507,34 @@ function summarize(project: EditProject, title: string | undefined): string {
         `music ${project.audio.music ? `${project.audio.music.file.split(/[/\\]/).pop()}${project.audio.music.loop === false ? " once" : ""}` : "none"}`,
         `click rings ${project.clicks?.highlight ? "on" : "off"}${project.clicks?.sound ? ", click sound" : ""}`,
         count(Object.keys(project.transcript?.fixes ?? {}).length, "edited caption line"),
+        // R5 6: what round 4 added, so the line names every kind an edit call can change.
+        count((project.markers ?? []).length, "marker"),
+        count((project.audio.voiceovers ?? []).length, "voiceover"),
+        `cards ${cards.length ? cards.join(" and ") : "none"}`,
     ];
-    return `${title ? `"${title}": ` : ""}${parts.join(", ")}`;
+}
+
+/** One line a reader takes in at a glance: the length and what the edit holds. */
+function summarize(project: EditProject, title: string | undefined): string {
+    return `${title ? `"${title}": ` : ""}${summaryParts(project).join(", ")}`;
+}
+
+/**
+ * What one edit call changed, as summary parts "before → after", or "nothing" when the call left the edit as it was.
+ * An agent read a summary taken after a reset() and before its next calls as "one call behind" (round 5, item 6); this
+ * names what THIS call did, so the summary is never read as a lagging state.
+ */
+export function changedParts(before: EditProject, after: EditProject): string {
+    const old = summaryParts(before);
+    const changed = summaryParts(after).flatMap((part, index) =>
+        part === old[index] ? [] : [`${old[index]} → ${part}`]
+    );
+
+    if (changed.length > 0) {
+        return changed.join("; ");
+    }
+
+    return after.revision === before.revision ? "nothing" : "settings only (the summary line shows no difference)";
 }
 
 /** What check() cannot read from the edit itself, looked up on the disk. */
@@ -1701,10 +1729,13 @@ export class Movie {
 
     /** One edit's answer (briefOf), with what the edit removed, measured or warns about. */
     private async change(ops: EditOp[]) {
+        const before = await openProject(this.recording);
         const edited = await editProject(this.recording, ops);
         const seconds = (us: number) => Math.round(us / 1000) / 1000;
         return {
             ...briefOf(edited.project, edited.path),
+            // R5 6: the summary is the edit AFTER this call; changed says what this call did.
+            changed: changedParts(before.project, edited.project),
             ...(edited.removedIdleUs
                 ? { removed: edited.removedIdleUs.map(([from, to]) => [seconds(from), seconds(to)]) }
                 : {}),
