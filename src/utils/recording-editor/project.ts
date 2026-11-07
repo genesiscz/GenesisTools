@@ -37,6 +37,14 @@ import {
     setLanes,
     withLane,
 } from "./lanes";
+import {
+    applyCaptionsStyle,
+    CAPTION_KINDS,
+    captionsStyleSchema,
+    TEXT_ANIMATIONS,
+    textAnimateOf,
+    textAnimateSchema,
+} from "./overlays";
 import { outputTimeSchema, sourceTimeSchema, timeSchema, timeToUs } from "./plan";
 import {
     cutRanges,
@@ -252,6 +260,9 @@ export const textNoteSchema = z.object({
     style: z.enum(TEXT_STYLES).default("plate"),
     /** The effect lane it sits on (lanes.ts); absent is the first lane that holds its kind. */
     lane: z.string().optional(),
+    // R4 6 animated texts
+    /** How it comes in (overlays.ts); absent is the 0.2 s fade. */
+    animate: textAnimateSchema.optional(),
 });
 export type EditTextNote = z.infer<typeof textNoteSchema>;
 
@@ -399,6 +410,9 @@ export const editProjectSchema = z.object({
     markers: z.array(editMarkerSchema).optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
+    // R4 6 animated captions
+    /** How the captions animate (overlays.ts); absent shows each line at once. */
+    captionsStyle: captionsStyleSchema.optional(),
 });
 
 export type EditProject = z.infer<typeof editProjectSchema>;
@@ -1041,6 +1055,12 @@ export const editOpSchema = z.discriminatedUnion("op", [
             style: z.enum(TEXT_STYLES).optional(),
             /** The effect lane to put it on (an id from info().lanes); absent is the first that holds it. */
             lane: z.string().optional(),
+            // R4 6 animated texts
+            /** How it comes in: "fade" (default), "typewriter" or "slideUp", over ms (600). */
+            animate: z
+                .object({ kind: z.enum(TEXT_ANIMATIONS), ms: z.number().int().min(100).max(5000).optional() })
+                .strict()
+                .optional(),
         })
         .strict(),
     z.object({ op: z.literal("untext"), id: z.string() }).strict(),
@@ -1364,6 +1384,11 @@ export const editOpSchema = z.discriminatedUnion("op", [
             y: z.number().optional(),
             size: z.number().optional(),
             style: z.enum(TEXT_STYLES).optional(),
+            // R4 6 animated texts
+            animate: z
+                .object({ kind: z.enum(TEXT_ANIMATIONS), ms: z.number().int().min(100).max(5000).optional() })
+                .strict()
+                .optional(),
         })
         .strict(),
     /** Changes a shape that exists: its kind, its two points (held inside the picture), colour, width, appearance. */
@@ -1415,6 +1440,16 @@ export const editOpSchema = z.discriminatedUnion("op", [
             transcript: z.boolean().optional(),
             voiceovers: z.boolean().optional(),
             /** false removes it: the music's older `duck` share applies again. */
+            enabled: z.boolean().optional(),
+        })
+        .strict(),
+    // R4 6 animated captions
+    z
+        .object({
+            op: z.literal("captionsStyle"),
+            kind: z.enum(CAPTION_KINDS).optional(),
+            color: hexColor.optional(),
+            /** false removes it: each line shows at once again. */
             enabled: z.boolean().optional(),
         })
         .strict(),
@@ -1757,6 +1792,11 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
             const { op: _op, ...change } = op;
             return applyDucking(project, change);
         }
+        // R4 6 animated captions
+        case "captionsStyle": {
+            const { op: _op, ...change } = op;
+            return applyCaptionsStyle(project, change);
+        }
         case "removeIdle": {
             if (!facts.idleUs) {
                 throw new Error("removeIdle needs the movie's idle stretches; run it through editProject or the CLI");
@@ -1854,6 +1894,8 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 ...(op.y === undefined ? {} : { y: op.y }),
                 ...(op.size === undefined ? {} : { size: op.size }),
                 ...(op.style === undefined ? {} : { style: op.style }),
+                // R4 6 animated texts
+                ...(textAnimateOf(op.animate) ? { animate: textAnimateOf(op.animate) } : {}),
             });
             return { ...project, texts: [...(project.texts ?? []), note] };
         }
@@ -2308,7 +2350,11 @@ export function describeProject(project: EditProject, path: string) {
             at: { x: note.x, y: note.y },
             size: note.size,
             style: note.style,
+            // R4 6 animated texts
+            ...(note.animate ? { animate: note.animate } : {}),
         })),
+        // R4 6 animated captions
+        captionsStyle: project.captionsStyle ?? null,
         /** The timeline's effect lanes top to bottom, each with the ids of the items on it. */
         lanes: resolveLanes(project).map(({ lane, items, automatic }) => ({
             id: lane.id,

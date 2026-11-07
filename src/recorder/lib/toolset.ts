@@ -13,6 +13,7 @@ import { checkProject, type EditFacts, type EditIssue, fixOps } from "@genesiscz
 import { findIdle } from "@genesiscz/utils/recording-editor/idle";
 import { placedShape } from "@genesiscz/utils/recording-editor/item-ops";
 import { DEFAULT_LANES, EFFECT_KINDS, type EffectLane } from "@genesiscz/utils/recording-editor/lanes";
+import { CAPTION_KINDS, TEXT_ANIMATIONS } from "@genesiscz/utils/recording-editor/overlays";
 import {
     outputTimeSchema,
     sourceTimeSchema,
@@ -252,9 +253,14 @@ const movieMethods = [
                 size: z.number().min(0.02).max(0.15).optional(),
                 style: z.enum(TEXT_STYLES).optional(),
                 lane: z.string().optional(),
+                // R4 6 animated texts
+                animate: z
+                    .object({ kind: z.enum(TEXT_ANIMATIONS), ms: z.number().int().min(100).max(5000).optional() })
+                    .strict()
+                    .optional(),
             })
             .strict(),
-        'Puts a line of text over the picture from `from` to `to` (source seconds or "m:ss"): a title or a step\'s name. x, y is its centre as 0...1 of the CANVAS from the top left (0.5, 0.12, top middle, by default), so it stays put through a zoom; size is the text height as a fraction of the short side (0.055); style "plate" (white on a dark plate, default) | "plain" (white with a shadow). It fades in and out. The result lists texts with their ids.'
+        'animate { kind: "typewriter" | "slideUp" | "fade", ms (600) } is how it comes in (a fade by default). Puts a line of text over the picture from `from` to `to` (source seconds or "m:ss"): a title or a step\'s name. x, y is its centre as 0...1 of the CANVAS from the top left (0.5, 0.12, top middle, by default), so it stays put through a zoom; size is the text height as a fraction of the short side (0.055); style "plate" (white on a dark plate, default) | "plain" (white with a shadow). It fades in and out. The result lists texts with their ids.'
     ),
     edit("untext", z.object({ id: z.string() }), "Removes a text by its id.", ["id"]),
     edit(
@@ -317,6 +323,11 @@ const movieMethods = [
                 seconds: z.number().min(0.5).max(15).optional(),
                 numbered: z.boolean().optional(),
                 y: z.number().min(0).max(1).optional(),
+                // R4 6 animated texts
+                animate: z
+                    .object({ kind: z.enum(TEXT_ANIMATIONS), ms: z.number().int().min(100).max(5000).optional() })
+                    .strict()
+                    .optional(),
             })
             .strict(),
         'Puts each marker\'s label on screen as a step title for `seconds` (2.5), "1. Open the settings" (numbered: false drops the number), at the top middle (y 0...1 of the canvas, 0.12): one text per marker in the kept movie, saved once, one undo(). A marker that has a text already is left alone, so running it again adds nothing. Throws when there is no marker.'
@@ -992,6 +1003,18 @@ const movieMethods = [
             .strict(),
         "How far the music drops while someone speaks: db quieter (12), reached over fadeMs (300), under the transcript's lines (transcript, true) and under the voiceover clips (voiceovers, true). Without it the music's older duck share applies (to both). enabled: false removes it."
     ),
+    // R4 6 animated captions
+    edit(
+        "captionsStyle",
+        z
+            .object({
+                kind: z.enum(CAPTION_KINDS).optional(),
+                color: hexColor.optional(),
+                enabled: z.boolean().optional(),
+            })
+            .strict(),
+        'How the captions animate: kind "karaoke" (the default once set) colours each word as it is said, in color ("#FFD60A"), from the transcript\'s word times (cut-words uses the same; estimated from the letters when the transcription has none); "line" shows each line at once. Captions themselves are captions({ show: true }). enabled: false goes back to plain lines.'
+    ),
 ];
 
 const recordingMethods = [
@@ -1423,6 +1446,11 @@ export class Movie {
             ...answer,
             voiceover: { id: added?.id ?? null, file, seconds: added ? added.durationUs / 1_000_000 : null },
         };
+    }
+
+    // R4 6 animated captions
+    async captionsStyle(options: Omit<Extract<EditOp, { op: "captionsStyle" }>, "op"> = {}) {
+        return this.change([{ op: "captionsStyle", ...options }]);
     }
 
     // R4 8 music ducking
@@ -2104,7 +2132,14 @@ export class Movie {
         return clickGroupsOf((await openProject(this.recording)).project, options);
     }
 
-    async titleMarkers(options: { seconds?: number; numbered?: boolean; y?: number } = {}) {
+    async titleMarkers(
+        options: {
+            seconds?: number;
+            numbered?: boolean;
+            y?: number;
+            animate?: { kind: (typeof TEXT_ANIMATIONS)[number]; ms?: number };
+        } = {}
+    ) {
         const opened = await openProject(this.recording);
         const marks = markersOf(opened).filter((mark) => mark.plays !== null);
 
@@ -2135,6 +2170,7 @@ export class Movie {
                     to,
                     text: text.slice(0, 200),
                     ...(options.y === undefined ? {} : { y: options.y }),
+                    ...(options.animate ? { animate: options.animate } : {}),
                 },
             ];
         });

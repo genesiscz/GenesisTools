@@ -68,6 +68,8 @@ enum EditOp: Equatable {
     case unvoiceover(Unvoiceover)
     // R4 8 music ducking
     case ducking(Ducking)
+    // R4 6 animated captions
+    case captionsStyle(CaptionsStyle)
 
     /// Every payload type, so the decoder finds one by its tag and the tag test lists them.
     static let payloads: [any EditOpPayload.Type] = [
@@ -80,7 +82,7 @@ enum EditOp: Equatable {
         SetZoom.self, SetRedaction.self, SetText.self, SetShape.self, Trim.self, DeleteClip.self, ClipSpeed.self,
         Duplicate.self, RemoveClickCircles.self, RenameLane.self,
         // R4 voiceover clips, 8 music ducking
-        Voiceover.self, Unvoiceover.self, Ducking.self,
+        Voiceover.self, Unvoiceover.self, Ducking.self, CaptionsStyle.self,
     ]
 
     static var tags: [String] { payloads.map { $0.tag } }
@@ -147,6 +149,7 @@ enum EditOp: Equatable {
         case let .voiceover(op): op
         case let .unvoiceover(op): op
         case let .ducking(op): op
+        case let .captionsStyle(op): op
         }
     }
 
@@ -307,6 +310,8 @@ extension EditOp {
         var size: Double?
         var style: EditProject.TextStyle?
         var lane: String?
+        // R4 6 animated texts
+        var animate: Animate?
         var op: EditOp { .text(self) }
     }
 
@@ -663,6 +668,8 @@ extension EditOp {
         var y: Double?
         var size: Double?
         var style: EditProject.TextStyle?
+        // R4 6 animated texts
+        var animate: Animate?
         var op: EditOp { .setText(self) }
     }
 
@@ -734,6 +741,21 @@ extension EditOp {
         static let tag = "unvoiceover"
         var id: String
         var op: EditOp { .unvoiceover(self) }
+    }
+
+    // R4 6 animated captions and texts
+    /// A text's way in; `ms` nil is the default length (600).
+    struct Animate: Codable, Equatable {
+        var kind: EditProject.TextAnimation
+        var ms: Int?
+    }
+
+    struct CaptionsStyle: EditOpPayload {
+        static let tag = "captionsStyle"
+        var kind: EditProject.CaptionKind?
+        var color: String?
+        var enabled: Bool?
+        var op: EditOp { .captionsStyle(self) }
     }
 
     // R4 8 music ducking

@@ -894,6 +894,28 @@
               },
               "lane": {
                 "type": "string"
+              },
+              "animate": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "fade",
+                      "typewriter",
+                      "slideUp"
+                    ]
+                  },
+                  "ms": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 5000
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -2135,6 +2157,28 @@
                   "plate",
                   "plain"
                 ]
+              },
+              "animate": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "fade",
+                      "typewriter",
+                      "slideUp"
+                    ]
+                  },
+                  "ms": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 5000
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -2372,6 +2416,32 @@
               },
               "voiceovers": {
                 "type": "boolean"
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "captionsStyle"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "line",
+                  "karaoke"
+                ]
+              },
+              "color": {
+                "$ref": "#/$defs/__schema9"
               },
               "enabled": {
                 "type": "boolean"
@@ -3981,6 +4051,30 @@
                 },
                 "lane": {
                   "type": "string"
+                },
+                "animate": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "fade",
+                        "typewriter",
+                        "slideUp"
+                      ]
+                    },
+                    "ms": {
+                      "default": 600,
+                      "type": "integer",
+                      "minimum": 100,
+                      "maximum": 5000
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "ms"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -4292,6 +4386,29 @@
           },
           "updatedBy": {
             "type": "string"
+          },
+          "captionsStyle": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "default": "karaoke",
+                "type": "string",
+                "enum": [
+                  "line",
+                  "karaoke"
+                ]
+              },
+              "color": {
+                "default": "#FFD60A",
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              }
+            },
+            "required": [
+              "kind",
+              "color"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

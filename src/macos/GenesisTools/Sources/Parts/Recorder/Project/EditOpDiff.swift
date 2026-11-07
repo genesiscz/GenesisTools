@@ -29,6 +29,11 @@ enum EditOpDiff {
         if old.motion != new.motion { ops.append(.motion(EditOp.Motion(blur: (new.motion ?? EditProject.Motion()).blur))) }
         if old.camera != new.camera, let op = camera(old.camera, new.camera) { ops.append(.camera(op)) }
         if old.transcript != new.transcript { ops += fixes(old.transcript?.fixes ?? [:], new.transcript?.fixes ?? [:]) }
+        // R4 6 animated captions
+        if old.captionsStyle != new.captionsStyle {
+            ops.append(.captionsStyle(new.captionsStyle.map { EditOp.CaptionsStyle(kind: $0.kind, color: $0.color, enabled: true) }
+                ?? EditOp.CaptionsStyle(enabled: false)))
+        }
         return ops
     }
 
@@ -75,6 +80,8 @@ enum EditOpDiff {
         if a.y != b.y { op.y = b.y }
         if a.size != b.size { op.size = b.size }
         if a.style != b.style { op.style = b.style }
+        // R4 6 animated texts: no animation is the fade.
+        if a.animate != b.animate { op.animate = EditOp.Animate(kind: b.animate?.kind ?? .fade, ms: b.animate?.ms) }
         let set: [EditOp] = op == EditOp.SetText(id: b.id) ? [] : [.setText(op)]
         return set + retime(b.id, from: (a.startUs, a.endUs), to: (b.startUs, b.endUs))
     }

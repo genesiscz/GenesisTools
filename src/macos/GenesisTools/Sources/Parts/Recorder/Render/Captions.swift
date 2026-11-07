@@ -10,6 +10,9 @@ final class CaptionTrack: @unchecked Sendable {
         var fromUs: Int64
         var toUs: Int64
         var text: String
+        // R4 6 karaoke captions
+        /// The start of each word in source time, when the transcription timed its words (`segments[].words`).
+        var wordStartsUs: [Int64] = []
     }
 
     let lines: [Line]
@@ -32,7 +35,10 @@ final class CaptionTrack: @unchecked Sendable {
             guard let text = (segment["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty,
                   let start = (segment["start"] as? NSNumber)?.doubleValue, let end = (segment["end"] as? NSNumber)?.doubleValue,
                   end > start else { return nil }
-            return Line(fromUs: Int64(start * 1_000_000), toUs: Int64(end * 1_000_000), text: text)
+            // R4 6 karaoke captions: the words' own times, as cut-words reads them.
+            let words = (segment["words"] as? [[String: Any]] ?? []).compactMap { ($0["start"] as? NSNumber)?.doubleValue }
+            return Line(fromUs: Int64(start * 1_000_000), toUs: Int64(end * 1_000_000), text: text,
+                        wordStartsUs: words.map { Int64($0 * 1_000_000) })
         }
         return lines.isEmpty ? nil : CaptionTrack(lines: lines)
     }
@@ -49,8 +55,8 @@ final class CaptionTrack: @unchecked Sendable {
     }
 
     /// The line as a white text block on a dark rounded plate, wrapped to `maxWidth` pixels.
-    func image(for line: Line, fontSize: CGFloat, maxWidth: CGFloat) -> CIImage? {
-        plates.plate(line.text, fontSize: fontSize, maxWidth: maxWidth)
+    func image(for line: Line, fontSize: CGFloat, maxWidth: CGFloat, highlight: (characters: Int, color: NSColor)? = nil) -> CIImage? {
+        plates.plate(line.text, fontSize: fontSize, maxWidth: maxWidth, highlight: highlight)
     }
 }
 
@@ -60,30 +66,39 @@ final class TextPlates: @unchecked Sendable {
     private let lock = NSLock()
     private var images: [String: CIImage] = [:]
 
-    /// `plain`: no plate, the text with a soft shadow, for a title over a busy picture.
-    func plate(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight = .semibold, plain: Bool = false) -> CIImage? {
-        let key = "\(text)|\(Int(fontSize))|\(Int(maxWidth))|\(weight.rawValue)|\(plain)"
+    /// `plain`: no plate, the text with a soft shadow, for a title over a busy picture. `highlight` colours the first
+    /// `characters` characters (the karaoke caption's words said so far).
+    func plate(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight = .semibold, plain: Bool = false,
+               highlight: (characters: Int, color: NSColor)? = nil) -> CIImage? {
+        let key = "\(text)|\(Int(fontSize))|\(Int(maxWidth))|\(weight.rawValue)|\(plain)|\(highlight.map { "\($0.characters)\($0.color)" } ?? "")"
         lock.lock()
         if let cached = images[key] {
             lock.unlock()
             return cached
         }
         lock.unlock()
-        guard let image = Self.render(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight, plain: plain) else { return nil }
+        guard let image = Self.render(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight, plain: plain,
+                                      highlight: highlight) else { return nil }
         lock.lock()
         images[key] = image
         lock.unlock()
         return image
     }
 
-    private static func render(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight, plain: Bool) -> CIImage? {
+    private static func render(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight, plain: Bool,
+                               highlight: (characters: Int, color: NSColor)?) -> CIImage? {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
-        let attributed = NSAttributedString(string: text, attributes: [
+        let attributed = NSMutableAttributedString(string: text, attributes: [
             .font: NSFont.systemFont(ofSize: fontSize, weight: weight),
             .foregroundColor: NSColor.white,
             .paragraphStyle: paragraph,
         ])
+        // R4 6 karaoke captions
+        if let highlight, highlight.characters > 0 {
+            let end = text.index(text.startIndex, offsetBy: min(highlight.characters, text.count))
+            attributed.addAttribute(.foregroundColor, value: highlight.color, range: NSRange(text.startIndex..<end, in: text))
+        }
         let inset = CGSize(width: fontSize * 0.7, height: fontSize * 0.38)
         let bounds = attributed.boundingRect(with: CGSize(width: max(fontSize * 4, maxWidth - 2 * inset.width), height: .greatestFiniteMagnitude),
                                              options: [.usesLineFragmentOrigin, .usesFontLeading])
@@ -109,29 +124,44 @@ final class TextPlates: @unchecked Sendable {
 }
 
 extension Looks {
-    /// A text note centred at its point of the canvas (kept inside it), faded by `opacity`.
-    static func drawText(_ note: EditProject.TextNote, opacity: Double, plates: TextPlates, on image: CIImage, size: CGSize) -> CIImage {
+    /// A text note centred at its point of the canvas (kept inside it), faded by `opacity`. `sinceUs` (source time since
+    /// its start) drives its `animate`: a typewriter shows the letters typed so far from the full text's left edge, a
+    /// slide-up rises into place while it fades in (TextMotion in Overlays.swift).
+    static func drawText(_ note: EditProject.TextNote, opacity: Double, plates: TextPlates, on image: CIImage, size: CGSize,
+                         sinceUs: Int64? = nil) -> CIImage {
         let unit = min(size.width, size.height)
         let fontSize = max(8, (note.size * unit).rounded())
-        guard var plate = plates.plate(note.text, fontSize: fontSize, maxWidth: size.width * 0.8, weight: .semibold,
-                                       plain: note.style == .plain) else { return image }
-        if opacity < 0.999 {
-            plate = plate.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(opacity))])
+        // R4 6 animated texts
+        let motion = TextMotion.at(sinceUs: sinceUs, note: note)
+        guard let full = plates.plate(note.text, fontSize: fontSize, maxWidth: size.width * 0.8, weight: .semibold,
+                                      plain: note.style == .plain) else { return image }
+        var plate = full
+        if motion.characters < note.text.count {
+            guard motion.characters > 0 else { return image }
+            guard let typed = plates.plate(String(note.text.prefix(motion.characters)), fontSize: fontSize, maxWidth: size.width * 0.8,
+                                           weight: .semibold, plain: note.style == .plain) else { return image }
+            plate = typed
         }
-        let width = plate.extent.width, height = plate.extent.height
+        let shown = opacity * motion.opacity
+        if shown < 0.999 {
+            plate = plate.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(shown))])
+        }
+        // Placed by the full text's box, so a typed line grows to the right and a risen one lands where it rests.
+        let width = full.extent.width, height = full.extent.height
         // The project counts y from the top; Core Image from the bottom.
         let x = min(max(0, note.x * size.width - width / 2), max(0, size.width - width))
-        let y = min(max(0, (1 - note.y) * size.height - height / 2), max(0, size.height - height))
-        return plate.transformed(by: CGAffineTransform(translationX: x.rounded(), y: y.rounded())).composited(over: image)
+        let y = min(max(0, (1 - note.y) * size.height - height / 2), max(0, size.height - height)) - motion.drop * height
+        let top = y + (height - plate.extent.height)
+        return plate.transformed(by: CGAffineTransform(translationX: x.rounded(), y: top.rounded())).composited(over: image)
     }
 
     /// The caption plate centred near the bottom (or the top) of the output, sized from its short side. Returns the
     /// picture and the height the plate takes from its edge, so the keys overlay can sit beside it.
     static func drawCaption(_ line: CaptionTrack.Line, track: CaptionTrack, settings: EditProject.Captions, on image: CIImage,
-                            size: CGSize) -> (image: CIImage, used: CGFloat) {
+                            size: CGSize, highlight: (characters: Int, color: NSColor)? = nil) -> (image: CIImage, used: CGFloat) {
         let unit = min(size.width, size.height)
         let fontSize = max(8, (settings.size * unit).rounded())
-        guard let plate = track.image(for: line, fontSize: fontSize, maxWidth: size.width * 0.86) else { return (image, 0) }
+        guard let plate = track.image(for: line, fontSize: fontSize, maxWidth: size.width * 0.86, highlight: highlight) else { return (image, 0) }
         let margin = unit * 0.05
         let x = ((size.width - plate.extent.width) / 2).rounded()
         let y = settings.position == .top ? size.height - margin - plate.extent.height : margin

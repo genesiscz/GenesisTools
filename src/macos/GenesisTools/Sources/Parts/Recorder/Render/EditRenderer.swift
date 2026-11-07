@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import CoreImage
 import Foundation
@@ -59,6 +60,8 @@ final class ZoomState: @unchecked Sendable {
         var line: CaptionTrack.Line
         var track: CaptionTrack
         var settings: EditProject.Captions
+        // R4 6 karaoke captions: the characters said so far and their colour; nil draws the line plain.
+        var highlight: (characters: Int, color: NSColor)?
     }
 
     /// The shortcut to draw over the output.
@@ -91,6 +94,9 @@ final class ZoomState: @unchecked Sendable {
         /// The zoom one output frame earlier, for the motion blur; nil at the start and across a cut.
         var previousView: ZoomCurve.View?
         var motionBlur = 0.0
+        // R4 overlays (fx-overlay): the frame's times, for the texts' animations and the progress bar.
+        var sourceUs: Int64 = 0
+        var outUs: Int64 = 0
     }
 
     /// Every frame the renderer drew; the editor compares it with the frames a playback should have shown.
@@ -134,7 +140,12 @@ final class ZoomState: @unchecked Sendable {
                              guard settings.show, let captions, let raw = captions.line(atSourceUs: sourceUs) else { return nil }
                              // A fix with no words hides the line.
                              guard let line = project.transcript.map({ $0.apply(raw) }) ?? raw else { return nil }
-                             return CaptionMark(line: line, track: captions, settings: settings)
+                             // R4 6 karaoke captions
+                             let highlight = project.captionsStyle.flatMap { style -> (characters: Int, color: NSColor)? in
+                                 guard style.kind == .karaoke else { return nil }
+                                 return (Karaoke.spokenCharacters(line: line, atSourceUs: sourceUs), NSColor(ciColor: Looks.color(style.color)))
+                             }
+                             return CaptionMark(line: line, track: captions, settings: settings, highlight: highlight)
                          },
                          key: project.keys.flatMap { settings in
                              guard settings.show, let shown = cursor?.key(atMs: Double(sourceUs) / 1000, durationMs: settings.durationMs) else { return nil }
@@ -145,6 +156,9 @@ final class ZoomState: @unchecked Sendable {
                          texts: Self.texts(atSourceUs: sourceUs, project: project))
         look.previousView = previousView
         look.motionBlur = motionBlur
+        // R4 overlays (fx-overlay)
+        look.sourceUs = sourceUs
+        look.outUs = outUs
         look.shapes = Self.shapes(atSourceUs: sourceUs, project: project)
         look.spotlightFade = look.redactions.filter { $0.style == .spotlight }.map { spot in
             let fade = Double(min(200_000, max(1, (spot.endUs - spot.startUs) / 3)))
@@ -630,7 +644,8 @@ struct EditRenderer {
             }
             var captionUsed: CGFloat = 0
             if let caption = look.caption {
-                let drawn = Looks.drawCaption(caption.line, track: caption.track, settings: caption.settings, on: result, size: size)
+                let drawn = Looks.drawCaption(caption.line, track: caption.track, settings: caption.settings, on: result, size: size,
+                                              highlight: caption.highlight)
                 result = drawn.image.cropped(to: CGRect(origin: .zero, size: size))
                 captionUsed = drawn.used
             }
@@ -641,7 +656,8 @@ struct EditRenderer {
                     .cropped(to: CGRect(origin: .zero, size: size))
             }
             for text in look.texts {
-                result = Looks.drawText(text.note, opacity: text.opacity, plates: zoom.keyPlates, on: result, size: size)
+                result = Looks.drawText(text.note, opacity: text.opacity, plates: zoom.keyPlates, on: result, size: size,
+                                        sinceUs: look.sourceUs - text.note.startUs)
                     .cropped(to: CGRect(origin: .zero, size: size))
             }
             if let cameraFeed, let camera = zoom.camera {

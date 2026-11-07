@@ -1,5 +1,6 @@
 import { cameraHiddenId } from "./camera";
 import { denoiseSchema } from "./denoise";
+import { textAnimateOf } from "./overlays";
 import type { CursorSample, EditOp, EditProject } from "./project";
 import { MINIMUM_CLIP_US, newId, placeZoom } from "./project";
 
@@ -110,6 +111,17 @@ export function setText(project: EditProject, op: Op<"setText">): EditProject {
         ...(op.size === undefined ? {} : { size: clamp(op.size, 0.02, 0.15) }),
         ...(op.style ? { style: op.style } : {}),
     };
+
+    // R4 6 animated texts: "fade" with no length goes back to the default (no key).
+    if (op.animate) {
+        const animate = textAnimateOf(op.animate);
+        const { animate: _animate, ...rest } = next;
+        return {
+            ...project,
+            texts: list.map((note) => (note.id === op.id ? (animate ? { ...rest, animate } : rest) : note)),
+        };
+    }
+
     return { ...project, texts: list.map((note) => (note.id === op.id ? next : note)) };
 }
 

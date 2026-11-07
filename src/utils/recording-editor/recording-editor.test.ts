@@ -1109,6 +1109,20 @@ describe("edit project (edit.json)", () => {
         expect(ducked.audio.ducking).toEqual({ db: 12, fadeMs: 300, transcript: true, voiceovers: false });
         expect(applyOp(ducked, { op: "ducking", db: 18 }).audio.ducking).toMatchObject({ db: 18, voiceovers: false });
         expect(applyOp(ducked, { op: "ducking", enabled: false }).audio.ducking).toBeUndefined();
+        // R4 6 animated captions and texts: karaoke by default once set; a text's animate with its default length;
+        // "fade" with no length is the default and leaves no key; setText changes it.
+        const karaoke = applyOp(project, { op: "captionsStyle" });
+        expect(karaoke.captionsStyle).toEqual({ kind: "karaoke", color: "#FFD60A" });
+        expect(applyOp(karaoke, { op: "captionsStyle", enabled: false }).captionsStyle).toBeUndefined();
+        const typed = applyOp(project, { op: "text", from: 1, to: 3, text: "Hi", animate: { kind: "typewriter" } });
+        const typedNote = typed.texts?.[0];
+        expect(typedNote?.animate).toEqual({ kind: "typewriter", ms: 600 });
+        const faded = applyOp(typed, { op: "setText", id: typedNote?.id ?? "", animate: { kind: "fade" } });
+        expect(faded.texts?.[0] && "animate" in faded.texts[0]).toBe(false);
+        expect(
+            applyOp(typed, { op: "setText", id: typedNote?.id ?? "", animate: { kind: "slideUp", ms: 900 } }).texts?.[0]
+                ?.animate
+        ).toEqual({ kind: "slideUp", ms: 900 });
         // Shapes: an arrow in source space with its defaults, a point-sized one refused, unshape removes it.
         const pointed = applyOp(project, {
             op: "shape",

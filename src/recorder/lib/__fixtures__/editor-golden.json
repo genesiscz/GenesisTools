@@ -111,6 +111,7 @@
     "movie.unvoiceover",
     "movie.say",
     "movie.ducking",
+    "movie.captionsStyle",
     "movies.list",
     "movies.search"
   ],
@@ -173,6 +174,7 @@
     "voiceover",
     "unvoiceover",
     "ducking",
+    "captionsStyle",
     "range"
   ],
   "ops": [
@@ -663,6 +665,32 @@
     {
       "op": "ducking",
       "enabled": false
+    },
+    {
+      "op": "captionsStyle",
+      "kind": "karaoke",
+      "color": "#FF9F0A"
+    },
+    {
+      "op": "captionsStyle",
+      "enabled": false
+    },
+    {
+      "op": "text",
+      "from": 1,
+      "to": 3,
+      "text": "Typed",
+      "animate": {
+        "kind": "typewriter",
+        "ms": 800
+      }
+    },
+    {
+      "op": "setText",
+      "id": "t1",
+      "animate": {
+        "kind": "slideUp"
+      }
     }
   ],
   "projects": [
@@ -1117,6 +1145,77 @@
           "output": ""
         },
         "revision": 0
+      }
+    },
+    {
+      "name": "karaoke captions and animated texts",
+      "project": {
+        "version": 1,
+        "source": {
+          "video": "/movies/screen.mp4",
+          "durationUs": 10000000,
+          "width": 1920,
+          "height": 1080
+        },
+        "clips": [
+          {
+            "id": "c1",
+            "fromUs": 0,
+            "toUs": 10000000,
+            "speed": 1
+          }
+        ],
+        "zooms": [],
+        "audio": {
+          "include": true,
+          "volume": 1,
+          "mutedTracks": []
+        },
+        "export": {
+          "codec": "h264",
+          "maxHeight": 0,
+          "output": ""
+        },
+        "captions": {
+          "show": true,
+          "size": 0.038,
+          "position": "bottom"
+        },
+        "revision": 0,
+        "texts": [
+          {
+            "id": "t1",
+            "startUs": 1000000,
+            "endUs": 3000000,
+            "text": "Typed",
+            "x": 0.5,
+            "y": 0.12,
+            "size": 0.055,
+            "style": "plate",
+            "animate": {
+              "kind": "typewriter",
+              "ms": 900
+            }
+          },
+          {
+            "id": "t2",
+            "startUs": 4000000,
+            "endUs": 6000000,
+            "text": "Risen",
+            "x": 0.5,
+            "y": 0.12,
+            "size": 0.055,
+            "style": "plate",
+            "animate": {
+              "kind": "slideUp",
+              "ms": 600
+            }
+          }
+        ],
+        "captionsStyle": {
+          "kind": "karaoke",
+          "color": "#FFD60A"
+        }
       }
     }
   ]

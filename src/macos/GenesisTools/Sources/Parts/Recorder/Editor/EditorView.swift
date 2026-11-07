@@ -740,6 +740,8 @@ private struct CaptionsInspector: View {
                            in: 0.025...0.08)
                         .accessibilityLabel("Caption text size")
                         .accessibilityIdentifier("recorder.style.captionsSize")
+                    // R4 6 karaoke captions
+                    CaptionsStyleSection(model: model)
                 }
                 CaptionLinesList(model: model)
             } else {
@@ -1043,6 +1045,8 @@ private struct TextInspector: View {
             Slider(value: Binding(get: { note.size }, set: { value in model.updateText(id) { $0.size = (value * 1000).rounded() / 1000 } }), in: 0.02...0.15)
                 .accessibilityLabel("Text size")
                 .accessibilityIdentifier("recorder.text.size")
+            // R4 6 animated texts
+            TextAnimateControls(model: model, note: note)
             SectionLabel(text: "Lasts", value: String(format: "%.1f s", Double(note.endUs - note.startUs) / 1_000_000))
             Slider(value: Binding(get: { Double(note.endUs - note.startUs) / 1_000_000 }, set: { value in
                 model.updateText(id) { $0.endUs = $0.startUs + Int64((value * 10).rounded() * 100_000) }

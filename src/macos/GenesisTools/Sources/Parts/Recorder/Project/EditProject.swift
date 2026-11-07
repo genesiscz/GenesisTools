@@ -44,6 +44,30 @@ struct EditProject: Codable, Equatable {
     /// Raised by every save, so a reader knows the file changed and who changed it last.
     var revision = 0
     var updatedBy: String?
+    // R4 6 animated captions
+    /// How the captions animate (karaoke colours each word as it is said); nil shows each line at once.
+    var captionsStyle: CaptionsStyle?
+
+    // R4 6 animated captions and texts
+    enum CaptionKind: String, Codable, CaseIterable {
+        case line, karaoke
+    }
+
+    struct CaptionsStyle: Codable, Equatable {
+        var kind: CaptionKind = .karaoke
+        /// #RRGGBB of the words said so far.
+        var color = "#FFD60A"
+    }
+
+    enum TextAnimation: String, Codable, CaseIterable {
+        case fade, typewriter, slideUp
+    }
+
+    /// How a text comes in over `ms`; nil on a text is the 0.2 s fade.
+    struct TextAnimate: Codable, Equatable {
+        var kind: TextAnimation
+        var ms = 600
+    }
 
     /// A moment marked while editing, at SOURCE microseconds; `id` is what the `unmarker` op takes.
     struct Marker: Codable, Equatable, Identifiable {
@@ -272,6 +296,8 @@ struct EditProject: Codable, Equatable {
         var style: TextStyle = .plate
         /// The effect lane it sits on (EffectLanes.swift); nil is the first lane that holds its kind.
         var lane: String?
+        // R4 6 animated texts
+        var animate: TextAnimate?
     }
 
     enum ShapeKind: String, Codable, CaseIterable {

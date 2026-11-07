@@ -214,6 +214,11 @@ const EXAMPLE_OPS: readonly unknown[] = [
     // R4 8 music ducking
     { op: "ducking", db: 12, fadeMs: 300, transcript: true, voiceovers: false },
     { op: "ducking", enabled: false },
+    // R4 6 animated captions and texts
+    { op: "captionsStyle", kind: "karaoke", color: "#FF9F0A" },
+    { op: "captionsStyle", enabled: false },
+    { op: "text", from: 1, to: 3, text: "Typed", animate: { kind: "typewriter", ms: 800 } },
+    { op: "setText", id: "t1", animate: { kind: "slideUp" } },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */
@@ -337,6 +342,20 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
                     ducking: { db: 15, fadeMs: 250, transcript: false },
                 },
             }),
+        },
+        // R4 6 animated captions and texts
+        {
+            name: "karaoke captions and animated texts",
+            project: stableIds(
+                apply(
+                    [
+                        { op: "text", from: 1, to: 3, text: "Typed", animate: { kind: "typewriter", ms: 900 } },
+                        { op: "text", from: 4, to: 6, text: "Risen", animate: { kind: "slideUp" } },
+                        { op: "captionsStyle", kind: "karaoke" },
+                    ],
+                    editProjectSchema.parse({ ...wholeProject(source), captions: { show: true } })
+                )
+            ),
         },
     ];
 }
