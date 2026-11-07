@@ -19,7 +19,18 @@ the order to use them in.
 
 🛑 Before you edit a recording into a cut for someone (effects, privacy, voiceover, music), read
 `references/editing-playbook.md` in full: work on a copy, survey first, place effects on screen events, hide text and
-not boxes of the screen, check every effect boundary, and score the cut before you hand it over.
+not boxes of the screen, check every effect boundary, and score the cut before you hand it over. Its section 2 is the
+table of the calls that exist today, one example each; section 3 is the recipe for a privacy-safe cut.
+
+## Editing at a glance
+
+- Run an edit as a script: `tools node-repl run --toolset movies --file edit.js` (10 minutes by default with
+  `movies`; `--timeout <ms>` for more). `help("movies")` lists the methods, `describe("movies.Movie.<name>")` prints
+  one in full.
+- One time base: ops take SOURCE seconds. Survey with `m.sheet({ source: true, every: 0.5, from, to })`,
+  `m.still({ at, source: true, full: true })`, `m.events()` and `m.findText()`, never with ffmpeg frame numbers.
+- Every edit call answers `summary` (the edit after it) and `changed` (what it did); `check()` before `export()`,
+  `verifyHidden()` after it.
 
 ## Demo mode (one call, a finished demo)
 
