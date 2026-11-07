@@ -494,7 +494,8 @@ private struct MarksLaneView: View {
         .onTapGesture { location in select(atX: location.x) }
         .instantTooltip("Markers (purple flags), review comments (yellow), caption lines (blue) and shortcuts (white lines). Click a marker or a comment to go to it.")
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Marks: \(Plural.count(markers.count, "marker")), \(Plural.count(model.reviewComments.count, "comment")), \(Plural.count(captions.count, "caption line")), \(Plural.count(keys.count, "shortcut"))")
+        .accessibilityLabel(TimelineView.marksLabel(markers: markers.count, comments: model.reviewComments.count, captions: captions.count,
+                                            shortcuts: keys.count))
         .overlay(alignment: .topLeading) {
             ZStack(alignment: .topLeading) {
                 ForEach(model.reviewComments) { comment in
@@ -791,6 +792,16 @@ private struct DisplayBand: View {
                 .liveRow()
                 .offset(x: scale.x(first.fromUs) + 1)
         }
+    }
+}
+
+extension TimelineView {
+    /// What the marks lane holds, without the kinds it has none of: "Marks: 4 caption lines", not "0 markers, 0
+    /// comments, 4 caption lines, 0 shortcuts".
+    nonisolated static func marksLabel(markers: Int, comments: Int, captions: Int, shortcuts: Int) -> String {
+        let parts = [(markers, "marker"), (comments, "comment"), (captions, "caption line"), (shortcuts, "shortcut")]
+            .filter { $0.0 > 0 }.map { Plural.count($0.0, $0.1) }
+        return parts.isEmpty ? "Marks: none" : "Marks: " + parts.joined(separator: ", ")
     }
 }
 

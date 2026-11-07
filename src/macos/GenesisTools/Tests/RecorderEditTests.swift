@@ -1441,6 +1441,14 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(PlayheadView.grip.height, 22)
     }
 
+    // Regression test: deep test 2026-11-07 R3-RX7. VoiceOver read the marks lane as "Marks: 0 markers, 0 comments, 4
+    // caption lines, 0 shortcuts".
+    func testTheMarksLaneNamesOnlyWhatItHolds() {
+        XCTAssertEqual(TimelineView.marksLabel(markers: 0, comments: 0, captions: 4, shortcuts: 0), "Marks: 4 caption lines")
+        XCTAssertEqual(TimelineView.marksLabel(markers: 1, comments: 2, captions: 0, shortcuts: 1), "Marks: 1 marker, 2 comments, 1 shortcut")
+        XCTAssertEqual(TimelineView.marksLabel(markers: 0, comments: 0, captions: 0, shortcuts: 0), "Marks: none")
+    }
+
     func testRenderSizeIsEvenAndCapped() {
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 4112, height: 2570), maxHeight: 1080), CGSize(width: 1728, height: 1080))
         XCTAssertEqual(EditRenderer.renderSize(source: CGSize(width: 1919, height: 1200), maxHeight: 720), CGSize(width: 1150, height: 720))
