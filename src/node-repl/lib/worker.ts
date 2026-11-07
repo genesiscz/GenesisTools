@@ -24,6 +24,9 @@ interface RunRequest {
     id: number;
     op: "run";
     code: string;
+    // R6 11 streamed output
+    /** Each console line also goes to the parent at once, as a `{ output }` line on the protocol channel. */
+    stream?: boolean;
 }
 
 interface AddDirRequest {
@@ -98,6 +101,8 @@ function policyOrExit(): ImportPolicy {
 }
 const imageDir = mkdtempSync(join(tmpdir(), "node-repl-images-"));
 let output: string[] = [];
+// R6 11 streamed output: set for the turn that asked for it.
+let streaming = false;
 let images: EmittedImage[] = [];
 let imageCounter = 0;
 
@@ -151,7 +156,7 @@ async function showImages(input: ShowInput | ShowInput[]): Promise<void> {
 }
 
 const CORE_HELP = [
-    "search(query) finds methods across loaded toolsets; describe(name) prints a method's complete descriptor.",
+    "search(query) finds methods across loaded toolsets; describe(name) prints a method's complete descriptor. All three return a string: a bare call on its own line prints it, inside an expression use console.log(describe(name)).",
     "help(name?) lists a loaded toolset, one line per method (describe(name) prints one in full); show(image | path | Buffer) returns an image to the model.",
     "nodeRepl.write(value) adds output; nodeRepl.emitImage({ bytes }) is show() for one image's bytes, checked the same way; await sleep(ms) waits.",
     "Each method says what it does: [read] changes nothing and reaches no one; [reversible] or [destructive] change state; · user means the user meets it (a dialog, a window, focus, the clipboard, the inbox), · paid means a run billed to an account. A call that would reach someone it does not declare is refused.",
@@ -342,6 +347,11 @@ const turnStream = new Writable({
 
         output.push(text);
         process.stderr.write(`${text}\n`);
+
+        if (streaming) {
+            process.stdout.write(`${SafeJSON.stringify({ id: 0, output: text })}\n`);
+        }
+
         done();
     },
 });
@@ -494,12 +504,16 @@ async function handle(request: Request): Promise<Response> {
         );
     }
 
+    streaming = request.stream === true;
+
     try {
         const text = await runTurn(request.code);
         return { id: request.id, ok: true, text, images };
     } catch (error) {
         const { message, stack, fullStack } = describeError(error);
         return { id: request.id, ok: false, text: output.join("\n"), images, error: message, stack, fullStack };
+    } finally {
+        streaming = false;
     }
 }
 
@@ -522,7 +536,7 @@ function readRequest(line: string): { request: Request } | { failure: Response }
     const id = typeof fields.id === "number" ? fields.id : 0;
 
     if (fields.op === "run" && typeof fields.code === "string") {
-        return { request: { id, op: "run", code: fields.code } };
+        return { request: { id, op: "run", code: fields.code, stream: fields.stream === true } };
     }
 
     if (fields.op === "addDir" && typeof fields.dir === "string") {

@@ -17,6 +17,7 @@ import {
     resultMessage,
     runTimeoutFor,
     runTimeoutHint,
+    withoutStreamed,
 } from "./engine";
 import {
     createToolsets,
@@ -106,6 +107,34 @@ describe("the output limit of a turn", () => {
         expect(DEFAULT_MAX_OUTPUT_CHARS).toBe(20_000);
         expect(capOutput({ text: "x".repeat(20_000), max: 20_000, writeRest })).toHaveLength(20_000);
         expect(capOutput({ text: "x".repeat(50_000), max: 0, writeRest })).toHaveLength(50_000);
+    });
+});
+
+// R6 11: `tools node-repl run` showed nothing until the process exited; a long edit printed nothing for minutes.
+describe("console output streams while the turn runs", () => {
+    it("hands each console line to onOutput before the turn answers, and the answer still holds them", async () => {
+        const seen: Array<{ line: string; at: number }> = [];
+        const engine = new ReplEngine({
+            defaultTimeoutMs: 10_000,
+            onOutput: (line) => seen.push({ line, at: performance.now() }),
+        });
+        try {
+            const result = await engine.run('console.log("first"); await sleep(600); console.log("second"); "done"');
+            const answered = performance.now();
+            expect(seen.map((entry) => entry.line)).toEqual(["first", "second"]);
+            expect(answered - (seen[0]?.at ?? answered)).toBeGreaterThan(400);
+            expect(result.text).toBe("first\nsecond\ndone");
+            expect(withoutStreamed(result.text, ["first", "second"])).toBe("done");
+        } finally {
+            await engine.shutdown();
+        }
+    });
+
+    it("leaves the turn text whole when nothing streamed or the streamed lines are not in it", () => {
+        expect(withoutStreamed("a\nb", [])).toBe("a\nb");
+        expect(withoutStreamed("note\nx\ny\nresult", ["x", "y"])).toBe("note\nresult");
+        expect(withoutStreamed("x\ny", ["x", "y"])).toBe("");
+        expect(withoutStreamed("other", ["x"])).toBe("other");
     });
 });
 

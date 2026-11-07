@@ -27,6 +27,18 @@ describe("rewriteTurn", () => {
         expect(rewriteTurn("try { 1 } finally { 2 }")).not.toContain("return (2)");
     });
 
+    // R6 11: describe()/help()/search() return a string, so a bare call in the middle of a script printed nothing.
+    it("prints a bare describe, help or search call whose value nothing uses", () => {
+        const out = rewriteTurn('describe("movies.Movie.cut");\nhelp();\nconst x = search("cut");\n1');
+        expect(out).toContain('console.log(describe("movies.Movie.cut"));');
+        expect(out).toContain("console.log(help());");
+        expect(out).not.toContain('console.log(search("cut"))');
+        expect(out).toContain("return (1)");
+        // The last statement is the turn's result, printed once already.
+        expect(rewriteTurn('describe("movies")')).toContain('return (describe("movies"))');
+        expect(rewriteTurn("other.describe(1);\n2")).not.toContain("console.log");
+    });
+
     it("gives a declaration without an initialiser an explicit undefined", () => {
         // Dropping the keyword alone leaves the bare expression `keep;`, which reads a binding
         // nothing created and throws ReferenceError instead of declaring anything.

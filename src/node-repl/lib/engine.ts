@@ -45,6 +45,9 @@ interface WorkerResponse {
     failed?: Array<{ id: string; error: string }>;
     /** Every frame of a failed turn's error, when `stack` dropped the library ones: logged, never returned. */
     fullStack?: string;
+    // R6 11 streamed output
+    /** A console line of the running turn (a stream line, not an answer). */
+    output?: string;
 }
 
 const WORKER_PATH = join(import.meta.dir, "worker.ts");
@@ -197,6 +200,12 @@ export interface ReplEngineOptions {
      * server timeout_ms. An agent whose script died at 30 s had no hint that either existed (round 5, item 8).
      */
     timeoutHint?: (timeoutMs: number) => string;
+    // R6 11 streamed output
+    /**
+     * Each console line of a turn, as the turn writes it (a long edit printed nothing for minutes). The turn's text
+     * still holds every line; `withoutStreamed` takes out what a caller already printed.
+     */
+    onOutput?: (line: string) => void;
 }
 
 /** `tools node-repl run`'s turn budget without --timeout. */
@@ -249,6 +258,28 @@ export function capOutput({
 }
 
 /** How long `shutdown` and `reset` give the toolsets to release what they started before the worker is killed. */
+// R6 11 streamed output
+/**
+ * A turn's text without the console lines a caller already printed as they came: the lines are one run in the text
+ * (after a preload note, before the result), so that run is taken out. Text that does not hold them stays whole.
+ */
+export function withoutStreamed(text: string, streamed: readonly string[]): string {
+    if (streamed.length === 0) {
+        return text;
+    }
+
+    const run = streamed.join("\n");
+    const at = text.indexOf(run);
+
+    if (at < 0) {
+        return text;
+    }
+
+    const before = text.slice(0, at).replace(/\n$/, "");
+    const after = text.slice(at + run.length).replace(/^\n/, "");
+    return [before, after].filter(Boolean).join("\n");
+}
+
 const DISPOSE_TIMEOUT_MS = 10_000;
 /** How long a shutdown waits for the recordings this engine owns to finish their post-processing. */
 const RECORDING_FINISH_TIMEOUT_MS = 600_000;
@@ -550,8 +581,14 @@ export class ReplEngine {
                 if (line) {
                     try {
                         const response = SafeJSON.parse(line, { strict: true }) as WorkerResponse;
-                        this.pending.get(response.id)?.(response);
-                        this.pending.delete(response.id);
+
+                        // R6 11: a console line of the running turn, on the same pipe so it comes before the answer.
+                        if (typeof response.output === "string") {
+                            this.options.onOutput?.(response.output);
+                        } else {
+                            this.pending.get(response.id)?.(response);
+                            this.pending.delete(response.id);
+                        }
                     } catch (error) {
                         logger.warn(
                             { error, line: line.slice(0, 200) },
@@ -658,7 +695,7 @@ export class ReplEngine {
         const turnStarted = performance.now();
         const response = await this.request(
             worker,
-            { op: "run", code },
+            { op: "run", code, ...(this.options.onOutput ? { stream: true } : {}) },
             {
                 timeoutMs,
                 onTimeout: `turn exceeded ${timeoutMs} ms; the worker was killed and every binding is gone${this.timeoutHint ? `. ${this.timeoutHint(timeoutMs)}` : ""}`,

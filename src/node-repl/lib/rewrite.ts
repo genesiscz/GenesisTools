@@ -24,7 +24,7 @@ interface Node {
     end: number;
     kind?: string;
     id?: { name: string } | null;
-    expression?: { start: number; end: number };
+    expression?: { start: number; end: number; type?: string; callee?: { type: string; name?: string } };
     declarations?: Array<{ start: number; end: number; id: { type: string }; init?: unknown }>;
     body?: Node[] | Node;
     block?: Node;
@@ -55,6 +55,27 @@ function returnLast(node: Node | null | undefined, code: string, edits: Edit[]):
         returnLast(node.consequent, code, edits);
         returnLast(node.alternate, code, edits);
     }
+}
+
+// R6 11 bare describe
+/** The discovery calls that return their text: a bare call whose value nothing uses printed nothing. */
+const PRINTED_WHEN_BARE = new Set(["describe", "help", "search"]);
+
+/** `describe("x");` in the middle of a turn becomes `console.log(describe("x"));`, so it prints as the author meant. */
+function printBareDiscovery(node: Node, edits: Edit[]): void {
+    const expression = node.expression;
+
+    if (
+        node.type !== "ExpressionStatement" ||
+        expression?.type !== "CallExpression" ||
+        expression.callee?.type !== "Identifier" ||
+        !PRINTED_WHEN_BARE.has(expression.callee.name ?? "")
+    ) {
+        return;
+    }
+
+    edits.push({ start: expression.start, end: expression.start, text: "console.log(" });
+    edits.push({ start: expression.end, end: expression.end, text: ")" });
 }
 
 // Dead-code elimination stays off: the transpiler would drop a side-effect-free last
@@ -166,6 +187,8 @@ export function rewriteTurn(source: string): string {
 
         if (isLast) {
             returnLast(node, code, edits);
+        } else {
+            printBareDiscovery(node, edits);
         }
     });
 

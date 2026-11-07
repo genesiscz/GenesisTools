@@ -15,6 +15,7 @@ import {
     RUN_TIMEOUT_MS,
     runTimeoutFor,
     runTimeoutHint,
+    withoutStreamed,
 } from "./lib/engine";
 import { coerceParam, listPresets, readPreset, removePreset, resolveParams, savePreset } from "./lib/presets";
 import { parseToolsetList, REPL_TOOLSET_IDS, toolsetCliHelp, toolsetOverlap } from "./lib/toolsets";
@@ -164,6 +165,9 @@ program
             '  search("cut")              the methods whose name, doc or parameters hold the words',
             '  describe("movies")         the methods of one toolset or object (describe() lists every name)',
             '  describe("movies.Movie.cut")  one method in full: signature, doc, parameters, result',
+            "They return their text: the last line of a script prints it, and so does a bare describe(…), help(…) or",
+            "search(…) line elsewhere; inside an expression, print it yourself (console.log(describe(…))).",
+            "console.log lines print as the script writes them; the result prints when it ends.",
             "Each `run` is a fresh process, so bindings do not survive between calls; the mcp server keeps them.",
         ].join("\n")
     )
@@ -210,11 +214,30 @@ program
                 return;
             }
 
-            const engine = new ReplEngine({ toolsets, maxOutputChars, timeoutHint: runTimeoutHint });
+            // R6 11: console lines print as the turn writes them (a long edit showed nothing for minutes), up to
+            // --max-output; the answer then prints only what was not printed yet (the result, a note).
+            const streamed: string[] = [];
+            let streamedChars = 0;
+            let answered = false;
+            const engine = new ReplEngine({
+                toolsets,
+                maxOutputChars,
+                timeoutHint: runTimeoutHint,
+                onOutput: (line) => {
+                    if (answered || (maxOutputChars > 0 && streamedChars + line.length > maxOutputChars)) {
+                        return;
+                    }
+
+                    streamed.push(line);
+                    streamedChars += line.length + 1;
+                    out.print(`${line}\n`);
+                },
+            });
 
             try {
                 const result = await engine.run(source, timeout);
-                printTurnText(result.text);
+                answered = true;
+                printTurnText(withoutStreamed(result.text, streamed));
 
                 for (const image of result.images) {
                     out.log.info(`image written to ${image.path}`);
