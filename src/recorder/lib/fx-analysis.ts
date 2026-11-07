@@ -40,6 +40,7 @@ import {
     type TextMatcherOptions,
     textHits,
     textMatcher,
+    unmatchedQueries,
 } from "@genesiscz/utils/recording-editor/private-data";
 import {
     boundaryWindows,
@@ -522,6 +523,8 @@ export interface TrackOptions {
     exclude?: readonly FractionBox[];
     /** Leave visible what stays still while the content under it moves. */
     excludeFixed?: boolean;
+    /** R8 7: gets every frame of screen text the hits were found in. */
+    onRead?: (frames: readonly ScreenTextFrame[]) => void;
 }
 
 /**
@@ -539,6 +542,7 @@ export async function trackedHits(
     const exclude = options.exclude ?? [];
 
     if (source === "frames") {
+        options.onRead?.(coarse);
         return textHits(coarse, matcher, { exclude });
     }
 
@@ -595,6 +599,7 @@ export async function trackedHits(
             fps,
             grid,
         });
+        options.onRead?.([...outside, ...dense]);
         return textHits([...outside, ...dense], matcher, { exclude, motion });
     };
     const merged = mergeWindows(windows);
@@ -729,8 +734,23 @@ export async function privateData(
 export type TextQuery = TextMatcherOptions;
 
 /** Every place of a text (or a pattern) on the screen, the input of the `hideText` op. */
-export function textHitsOf(project: EditProject, options: TrackOptions & TextQuery): Promise<PrivateHit[]> {
-    return trackedHits(project, textMatcher(options), options);
+export async function textHitsOf(project: EditProject, options: TrackOptions & TextQuery): Promise<PrivateHit[]> {
+    let read: readonly ScreenTextFrame[] = [];
+    const hits = await trackedHits(project, textMatcher(options), {
+        ...options,
+        onRead: (frames) => {
+            read = frames;
+        },
+    });
+
+    // R8 7: a pattern that never matched is said, not silently dropped (a \w that did not take Czech letters did).
+    for (const query of unmatchedQueries(read, options)) {
+        log.out.warn(
+            `no screen text of the whole movie matches ${query}: each OCR line is matched on its own, without case; \\w and \\b take letters of any language, \\p{L} is any letter`
+        );
+    }
+
+    return hits;
 }
 
 export async function findText(

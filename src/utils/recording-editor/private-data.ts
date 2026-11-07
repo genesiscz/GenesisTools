@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 
 /**
@@ -295,6 +296,63 @@ function escapeRegExp(text: string): string {
     return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** R8 7: a letter, a mark, a digit or an underscore in any script: what `\w` means in a hide pattern. */
+const WORD = "\\p{L}\\p{M}\\p{N}_";
+/** What a pattern may escape under the `u` flag; any other escaped sign is that sign. */
+const SYNTAX = new Set([..."^$\\.*+?()[]{}|/"]);
+const CLASS_ESCAPES = new Set([..."dDsSwWbBtnrvf0cxupPk123456789"]);
+
+/**
+ * R8 7: a hide pattern as a regular expression that knows every script, without case: `\w`, `\b` and `\B` take
+ * letters of any language (`\w+ová` finds "Kovářová", `\bŠtěpán\b` finds the name), `\p{L}` is any letter, and an
+ * escaped sign the `u` flag refuses (`\-`, `\:`) is that sign. A pattern that still does not compile with `u` (an old
+ * form like `\8`) is compiled as it was written.
+ */
+export function unicodePattern(source: string): RegExp {
+    let out = "";
+    let inClass = false;
+
+    for (let at = 0; at < source.length; at++) {
+        const char = source[at];
+
+        if (char === "\\" && at + 1 < source.length) {
+            const next = source[at + 1];
+            at++;
+
+            if (next === "w") {
+                out += inClass ? WORD : `[${WORD}]`;
+            } else if (next === "W" && !inClass) {
+                out += `[^${WORD}]`;
+            } else if (next === "b" && !inClass) {
+                out += `(?:(?<=[${WORD}])(?![${WORD}])|(?<![${WORD}])(?=[${WORD}]))`;
+            } else if (next === "B" && !inClass) {
+                out += `(?:(?<=[${WORD}])(?=[${WORD}])|(?<![${WORD}])(?![${WORD}]))`;
+            } else if (SYNTAX.has(next) || CLASS_ESCAPES.has(next) || (inClass && next === "-")) {
+                out += `\\${next}`;
+            } else {
+                out += next;
+            }
+
+            continue;
+        }
+
+        if (char === "[" && !inClass) {
+            inClass = true;
+        } else if (char === "]" && inClass) {
+            inClass = false;
+        }
+
+        out += char;
+    }
+
+    try {
+        return new RegExp(out, "giu");
+    } catch (error) {
+        logger.debug({ error, source }, "a hide pattern does not compile with the u flag; it is used as written");
+        return new RegExp(source, "gi");
+    }
+}
+
 /**
  * OCR often reads a space into an address or a token ("alice@example. com", "sk- ant"): the line is matched with
  * the spaces next to . @ _ - removed, and each match's offsets are mapped back to the line as OCR read it.
@@ -374,7 +432,7 @@ export function textMatcher(options: TextMatcherOptions): LineMatcher {
         throw new Error("give text (the words to hide) or pattern (a regular expression), or texts and patterns");
     }
 
-    const regexes = sources.map((source) => new RegExp(source, "gi"));
+    const regexes = sources.map(unicodePattern);
     // R6 3: every text and pattern in one pass over the screen text; each value is its own hit.
     const matches = compacting((text) =>
         regexes
@@ -504,6 +562,23 @@ export interface TextMatcherOptions {
     texts?: readonly string[];
     patterns?: readonly string[];
     unit?: HideUnit;
+}
+
+/** R8 7: each text and pattern of a request that no line of `frames` matches, as a message names it. */
+export function unmatchedQueries(
+    frames: readonly ScreenTextFrame[],
+    options: Omit<TextMatcherOptions, "unit">
+): string[] {
+    const queries = [
+        ...[options.text, ...(options.texts ?? [])].filter(Boolean).map((text) => ({ text })),
+        ...[options.pattern, ...(options.patterns ?? [])].filter(Boolean).map((pattern) => ({ pattern })),
+    ];
+    return queries
+        .filter((query) => {
+            const matcher = textMatcher(query);
+            return !frames.some((frame) => frame.lines.some((line) => matcher(line.text).length > 0));
+        })
+        .map((query) => describeTextQuery(query));
 }
 
 /** The words a text request names, for a message: `"a", "b" or /c/`. */

@@ -22,6 +22,7 @@ import {
     type TrackKey,
     textHits,
     textMatcher,
+    unmatchedQueries,
 } from "./private-data";
 import {
     applyOp,
@@ -960,5 +961,31 @@ describe("hidden parts keep whole microseconds (round 7)", () => {
         expect(loaded.redactions?.[0].startUs).toBe(1_133_333);
         expect(loaded.redactions?.[0].endUs).toBe(2_000_001);
         expect(loaded.redactions?.[0].track?.[0].atUs).toBe(1_500_000);
+    });
+});
+
+describe("hide patterns know every script (round 8)", () => {
+    test("\\w, \\b and \\p{L} take Czech letters, without case", () => {
+        const surname = textMatcher({ pattern: "\\w+ová" });
+        expect(surname("Smlouva: Kovářová")).toMatchObject([{ value: "kovářová" }]);
+        const name = textMatcher({ pattern: "\\bŠtěpán\\b" });
+        expect(name("pan štěpán Nový")).toMatchObject([{ value: "štěpán" }]);
+        expect(name("Štěpánek")).toEqual([]);
+        expect(textMatcher({ pattern: "\\p{Lu}\\p{Ll}+ \\p{Lu}\\p{Ll}+ová" })("Jana Dvořáková")).toHaveLength(1);
+    });
+
+    test("an escaped sign the u flag refuses is that sign, a class keeps its escapes", () => {
+        expect(textMatcher({ pattern: "4071\\-\\d{4}" })("č. 4071-8263")).toMatchObject([{ value: "4071-8263" }]);
+        expect(textMatcher({ pattern: "[\\w.\\-]+@example\\.com" })("jiří.nový@example.com")).toHaveLength(1);
+    });
+
+    test("a text or pattern no line shows is named", () => {
+        const frames: ScreenTextFrame[] = [
+            { atUs: 0, untilUs: 1, lines: [{ text: "Účet Kovářová", x: 0, y: 0, width: 0.3, height: 0.03 }] },
+        ];
+        expect(unmatchedQueries(frames, { texts: ["Kovářová", "Orla"], patterns: ["\\w+ová", "\\d{6}"] })).toEqual([
+            '"Orla"',
+            "/\\d{6}/",
+        ]);
     });
 });
