@@ -2779,6 +2779,136 @@
               "op"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "hidePrivate"
+              },
+              "ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kinds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "email",
+                    "token",
+                    "phone",
+                    "iban",
+                    "card"
+                  ]
+                }
+              },
+              "style": {
+                "type": "string",
+                "enum": [
+                  "blur",
+                  "pixelate",
+                  "black"
+                ]
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "cursorSmooth"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "strength": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "jitterPx": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 20
+              },
+              "idleFadeSeconds": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 30
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "speedUpWaits"
+              },
+              "ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "minSeconds": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 600
+              },
+              "maxArea": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 0.5
+              },
+              "speed": {
+                "type": "number",
+                "minimum": 1.5,
+                "maximum": 16
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "const": "autoSpeed"
+              },
+              "badge": {
+                "type": "boolean"
+              },
+              "position": {
+                "type": "string",
+                "enum": [
+                  "top-right",
+                  "top-left",
+                  "bottom-right",
+                  "bottom-left"
+                ]
+              }
+            },
+            "required": [
+              "op"
+            ],
+            "additionalProperties": false
           }
         ]
       },
@@ -4819,6 +4949,75 @@
               "tiltOut",
               "inMs",
               "outMs"
+            ],
+            "additionalProperties": false
+          },
+          "privacy": {
+            "type": "object",
+            "properties": {
+              "applied": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "applied"
+            ],
+            "additionalProperties": false
+          },
+          "cursorSmooth": {
+            "type": "object",
+            "properties": {
+              "strength": {
+                "default": 0.6,
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "jitterPx": {
+                "default": 3,
+                "type": "number",
+                "minimum": 0,
+                "maximum": 20
+              },
+              "idleFadeSeconds": {
+                "default": 2,
+                "type": "number",
+                "minimum": 0,
+                "maximum": 30
+              }
+            },
+            "required": [
+              "strength",
+              "jitterPx",
+              "idleFadeSeconds"
+            ],
+            "additionalProperties": false
+          },
+          "autoSpeed": {
+            "type": "object",
+            "properties": {
+              "badge": {
+                "default": true,
+                "type": "boolean"
+              },
+              "position": {
+                "default": "top-right",
+                "type": "string",
+                "enum": [
+                  "top-right",
+                  "top-left",
+                  "bottom-right",
+                  "bottom-left"
+                ]
+              }
+            },
+            "required": [
+              "badge",
+              "position"
             ],
             "additionalProperties": false
           },

@@ -120,6 +120,12 @@
     "movie.setLens",
     "movie.unlens",
     "movie.tilt",
+    "movie.privateData",
+    "movie.hidePrivate",
+    "movie.smoothCursor",
+    "movie.waits",
+    "movie.speedUpWaits",
+    "movie.speedBadge",
     "movies.list",
     "movies.search"
   ],
@@ -191,7 +197,11 @@
     "lens",
     "setLens",
     "unlens",
-    "tilt"
+    "tilt",
+    "hidePrivate",
+    "cursorSmooth",
+    "speedUpWaits",
+    "autoSpeed"
   ],
   "ops": [
     {
@@ -798,6 +808,41 @@
       "tiltOut": false,
       "inMs": 900,
       "outMs": 1500
+    },
+    {
+      "op": "hidePrivate",
+      "ids": [
+        "p1a2b3c4d"
+      ],
+      "kinds": [
+        "email",
+        "token"
+      ],
+      "style": "pixelate"
+    },
+    {
+      "op": "cursorSmooth",
+      "strength": 0.8,
+      "jitterPx": 4,
+      "idleFadeSeconds": 2.5
+    },
+    {
+      "op": "cursorSmooth",
+      "enabled": false
+    },
+    {
+      "op": "speedUpWaits",
+      "ids": [
+        "w1a2b3c4d"
+      ],
+      "minSeconds": 5,
+      "maxArea": 0.08,
+      "speed": 6
+    },
+    {
+      "op": "autoSpeed",
+      "badge": true,
+      "position": "bottom-left"
     }
   ],
   "projects": [
@@ -1436,6 +1481,146 @@
             "seconds": 3
           }
         }
+      }
+    },
+    {
+      "name": "private data hidden, a smooth cursor and a speed badge",
+      "project": {
+        "version": 1,
+        "source": {
+          "video": "/movies/screen.mp4",
+          "durationUs": 10000000,
+          "width": 1920,
+          "height": 1080
+        },
+        "clips": [
+          {
+            "id": "c1",
+            "fromUs": 0,
+            "toUs": 6000000,
+            "speed": 1
+          },
+          {
+            "id": "c2",
+            "fromUs": 6000000,
+            "toUs": 7000000,
+            "speed": 1
+          },
+          {
+            "id": "c3",
+            "fromUs": 7000000,
+            "toUs": 9000000,
+            "speed": 2
+          },
+          {
+            "id": "c4",
+            "fromUs": 9000000,
+            "toUs": 10000000,
+            "speed": 1
+          }
+        ],
+        "zooms": [
+          {
+            "id": "z1",
+            "startUs": 1000000,
+            "endUs": 3000000,
+            "scale": 2,
+            "mode": "manual",
+            "focusX": 0.3,
+            "focusY": 0.4,
+            "easeInMs": 450,
+            "easeOutMs": 450
+          }
+        ],
+        "audio": {
+          "include": true,
+          "volume": 1,
+          "mutedTracks": []
+        },
+        "export": {
+          "codec": "h264",
+          "maxHeight": 0,
+          "output": ""
+        },
+        "redactions": [
+          {
+            "id": "r1",
+            "startUs": 2000000,
+            "endUs": 4000000,
+            "x": 0.1,
+            "y": 0.1,
+            "width": 0.2,
+            "height": 0.1,
+            "style": "blur",
+            "label": "API token"
+          },
+          {
+            "id": "r2",
+            "startUs": 4000000,
+            "endUs": 5000000,
+            "x": 0.4,
+            "y": 0.4,
+            "width": 0.2,
+            "height": 0.2,
+            "style": "spotlight",
+            "dim": 0.6,
+            "cutout": "circle"
+          }
+        ],
+        "texts": [
+          {
+            "id": "t1",
+            "startUs": 5000000,
+            "endUs": 7000000,
+            "text": "Hello",
+            "x": 0.5,
+            "y": 0.12,
+            "size": 0.055,
+            "style": "plain"
+          }
+        ],
+        "shapes": [
+          {
+            "id": "s1",
+            "startUs": 6000000,
+            "endUs": 8000000,
+            "kind": "arrow",
+            "x1": 0.2,
+            "y1": 0.2,
+            "x2": 0.5,
+            "y2": 0.5,
+            "color": "#FF3B30",
+            "width": 0.006,
+            "appear": "fade"
+          }
+        ],
+        "transcript": {
+          "fixes": {
+            "4200": "The fixed words"
+          }
+        },
+        "markers": [
+          {
+            "id": "m1",
+            "atUs": 2000000,
+            "label": "Login"
+          }
+        ],
+        "privacy": {
+          "applied": [
+            "p1a2b3c4d"
+          ]
+        },
+        "cursorSmooth": {
+          "strength": 0.8,
+          "jitterPx": 4,
+          "idleFadeSeconds": 2.5
+        },
+        "autoSpeed": {
+          "badge": true,
+          "position": "bottom-left"
+        },
+        "revision": 0
       }
     }
   ]

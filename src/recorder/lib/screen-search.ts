@@ -52,7 +52,7 @@ export interface ScreenHit {
 }
 
 /** Each frame's OCR text: a meeting's (or a jsonl-sink recording's) `ocr.jsonl`, else the `<frame>.ocr.json` sidecars. */
-function frameTexts(folder: string, files: string[], wanted: string, limit: number): Map<string, FrameText> {
+export function frameTexts(folder: string, files: string[], wanted: string, limit: number): Map<string, FrameText> {
     const texts = new Map<string, FrameText>();
     const keep = (file: string, text: FrameText) => {
         if (foldText(text.text).includes(wanted)) {
@@ -99,7 +99,7 @@ function micro(value: number): number {
 }
 
 /** The pixel size of each display's first frame (one display's frames share a size); a missing file is left out. */
-function displaySizes(folder: string, frames: ReadonlyArray<{ file: string; displayId?: number }>) {
+export function displaySizes(folder: string, frames: ReadonlyArray<{ file: string; displayId?: number }>) {
     const sizes = new Map<number | undefined, { width: number; height: number }>();
 
     for (const frame of frames) {
@@ -124,7 +124,7 @@ function displaySizes(folder: string, frames: ReadonlyArray<{ file: string; disp
  * frame begins (the last at `endUs`). A frame the movie never shows has no entry. A frame can show more than once,
  * because the plan may leave its display and come back before the display's next frame.
  */
-function visibleSpans(
+export function visibleSpans(
     frames: ReadonlyArray<{ file: string; atMs: number; displayId?: number }>,
     ranges: readonly DisplayRange[],
     endUs: number

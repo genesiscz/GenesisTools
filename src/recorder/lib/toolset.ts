@@ -22,6 +22,7 @@ import {
     type timeSchema,
     timeToUs,
 } from "@genesiscz/utils/recording-editor/plan";
+import { PRIVATE_KINDS, PRIVATE_STYLES } from "@genesiscz/utils/recording-editor/private-data";
 import {
     BACKGROUND_KINDS,
     CANVAS_ASPECTS,
@@ -50,6 +51,7 @@ import {
 } from "@genesiscz/utils/recording-editor/project";
 import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recording-editor/subtitles";
 import { type CutMatch, FILLER_LEVELS, type FillerLevel } from "@genesiscz/utils/recording-editor/transcript-cuts";
+import { SPEED_BADGE_POSITIONS } from "@genesiscz/utils/recording-editor/waits";
 import { ReplToolset, type ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { recorderSetSchema, settingsPatchOf } from "@genesiscz/utils/repl/toolsets/recorder";
 import { readRecordingManifest, renameRecording } from "@genesiscz/utils/screen-recorder/library";
@@ -75,6 +77,7 @@ import {
     writeSubtitles,
 } from "./edit";
 import { stepDisplaySwitch, switchDisplay } from "./frames-movie";
+import { privateData, waits } from "./fx-analysis";
 import {
     EDITOR_TABS,
     type EditorTab,
@@ -1126,6 +1129,73 @@ const movieMethods = [
             })
             .strict(),
         "The 3D tilt camera: a slight perspective tilt of the framed picture and its shadow (strength 0 to 1, 0.5), drifting slowly (drift, on), tilting in over the first inMs (1200) and out over the last outMs (1200). Best with a frame (frame()); without one the picture tilts over black. enabled: false removes it."
+    ),
+    // fx B (round 4): private data, smooth cursor, typing and waiting speed-ups.
+    defineMethod({
+        name: "privateData",
+        params: z.object({}).strict(),
+        result: z.unknown(),
+        resultName: "{ id, kind, label, masked, from, to, plays, box: { x, y, width, height }, hidden }[]",
+        doc: 'The private data on the screen: emails, tokens and keys, phone numbers, IBANs and card numbers in the text of its frames (a frames recording\'s own OCR, else Vision OCR of one movie frame a second, read on this Mac and cached in screen-text.json; the first scan of a long movie takes minutes). One hit per value for as long as it shows, at source seconds; masked shows only its first and last two characters. hidePrivate({ ids }) hides them. kind is "email" | "token" | "phone" | "iban" | "card".',
+        effect: "read",
+    }),
+    edit(
+        "hidePrivate",
+        z
+            .object({
+                ids: z.array(z.string()).optional(),
+                kinds: z.array(z.enum(PRIVATE_KINDS)).optional(),
+                style: z.enum(PRIVATE_STYLES).optional(),
+            })
+            .strict(),
+        'Hides the private data privateData() lists: one blurred part per hit while it shows (style "pixelate" or "black" instead). ids picks hits (absent: all), kinds picks kinds; a hit hidden before is skipped. One undo() puts it back.'
+    ),
+    edit(
+        "smoothCursor",
+        z
+            .object({
+                enabled: z.boolean().optional(),
+                strength: z.number().min(0).max(1).optional(),
+                jitterPx: z.number().min(0).max(20).optional(),
+                idleFadeSeconds: z.number().min(0).max(30).optional(),
+            })
+            .strict(),
+        "The smooth cursor (a movie with a drawn cursor): the path follows an averaged curve, strength 0 to 1 (0.6; 1 averages over ±400 ms), moves under jitterPx points (3) are dropped, and the cursor fades after idleFadeSeconds (2; 0 keeps it) without a move. The cursor still sits exactly on each click. enabled: false turns it off (the cursor's own smoothing applies again)."
+    ),
+    defineMethod({
+        name: "waits",
+        params: z
+            .object({
+                minSeconds: z.number().min(1).max(600).optional(),
+                maxArea: z.number().min(0).max(0.5).optional(),
+            })
+            .strict(),
+        result: z.unknown(),
+        resultName: '{ id, kind: "still" | "typing", from, to, seconds, speed, saves, plays, region }[]',
+        doc: "The typing and waiting stretches: where only a small part of the picture changes (at most maxArea of it per quarter second, 0.06: typing, a spinner, a progress bar) or nothing does, for at least minSeconds (4), inside the kept parts at normal speed and away from clicks, cursor moves and speech. Each has a proposed speed (4x to 8x, longer is faster), the seconds it saves and the region that changed. The picture is compared once and cached in waits.json. speedUpWaits({ ids }) applies them.",
+        effect: "read",
+    }),
+    edit(
+        "speedUpWaits",
+        z
+            .object({
+                ids: z.array(z.string()).optional(),
+                minSeconds: z.number().min(1).max(600).optional(),
+                maxArea: z.number().min(0).max(0.5).optional(),
+                speed: z.number().min(1.5).max(16).optional(),
+            })
+            .strict(),
+        'Speeds up the stretches waits() lists, each at its proposed speed (or at speed), and turns on the "⏩ 6x" badge over them. ids picks stretches (absent: all; the same minSeconds and maxArea as the list). One undo() puts it back.'
+    ),
+    edit(
+        "speedBadge",
+        z
+            .object({
+                badge: z.boolean().optional(),
+                position: z.enum(SPEED_BADGE_POSITIONS).optional(),
+            })
+            .strict(),
+        'The "⏩ 6x" badge drawn while a part plays at 1.5x or faster: badge false hides it, position "top-right" (default), "top-left", "bottom-right" or "bottom-left".'
     ),
 ];
 
@@ -2423,6 +2493,32 @@ export class Movie {
 
     async tilt(options: Omit<Extract<EditOp, { op: "tilt" }>, "op"> = {}) {
         return this.change([{ op: "tilt", ...options }]);
+    }
+
+    // fx B (round 4): private data, smooth cursor, typing and waiting speed-ups.
+
+    async privateData() {
+        return privateData((await openProject(this.recording)).project);
+    }
+
+    async hidePrivate(options: Omit<Extract<EditOp, { op: "hidePrivate" }>, "op"> = {}) {
+        return this.change([{ op: "hidePrivate", ...options }]);
+    }
+
+    async smoothCursor(options: Omit<Extract<EditOp, { op: "cursorSmooth" }>, "op"> = {}) {
+        return this.change([{ op: "cursorSmooth", ...options }]);
+    }
+
+    async waits(options: { minSeconds?: number; maxArea?: number } = {}) {
+        return waits((await openProject(this.recording)).project, options);
+    }
+
+    async speedUpWaits(options: Omit<Extract<EditOp, { op: "speedUpWaits" }>, "op"> = {}) {
+        return this.change([{ op: "speedUpWaits", ...options }]);
+    }
+
+    async speedBadge(options: Omit<Extract<EditOp, { op: "autoSpeed" }>, "op"> = {}) {
+        return this.change([{ op: "autoSpeed", ...options }]);
     }
 }
 

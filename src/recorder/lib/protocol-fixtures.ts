@@ -261,6 +261,12 @@ const EXAMPLE_OPS: readonly unknown[] = [
     },
     { op: "unlens", id: "l1" },
     { op: "tilt", enabled: true, strength: 0.6, drift: false, tiltIn: true, tiltOut: false, inMs: 900, outMs: 1500 },
+    // fx B (round 4)
+    { op: "hidePrivate", ids: ["p1a2b3c4d"], kinds: ["email", "token"], style: "pixelate" },
+    { op: "cursorSmooth", strength: 0.8, jitterPx: 4, idleFadeSeconds: 2.5 },
+    { op: "cursorSmooth", enabled: false },
+    { op: "speedUpWaits", ids: ["w1a2b3c4d"], minSeconds: 5, maxArea: 0.08, speed: 6 },
+    { op: "autoSpeed", badge: true, position: "bottom-left" },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */
@@ -417,6 +423,16 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
                     editProjectSchema.parse({ ...wholeProject(source), captions: { show: true } })
                 )
             ),
+        },
+        // fx B (round 4): the three objects as the ops write them.
+        {
+            name: "private data hidden, a smooth cursor and a speed badge",
+            project: editProjectSchema.parse({
+                ...items,
+                privacy: { applied: ["p1a2b3c4d"] },
+                cursorSmooth: { strength: 0.8, jitterPx: 4, idleFadeSeconds: 2.5 },
+                autoSpeed: { badge: true, position: "bottom-left" },
+            }),
         },
     ];
 }

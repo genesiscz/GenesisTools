@@ -6,6 +6,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { z } from "zod";
 import { CAMERA_CORNERS, CAMERA_SHAPES, cameraBubbleSchema, hideCamera, showCamera } from "./camera";
+import { cursorSmoothSchema } from "./cursor-smooth";
 import { DENOISE_METHODS, denoiseSchema } from "./denoise";
 import { applyFxOp, describeFx, fxOpSchemas, lensSchema, tiltSchema, transitionsSchema } from "./fx";
 import { recordingItemId, withItemIds } from "./item-ids";
@@ -51,6 +52,7 @@ import {
     textAnimateSchema,
 } from "./overlays";
 import { outputTimeSchema, sourceTimeSchema, timeSchema, timeToUs } from "./plan";
+import { PRIVATE_KINDS, PRIVATE_STYLES, type PrivateHit, privacySchema } from "./private-data";
 import {
     cutRanges,
     FILLER_LEVELS,
@@ -61,6 +63,7 @@ import {
     wordCuts,
 } from "./transcript-cuts";
 import { applyDucking, applyVoiceover, duckingSchema, removeVoiceover, voiceoverSchema } from "./voiceovers";
+import { autoSpeedSchema, SPEED_BADGE_POSITIONS, type WaitStretch } from "./waits";
 
 const { log } = logger.scoped("recording-editor-project");
 
@@ -419,6 +422,13 @@ export const editProjectSchema = z.object({
     lens: lensSchema.optional(),
     /** Round 4 fx-render: the 3D tilt of the framed picture (fx.ts); absent is flat. */
     tilt: tiltSchema.optional(),
+    // fx B (round 4): private data, smooth cursor, typing and waiting speed-ups. Absent is off.
+    /** The private data hidden from the screen text scan (private-data.ts); absent is none. */
+    privacy: privacySchema.optional(),
+    /** The smooth cursor (cursor-smooth.ts); absent keeps the cursor's own smoothing. */
+    cursorSmooth: cursorSmoothSchema.optional(),
+    /** The speed badge over sped-up parts (waits.ts); absent is no badge. */
+    autoSpeed: autoSpeedSchema.optional(),
     revision: z.number().int().nonnegative().default(0),
     updatedBy: z.string().optional(),
     // R4 6 animated captions
@@ -1527,6 +1537,52 @@ export const editOpSchema = z.discriminatedUnion("op", [
         .strict(),
     // Round 4 fx-render: transition, lens, setLens, unlens, tilt (fx.ts).
     ...fxOpSchemas,
+    // fx B (round 4): private data, smooth cursor, typing and waiting speed-ups.
+    /**
+     * Hides the private data the screen text holds (emails, tokens and keys, phone numbers, IBANs, card numbers):
+     * one hidden part per hit for as long as it shows. `ids` from privateData() picks hits (absent: all), `kinds`
+     * picks kinds; a hit hidden before is skipped. The CLI and the REPL read the screen text (Vision OCR, local).
+     */
+    z
+        .object({
+            op: z.literal("hidePrivate"),
+            ids: z.array(z.string()).optional(),
+            kinds: z.array(z.enum(PRIVATE_KINDS)).optional(),
+            style: z.enum(PRIVATE_STYLES).optional(),
+        })
+        .strict(),
+    /** The smooth cursor: strength (0.6), jitterPx (3), idleFadeSeconds (2); enabled: false turns it off. */
+    z
+        .object({
+            op: z.literal("cursorSmooth"),
+            enabled: z.boolean().optional(),
+            strength: z.number().min(0).max(1).optional(),
+            jitterPx: z.number().min(0).max(20).optional(),
+            idleFadeSeconds: z.number().min(0).max(30).optional(),
+        })
+        .strict(),
+    /**
+     * Speeds up the typing and waiting stretches waits() lists (only a small part of the picture changes, or none,
+     * for minSeconds): each at its proposed 4x to 8x, or at `speed`; `ids` picks stretches (absent: all). Turns the
+     * speed badge on.
+     */
+    z
+        .object({
+            op: z.literal("speedUpWaits"),
+            ids: z.array(z.string()).optional(),
+            minSeconds: z.number().min(1).max(600).optional(),
+            maxArea: z.number().min(0).max(0.5).optional(),
+            speed: z.number().min(1.5).max(16).optional(),
+        })
+        .strict(),
+    /** The "⏩ 6x" badge over sped-up parts: badge on or off, position (top-right). */
+    z
+        .object({
+            op: z.literal("autoSpeed"),
+            badge: z.boolean().optional(),
+            position: z.enum(SPEED_BADGE_POSITIONS).optional(),
+        })
+        .strict(),
 ]);
 export type EditOp = z.infer<typeof editOpSchema>;
 
@@ -1590,6 +1646,11 @@ export interface OpFacts {
     // R4 voiceover clips
     /** The length of a `voiceover` op's file, measured with ffprobe. */
     voiceoverDurationUs?: number;
+    // fx B (round 4)
+    /** The private data on the screen (`hidePrivate`), from the screen text scan. */
+    privateHits?: readonly PrivateHit[];
+    /** The typing and waiting stretches (`speedUpWaits`), from the picture's change steps. */
+    waits?: readonly WaitStretch[];
 }
 
 /** A `zoom` op whose zoom went past a zoom it met (`placeZoom`), as a sentence a caller can return. */
@@ -1864,6 +1925,17 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
         case "endCard": {
             const { op: kind, ...change } = op;
             return applyCard(project, kind === "introCard" ? "intro" : "end", change, { exists: existsSync, resolve });
+        }
+        // fx B (round 4)
+        case "hidePrivate":
+            return hidePrivate(project, op, facts.privateHits);
+        case "cursorSmooth":
+            return smoothCursor(project, op);
+        case "speedUpWaits":
+            return speedUpWaits(project, op, facts.waits);
+        case "autoSpeed": {
+            const { op: _op, ...change } = op;
+            return { ...project, autoSpeed: autoSpeedSchema.parse({ ...project.autoSpeed, ...change }) };
         }
         case "removeIdle": {
             if (!facts.idleUs) {
@@ -2444,7 +2516,105 @@ export function describeProject(project: EditProject, path: string) {
         })),
         // Round 4 fx-render: transitions (with every join), lenses, tilt.
         ...describeFx(project),
+        // fx B (round 4)
+        cursorSmooth: project.cursorSmooth ?? null,
+        autoSpeed: project.autoSpeed ?? null,
+        privateHidden: project.privacy?.applied.length ?? 0,
     };
+}
+
+// fx B (round 4): the ops of private data, the smooth cursor and the typing and waiting speed-ups.
+
+/** Picks the facts' items by `ids` (absent: all); an unknown id is refused with the ids there are. */
+function pickById<T extends { id: string }>(
+    items: readonly T[],
+    ids: readonly string[] | undefined,
+    what: string
+): T[] {
+    if (!ids) {
+        return [...items];
+    }
+
+    const unknown = ids.filter((id) => !items.some((item) => item.id === id));
+
+    if (unknown.length > 0) {
+        const known = items.length ? `${what}s: ${items.map((item) => item.id).join(", ")}` : `there is no ${what}`;
+        throw new Error(`no ${what} ${unknown.join(", ")}; ${known}`);
+    }
+
+    return items.filter((item) => ids.includes(item.id));
+}
+
+function hidePrivate(
+    project: EditProject,
+    op: Extract<EditOp, { op: "hidePrivate" }>,
+    hits: readonly PrivateHit[] | undefined
+): EditProject {
+    if (!hits) {
+        throw new Error("hidePrivate needs the screen text's private data; run it through editProject or the CLI");
+    }
+
+    const applied = new Set(project.privacy?.applied ?? []);
+    const picked = pickById(hits, op.ids, "private hit").filter(
+        (hit) => !applied.has(hit.id) && (!op.kinds || op.kinds.includes(hit.kind))
+    );
+    let next = project;
+
+    for (const hit of picked) {
+        const fromUs = Math.max(0, Math.min(hit.fromUs, project.source.durationUs - MINIMUM_CLIP_US));
+        const toUs = Math.min(project.source.durationUs, Math.max(hit.toUs, fromUs + MINIMUM_CLIP_US));
+        next = addRedaction(next, {
+            fromUs,
+            toUs,
+            rect: hit.box,
+            style: op.style ?? "blur",
+            label: `${hit.label} (auto)`,
+        });
+        applied.add(hit.id);
+    }
+
+    return picked.length === 0 ? project : { ...next, privacy: privacySchema.parse({ applied: [...applied] }) };
+}
+
+function smoothCursor(project: EditProject, op: Extract<EditOp, { op: "cursorSmooth" }>): EditProject {
+    const { op: _op, enabled, ...change } = op;
+
+    if (enabled === false) {
+        const { cursorSmooth: _off, ...rest } = project;
+        return rest;
+    }
+
+    if (!trackDrawsCursor(project.source.cursor)) {
+        throw new Error(
+            "this movie has the system cursor in its picture, so the editor cannot smooth it; record without --system-cursor to get a drawn cursor"
+        );
+    }
+
+    return { ...project, cursorSmooth: cursorSmoothSchema.parse({ ...project.cursorSmooth, ...change }) };
+}
+
+function speedUpWaits(
+    project: EditProject,
+    op: Extract<EditOp, { op: "speedUpWaits" }>,
+    waits: readonly WaitStretch[] | undefined
+): EditProject {
+    if (!waits) {
+        throw new Error(
+            "speedUpWaits needs the movie's typing and waiting stretches; run it through editProject or the CLI"
+        );
+    }
+
+    let next = project;
+
+    for (const wait of pickById(waits, op.ids, "stretch")) {
+        const toUs = Math.min(wait.toUs, project.source.durationUs);
+
+        if (toUs - wait.fromUs >= MINIMUM_CLIP_US) {
+            next = speedRange(next, wait.fromUs, toUs, op.speed ?? wait.speed);
+        }
+    }
+
+    return next === project ? project : { ...next, autoSpeed: autoSpeedSchema.parse(project.autoSpeed ?? {}) };
 }
 
 /** The `range` op: the OUTPUT range mapped to the source, then the op that does the action there. */

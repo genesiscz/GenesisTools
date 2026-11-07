@@ -56,6 +56,7 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { probeVideo, type VideoProbeLimits } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { z } from "zod";
+import { privateHitsOf, waitsOf } from "./fx-analysis";
 import { type ExportAnswer, movieOf, resolveRecording } from "./library";
 import { chapterMetadata, chapterPoints, chaptersOfPart, markersOf, recordedMarkersOf } from "./moments";
 import { hostExport } from "./service-client";
@@ -642,6 +643,15 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
     // A fix is keyed by its line's start; without a transcript the time is taken as that start.
     if (op.op === "fixLine" && existsSync(transcriptCachePath(project.source.video))) {
         return { transcript: readTranscriptSegments(project) };
+    }
+
+    // fx B (round 4): the screen text's private data, and the typing and waiting stretches (both cached).
+    if (op.op === "hidePrivate") {
+        return { privateHits: await privateHitsOf(project) };
+    }
+
+    if (op.op === "speedUpWaits") {
+        return { waits: await waitsOf(project, { minSeconds: op.minSeconds, maxArea: op.maxArea }) };
     }
 
     return {};
