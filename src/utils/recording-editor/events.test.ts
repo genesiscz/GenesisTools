@@ -111,4 +111,53 @@ describe("scene changes: a partial swap, a slide over several steps, and the fra
         // Frame 42 of a 30 fps movie starts at 1.4 s; one frame is 33 ms.
         expect(Math.abs((refined ?? 0) - 1_400_000)).toBeLessThan(34_000);
     });
+
+    // R8 10: a simulator recording has bursts of frames and gaps (about 116 fps on average, 60 nominal). The scene
+    // reader paired ffmpeg's frame times with frames that its constant-rate output had duplicated, so a change in a
+    // sparse stretch read at the wrong time and every scene of the real copy kept its coarse time.
+    test.skipIf(skip.integration)(
+        "on a movie with gaps between frames, the scene lands on the first frame after the cut",
+        async () => {
+            const folder = mkdtempSync(join(tmpdir(), "scene-times-vfr-"));
+            const video = join(folder, "screen.mp4");
+            // 120 fps, every frame up to 1 s and from 5 s, only every ninth one between: a block appears at 4.6 s, in
+            // the sparse part, so the first frame that shows it is the one at 4.65 s.
+            const made = Bun.spawnSync(
+                [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=white:s=160x320:r=120:d=7",
+                    "-vf",
+                    "drawbox=x=0:y=100:w=160:h=120:color=black@1:t=fill:enable='gte(t,4.6)'," +
+                        "drawbox=x=0:y=290:w=160:h=30:color=gray@1:t=fill,select='lt(t,1)+gte(t,5)+not(mod(n,9))'",
+                    "-fps_mode",
+                    "vfr",
+                    "-c:v",
+                    "libx264",
+                    "-bf",
+                    "2",
+                    "-pix_fmt",
+                    "yuv420p",
+                    video,
+                ],
+                { env: process.env }
+            );
+            expect(made.exitCode).toBe(0);
+            const refined = await refineSceneTimes({
+                video,
+                width: 160,
+                height: 320,
+                scenesUs: [4_750_000, 5_500_000],
+                stepUs: 250_000,
+            });
+            // The frames around the cut are 75 ms apart (4.575 s, then 4.65 s); the second scene has no change and stays.
+            expect(refined[0]).toBe(4_650_000);
+            expect(refined[1]).toBe(5_500_000);
+        }
+    );
 });

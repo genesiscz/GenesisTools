@@ -1010,7 +1010,7 @@ export async function eventsOf(project: EditProject, options: { taps?: readonly 
         ...analysisOf(
             video,
             "scenes",
-            `scenes,v1,${scenes.map((scene) => scene.fromUs).join(",")}`,
+            `scenes,v2,${scenes.map((scene) => scene.fromUs).join(",")}`,
             z.array(z.number())
         ),
         compute: () =>

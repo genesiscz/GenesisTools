@@ -53,8 +53,11 @@ export function changeMoment(frames: readonly TimedFrame[]): number | undefined 
 
 /**
  * Each coarse scene time (the first sample after the change) moved to the frame the change starts on, read from
- * `stepUs` before it to the scene time at the movie's own rate. A scene that cannot be read keeps its coarse time.
- * One ffmpeg run per scene, on a 160 pixel wide grey copy.
+ * `stepUs` before it to the scene time at the movie's own frames. A scene that cannot be read keeps its coarse time.
+ *
+ * One ffmpeg run reads every scene's window from the movie's start, without a seek (R8 10): on a simulator recording
+ * (bursts near 120 fps, gaps, B-frames) a seek gave its frames evenly spaced times that ran up to 2 s behind the
+ * picture, and a constant-rate output repeated frames, so the times printed no longer matched the frames read.
  */
 export async function refineSceneTimes(options: {
     video: string;
@@ -64,72 +67,75 @@ export async function refineSceneTimes(options: {
     stepUs: number;
     timeoutMs?: number;
 }): Promise<number[]> {
-    const width = WAIT_SAMPLE_WIDTH;
-    const height = Math.max(2, Math.round((width * options.height) / options.width / 2) * 2);
-    const refined: number[] = [];
-
-    for (const sceneUs of options.scenesUs) {
-        // 50 ms more: the frame the editor shows at the step before is the latest one at or before it.
-        const fromUs = Math.max(0, sceneUs - options.stepUs - 50_000);
-
-        try {
-            const frames = await readFrames({
-                video: options.video,
-                fromUs,
-                toUs: sceneUs,
-                width,
-                height,
-                timeoutMs: options.timeoutMs,
-            });
-            refined.push(changeMoment(frames) ?? sceneUs);
-        } catch (error) {
-            log.warn(
-                { error, video: options.video, sceneUs },
-                "a scene's frames could not be read; its coarse time stays"
-            );
-            refined.push(sceneUs);
-        }
+    if (options.scenesUs.length === 0) {
+        return [];
     }
 
-    return refined;
+    const width = WAIT_SAMPLE_WIDTH;
+    const height = Math.max(2, Math.round((width * options.height) / options.width / 2) * 2);
+    // 50 ms more: the frame the editor shows at the step before is the latest one at or before it.
+    const windows = options.scenesUs.map((sceneUs): [number, number] => [
+        Math.max(0, sceneUs - options.stepUs - 50_000),
+        sceneUs,
+    ]);
+    let frames: TimedFrame[];
+
+    try {
+        frames = await readFrames({ video: options.video, windows, width, height, timeoutMs: options.timeoutMs });
+    } catch (error) {
+        log.warn({ error, video: options.video }, "the scenes' frames could not be read; their coarse times stay");
+        return [...options.scenesUs];
+    }
+
+    return windows.map(([fromUs, toUs], index) => {
+        const inside = frames.filter((frame) => frame.us >= fromUs - 1000 && frame.us <= toUs + 1000);
+        return changeMoment(inside) ?? options.scenesUs[index];
+    });
 }
 
-/** The movie's own frames from `fromUs` to `toUs` (both in), grey and small, with their source times. */
+/**
+ * The movie's own frames inside `windows` ([from, to] source microseconds), grey and small, with their own times.
+ * Decodes from the start (no seek) and keeps every frame as it is (passthrough), so frame N of the output is the
+ * frame showinfo printed as N.
+ */
 async function readFrames(options: {
     video: string;
-    fromUs: number;
-    toUs: number;
+    windows: ReadonlyArray<[number, number]>;
     width: number;
     height: number;
     timeoutMs?: number;
 }): Promise<TimedFrame[]> {
     const seconds = (us: number) => (us / 1_000_000).toFixed(6);
     const frameBytes = options.width * options.height;
-    // -copyts keeps each frame's own time after the seek; showinfo prints it (pts_time) on stderr.
+    const select = options.windows
+        .map(([fromUs, toUs]) => `between(t,${seconds(fromUs - 1000)},${seconds(toUs + 1000)})`)
+        .join("+");
+    const endUs = Math.max(...options.windows.map(([, toUs]) => toUs)) + 100_000;
     const command = [
         "ffmpeg",
         "-nostdin",
         "-hide_banner",
-        "-copyts",
-        "-ss",
-        seconds(options.fromUs),
+        "-t",
+        seconds(endUs),
         "-i",
         options.video,
-        "-to",
-        seconds(options.toUs + 1000),
         "-map",
         "0:v:0",
         "-vf",
-        `scale=${options.width}:${options.height}:flags=area,format=gray,showinfo`,
+        // setpts=N after showinfo: the frames' own times are printed, and the output's are strictly increasing.
+        `select='${select}',scale=${options.width}:${options.height}:flags=area,format=gray,showinfo,setpts=N`,
+        "-fps_mode",
+        "passthrough",
         "-f",
         "rawvideo",
         "-pix_fmt",
         "gray",
         "-",
     ];
-    log.debug({ command }, "reading a scene's frames");
+    log.debug({ command }, "reading the scenes' frames");
     const child = Bun.spawn(command, { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
-    const timer = setTimeout(() => child.kill(), options.timeoutMs ?? 60_000);
+    // A whole decode up to the last scene: about 6 s for 90 s of a 1206 x 2622 recording on this Mac.
+    const timer = setTimeout(() => child.kill(), options.timeoutMs ?? 600_000);
 
     try {
         const [bytes, stderr, status] = await Promise.all([
@@ -146,11 +152,13 @@ async function readFrames(options: {
             Math.round(Number(match[1]) * 1_000_000)
         );
         const data = new Uint8Array(bytes);
-        const count = Math.min(times.length, Math.floor(data.length / frameBytes));
-        return Array.from({ length: count }, (_, index) => ({
-            us: times[index] ?? 0,
-            pixels: data.subarray(index * frameBytes, (index + 1) * frameBytes),
-        })).filter((frame) => frame.us >= options.fromUs - 1000 && frame.us <= options.toUs + 1000);
+        const count = Math.floor(data.length / frameBytes);
+
+        if (count !== times.length) {
+            throw new Error(`ffmpeg printed ${times.length} frame times for ${count} frames of ${options.video}`);
+        }
+
+        return times.map((us, index) => ({ us, pixels: data.subarray(index * frameBytes, (index + 1) * frameBytes) }));
     } finally {
         clearTimeout(timer);
     }
