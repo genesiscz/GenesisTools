@@ -303,6 +303,15 @@ final class RecorderScreenFindViewTests: XCTestCase {
         XCTAssertFalse(text.contains("click rings"), "a switch that cannot draw anything: \(text)")
     }
 
+    // Regression test: deep test 2026-11-07 R3-RX5. With one clip, Delete Clip was greyed with no word of why.
+    func testTheOnlyClipSaysWhyItCannotBeDeleted() throws {
+        let model = model()
+        model.selection = .clip(try XCTUnwrap(model.project.clips.first?.id))
+        let image = try EditorShots.write(ClipInspector(model: model).padding(18), name: "clip-only-one", width: 300)
+        let text = try EditorShots.text(image).lowercased()
+        XCTAssertTrue(text.contains("the only clip stays"), text)
+    }
+
     func testAMovieWithoutARecordingSaysWhyItHasNoScreenText() throws {
         let model = model()
         model.screenQuery = "token"

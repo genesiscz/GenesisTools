@@ -425,7 +425,7 @@ private struct StillPartsSection: View {
     }
 }
 
-private struct ClipInspector: View {
+struct ClipInspector: View {
     @Bindable var model: EditorModel
     /// 8× is what Speed Up Still Parts sets, so such a clip shows its own segment.
     private let speeds: [Double] = [0.5, 1, 1.5, 2, 4, 8]
@@ -454,6 +454,14 @@ private struct ClipInspector: View {
                 .instantTooltip("Splits the clip under the playhead in two (S)")
             WideButton(title: "Delete Clip", systemImage: "trash", role: .destructive) { model.deleteSelection() }
                 .disabled(placed.count < 2)
+                .instantTooltip("Deletes this clip from the edit (⌫); ⌘Z brings it back")
+            if placed.count < 2 {
+                // A greyed button says why: the edit cannot lose its only clip.
+                Text("The only clip stays. Split it first, then delete the part you do not want.")
+                    .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("recorder.clip.deleteReason")
+            }
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Clips").font(.system(size: 15, weight: .semibold))
