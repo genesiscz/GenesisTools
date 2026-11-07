@@ -177,6 +177,8 @@ final class EditorModel {
     var screenHits: [ScreenHit]?
     var isSearchingScreen = false
     var screenSearchFailure: String?
+    /// Whether the recording kept text off its screens (`hasScreenText`); nil until the Find tab first asks.
+    var screenTextKnown: Bool?
     /// The moment last clicked in the Find tab.
     var selectedScreenHit: Int?
     @ObservationIgnored var screenSearchRevision = 0

@@ -216,6 +216,8 @@ final class RecorderScreenFindViewTests: XCTestCase {
     }
 
     func testTheFindTabListsEachMomentWithItsDisplayAndAClickGoesThere() throws {
+        // A frames recording: its manifest lists frames, so the tab offers the search (R3-RX2).
+        try Data(#"{"frames":[{"file":"frames/0001.jpg","t":0}]}"#.utf8).write(to: folder.appendingPathComponent("recording.json"))
         let model = model()
         let hits = try Self.hits()
         model.displayPlan = DisplayPlan(policy: "most-change", windowSec: 10,
@@ -312,6 +314,27 @@ final class RecorderScreenFindViewTests: XCTestCase {
                        "This movie has no screen text. Only a frames recording or a meeting keeps the text it read off its screens.")
         let image = try EditorShots.write(ScreenFindInspector(model: model).padding(18), name: "find-on-screen-no-text", width: 300)
         XCTAssertTrue(try EditorShots.text(image).lowercased().contains("no screen text"))
+    }
+
+    // Regression test: deep test 2026-11-07 R3-RX2. On a movie recording the Find tab offered a search box and "Type a
+    // word you saw on the screen", though a movie keeps no screen text: every search could only fail. The tab now says so
+    // at once, with no box.
+    func testAMovieRecordingSaysItHasNoScreenTextBeforeAnySearch() throws {
+        let manifest = folder.appendingPathComponent("recording.json")
+        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder), false, "no recording.json: find-screen refuses it")
+        try Data(#"{"settings":{"kind":"video"},"frames":[]}"#.utf8).write(to: manifest)
+        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder), false, "a movie recording lists no frames")
+        try Data(#"{"frames":[{"file":"frames/0001.jpg","t":0}]}"#.utf8).write(to: manifest)
+        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder), true)
+        try Data("not json".utf8).write(to: manifest)
+        XCTAssertNil(EditorModel.hasScreenText(recordingFolder: folder), "unreadable: keep the box and let the door answer")
+
+        let model = model()
+        model.screenTextKnown = false
+        let image = try EditorShots.write(ScreenFindInspector(model: model).padding(18), name: "find-on-screen-movie", width: 300)
+        let text = try EditorShots.text(image).lowercased()
+        XCTAssertTrue(text.contains("no screen text"), text)
+        XCTAssertFalse(text.contains("a name, an error"), "no search box that can only fail: \(text)")
     }
 }
 
