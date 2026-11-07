@@ -49,10 +49,12 @@ import {
     decisions,
     editAnswer,
     openDecisions,
+    pickAfterPress,
     sendDecisionAnswers,
     shownDecisions,
     stagedMessage,
     stagedText,
+    tickLocal,
     typedAnswer,
 } from "../hooks/decisions";
 import {
@@ -449,6 +451,120 @@ test("decisions sidebar: the log's states, chat asks the log lacks, and a chat a
     expect(answeredInChat({ status: "acknowledged", answeredVia: "automatic_heuristic" })).toBe(true);
     expect(answeredInChat({ status: "acknowledged", answeredVia: "inbox" })).toBe(false);
     expect(answeredInChat({ status: "waiting", answeredVia: "agent" })).toBe(false);
+});
+
+test("decisions sidebar: a decision that takes any set toggles letters; a single-choice one stages one", () => {
+    const logged = answersFrom(
+        JSON.stringify({
+            sessionId: "s-multi",
+            decisions: [
+                {
+                    number: 1,
+                    title: "Which parts?",
+                    prompt: "Pick any set of letters.",
+                    status: "waiting",
+                    multiple: true,
+                    choices: [
+                        { id: "a", label: "a) cache" },
+                        { id: "b", label: "b) queue" },
+                        { id: "c", label: "c) index" },
+                    ],
+                },
+                {
+                    number: 2,
+                    title: "Recommends a set",
+                    prompt: "",
+                    status: "waiting",
+                    recommended: "a + c",
+                    choices: [
+                        { id: "a", label: "a) one" },
+                        { id: "b", label: "b) two" },
+                        { id: "c", label: "c) three" },
+                    ],
+                },
+                {
+                    number: 3,
+                    title: "Keep it?",
+                    prompt: "Keep the cache?",
+                    status: "waiting",
+                    recommended: "a",
+                    choices: [
+                        { id: "a", label: "a) yes" },
+                        { id: "b", label: "b) no" },
+                    ],
+                },
+            ],
+        }),
+        1
+    );
+    const [first, second, single] = logged?.decisions ?? [];
+
+    expect([first?.multiple, second?.multiple, single?.multiple]).toEqual([true, true, undefined]);
+
+    // Toggling builds the set in option order, whatever order the letters were pressed in.
+    const press = (pick: string, letter: string) =>
+        pickAfterPress({ ...(first ?? { options: [] }), draftOption: pick }, letter);
+    expect(press("", "c")).toBe("c");
+    expect(press("c", "a")).toBe("ac");
+    expect(press("ac", "c")).toBe("a");
+    // Unstaging the last letter clears the staged pick.
+    expect(press("a", "a")).toBe("");
+
+    // A single-choice decision still replaces: a second letter does not join the first.
+    const one = { ...(single ?? { options: [] }), draftOption: "a" };
+    expect(pickAfterPress(one, "b")).toBe("b");
+    expect(pickAfterPress(one, "a")).toBe("");
+    expect(pickAfterPress({ ...one, draftOption: "" }, "b")).toBe("b");
+
+    // A set reads as one answer the chat reader takes (`D16: ac)`); one letter stays `b)`.
+    expect(stagedText({ draftOption: "ac" })).toBe("ac)");
+    expect(stagedText({ draftOption: "b", draft: "why" })).toBe("b) why");
+
+    // An ask read from the session's messages has no log row: the same rule reads its text.
+    const asked = chatDecisions([
+        { role: "assistant", text: "❓ DECISION 9 which parts?\na) cache\nb) queue\nPick several letters." },
+        { role: "assistant", text: "❓ DECISION 10 keep it?\na) yes\nb) no" },
+    ]).open;
+
+    expect(asked.map((d) => [d.n, d.multiple])).toEqual([
+        [9, true],
+        [10, undefined],
+    ]);
+    expect(shownDecisions([], { open: asked }).map((d) => d.multiple)).toEqual([true, undefined]);
+});
+
+test("decisions sidebar: ticks on an unlogged several-letter ask reach the prompt once, as one line", async () => {
+    forgetAnswers();
+    const filled: { text: string; mode?: string }[] = [];
+    const host: Host = {
+        ...checkoutHost(),
+        async fill(args) {
+            filled.push({ text: args.text, mode: args.mode });
+            return {};
+        },
+    };
+    const ask = {
+        n: 16,
+        options: [
+            { letter: "a", text: "x" },
+            { letter: "b", text: "y" },
+            { letter: "c", text: "z" },
+        ],
+    };
+
+    // a, c, a: only ticks, nothing is written to the prompt yet.
+    expect(tickLocal(ask, "a")).toBe("a");
+    expect(tickLocal(ask, "c")).toBe("ac");
+    expect(tickLocal(ask, "a")).toBe("c");
+    expect(filled).toEqual([]);
+
+    await sendDecisionAnswers(host, { outgoing: "", how: "fill" });
+    expect(filled).toEqual([{ text: "D16: c)", mode: "replace" }]);
+
+    // The ticks left with that line: a second put in prompt has nothing to write.
+    await sendDecisionAnswers(host, { outgoing: "", how: "fill" });
+    expect(filled).toHaveLength(1);
+    forgetAnswers();
 });
 
 test("jump to: a decision's first ask is its first unlinked ask in the transcript; an entry's row is the call before it", async () => {
