@@ -55,6 +55,7 @@ import {
     FRAME_PRESETS,
     findInTranscript,
     hexColor,
+    hidingOf,
     outputDurationUs,
     outputTimeOf,
     RANGE_ACTIONS,
@@ -1248,7 +1249,7 @@ const movieMethods = [
                 excludeFixed: z.boolean().optional(),
             })
             .strict(),
-        'Hides the private data privateData() lists (pass the same names, exclude and excludeFixed): one blurred part per hit that starts and ends when the value shows and follows it through a scroll (style "pixelate" or "black" instead). ids picks hits (absent: all), kinds picks kinds; a hit hidden before is skipped. Check the result with verifyHidden({ private: true }). One undo() puts it back.'
+        'Hides the private data privateData() lists (pass the same names, exclude and excludeFixed): one blurred part per hit that starts and ends when the value shows and follows it through a scroll or a slide (style "pixelate" or "black" instead); hiding in the answer says how sure it is, as for hideText(). ids picks hits (absent: all), kinds picks kinds; a hit hidden before is skipped. Check the result with verifyHidden({ private: true }). One undo() puts it back.'
     ),
     defineMethod({
         name: "findText",
@@ -1261,7 +1262,7 @@ const movieMethods = [
             })
             .strict(),
         result: z.unknown(),
-        resultName: "{ id, label, masked, from, to, plays, box, moves, exclude?, hidden }[]",
+        resultName: "{ id, label, masked, from, to, plays, box, moves, exclude?, uncertain?, hidden }[]",
         doc: "Every place a text (without case) or a pattern (a regular expression) shows on the screen, tracked as privateData() tracks a hit: what hideText() will hide, so you never guess coordinates or seconds.",
         effect: "read",
     }),
@@ -1279,7 +1280,7 @@ const movieMethods = [
                 label: z.string().max(60).optional(),
             })
             .strict(),
-        "Hides every place a text or a pattern shows (between from and to, source seconds; absent: all): one hidden part per place, found by OCR, that starts and ends when the text shows and follows it through a scroll. exclude and excludeFixed leave a toast or a tab bar over it visible. Refused when the screen never shows it. Check with verifyHidden({ text })."
+        "Hides every place a text or a pattern shows (between from and to, source seconds; absent: all): one hidden part per place, found by OCR, that starts and ends when the text shows and follows it through a scroll or a slide frame by frame (the content's measured motion, also where OCR cannot read the blurred text). Where a moving text cannot be followed, the band it may cross is hidden for that time instead. hiding in the answer says how sure it is: parts, moving { parts, seconds, minKeysPerSecond } and uncertain [{ from, to }] (source seconds of the bands; check() lists them too). exclude and excludeFixed leave a toast or a tab bar over it visible. Refused when the screen never shows it. Check with verifyHidden({ text })."
     ),
     defineMethod({
         name: "verifyHidden",
@@ -2852,7 +2853,15 @@ export class Movie {
     }
 
     async hideText(options: Omit<Extract<EditOp, { op: "hideText" }>, "op">) {
-        return this.change([{ op: "hideText", ...options }]);
+        return this.hideAnd([{ op: "hideText", ...options }]);
+    }
+
+    /** R6 1: a hide's answer says how sure it is: the parts it added, how they follow motion, and where they could not. */
+    private async hideAnd(ops: EditOp[]) {
+        const before = await openProject(this.recording);
+        const edited = await this.change(ops);
+        const after = await openProject(this.recording);
+        return { ...edited, hiding: hidingOf(before.project, after.project) };
     }
 
     async verifyHidden(
@@ -2869,7 +2878,7 @@ export class Movie {
     }
 
     async hidePrivate(options: Omit<Extract<EditOp, { op: "hidePrivate" }>, "op"> = {}) {
-        return this.change([{ op: "hidePrivate", ...options }]);
+        return this.hideAnd([{ op: "hidePrivate", ...options }]);
     }
 
     async smoothCursor(options: Omit<Extract<EditOp, { op: "cursorSmooth" }>, "op"> = {}) {

@@ -248,6 +248,42 @@ export interface PrivateHit {
     keys: TrackKey[];
     /** Areas inside it the hidden part leaves visible: what does not move with the text (a toast over a scroll). */
     exclude?: FractionBox[];
+    /** Where it moved but could not be followed: its swept band is hidden for that time. */
+    uncertain?: UncertainStretch[];
+    /** How well it was followed while the picture moved: the moving time it showed, and its places measured then. */
+    follow?: { movingUs: number; keysInMotion: number };
+}
+
+/** A stretch where a moving text could not be followed: the band it may have swept is hidden instead. */
+export interface UncertainStretch {
+    fromUs: number;
+    toUs: number;
+    /** The band the text may have crossed meanwhile, as fractions of the picture. */
+    box: FractionBox;
+}
+
+/** The content's motion carried a box this far: one key per picture, and why it stopped. */
+export interface Carried {
+    keys: TrackKey[];
+    /** Where it got to: the asked time, or where it was lost, left the picture or the picture stood still. */
+    reachedUs: number;
+    box: FractionBox;
+    end: "reached" | "lost" | "left" | "still";
+}
+
+/**
+ * How the picture's content moves (motion.ts measures it): textHits carries each hit's place between its OCR reads
+ * with it, so a scroll or a slide is followed frame by frame, also through frames OCR cannot read.
+ */
+export interface MotionModel {
+    /** Whether any part of the picture moves between the two source times. */
+    moving(fromUs: number, toUs: number): boolean;
+    /** The part of the picture that moves between the two times; undefined when nothing does. */
+    movingArea(fromUs: number, toUs: number): FractionBox | undefined;
+    /** Where the picture under `box` stops changing from `atUs` on in `direction`, at most `limitUs` away. */
+    changeEdge(box: FractionBox, atUs: number, direction: 1 | -1, limitUs: number): number;
+    /** `box` carried by the content's motion from `fromUs` to `toUs` (either way); `untilStill` stops where it rests. */
+    carry(box: FractionBox, fromUs: number, toUs: number, options?: { untilStill?: boolean }): Carried;
 }
 
 const labelOf = (kind: PrivateKind): string => PRIVATE_PATTERNS.find((pattern) => pattern.kind === kind)?.label ?? kind;
@@ -364,6 +400,12 @@ const rounded = (box: FractionBox): FractionBox => ({
     width: round6(box.width),
     height: round6(box.height),
 });
+/** The part of a box inside the picture (a carried place can reach past an edge), at least 1.2 % each way. */
+function clipped(box: FractionBox): FractionBox {
+    const width = Math.max(0.012, Math.min(1, box.x + box.width) - Math.max(0, box.x));
+    const height = Math.max(0.012, Math.min(1, box.y + box.height) - Math.max(0, box.y));
+    return { x: Math.min(clamp01(box.x), 1 - width), y: Math.min(clamp01(box.y), 1 - height), width, height };
+}
 const sameBox = (a: FractionBox, b: FractionBox): boolean =>
     Math.abs(a.x - b.x) < 0.001 &&
     Math.abs(a.y - b.y) < 0.001 &&
@@ -394,13 +436,118 @@ const inside = (box: FractionBox, area: FractionBox): boolean => {
     return x >= area.x && x <= area.x + area.width && y >= area.y && y <= area.y + area.height;
 };
 
+/** Centres close enough that two places are the same text: within most of a line's height, and a quarter its width. */
+function samePlace(a: FractionBox, b: FractionBox): boolean {
+    const dx = Math.abs(a.x + a.width / 2 - (b.x + b.width / 2));
+    const dy = Math.abs(a.y + a.height / 2 - (b.y + b.height / 2));
+    return dy <= Math.max(0.6 * b.height, 0.008) && dx <= Math.max(0.25 * b.width, 0.015);
+}
+
+/** A band hidden where a text could not be followed starts and ends this much wider: its edges are guessed. */
+const BAND_MARGIN_US = 100_000;
+/** Two reads of the same value this close, with motion between that did not join them, get the band between hidden. */
+const GAP_BAND_US = 3_000_000;
+/** How far a moving text is followed past its first and last OCR read: until the picture rests, at most this long. */
+const EXTEND_US = 2_000_000;
+
 /**
- * The hits of `matcher` in a movie's screen text, tracked over time: the same value on consecutive samples is one hit
- * while it stays in place or scrolls (up to `maxShift` of the picture between two samples), with its place at each
- * sample as keys. A gap up to `gapUs` is bridged (a sample can miss a line OCR read on its neighbours). It starts half
- * way between the last sample without it and the first with it (at most 0.5 s early), and lasts until the sample
- * after its last. A match
- * whose centre lies in an `exclude` area (a floating toast, a tab bar) is not a hit.
+ * Keys that a straight line between their neighbours places within `tolerance` are left out: the renderer moves a part
+ * straight from one key to the next, so they add nothing but size.
+ */
+function simplifyKeys(keys: readonly TrackKey[], tolerance = 0.002): TrackKey[] {
+    if (keys.length <= 2) {
+        return [...keys];
+    }
+
+    const keep = new Uint8Array(keys.length);
+    keep[0] = 1;
+    keep[keys.length - 1] = 1;
+    const stack: Array<[number, number]> = [[0, keys.length - 1]];
+
+    while (stack.length > 0) {
+        const [first, last] = stack.pop() ?? [0, 0];
+        let worst = -1;
+        let worstError = tolerance;
+
+        for (let index = first + 1; index < last; index++) {
+            const placed = redactionBoxAt({ ...keys[first], track: [keys[first], keys[last]] }, keys[index].atUs);
+            const error = Math.max(
+                Math.abs(placed.x - keys[index].x),
+                Math.abs(placed.y - keys[index].y),
+                Math.abs(placed.width - keys[index].width),
+                Math.abs(placed.height - keys[index].height)
+            );
+
+            if (error > worstError) {
+                worst = index;
+                worstError = error;
+            }
+        }
+
+        if (worst > 0) {
+            keep[worst] = 1;
+            stack.push([first, worst], [worst, last]);
+        }
+    }
+
+    return keys.filter((_, index) => keep[index]);
+}
+
+/**
+ * The band a text may have crossed while it could not be followed: from its last known place on to the picture's edge
+ * in the direction it was moving, as wide as the text across the motion; all that moved around it when the direction
+ * is unknown.
+ */
+function sweptBand(options: {
+    box: FractionBox;
+    velocity: { x: number; y: number };
+    area: FractionBox | undefined;
+}): FractionBox {
+    const { box, velocity } = options;
+    const pad = Math.max(0.01, box.height * 0.5);
+    const clampBox = (left: number, top: number, right: number, bottom: number): FractionBox => {
+        const x = clamp01(left);
+        const y = clamp01(top);
+        return { x, y, width: Math.max(0.012, clamp01(right) - x), height: Math.max(0.012, clamp01(bottom) - y) };
+    };
+
+    // The direction is known: on to the picture's edge that way (the change steps, 4 a second, can miss a fast slide).
+    if (Math.abs(velocity.y) >= Math.abs(velocity.x) && velocity.y !== 0) {
+        return velocity.y > 0
+            ? clampBox(box.x - pad, box.y - pad, box.x + box.width + pad, 1)
+            : clampBox(box.x - pad, 0, box.x + box.width + pad, box.y + box.height + pad);
+    }
+
+    if (velocity.x !== 0) {
+        return velocity.x > 0
+            ? clampBox(box.x - pad, box.y - pad, 1, box.y + box.height + pad)
+            : clampBox(0, box.y - pad, box.x + box.width + pad, box.y + box.height + pad);
+    }
+
+    const area = options.area ?? { x: 0, y: 0, width: 1, height: 1 };
+    return clampBox(
+        Math.min(box.x, area.x) - pad,
+        Math.min(box.y, area.y) - pad,
+        Math.max(box.x + box.width, area.x + area.width) + pad,
+        Math.max(box.y + box.height, area.y + area.height) + pad
+    );
+}
+
+/**
+ * The hits of `matcher` in a movie's screen text, tracked over time. A match whose centre lies in an `exclude` area (a
+ * floating toast, a tab bar) is not a hit.
+ *
+ * With `motion` (a movie): the same value on a later sample is the same hit only where the content's measured motion
+ * carries its last place there; between the two samples the hit gets a key at every picture, so a scroll or a slide
+ * is followed exactly, also through pictures OCR could not read. A sample the motion does not lead to is a new hit:
+ * two lines that hold the same value are never joined. Past its first and last read a hit is carried while the picture
+ * moves (it slid in, or scrolled away). Where the motion cannot be followed while the picture moves, the band the text
+ * may cross is hidden for that time and reported as `uncertain`.
+ *
+ * Without `motion` (a frames recording's own OCR): the same value continues a hit while it stays in place or moves
+ * straight up or down by at most `maxShift` of the picture between samples. A gap up to `gapUs` is bridged (a sample
+ * can miss a line OCR read on its neighbours). A hit starts half way between the last sample without it and the first
+ * with it (at most 0.5 s early), and lasts until the sample after its last.
  */
 export function textHits(
     frames: readonly ScreenTextFrame[],
@@ -409,7 +556,8 @@ export function textHits(
         gapUs = 1_500_000,
         maxShift = 0.35,
         exclude = [],
-    }: { gapUs?: number; maxShift?: number; exclude?: readonly FractionBox[] } = {}
+        motion,
+    }: { gapUs?: number; maxShift?: number; exclude?: readonly FractionBox[]; motion?: MotionModel } = {}
 ): PrivateHit[] {
     interface Open {
         kind: HitKind;
@@ -418,11 +566,55 @@ export function textHits(
         fromUs: number;
         toUs: number;
         keys: TrackKey[];
+        /** Its first and last place OCR read (the other keys were carried by the motion). */
+        firstRead: TrackKey;
+        lastRead: TrackKey;
+        uncertain: UncertainStretch[];
     }
 
     const open: Open[] = [];
     const done: Open[] = [];
     const ordered = [...frames].sort((a, b) => a.atUs - b.atUs);
+
+    /** The keys that lead from the track's last place to `box` at `atUs`, or undefined when it is not the same text. */
+    const linkTo = (track: Open, box: FractionBox, atUs: number): TrackKey[] | undefined => {
+        const last = track.keys[track.keys.length - 1];
+
+        if (!motion) {
+            return continues(last, box, maxShift) ? [] : undefined;
+        }
+
+        if (!motion.moving(last.atUs, atUs)) {
+            return overlap(last, box) > 0.3 || samePlace(last, box) ? [] : undefined;
+        }
+
+        const carried = motion.carry(last, last.atUs, atUs);
+
+        if (carried.end !== "reached" || !samePlace(carried.box, box)) {
+            return undefined;
+        }
+
+        // The measured path ends a little off the read place: the difference is spread over the way there.
+        const span = Math.max(1, atUs - last.atUs);
+        const off = {
+            x: box.x - carried.box.x,
+            y: box.y - carried.box.y,
+            width: box.width - carried.box.width,
+            height: box.height - carried.box.height,
+        };
+        return carried.keys
+            .filter((key) => key.atUs < atUs)
+            .map((key) => {
+                const share = (key.atUs - last.atUs) / span;
+                return {
+                    atUs: key.atUs,
+                    x: key.x + off.x * share,
+                    y: key.y + off.y * share,
+                    width: key.width + off.width * share,
+                    height: key.height + off.height * share,
+                };
+            });
+    };
 
     for (const [index, frame] of ordered.entries()) {
         for (const track of open.splice(0)) {
@@ -440,22 +632,21 @@ export function textHits(
                     continue;
                 }
 
-                const candidates = open.filter(
-                    (track) =>
-                        !taken.has(track) &&
-                        track.kind === match.kind &&
-                        track.value === match.value &&
-                        continues(track.keys[track.keys.length - 1], box, maxShift)
-                );
-                const track = candidates.sort(
-                    (a, b) =>
-                        Math.abs(a.keys[a.keys.length - 1].y - box.y) - Math.abs(b.keys[b.keys.length - 1].y - box.y)
-                )[0];
+                const linked = open
+                    .filter((track) => !taken.has(track) && track.kind === match.kind && track.value === match.value)
+                    .map((track) => ({ track, keys: linkTo(track, box, frame.atUs) }))
+                    .filter((candidate): candidate is { track: Open; keys: TrackKey[] } => candidate.keys !== undefined)
+                    .sort((a, b) => {
+                        const distance = (track: Open) => Math.abs(track.keys[track.keys.length - 1].y - box.y);
+                        return distance(a.track) - distance(b.track);
+                    })[0];
+                const key = { atUs: frame.atUs, ...box };
 
-                if (track) {
-                    track.toUs = Math.max(track.toUs, frame.untilUs);
-                    track.keys.push({ atUs: frame.atUs, ...box });
-                    taken.add(track);
+                if (linked) {
+                    linked.track.toUs = Math.max(linked.track.toUs, frame.untilUs);
+                    linked.track.keys.push(...linked.keys, key);
+                    linked.track.lastRead = key;
+                    taken.add(linked.track);
                 } else {
                     // Half way back to the sample without it, at most half a second early.
                     const fromUs = previous
@@ -467,7 +658,10 @@ export function textHits(
                         value: match.value,
                         fromUs,
                         toUs: frame.untilUs,
-                        keys: [{ atUs: frame.atUs, ...box }],
+                        keys: [key],
+                        firstRead: key,
+                        lastRead: key,
+                        uncertain: [],
                     };
                     open.push(started);
                     taken.add(started);
@@ -477,21 +671,33 @@ export function textHits(
     }
 
     done.push(...open);
+
+    if (motion) {
+        for (const track of done) {
+            extendWithMotion(track, motion);
+        }
+
+        bridgeGaps(done, motion);
+    }
+
     return done
         .filter((track) => track.toUs > track.fromUs)
         .sort((a, b) => a.fromUs - b.fromUs || a.keys[0].y - b.keys[0].y)
         .map((track) => {
             // A key between two of the same place adds nothing: the place holds until the key where it moves.
-            const keys = track.keys
-                .filter(
-                    (key, index, all) =>
-                        index === 0 ||
-                        index === all.length - 1 ||
-                        !(sameBox(all[index - 1], key) && sameBox(all[index + 1], key))
-                )
-                .map((key) => ({ atUs: key.atUs, ...rounded(key) }));
+            const deduped = track.keys.filter(
+                (key, index, all) =>
+                    index === 0 ||
+                    index === all.length - 1 ||
+                    !(sameBox(all[index - 1], key) && sameBox(all[index + 1], key))
+            );
+            const keys = (motion ? simplifyKeys(deduped) : deduped).map((key) => ({
+                atUs: key.atUs,
+                ...rounded(clipped(key)),
+            }));
             const still = keys.every((key) => sameBox(key, keys[0]));
             const box = rounded(keys.reduce<FractionBox>((all, key) => union(all, key), keys[0]));
+            const follow = motion ? followOf(track, motion) : undefined;
             return {
                 id: hitId(track.kind, track.value, track.fromUs, keys[0]),
                 kind: track.kind,
@@ -501,8 +707,139 @@ export function textHits(
                 toUs: track.toUs,
                 box,
                 keys: still ? [keys[0]] : keys,
+                ...(track.uncertain.length > 0
+                    ? {
+                          uncertain: track.uncertain.map((stretch) => ({
+                              fromUs: Math.round(stretch.fromUs),
+                              toUs: Math.round(stretch.toUs),
+                              box: rounded(stretch.box),
+                          })),
+                      }
+                    : {}),
+                ...(follow && follow.movingUs > 0 ? { follow } : {}),
             };
         });
+
+    /**
+     * Carries a finished track past its first and last read while the picture moves there (it slid in, or scrolled on),
+     * and covers the swept band where the motion cannot be followed.
+     */
+    function extendWithMotion(track: Open, model: MotionModel): void {
+        for (const direction of [-1, 1] as const) {
+            const edge = direction < 0 ? track.keys[0] : track.keys[track.keys.length - 1];
+            const limitUs = direction < 0 ? Math.max(0, edge.atUs - EXTEND_US) : edge.atUs + EXTEND_US;
+            const carried = model.carry(edge, edge.atUs, limitUs, { untilStill: true });
+            const keys = carried.keys;
+
+            if (direction < 0) {
+                track.keys.unshift(...[...keys].reverse());
+                track.fromUs = Math.min(track.fromUs, carried.reachedUs);
+            } else {
+                track.keys.push(...keys);
+                track.toUs = Math.max(track.toUs, carried.reachedUs);
+            }
+
+            if (carried.end !== "lost" && carried.end !== "still") {
+                continue;
+            }
+
+            // Lost, or taken as resting while the picture under it still changes (a smear too heavy to match, a slide
+            // faster than the search): hide the band it may cross until the picture under it rests. A rest is checked from
+            // where it began, the first carried place it no longer moves from.
+            let rest = keys.length - 1;
+            const resting = (key: FractionBox) =>
+                Math.abs(key.x - carried.box.x) < 0.004 && Math.abs(key.y - carried.box.y) < 0.004;
+
+            while (carried.end === "still" && rest > 0 && resting(keys[rest - 1])) {
+                rest--;
+            }
+
+            const start =
+                carried.end === "still" && keys.length > 0 ? keys[rest] : { ...carried.box, atUs: carried.reachedUs };
+            const stopUs = model.changeEdge(start, start.atUs, direction, EXTEND_US);
+            const before = (carried.end === "still" ? keys[rest - 1] : keys[keys.length - 2]) ?? edge;
+            const span = Math.max(1, Math.abs(start.atUs - before.atUs));
+            const velocity = {
+                x: (direction * (start.x - before.x)) / span,
+                y: (direction * (start.y - before.y)) / span,
+            };
+            if (Math.abs(stopUs - start.atUs) < 1000) {
+                continue;
+            }
+
+            const fromUs = Math.max(0, Math.min(start.atUs, stopUs) - BAND_MARGIN_US);
+            const toUs = Math.max(start.atUs, stopUs) + BAND_MARGIN_US;
+
+            track.uncertain.push({
+                fromUs,
+                toUs,
+                box: sweptBand({
+                    box: start,
+                    velocity: { x: direction * velocity.x, y: direction * velocity.y },
+                    area: model.movingArea(fromUs, toUs),
+                }),
+            });
+            track.fromUs = Math.min(track.fromUs, fromUs);
+            track.toUs = Math.max(track.toUs, toUs);
+        }
+    }
+
+    /**
+     * Two hits of the same value that the motion could not join, the second read within GAP_BAND_US of the first while
+     * the picture moves: the text may have travelled from the first's last read place to the second's first, so that
+     * band is hidden between the two reads (a blur too heavy to follow, a move faster than the search).
+     */
+    function bridgeGaps(tracks: Open[], model: MotionModel): void {
+        const ordered = [...tracks].sort((a, b) => a.firstRead.atUs - b.firstRead.atUs);
+
+        for (const [index, track] of ordered.entries()) {
+            const from = track.lastRead;
+            const next = ordered
+                .slice(index + 1)
+                .find(
+                    (other) =>
+                        other.kind === track.kind &&
+                        other.value === track.value &&
+                        other.firstRead.atUs > from.atUs &&
+                        other.firstRead.atUs - from.atUs <= GAP_BAND_US
+                );
+
+            if (!next || !model.moving(from.atUs, next.firstRead.atUs) || samePlace(from, next.firstRead)) {
+                continue;
+            }
+
+            const to = next.firstRead;
+            const pad = Math.max(0.01, Math.max(from.height, to.height) * 0.5);
+            const band = union(from, to);
+            const x = clamp01(band.x - pad);
+            const y = clamp01(band.y - pad);
+            track.uncertain.push({
+                fromUs: Math.max(0, from.atUs - BAND_MARGIN_US),
+                toUs: to.atUs + BAND_MARGIN_US,
+                box: {
+                    x,
+                    y,
+                    width: Math.min(1, band.x + band.width + pad) - x,
+                    height: Math.min(1, band.y + band.height + pad) - y,
+                },
+            });
+        }
+    }
+
+    /** The moving time of a track and the places it has then (read or carried). */
+    function followOf(track: Open, model: MotionModel): { movingUs: number; keysInMotion: number } {
+        const sliceUs = 100_000;
+        let movingUs = 0;
+
+        for (let at = track.fromUs; at < track.toUs; at += sliceUs) {
+            if (model.moving(at, Math.min(track.toUs, at + sliceUs))) {
+                movingUs += Math.min(sliceUs, track.toUs - at);
+            }
+        }
+
+        const keysInMotion = track.keys.filter((key) => model.moving(key.atUs - 1, key.atUs + 1)).length;
+        return { movingUs, keysInMotion };
+    }
 }
 
 /** The private hits of a movie's screen text (and of `names`), tracked over time (textHits). */
@@ -511,6 +848,52 @@ export function privateHits(
     options: { gapUs?: number; names?: readonly string[]; exclude?: readonly FractionBox[] } = {}
 ): PrivateHit[] {
     return textHits(frames, privateMatcher(options.names), { gapUs: options.gapUs, exclude: options.exclude });
+}
+
+/**
+ * Where a hidden part is at a source time, as the renderer places it (RedactionTrack.swift): between two keyframes it
+ * moves straight from one to the next, before the first and after the last it keeps the speed of the nearest two, a
+ * single keyframe holds, and a part without keyframes keeps its own rectangle.
+ */
+export function redactionBoxAt(part: FractionBox & { track?: ReadonlyArray<TrackKey> }, atUs: number): FractionBox {
+    const keys = part.track;
+
+    if (!keys || keys.length === 0) {
+        return { x: part.x, y: part.y, width: part.width, height: part.height };
+    }
+
+    if (keys.length === 1) {
+        return { x: keys[0].x, y: keys[0].y, width: keys[0].width, height: keys[0].height };
+    }
+
+    let low = 0;
+    let high = keys.length - 1;
+
+    if (atUs <= keys[0].atUs) {
+        high = 1;
+    } else if (atUs >= keys[keys.length - 1].atUs) {
+        low = keys.length - 2;
+    } else {
+        while (high - low > 1) {
+            const mid = (low + high) >> 1;
+
+            if (keys[mid].atUs <= atUs) {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+    }
+
+    const a = keys[low];
+    const b = keys[high];
+    const f = b.atUs > a.atUs ? (atUs - a.atUs) / (b.atUs - a.atUs) : 0;
+    return {
+        x: a.x + (b.x - a.x) * f,
+        y: a.y + (b.y - a.y) * f,
+        width: a.width + (b.width - a.width) * f,
+        height: a.height + (b.height - a.height) * f,
+    };
 }
 
 /** The edit's record of the private data it hid: the hit ids already applied, so a second apply adds none twice. */

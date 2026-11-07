@@ -16,6 +16,15 @@ import {
 } from "@genesiscz/utils/recording-editor/events";
 import { sampleFpsFilter } from "@genesiscz/utils/recording-editor/ffmpeg";
 import {
+    MOTION_FPS,
+    MOVING_SHARE,
+    MotionField,
+    type MotionWindow,
+    measureMotion,
+    motionWindowFromJson,
+    motionWindowToJson,
+} from "@genesiscz/utils/recording-editor/motion";
+import {
     type FractionBox,
     type LineMatcher,
     type PrivateHit,
@@ -370,6 +379,89 @@ function mergeWindows(ranges: Array<[number, number]>): Array<[number, number]> 
     return merged;
 }
 
+/** How far from a sample that shows the text the picture's motion is measured: a hit is carried at most 2 s past it. */
+const MOTION_REACH_US = 3_000_000;
+
+/**
+ * The stretches where the picture moves (more than MOVING_SHARE of the grid changes between two change-step pictures),
+ * a step wider each way, that lie within MOTION_REACH_US of a sample showing the text.
+ */
+function movingStretches(
+    { steps, fps }: { steps: readonly ChangeStep[]; fps: number },
+    seenUs: readonly number[]
+): Array<[number, number]> {
+    const stepUs = 1_000_000 / fps;
+    const stretches: Array<[number, number]> = [];
+
+    for (const [index, step] of steps.entries()) {
+        if (step.dy || step.changed / Math.max(1, step.cells) > MOVING_SHARE) {
+            const from = Math.max(0, (index - 1) * stepUs);
+            const to = (index + 2) * stepUs;
+
+            if (seenUs.some((at) => at > from - MOTION_REACH_US && at < to + MOTION_REACH_US)) {
+                stretches.push([from, to]);
+            }
+        }
+    }
+
+    return mergeWindows(stretches);
+}
+
+const motionWindowSchema = z.object({
+    fromUs: z.number(),
+    stepUs: z.number(),
+    width: z.number(),
+    height: z.number(),
+    columns: z.number(),
+    rows: z.number(),
+    pairs: z.number(),
+    dx: z.string(),
+    dy: z.string(),
+    ok: z.string(),
+});
+const motionCacheSchema = z.record(z.string(), motionWindowSchema);
+
+/** The content's motion in each stretch (motion.ts), cached by stretch in `motion.json` beside the edit. */
+async function motionWindows(
+    project: EditProject,
+    stretches: ReadonlyArray<[number, number]>
+): Promise<MotionWindow[]> {
+    const video = project.source.video;
+    const path = cachePath(video, "motion");
+    const key = movieKey(video, `motion=${MOTION_FPS},v1`);
+    const cache = { ...(readCache(path, key, motionCacheSchema) ?? {}) };
+    const windows: MotionWindow[] = [];
+    let measured = false;
+
+    for (const [fromUs, toUs] of stretches) {
+        const name = `${Math.round(fromUs)}-${Math.round(toUs)}`;
+        const known = cache[name];
+
+        if (known) {
+            windows.push(motionWindowFromJson(known));
+            continue;
+        }
+
+        const window = await measureMotion({
+            video,
+            sourceWidth: project.source.width,
+            sourceHeight: project.source.height,
+            fromUs,
+            toUs,
+        });
+        cache[name] = motionWindowSchema.parse(motionWindowToJson(window));
+        windows.push(window);
+        measured = true;
+    }
+
+    if (measured) {
+        writeCache(path, key, cache);
+    }
+
+    log.debug({ video, stretches: stretches.length, measured }, "the content's motion is ready");
+    return windows;
+}
+
 export interface TrackOptions {
     exclude?: readonly FractionBox[];
     /** Leave visible what stays still while the content under it moves. */
@@ -428,7 +520,13 @@ export async function trackedHits(
     const merged = mergeWindows(windows);
     const dense = await denseScreenText(project, merged);
     const outside = coarse.filter((frame) => !merged.some(([from, to]) => frame.atUs >= from && frame.atUs < to));
-    const hits = textHits([...outside, ...dense], matcher, { exclude });
+    const seen = [...outside, ...dense].filter((frame) => matches(frame)).map((frame) => frame.atUs);
+    const motion = new MotionField(await motionWindows(project, movingStretches({ steps, fps }, seen)), {
+        steps,
+        fps,
+        grid,
+    });
+    const hits = textHits([...outside, ...dense], matcher, { exclude, motion });
 
     if (!options.excludeFixed) {
         return hits;
@@ -488,6 +586,8 @@ export interface PrivateHitOut {
     moves: boolean;
     /** Areas its hidden part leaves visible (excludeFixed). */
     exclude?: FractionBox[];
+    /** Source seconds where it moved and could not be followed: hideText hides the band it may cross there. */
+    uncertain?: Array<{ from: number; to: number }>;
     /** Already hidden by an earlier hidePrivate or hideText. */
     hidden: boolean;
 }
@@ -509,6 +609,14 @@ function hitsOut(project: EditProject, hits: readonly PrivateHit[]): PrivateHitO
             box: hit.box,
             moves: hit.keys.length > 1,
             ...(hit.exclude ? { exclude: hit.exclude } : {}),
+            ...(hit.uncertain
+                ? {
+                      uncertain: hit.uncertain.map((stretch) => ({
+                          from: seconds(stretch.fromUs),
+                          to: seconds(stretch.toUs),
+                      })),
+                  }
+                : {}),
             hidden: applied.has(hit.id),
         };
     });

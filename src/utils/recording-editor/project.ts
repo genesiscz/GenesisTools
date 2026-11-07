@@ -269,6 +269,21 @@ export const redactionSchema = z.object({
     fadeMs: z.number().int().min(0).max(2000).optional(),
     /** A pixelate block's side in source pixels (2 to 256); absent is 1.8 % of the picture's height, at least 8. */
     cell: z.number().min(2).max(256).optional(),
+    // R6 1 moving text
+    /** A part hideText or hidePrivate made: the hit it hides and how sure its place is. Absent on a hand-made part. */
+    hide: z
+        .object({
+            /** The op that made it. */
+            by: z.enum(["hideText", "hidePrivate"]),
+            /** The hit's id (findText, privateData). */
+            hit: z.string(),
+            /** The band a moving text may cross where it could not be followed, not the text's own place. */
+            uncertain: z.boolean().optional(),
+            /** Seconds it showed while the picture moved, and its places a second then (read or followed). */
+            movingSeconds: z.number().nonnegative().optional(),
+            keysPerSecond: z.number().nonnegative().optional(),
+        })
+        .optional(),
 });
 export type EditRedaction = z.infer<typeof redactionSchema>;
 
@@ -1870,6 +1885,14 @@ export interface OpFacts {
 
 /** A `zoom` op whose zoom went past a zoom it met (`placeZoom`), as a sentence a caller can return. */
 export function opPlacementWarnings(op: EditOp, before: EditProject, after: EditProject): string[] {
+    // R6 1: a hide that could not follow a moving text says where, so its ok is not a guess.
+    if (op.op === "hideText" || op.op === "hidePrivate") {
+        return hidingOf(before, after).uncertain.map(
+            (stretch) =>
+                `${op.op}: a moving text could not be followed from ${stretch.from} to ${stretch.to} s; the band it may cross is hidden there (uncertain in the result and in check())`
+        );
+    }
+
     if (op.op !== "zoom") {
         return [];
     }
@@ -2819,7 +2842,7 @@ function hidePrivate(
     const picked = pickById(hits, op.ids, "private hit").filter(
         (hit) => !op.kinds || (hit.kind !== "text" && op.kinds.includes(hit.kind))
     );
-    return hideHits(project, picked, { style: op.style, exclude: op.exclude });
+    return hideHits(project, picked, { style: op.style, exclude: op.exclude, by: "hidePrivate" });
 }
 
 function hideText(
@@ -2841,7 +2864,7 @@ function hideText(
         );
     }
 
-    return hideHits(project, picked, { style: op.style, exclude: op.exclude, label: op.label });
+    return hideHits(project, picked, { style: op.style, exclude: op.exclude, label: op.label, by: "hideText" });
 }
 
 /**
@@ -2851,41 +2874,112 @@ function hideText(
 function hideHits(
     project: EditProject,
     hits: readonly PrivateHit[],
-    options: { style?: EditRedaction["style"]; exclude?: ReadonlyArray<z.infer<typeof boxSchema>>; label?: string }
+    options: {
+        style?: EditRedaction["style"];
+        exclude?: ReadonlyArray<z.infer<typeof boxSchema>>;
+        label?: string;
+        by: NonNullable<EditRedaction["hide"]>["by"];
+    }
 ): EditProject {
     const applied = new Set(project.privacy?.applied ?? []);
     const picked = hits.filter((hit) => !applied.has(hit.id));
     let next = project;
-
-    for (const hit of picked) {
-        const fromUs = Math.max(0, Math.min(hit.fromUs, project.source.durationUs - MINIMUM_CLIP_US));
-        const toUs = Math.min(project.source.durationUs, Math.max(hit.toUs, fromUs + MINIMUM_CLIP_US));
-        const first = hit.keys[0] ?? hit.box;
+    const seconds = (us: number) => Math.round(us / 10_000) / 100;
+    /** Adds one part and sets what addRedaction does not take (its keys, the areas left visible, where it came from). */
+    const add = (
+        part: { fromUs: number; toUs: number; rect: z.infer<typeof boxSchema>; label: string },
+        extra: Partial<EditRedaction>
+    ) => {
+        const fromUs = Math.max(0, Math.min(part.fromUs, project.source.durationUs - MINIMUM_CLIP_US));
+        const toUs = Math.min(project.source.durationUs, Math.max(part.toUs, fromUs + MINIMUM_CLIP_US));
         next = addRedaction(next, {
             fromUs,
             toUs,
-            rect: { x: first.x, y: first.y, width: first.width, height: first.height },
+            rect: part.rect,
             style: options.style ?? "blur",
-            label: options.label ?? `${hit.label} (auto)`,
+            label: part.label,
         });
-        const exclude = [...(options.exclude ?? []), ...(hit.exclude ?? [])];
         const added = next.redactions?.at(-1);
 
-        if (added && (hit.keys.length > 1 || exclude.length > 0)) {
-            const tracked: EditRedaction = {
-                ...added,
+        if (added) {
+            next = { ...next, redactions: [...(next.redactions ?? []).slice(0, -1), { ...added, ...extra }] };
+        }
+    };
+
+    for (const hit of picked) {
+        const first = hit.keys[0] ?? hit.box;
+        const exclude = [...(options.exclude ?? []), ...(hit.exclude ?? [])];
+        const label = options.label ?? `${hit.label} (auto)`;
+        const moving = hit.follow && hit.follow.movingUs > 0 ? hit.follow : undefined;
+        add(
+            {
+                fromUs: hit.fromUs,
+                toUs: hit.toUs,
+                rect: { x: first.x, y: first.y, width: first.width, height: first.height },
+                label,
+            },
+            {
                 ...(hit.keys.length > 1
                     ? { track: hit.keys.map((key) => ({ ...key, atUs: Math.round(key.atUs) })) }
                     : {}),
                 ...(exclude.length > 0 ? { exclude } : {}),
-            };
-            next = { ...next, redactions: [...(next.redactions ?? []).slice(0, -1), tracked] };
+                hide: {
+                    by: options.by,
+                    hit: hit.id,
+                    ...(moving
+                        ? {
+                              movingSeconds: seconds(moving.movingUs),
+                              keysPerSecond:
+                                  Math.round((moving.keysInMotion / (moving.movingUs / 1_000_000)) * 10) / 10,
+                          }
+                        : {}),
+                },
+            }
+        );
+
+        // R6 1: where the moving text could not be followed, the band it may cross is hidden as well.
+        for (const stretch of hit.uncertain ?? []) {
+            add(
+                { fromUs: stretch.fromUs, toUs: stretch.toUs, rect: stretch.box, label: `${label} (uncertain)` },
+                { hide: { by: options.by, hit: hit.id, uncertain: true } }
+            );
         }
 
         applied.add(hit.id);
     }
 
     return picked.length === 0 ? project : { ...next, privacy: privacySchema.parse({ applied: [...applied] }) };
+}
+
+/** What a hideText or hidePrivate added to the edit: its parts, how well they follow moving text, and where not. */
+export interface Hiding {
+    /** Hidden parts added (bands included). */
+    parts: number;
+    /** Parts that follow a moving text, with the seconds it moved and the fewest places a second any of them has. */
+    moving: { parts: number; seconds: number; minKeysPerSecond: number | null };
+    /** Source seconds where a moving text could not be followed: the band it may cross is hidden instead. */
+    uncertain: Array<{ from: number; to: number }>;
+}
+
+/** The hidden parts in `after` and not in `before` that a hide op made, summed up (R6 1). */
+export function hidingOf(before: EditProject, after: EditProject): Hiding {
+    const had = new Set((before.redactions ?? []).map((part) => part.id));
+    const added = (after.redactions ?? []).filter((part) => !had.has(part.id) && part.hide);
+    const seconds = (us: number) => Math.round(us / 10_000) / 100;
+    const moving = added.filter((part) => !part.hide?.uncertain && (part.hide?.movingSeconds ?? 0) > 0);
+    const rates = moving.map((part) => part.hide?.keysPerSecond ?? 0);
+    return {
+        parts: added.length,
+        moving: {
+            parts: moving.length,
+            seconds: Math.round(moving.reduce((all, part) => all + (part.hide?.movingSeconds ?? 0), 0) * 100) / 100,
+            minKeysPerSecond: rates.length > 0 ? Math.min(...rates) : null,
+        },
+        uncertain: added
+            .filter((part) => part.hide?.uncertain)
+            .map((part) => ({ from: seconds(part.startUs), to: seconds(part.endUs) }))
+            .sort((a, b) => a.from - b.from),
+    };
 }
 
 function smoothCursor(project: EditProject, op: Extract<EditOp, { op: "cursorSmooth" }>): EditProject {

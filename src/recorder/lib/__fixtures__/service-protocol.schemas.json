@@ -4804,6 +4804,37 @@
                   "type": "number",
                   "minimum": 2,
                   "maximum": 256
+                },
+                "hide": {
+                  "type": "object",
+                  "properties": {
+                    "by": {
+                      "type": "string",
+                      "enum": [
+                        "hideText",
+                        "hidePrivate"
+                      ]
+                    },
+                    "hit": {
+                      "type": "string"
+                    },
+                    "uncertain": {
+                      "type": "boolean"
+                    },
+                    "movingSeconds": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "keysPerSecond": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "by",
+                    "hit"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [

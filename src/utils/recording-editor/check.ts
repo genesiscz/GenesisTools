@@ -197,6 +197,8 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
 
     // R5 5 redaction edges
     issues.push(...redactionEdgeIssues(project));
+    // R6 1 moving text
+    issues.push(...uncertainHideIssues(project));
     // R5 11 clamps: an op time past the end was clamped to it; the edit call said so once, check() keeps saying it.
     for (const note of project.notes?.clamped ?? []) {
         issues.push({
@@ -699,4 +701,22 @@ export function fixOps(project: EditProject, facts: EditFacts, passes = 4): { op
     }
 
     return { ops, fixed };
+}
+
+// R6 1 moving text
+/**
+ * The bands hideText or hidePrivate hid where a moving text could not be followed: private, but a larger box than the
+ * text, so look at them (a sheet over their time) and keep them or cut the moment.
+ */
+function uncertainHideIssues(project: EditProject): EditIssue[] {
+    return (project.redactions ?? [])
+        .filter((part) => part.hide?.uncertain && keptUs(project, part.startUs, part.endUs) > 0)
+        .map((part) => ({
+            severity: "check" as const,
+            item: `hidden part ${part.id}`,
+            message: `${part.hide?.by ?? "hideText"} could not follow a moving text from ${tenths(part.startUs)} to ${tenths(part.endUs)} s, so it hides the band the text may cross there (a larger box than the text)`,
+            fix: `movie.sheet({ from: ${tenths(part.startUs)}, to: ${tenths(part.endUs)}, source: true }) shows it; unredact("${part.id}") drops the band`,
+            at: tenths(part.startUs),
+            target: { list: "redactions" as const, id: part.id },
+        }));
 }

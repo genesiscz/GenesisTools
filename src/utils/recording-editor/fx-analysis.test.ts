@@ -4,18 +4,31 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { anchorTimeUs, movieEvents, nearestEvent } from "./events";
+import { blockShifts } from "./motion";
 import {
     findPrivateText,
     ibanValid,
     luhnValid,
+    type MotionModel,
     maskPrivate,
     privateHits,
     privateMatcher,
+    redactionBoxAt,
     type ScreenTextFrame,
+    type TrackKey,
     textHits,
     textMatcher,
 } from "./private-data";
-import { applyOp, editOpSchema, editProjectSchema, type OpFacts, parseProject, wholeProject } from "./project";
+import {
+    applyOp,
+    editOpSchema,
+    editProjectSchema,
+    hidingOf,
+    type OpFacts,
+    opPlacementWarnings,
+    parseProject,
+    wholeProject,
+} from "./project";
 import {
     type ChangeStep,
     compareFrames,
@@ -298,5 +311,110 @@ describe("tracked text, exclusions and events", () => {
         const blob = new Uint8Array(width * height);
         blob.fill(200, 20 * width, 22 * width);
         expect(verticalShift(new Uint8Array(width * height), blob, width, height)).toBe(0);
+    });
+});
+
+describe("moving text: the content's motion carries a hit (round 6)", () => {
+    const frame = (ms: number, lines: ScreenTextFrame["lines"]): ScreenTextFrame => ({
+        atUs: ms * 1000,
+        untilUs: (ms + 200) * 1000,
+        lines,
+    });
+    const row = (text: string, y: number) => ({ text, x: 0.1, y, width: 0.3, height: 0.03 });
+    /** A list that scrolls up by `travel` of the picture from 0.2 s to 0.8 s, fast first and slow at the end. */
+    const scroll = (travel: number, options: { lostAfterUs?: number } = {}): MotionModel => {
+        const offset = (us: number) => {
+            const u = Math.min(1, Math.max(0, (us - 200_000) / 600_000));
+            return -travel * (1 - (1 - u) ** 2);
+        };
+        return {
+            moving: (fromUs, toUs) => Math.max(fromUs, toUs) > 200_000 && Math.min(fromUs, toUs) < 800_000,
+            movingArea: () => ({ x: 0, y: 0, width: 1, height: 1 }),
+            changeEdge: (_box, atUs) => atUs,
+            carry: (box, fromUs, toUs) => {
+                const direction = toUs >= fromUs ? 1 : -1;
+                const keys: TrackKey[] = [];
+
+                for (
+                    let at = fromUs + direction * 33_333;
+                    direction > 0 ? at <= toUs : at >= toUs;
+                    at += direction * 33_333
+                ) {
+                    if (options.lostAfterUs !== undefined && at > options.lostAfterUs) {
+                        const last = keys.at(-1) ?? { ...box, atUs: fromUs };
+                        return { keys, reachedUs: at, box: last, end: "lost" };
+                    }
+
+                    keys.push({ ...box, atUs: Math.round(at), y: box.y + offset(at) - offset(fromUs) });
+                }
+
+                const last = keys.at(-1) ?? { ...box, atUs: fromUs };
+                return { keys, reachedUs: toUs, box: last, end: "reached" };
+            },
+        };
+    };
+    const matcher = textMatcher({ text: "Orla Fictive" });
+
+    test("a read OCR missed in the middle of a scroll is bridged by the motion, with a key for every picture", () => {
+        // OCR reads the name still at 0.8 of the picture, then nothing while it moves, then at rest 0.6 higher.
+        const frames = [
+            frame(0, [row("Orla Fictive 777 123 456", 0.8)]),
+            frame(200, [row("Orla Fictive 777 123 456", 0.8)]),
+            frame(400, []),
+            frame(600, []),
+            frame(800, [row("Orla Fictive 777 123 456", 0.2)]),
+        ];
+        const [hit, ...rest] = textHits(frames, matcher, { motion: scroll(0.6) });
+        expect(rest).toEqual([]);
+        expect(hit.uncertain).toBeUndefined();
+        // Halfway through the move the part is where the motion put the text, not on a straight line between reads.
+        const placed = redactionBoxAt({ ...hit.box, track: hit.keys }, 400_000);
+        const read = hit.keys[0];
+        expect(Math.abs(placed.y - (read.y - 0.6 * (1 - (1 - 1 / 3) ** 2)))).toBeLessThan(0.01);
+        // Without the motion the 0.6 jump is two hits and the move between them is not hidden.
+        expect(textHits(frames, matcher).length).toBe(2);
+    });
+
+    test("a read the motion does not lead to is another text; a gap it cannot follow hides the band between", () => {
+        const frames = [frame(0, [row("Orla Fictive", 0.8)]), frame(200, [row("Orla Fictive", 0.8)])];
+        // The motion carries it to 0.2, so a read at 0.5 is a second copy of the name, not this one.
+        expect(
+            textHits([...frames, frame(800, [row("Orla Fictive", 0.5)])], matcher, { motion: scroll(0.6) }).length
+        ).toBe(2);
+        // The motion is lost at 0.4 s: the two reads stay apart, and the band from 0.8 up to 0.2 is hidden between them.
+        const lost = textHits([...frames, frame(800, [row("Orla Fictive", 0.2)])], matcher, {
+            motion: scroll(0.6, { lostAfterUs: 400_000 }),
+        });
+        const band = lost
+            .flatMap((hit) => hit.uncertain ?? [])
+            .find((one) => one.fromUs <= 300_000 && one.toUs >= 700_000);
+        expect(band && band.box.y <= 0.2 && band.box.y + band.box.height >= 0.83).toBe(true);
+        const before = wholeProject(source);
+        const edited = applyOp(before, op({ op: "hideText", text: "Orla Fictive" }), { textHits: lost });
+        expect(
+            edited.redactions?.some((part) => part.hide?.uncertain && part.label === "Text (auto) (uncertain)")
+        ).toBe(true);
+        expect(hidingOf(before, edited).uncertain.length).toBeGreaterThan(0);
+        expect(opPlacementWarnings(op({ op: "hideText", text: "Orla Fictive" }), before, edited)[0]).toMatch(
+            /could not be followed/
+        );
+    });
+
+    test("block matching finds a scroll's shift and leaves a still picture still", () => {
+        const width = 96;
+        const height = 96;
+        const rows = (offset: number) =>
+            Uint8Array.from({ length: width * height }, (_, index) => {
+                const y = Math.floor(index / width) + offset;
+                const x = index % width;
+                return (y * 7 + x * 3) % 17 < 6 || (Math.floor(y / 5) + Math.floor(x / 9)) % 3 === 0 ? 230 : 30;
+            });
+        // The content moves 9 pixels up: what was at row y + 9 is at row y.
+        const moved = blockShifts({ previous: rows(0), current: rows(9), width, height });
+        const found = [...moved.dy].filter((_, index) => moved.ok[index] === 2);
+        expect(found.length).toBeGreaterThan(4);
+        expect(found.every((dy) => Math.abs(dy + 9) < 0.6)).toBe(true);
+        const still = blockShifts({ previous: rows(0), current: rows(0), width, height });
+        expect([...still.ok].every((state) => state === 1)).toBe(true);
     });
 });
