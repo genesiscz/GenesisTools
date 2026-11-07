@@ -44,6 +44,7 @@ import {
     sourceTimeOf,
     transcriptCachePath,
 } from "@genesiscz/utils/recording-editor/project";
+import { refineSceneTimes } from "@genesiscz/utils/recording-editor/scene-times";
 import {
     type ChangeStep,
     fixedAreas,
@@ -912,13 +913,41 @@ export interface MovieEventOut {
 /** The events of an edit's movie: scene changes, scrolls, still stretches, clicks, and `taps` the caller passes. */
 export async function eventsOf(project: EditProject, options: { taps?: readonly Tap[] } = {}): Promise<MovieEvent[]> {
     const { steps, fps, height } = await changeStepsOf(project);
-    return movieEvents({
+    const events = movieEvents({
         steps,
         fps,
         pictureHeight: height,
         clicks: readCursorTrack(project.source.cursor).filter((sample) => sample.click),
         taps: options.taps,
     });
+    // R7 8: each scene at the frame it starts on, not the 4-a-second sample after it.
+    const scenes = events.filter((event) => event.kind === "scene");
+
+    if (scenes.length === 0) {
+        return events;
+    }
+
+    const video = project.source.video;
+    const path = cachePath(video, "scenes");
+    const key = movieKey(video, `scenes,v1,${scenes.map((scene) => scene.fromUs).join(",")}`);
+    let refined = readCache(path, key, z.array(z.number()));
+
+    if (!refined) {
+        refined = await refineSceneTimes({
+            video,
+            width: project.source.width,
+            height: project.source.height,
+            scenesUs: scenes.map((scene) => scene.fromUs),
+            stepUs: 1_000_000 / fps,
+        });
+        writeCache(path, key, refined);
+    }
+
+    const times = refined;
+    const moved = new Map(scenes.map((scene, index) => [scene, times[index] ?? scene.fromUs]));
+    return events
+        .map((event) => ({ ...event, fromUs: moved.get(event) ?? event.fromUs }))
+        .sort((a, b) => a.fromUs - b.fromUs);
 }
 
 export function eventsOut(project: EditProject, events: readonly MovieEvent[]): MovieEventOut[] {
