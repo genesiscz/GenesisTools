@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as captureRunner from "@app/control/lib/capture-runner";
@@ -346,6 +346,17 @@ describe.skipIf(!hasFfmpeg)("movieDemoDriver on a recording session", () => {
             }
         }
     }, 60_000);
+});
+
+describe("a recording folder without its movie", () => {
+    test("a movie recording whose movie went away says so instead of offering a proxy", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "lost-movie-"));
+        writeFileSync(join(folder, "recording.json"), '{"settings":{"kind":"video","video":{"file":"screen.mp4"}}}');
+        await expect(edit.openProject(folder)).rejects.toThrow("screen.mp4 is missing: recording.json names it");
+        const frames = mkdtempSync(join(tmpdir(), "frames-only-"));
+        writeFileSync(join(frames, "recording.json"), '{"settings":{"kind":"frames"}}');
+        await expect(edit.openProject(frames)).rejects.toThrow("has no movie yet; make one with");
+    });
 });
 
 describe("movie.sheet() bounds", () => {

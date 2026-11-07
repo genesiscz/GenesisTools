@@ -81,6 +81,23 @@ export interface OpenedProject {
     saved?: boolean;
 }
 
+/** The movie file a movie recording's recording.json names (`settings.video.file`); undefined for a frames recording. */
+function recordedMovieName(folder: string): string | undefined {
+    const manifest = join(folder, "recording.json");
+
+    if (!existsSync(manifest)) {
+        return undefined;
+    }
+
+    try {
+        const file = SafeJSON.parse(readFileSync(manifest, "utf8"), { strict: true })?.settings?.video?.file;
+        return typeof file === "string" && file.length > 0 ? basename(file) : undefined;
+    } catch (error) {
+        logger.debug({ manifest, error }, "recording.json does not parse; the movie's name is unknown");
+        return undefined;
+    }
+}
+
 /** The movie a recording argument names: the folder's movie, or the movie an edit file points at. */
 function movieFor(path: string): string {
     if (path.endsWith(".json")) {
@@ -91,6 +108,15 @@ function movieFor(path: string): string {
         const movie = movieOf(path);
 
         if (!movie) {
+            const lost = recordedMovieName(path);
+
+            // A movie recording whose movie went away: a proxy makes nothing there ("has no frames to make a movie of").
+            if (lost) {
+                throw new Error(
+                    `${join(path, lost)} is missing: recording.json names it, but the file was moved or removed`
+                );
+            }
+
             throw new Error(`${path} has no movie yet; make one with ${toolCommand("recorder proxy", basename(path))}`);
         }
 
