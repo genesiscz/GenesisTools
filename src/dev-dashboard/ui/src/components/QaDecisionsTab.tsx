@@ -58,14 +58,18 @@ export function draftedAnswers(drafts: Drafts): Array<{ number: number; option?:
 }
 
 /** The letters of a stored option (`"ac"`), kept in the decision's option order. */
-export function chosenLetters(item: Pick<InboxDecision, "choices">, option: string | undefined): string[] {
+export function chosenLetters(item: Pick<InboxDecision, "choices">, option: string | null | undefined): string[] {
     const held = new Set(option ?? "");
 
     return item.choices.map((choice) => choice.id).filter((id) => held.has(id));
 }
 
 /** A click on a letter of a multiple decision: toggles it in the draft option, kept in option order. */
-export function toggleLetter(item: Pick<InboxDecision, "choices">, option: string | undefined, letter: string): string {
+export function toggleLetter(
+    item: Pick<InboxDecision, "choices">,
+    option: string | null | undefined,
+    letter: string
+): string {
     const next = new Set(chosenLetters(item, option));
 
     if (next.has(letter)) {
