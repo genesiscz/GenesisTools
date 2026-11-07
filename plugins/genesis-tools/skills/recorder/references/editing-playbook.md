@@ -47,11 +47,12 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
 | `m.itemsAt(t)` | What plays at an OUTPUT second, in words | `await m.itemsAt(12.5)` |
 | `m.events({ kinds, taps })` | Scene changes, scrolls, still stretches, clicks, at source seconds | `await m.events({ kinds: ["scene", "scroll"] })` |
 | `m.snap({ event, index, lead })` | One event's source time, to place an effect on | `(await m.snap({ event: "scene", index: 3, lead: -0.3 })).at` |
-| `m.findText({ text \| pattern })` | Where a text shows, tracked through scrolls | `await m.findText({ pattern: "\\d{4} \\d{4}" })` |
+| `m.findText({ text \| pattern \| texts \| patterns, unit })` | Where texts show, tracked through scrolls; several texts and patterns in ONE scan (each scan costs 10 to 60 s, so pass them together). A pattern matches each OCR line on its own, case-insensitive; `^` and `$` anchor to that line | `await m.findText({ texts: ["Alice Example"], patterns: ["\\d{4} \\d{4}"] })` |
 | `m.privateData()` | Emails, tokens, phone numbers, IBANs, card numbers on screen | `await m.privateData({ names: ["Alice Example"] })` |
-| `m.hideText({ text \| pattern, style, exclude, excludeFixed })` | Hides each place a text shows, following it | `await m.hideText({ text: "alice@example.com", style: "blur", excludeFixed: true })` |
+| `m.hideText({ text \| pattern \| texts \| patterns, unit, style, exclude, excludeFixed })` | Hides each place a text shows, following it frame by frame through scrolls and slide-ins by the measured motion. `unit: "line"` hides the whole OCR line (the number beside a hidden name too). Read `hiding.uncertain` in the answer: stretches where the text could not be followed, covered by the band it may cross | `await m.hideText({ texts: ["Alice Example", "Main Street 1"], unit: "line", excludeFixed: true })` |
+| `m.unhide({ text \| pattern \| ids \| all })` | Takes back what `hideText`/`hidePrivate` hid, and forgets it, so the same hide can run again; hand-drawn boxes and spotlights stay. `info().redactions[i].kind` is `hidden` or `spotlight`, `hide.request` names the hide that made a part | `await m.unhide({ text: "Alice Example" })` |
 | `m.hidePrivate({ kinds, ids })` | Hides what `privateData()` lists | `await m.hidePrivate({ kinds: ["email", "phone"] })` |
-| `m.verifyHidden({ text \| pattern \| private })` | Exports, reads the OUTPUT and lists every leak | `(await m.verifyHidden({ private: true })).ok` |
+| `m.verifyHidden({ text \| pattern \| texts \| patterns \| private })` | Exports, reads the OUTPUT and lists every leak with its `source` and `output` seconds (null inside a card), logging progress while it reads; all texts in one call | `(await m.verifyHidden({ private: true, texts: ["Alice Example"] })).ok` |
 | `m.waits()` / `m.speedUpWaits({ ids })` | Typing and waiting stretches, sped up 4x to 8x with a badge | `await m.speedUpWaits({})` |
 | `m.cut(from, to)` / `m.speed(from, to, x)` | Cut or speed a source range; a factor from 0.25 to 16, below 1 is slow motion | `await m.cut(5.6, 9.8)`; `await m.speed(61, 62.5, 0.5)` |
 | `m.zoom({ from, to, scale, focus })` | Zoom inside the picture | `await m.zoom({ from: 49, to: 54, scale: 1.4, focus: { x: 0.5, y: 0.3 } })` |
@@ -84,16 +85,18 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
 3. Cut the loading screens and the waiting: a splash or a spinner says nothing. `cut()` what shows nothing new,
    `speedUpWaits()` what must stay but is slow. Read `changed` and `warnings` after each call: a time past the end is
    clamped, and `check()` keeps naming it.
-4. Hide the private data by its text, never by a box of the screen: `privateData()` and `findText()` list it,
-   `hidePrivate()` and `hideText({ excludeFixed: true })` hide it and follow it through every scroll. Use a fixed
-   `redact()` box only for a still stretch, measured on a `still({ source: true, full: true })` of that stretch.
+4. Hide the private data by its text, never by a box of the screen: `privateData()` and one `findText({ texts,
+   patterns })` list it, `hidePrivate()` and one `hideText({ texts, patterns, unit: "line", excludeFixed: true })`
+   hide it and follow it through every scroll and slide-in. Keep the scrolls: they show the app, and the hiding
+   follows them. Read `hiding.uncertain`; each stretch there is covered by a wider band, so look at it on an effects
+   sheet. Use a fixed `redact()` box only for a still stretch, measured on a `still({ source: true, full: true })`.
 5. Frame it: a phone (9:16) uses `frame({ aspect: "9:16" })` or "4:5" with padding, and titles go in the padding,
    never over the app's text or the status bar (section 6).
 6. Place every effect on an event from step 2 (section 4) and add the story: an intro card, markers, short callouts.
 7. Sound: voice lines with `say()` at source seconds, music with `ducking()` (section 8).
 8. `check()`, then `fix()` what it offers, then check every boundary (section 9).
-9. Export, then `verifyHidden({ private: true })` and `verifyHidden({ text })` for each name you hid. `ok: false` is
-   a failed edit: fix the leak and export again.
+9. Export, then one `verifyHidden({ private: true, texts: [...every name you hid] })`. `ok: false` is a failed edit:
+   each leak names its `source` second, so fix the leak there and export again.
 10. Score it (section 10).
 
 ## 4. Place every effect on an event, never on a guess
@@ -110,13 +113,16 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
 ## 5. Privacy: hide the text, not a box of the screen
 
 - Content that moves (scrolls, screen changes) cannot be hidden with a fixed box for a fixed time. `hideText()` and
-  `hidePrivate()` follow the text and start and end with it.
+  `hidePrivate()` follow the text frame by frame by the measured motion of the content (also through blurred frames
+  the OCR cannot read), never join two different texts, and start and end with the text. Where they cannot follow,
+  they hide the band the text may cross and name that stretch in `hiding.uncertain` and in `check()`.
+- `unit: "line"` hides a whole line: use it for a name with a contract number or an address beside it.
 - Leave out what does not move with the content (a toast, a tab bar, the status bar) with `excludeFixed: true` or
   `exclude`.
 - A box must never stay on after its text left: it then blurs the next screen's harmless content.
 - Verify the OUTPUT with `verifyHidden()` after the export. A leak found after delivery is a failed edit.
-- When `verifyHidden()` names leaks in a scroll or a slide-in (text the tracking could not follow), do not cut the
-  scroll and do not pixelate the whole screen for seconds. Look at the leak times on a
+- When `verifyHidden()` still names leaks in a scroll or a slide-in, do not cut the scroll and do not pixelate the
+  whole screen for seconds. Look at the leak times on a
   `sheet({ source: true, effects: true, from, to, every: 0.2 })`, then cover only that stretch: a `redact()` box over
   the band the text moves through, from the frame before the leak to the frame after it, joined to the tracked parts
   (`redactionJoins` closes holes up to 250 ms). Export and verify again.
