@@ -398,6 +398,36 @@ export function textMatcher(options: TextMatcherOptions): LineMatcher {
         : matches;
 }
 
+/**
+ * R7: `matcher`, and also a line that is only the head or the tail of one of `values` (what the matcher found in the
+ * source): a heading that slid out at the edge shows a few of its digits, and those are a leak of the whole value. A
+ * fragment needs 3 characters with a digit in them, or 5 without. The values stay in memory; a hit shows them masked.
+ */
+export function edgeFragments(matcher: LineMatcher, values: readonly string[]): LineMatcher {
+    const known = [...new Set(values.map((value) => value.replace(/\s+/g, "").toLowerCase()))];
+    return (text) => {
+        const own = matcher(text);
+
+        if (own.length > 0) {
+            return own;
+        }
+
+        const line = text.replace(/\s+/g, "").toLowerCase();
+        const enough = line.length >= 5 || (line.length >= 3 && /\d/.test(line));
+
+        if (!enough) {
+            return [];
+        }
+
+        const whole = known.find(
+            (value) => value.length > line.length && (value.startsWith(line) || value.endsWith(line))
+        );
+        return whole
+            ? [{ kind: "text" as const, label: "Text (part at an edge)", value: whole, start: 0, end: text.length }]
+            : [];
+    };
+}
+
 /** What textMatcher looks for: one text or pattern, or several (R6 3), and how much of its line a match covers. */
 export interface TextMatcherOptions {
     text?: string;

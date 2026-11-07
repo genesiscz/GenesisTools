@@ -802,11 +802,11 @@ export function leakSourceBox(
 ): { x: number; y: number; width: number; height: number } | null {
     const slackUs = 300_000;
     const showing = options.sourceHits.filter(
-        (hit) =>
-            hit.label === options.label && hit.fromUs <= options.toUs + slackUs && hit.toUs >= options.fromUs - slackUs
+        (hit) => hit.fromUs <= options.toUs + slackUs && hit.toUs >= options.fromUs - slackUs
     );
+    // The same value first (a few characters of it at an edge carry its mask too), else any of the same kind.
     const same = showing.filter((hit) => hit.masked === options.masked);
-    const chosen = same.length > 0 ? same : showing;
+    const chosen = same.length > 0 ? same : showing.filter((hit) => hit.label === options.label);
 
     if (chosen.length > 0) {
         const boxes = chosen.flatMap((hit) => {

@@ -27,6 +27,7 @@ import {
 import { cardsLeadUs } from "@genesiscz/utils/recording-editor/overlays";
 import { type TimeValue, timeToUs } from "@genesiscz/utils/recording-editor/plan";
 import {
+    edgeFragments,
     type FractionBox,
     type LineMatcher,
     type PrivateHit,
@@ -801,7 +802,12 @@ export async function verifyHidden(
     const frames = mergeFrames(even, dense);
     // R6 5: an export starts with the intro card; what plays after it is the output, and each output moment a source one.
     const endUs = cardsLeadUs(project) + outputDurationUs(project);
-    const leaks = textHits(frames, matcher, { gapUs: 0 }).map((hit) => {
+    // R7: a few characters of a value the source shows (a heading that slid out at the edge) are a leak of it too.
+    const { frames: sourceFrames } = await screenTextOf(project);
+    const values = sourceFrames.flatMap((frame) =>
+        frame.lines.flatMap((line) => matcher(line.text).map((match) => match.value))
+    );
+    const leaks = textHits(frames, edgeFragments(matcher, values), { gapUs: 0 }).map((hit) => {
         const atUs = hit.keys[0]?.atUs ?? hit.fromUs;
         const from = exportToOutputUs(project, atUs);
         const to = exportToOutputUs(project, Math.min(hit.toUs, endUs));

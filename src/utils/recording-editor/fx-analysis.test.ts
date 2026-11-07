@@ -6,6 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { anchorTimeUs, movieEvents, nearestEvent } from "./events";
 import { blockShifts } from "./motion";
 import {
+    edgeFragments,
     findPrivateText,
     ibanValid,
     luhnValid,
@@ -680,6 +681,31 @@ describe("verifyHidden reads every frame at the edges and says how to fix a leak
         const rect = fix.op === "redact" ? fix.rect : undefined;
         expect(rect?.x).toBeCloseTo(0.175, 5);
         expect(rect?.height).toBeCloseTo(0.1, 5);
+    });
+});
+
+describe("a few digits of a hidden value at the picture's edge are a leak (round 7)", () => {
+    // An invented device number the request's pattern matches in the source.
+    const matcher = textMatcher({ pattern: "SN-\\d{8}" });
+    const values = ["sn-40718263"];
+
+    test("a line that is only the head or the tail of a value counts, a short or unrelated one does not", () => {
+        const fragments = edgeFragments(matcher, values);
+        expect(fragments("18263")).toMatchObject([{ label: "Text (part at an edge)", value: "sn-40718263" }]);
+        expect(fragments("SN-407")).toMatchObject([{ label: "Text (part at an edge)" }]);
+        // The whole value is the pattern's own match.
+        expect(fragments("SN-40718263")).toMatchObject([{ label: "Text" }]);
+        expect(fragments("63")).toEqual([]);
+        expect(fragments("Settings")).toEqual([]);
+        expect(fragments("Battery 82 %")).toEqual([]);
+    });
+
+    test("verifyHidden's read of a slid-out heading finds it", () => {
+        const frames: ScreenTextFrame[] = [
+            { atUs: 0, untilUs: 33_000, lines: [{ text: "718263", x: 0.97, y: 0.2, width: 0.03, height: 0.04 }] },
+        ];
+        expect(textHits(frames, edgeFragments(matcher, values), { gapUs: 0 }).length).toBe(1);
+        expect(textHits(frames, matcher, { gapUs: 0 }).length).toBe(0);
     });
 });
 
