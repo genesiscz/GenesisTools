@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { recognizeTextBoxes } from "@genesiscz/utils/macos/ocr-boxes";
+import { recognizeTextBoxesQueued } from "@genesiscz/utils/macos/ocr-queue";
 import {
     anchorTimeUs,
     type EventAnchor,
@@ -239,8 +239,14 @@ export async function ocrVideo(options: {
             const path = join(folder, file);
             const digest = createHash("sha1").update(readFileSync(path)).digest("hex");
 
+            const atUs = Math.round(fromUs + Number(file.replace(".png", "")) * stepUs);
+
             if (digest !== previousDigest) {
-                const read = await recognizeTextBoxes(path, { fastFallback: false });
+                // R6 4: one Vision read at a time on this Mac, retried once with a longer deadline.
+                const read = await recognizeTextBoxesQueued(path, {
+                    fastFallback: false,
+                    what: `the frame at ${(atUs / 1_000_000).toFixed(2)} s of ${basename(options.video)}`,
+                });
                 previousLines = read.lines.map((line) => ({
                     text: line.text,
                     x: line.x / read.width,
@@ -251,7 +257,6 @@ export async function ocrVideo(options: {
                 previousDigest = digest;
             }
 
-            const atUs = Math.round(fromUs + Number(file.replace(".png", "")) * stepUs);
             frames.push({ atUs, untilUs: Math.min(options.toUs, Math.round(atUs + stepUs)), lines: previousLines });
         }
 
