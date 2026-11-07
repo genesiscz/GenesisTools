@@ -111,7 +111,17 @@ import {
     writeSubtitles,
 } from "./edit";
 import { stepDisplaySwitch, switchDisplay } from "./frames-movie";
-import { eventsOf, eventsOut, findText, privateData, snapOf, type TextQuery, verifyHidden, waits } from "./fx-analysis";
+import {
+    cachedScreenText,
+    eventsOf,
+    eventsOut,
+    findText,
+    privateData,
+    snapOf,
+    type TextQuery,
+    verifyHidden,
+    waits,
+} from "./fx-analysis";
 import {
     EDITOR_TABS,
     type EditorTab,
@@ -246,7 +256,7 @@ const movieMethods = [
         result: z.unknown(),
         resultName:
             '{ ok, clean, counts: { fix, check, note }, summary: string[], groups: { kind, severity, count, message, items, at, fix?, fixable }[], issues: { severity: "fix" | "check" | "note", kind, item, message, fix?, at?, target?, action?: { label, ops } }[] }',
-        doc: 'What to look at before export(): items whose whole time is cut (they never show), a marker in cut time (no chapter: an edit marker comes with a move to the nearest kept moment, one set while it recorded is stood in for by an edit marker of its name), a text a cut shortens, a missing music file, captions, subtitles or ducking without a transcript, a part that follows a cursor the movie lacks, items too short to read, texts drawn over each other, and every op time past the end of the source that an edit clamped (until undo() or reset()). "fix" issues come first, each with a call that fixes it when one does (`fix`, and the same as edit ops in `action.ops` for apply()); "note" issues are holes the export closes by itself (redactionJoins), said only so nothing is hidden. Read `summary` first: one line per kind of issue with its count ("check ×40 hiding-starts-after-cut: …"); `groups` holds the same with the items and source times (at most 20 each), `issues` every single one. ok is true when there is no "fix" issue (the export works), clean when there is no "fix" or "check" issue. Two texts count as "same time, same place" only when their rendered plates overlap (font size, wrap and the shape of the canvas). It changes nothing. An edit call whose cut hides an item or a marker, or shortens a text, says so in its own warnings too.',
+        doc: 'What to look at before export(): items whose whole time is cut (they never show), a marker in cut time (no chapter: an edit marker comes with a move to the nearest kept moment, one set while it recorded is stood in for by an edit marker of its name), a text a cut shortens, a missing music file, captions, subtitles or ducking without a transcript, a part that follows a cursor the movie lacks, items too short to read, texts drawn over each other, and every op time past the end of the source that an edit clamped (until undo() or reset()). "fix" issues come first, each with a call that fixes it when one does (`fix`, and the same as edit ops in `action.ops` for apply()); "note" issues are holes the export closes by itself (redactionJoins), said only so nothing is hidden. Read `summary` first: one line per kind of issue with its count ("check ×40 hiding-starts-after-cut: …"); `groups` holds the same with the items and source times (at most 20 each), `issues` every single one. ok is true when there is no "fix" issue (the export works), clean when there is no "fix" or "check" issue. A picture zoom whose view cuts screen text at its edge (read from the screen text that findText or hideText already read; check() never runs an OCR) is a "zoom-cuts-text" issue with a setZoom that keeps the lines whole when a smaller zoom can. Two texts count as "same time, same place" only when their rendered plates overlap (font size, wrap and the shape of the canvas). It changes nothing. An edit call whose cut hides an item or a marker, or shortens a text, says so in its own warnings too.',
         effect: "read",
     }),
     defineMethod({
@@ -1611,7 +1621,21 @@ function facts(opened: { path: string; project: EditProject }): EditFacts {
         missingVoiceovers: (project.audio.voiceovers ?? [])
             .filter((clip) => !existsSync(clip.file))
             .map((clip) => clip.id),
+        // R7 10 zoom edge text: only what was read already; check() never starts an OCR.
+        screenText: screenTextForCheck(project),
     };
+}
+
+function screenTextForCheck(project: EditProject): EditFacts["screenText"] {
+    try {
+        return cachedScreenText(project);
+    } catch (error) {
+        log.debug(
+            { error, video: project.source.video },
+            "the screen text cache does not read; check() skips zoom edges"
+        );
+        return undefined;
+    }
 }
 
 /** True when a video recording's manifest lists no sound source, so a transcription would pay for silence. */

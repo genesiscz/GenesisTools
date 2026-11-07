@@ -35,6 +35,13 @@ export interface EditFacts {
     // R4 voiceover clips
     /** The ids of the voiceover clips whose file is gone; absent is none checked. */
     missingVoiceovers?: readonly string[];
+    // R7 10 zoom edge text
+    /** The screen text read so far (the OCR cache of findText/hideText, or a frames recording's); absent: not read. */
+    screenText?: ReadonlyArray<{
+        atUs: number;
+        untilUs: number;
+        lines: ReadonlyArray<{ text: string; x: number; y: number; width: number; height: number }>;
+    }>;
 }
 
 /** A text that loses less than this to a cut is not worth a word. */
@@ -197,6 +204,8 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
 
     // R5 5 redaction edges
     issues.push(...redactionEdgeIssues(project));
+    // R7 10 zoom edge text
+    issues.push(...zoomEdgeIssues(project, facts.screenText ?? []));
     // R6 1 moving text
     issues.push(...uncertainHideIssues(project));
     // R5 11 clamps: an op time past the end was clamped to it; the edit call said so once, check() keeps saying it.
@@ -719,4 +728,106 @@ function uncertainHideIssues(project: EditProject): EditIssue[] {
             at: tenths(part.startUs),
             target: { list: "redactions" as const, id: part.id },
         }));
+}
+
+// R7 10 zoom edge text
+/** A line counts as cut when at least this share of its width (or height) is outside the zoom's view. */
+const CUT_SHARE = 0.08;
+
+/** A picture zoom's view at full scale, as the renderer clamps it (TimelineMap.swift `shown`): fractions of the picture. */
+export function zoomView(zoom: { scale: number; focusX: number; focusY: number }): {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+} {
+    const side = 1 / Math.max(1, zoom.scale);
+    const half = side / 2;
+    const centerX = Math.min(Math.max(zoom.focusX, half), 1 - half);
+    const centerY = Math.min(Math.max(zoom.focusY, half), 1 - half);
+    return { x: centerX - half, y: centerY - half, width: side, height: side };
+}
+
+/**
+ * Picture zooms whose view cuts screen text at its edge (round 7: 1.2x on a phone cut the side labels in half), from
+ * the screen text already read (never an OCR here). One issue per zoom, with a setZoom that fits the cut lines when a
+ * smaller zoom (1.05x or more) can. A follow zoom moves with the cursor and a canvas zoom has no picture view: neither
+ * is checked.
+ */
+function zoomEdgeIssues(project: EditProject, screenText: NonNullable<EditFacts["screenText"]>): EditIssue[] {
+    if (screenText.length === 0) {
+        return [];
+    }
+
+    const issues: EditIssue[] = [];
+
+    for (const zoom of project.zooms) {
+        if (zoom.mode === "follow" || zoom.target === "canvas" || keptUs(project, zoom.startUs, zoom.endUs) === 0) {
+            continue;
+        }
+
+        const view = zoomView(zoom);
+        const cut = new Map<string, { text: string; x: number; y: number; width: number; height: number }>();
+
+        for (const frame of screenText) {
+            if (frame.untilUs <= zoom.startUs || frame.atUs >= zoom.endUs) {
+                continue;
+            }
+
+            for (const line of frame.lines) {
+                const insideX = Math.max(
+                    0,
+                    Math.min(line.x + line.width, view.x + view.width) - Math.max(line.x, view.x)
+                );
+                const insideY = Math.max(
+                    0,
+                    Math.min(line.y + line.height, view.y + view.height) - Math.max(line.y, view.y)
+                );
+                const outX = 1 - insideX / Math.max(1e-6, line.width);
+                const outY = 1 - insideY / Math.max(1e-6, line.height);
+
+                if (insideX > 0 && insideY > 0 && (outX >= CUT_SHARE || outY >= CUT_SHARE)) {
+                    cut.set(`${line.text}@${Math.round(line.x * 100)},${Math.round(line.y * 100)}`, line);
+                }
+            }
+        }
+
+        if (cut.size === 0) {
+            continue;
+        }
+
+        const lines = [...cut.values()];
+        const left = Math.min(view.x, ...lines.map((line) => line.x));
+        const right = Math.max(view.x + view.width, ...lines.map((line) => line.x + line.width));
+        const top = Math.min(view.y, ...lines.map((line) => line.y));
+        const bottom = Math.max(view.y + view.height, ...lines.map((line) => line.y + line.height));
+        const fitted = Math.floor((1 / Math.max(right - left + 0.02, bottom - top + 0.02)) * 100) / 100;
+        const focus = {
+            x: Math.round(((left + right) / 2) * 1000) / 1000,
+            y: Math.round(((top + bottom) / 2) * 1000) / 1000,
+        };
+        const named = lines
+            .slice(0, 2)
+            .map((line) => `"${line.text.length > 24 ? `${line.text.slice(0, 23)}…` : line.text}"`)
+            .join(", ");
+        issues.push({
+            severity: "check",
+            kind: "zoom-cuts-text",
+            item: `zoom ${zoom.id}`,
+            message: `The zoom at ${tenths(zoom.startUs)} s (${zoom.scale}x) cuts ${lines.length} line${lines.length === 1 ? "" : "s"} of screen text at its edge (${named}${lines.length > 2 ? ", …" : ""}); ${fitted >= 1.05 && fitted < zoom.scale ? `${fitted}x around them keeps them whole` : "a smaller zoom or another focus keeps them whole"}`,
+            at: tenths(zoom.startUs),
+            target: { list: "zooms", id: zoom.id },
+            ...(fitted >= 1.05 && fitted < zoom.scale
+                ? {
+                      fix: `movie.apply([{ op: "setZoom", id: "${zoom.id}", scale: ${fitted}, focus: { x: ${focus.x}, y: ${focus.y} } }])`,
+                      action: {
+                          label: "Fit Text",
+                          ops: [{ op: "setZoom" as const, id: zoom.id, scale: fitted, focus }],
+                      },
+                  }
+                : {}),
+        });
+    }
+
+    return issues;
 }

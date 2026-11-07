@@ -286,6 +286,28 @@ function movieScreenText(project: EditProject): Promise<ScreenTextFrame[]> {
     });
 }
 
+// R7 10 zoom edge text
+/**
+ * The screen text read so far, never a new OCR: a frames recording's own, else the movie's cache when a findText or
+ * hideText made it. check() reads it to find a zoom that cuts text; undefined when nothing was read yet.
+ */
+export function cachedScreenText(project: EditProject): ScreenTextFrame[] | undefined {
+    const framesFolder = framesFolderOf(project);
+
+    if (framesFolder) {
+        return framesScreenText(framesFolder);
+    }
+
+    const video = project.source.video;
+
+    if (!existsSync(video)) {
+        return undefined;
+    }
+
+    const key = movieKey(video, `every=${screenTextEverySeconds(project.source.durationUs)},editor-time`);
+    return readCache(cachePath(video, "screen-text"), key, screenFramesSchema);
+}
+
 /**
  * The movie's screen text as frames of OCR lines over its picture. A frames recording's own OCR, else a Vision read
  * of sampled movie frames, cached in `screen-text.json` beside the edit.

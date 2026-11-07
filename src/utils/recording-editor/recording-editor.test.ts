@@ -21,6 +21,7 @@ import {
     groupIssues,
     issueSummary,
     textBox,
+    zoomView,
 } from "@genesiscz/utils/recording-editor/check";
 import {
     addComment,
@@ -995,6 +996,43 @@ describe("edit project (edit.json)", () => {
             width: 1,
             height: 16 / 9,
         });
+    });
+
+    // R7 10: a 1.2x zoom on a phone cut the side labels in half, and check() said nothing.
+    test("check names a zoom whose view cuts screen text at its edge, with a smaller zoom that keeps it whole", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const zoomed = applyOp(wholeProject(source), { op: "zoom", from: 2, to: 4, scale: 1.2 });
+        const zoomId = zoomed.zooms[0]?.id ?? "";
+        const screenText = [
+            {
+                atUs: 1_500_000,
+                untilUs: 3_000_000,
+                lines: [
+                    { text: "Invoices", x: 0.05, y: 0.5, width: 0.25, height: 0.03 },
+                    { text: "Total 120", x: 0.4, y: 0.6, width: 0.2, height: 0.03 },
+                ],
+            },
+            { atUs: 6_000_000, untilUs: 7_000_000, lines: [{ text: "Later", x: 0, y: 0, width: 0.2, height: 0.03 }] },
+        ];
+        const issues = checkProject(zoomed, { ...facts, screenText }).filter(
+            (issue) => issue.kind === "zoom-cuts-text"
+        );
+        expect(issues).toHaveLength(1);
+        expect(issues[0]?.message).toContain('cuts 1 line of screen text at its edge ("Invoices")');
+        expect(issues[0]?.action?.ops).toEqual([
+            { op: "setZoom", id: zoomId, scale: 1.12, focus: { x: 0.483, y: 0.5 } },
+        ]);
+        const fitted = (issues[0]?.action?.ops ?? []).reduce((next, op) => applyOp(next, op), zoomed);
+        expect(
+            checkProject(fitted, { ...facts, screenText }).filter((issue) => issue.kind === "zoom-cuts-text")
+        ).toEqual([]);
+        // Nothing read, nothing said; a follow zoom moves with the cursor and is not judged.
+        expect(checkProject(zoomed, facts).some((issue) => issue.kind === "zoom-cuts-text")).toBe(false);
+        const follow = applyOp(wholeProject(source), { op: "zoom", from: 2, to: 4, scale: 1.2, follow: true });
+        expect(checkProject(follow, { ...facts, screenText }).some((issue) => issue.kind === "zoom-cuts-text")).toBe(
+            false
+        );
+        expect(zoomView({ scale: 2, focusX: 0.9, focusY: 0.1 })).toEqual({ x: 0.5, y: 0, width: 0.5, height: 0.5 });
     });
 
     // R5 4: a phone in 16:9 filled a quarter of the width, with no way to move it aside or zoom the whole canvas.
