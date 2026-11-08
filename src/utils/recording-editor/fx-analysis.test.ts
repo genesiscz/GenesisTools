@@ -234,6 +234,9 @@ describe("tracked text, exclusions and events", () => {
         expect(matcher("Contact alice@example. com").map((match) => [match.start, match.end])).toEqual([[8, 26]]);
         expect(privateMatcher()("alice@example. com").map((match) => match.kind)).toEqual(["email"]);
         expect(privateMatcher(["Bob Builder"])("call bob builder now").map((match) => match.kind)).toEqual(["name"]);
+        // OCR drops or doubles the space: the name is still hidden, as the warning of an unread name assumes.
+        expect(privateMatcher(["Bob Builder"])("call BobBuilder now").map((match) => match.kind)).toEqual(["name"]);
+        expect(privateMatcher(["Bob Builder"])("call bob  builder now").map((match) => match.kind)).toEqual(["name"]);
         // It scrolls up 0.1 of the picture per 0.2 s sample, then rests.
         const frames = [
             frame(0, []),
