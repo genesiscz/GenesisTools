@@ -1222,6 +1222,22 @@ describe("edit project (edit.json)", () => {
         expect(checkProject(slow, facts).filter((found) => found.kind === "too-short")).toEqual([]);
     });
 
+    // Regression test: unified review 2026-11-08 ED-voiceover-false-in-cut.
+    test("a voiceover at a cut's start plays, so check does not report it as in the cut", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const cut = applyOp(wholeProject(source), { op: "cut", from: 4, to: 5 });
+        const voiced = (atUs: number) =>
+            editProjectSchema.parse({
+                ...cut,
+                audio: { ...cut.audio, voiceovers: [{ id: "v1", atUs, file: "/movies/voice.m4a", durationUs: 1 }] },
+            });
+        const inCut = (project: projectOps.EditProject) =>
+            checkProject(project, facts).filter((found) => found.kind === "voiceover-in-cut");
+        expect(voiceoverExportSpans(voiced(4_000_000))).toHaveLength(1);
+        expect(inCut(voiced(4_000_000))).toEqual([]);
+        expect(inCut(voiced(4_500_000))).toHaveLength(1);
+    });
+
     // Regression test: deep test 2026-11-06 RE5 — `tools recorder fix` printed "fixed" four times for an op that changed nothing.
     test("fix reports nothing fixed for an item that already spans the whole movie", () => {
         const short = { ...source, durationUs: 300_000 };
