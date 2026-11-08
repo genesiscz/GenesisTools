@@ -854,6 +854,37 @@ describe("projects rename and remove", () => {
         expect(SafeJSON.parse(readFileSync(first.backup, "utf8"))).toMatchObject({ block: { labels: ["First"] } });
         expect(SafeJSON.parse(readFileSync(second.backup, "utf8"))).toMatchObject({ block: { labels: ["Second"] } });
     });
+
+    test("a waiting folder step follows a rename and closes on a removal, so no answer brings the old name back", async () => {
+        const { config, meetings, used } = await withProject();
+        const waitFor = async (id: string, project: string) =>
+            meetings.update(id, { command: "test", change: "folder step" }, (next) => {
+                next.assign = {
+                    folder: {
+                        source: "wisprflow",
+                        project,
+                        state: "asked",
+                        since: "2026-11-02T15:00:00.000Z",
+                        folder: "Inbox",
+                    },
+                };
+            });
+        await waitFor(used, "wrok");
+
+        await renameProject({ config, store: meetings, from: "wrok", to: "work" });
+        expect(meetings.read(used)?.assign?.folder?.project).toBe("work");
+
+        await removeProject({
+            config,
+            store: meetings,
+            name: "work",
+            unassign: true,
+            backupRoot: join(meetings.root, "..", "backups"),
+        });
+        expect(meetings.read(used)?.assign?.folder).toBeUndefined();
+        await expect(config.addSourceFolder("wisprflow", "work", "Inbox")).rejects.toThrow("No project work");
+        expect((await config.read()).projects.work).toBeUndefined();
+    });
 });
 
 describe("set and project labels for every door (R2-MC7)", () => {

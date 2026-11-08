@@ -4,7 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfigStore, projectNameSchema } from "@genesiscz/utils/meetings/config";
 import { MeetingsConflictError } from "@genesiscz/utils/meetings/conflict";
-import type { MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { localStamp } from "./shared";
 
@@ -21,6 +21,11 @@ function sourceMatches(raw: Record<string, unknown>): Array<Record<string, unkno
               isObject(source) && isObject(source.match) ? [source.match] : []
           )
         : [];
+}
+
+/** A folder step (waiting or asked) that would pair a folder with the project once it is answered. */
+function folderStepNames(record: MeetingRecord, project: string): boolean {
+    return record.assign?.folder?.project === project;
 }
 
 export interface ProjectRename {
@@ -70,22 +75,31 @@ export async function renameProject(options: {
 
     const meetings: string[] = [];
 
-    // The list is a snapshot: a meeting moved to another project since keeps that project, and is not reported.
-    for (const record of store.list().filter((one) => one.project === from)) {
-        const renamed = await store.updateIf(
+    // The list is a snapshot: a meeting moved to another project since keeps that project, and is not reported. A
+    // folder step (waiting or asked) that names the old project follows the rename, so a late answer cannot bring it back.
+    for (const record of store.list().filter((one) => one.project === from || folderStepNames(one, from))) {
+        let renamed = false;
+        const changed = await store.updateIf(
             record.id,
             { command: "projects rename", change: `project ${from} → ${to}` },
             (next) => {
-                if (next.project !== from) {
-                    return false;
+                let stepRenamed = false;
+
+                if (next.project === from) {
+                    next.project = to;
+                    renamed = true;
                 }
 
-                next.project = to;
-                return true;
+                if (next.assign?.folder?.project === from) {
+                    next.assign.folder.project = to;
+                    stepRenamed = true;
+                }
+
+                return renamed || stepRenamed;
             }
         );
 
-        if (renamed) {
+        if (changed && renamed) {
             meetings.push(record.id);
         }
     }
@@ -188,22 +202,34 @@ export async function removeProject(options: {
 
     const unassigned: string[] = [];
 
-    // `using` is a snapshot taken before the config lock: a meeting moved to another project since keeps it.
-    for (const record of using) {
-        const cleared = await store.updateIf(
+    // `using` is a snapshot taken before the config lock: a meeting moved to another project since keeps it, and only
+    // a meeting in it loses the project. A folder step (waiting or asked) that names the project is closed too, so a
+    // late answer cannot bring the removed project back.
+    const usingIds = new Set(using.map((record) => record.id));
+
+    for (const record of store.list().filter((one) => usingIds.has(one.id) || folderStepNames(one, name))) {
+        let cleared = false;
+        const changed = await store.updateIf(
             record.id,
             { command: "projects remove", change: `project ${name} removed` },
             (next) => {
-                if (next.project !== name) {
-                    return false;
+                let stepClosed = false;
+
+                if (usingIds.has(next.id) && next.project === name) {
+                    next.project = undefined;
+                    cleared = true;
                 }
 
-                next.project = undefined;
-                return true;
+                if (next.assign?.folder?.project === name) {
+                    delete next.assign.folder;
+                    stepClosed = true;
+                }
+
+                return cleared || stepClosed;
             }
         );
 
-        if (cleared) {
+        if (changed && cleared) {
             unassigned.push(record.id);
         }
     }

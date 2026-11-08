@@ -824,13 +824,21 @@ export class MeetingsConfigStore {
         return removed;
     }
 
-    /** Pairs a source's folder with a project: a meeting in it then goes to the project. False when it was paired. */
+    /**
+     * Pairs a source's folder with a known project: a meeting in it then goes to the project. False when it was paired.
+     * An unknown project is refused, so a late answer cannot bring back a project that was renamed or removed.
+     */
     async addSourceFolder(source: MeetingSourceId, project: string, folder: string): Promise<boolean> {
         projectNameSchema.parse(project);
         let added = false;
 
         await this.update((raw) => {
-            objectAt(objectAt(raw, "projects"), project);
+            const projects = objectAt(raw, "projects");
+
+            if (!projects[project]) {
+                throw new Error(`No project ${project}, so the ${source} folder "${folder}" is not paired`);
+            }
+
             const match = objectAt(objectAt(objectAt(objectAt(raw, "sources"), source), "match"), project);
             const folders = stringList(match.folders);
             added = !folders.some((known) => known.toLowerCase() === folder.toLowerCase());
