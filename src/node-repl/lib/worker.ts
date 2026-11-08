@@ -115,9 +115,21 @@ declare global {
     var sleep: (ms: number) => Promise<void>;
 }
 
+/**
+ * One entry of the turn's text. A turn that streams sends it to the parent as well, console lines and nodeRepl.write
+ * alike: the streamed lines must be one run in the text, or the caller cannot take them out and prints them twice.
+ */
+function pushOutput(text: string): void {
+    output.push(text);
+
+    if (streaming) {
+        process.stdout.write(`${SafeJSON.stringify({ id: 0, output: text })}\n`);
+    }
+}
+
 const replApi = {
     write(value: unknown): void {
-        output.push(typeof value === "string" ? value : Bun.inspect(value));
+        pushOutput(typeof value === "string" ? value : Bun.inspect(value));
     },
     /**
      * One image's bytes (or base64), checked as show() checks them: the bytes decide the type. Unchecked bytes went to
@@ -369,13 +381,8 @@ const turnStream = new Writable({
     write(chunk: Buffer | string, _encoding, done): void {
         const text = String(chunk).replace(/\n$/, "");
 
-        output.push(text);
         process.stderr.write(`${text}\n`);
-
-        if (streaming) {
-            process.stdout.write(`${SafeJSON.stringify({ id: 0, output: text })}\n`);
-        }
-
+        pushOutput(text);
         done();
     },
 });
