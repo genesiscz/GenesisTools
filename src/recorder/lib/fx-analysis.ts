@@ -856,19 +856,51 @@ function hitsOut(project: EditProject, hits: readonly PrivateHit[]): PrivateHitO
     });
 }
 
-/** The private hits of an edit's movie (Vision OCR, local), the input of the `hidePrivate` op. */
-export function privateHitsOf(
+/**
+ * CLI-F4: hits and a warning for each request no screen text matched, so the answer says a silent miss (a REPL over
+ * MCP or the service never shows a stderr line).
+ */
+export interface HitsAnswer {
+    hits: PrivateHit[];
+    warnings: string[];
+}
+
+/** R8 7: the warning of each text, pattern or name of a request that no line read matched. */
+function unmatchedWarnings(
+    read: readonly ScreenTextFrame[],
+    query: Omit<TextQuery, "unit">,
+    scan: TrackOptions["scan"]
+): string[] {
+    return unmatchedQueries(read, query).map(
+        (said) =>
+            `no screen text ${scan ? "of the range read" : "of the whole movie"} matches ${said}: each OCR line is matched on its own, without case; \\w and \\b take letters of any language, \\p{L} is any letter`
+    );
+}
+
+/** The private hits of an edit's movie (Vision OCR, local), the input of the `hidePrivate` op; a name never read is a warning. */
+export async function privateHitsOf(
     project: EditProject,
     options: TrackOptions & { names?: readonly string[] } = {}
-): Promise<PrivateHit[]> {
-    return trackedHits(project, privateMatcher(options.names), options);
+): Promise<HitsAnswer> {
+    let read: readonly ScreenTextFrame[] = [];
+    const hits = await trackedHits(project, privateMatcher(options.names), {
+        ...options,
+        onRead: (frames) => {
+            read = frames;
+            options.onRead?.(frames);
+        },
+    });
+    const names = (options.names ?? []).map((name) => name.trim()).filter(Boolean);
+    const warnings = names.length > 0 ? unmatchedWarnings(read, { texts: names }, options.scan) : [];
+    log.debug({ hits: hits.length, warnings }, "private hits");
+    return { hits, warnings };
 }
 
 export async function privateData(
     project: EditProject,
     options: TrackOptions & { names?: readonly string[] } = {}
 ): Promise<PrivateHitOut[]> {
-    return hitsOut(project, await privateHitsOf(project, options));
+    return hitsOut(project, (await privateHitsOf(project, options)).hits);
 }
 
 /**
@@ -877,8 +909,8 @@ export async function privateData(
  */
 export type TextQuery = TextMatcherOptions;
 
-/** Every place of a text (or a pattern) on the screen, the input of the `hideText` op. */
-export async function textHitsOf(project: EditProject, options: TrackOptions & TextQuery): Promise<PrivateHit[]> {
+/** Every place of a text (or a pattern) on the screen, the input of the `hideText` op; a request never read is a warning. */
+export async function textHitsOf(project: EditProject, options: TrackOptions & TextQuery): Promise<HitsAnswer> {
     let read: readonly ScreenTextFrame[] = [];
     const hits = await trackedHits(project, textMatcher(options), {
         ...options,
@@ -887,29 +919,30 @@ export async function textHitsOf(project: EditProject, options: TrackOptions & T
             options.onRead?.(frames);
         },
     });
-
     // R8 7: a pattern that never matched is said, not silently dropped (a \w that did not take Czech letters did).
-    for (const query of unmatchedQueries(read, options)) {
-        log.out.warn(
-            `no screen text ${options.scan ? "of the range read" : "of the whole movie"} matches ${query}: each OCR line is matched on its own, without case; \\w and \\b take letters of any language, \\p{L} is any letter`
-        );
-    }
-
-    return hits;
+    const warnings = unmatchedWarnings(read, options, options.scan);
+    log.debug({ hits: hits.length, warnings }, "text hits");
+    return { hits, warnings };
 }
 
 export async function findText(
     project: EditProject,
     options: TrackOptions & TextQuery & { from?: TimeValue; to?: TimeValue }
-): Promise<PrivateHitOut[]> {
+): Promise<{ hits: PrivateHitOut[]; warnings?: string[] }> {
     // R7 6: from/to (source seconds) as hideText takes them; a place that shows at any moment between them counts.
     const fromUs = options.from === undefined ? 0 : timeToUs(options.from);
     const toUs = options.to === undefined ? Number.POSITIVE_INFINITY : timeToUs(options.to);
-    const hits = await textHitsOf(project, { ...options, scan: options.scan ?? scanOf(options.from, options.to) });
-    return hitsOut(
-        project,
-        hits.filter((hit) => hit.toUs > fromUs && hit.fromUs < toUs)
-    );
+    const { hits, warnings } = await textHitsOf(project, {
+        ...options,
+        scan: options.scan ?? scanOf(options.from, options.to),
+    });
+    return {
+        hits: hitsOut(
+            project,
+            hits.filter((hit) => hit.toUs > fromUs && hit.fromUs < toUs)
+        ),
+        ...(warnings.length > 0 ? { warnings } : {}),
+    };
 }
 
 /**
@@ -1137,13 +1170,21 @@ export async function verifyHidden(
               })
             : null,
     }));
-    // R8 4: a leak with no place in the source gets no fix op (never a box over the whole frame), but a note.
-    const notes = placed
-        .filter((leak) => leak.source && leak.sourceKeys.length === 0)
-        .map(
-            (leak) =>
-                `the leak at ${leak.source?.at} to ${leak.source?.until} s (source) has no place in the source picture (the source never read it there): hide it by hand from its export box, or with still({ source: true, full: true }) at that time`
-        );
+    // R8 4: a leak with no place in the source gets no fix op (never a box over the whole frame), but a note; so does
+    // a leak inside an intro or end card (CLI-F4), so fixOps plus notes name every leak.
+    const notes = placed.flatMap((leak) => {
+        if (!leak.source) {
+            return [
+                `the leak at ${leak.at} to ${leak.until} s of the export is inside an intro or end card, which no redact op reaches: change the card's text (introCard() or endCard())`,
+            ];
+        }
+
+        return leak.sourceKeys.length === 0
+            ? [
+                  `the leak at ${leak.source.at} to ${leak.source.until} s (source) has no place in the source picture (the source never read it there): hide it by hand from its export box, or with still({ source: true, full: true }) at that time`,
+              ]
+            : [];
+    });
     return {
         ok: placed.length === 0,
         movie,
