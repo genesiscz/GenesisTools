@@ -215,16 +215,24 @@ program
             }
 
             // R6 11: console lines print as the turn writes them (a long edit showed nothing for minutes), up to
-            // --max-output; the answer then prints only what was not printed yet (the result, a note).
+            // --max-output; the answer then prints only what was not printed yet (the result, a note). Streaming stops
+            // for good at the first line past the limit: a later short line would break the run of printed lines in
+            // the text, and the whole text would print again (REPL-F5).
             const streamed: string[] = [];
             let streamedChars = 0;
             let answered = false;
+            let cut = false;
             const engine = new ReplEngine({
                 toolsets,
                 maxOutputChars,
                 timeoutHint: runTimeoutHint,
                 onOutput: (line) => {
-                    if (answered || (maxOutputChars > 0 && streamedChars + line.length > maxOutputChars)) {
+                    if (answered || cut) {
+                        return;
+                    }
+
+                    if (maxOutputChars > 0 && streamedChars + line.length > maxOutputChars) {
+                        cut = true;
                         return;
                     }
 

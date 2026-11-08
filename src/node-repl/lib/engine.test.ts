@@ -861,3 +861,30 @@ it("a module directory added while a turn runs answers at once and leaves the tu
         await engine.shutdown();
     }
 }, 20_000);
+
+// REPL-F5: nodeRepl.write lines did not stream, so the streamed console lines were not one run in the text and the
+// CLI printed all of them twice.
+it("nodeRepl.write streams beside console lines, so the streamed lines come out of the text whole", async () => {
+    const seen: string[] = [];
+    const engine = new ReplEngine({ onOutput: (line) => seen.push(line) });
+    try {
+        const result = await engine.run('console.log("a"); nodeRepl.write("b"); console.log("c"); 1');
+        expect(seen).toEqual(["a", "b", "c"]);
+        expect(withoutStreamed(result.text, seen)).toBe("1");
+    } finally {
+        await engine.shutdown();
+    }
+});
+
+it("run stops streaming after the first line past --max-output, so no line prints twice", async () => {
+    const cli = join(import.meta.dir, "..", "index.ts");
+    const code = 'console.log("x".repeat(15000)); console.log("y".repeat(6000)); console.log("z".repeat(100)); 1';
+    const child = Bun.spawn([process.execPath, cli, "run", "--max-output", "20000", code], {
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+    expect(stdout.split("x".repeat(15000)).length - 1).toBe(1);
+    expect(stdout.split("z".repeat(100)).length - 1).toBeLessThanOrEqual(1);
+}, 20_000);
