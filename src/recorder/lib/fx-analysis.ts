@@ -1,24 +1,23 @@
 import { createHash } from "node:crypto";
 import {
-    closeSync,
     existsSync,
     mkdirSync,
     mkdtempSync,
-    openSync,
     readdirSync,
     readFileSync,
-    readSync,
     rmSync,
     statSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { recognizeTextBoxesQueued } from "@genesiscz/utils/macos/ocr-queue";
 import {
     type AnalysisCacheRequest,
     cachedAnalysis,
+    movieContentKey,
     readAnalysis,
 } from "@genesiscz/utils/recording-editor/analysis-cache";
 import {
@@ -78,7 +77,6 @@ import {
     waitStretches,
 } from "@genesiscz/utils/recording-editor/waits";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
@@ -217,35 +215,14 @@ export interface FrameCache {
 const frameLinesSchema = z.record(z.string(), screenFramesSchema.element.shape.lines);
 
 /**
- * R8 5: what identifies a file's content without reading all of it: its size and a hash of its first, middle and last
- * 2 MB. An export written again with other bytes is another key; the same file under another name is the same one.
- */
-export function contentKey(path: string): string {
-    const size = statSync(path).size;
-    const chunk = 2 * 1024 * 1024;
-    const hash = createHash("sha1").update(String(size));
-    const buffer = Buffer.alloc(chunk);
-    const fd = openSync(path, "r");
-
-    try {
-        for (const start of [0, Math.max(0, Math.floor(size / 2) - chunk / 2), Math.max(0, size - chunk)]) {
-            const read = readSync(fd, buffer, 0, chunk, start);
-            hash.update(buffer.subarray(0, read));
-        }
-    } finally {
-        closeSync(fd);
-    }
-
-    return hash.digest("hex").slice(0, 24);
-}
-
-/**
  * R8 5: the OCR of an export's frames, kept in `recorder/verify-ocr/<content key>.json` by frame time, so verifyHidden
  * over the same export reads nothing twice, and a run that fails late keeps what it read (written every 10 frames and
  * at the end).
  */
 export function exportFrameCache(movie: string): FrameCache & { flush(): void } {
-    const path = toolDataDir("recorder", "verify-ocr", `${contentKey(movie)}.json`);
+    // The same content key as the movie analyses (analysis-cache.ts): an export written again with other bytes is
+    // another key; the same file under another name is the same one.
+    const path = toolDataDir("recorder", "verify-ocr", `${movieContentKey(movie)}.json`);
     let lines: Record<string, ScreenTextFrame["lines"]> = {};
 
     if (existsSync(path)) {
@@ -405,8 +382,12 @@ export function cachedScreenText(project: EditProject): ScreenTextFrame[] | unde
         return undefined;
     }
 
-    const key = movieKey(video, `every=${screenTextEverySeconds(project.source.durationUs)},editor-time,pts`);
-    return readCache(cachePath(video, "screen-text"), key, screenFramesSchema);
+    return readAnalysis(analysisOf(video, "screen-text", screenTextKey(project), screenFramesSchema));
+}
+
+/** How the screen text is read. editor-time: sampled on the editor time base (sampleFpsFilter); pts: each frame picked by its own presentation time (frame-grid.ts). */
+function screenTextKey(project: EditProject): string {
+    return `every=${screenTextEverySeconds(project.source.durationUs)},editor-time,pts`;
 }
 
 /**
@@ -428,20 +409,21 @@ export async function screenTextOf(
         throw new Error(`the movie ${video} is not there, so its screen text cannot be read`);
     }
 
-    const path = cachePath(video, "screen-text");
-    // editor-time: sampled on the editor time base (sampleFpsFilter); older caches took the nearest frame.
-    const key = movieKey(video, `every=${screenTextEverySeconds(project.source.durationUs)},editor-time,pts`);
-    const cached = readCache(path, key, screenFramesSchema);
-
-    if (cached) {
-        return { frames: cached, source: "movie", cached: true };
-    }
-
-    const started = Date.now();
-    const frames = await movieScreenText(project);
-    log.debug({ video, frames: frames.length, ms: Date.now() - started }, "movie screen text read with Vision");
-    writeCache(path, key, frames);
-    return { frames, source: "movie", cached: false };
+    let read = false;
+    const frames = await cachedAnalysis({
+        ...analysisOf(video, "screen-text", screenTextKey(project), screenFramesSchema),
+        compute: async () => {
+            const started = Date.now();
+            const movieFrames = await movieScreenText(project);
+            log.debug(
+                { video, frames: movieFrames.length, ms: Date.now() - started },
+                "movie screen text read with Vision"
+            );
+            read = true;
+            return movieFrames;
+        },
+    });
+    return { frames, source: "movie", cached: !read };
 }
 
 /** Frames a second around a hit's edges and while it moves: a scrolling line is placed every 0.2 s. */
@@ -460,45 +442,46 @@ async function denseScreenText(
     { twice = false }: { twice?: boolean } = {}
 ): Promise<ScreenTextFrame[]> {
     const video = project.source.video;
-    const path = cachePath(video, "screen-text-dense");
-    const key = movieKey(video, `dense=${DENSE_FPS},pts`);
-    const cache: Record<string, ScreenTextFrame["lines"]> = { ...(readCache(path, key, denseSchema) ?? {}) };
     const stepUs = 1_000_000 / DENSE_FPS;
-    let read = false;
-
-    const times = new Set<number>();
+    const grids: Array<{ start: number; toUs: number; times: number[] }> = [];
 
     for (const [fromUs, toUs] of windows) {
         // Each grid is read on its own, so the half-way frames of a window read before at DENSE_FPS add only themselves.
         for (const offset of twice ? [0, stepUs / 2] : [0]) {
             const start = Math.floor((fromUs - offset) / stepUs) * stepUs + offset;
-            const grid: number[] = [];
+            const times: number[] = [];
 
             for (let atUs = start; atUs < toUs; atUs += stepUs) {
-                grid.push(Math.round(atUs));
+                times.push(Math.round(atUs));
             }
 
-            if (grid.some((atUs) => !cache[String(atUs)])) {
-                for (const frame of await ocrVideo({ video, fromUs: start, toUs, fps: DENSE_FPS })) {
-                    const atUs = Math.round(Math.round((frame.atUs - start) / stepUs) * stepUs + start);
-                    cache[String(atUs)] = frame.lines;
-                }
-
-                read = true;
-            }
-
-            for (const atUs of grid) {
-                times.add(atUs);
-            }
+            grids.push({ start, toUs, times });
         }
     }
 
-    if (read) {
-        writeCache(path, key, cache);
-    }
+    const cache = await cachedAnalysis({
+        ...analysisOf(video, "screen-text-dense", `dense=${DENSE_FPS},pts`, denseSchema),
+        complete: (cached) => grids.every(({ times }) => times.every((atUs) => cached[String(atUs)])),
+        compute: async (cached) => {
+            const known: Record<string, ScreenTextFrame["lines"]> = { ...(cached ?? {}) };
+
+            for (const { start, toUs, times } of grids) {
+                if (times.some((atUs) => !known[String(atUs)])) {
+                    for (const frame of await ocrVideo({ video, fromUs: start, toUs, fps: DENSE_FPS })) {
+                        const atUs = Math.round(Math.round((frame.atUs - start) / stepUs) * stepUs + start);
+                        known[String(atUs)] = frame.lines;
+                    }
+                }
+            }
+
+            return known;
+        },
+    });
 
     // A time ffmpeg gave no picture for (past the last frame) is not a frame that shows nothing.
-    const ordered = [...times].filter((atUs) => cache[String(atUs)]).sort((a, b) => a - b);
+    const ordered = [...new Set(grids.flatMap(({ times }) => times))]
+        .filter((atUs) => cache[String(atUs)])
+        .sort((a, b) => a - b);
     return ordered.map((atUs, index) => ({
         atUs,
         untilUs: Math.min(project.source.durationUs, ordered[index + 1] ?? atUs + stepUs, atUs + stepUs),
@@ -595,11 +578,12 @@ async function motionWindows(
     stretches: ReadonlyArray<[number, number]>
 ): Promise<MotionWindow[]> {
     const video = project.source.video;
-    const path = cachePath(video, "motion");
-    const key = movieKey(video, `motion=${MOTION_FPS},v2,pts`);
-    const cache = { ...(readCache(path, key, motionCacheSchema) ?? {}) };
-    const windows: MotionWindow[] = [];
-    let measured = false;
+    const names = stretches.map(([fromUs, toUs]) => `${Math.round(fromUs)}-${Math.round(toUs)}`);
+    const cache = await cachedAnalysis({
+        ...analysisOf(video, "motion", `motion=${MOTION_FPS},v2,pts`, motionCacheSchema),
+        complete: (cached) => names.every((name) => cached[name]),
+        compute: async (cached) => {
+            const known = { ...(cached ?? {}) };
 
             for (const [index, [fromUs, toUs]] of stretches.entries()) {
                 const name = names[index];
@@ -1206,17 +1190,9 @@ export async function changeStepsOf(
     }
 
     // v3: sampled on the editor time base (sampleFpsFilter); v2 caches took the nearest frame.
-    const key = movieKey(video, `fps=${WAIT_SAMPLE_FPS},v3,pts`);
-    const cached = readCache(path, key, stepsCacheSchema);
-
-    if (cached) {
-        return cached;
-    }
-
-    const measured = await measureChangeSteps({
-        video,
-        width: project.source.width,
-        height: project.source.height,
+    return cachedAnalysis({
+        ...analysisOf(video, "waits", `fps=${WAIT_SAMPLE_FPS},v3,pts`, stepsCacheSchema),
+        compute: () => measureChangeSteps({ video, width: project.source.width, height: project.source.height }),
     });
 }
 
