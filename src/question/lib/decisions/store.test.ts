@@ -2133,7 +2133,7 @@ describe("chatAnswers", () => {
         const answerTo = (text: string) =>
             chatAnswers(
                 [entry("assistant", "❓ DECISION 15 — Which cleanup steps may run now?", 1), entry("user", text, 2)],
-                [{ number: 15, letters: six, askedAt: at(1) }]
+                [{ number: 15, letters: six, several: true, askedAt: at(1) }]
             );
         const options = (text: string) => answerTo(text).unambiguous.map((answer) => answer.option ?? null);
 
@@ -2151,6 +2151,30 @@ describe("chatAnswers", () => {
         ]);
         expect(options("15 a but not c")).toEqual([]);
         expect(options("15 abcfed")).toEqual([]);
+        expect(options("15 bad")).toEqual([]);
+    });
+
+    test("reads a word as words on a decision that takes one letter, never as a set of its letters", () => {
+        const five = ["a", "b", "c", "d", "e"];
+        const answerTo = (text: string) =>
+            chatAnswers(
+                [entry("assistant", "❓ DECISION 3 — Which cache?", 1), entry("user", text, 2)],
+                [{ number: 3, letters: five, askedAt: at(1) }]
+            );
+        const read = (text: string) => {
+            const found = answerTo(text);
+            return {
+                unambiguous: found.unambiguous.map((answer) => [answer.option ?? null, answer.answer]),
+                ambiguous: found.ambiguous.map((item) => item.reason),
+            };
+        };
+
+        expect(read("D3: add")).toEqual({ unambiguous: [[null, "add"]], ambiguous: [] });
+        expect(read("D3: be")).toEqual({ unambiguous: [[null, "be"]], ambiguous: [] });
+        expect(read("D3 bad")).toEqual({ unambiguous: [], ambiguous: ["mentioned without an option"] });
+        expect(read("D3 ac)")).toEqual({ unambiguous: [], ambiguous: ["mentioned without an option"] });
+        expect(read("D3 b")).toEqual({ unambiguous: [["b", ""]], ambiguous: [] });
+        expect(read("D3: c - the cheap one")).toEqual({ unambiguous: [["c", "the cheap one"]], ambiguous: [] });
     });
 
     test("calls two answers, a letter past the options, or a bare mention ambiguous", () => {
