@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -33,6 +35,24 @@ export const recordingManifestSchema = z.object({
     warnings: z.array(z.string()).default([]),
 });
 export type RecordingManifest = z.infer<typeof recordingManifestSchema>;
+
+/**
+ * A new movie recording's library id, `video-<local date>_<time>-<uuid>`: the library sorts its folders by the time in
+ * the name, and `shortRecordingId` shortens it to the part before the uuid's second group.
+ */
+export function newVideoRecordingId(now = new Date()): string {
+    const pad = (value: number) => String(value).padStart(2, "0");
+    const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+    return `video-${stamp}-${randomUUID()}`;
+}
+
+/** Writes a recording's manifest whole: a `.partial` file renamed over it, so a reader never sees half of one. */
+export async function writeRecordingManifest(folder: string, manifest: RecordingManifest): Promise<void> {
+    const path = join(folder, RECORDING_MANIFEST);
+    const partial = `${path}.partial`;
+    await writeFile(partial, `${SafeJSON.stringify(manifest, null, 2)}\n`);
+    await rename(partial, path);
+}
 
 /** The manifest of a recording folder, or undefined when the folder holds none. */
 export function readRecordingManifest(folder: string): RecordingManifest | undefined {

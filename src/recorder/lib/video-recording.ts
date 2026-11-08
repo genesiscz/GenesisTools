@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { runCountdown } from "@app/control/lib/peekaboo";
 import {
@@ -19,13 +19,14 @@ import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { formatCount } from "@genesiscz/utils/format";
 import type { FlockState } from "@genesiscz/utils/fs/flock";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { passStartGate, releaseStartGate } from "@genesiscz/utils/process/start-gate";
 import {
+    newVideoRecordingId,
     RECORDING_MANIFEST,
     type RecordingManifest,
     recordingsLibraryDir,
+    writeRecordingManifest,
 } from "@genesiscz/utils/screen-recorder/library";
 import { LiveRecordingServer, liveRecordingId } from "@genesiscz/utils/screen-recorder/live";
 import { trashRecordingFolder } from "@genesiscz/utils/screen-recorder/start";
@@ -194,18 +195,6 @@ export async function recordedNothing(folder: string): Promise<boolean> {
     return true;
 }
 
-function stamp(date = new Date()): string {
-    const pad = (value: number) => String(value).padStart(2, "0");
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`;
-}
-
-async function writeManifest(folder: string, manifest: RecordingManifest): Promise<void> {
-    const path = join(folder, RECORDING_MANIFEST);
-    const partial = `${path}.partial`;
-    await writeFile(partial, `${SafeJSON.stringify(manifest, null, 2)}\n`);
-    await rename(partial, path);
-}
-
 /**
  * Records the screen (or a window or app) as a movie into the recordings library: `screen.mp4` with its audio
  * tracks, `cursor.jsonl` and `recording.json`, ready for the editor. The recording is a live entry, so the menu bar
@@ -256,7 +245,7 @@ export async function recordVideo(options: VideoRecordingOptions): Promise<Video
 }
 
 async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecordingResult> {
-    const id = `video-${stamp()}-${randomUUID()}`;
+    const id = newVideoRecordingId();
     const folder = recordingsLibraryDir(id);
     const movie = join(folder, "screen.mp4");
     // "display 0" (the target's own description) said nothing in the library; a time does.
@@ -290,7 +279,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         frames: [],
         warnings: [],
     };
-    await writeManifest(folder, manifest);
+    await writeRecordingManifest(folder, manifest);
     log.info(
         { id, folder, target: options.target, audio: options.audio, fps: options.fps },
         "video recording starting"
@@ -433,7 +422,7 @@ async function recordPassed(options: VideoRecordingOptions): Promise<VideoRecord
         options.emit?.({ event: "error", message: cameraWarning, code: "camera-missing", fatal: false });
     }
 
-    await writeManifest(folder, {
+    await writeRecordingManifest(folder, {
         ...manifest,
         endedAt: new Date().toISOString(),
         settings: {
