@@ -761,7 +761,8 @@ struct EditRenderer {
         let outputScale = picture.height / natural.height
         let cameraFeed = await CameraFeed.make(project: project)
         // Round 4 fx-render: the frames a transition blends with, read when a frame first needs them.
-        let stills = TransitionStills(asset: asset)
+        let stills = TransitionStills(asset: asset,
+                                      maximumSize: TransitionStills.maximumSize(source: natural, picture: picture, project: project))
         let videoComposition = AVMutableVideoComposition(asset: composition) { request in
             var image = request.sourceImage
             let extent = image.extent
