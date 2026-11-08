@@ -10,7 +10,16 @@ import { applyOp, editOpSchema, wholeProject, writeProject } from "@genesiscz/ut
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { computeEdit } from "./edit";
-import { exportFrameCache, exportRangeOf, findText, ocrVideo, scanOf, textHitsOf, verifyHidden } from "./fx-analysis";
+import {
+    cachedScreenText,
+    exportFrameCache,
+    exportRangeOf,
+    findText,
+    ocrVideo,
+    scanOf,
+    textHitsOf,
+    verifyHidden,
+} from "./fx-analysis";
 
 /**
  * Round 6 item 1: hidden text must stay hidden while the screen scrolls or slides. The movie is generated from two
@@ -251,6 +260,19 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
             fresh: true,
         });
         expect(edit.warnings).toEqual(expect.arrayContaining(miss));
+    }, 120_000);
+
+    test("verifyHidden with from and to reads the source of that range only (review CLI-F7)", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-verify-range-"));
+        const movie = await stillListMovie(folder, 7);
+        const project = wholeProject({ video: movie, durationUs: 7_000_000, width: W, height: H });
+        const path = join(folder, "still-list.edit.json");
+        writeProject(path, project);
+        const answer = await verifyHidden(path, { movie, text: "Orla Fictive", from: 2, to: 3 });
+        expect(answer.leaks.length).toBeGreaterThan(0);
+        expect(answer.leaks.every((leak) => leak.source && leak.source.at >= 1 && leak.source.until <= 4)).toBe(true);
+        // A whole-movie read is kept in the cache; a read of the range alone is not, so nothing is kept.
+        expect(cachedScreenText(project)).toBeUndefined();
     }, 120_000);
 
     test("a leak inside an intro card gets a note, as no fix op reaches it (review CLI-F4)", async () => {
