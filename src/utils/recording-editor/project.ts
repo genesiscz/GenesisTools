@@ -797,17 +797,30 @@ export function splitAt(project: EditProject, sourceUs: number): EditProject {
     return { ...project, clips };
 }
 
-/** Removes a source range from the movie: the clips around it are split and the parts inside it dropped. */
+/**
+ * Removes a source range from the movie: each clip it touches keeps its part before `fromUs` and its part after `toUs`,
+ * with no minimum on the cut itself. A kept part shorter than one frame is dropped. The first kept part keeps the
+ * clip's id, so a join keyed by that clip (its own transition) stays on it when the cut takes the clip's head.
+ */
 export function cutRange(project: EditProject, fromUs: number, toUs: number): EditProject {
     checkRange(project, fromUs, toUs);
-    const split = splitAt(splitAt(project, fromUs), toUs);
-    const clips = split.clips.filter((clip) => clip.toUs <= fromUs || clip.fromUs >= toUs);
+    const clips = project.clips.flatMap((clip) => {
+        if (clip.toUs <= fromUs || clip.fromUs >= toUs) {
+            return [clip];
+        }
+
+        const pieces = [
+            { ...clip, toUs: Math.min(clip.toUs, fromUs) },
+            { ...clip, fromUs: Math.max(clip.fromUs, toUs) },
+        ].filter((piece) => piece.toUs - piece.fromUs >= MINIMUM_CLIP_US);
+        return pieces.map((piece, index) => (index === 0 ? piece : { ...piece, id: newId("c") }));
+    });
 
     if (clips.length === 0) {
         throw new RangeError("that cut removes the whole movie; keep at least one part");
     }
 
-    return { ...split, clips };
+    return { ...project, clips };
 }
 
 /** Keeps only a source range (a trim of both ends). */
