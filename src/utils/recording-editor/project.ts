@@ -922,12 +922,33 @@ export function leakFixOps(
 
         const first = keys[0];
         const last = keys[keys.length - 1];
-        const track = keys.length > 1 ? keys.map((key) => ({ at: round(key.at), ...margin(key) })) : undefined;
+        const from = round(Math.max(0, Math.min(first.at, leak.source.at) - 0.1));
+        const to = round(Math.max(first.at + 0.05, last.at, leak.source.until) + 0.1);
+        const placed = keys.map((key) => ({ at: round(key.at), ...margin(key) }));
+        // A redact op holds its edge keys; a moving leak keeps moving through the margins, so its edges get keys
+        // along the speed of the two nearest reads.
+        const along = (a: (typeof placed)[number], b: (typeof placed)[number], at: number) => {
+            const edge = at < a.at ? a : b;
+            const f = b.at > a.at ? (at - a.at) / (b.at - a.at) : 0;
+            const y = Math.min(1 - edge.height, Math.max(0, a.y + (b.y - a.y) * f));
+            const x = Math.min(1 - edge.width, Math.max(0, a.x + (b.x - a.x) * f));
+            return { ...edge, at, x: round(x), y: round(y) };
+        };
+        const track =
+            placed.length > 1
+                ? [
+                      ...(from < placed[0].at ? [along(placed[0], placed[1], from)] : []),
+                      ...placed,
+                      ...(to > placed[placed.length - 1].at
+                          ? [along(placed[placed.length - 2], placed[placed.length - 1], to)]
+                          : []),
+                  ]
+                : undefined;
         return [
             editOpSchema.parse({
                 op: "redact",
-                from: round(Math.max(0, Math.min(first.at, leak.source.at) - 0.1)),
-                to: round(Math.max(first.at + 0.05, last.at, leak.source.until) + 0.1),
+                from,
+                to,
                 rect: margin(first),
                 label: `${leak.label} (verifyHidden)`.slice(0, 60),
                 ...(track && new Set(track.map((key) => key.at)).size === track.length ? { track } : {}),
@@ -2568,9 +2589,19 @@ function applyOpItself(project: EditProject, op: EditOp, facts: OpFacts): EditPr
                 return added;
             }
 
-            const track = op.track
+            const keys = op.track
                 .map(({ at, ...box }) => ({ atUs: timeToUs(at), ...box }))
                 .sort((a, b) => a.atUs - b.atUs);
+            // The op holds the first place before the first key and the last after the last one. Both renderers keep
+            // the speed of the two edge keys beyond them (a hide's keys want that), so the holds are written as keys
+            // at the part's own edges; without them a box over a scroll that came to rest slid off its text.
+            const first = keys[0];
+            const last = keys[keys.length - 1];
+            const track = [
+                ...(first.atUs > part.startUs ? [{ ...first, atUs: part.startUs }] : []),
+                ...keys,
+                ...(last.atUs < part.endUs ? [{ ...last, atUs: part.endUs }] : []),
+            ];
             return { ...added, redactions: [...(added.redactions ?? []).slice(0, -1), { ...part, track }] };
         }
         case "spotlight":

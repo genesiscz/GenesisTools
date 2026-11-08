@@ -728,10 +728,16 @@ describe("verifyHidden reads every frame at the edges and says how to fix a leak
         expect(fix).toMatchObject({ op: "redact", from: 9.9, to: 11.1 });
         const redact = fix.op === "redact" ? fix : undefined;
         expect(redact?.rect.height).toBeLessThan(0.1);
-        expect(redact?.track?.length).toBe(3);
-        // Applied, the part follows the keys.
+        // The three reads plus a key at each edge of the op: a redact op holds its edge keys, and the leak keeps
+        // moving through the 0.1 s margins, so the fix writes where it will be then.
+        expect(redact?.track?.map((key) => key.at)).toEqual([9.9, 10, 10.5, 11, 11.1]);
+        // Applied, the part follows the keys, and before the first read it is where the motion puts it.
         const part = applyOp(framed, fix).redactions?.at(-1);
-        expect(part?.track?.map((key) => key.atUs)).toEqual([10_000_000, 10_500_000, 11_000_000]);
+        expect(part?.track?.map((key) => key.atUs)).toEqual([
+            9_900_000, 10_000_000, 10_500_000, 11_000_000, 11_100_000,
+        ]);
+        const [k0, k1] = part?.track ?? [];
+        expect(k0.y - k1.y).toBeCloseTo((k1.y - (part?.track?.[2].y ?? 0)) / 5, 3);
     });
 });
 
@@ -1020,6 +1026,28 @@ describe("hidden parts keep whole microseconds (round 7)", () => {
         expect(loaded.redactions?.[0].startUs).toBe(1_133_333);
         expect(loaded.redactions?.[0].endUs).toBe(2_000_001);
         expect(loaded.redactions?.[0].track?.[0].atUs).toBe(1_500_000);
+    });
+
+    test("a redact op's own track holds its first and last place to the part's edges, as its doc says", () => {
+        // The keys stop while the part goes on: a box drawn by hand over a scroll that came to rest. The renderer keeps
+        // the speed of the last two keys after the last one, so without a hold the box slid off its text.
+        const project = applyOp(
+            wholeProject(source),
+            op({
+                op: "redact",
+                from: 1,
+                to: 4,
+                rect: { x: 0.1, y: 0.3, width: 0.4, height: 0.05 },
+                track: [
+                    { at: 1.5, x: 0.1, y: 0.4, width: 0.4, height: 0.05 },
+                    { at: 2, x: 0.1, y: 0.3, width: 0.4, height: 0.05 },
+                ],
+            })
+        );
+        const [part] = project.redactions ?? [];
+        expect(redactionBoxAt(part, 3_500_000).y).toBeCloseTo(0.3, 6);
+        expect(redactionBoxAt(part, 1_000_000).y).toBeCloseTo(0.4, 6);
+        expect(redactionBoxAt(part, 1_750_000).y).toBeCloseTo(0.35, 6);
     });
 });
 
