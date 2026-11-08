@@ -44,9 +44,15 @@ export function framePresentationUs(video: string): number[] {
     return times;
 }
 
-/** A plan to read grid times: the ffmpeg arguments from the input on, and the output frame each grid time takes. */
+/** ffmpeg's expression parser runs out of memory near a hundred terms, so a read is split into runs of this many. */
+const TERMS_PER_READ = 32;
+
+/**
+ * A plan to read grid times: one or more ffmpeg reads (the arguments from the input on, run in order, their output
+ * frames following each other), and the output frame each grid time takes.
+ */
 export interface GridRead {
-    args: string[];
+    reads: Array<{ args: string[]; frames: number }>;
     /** One per grid time from `fromUs`: its time and the ordinal of the output frame that shows then. */
     slots: Array<{ atUs: number; frame: number }>;
 }
@@ -94,18 +100,77 @@ export function gridRead(options: {
         }
     }
 
-    const select = runs.map(([a, b]) => (a === b ? `eq(n\\,${a})` : `between(n\\,${a}\\,${b})`)).join("+") || "0";
-    return {
-        args: [
-            "-i",
-            options.video,
-            "-map",
-            "0:v:0",
-            "-vf",
-            `select='${select}'${options.extra ? `,${options.extra}` : ""}`,
-            "-fps_mode",
-            "passthrough",
-        ],
-        slots,
-    };
+    const reads: GridRead["reads"] = [];
+
+    for (let at = 0; at < Math.max(1, runs.length); at += TERMS_PER_READ) {
+        const part = runs.slice(at, at + TERMS_PER_READ);
+        const select = part.map(([a, b]) => (a === b ? `eq(n\\,${a})` : `between(n\\,${a}\\,${b})`)).join("+") || "0";
+        reads.push({
+            args: [
+                "-i",
+                options.video,
+                "-map",
+                "0:v:0",
+                "-vf",
+                `select='${select}'${options.extra ? `,${options.extra}` : ""}`,
+                "-fps_mode",
+                "passthrough",
+            ],
+            frames: part.reduce((all, [a, b]) => all + b - a + 1, 0),
+        });
+    }
+
+    return { reads, slots };
+}
+
+/**
+ * Runs a plan's reads as grey raw frames of `frameBytes` each (its `extra` filters must end in `format=gray`) and gives
+ * the picture of every grid time, in order (a time in a gap shares its frame).
+ */
+export async function readGridGray(
+    plan: GridRead,
+    options: { video: string; frameBytes: number; timeoutMs: number }
+): Promise<Uint8Array[]> {
+    const frames: Uint8Array[] = [];
+
+    for (const read of plan.reads) {
+        const command = ["ffmpeg", "-nostdin", "-v", "error", ...read.args, "-f", "rawvideo", "-pix_fmt", "gray", "-"];
+        const child = Bun.spawn(command, { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+        const timer = setTimeout(() => child.kill(), options.timeoutMs);
+
+        try {
+            const [bytes, status, stderr] = await Promise.all([
+                new Response(child.stdout).arrayBuffer().then((buffer) => new Uint8Array(buffer)),
+                child.exited,
+                new Response(child.stderr).text(),
+            ]);
+
+            if (status !== 0) {
+                throw new Error(
+                    `ffmpeg could not read ${options.video} (exit ${status}): ${stderr.trim().slice(-500)}`
+                );
+            }
+
+            for (let at = 0; at + options.frameBytes <= bytes.length; at += options.frameBytes) {
+                frames.push(bytes.subarray(at, at + options.frameBytes));
+            }
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    log.debug({ video: options.video, reads: plan.reads.length, frames: frames.length }, "grid frames read");
+    const out: Uint8Array[] = [];
+
+    for (const slot of plan.slots) {
+        const frame = frames[slot.frame];
+
+        if (!frame) {
+            break;
+        }
+
+        out.push(frame);
+    }
+
+    return out;
 }

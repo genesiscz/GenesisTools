@@ -305,20 +305,26 @@ export async function ocrVideo(options: {
     });
 
     try {
-        await runVideoCommand({
-            command: [
-                "ffmpeg",
-                "-nostdin",
-                "-v",
-                "error",
-                ...plan.args,
-                "-start_number",
-                "0",
-                join(folder, "%06d.png"),
-            ],
-            timeoutMs: 20 * 60_000,
-        });
-        const written = new Set(readdirSync(folder).filter((file) => file.endsWith(".png")));
+        let written = 0;
+
+        for (const read of plan.reads) {
+            await runVideoCommand({
+                command: [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    ...read.args,
+                    "-start_number",
+                    String(written),
+                    join(folder, "%06d.png"),
+                ],
+                timeoutMs: 20 * 60_000,
+            });
+            written += read.frames;
+        }
+
+        const files = new Set(readdirSync(folder).filter((file) => file.endsWith(".png")));
         const frames: ScreenTextFrame[] = [];
         let previousDigest = "";
         let previousLines: ScreenTextFrame["lines"] = [];
@@ -326,7 +332,7 @@ export async function ocrVideo(options: {
         for (const [index, slot] of plan.slots.entries()) {
             const file = `${String(slot.frame).padStart(6, "0")}.png`;
 
-            if (!written.has(file)) {
+            if (!files.has(file)) {
                 break;
             }
 

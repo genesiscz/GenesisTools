@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
-import { framePresentationUs, gridRead } from "./frame-grid";
+import { framePresentationUs, gridRead, readGridGray } from "./frame-grid";
 
 const { log } = logger.scoped("recording-editor-waits");
 
@@ -306,51 +306,15 @@ export async function measureChangeSteps(options: {
         fps: WAIT_SAMPLE_FPS,
         extra: `scale=${width}:${height}:flags=area,format=gray`,
     });
-    const command = ["ffmpeg", "-nostdin", "-v", "error", ...plan.args, "-f", "rawvideo", "-pix_fmt", "gray", "-"];
-    log.debug({ command: command.join(" ").slice(0, 400) }, "measuring the picture's change steps");
-    const child = Bun.spawn(command, { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
-    const timer = setTimeout(() => child.kill(), options.timeoutMs ?? 15 * 60_000);
     const steps: ChangeStep[] = [];
-    let previous: Uint8Array | undefined;
-    let pending = new Uint8Array(0);
-    let ordinal = 0;
-    let slot = 0;
+    const pictures = await readGridGray(plan, {
+        video: options.video,
+        frameBytes,
+        timeoutMs: options.timeoutMs ?? 15 * 60_000,
+    });
 
-    try {
-        for await (const chunk of child.stdout) {
-            const joined = new Uint8Array(pending.length + chunk.length);
-            joined.set(pending);
-            joined.set(chunk, pending.length);
-            let offset = 0;
-
-            while (joined.length - offset >= frameBytes) {
-                const frame = joined.slice(offset, offset + frameBytes);
-                offset += frameBytes;
-
-                // Every step this frame shows on (more than one inside a gap of the recording).
-                while (slot < plan.slots.length && plan.slots[slot].frame === ordinal) {
-                    if (previous) {
-                        steps.push(compareFrames(previous, frame, width, height));
-                    }
-
-                    previous = frame;
-                    slot++;
-                }
-
-                ordinal++;
-            }
-
-            pending = joined.slice(offset);
-        }
-
-        const status = await child.exited;
-
-        if (status !== 0) {
-            const stderr = await new Response(child.stderr).text();
-            throw new Error(`ffmpeg could not read ${options.video} (exit ${status}): ${stderr.trim().slice(-500)}`);
-        }
-    } finally {
-        clearTimeout(timer);
+    for (let at = 1; at < pictures.length; at++) {
+        steps.push(compareFrames(pictures[at - 1], pictures[at], width, height));
     }
 
     log.debug({ video: options.video, steps: steps.length }, "change steps measured");

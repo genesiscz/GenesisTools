@@ -278,14 +278,14 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
             ],
         });
         const plan = gridRead({ video: movie, fromUs: 2_500_000, toUs: 3_000_000, fps: 10, extra: "format=gray" });
-        expect(plan.args).not.toContain("-ss");
+        expect(plan.reads.flatMap((read) => read.args)).not.toContain("-ss");
         expect(plan.slots.map((slot) => slot.atUs)).toEqual([2_500_000, 2_600_000, 2_700_000, 2_800_000, 2_900_000]);
         // 2.5 and 2.6 s are inside the gap: the last frame before it (index 239) shows then.
         const times = framePresentationUs(movie);
         const selected = (slot: number) => plan.slots[slot].frame;
         expect(selected(0)).toBe(selected(1));
         expect(times[239]).toBeLessThan(2_000_000);
-        const child = Bun.spawn(["ffmpeg", "-nostdin", "-v", "error", ...plan.args, "-f", "rawvideo", "-"], {
+        const child = Bun.spawn(["ffmpeg", "-nostdin", "-v", "error", ...plan.reads[0].args, "-f", "rawvideo", "-"], {
             stdout: "pipe",
             stderr: "pipe",
         });

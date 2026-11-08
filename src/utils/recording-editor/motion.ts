@@ -1,5 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
-import { gridRead } from "./frame-grid";
+import { gridRead, readGridGray } from "./frame-grid";
 import type { Carried, FractionBox, MotionModel, TrackKey } from "./private-data";
 import { type ChangeStep, maskCells } from "./waits";
 
@@ -339,53 +339,32 @@ export async function measureMotion(options: {
         fps: MOTION_FPS,
         extra: `scale=${width}:${height}:flags=area,format=gray`,
     });
-    const command = ["ffmpeg", "-nostdin", "-v", "error", ...plan.args, "-f", "rawvideo", "-pix_fmt", "gray", "-"];
-    log.debug({ command: command.join(" ").slice(0, 400) }, "measuring the content's motion");
-    const child = Bun.spawn(command, { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
-    const timer = setTimeout(() => child.kill(), options.timeoutMs ?? 10 * 60_000);
     const dx: Float32Array[] = [];
     const dy: Float32Array[] = [];
     const ok: Uint8Array[] = [];
+    const pictures = await readGridGray(plan, {
+        video: options.video,
+        frameBytes,
+        timeoutMs: options.timeoutMs ?? 10 * 60_000,
+    });
+    let previous: Uint8Array | undefined;
 
-    try {
-        const [bytes, status] = await Promise.all([
-            new Response(child.stdout).arrayBuffer().then((buffer) => new Uint8Array(buffer)),
-            child.exited,
-        ]);
-
-        if (status !== 0) {
-            const stderr = await new Response(child.stderr).text();
-            throw new Error(`ffmpeg could not read ${options.video} (exit ${status}): ${stderr.trim().slice(-500)}`);
+    for (const frame of pictures) {
+        if (previous) {
+            const last = ok.length - 1;
+            const shifts = blockShifts({
+                previous,
+                current: frame,
+                width,
+                height,
+                guess: last >= 0 ? { dx: dx[last], dy: dy[last], ok: ok[last] } : undefined,
+            });
+            dx.push(shifts.dx);
+            dy.push(shifts.dy);
+            ok.push(shifts.ok);
         }
 
-        const written = Math.floor(bytes.length / frameBytes);
-        let previous: Uint8Array | undefined;
-
-        for (const slot of plan.slots) {
-            if (slot.frame >= written) {
-                break;
-            }
-
-            const frame = bytes.subarray(slot.frame * frameBytes, (slot.frame + 1) * frameBytes);
-
-            if (previous) {
-                const last = ok.length - 1;
-                const shifts = blockShifts({
-                    previous,
-                    current: frame,
-                    width,
-                    height,
-                    guess: last >= 0 ? { dx: dx[last], dy: dy[last], ok: ok[last] } : undefined,
-                });
-                dx.push(shifts.dx);
-                dy.push(shifts.dy);
-                ok.push(shifts.ok);
-            }
-
-            previous = frame;
-        }
-    } finally {
-        clearTimeout(timer);
+        previous = frame;
     }
 
     const count = columns * rows;
