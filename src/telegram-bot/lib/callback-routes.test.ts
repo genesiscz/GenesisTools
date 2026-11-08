@@ -346,6 +346,61 @@ describe("F11: decisions answered in Telegram", () => {
         expect(message.buttons).toEqual([]);
     });
 
+    it("Send answers only with the letters it shows: a pick changed elsewhere refuses and redraws the keyboard", async () => {
+        const own = { ...bot, chats: { commands: 7014 } };
+        const api = new FakeTelegramMessagesApi();
+        const store = memoryActTokenStore();
+        let row = decision({
+            id: "d_14_s-fourteen",
+            number: 14,
+            sessionId: "s-fourteen",
+            prompt: "Which caches?\n\na) memory\nb) disk\nc) network",
+            options: ["memory", "disk", "network"],
+            recommended: undefined,
+            multiple: true,
+        });
+        await postDecisionsToTelegram([row], { bot: own, api, store, now: NOW });
+
+        const calls: AnswerDecisionInput[] = [];
+        const actDeps: ActDeps = {
+            store,
+            rows: () => [row],
+            answer: async (input) => {
+                calls.push(input);
+                return { session: "s-fourteen", text: "14a", channel: "cmux", delivered: true, detail: "cmux" };
+            },
+            stage: async (input) => {
+                row = { ...row, state: input.option ? "drafted" : "open", draftOption: input.option ?? "" };
+                return row;
+            },
+        };
+        const router = createCallbackRouter({
+            d: decisionPressHandler({ actDeps: async () => actDeps, now: () => NOW + 1 }),
+        });
+        const [message] = api.messages;
+        const labels = () => message.buttons.map((buttons) => buttons.map((button) => button.text));
+        const [a, , c] = message.buttons[0].map((button) => button.data);
+        const tap = (id: string, data: string) =>
+            answerPress({ api, router, press: { id, data, chatId: 7014, messageId: message.message } });
+
+        await tap("cbq-14a", a);
+        await tap("cbq-14c", c);
+        expect(labels()).toEqual([["✓ a", "b", "✓ c"], ["Send a + c"]]);
+        const sendShown = message.buttons[1][0].data;
+
+        // The hub unticks c; the phone still shows "Send a + c".
+        row = { ...row, draftOption: "a" };
+        await tap("cbq-14send", sendShown);
+
+        expect(calls).toEqual([]);
+        expect(api.answered.at(-1)?.text).toContain("The pick changed");
+        expect(labels()).toEqual([["✓ a", "b", "c"], ["Send a"]]);
+
+        await tap("cbq-14send2", message.buttons[1][0].data);
+        expect(calls).toHaveLength(1);
+        expect(calls[0]).toMatchObject({ number: 14, option: "a" });
+    });
+
     it("a toggle on a decision that closed meanwhile refuses and drops the buttons", async () => {
         const own = { ...bot, chats: { commands: 7013 } };
         const api = new FakeTelegramMessagesApi();

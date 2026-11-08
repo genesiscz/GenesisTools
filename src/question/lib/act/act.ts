@@ -164,6 +164,11 @@ interface ActInput {
     deps: ActDeps;
     /** The answer of a reply token (the notification's Reply field); a letter token ignores it. */
     text?: string;
+    /**
+     * The letters a send button shows ("ac" for "Send a + c"). A send whose staged pick no longer matches is refused,
+     * so a stale button never answers with letters it does not show. Absent on a button drawn before it was carried.
+     */
+    shown?: string;
     now?: number;
 }
 
@@ -202,6 +207,7 @@ async function settle({
     key,
     deps,
     text,
+    shown,
     now = Date.now(),
     toggles,
 }: ActInput & { toggles: boolean }): Promise<PressReceipt> {
@@ -284,7 +290,7 @@ async function settle({
             ? refuse("closed", `DECISION ${claim.decision.number} is ${row.state} already.`, claim.decision)
             : claim.tokenKind === "toggle"
               ? await toggle({ claim, row, key, deps, refuse, now })
-              : await answer({ claim, row, key, deps, refuse, text, now })),
+              : await answer({ claim, row, key, deps, refuse, text, shown, now })),
         tokenKind: claim.tokenKind,
     };
 
@@ -373,6 +379,7 @@ async function answer({
     deps,
     refuse,
     text,
+    shown,
     now,
 }: {
     claim: Go;
@@ -381,16 +388,27 @@ async function answer({
     deps: ActDeps;
     refuse: Refuse;
     text: string | undefined;
+    shown: string | undefined;
     now: number;
 }): Promise<ActReceipt> {
     const reply = claim.reply ? text?.trim() : undefined;
-    const shown = row ? decisionChoice(row) : undefined;
-    const lettered = reply && shown?.several ? replyLetters(reply, shown.count) : undefined;
+    const choice = row ? decisionChoice(row) : undefined;
+    const lettered = reply && choice?.several ? replyLetters(reply, choice.count) : undefined;
     const option = claim.tokenKind === "send" ? pickLetters(row?.draftOption) : (lettered ?? claim.decision.option);
     const decision = { ...claim.decision, option: reply && !lettered ? claim.decision.option : option };
 
     if (claim.tokenKind === "send" && !option) {
         return refuse("invalid", "Nothing is ticked yet: tick one or more letters, then send.", decision);
+    }
+
+    // The hub, the widget or the phone changed the pick after this button was drawn: it must not answer with letters
+    // it does not show. "invalid" keeps the keyboard, so the caller can redraw it with the pick as it is now.
+    if (claim.tokenKind === "send" && shown !== undefined && pickLetters(shown) !== option) {
+        return refuse(
+            "invalid",
+            `The pick changed to ${[...option].join(" + ")}; check the ticks and send again.`,
+            decision
+        );
     }
 
     try {

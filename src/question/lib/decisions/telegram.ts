@@ -116,7 +116,14 @@ export function toggleKeyboard(tokens: ToggleTokens, staged: string, recommended
     return pick.length > 0
         ? [
               ...letters,
-              [{ text: `Send ${pickLabel(pick.join(""))}`, data: `${DECISION_CALLBACK_PREFIX}:${tokens.send}` }],
+              // The data carries the letters the button shows (`d:<token>:ac`, under 64 bytes), so a pick changed
+              // elsewhere after this redraw refuses the send instead of answering with letters nobody saw here.
+              [
+                  {
+                      text: `Send ${pickLabel(pick.join(""))}`,
+                      data: `${DECISION_CALLBACK_PREFIX}:${tokens.send}:${pick.join("")}`,
+                  },
+              ],
           ]
         : letters;
 }
