@@ -35,8 +35,8 @@ final class ZoomState: @unchecked Sendable {
 
     // R5 5 redaction edges
     private var sourceFrames: SourceFrames?
-    /// The hidden parts as drawn (RedactionEdges), for the project they were made from.
-    private var drawnRedactions: (key: RedactionEdges.Key, parts: [EditProject.Redaction])?
+    /// The hidden parts as drawn (RedactionEdges), for the project and the frame times they were made from.
+    private var drawnRedactions: (key: RedactionEdges.Key, frames: SourceFrames?, parts: [EditProject.Redaction])?
 
     /// The source movie's frame times, read by the renderer once it has the movie.
     func setSourceFrames(_ frames: SourceFrames?) {
@@ -50,7 +50,7 @@ final class ZoomState: @unchecked Sendable {
     private func refreshRedactions(_ project: EditProject, frames: SourceFrames?) {
         let parts = RedactionEdges.effective(project, frames: frames)
         lock.lock()
-        drawnRedactions = (RedactionEdges.Key(project), parts)
+        drawnRedactions = (RedactionEdges.Key(project), frames, parts)
         lock.unlock()
     }
 
@@ -59,7 +59,8 @@ final class ZoomState: @unchecked Sendable {
         let cached = drawnRedactions
         let frames = sourceFrames
         lock.unlock()
-        if let cached, cached.key == RedactionEdges.Key(project) { return cached.parts }
+        // Parts worked out before the frame times arrived end too early, so they are not used once the times are known.
+        if let cached, cached.key == RedactionEdges.Key(project), cached.frames === frames { return cached.parts }
         return RedactionEdges.effective(project, frames: frames)
     }
 
@@ -693,8 +694,10 @@ struct EditRenderer {
         guard natural.width.isFinite, natural.height.isFinite, natural.width >= 1, natural.height >= 1 else {
             throw RenderError.badComposition("the movie's picture is \(natural.width)×\(natural.height)")
         }
-        // R5 5 redaction edges: a hidden part stays on while a frame from its time stays on screen.
-        if project.redactions?.isEmpty == false, (try? await video.load(.canProvideSampleCursors)) == true {
+        // R5 5 redaction edges: a hidden part stays on while a frame from its time stays on screen. Set even when the
+        // edit hides nothing yet: the preview keeps this ZoomState when a part is added later, and SourceFrames reads
+        // nothing until a part asks.
+        if (try? await video.load(.canProvideSampleCursors)) == true {
             zoom.setSourceFrames(SourceFrames(track: video, durationUs: project.source.durationUs))
         }
         let composition = AVMutableComposition()
