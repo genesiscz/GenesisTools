@@ -159,11 +159,12 @@ export function recommendedLetters(recommended: string | null | undefined): Set<
 
 /**
  * The words of a prompt that ask for a set of the options: "Pick any set of letters", "choose several of these", "all
- * that apply". "Pick several" counts only about the options themselves (the clause ends, or names the letters or the
- * options), so a yes/no question such as "Should users select multiple sessions?" is not a set.
+ * that apply". "Pick several" counts only about the options themselves (the clause ends, goes on with "if", or names
+ * the letters, a list of letters or the options), so a yes/no question such as "Should users select multiple
+ * sessions?" is not a set.
  */
 const ASKS_FOR_SEVERAL =
-    /\b(?:any set of (?:the )?(?:letters|options)\b|all that apply\b|several letters\b|multiple letters\b|(?:pick|choose|select|tick) (?:several|multiple|one or more|any number)(?=\s+of\s+(?:the|these|them|letters|options)\b|\s+(?:letters|options)\b|\s*(?:[.:!;),\n]|$)))/i;
+    /\b(?:any set of (?:the )?(?:letters|options)\b|all that apply\b|several letters\b|multiple letters\b|(?:pick|choose|select|tick) (?:several|multiple|one or more|any number)(?=\s+of\s+(?:the|these|them|letters|options)\b|\s+of\s+\(?[a-z]\s*[,)+/]|\s+(?:letters|options|if)\b|\s*(?:[.:!;),\n]|$)))/i;
 
 /**
  * Whether a decision takes any set of its options (`"ac"`) instead of one: it was posted with `multiple`

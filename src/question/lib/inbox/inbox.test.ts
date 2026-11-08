@@ -256,6 +256,8 @@ describe("decision option labels", () => {
         expect(takesSeveral({ prompt: "Tick all that apply.", options: ["x", "y"] })).toBe(true);
         expect(takesSeveral({ prompt: "Pick several of these:", options: ["x", "y"] })).toBe(true);
         expect(takesSeveral({ prompt: "Choose one or more.", options: ["x", "y"] })).toBe(true);
+        expect(takesSeveral({ prompt: "Pick one or more of a, b, c", options: ["x", "y", "z"] })).toBe(true);
+        expect(takesSeveral({ prompt: "Tick multiple if you like.", options: ["x", "y"] })).toBe(true);
         // A question ABOUT selecting several things, with one answer, is no set; nor is a word as the recommendation.
         const yesNo = ["yes", "no"];
         expect(
