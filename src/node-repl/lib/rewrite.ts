@@ -61,7 +61,16 @@ function returnLast(node: Node | null | undefined, code: string, edits: Edit[]):
 /** The discovery calls that return their text: a bare call whose value nothing uses printed nothing. */
 const PRINTED_WHEN_BARE = new Set(["describe", "help", "search"]);
 
-/** `describe("x");` in the middle of a turn becomes `console.log(describe("x"));`, so it prints as the author meant. */
+/**
+ * The global the worker defines that prints a value only when the callee is the kernel's own discovery function. The
+ * name alone does not tell: a user's own `search()` had its return value printed (REPL-F6).
+ */
+export const PRINT_IF_DISCOVERY = "__nodeReplPrintIfDiscovery";
+
+/**
+ * `describe("x");` in the middle of a turn becomes `globalThis.__nodeReplPrintIfDiscovery(describe, describe("x"));`,
+ * so the kernel's call prints as the author meant and a function of the same name that the author wrote prints nothing.
+ */
 function printBareDiscovery(node: Node, edits: Edit[]): void {
     const expression = node.expression;
 
@@ -74,7 +83,11 @@ function printBareDiscovery(node: Node, edits: Edit[]): void {
         return;
     }
 
-    edits.push({ start: expression.start, end: expression.start, text: "console.log(" });
+    edits.push({
+        start: expression.start,
+        end: expression.start,
+        text: `globalThis.${PRINT_IF_DISCOVERY}(${expression.callee.name}, `,
+    });
     edits.push({ start: expression.end, end: expression.end, text: ")" });
 }
 

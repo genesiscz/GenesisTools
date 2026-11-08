@@ -8,7 +8,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 import { readShowable, type ShowInput } from "@genesiscz/utils/repl/show";
 import type { ReplToolset, ToolsetContext } from "@genesiscz/utils/repl/toolset";
-import { rewriteTurn } from "./rewrite";
+import { PRINT_IF_DISCOVERY, rewriteTurn } from "./rewrite";
 import { type ImportPolicy, importAllowed, loadImportPolicy } from "./trust";
 
 /**
@@ -212,6 +212,15 @@ globalThis.describe = (name) =>
     );
 globalThis.show = showImages;
 globalThis.sleep = (ms: number) => Bun.sleep(ms);
+
+const KERNEL_DISCOVERY = new Set<unknown>([globalThis.help, globalThis.search, globalThis.describe]);
+Object.defineProperty(globalThis, PRINT_IF_DISCOVERY, {
+    value: (callee: unknown, value: unknown): void => {
+        if (KERNEL_DISCOVERY.has(callee)) {
+            console.log(value);
+        }
+    },
+});
 
 /**
  * Errors no turn caught: a timer that threw after its turn answered, a promise nobody awaited. The worker keeps running,

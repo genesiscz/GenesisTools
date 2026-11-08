@@ -888,3 +888,24 @@ it("run stops streaming after the first line past --max-output, so no line print
     expect(stdout.split("x".repeat(15000)).length - 1).toBe(1);
     expect(stdout.split("z".repeat(100)).length - 1).toBeLessThanOrEqual(1);
 }, 20_000);
+
+// REPL-F6: a user's own search function on a bare line had its return value printed as if it were the kernel's.
+it("a bare call of the user's own search prints nothing, and the kernel's search still prints", async () => {
+    const engine = new ReplEngine();
+    try {
+        await engine.run("const log = []; function search(q) { log.push(q); return 'secret-index-' + q; }");
+        const own = await engine.run("search('alpha'); search('beta'); log.length");
+        expect(own.text).toBe("2");
+    } finally {
+        await engine.shutdown();
+    }
+
+    const fresh = new ReplEngine();
+    try {
+        const kernel = await fresh.run("help(); 1");
+        expect(kernel.text).toContain("search(query)");
+        expect(kernel.text.endsWith("\n1")).toBe(true);
+    } finally {
+        await fresh.shutdown();
+    }
+});
