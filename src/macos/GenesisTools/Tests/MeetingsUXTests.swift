@@ -286,6 +286,26 @@ final class MeetingsUXTests: XCTestCase {
         XCTAssertEqual(items.filter(\.canConfirm).map(\.id), ["r1", "t2", "l1", "n1"])
     }
 
+    func testADecisionTheCliSkippedIsNotMarkedAndOffersNoUndo() {
+        let skipped = DecideResult(decided: [], token: nil, skipped: [.init(id: "i7", reason: "it is confirmed already")])
+        XCTAssertEqual(MeetingDetailModel.decideOutcome(skipped, item: "i7"), .skipped(reason: "it is confirmed already"))
+        XCTAssertEqual(MeetingDetailModel.skipNote(title: "“jason” → “JSON”", confirm: true, reason: "it is confirmed already"),
+                       "“jason” → “JSON” was not confirmed: it is confirmed already.")
+        let decided = DecideResult(decided: ["i7"], token: "t-7", skipped: [])
+        XCTAssertEqual(MeetingDetailModel.decideOutcome(decided, item: "i7"), .decided(undoToken: "t-7"))
+        let tokenless = DecideResult(decided: ["i7"], token: nil, skipped: [])
+        XCTAssertEqual(MeetingDetailModel.decideOutcome(tokenless, item: "i7"), .decided(undoToken: nil),
+                       "with no token an Undo could take back a decision made elsewhere, so none is offered")
+    }
+
+    func testADecisionKeepsTheTranscriptOnScreenAndReadsItQuietly() {
+        XCTAssertEqual(MeetingDetailModel.transcriptRefresh(read: true, showing: true), .readQuietly,
+                       "the lines and the scroll place stay until the new answer lands")
+        XCTAssertEqual(MeetingDetailModel.transcriptRefresh(read: true, showing: false), .markStale,
+                       "a hidden tab keeps its lines and reads quietly when it shows again")
+        XCTAssertEqual(MeetingDetailModel.transcriptRefresh(read: false, showing: false), .none, "never read: its first show reads it")
+    }
+
     func testABulkConfirmSaysHowManyAndWhatWaits() {
         let both = DecideResult(decided: ["r1", "t2"], token: "tok", skipped: [.init(id: "r2", reason: "it has no speaker yet.")])
         XCTAssertEqual(MeetingDetailModel.bulkNote(both, threshold: 0.8), "Confirmed 2 items at 80 % or more; 1 item still waits for you")
