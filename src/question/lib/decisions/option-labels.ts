@@ -157,9 +157,13 @@ export function recommendedLetters(recommended: string | null | undefined): Set<
     return new Set(letters);
 }
 
-/** The words of a prompt that ask for a set of letters: "Pick any set of letters", "choose several", "all that apply". */
+/**
+ * The words of a prompt that ask for a set of the options: "Pick any set of letters", "choose several of these", "all
+ * that apply". "Pick several" counts only about the options themselves (the clause ends, or names the letters or the
+ * options), so a yes/no question such as "Should users select multiple sessions?" is not a set.
+ */
 const ASKS_FOR_SEVERAL =
-    /\b(?:any set of (?:the )?(?:letters|options)|(?:pick|choose|select|tick) (?:several|multiple|one or more|any number)|all that apply|several letters|multiple letters)\b/i;
+    /\b(?:any set of (?:the )?(?:letters|options)\b|all that apply\b|several letters\b|multiple letters\b|(?:pick|choose|select|tick) (?:several|multiple|one or more|any number)(?=\s+of\s+(?:the|these|them|letters|options)\b|\s+(?:letters|options)\b|\s*(?:[.:!;),\n]|$)))/i;
 
 /**
  * Whether a decision takes any set of its options (`"ac"`) instead of one: it was posted with `multiple`
@@ -177,9 +181,13 @@ export function takesSeveral(row: {
         return false;
     }
 
-    return (
-        row.multiple === true || recommendedLetters(row.recommended).size > 1 || ASKS_FOR_SEVERAL.test(row.prompt ?? "")
-    );
+    // A recommendation counts only as letters of the options: "no" on a yes/no decision names n and o, not a set.
+    const recommended = [...recommendedLetters(row.recommended)];
+    const inRange =
+        row.options === undefined ||
+        recommended.every((letter) => letter.charCodeAt(0) - 97 < (row.options?.length ?? 0));
+
+    return row.multiple === true || (recommended.length > 1 && inRange) || ASKS_FOR_SEVERAL.test(row.prompt ?? "");
 }
 
 /** Whether `label` names nothing beyond its letter: "", "a", "a)", "(a)", "a.", "**a)**". */

@@ -254,6 +254,16 @@ describe("decision option labels", () => {
         );
         expect(fromRecord(storedRow({ prompt: "Which?", options: ["x", "y"], multiple: true })).multiple).toBe(true);
         expect(takesSeveral({ prompt: "Tick all that apply.", options: ["x", "y"] })).toBe(true);
+        expect(takesSeveral({ prompt: "Pick several of these:", options: ["x", "y"] })).toBe(true);
+        expect(takesSeveral({ prompt: "Choose one or more.", options: ["x", "y"] })).toBe(true);
+        // A question ABOUT selecting several things, with one answer, is no set; nor is a word as the recommendation.
+        const yesNo = ["yes", "no"];
+        expect(
+            takesSeveral({ prompt: "Should the hub let users select multiple sessions at once?", options: yesNo })
+        ).toBe(false);
+        expect(takesSeveral({ prompt: "Do we choose multiple providers or keep one?", options: yesNo })).toBe(false);
+        expect(takesSeveral({ prompt: "Ship it?", options: yesNo, recommended: "no" })).toBe(false);
+        expect(takesSeveral({ prompt: "Ship it?", options: ["x", "y", "z"], recommended: "a, c" })).toBe(true);
         // One option is never a set, whatever the post says.
         expect(takesSeveral({ multiple: true, options: ["x"] })).toBe(false);
         // question_post names it allowMultiple, the form field; the log stores it as multiple.
