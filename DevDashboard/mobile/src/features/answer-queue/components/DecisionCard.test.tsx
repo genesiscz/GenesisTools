@@ -121,3 +121,55 @@ it("stages the whole set for a multiple decision and the single letter for a sin
     await singleCard.unmount();
     queryClient.clear();
 });
+
+it("keeps the options disabled until the queue shows the staged set, so the next tap toggles from fresh data", async () => {
+    picks.length = 0;
+    const { useQuery } = await import("@tanstack/react-query");
+    const { answerQueueKeys } = await import("@/features/answer-queue/queries");
+    const { waitFor } = await import("@testing-library/react-native/pure");
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { gcTime: 0 } } });
+    const base = fixtureQueue().sessions[0].items.find((item) => item.kind === "decision")!;
+    if (base.kind !== "decision") {
+        throw new Error("Expected a decision fixture");
+    }
+    const choices = ["a", "b", "c"].map((id) => ({ id, label: `Option ${id}`, rationale: null, recommended: false }));
+    // The Mac's copy of the decision: its staged set is the last pick the stage door took.
+    const server = { ...base, choices, multiple: true, draftOption: null as string | null };
+    let gate: Promise<void> = Promise.resolve();
+    let release = () => {};
+    function Host() {
+        const { data } = useQuery({
+            queryKey: answerQueueKeys.queue,
+            queryFn: async () => {
+                await gate;
+                return { ...server, draftOption: picks.at(-1) || null };
+            },
+        });
+        return data ? createElement(DecisionCard, { session: "session", decision: data, registerFlush: () => {} }) : null;
+    }
+    const card = await render(createElement(QueryClientProvider, { client: queryClient }, createElement(Host)));
+    const option = (id: string) => card.getByTestId(`answer-queue-decision-session-${server.number}-option-${id}`);
+    await waitFor(() => expect(option("a")).toBeDefined());
+
+    // The stage resolves at once; the refetch that shows it waits.
+    gate = new Promise((resolve) => {
+        release = resolve;
+    });
+    await fireEvent.press(option("a"));
+    await act(async () => {
+        await Bun.sleep(5);
+    });
+    expect(picks).toEqual(["a"]);
+    expect(option("c").props.disabled).toBe(true);
+
+    await act(async () => {
+        release();
+        await Bun.sleep(5);
+    });
+    await waitFor(() => expect(option("c").props.disabled).toBe(false));
+    expect(option("a").props.accessibilityState.checked).toBe(true);
+    await fireEvent.press(option("c"));
+    expect(picks).toEqual(["a", "ac"]);
+    await card.unmount();
+    queryClient.clear();
+});
