@@ -7,6 +7,7 @@ import { isTestProcess } from "@genesiscz/utils/test-process";
 import { waitsOnHuman } from "../waiting/set";
 import { decisionOptionLabels, recommendedLetters, shownDecisionText, takesSeveral } from "./option-labels";
 import {
+    advisesAgainst,
     boundContext,
     cleanBlock,
     isFooterLine,
@@ -657,7 +658,8 @@ export function parseDecisionBlocks(reply: string): HarvestedDecision[] {
             const mark = stripRecommendation(text);
             current.rationales[last] = [current.rationales[last], mark.label].filter(Boolean).join(" ");
 
-            if (mark.recommended || /\brecommend/i.test(text)) {
+            // "not recommended: duplicates" names the word too, but it advises against this option.
+            if (mark.recommended || (/\brecommend/i.test(text) && !advisesAgainst(text))) {
                 current.recommended = letterAt(last);
             }
 
