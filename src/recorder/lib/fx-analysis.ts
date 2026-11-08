@@ -285,9 +285,20 @@ export async function ocrVideo(options: {
     });
 
     try {
+        const frames: ScreenTextFrame[] = [];
+        let previousDigest = "";
+        let previousLines: ScreenTextFrame["lines"] = [];
         let written = 0;
+        let index = 0;
+        let missing = false;
 
+        // CLI-F9: one read's frame pictures at a time are on disk: they are read and removed before the next read
+        // writes its own, so a long export never needs GBs of temp space at once. The slots take the frames in order.
         for (const read of plan.reads) {
+            if (missing) {
+                break;
+            }
+
             await runVideoCommand({
                 command: [
                     "ffmpeg",
@@ -302,50 +313,52 @@ export async function ocrVideo(options: {
                 timeoutMs: 20 * 60_000,
             });
             written += read.frames;
-        }
+            const files = new Set(readdirSync(folder).filter((file) => file.endsWith(".png")));
 
-        const files = new Set(readdirSync(folder).filter((file) => file.endsWith(".png")));
-        const frames: ScreenTextFrame[] = [];
-        let previousDigest = "";
-        let previousLines: ScreenTextFrame["lines"] = [];
+            for (; index < plan.slots.length && plan.slots[index].frame < written; index++) {
+                const slot = plan.slots[index];
+                const file = `${String(slot.frame).padStart(6, "0")}.png`;
 
-        for (const [index, slot] of plan.slots.entries()) {
-            const file = `${String(slot.frame).padStart(6, "0")}.png`;
+                if (!files.has(file)) {
+                    missing = true;
+                    break;
+                }
 
-            if (!files.has(file)) {
-                break;
+                const path = join(folder, file);
+                const digest = createHash("sha1").update(readFileSync(path)).digest("hex");
+                const atUs = slot.atUs;
+
+                const known = options.cache?.get(atUs);
+
+                if (known) {
+                    previousLines = known;
+                    previousDigest = digest;
+                } else if (digest !== previousDigest) {
+                    // R6 4: one Vision read at a time on this Mac, retried once with a longer deadline.
+                    const ocr = await recognizeTextBoxesQueued(path, {
+                        fastFallback: false,
+                        what: `the frame at ${(atUs / 1_000_000).toFixed(2)} s of ${basename(options.video)}`,
+                    });
+                    previousLines = ocr.lines.map((line) => ({
+                        text: line.text,
+                        x: line.x / ocr.width,
+                        y: line.y / ocr.height,
+                        width: line.width / ocr.width,
+                        height: line.height / ocr.height,
+                    }));
+                    previousDigest = digest;
+                    options.cache?.set(atUs, previousLines);
+                } else {
+                    options.cache?.set(atUs, previousLines);
+                }
+
+                frames.push({ atUs, untilUs: Math.min(options.toUs, Math.round(atUs + stepUs)), lines: previousLines });
+                options.onFrame?.(index + 1, plan.slots.length);
             }
 
-            const path = join(folder, file);
-            const digest = createHash("sha1").update(readFileSync(path)).digest("hex");
-            const atUs = slot.atUs;
-
-            const known = options.cache?.get(atUs);
-
-            if (known) {
-                previousLines = known;
-                previousDigest = digest;
-            } else if (digest !== previousDigest) {
-                // R6 4: one Vision read at a time on this Mac, retried once with a longer deadline.
-                const read = await recognizeTextBoxesQueued(path, {
-                    fastFallback: false,
-                    what: `the frame at ${(atUs / 1_000_000).toFixed(2)} s of ${basename(options.video)}`,
-                });
-                previousLines = read.lines.map((line) => ({
-                    text: line.text,
-                    x: line.x / read.width,
-                    y: line.y / read.height,
-                    width: line.width / read.width,
-                    height: line.height / read.height,
-                }));
-                previousDigest = digest;
-                options.cache?.set(atUs, previousLines);
-            } else {
-                options.cache?.set(atUs, previousLines);
+            for (const file of files) {
+                rmSync(join(folder, file), { force: true });
             }
-
-            frames.push({ atUs, untilUs: Math.min(options.toUs, Math.round(atUs + stepUs)), lines: previousLines });
-            options.onFrame?.(index + 1, plan.slots.length);
         }
 
         log.debug(
