@@ -506,7 +506,7 @@ program
 program
     .command("import")
     .description(
-        "Make a library recording of a movie file (.mp4, .m4v or .mov): an APFS clone of it (no extra disk; the file stays as it is), titled --title or the file's name, with a marker at each --marker; prints its folder, and the editor, movies.open() and every command take its id"
+        "Make a library recording of a movie file (.mp4, .m4v or .mov), titled --title or the file's name, with a marker at each --marker: an APFS clone of it where the disk can make one (no extra disk), else a whole copy, and the file stays as it is; prints its folder, and the editor, movies.open() and every command take its id"
     )
     .argument("<movie>", "the movie file")
     .option("--title <title>", "the library's title (1 to 120 characters); default the file's name")

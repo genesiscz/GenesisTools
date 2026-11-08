@@ -146,13 +146,24 @@ take it like a recording. It writes the folder the recorder writes (`src/recorde
   refuses it.
 
 A marker is `--marker <time>=<label>` (`0:12=Login done`; `{ at, label }` in the REPL, `at` in source seconds or
-`m:ss`), with a label of 1 to 80 characters. A marker outside the movie is refused. A file that is not a movie the
-editor plays is refused too: another extension, a file ffprobe cannot read, a file with no video stream, and a movie
-the editor's own probe refuses (over 12 hours, over 48 megapixels, HDR). A refusal makes nothing; when the editor
-refuses the copy, its folder goes to the GenesisTools trash. `movies.import()` returns the recording as a `Movie`, as
-`movies.open()` does, because the next call is an edit; the CLI prints the folder on stdout and the id on stderr, and
-`--json` prints `{ id, folder, title, movie, source, seconds, frames, averageFps, audioTracks, markers }`.
-`tools recorder trash <id>` removes it again.
+`m:ss`), with a label of 1 to 80 characters. A marker outside the movie's video is refused: when the sound runs on
+past the video, the editor plays only the video's length. A file that is not a movie the editor plays is refused too,
+each with its reason, and the import reads the file the way the editor's probe does before it copies anything:
+
+- another extension, a file ffprobe cannot read, a file with no video stream;
+- a video codec AVFoundation does not decode (vp9, dnxhd, QuickTime Animation, among others; checked with
+  `AVURLAsset` on macOS 27), with an ffmpeg line that converts it to H.264;
+- HEVC tagged `hev1` (ffmpeg's libx265 default in an .mp4), with an ffmpeg line that puts it under `hvc1` without
+  encoding it again;
+- an HDR movie (PQ or HLG, such as an iPhone's HDR video): the editor takes SDR movies only;
+- a movie turned by anything but 0, 90, 180 or 270 degrees.
+
+The editor's own probe then reads the copy and refuses a movie over its limits (12 hours, 48 megapixels, 64 GiB). A
+refusal makes nothing; when the editor refuses the copy, its folder goes to the GenesisTools trash.
+
+`movies.import()` returns the recording as a `Movie`, as `movies.open()` does, because the next call is an edit; the
+CLI prints the folder on stdout and the id on stderr, and `--json` prints `{ id, folder, title, movie, source, seconds,
+frames, averageFps, audioTracks, markers }`. `tools recorder trash <id>` removes it again.
 
 ## The edit (`edit.json`, version 1)
 
