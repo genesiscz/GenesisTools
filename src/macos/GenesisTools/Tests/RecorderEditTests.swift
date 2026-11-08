@@ -733,6 +733,25 @@ final class RecorderEditTests: XCTestCase {
     /// Round 3 (2026-11-08): the release starts and lands softly. It used to leave at full speed (about a fifth of the
     /// scale in its first 60 fps frame), which read as a snap at 300 to 500 ms; the snap before that (held, then out in
     /// the last milliseconds) must not come back either.
+    /// Round 3 (2026-11-08): a voiceover on the intro or the end card plays over that card in the export, `atUs` from
+    /// the card's first frame; the shared golden file (card-voiceovers.json) holds the places TypeScript computes too.
+    func testCardVoiceoversPlayOverTheirCardsWhereTheGoldenFileSays() throws {
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: SharedEditorFixture.url("card-voiceovers.json"))) as? [String: Any])
+        let edit = try JSONSerialization.data(withJSONObject: try XCTUnwrap(root["edit"]))
+        let project = try JSONDecoder().decode(EditProject.self, from: edit)
+        XCTAssertEqual(project.audio.voiceovers?.map(\.card), [.intro, nil, nil, .end])
+        let spans = try XCTUnwrap(root["spans"] as? [[String: Any]])
+        let expected = spans.map { span in
+            "\(span["id"] ?? "") \(span["startUs"] ?? "") \(span["playUs"] ?? "")"
+        }
+        let placed = VoiceoverMix.exportPlacements(project, cards: CardSpans(project: project, enabled: true))
+        XCTAssertEqual(placed.map { "\($0.clip.id) \($0.outUs) \($0.playUs)" }, expected)
+        // The preview has no cards: only the movie's own lines play there, at their output times.
+        XCTAssertEqual(VoiceoverMix.placements(project).map(\.clip.id), ["vmovie", "vlate"])
+        let preview = VoiceoverMix.exportPlacements(project, cards: CardSpans(project: project, enabled: false))
+        XCTAssertEqual(preview.map { "\($0.clip.id) \($0.outUs)" }, ["vmovie 1000000", "vlate 7500000"])
+    }
+
     func testTheZoomLeavesSoftlyAndLandsSoftlyOnTheWholeFrame() {
         for easeMs in [300, 500] {
             let endUs: Int64 = 3_000_000

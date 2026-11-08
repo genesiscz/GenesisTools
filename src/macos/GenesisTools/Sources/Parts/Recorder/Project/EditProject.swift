@@ -224,8 +224,17 @@ struct EditProject: Codable, Equatable {
     /// A sound file (a narration) that plays from SOURCE time `atUs` at its own speed for `durationUs`, measured
     /// when it was added; `id` is what the `unvoiceover` op takes.
     struct Voiceover: Codable, Equatable, Identifiable {
+        /// The card a voiceover plays over instead of the movie (voiceovers.ts `VOICEOVER_CARDS`).
+        enum Card: String, Codable, Equatable {
+            case intro
+            case end
+        }
+
         var id: String
+        /// A source time, or with `card` the time from that card's first frame.
         var atUs: Int64
+        /// Round 3 (2026-11-08): it plays over this card in the export; the preview has no cards and leaves it out.
+        var card: Card?
         var file: String
         var durationUs: Int64
         /// 0 to 2.

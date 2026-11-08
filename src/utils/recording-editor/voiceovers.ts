@@ -11,10 +11,19 @@ import type { EditProject, OpFacts } from "./project";
  * it moves it with the picture. The music drops under it, and under the transcript's lines, by `ducking.db`.
  */
 
-/** One voiceover clip: `file` plays from source time `atUs` for `durationUs` (measured when it was added). */
+/** The cards a voiceover can play over instead of the movie. */
+export const VOICEOVER_CARDS = ["intro", "end"] as const;
+export type VoiceoverCard = (typeof VOICEOVER_CARDS)[number];
+
+/**
+ * One voiceover clip: `file` plays from source time `atUs` for `durationUs` (measured when it was added). With `card`
+ * it plays over that card instead: `atUs` then counts from the card's first frame, and the line may run on into what
+ * follows the card (the movie after the intro).
+ */
 export const voiceoverSchema = z.object({
     id: z.string(),
     atUs: z.number().int().nonnegative(),
+    card: z.enum(VOICEOVER_CARDS).optional(),
     file: z.string().min(1),
     durationUs: z.number().int().positive(),
     /** 0 to 2 (200 %). */
@@ -70,6 +79,8 @@ export async function audioFileDurationUs(file: string): Promise<number> {
 export interface VoiceoverChange {
     id?: string;
     atUs?: number;
+    /** `atUs` counts from this card's start; the clip plays over the card. */
+    card?: VoiceoverCard;
     file?: string;
     volume?: number;
     label?: string;
@@ -101,23 +112,37 @@ export function applyVoiceover(project: EditProject, op: VoiceoverChange, facts:
         throw new Error(`the length of ${file} was not measured; send the op through apply() or the editor`);
     }
 
-    if (op.atUs !== undefined && op.atUs >= project.source.durationUs) {
+    const index = op.id === undefined ? -1 : list.findIndex((clip) => clip.id === op.id);
+
+    if (op.id !== undefined && index < 0) {
+        throw new Error(`no voiceover ${op.id}; voiceovers: ${list.map((clip) => clip.id).join(", ") || "none"}`);
+    }
+
+    const card = op.card ?? list[index]?.card;
+    const atUs = op.atUs ?? list[index]?.atUs;
+
+    if (card !== undefined) {
+        const seconds = project.cards?.[card]?.seconds;
+
+        if (seconds === undefined) {
+            throw new Error(`there is no ${card} card to speak over; add it first with movie.${card}Card(...)`);
+        }
+
+        if (atUs !== undefined && atUs >= Math.round(seconds * 1_000_000)) {
+            throw new Error(`a voiceover at ${atUs / 1_000_000} s is past the ${card} card's ${seconds} s`);
+        }
+    } else if (op.atUs !== undefined && op.atUs >= project.source.durationUs) {
         throw new Error(
             `a voiceover at ${op.atUs / 1_000_000} s starts after the movie's end (${project.source.durationUs / 1_000_000} s)`
         );
     }
 
     if (op.id !== undefined) {
-        const index = list.findIndex((clip) => clip.id === op.id);
-
-        if (index < 0) {
-            throw new Error(`no voiceover ${op.id}; voiceovers: ${list.map((clip) => clip.id).join(", ") || "none"}`);
-        }
-
         const current = list[index];
         const changed = voiceoverSchema.parse({
             ...current,
             ...(op.atUs === undefined ? {} : { atUs: op.atUs }),
+            ...(op.card === undefined ? {} : { card: op.card }),
             ...(file === undefined ? {} : { file, durationUs: facts.voiceoverDurationUs }),
             ...(op.volume === undefined ? {} : { volume: op.volume }),
             ...(op.label === undefined ? {} : { label: op.label }),
@@ -133,6 +158,7 @@ export function applyVoiceover(project: EditProject, op: VoiceoverChange, facts:
     const clip = voiceoverSchema.parse({
         id: recordingItemId("v"),
         atUs: op.atUs,
+        ...(card === undefined ? {} : { card }),
         file,
         durationUs: facts.voiceoverDurationUs,
         ...(op.volume === undefined ? {} : { volume: op.volume }),
@@ -171,8 +197,10 @@ export function applyDucking(
     return { ...project, audio: { ...project.audio, ducking } };
 }
 
+/** The intro card's clips first, then the movie's, then the end card's, each by time. */
 function sortVoiceovers(list: EditVoiceover[]): EditVoiceover[] {
-    return [...list].sort((a, b) => a.atUs - b.atUs);
+    const rank = (clip: EditVoiceover) => (clip.card === "intro" ? 0 : clip.card === "end" ? 2 : 1);
+    return [...list].sort((a, b) => rank(a) - rank(b) || a.atUs - b.atUs);
 }
 
 /** The music's gain under speech, 0...1: the `ducking` dB when set, else `1 - music.duck`. */

@@ -190,6 +190,18 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
                 at: tenths(clip.atUs),
                 action: { label: "Remove", ops: [{ op: "unvoiceover", id: clip.id }] },
             });
+        } else if (clip.card !== undefined) {
+            // A card's line plays over its card and may run on into what follows; it needs only the card.
+            if (!project.cards?.[clip.card]) {
+                issues.push({
+                    severity: "fix",
+                    kind: "voiceover-card-missing",
+                    item: name,
+                    message: `The voiceover on the ${clip.card} card does not play: the edit has no ${clip.card} card`,
+                    fix: `movie.${clip.card}Card({ ... }) or movie.unvoiceover("${clip.id}")`,
+                    action: { label: "Remove", ops: [{ op: "unvoiceover", id: clip.id }] },
+                });
+            }
         } else if (keptUs(project, clip.atUs, clip.atUs + 1) === 0) {
             issues.push({
                 severity: "fix",

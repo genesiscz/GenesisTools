@@ -483,9 +483,13 @@ enum MusicMix {
         if ducking?.voiceovers ?? true {
             spans += VoiceoverMix.placements(project).map { ($0.outUs, $0.outUs + $0.playUs) }
         }
-        spans.sort { $0.fromUs < $1.fromUs }
+        return merged(spans, rampUs: rampUs)
+    }
+
+    /// Spoken parts in time order, those closer than two ramps joined into one.
+    static func merged(_ spans: [(fromUs: Int64, toUs: Int64)], rampUs: Int64) -> [(fromUs: Int64, toUs: Int64)] {
         var merged: [(fromUs: Int64, toUs: Int64)] = []
-        for span in spans {
+        for span in spans.sorted(by: { $0.fromUs < $1.fromUs }) {
             if let last = merged.last, span.fromUs - last.toUs < rampUs * 2 {
                 merged[merged.count - 1].toUs = max(last.toUs, span.toUs)
             } else {
@@ -535,7 +539,8 @@ enum MusicMix {
     /// Lays the music under the movie and returns its mix parameters; nil (logged) when the file has no sound.
     /// `offsetUs`: where the movie starts in the composition (after an intro card); the speech moves by it.
     static func add(_ music: EditProject.Music, to composition: AVMutableComposition, lengthUs: Int64,
-                    project: EditProject, offsetUs: Int64 = 0) async throws -> AVMutableAudioMixInputParameters? {
+                    project: EditProject, offsetUs: Int64 = 0, cards: CardSpans? = nil,
+                    movieUs: Int64? = nil) async throws -> AVMutableAudioMixInputParameters? {
         let asset = AVURLAsset(url: URL(fileURLWithPath: music.file))
         guard let source = try? await asset.loadTracks(withMediaType: .audio).first,
               let out = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
@@ -559,8 +564,16 @@ enum MusicMix {
         }
         // Played once, the music fades out at its own end.
         let playedUs = min(lengthUs, Int64((at.seconds * 1_000_000).rounded()))
-        let speech = speech(lines: CaptionTrack.load(video: project.source.video)?.lines ?? [], project: project)
+        var speech = speech(lines: CaptionTrack.load(video: project.source.video)?.lines ?? [], project: project)
             .map { (fromUs: $0.fromUs + offsetUs, toUs: $0.toUs + offsetUs) }
+        // Round 3 (2026-11-08): a card's voiceover ducks the music over its card too (in the file's time already).
+        if let cards, project.audio.ducking?.voiceovers ?? true {
+            let onCards = VoiceoverMix.exportPlacements(project, cards: cards, movieUs: movieUs).filter { $0.clip.card != nil }
+            if !onCards.isEmpty {
+                speech = Self.merged(speech + onCards.map { (fromUs: $0.outUs, toUs: $0.outUs + $0.playUs) },
+                                     rampUs: Duck.of(project).rampUs)
+            }
+        }
         let frames = keyframes(music: music, speech: speech, lengthUs: playedUs, duck: Duck.of(project))
         let parameters = AVMutableAudioMixInputParameters(track: out)
         for (start, end) in zip(frames, frames.dropFirst()) where end.us > start.us {
@@ -888,14 +901,15 @@ struct EditRenderer {
         }
         // R4 9 intro and end cards: the music runs under the cards too; everything the movie times moves by the intro.
         if let music = project.audio.music, let parameters = try await MusicMix.add(music, to: composition, lengthUs: Int64((cursor.seconds * 1_000_000).rounded()),
-                                                                                    project: project, offsetUs: cardSpans.leadUs) {
+                                                                                    project: project, offsetUs: cardSpans.leadUs,
+                                                                                    cards: cardSpans, movieUs: movieUs) {
             inputs.append(parameters)
         }
         if project.clicks?.sound == true, let parameters = try await ClickSound.add(to: composition, project: project, offsetUs: cardSpans.leadUs) {
             inputs.append(parameters)
         }
         // R4 voiceover clips
-        inputs += await VoiceoverMix.add(to: composition, project: project, lengthUs: movieUs, offsetUs: cardSpans.leadUs)
+        inputs += await VoiceoverMix.add(to: composition, project: project, movieUs: movieUs, cards: cardSpans)
         var audioMix: AVAudioMix?
         if !inputs.isEmpty {
             let mix = AVMutableAudioMix()

@@ -114,9 +114,16 @@ private struct VoiceoverRow: View {
                 Text(verbatim: name).lineLimit(1).truncationMode(.middle)
                     .instantTooltip(missing ? "\(clip.file) is gone; it does not play" : clip.file)
                 Spacer()
-                Text(verbatim: plays.map { formatClock($0, tenths: true) } ?? "cut")
-                    .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(plays == nil ? Color.orange : RecorderPalette.dim)
-                    .instantTooltip(plays == nil ? "Its start is in a cut part, so it does not play" : "Where it starts in the edited movie")
+                if let card = clip.card {
+                    // Round 3 (2026-11-08): a card's line plays only in the export, over its card.
+                    Text(verbatim: "\(card.rawValue) card +\(formatClock(clip.atUs, tenths: true))")
+                        .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
+                        .instantTooltip("Plays over the \(card.rawValue) card in the export; the preview has no cards")
+                } else {
+                    Text(verbatim: plays.map { formatClock($0, tenths: true) } ?? "cut")
+                        .font(.system(size: 11.5).monospacedDigit()).foregroundStyle(plays == nil ? Color.orange : RecorderPalette.dim)
+                        .instantTooltip(plays == nil ? "Its start is in a cut part, so it does not play" : "Where it starts in the edited movie")
+                }
                 IconButton(systemName: "trash", tooltip: "Remove this voiceover") {
                     model.removeVoiceover(clip.id)
                 }

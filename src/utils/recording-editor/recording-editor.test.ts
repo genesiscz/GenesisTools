@@ -51,6 +51,7 @@ import {
     shortcutsOf,
     sourceTimeOf,
     transcriptLines,
+    voiceoverExportSpans,
     wholeProject,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
@@ -62,6 +63,7 @@ import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { createCanvas } from "@napi-rs/canvas";
 import { ZodError } from "zod";
 import cameraOps from "./__fixtures__/camera-ops.json";
+import cardVoiceovers from "./__fixtures__/card-voiceovers.json";
 import editMarkers from "./__fixtures__/edit-markers.json";
 import legacyEvidence from "./__fixtures__/legacy-evidence.json";
 import transcriptCuts from "./__fixtures__/transcript-cuts.json";
@@ -857,6 +859,51 @@ describe("edit project (edit.json)", () => {
         expect(snaps[0]?.action?.ops).toEqual([{ op: "retime", id: project.zooms[0]?.id, to: 5.5 }]);
         const fixed = applyOp(project, { op: "retime", id: project.zooms[0]?.id ?? "", to: 5.5 });
         expect(checkProject(fixed, facts).filter((issue) => issue.kind === "zoom-eases-out-at-cut")).toEqual([]);
+    });
+
+    test("a voiceover on the intro or end card plays from the card's start, and the export lays each clip as the golden file says", () => {
+        // The shared golden file: the Swift export lays the same clips at the same places (RecorderEditTests).
+        const golden = editProjectSchema.parse(cardVoiceovers.edit);
+        expect(voiceoverExportSpans(golden)).toEqual(cardVoiceovers.spans);
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        expect(checkProject(golden, facts).filter((issue) => issue.kind?.startsWith("voiceover"))).toEqual([
+            expect.objectContaining({ kind: "voiceover-cut-at-end", item: "voiceover vlate" }),
+        ]);
+        const info = describeProject(golden, "/x").voiceovers;
+        expect(info.map((clip) => [clip.id, clip.card ?? null, clip.plays, clip.exportPlays])).toEqual([
+            ["vintro", "intro", null, 0.4],
+            ["vmovie", null, 1, 4],
+            ["vlate", null, 7.5, 10.5],
+            ["vend", "end", null, 11.5],
+        ]);
+
+        // The op: `card` anchors `at` to the card; the card must exist and `at` must fall inside it.
+        const folder = mkdtempSync(join(tmpdir(), "card-voice-"));
+        const voice = join(folder, "voice.mp3");
+        writeFileSync(voice, "");
+        const bare = wholeProject(source);
+        expect(() =>
+            applyOp(bare, { op: "voiceover", card: "intro", at: 0.4, file: voice }, { voiceoverDurationUs: 1_000_000 })
+        ).toThrow("no intro card");
+        const carded = applyOp(bare, { op: "introCard", title: "Demo", seconds: 3 });
+        expect(() =>
+            applyOp(
+                carded,
+                { op: "voiceover", card: "intro", at: 3.2, file: voice },
+                { voiceoverDurationUs: 1_000_000 }
+            )
+        ).toThrow("past the intro card's 3 s");
+        const voiced = applyOp(
+            carded,
+            { op: "voiceover", card: "intro", at: 0.4, file: voice, label: "Hello" },
+            { voiceoverDurationUs: 1_000_000 }
+        );
+        expect(voiced.audio.voiceovers?.map((clip) => [clip.card, clip.atUs, clip.durationUs])).toEqual([
+            ["intro", 400_000, 1_000_000],
+        ]);
+        // A card that goes away leaves its voiceover with nothing to play over: check() says so.
+        const gone = applyOp(voiced, { op: "introCard", enabled: false });
+        expect(checkProject(gone, facts).map((issue) => issue.kind)).toContain("voiceover-card-missing");
     });
 
     test("check names a voiceover that runs past the movie's end, where the export cuts it off", () => {

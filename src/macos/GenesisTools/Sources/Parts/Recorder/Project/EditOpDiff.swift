@@ -159,6 +159,7 @@ enum EditOpDiff {
                 guard let old = before.first(where: { $0.id == clip.id }), old != clip else { continue }
                 var op = EditOp.Voiceover(id: clip.id)
                 if old.atUs != clip.atUs { op.at = seconds(clip.atUs) }
+                if old.card != clip.card, let card = clip.card { op.card = card }
                 if old.file != clip.file { op.file = clip.file }
                 if old.volume != clip.volume { op.volume = clip.volume }
                 if old.label != clip.label { op.label = clip.label ?? "" }

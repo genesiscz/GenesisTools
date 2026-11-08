@@ -817,6 +817,8 @@ extension EditOp {
         static let tag = "voiceover"
         var id: String?
         var at: Double?
+        /// "intro" or "end": `at` counts from that card's first frame, and the clip plays over the card.
+        var card: EditProject.Voiceover.Card?
         var file: String?
         var volume: Double?
         var label: String?

@@ -82,6 +82,7 @@ import {
 } from "@genesiscz/utils/recording-editor/project";
 import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recording-editor/subtitles";
 import { type CutMatch, FILLER_LEVELS, type FillerLevel } from "@genesiscz/utils/recording-editor/transcript-cuts";
+import { VOICEOVER_CARDS, type VoiceoverCard } from "@genesiscz/utils/recording-editor/voiceovers";
 import { SPEED_BADGE_POSITIONS } from "@genesiscz/utils/recording-editor/waits";
 import { ReplToolset, type ToolsetContext } from "@genesiscz/utils/repl/toolset";
 import { recorderSetSchema, settingsPatchOf } from "@genesiscz/utils/repl/toolsets/recorder";
@@ -1103,13 +1104,14 @@ const movieMethods = [
         z
             .object({
                 at: sourceTimeSchema.optional(),
+                card: z.enum(VOICEOVER_CARDS).optional(),
                 file: z.string().min(1).optional(),
                 volume: z.number().min(0).max(2).optional(),
                 label: z.string().max(200).optional(),
                 id: z.string().optional(),
             })
             .strict(),
-        'Plays a sound file (mp3, wav, aiff, m4a) from SOURCE time `at` (seconds or "m:ss") at its own speed, mixed into the preview and the export: a narration. volume 0 to 2 (1), label names it ("Intro"). With id (from info().voiceovers) it changes that clip instead: a new at moves it, a new file replaces it. The music drops under it (ducking()). unvoiceover(id) removes it. info().voiceovers lists each with plays (its OUTPUT second, null when its start is cut).'
+        'Plays a sound file (mp3, wav, aiff, m4a) from SOURCE time `at` (seconds or "m:ss") at its own speed, mixed into the preview and the export: a narration. volume 0 to 2 (1), label names it ("Intro"). With id (from info().voiceovers) it changes that clip instead: a new at moves it, a new file replaces it. The music drops under it (ducking()). unvoiceover(id) removes it. card: "intro" or "end" plays it over that card instead, `at` counting from the first frame of the card ({ card: "intro", at: 0.4, file }); an intro line may run on into the movie. info().voiceovers lists each with plays (its OUTPUT second, null when its start is cut or it is on a card) and exportPlays (its second in the exported file).'
     ),
     edit("unvoiceover", z.object({ id: z.string() }).strict(), "Removes a voiceover clip by its id.", ["id"]),
     defineMethod({
@@ -1117,6 +1119,7 @@ const movieMethods = [
         params: z
             .object({
                 at: sourceTimeSchema,
+                card: z.enum(VOICEOVER_CARDS).optional(),
                 text: z.string().trim().min(1).max(2000),
                 provider: z.enum(["xai", "openai", "macos"]).optional(),
                 voice: z.string().optional(),
@@ -1127,7 +1130,7 @@ const movieMethods = [
             .strict(),
         result: z.unknown(),
         resultName: `${editResult.replace(" }", ", voiceover: { id, file, seconds } }")}`,
-        doc: `Speaks \`text\` into a sound file with \`${toolCommand("say", "--output")}\` (provider "xai" by default, voice and rate as ${toolCommand("say")} takes them; it costs a cloud call) in the recording's voiceovers/ folder, then adds it as a voiceover at SOURCE time \`at\`, like voiceover(). Nothing plays aloud. A cloud failure throws (no fallback to the macOS voice).`,
+        doc: `Speaks \`text\` into a sound file with \`${toolCommand("say", "--output")}\` (provider "xai" by default, voice and rate as ${toolCommand("say")} takes them; it costs a cloud call) in the recording's voiceovers/ folder, then adds it as a voiceover at SOURCE time \`at\` (or with card, \`at\` seconds into that card), like voiceover(). Nothing plays aloud. A cloud failure throws (no fallback to the macOS voice).`,
         effect: "reversible",
     }),
     // R4 8 music ducking
@@ -1936,6 +1939,7 @@ export class Movie {
     /** Speaks the text into a file beside the recording (never aloud) and adds it as a voiceover. */
     async say(options: {
         at: TimeValue;
+        card?: VoiceoverCard;
         text: string;
         provider?: "xai" | "openai" | "macos";
         voice?: string;
@@ -1982,6 +1986,7 @@ export class Movie {
             {
                 op: "voiceover",
                 at: options.at,
+                ...(options.card === undefined ? {} : { card: options.card }),
                 file,
                 label,
                 ...(options.volume === undefined ? {} : { volume: options.volume }),

@@ -72,7 +72,14 @@ import {
     type TranscriptSegment,
     wordCuts,
 } from "./transcript-cuts";
-import { applyDucking, applyVoiceover, duckingSchema, removeVoiceover, voiceoverSchema } from "./voiceovers";
+import {
+    applyDucking,
+    applyVoiceover,
+    duckingSchema,
+    removeVoiceover,
+    VOICEOVER_CARDS,
+    voiceoverSchema,
+} from "./voiceovers";
 import { autoSpeedSchema, SPEED_BADGE_POSITIONS, type WaitStretch } from "./waits";
 
 const { log } = logger.scoped("recording-editor-project");
@@ -720,6 +727,47 @@ export function outputTimeOf(project: EditProject, sourceUs: number): number | u
     }
 
     return undefined;
+}
+
+/**
+ * Where each voiceover plays in the exported file, in microseconds from its first frame (the intro card's), in that
+ * order: a movie line from its output time after the intro, cut at the movie's end; a card line from its card's start
+ * plus `atUs`, running on to the end of the file at most. A line whose start is cut, or whose card is gone, is left out.
+ * The Swift export lays the clips at the same places (VoiceoverMix.exportPlacements).
+ */
+export function voiceoverExportSpans(project: EditProject): Array<{ id: string; startUs: number; playUs: number }> {
+    const leadUs = cardsLeadUs(project);
+    const movieUs = outputDurationUs(project);
+    const tailUs = Math.round((project.cards?.end?.seconds ?? 0) * 1_000_000);
+    const totalUs = leadUs + movieUs + tailUs;
+    const spans: Array<{ id: string; startUs: number; playUs: number }> = [];
+
+    for (const clip of project.audio.voiceovers ?? []) {
+        if (clip.card !== undefined) {
+            if (!project.cards?.[clip.card]) {
+                continue;
+            }
+
+            const startUs = (clip.card === "intro" ? 0 : leadUs + movieUs) + clip.atUs;
+            const playUs = Math.min(clip.durationUs, totalUs - startUs);
+
+            if (playUs > 0) {
+                spans.push({ id: clip.id, startUs, playUs });
+            }
+
+            continue;
+        }
+
+        const outUs = outputTimeOf(project, clip.atUs);
+
+        if (outUs === undefined || outUs >= movieUs) {
+            continue;
+        }
+
+        spans.push({ id: clip.id, startUs: leadUs + outUs, playUs: Math.min(clip.durationUs, movieUs - outUs) });
+    }
+
+    return spans.sort((a, b) => a.startUs - b.startUs);
 }
 
 function checkRange(project: EditProject, fromUs: number, toUs: number): void {
@@ -1976,6 +2024,8 @@ export const editOpSchema = z.discriminatedUnion("op", [
             op: z.literal("voiceover"),
             id: z.string().optional(),
             at: sourceTimeSchema.optional(),
+            /** "intro" or "end": it plays over that card, and `at` counts from the card's first frame. */
+            card: z.enum(VOICEOVER_CARDS).optional(),
             file: z.string().min(1).optional(),
             volume: z.number().min(0).max(2).optional(),
             label: z.string().max(200).optional(),
@@ -3167,14 +3217,17 @@ export function describeProject(project: EditProject, path: string) {
             : project.audio,
         // R4 voiceover clips: where each plays in the edit (null when its start is cut).
         voiceovers: (project.audio.voiceovers ?? []).map((clip) => {
-            const plays = outputTimeOf(project, clip.atUs);
+            // A card's line has no movie time: `at` counts from its card, and it plays only in the export.
+            const plays = clip.card === undefined ? outputTimeOf(project, clip.atUs) : undefined;
+            const exported = voiceoverExportSpans(project).find((span) => span.id === clip.id);
             return {
                 id: clip.id,
                 at: seconds(clip.atUs),
+                ...(clip.card ? { card: clip.card } : {}),
                 seconds: seconds(clip.durationUs),
                 plays: plays === undefined ? null : seconds(plays),
                 // R5 7: where it plays in the exported file, after the intro card.
-                exportPlays: plays === undefined ? null : seconds(plays + cardsLeadUs(project)),
+                exportPlays: exported === undefined ? null : seconds(exported.startUs),
                 file: clip.file,
                 volume: clip.volume,
                 ...(clip.label ? { label: clip.label } : {}),
