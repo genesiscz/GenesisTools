@@ -811,6 +811,25 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(ZoomCurve.view(atSource: 3_600_000, zooms: [first, second], cursor: nil).centerX, 0.75, accuracy: 0.0001)
     }
 
+    func testLinkedZoomsShorterThanTheirEaseNeverShowTheWholeFrameOrJump() {
+        // A 300 ms zoom 0.3 s after a 1 s one: linked, but shorter than its own 450 ms ease out. The glide ended at
+        // 5.15 s, the whole frame showed until 5.3 s, and then the view jumped to 74 % of the second zoom.
+        let first = EditProject.Zoom(id: "a", startUs: 4_000_000, endUs: 5_000_000, scale: 2)
+        let second = EditProject.Zoom(id: "b", startUs: 5_300_000, endUs: 5_600_000, scale: 2)
+        // The mirror case: a 300 ms first zoom, shorter than its own 450 ms ease in.
+        let short = EditProject.Zoom(id: "c", startUs: 4_000_000, endUs: 4_300_000, scale: 2)
+        let later = EditProject.Zoom(id: "d", startUs: 4_600_000, endUs: 6_000_000, scale: 2)
+        for (zooms, from, to) in [([first, second], 4_500_000, 5_400_000), ([short, later], 4_100_000, 5_000_000)] {
+            var previous = ZoomCurve.view(atSource: Int64(from), zooms: zooms, cursor: nil)
+            for us in stride(from: from, through: to, by: 5_000) {
+                let view = ZoomCurve.view(atSource: Int64(us), zooms: zooms, cursor: nil)
+                XCTAssertGreaterThan(view.scale, 1.2, "\(zooms.map(\.id)) at \(us) µs: never the whole frame between them")
+                XCTAssertLessThan(abs(view.scale - previous.scale), 0.05, "\(zooms.map(\.id)) at \(us) µs: no jump")
+                previous = view
+            }
+        }
+    }
+
     func testAFollowZoomTracksTheSmoothedCursor() {
         let track = CursorTrack(samples: (0...40).map { CursorTrack.Sample(ms: Double($0) * 50, x: 0.3, y: 0.6, click: nil) })
         let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: 2_000_000, scale: 2, mode: .follow, easeInMs: 0, easeOutMs: 0)
