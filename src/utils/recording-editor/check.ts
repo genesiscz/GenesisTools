@@ -122,10 +122,13 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
 
     const texts = [...(project.texts ?? [])].sort((a, b) => a.startUs - b.startUs);
     // R6 9: two texts overlap when what they show does (the renderer's font, wrap and clamp to the canvas; a plate
-    // text's plate, a plain text's lines), not when their anchors are near: "same place" for texts side by side was
+    // text's plate, a plain text's letters), not when their anchors are near: "same place" for texts side by side was
     // most of check()'s noise.
     const canvas = canvasShape(project);
-    const shown = texts.map((note) => ({ note, box: shownBox(note, canvas) }));
+    const shown = texts.flatMap((note) => {
+        const box = shownBox(note, canvas);
+        return box ? [{ note, box }] : [];
+    });
 
     for (const [index, { note, box }] of shown.entries()) {
         const over = shown
@@ -452,11 +455,15 @@ export function textBox(
     return textBoxes(note, canvas).plate;
 }
 
-/** The plate (textBox) and the lines inside it: the plate less its inset. */
+/**
+ * The plate (textBox) and its letters: the widest line's letters aligned inside the plate less its inset, over the
+ * lines that hold a letter. A blank line can make a plate much wider than its letters (text-metrics.ts layoutText).
+ * No letters when the text has none.
+ */
 function textBoxes(
     note: { text: string; size: number; x: number; y: number; block?: EditTextNote["block"] },
     canvas: { width: number; height: number }
-): { plate: CanvasBox; lines: CanvasBox } {
+): { plate: CanvasBox; letters?: CanvasBox } {
     const unit = CHECK_SHORT_SIDE_PX;
     const font = Math.max(8, Math.round(note.size * unit));
     const insetX = font * 0.7;
@@ -477,19 +484,33 @@ function textBoxes(
         right: x1 / unit,
         bottom: y1 / unit,
     });
+    const plate = box(left, top, left + width, top + height);
+
+    if (!set.letters) {
+        return { plate };
+    }
+
+    // TextPlates draws the lines in the plate less its inset, each one aligned there.
+    const lettersLeft = {
+        left: left + insetX,
+        center: left + (width - set.letters.width) / 2,
+        right: left + width - insetX - set.letters.width,
+    }[align];
+    const lettersTop = top + insetY + set.letters.top;
     return {
-        plate: box(left, top, left + width, top + height),
-        lines: box(left + insetX, top + insetY, left + width - insetX, top + height - insetY),
+        plate,
+        letters: box(lettersLeft, lettersTop, lettersLeft + set.letters.width, lettersTop + set.letters.height),
     };
 }
 
 /**
- * What a viewer sees of a text: a plate text's plate, a plain text's lines. A plain text draws no plate, so its inset
- * is empty space, and a subtitle may sit inside a title's inset without touching its letters.
+ * What a viewer sees of a text: a plate text's plate, a plain text's letters. A plain text draws no plate, so its inset
+ * and its blank lines are empty space, and a subtitle may sit inside a title's inset without touching its letters.
+ * Nothing for a plain text with no letters.
  */
-function shownBox(note: EditTextNote, canvas: { width: number; height: number }): CanvasBox {
+function shownBox(note: EditTextNote, canvas: { width: number; height: number }): CanvasBox | undefined {
     const boxes = textBoxes(note, canvas);
-    return note.style === "plain" ? boxes.lines : boxes.plate;
+    return note.style === "plain" ? boxes.letters : boxes.plate;
 }
 
 function boxesOverlap(a: CanvasBox, b: CanvasBox): boolean {
