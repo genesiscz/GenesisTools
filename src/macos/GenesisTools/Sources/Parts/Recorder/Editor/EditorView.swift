@@ -1771,7 +1771,7 @@ private struct PreviewView: View {
                     .aspectRatio(aspect, contentMode: .fit)
                     .padding(28)
             } else {
-                picture(aspect: aspect)
+                picture(aspect: aspect, canvas: canvas)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1779,7 +1779,7 @@ private struct PreviewView: View {
         .accessibilityLabel("Preview")
     }
 
-    private func picture(aspect: CGFloat) -> some View {
+    private func picture(aspect: CGFloat, canvas: CGSize) -> some View {
             Group {
                 if let still {
                     Image(decorative: still, scale: 1).resizable()
@@ -1797,7 +1797,7 @@ private struct PreviewView: View {
                     CameraBubbleHandle(model: model, clock: model.clock)
                 } else if model.tab == .text && !model.isPlaying {
                     ZStack {
-                        TextHandles(model: model, clock: model.clock)
+                        TextHandles(model: model, clock: model.clock, canvas: canvas)
                         ShapeHandles(model: model, clock: model.clock)
                     }
                 } else if model.tab == .find && !model.isPlaying {
@@ -1978,11 +1978,27 @@ private struct HiddenPartHandles: View {
     }
 }
 
-/// The Text tab on the preview: a grip at the centre of every text showing at the playhead; a drag moves it (in the
-/// canvas, where a text lives), a click selects it.
+/// Where the Text tab's grip sits on the preview, as a share of the picture from its top left: the centre of the plate
+/// the renderer draws at rest (Looks.textPlateUnitRect, measured on the export's canvas). A text's x, y is the centre of
+/// its block, and a left- or right-aligned plate sits against the block's edge or is kept inside at the canvas's edge,
+/// so a grip at x, y floated beside the plate. The centre lies on the plate for every alignment and edge, and keeps
+/// the grip where it was for a centred text. A text that makes no plate keeps its grip at x, y.
+enum TextGrip {
+    static func point(_ note: EditProject.TextNote, canvas: CGSize) -> CGPoint {
+        guard let plate = Looks.textPlateUnitRect(note, canvas: canvas) else { return CGPoint(x: note.x, y: note.y) }
+        return CGPoint(x: plate.midX, y: plate.midY)
+    }
+}
+
+/// The Text tab on the preview: a grip on the plate of every text showing at the playhead (TextGrip); a drag moves it
+/// (in the canvas, where a text lives), a click selects it.
 private struct TextHandles: View {
     @Bindable var model: EditorModel
     let clock: PlayheadClock
+    /// The canvas the export draws (PreviewView): this overlay has its shape, so a share of it times `size` is a point
+    /// here. The preview's player renders at most 1440 pixels high; its plates differ from the canvas's only by the
+    /// font size's rounding.
+    let canvas: CGSize
     @State private var grabbed: CGPoint?
 
     var body: some View {
@@ -1994,7 +2010,8 @@ private struct TextHandles: View {
                 Color.clear.allowsHitTesting(false)
                 ForEach(showing) { note in
                     let selected = model.selectedText == note.id
-                    let center = CGPoint(x: note.x * size.width, y: note.y * size.height)
+                    let grip = TextGrip.point(note, canvas: canvas)
+                    let center = CGPoint(x: grip.x * size.width, y: grip.y * size.height)
                     Circle()
                         .fill(selected ? RecorderPalette.zoom : Color.white.opacity(0.85))
                         .overlay(Circle().strokeBorder(Color.black.opacity(0.45), lineWidth: 1))
@@ -2002,6 +2019,10 @@ private struct TextHandles: View {
                             .foregroundStyle(selected ? Color.white : Color.black.opacity(0.7)))
                         .frame(width: 22, height: 22)
                         .contentShape(Circle().inset(by: -6))
+                        // Set, never pushed, as on a shape's middle handle: a grip that goes away under the pointer
+                        // gets no exit.
+                        .onHover { inside in (inside ? NSCursor.openHand : NSCursor.arrow).set() }
+                        .onDisappear { NSCursor.arrow.set() }
                         .offset(x: center.x - 11, y: center.y - 11)
                         .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                             model.selectedText = note.id

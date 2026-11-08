@@ -98,8 +98,25 @@ final class TextPlates: @unchecked Sendable {
         return image
     }
 
-    private static func render(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight, plain: Bool,
-                               highlight: (characters: Int, color: NSColor)?, alignment: NSTextAlignment) -> CIImage? {
+    /// The size `plate` makes for this text, from the same layout it draws but without drawing, so a preview overlay
+    /// knows where the plate lands (Looks.textPlateRect). The colours (`plain`, `highlight`) never change the size.
+    static func measure(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight = .semibold,
+                        alignment: NSTextAlignment = .center) -> CGSize? {
+        layout(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight, highlight: nil, alignment: alignment)?.size
+    }
+
+    /// A text set on its plate: the styled string, its margin on the plate, the text's own height and the plate's size
+    /// in whole pixels. `render` draws it and `measure` reads its size, so the two cannot disagree.
+    private struct Layout {
+        let attributed: NSAttributedString
+        let inset: CGSize
+        let textHeight: CGFloat
+        let size: CGSize
+    }
+
+    /// Nil for a plate too small to draw.
+    private static func layout(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight,
+                               highlight: (characters: Int, color: NSColor)?, alignment: NSTextAlignment) -> Layout? {
         let paragraph = NSMutableParagraphStyle()
         // R5 10 multi-line texts: "\n" starts a line, a long line wraps at maxWidth, and the lines align as asked.
         paragraph.alignment = alignment
@@ -117,9 +134,16 @@ final class TextPlates: @unchecked Sendable {
         let bounds = attributed.boundingRect(with: CGSize(width: max(fontSize * 4, maxWidth - 2 * inset.width), height: .greatestFiniteMagnitude),
                                              options: [.usesLineFragmentOrigin, .usesFontLeading])
         let size = CGSize(width: ceil(bounds.width + 2 * inset.width), height: ceil(bounds.height + 2 * inset.height))
-        guard size.width > 2, size.height > 2,
-              let context = CGContext(data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8, bytesPerRow: 0,
+        guard size.width > 2, size.height > 2 else { return nil }
+        return Layout(attributed: attributed, inset: inset, textHeight: bounds.height, size: size)
+    }
+
+    private static func render(_ text: String, fontSize: CGFloat, maxWidth: CGFloat, weight: NSFont.Weight, plain: Bool,
+                               highlight: (characters: Int, color: NSColor)?, alignment: NSTextAlignment) -> CIImage? {
+        guard let layout = layout(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight, highlight: highlight, alignment: alignment),
+              let context = CGContext(data: nil, width: Int(layout.size.width), height: Int(layout.size.height), bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        let size = layout.size
         let plate = CGPath(roundedRect: CGRect(origin: .zero, size: size), cornerWidth: fontSize * 0.45, cornerHeight: fontSize * 0.45, transform: nil)
         if plain {
             context.setShadow(offset: CGSize(width: 0, height: -fontSize * 0.04), blur: fontSize * 0.25, color: CGColor(gray: 0, alpha: 0.85))
@@ -130,8 +154,9 @@ final class TextPlates: @unchecked Sendable {
         }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
-        attributed.draw(with: CGRect(x: inset.width, y: inset.height, width: size.width - 2 * inset.width, height: bounds.height),
-                        options: [.usesLineFragmentOrigin, .usesFontLeading])
+        layout.attributed.draw(with: CGRect(x: layout.inset.width, y: layout.inset.height, width: size.width - 2 * layout.inset.width,
+                                            height: layout.textHeight),
+                               options: [.usesLineFragmentOrigin, .usesFontLeading])
         NSGraphicsContext.restoreGraphicsState()
         return context.makeImage().map { CIImage(cgImage: $0) }
     }
@@ -143,32 +168,58 @@ extension Looks {
     /// slide-up rises into place while it fades in (TextMotion in Overlays.swift).
     static func drawText(_ note: EditProject.TextNote, opacity: Double, plates: TextPlates, on image: CIImage, size: CGSize,
                          sinceUs: Int64? = nil) -> CIImage {
-        let unit = min(size.width, size.height)
-        let fontSize = max(8, (note.size * unit).rounded())
         // R4 6 animated texts
         let motion = TextMotion.at(sinceUs: sinceUs, note: note)
-        // R5 10 multi-line texts: the block's wrap width and line alignment.
-        let wrap = textBlockWidth(note, canvasWidth: size.width)
-        let alignment = textAlignment(note.block?.align)
-        guard let full = plates.plate(note.text, fontSize: fontSize, maxWidth: wrap, weight: .semibold,
-                                      plain: note.style == .plain, alignment: alignment) else { return image }
+        let style = textPlateStyle(note, size: size)
+        guard let full = plates.plate(note.text, fontSize: style.fontSize, maxWidth: style.wrap, weight: .semibold,
+                                      plain: note.style == .plain, alignment: style.alignment) else { return image }
         var plate = full
         if motion.characters < note.text.count {
             guard motion.characters > 0 else { return image }
-            guard let typed = plates.plate(String(note.text.prefix(motion.characters)), fontSize: fontSize, maxWidth: wrap,
-                                           weight: .semibold, plain: note.style == .plain, alignment: alignment) else { return image }
+            guard let typed = plates.plate(String(note.text.prefix(motion.characters)), fontSize: style.fontSize, maxWidth: style.wrap,
+                                           weight: .semibold, plain: note.style == .plain, alignment: style.alignment) else { return image }
             plate = typed
         }
         let shown = opacity * motion.opacity
         if shown < 0.999 {
             plate = plate.applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(shown))])
         }
-        // Placed by the full text's box, so a typed line grows to the right and a risen one lands where it rests.
-        let origin = textOrigin(note, plate: full.extent.size, size: size)
-        let height = full.extent.height
-        let y = origin.y - motion.drop * height
-        let top = y + (height - plate.extent.height)
-        return plate.transformed(by: CGAffineTransform(translationX: origin.x.rounded(), y: top.rounded())).composited(over: image)
+        // Placed by the full text's plate at rest (textPlateRect, where the editor's grip sits), so a typed line grows
+        // to the right and a risen one lands where it rests.
+        let rest = textPlateRect(note, plate: full.extent.size, size: size)
+        let top = rest.maxY - plate.extent.height - motion.drop * rest.height
+        return plate.transformed(by: CGAffineTransform(translationX: rest.minX, y: top.rounded())).composited(over: image)
+    }
+
+    /// The font size, wrap width and line alignment a text's plate is made with on a canvas of `size`.
+    static func textPlateStyle(_ note: EditProject.TextNote, size: CGSize) -> (fontSize: CGFloat, wrap: CGFloat, alignment: NSTextAlignment) {
+        let unit = min(size.width, size.height)
+        // R5 10 multi-line texts: the block's wrap width and line alignment.
+        return (max(8, (note.size * unit).rounded()), textBlockWidth(note, canvasWidth: size.width), textAlignment(note.block?.align))
+    }
+
+    /// Where drawText puts a text's plate at rest on a canvas of `size`, in Core Image pixels (lower-left origin): its
+    /// size from the plate's own layout (TextPlates.measure), placed by textOrigin and rounded to whole pixels as drawn.
+    /// A typewriter's typed part and a slide-up still rising are drawn from this rest box. Nil when the text makes no
+    /// plate (drawText then draws nothing). The editor's text grip sits on it (TextGrip).
+    static func textPlateRect(_ note: EditProject.TextNote, size: CGSize) -> CGRect? {
+        let style = textPlateStyle(note, size: size)
+        guard let plate = TextPlates.measure(note.text, fontSize: style.fontSize, maxWidth: style.wrap, weight: .semibold,
+                                             alignment: style.alignment) else { return nil }
+        return textPlateRect(note, plate: plate, size: size)
+    }
+
+    /// The same for a plate of a known size.
+    static func textPlateRect(_ note: EditProject.TextNote, plate: CGSize, size: CGSize) -> CGRect {
+        let origin = textOrigin(note, plate: plate, size: size)
+        return CGRect(origin: CGPoint(x: origin.x.rounded(), y: origin.y.rounded()), size: plate)
+    }
+
+    /// textPlateRect as a share of the canvas from its top left (y down), the space the editor's preview overlays draw in.
+    static func textPlateUnitRect(_ note: EditProject.TextNote, canvas: CGSize) -> CGRect? {
+        guard canvas.width >= 1, canvas.height >= 1, let rect = textPlateRect(note, size: canvas) else { return nil }
+        return CGRect(x: rect.minX / canvas.width, y: (canvas.height - rect.maxY) / canvas.height,
+                      width: rect.width / canvas.width, height: rect.height / canvas.height)
     }
 
     // R5 10 multi-line texts
