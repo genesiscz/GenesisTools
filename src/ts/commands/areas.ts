@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import type { Block } from "@genesiscz/utils/json2md";
 import { logger } from "@genesiscz/utils/logger";
@@ -363,9 +364,9 @@ export function registerAreasCommands(program: Command): void {
             "lazily. Tests are skipped unless --tests.",
             "",
             "Examples:",
-            "  tools ts areas src --split src/utils",
-            '  tools ts areas src --split src/utils --forbid "src/utils->src/" --json',
-            "  tools ts areas src --mermaid --min-edges 20 > areas.mmd",
+            `  ${toolCommand("ts areas", "src", "--split", "src/utils")}`,
+            `  ${toolCommand("ts areas", "src", "--split", "src/utils", "--forbid", "src/utils->src/", "--json")}`,
+            `  ${toolCommand("ts areas", "src", "--mermaid", "--min-edges", "20")} > areas.mmd`,
         ].join("\n")
     );
 
