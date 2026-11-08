@@ -254,7 +254,7 @@ describe.skipIf(!hasFfmpeg)("movieDemoDriver on a recording session", () => {
                     }
 
                     copyFileSync(clip, output);
-                    onRecording?.();
+                    onRecording?.({ sessionDir: join(scratch, "no-session") });
 
                     if (!signal.aborted) {
                         await new Promise<void>((resolve) =>
@@ -324,6 +324,8 @@ describe.skipIf(!hasFfmpeg)("movieDemoDriver on a recording session", () => {
             expect(manifest?.title).toBe("Northwind checkout");
             const markers = markerList.parse(manifest?.settings.markers);
             expect(markers.map((marker) => marker.label)).toEqual(["Open the cart", "Break", "Pay"]);
+            // The marks count from the movie's first frame, and the manifest says so (older recordings lack the key).
+            expect(manifest?.settings.markerClock).toBe("movie");
             expect(result.steps.map((step) => step.startMs)).toEqual(markers.map((marker) => marker.atMs));
             expect(result.failed).toEqual([{ caption: "Break", error: "no such button" }]);
 

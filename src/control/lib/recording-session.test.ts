@@ -97,8 +97,8 @@ interface FakeRun {
     signal: AbortSignal;
     /** Ends the run by itself, as the recorder's deadline or a failure would. */
     end: (result: SegmentResult, writeMovie?: boolean) => Promise<void>;
-    /** The first frame arrives (runs arm at once unless the fake was made with `armLater`). */
-    arm: () => void;
+    /** The first frame arrives (runs arm at once unless the fake was made with `armLater`), when the recorder said. */
+    arm: (start?: { firstFrameAt: number }) => void;
 }
 
 /**
@@ -112,6 +112,8 @@ function fakeRecorder(
         prepares?: boolean;
         /** What each run reports when a stop or pause ends it (ax-tool's capturedFrames). */
         frames?: { frames: number };
+        /** The length of each run's movie, as ax-tool reports it on a stop or pause. */
+        movieMs?: number;
     } = {}
 ) {
     const runs: FakeRun[] = [];
@@ -131,9 +133,9 @@ function fakeRecorder(
 
                     resolve(result);
                 };
-                const arm = () => {
+                const arm = (start?: { firstFrameAt: number }) => {
                     armed = true;
-                    onRecording();
+                    onRecording(start);
                 };
                 runs.push({ target, rates, output, maxSeconds, signal, end, arm });
                 if (options.failFirst && index === 0) {
@@ -145,7 +147,13 @@ function fakeRecorder(
                     "abort",
                     () =>
                         void (armed
-                            ? end({ ok: true, endedBy: "stop", durationMs: 1000, ...options.frames })
+                            ? end({
+                                  ok: true,
+                                  endedBy: "stop",
+                                  durationMs: 1000,
+                                  ...options.frames,
+                                  ...(options.movieMs === undefined ? {} : { movieMs: options.movieMs }),
+                              })
                             : end({ ok: false, endedBy: "stop", error: "cancelled while arming" }, false)),
                     { once: true }
                 );
@@ -187,8 +195,11 @@ describe("RecordingSession", () => {
             segmentSeconds?: number;
             slowStartMs?: number;
             join?: ConstructorParameters<typeof RecordingSession>[0]["join"];
+            /** Sees every event after the test's own list does. */
+            emit?: (event: RecordingSessionEvent) => void;
         } = {}
     ) {
+        const { emit, ...rest } = extra;
         return new RecordingSession({
             target: finder,
             directory: join(root, "segments"),
@@ -199,11 +210,14 @@ describe("RecordingSession", () => {
                 await writeFile(output, segments.map((segment) => segment.path).join("\n"));
                 return { durationMs: segments.reduce((sum, segment) => sum + segment.durationMs, 0) };
             },
-            emit: (event) => events.push(event),
+            emit: (event) => {
+                events.push(event);
+                emit?.(event);
+            },
             now: () => clock,
             tickMs: 0,
             slowStartMs: 0,
-            ...extra,
+            ...rest,
         });
     }
 
@@ -337,6 +351,45 @@ describe("RecordingSession", () => {
         // The paused minute is not recording time.
         const finishing = events.findLast((event) => event.event === "state");
         expect(finishing?.event === "state" && finishing.elapsedMs).toBe(9000);
+    });
+
+    // 2026-11-08: markers sat about 1.35 s before what they marked. The session heard of the first frame only once the
+    // recorder had written its PNG, and counted the movie from then; the movie starts at the frame itself.
+    it("a mark is at its movie time: from the first frame the recorder reports, across a pause, and 0 before it", async () => {
+        const { recorder, runs } = fakeRecorder({ armLater: true, movieMs: 2500 });
+        let control: SessionRecorderControl | undefined;
+        const recording = session(recorder, { emit: (event) => control?.observe(event) });
+        control = new SessionRecorderControl(recording, { target: finder });
+        await recording.start();
+
+        clock = 1_000_300;
+        const early = control.addMarker("before the first frame");
+        clock = 1_001_500;
+        const between = control.addMarker("after the frame, before the session heard of it");
+        clock = 1_002_150;
+        runs[0].arm({ firstFrameAt: 1_000_800 });
+        expect(await early).toEqual({ atMs: 0, label: "before the first frame" });
+        expect((await between).atMs).toBe(700);
+        clock = 1_003_150;
+        expect((await control.addMarker("bell")).atMs).toBe(2350);
+
+        // After a pause the next piece starts where the first piece's movie ends (2.5 s), at its own first frame.
+        clock = 1_003_300;
+        await recording.command({ cmd: "pause" });
+        clock = 1_060_000;
+        await recording.command({ cmd: "resume" });
+        clock = 1_060_400;
+        runs[1].arm({ firstFrameAt: 1_060_100 });
+        clock = 1_061_100;
+        expect((await control.addMarker("after the pause")).atMs).toBe(3500);
+
+        // A recorder that names no first frame starts the movie when the session hears of it, as before.
+        clock = 1_062_000;
+        await recording.command({ cmd: "pause" });
+        await recording.command({ cmd: "resume" });
+        runs[2].arm();
+        clock = 1_062_400;
+        expect((await control.addMarker("no first frame named")).atMs).toBe(5400);
     });
 
     it("one segment is moved into place without a join", async () => {
@@ -836,7 +889,7 @@ describe("nativeSegmentRecorder", () => {
         const output = join(root, "segment.mp4");
         spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async ({ signal, onRecording }) => {
             await writeFile(output, "movie");
-            onRecording?.();
+            onRecording?.({ sessionDir: join(root, "session") });
             if (!signal.aborted) {
                 await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
             }
@@ -898,6 +951,40 @@ describe("nativeSegmentRecorder", () => {
             { activeFps: 30, idleFps: 1, threshold: 2 },
             { activeFps: 30, idleFps: undefined, threshold: 2 },
         ]);
+    });
+
+    it("a run tells the session when ax-tool captured its first frame, and how long its movie is", async () => {
+        const sessionDir = join(root, "session");
+        await mkdir(sessionDir, { recursive: true });
+        await writeFile(join(sessionDir, "movie-start.json"), '{"firstFrameEpochMs": 1700000000123.4}\n');
+        spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async ({ onRecording }) => {
+            onRecording?.({ sessionDir });
+            return {
+                ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+                captureFailed: false,
+                sessionDir,
+                warnings: [],
+                capture: { data: { stats: { durationMs: 2600, capturedFrames: 75, movieMs: 2480 } } },
+            };
+        });
+        const starts: unknown[] = [];
+        const record = (onRecording: (start?: { firstFrameAt: number }) => void) =>
+            nativeSegmentRecorder().record({
+                target: display,
+                output: join(root, "segment.mp4"),
+                maxSeconds: 3,
+                signal: new AbortController().signal,
+                onRecording,
+            });
+
+        const result = await record((start) => starts.push(start));
+        expect(starts).toEqual([{ firstFrameAt: 1_700_000_000_123.4 }]);
+        expect(result).toMatchObject({ durationMs: 2600, movieMs: 2480, frames: 75 });
+
+        // A recorder that wrote no first-frame time (an older ax-tool) leaves the session to its own clock.
+        await mkdir(sessionDir, { recursive: true });
+        await record((start) => starts.push(start));
+        expect(starts).toEqual([{ firstFrameAt: 1_700_000_000_123.4 }, undefined]);
     });
 
     it("a stop on a recorder that failed probes its movie and drops an unfinished one", async () => {

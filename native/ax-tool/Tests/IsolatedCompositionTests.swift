@@ -118,6 +118,17 @@ final class IsolatedCompositionTests: XCTestCase {
         XCTAssertEqual(movieSessionEnd(stop: stop, lastFrame: late), late, "the end never cuts off an appended frame")
     }
 
+    func testTheMoviesFirstFrameGetsItsWallClockTimeAndTheMovieItsLength() {
+        // The first frame was captured 1.35 s before the clocks were read (its PNG took that long): its wall time is
+        // 1.35 s before the wall clock's reading, not the reading itself.
+        let first = CMTime(seconds: 500.25, preferredTimescale: 1_000_000_000)
+        let hostNow = CMTime(seconds: 501.6, preferredTimescale: 1_000_000_000)
+        XCTAssertEqual(epochMs(ofHostTime: first, hostNow: hostNow, epochNowMs: 1_762_636_000_000), 1_762_635_998_650, accuracy: 0.001)
+        let end = movieSessionEnd(stop: CMTime(seconds: 513.862, preferredTimescale: 600), lastFrame: nil)
+        XCTAssertEqual(movieLengthMs(first: first, end: end), 13_612)
+        XCTAssertEqual(movieLengthMs(first: first, end: first), 0)
+    }
+
     func testSourceResolutionChangeIsAGeometryChange() {
         let placements = [IsolatedLayerPlacement(id: 1, bounds: left)]
         let resizing = IsolatedFrameGeometry(canvas: left, placements: placements, sources: [

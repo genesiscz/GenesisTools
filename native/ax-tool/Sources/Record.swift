@@ -349,6 +349,13 @@ private func resolveRecordWindow(_ options: RecordOptions) -> (id: CGWindowID, b
     return (id, frame)
 }
 
+/// A run's stats with `movieMs`, the movie's own length, when it wrote a movie. `durationMs` is the run's wall time,
+/// which also counts the wait for the first frame and the stop.
+func withMovieLength(_ stats: [String: Any], _ movieMs: Int?) -> [String: Any] {
+    guard let movieMs else { return stats }
+    return stats.merging(["movieMs": movieMs]) { _, new in new }
+}
+
 /// `--control-stdin` events: one JSON object per line on stderr, so a supervisor can stream them while the final
 /// result stays on stdout. Silent without the flag.
 enum CaptureEvents {
@@ -662,6 +669,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
             firstTimestamp = timestamp
             writer?.startSession(atSourceTime: timestamp)
             audio?.movieStarted(at: timestamp)
+            noteMovieStart(timestamp)
         }
         lastTimestamp = timestamp
         captured += 1
@@ -828,12 +836,32 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
     var videoSucceeded: Bool { options.videoOut == nil || (writer?.status == .completed && !videoAppendFailed) }
 
+    /// The movie starts at this frame. Its wall-clock time goes into `movie-start.json` now, before the frame's PNG
+    /// (up to a second for a first retina frame), because the session hears of the start only from that PNG and
+    /// counts marks in movie time from this moment (src/control/lib/recording-native.ts MOVIE_START_FILE).
+    private func noteMovieStart(_ timestamp: CMTime) {
+        guard options.videoOut != nil else { return }
+        let hostNow = CMClockGetTime(CMClockGetHostTimeClock())
+        let at = epochMs(ofHostTime: timestamp, hostNow: hostNow, epochNowMs: Date().timeIntervalSince1970 * 1000)
+        let url = URL(fileURLWithPath: options.outDir).appendingPathComponent("movie-start.json")
+        do {
+            try JSONSerialization.data(withJSONObject: ["firstFrameEpochMs": at]).write(to: url, options: .atomic)
+        } catch {
+            warnings.append("the movie's first-frame time could not be written: \(error.localizedDescription)")
+        }
+    }
+
+    /// The movie's length (its first frame to its end), once `finishVideo` ended its writer session.
+    private(set) var movieMs: Int?
+
     /// `stop` is the host-clock moment recording stopped. Frames carry host-clock timestamps and
     /// the session started at the first one, so the end needs no duration from another origin.
     func finishVideo(stoppedAt stop: CMTime) {
         guard let writer, let writerInput else { return }
-        if firstTimestamp != nil {
-            writer.endSession(atSourceTime: movieSessionEnd(stop: stop, lastFrame: lastTimestamp))
+        if let firstTimestamp {
+            let end = movieSessionEnd(stop: stop, lastFrame: lastTimestamp)
+            writer.endSession(atSourceTime: end)
+            movieMs = movieLengthMs(first: firstTimestamp, end: end)
         }
         writerInput.markAsFinished()
         let done = DispatchSemaphore(value: 0)
@@ -1180,9 +1208,11 @@ func cmdCaptureScreen() {
         "source": "native", "captureEngine": "ScreenCaptureKit", "scope": options.mode, "cancelled": cancelled || host.stopRequested,
         "options": recordedOptions,
         "frames": frames,
-        "stats": ["durationMs": durationMs, "capturedFrames": recorder.captured, "keptFrames": recorder.kept.count,
-                  "droppedFrames": recorder.captured - recorder.kept.count, "bytesWritten": recorder.bytesWritten,
-                  "displaySwitches": recorder.displaySwitches, "heartbeatFrames": recorder.heartbeatFrames],
+        "stats": withMovieLength(["durationMs": durationMs, "capturedFrames": recorder.captured,
+                                  "keptFrames": recorder.kept.count,
+                                  "droppedFrames": recorder.captured - recorder.kept.count, "bytesWritten": recorder.bytesWritten,
+                                  "displaySwitches": recorder.displaySwitches, "heartbeatFrames": recorder.heartbeatFrames],
+                                 recorder.movieMs),
         "warnings": recorder.warnings,
         "sessionDir": options.outDir,
         "display": ["id": host.display.id],

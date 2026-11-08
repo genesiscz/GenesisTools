@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, copyFile, mkdir, rename, rm, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -30,6 +31,8 @@ const SLOW_START_MS = 8000;
 /** A rest of the limit shorter than this starts no new segment: a capture's start costs about as long, and the
  * recorder's deadline runs from its own launch, so such a refill ran past the limit (10.31 s for 10, 25.35 s for 20). */
 const MIN_REFILL_MS = 1000;
+/** A mark made while a segment arms waits this long for its first frame: as long as a recorder may arm (startCapture). */
+const MARK_WAIT_MS = 15_000;
 
 export const recordingCommandSchema = z.discriminatedUnion("cmd", [
     z.object({ cmd: z.literal("pause") }),
@@ -115,6 +118,8 @@ export interface SegmentResult {
     endedBy: SegmentEnd;
     /** The recorder's own measure of the movie, when it reported one. */
     durationMs?: number;
+    /** The movie's own length (from its first frame to its end), when the recorder reported it. */
+    movieMs?: number;
     /** Frames written into the movie, when the recorder reported them. */
     frames?: number;
     error?: string;
@@ -122,10 +127,16 @@ export interface SegmentResult {
     code?: string;
 }
 
+/** When a run's first frame was captured (epoch ms), as the recorder measured it: the movie's time 0. */
+export interface SegmentStart {
+    firstFrameAt: number;
+}
+
 /**
  * One recorder run: records `target` into `output` until `maxSeconds` or until `signal` aborts, then finalizes the
- * movie. `onRecording` runs once, when the first frame is in. Resolves after the recorder exited; never rejects for
- * a recording problem (that is `endedBy: "failure"`).
+ * movie. `onRecording` runs once, when the first frame is in, with that frame's time when the recorder said it (the
+ * session hears of the frame later: ax-tool writes its PNG first). Resolves after the recorder exited; never rejects
+ * for a recording problem (that is `endedBy: "failure"`).
  */
 export interface SegmentRecorder {
     record(input: {
@@ -135,7 +146,7 @@ export interface SegmentRecorder {
         output: string;
         maxSeconds: number;
         signal: AbortSignal;
-        onRecording: () => void;
+        onRecording: (start?: SegmentStart) => void;
         /** The recorder needs a slow step before it can start (a compile after an update). */
         onPreparing?: () => void;
     }): Promise<SegmentResult>;
@@ -173,8 +184,15 @@ interface ActiveSegment {
     path: string;
     target: RecordingTarget;
     maxSeconds: number;
+    /** When the run was asked for; its first frame cannot come earlier. */
+    requestedAt: number;
     /** When the first frame came in; unset while the recorder arms. */
     startedAt?: number;
+    /** Where this run starts in the joined movie: the movie length of every earlier segment. */
+    movieOffsetMs: number;
+    /** Settles when the first frame is in or the run ended without one. */
+    framed: Promise<void>;
+    settleFramed: () => void;
     /** The reason the `recording` state will carry once the first frame is in. */
     reason: RecordingStateReason;
     controller: AbortController;
@@ -205,6 +223,8 @@ export class RecordingSession {
     private counter = 0;
     /** Wall time of every finished segment, capped at its run's own limit. */
     private recordedMs = 0;
+    /** Movie length of every finished segment: where the next one starts in the joined movie. */
+    private movieMs = 0;
     private queue: Promise<void> = Promise.resolve();
     private ticker: ReturnType<typeof setInterval> | undefined;
     private settle: (outcome: RecordingOutcome) => void = () => {};
@@ -319,6 +339,33 @@ export class RecordingSession {
         return this.recordedMs + (this.current ? this.liveMs(this.current) : 0);
     }
 
+    /**
+     * Where a mark made now lands in the joined movie: the movie length of the finished segments plus the time since
+     * the running segment's first frame. A mark made while a segment arms waits (at most `MARK_WAIT_MS`) for that
+     * frame, because the recorder captures it before the session hears of it; a mark made before the first frame,
+     * or in a segment that never records one, is at the segment's start (0 in the first segment).
+     */
+    async movieTimeOfMark(): Promise<number> {
+        const at = this.now();
+        const run = this.current;
+
+        if (!run) {
+            return this.movieMs;
+        }
+
+        if (run.startedAt === undefined) {
+            await withTimeout(run.framed, MARK_WAIT_MS).catch(() => {
+                log.debug({ index: run.index }, "a mark waited for a first frame that did not come");
+            });
+        }
+
+        if (run.startedAt === undefined) {
+            return run.movieOffsetMs;
+        }
+
+        return run.movieOffsetMs + Math.min(Math.max(0, at - run.startedAt), run.maxSeconds * 1000);
+    }
+
     /** Time a run has been in the movie: none while it arms, never past its own limit. */
     private liveMs(run: ActiveSegment): number {
         if (run.startedAt === undefined) {
@@ -375,6 +422,7 @@ export class RecordingSession {
                 await this.stopSegment();
                 await this.deleteSegments();
                 this.recordedMs = 0;
+                this.movieMs = 0;
                 this.beginSegment("user");
                 return;
             case "stop":
@@ -419,11 +467,19 @@ export class RecordingSession {
         const maxSeconds = Math.min(this.segmentSeconds, (this.limitMs - this.recordedMs) / 1000);
         const controller = new AbortController();
         const target = this.target;
+        let settleFramed = () => {};
+        const framed = new Promise<void>((resolve) => {
+            settleFramed = resolve;
+        });
         const run: ActiveSegment = {
             index,
             path,
             target,
             maxSeconds,
+            requestedAt: this.now(),
+            movieOffsetMs: this.movieMs,
+            framed,
+            settleFramed,
             reason,
             controller,
             stopping: false,
@@ -439,7 +495,7 @@ export class RecordingSession {
                 output: path,
                 maxSeconds,
                 signal: controller.signal,
-                onRecording: () => this.markRecording(run),
+                onRecording: (start) => this.markRecording(run, start),
                 onPreparing: () => {
                     run.preparing = true;
                     this.options.emit({ event: "preparing", message: PREPARING_MESSAGE });
@@ -457,19 +513,25 @@ export class RecordingSession {
 
         void run.result.then((result) => {
             clearTimeout(run.slowStart);
+            run.settleFramed();
             if (!run.stopping) {
                 void this.enqueue(() => this.endedByItself(run, result));
             }
         });
     }
 
-    /** The run's first frame is in: from here its time is in the movie. */
-    private markRecording(run: ActiveSegment): void {
+    /**
+     * The run's first frame is in: from here its time is in the movie. The movie starts at the frame the recorder
+     * captured (`start`), which it reports after writing that frame's PNG; without it, at the moment the session hears.
+     */
+    private markRecording(run: ActiveSegment, start?: SegmentStart): void {
         if (this.current !== run || run.stopping || run.startedAt !== undefined) {
             return;
         }
 
-        run.startedAt = this.now();
+        const now = this.now();
+        run.startedAt = Math.min(now, Math.max(run.requestedAt, start?.firstFrameAt ?? now));
+        run.settleFramed();
         clearTimeout(run.slowStart);
         log.debug({ index: run.index }, "recording segment started");
         this.setState("recording", run.reason);
@@ -518,6 +580,7 @@ export class RecordingSession {
         // The longer of the movie and the wall time this session saw: the recorder's deadline runs from its own launch,
         // so its movie can be longer, and the limit must count what the movie holds.
         this.recordedMs += Math.max(wallMs, segment.durationMs);
+        this.movieMs += result.movieMs ?? segment.durationMs;
         this.options.emit({ event: "segment", ...segment });
     }
 
