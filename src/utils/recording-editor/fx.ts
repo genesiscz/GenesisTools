@@ -244,13 +244,14 @@ export function applyFxOp<P extends FxProject>(project: P, op: FxOp): P {
             }
 
             const joins = transitionJoins(project);
+            const { [op.clip]: own, ...others } = current.joins ?? {};
+            // A key whose clip starts no join any more can still be dropped, so a stale one never sticks.
+            const dropsStaleKey = op.kind === "default" && own !== undefined;
 
-            if (!joins.some((join) => join.clip === op.clip)) {
+            if (!dropsStaleKey && !joins.some((join) => join.clip === op.clip)) {
                 const known = joins.map((join) => join.clip).join(", ") || "none (the edit has no cut)";
                 throw new Error(`clip ${op.clip} starts no join; the joins start at clips: ${known}`);
             }
-
-            const { [op.clip]: own, ...others } = current.joins ?? {};
 
             if (op.kind === "default") {
                 return {

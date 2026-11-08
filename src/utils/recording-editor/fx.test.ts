@@ -42,6 +42,22 @@ describe("transitions", () => {
         expect(() => applyOp(cutProject(), { op: "transition", kind: "default" })).toThrow(/give clip/);
         expect(() => editOpSchema.parse({ op: "transition", kind: "wipe" })).toThrow();
     });
+
+    // Regression test: unified review 2026-11-08 ED-join-override-lost.
+    test("a cut at the head of a join's clip keeps the join's own transition, and a stale key can be dropped", () => {
+        let project = applyOp(cutProject(), { op: "transition", clip: "c2", kind: "crossfade", ms: 800 });
+        project = applyOp(project, { op: "cut", from: 8, to: 8.5 });
+        expect(transitionJoins(project)).toEqual([
+            { clip: "c2", atUs: 5_000_000, kind: "crossfade", ms: 800, own: true },
+        ]);
+        const stale = editProjectSchema.parse({
+            ...cutProject(),
+            transitions: { default: { kind: "none", ms: 300 }, joins: { c9: { kind: "blur", ms: 600 } } },
+        });
+        expect(applyOp(stale, { op: "transition", clip: "c9", kind: "default" }).transitions).toEqual({
+            default: { kind: "none", ms: 300 },
+        });
+    });
 });
 
 describe("lens", () => {
