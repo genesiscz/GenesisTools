@@ -162,14 +162,27 @@ enum TransitionLook {
 /// time order and each reads two stills, so only the stills used last are kept, never one per join of the movie.
 final class TransitionStills: @unchecked Sendable {
     static let kept = 4
-    private let generator: AVAssetImageGenerator
+    private let asset: AVAsset
+    private var generator: AVAssetImageGenerator
     private let lock = NSLock()
     private var images = RecentCache<Int64, CIImage?>(limit: TransitionStills.kept)
 
     /// `maximumSize` (zero: the source's size) is the largest still the render can show, so a 5K source is not
     /// decoded at full size for a smaller output.
     init(asset: AVAsset, maximumSize: CGSize = .zero) {
-        generator = AVAssetImageGenerator(asset: asset)
+        self.asset = asset
+        generator = Self.generator(asset, maximumSize: maximumSize)
+    }
+
+    /// The size the stills are read at now (zero: the source's size).
+    var maximumSize: CGSize {
+        lock.lock()
+        defer { lock.unlock() }
+        return generator.maximumSize
+    }
+
+    private static func generator(_ asset: AVAsset, maximumSize: CGSize) -> AVAssetImageGenerator {
+        let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = false
         generator.maximumSize = maximumSize
         // Exactly the frame on screen at the time, the one the clip itself shows there. Any tolerance lets the
@@ -178,12 +191,20 @@ final class TransitionStills: @unchecked Sendable {
         // clip's start, so an exported transition showed a phone number and an address (2026-11-07).
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
+        return generator
     }
 
     /// The frame at `us`, placed on `extent` (the size the video composition hands the filter); nil when the movie
     /// has none there, and the transition then draws as a hard cut. Waits at most 3 s for a first read.
-    func image(atSourceUs us: Int64, extent: CGRect) -> CIImage? {
+    /// `maximumSize` (nil: as before) is the size the frame needs now: the preview keeps its composition when a zoom
+    /// changes, so a larger zoom reads the stills again at the larger size instead of drawing small ones enlarged.
+    func image(atSourceUs us: Int64, extent: CGRect, maximumSize: CGSize? = nil) -> CIImage? {
         lock.lock()
+        if let maximumSize, maximumSize != generator.maximumSize {
+            generator = Self.generator(asset, maximumSize: maximumSize)
+            images = RecentCache(limit: Self.kept)
+        }
+        let generator = generator
         if let cached = images.value(for: us) {
             lock.unlock()
             return cached.map { fit($0, to: extent) }
@@ -203,7 +224,8 @@ final class TransitionStills: @unchecked Sendable {
         }
         let image = box.image.map { CIImage(cgImage: $0) }
         lock.lock()
-        images.set(image, for: us)
+        // A read the size changed under belongs to the old size; it is drawn once and not kept.
+        if generator === self.generator { images.set(image, for: us) }
         lock.unlock()
         return image.map { fit($0, to: extent) }
     }
@@ -215,12 +237,17 @@ final class TransitionStills: @unchecked Sendable {
         return images.count
     }
 
-    /// The largest still a frame can show: the output picture, times the largest zoom and lens magnification of the
-    /// edit (both enlarge the still), and never more than the source.
-    static func maximumSize(source: CGSize, picture: CGSize, project: EditProject) -> CGSize {
-        let zoom = project.zooms.map(\.scale).max() ?? 1
-        let lens = project.lens?.items.map(\.magnification).max() ?? 1
-        let enlarge = max(1, zoom) * max(1, lens)
+    /// The size of the still read at `us` (nil: none kept), for the tests.
+    func readSize(atSourceUs us: Int64) -> CGSize? {
+        lock.lock()
+        defer { lock.unlock() }
+        return images.peek(us).flatMap { $0 }.map(\.extent.size)
+    }
+
+    /// The largest still a frame can show: the output picture times the largest zoom of the edit, and never more than
+    /// the source. The lens is no term: it draws on the finished picture, after the zoom and the output scale.
+    static func maximumSize(source: CGSize, picture: CGSize, zoomScale: Double) -> CGSize {
+        let enlarge = max(1, zoomScale)
         return CGSize(width: min(source.width, (picture.width * enlarge).rounded(.up)),
                       height: min(source.height, (picture.height * enlarge).rounded(.up)))
     }

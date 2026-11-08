@@ -179,16 +179,66 @@ final class RecorderFxExportTests: XCTestCase {
         XCTAssertLessThanOrEqual(stills.count, 4, "only the stills used last stay")
         XCTAssertNotNil(stills.image(atSourceUs: 8_000_000, extent: extent), "the newest still is still there")
 
-        let source = CGSize(width: 5120, height: 2880)
-        var project = EditProject.whole(video: movie.path, durationUs: 10_000_000, width: 5120, height: 2880, cursor: nil, recording: nil)
-        XCTAssertEqual(TransitionStills.maximumSize(source: source, picture: CGSize(width: 1920, height: 1080), project: project),
-                       CGSize(width: 1920, height: 1080), "no zoom: the output's picture")
-        project.zooms = [EditProject.Zoom(id: "z", startUs: 0, endUs: 1_000_000, scale: 2)]
-        XCTAssertEqual(TransitionStills.maximumSize(source: source, picture: CGSize(width: 1920, height: 1080), project: project),
-                       CGSize(width: 3840, height: 2160), "a 2x zoom shows the still twice as large")
+        let source = CGSize(width: 5120, height: 2880), picture = CGSize(width: 1920, height: 1080)
+        XCTAssertEqual(TransitionStills.maximumSize(source: source, picture: picture, zoomScale: 1), picture, "no zoom: the output's picture")
+        XCTAssertEqual(TransitionStills.maximumSize(source: source, picture: picture, zoomScale: 2), CGSize(width: 3840, height: 2160),
+                       "a 2x zoom shows the still twice as large")
+        XCTAssertEqual(TransitionStills.maximumSize(source: source, picture: picture, zoomScale: 4), source, "never more than the source")
+    }
+
+    /// The lens draws on the finished picture (after the zoom and the output scale), so it never enlarges a still: a 4x
+    /// lens on an edit without a zoom keeps the stills at the output's size.
+    func testALensDoesNotEnlargeTheTransitionStills() {
+        var project = EditProject.whole(video: "/tmp/none.mp4", durationUs: 10_000_000, width: 5120, height: 2880, cursor: nil, recording: nil)
         project.lens = EditProject.Lens(items: [.init(id: "l", startUs: 0, endUs: 1_000_000, magnification: 4)])
-        XCTAssertEqual(TransitionStills.maximumSize(source: source, picture: CGSize(width: 1920, height: 1080), project: project),
-                       source, "never more than the source")
+        let zoom = ZoomState(project: project, cursor: nil)
+        XCTAssertEqual(zoom.largestZoomScale, 1, "a lens is no zoom")
+        XCTAssertEqual(TransitionStills.maximumSize(source: CGSize(width: 5120, height: 2880), picture: CGSize(width: 1920, height: 1080),
+                                                    zoomScale: zoom.largestZoomScale),
+                       CGSize(width: 1920, height: 1080))
+    }
+
+    /// The size TransitionStills is built with is the size its generator reads, and a still read is no larger.
+    func testTransitionStillsReadAtTheSizeTheyAreBuiltWith() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("fx-stills-size-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("screen.mp4")
+        try await makeMovie(at: movie)
+        let half = CGSize(width: 160, height: 90)
+        let stills = TransitionStills(asset: AVURLAsset(url: movie), maximumSize: half)
+        XCTAssertEqual(stills.maximumSize, half, "the generator gets the size")
+        let extent = CGRect(x: 0, y: 0, width: Self.size.width, height: Self.size.height)
+        XCTAssertNotNil(stills.image(atSourceUs: 1_000_000, extent: extent, maximumSize: half))
+        XCTAssertEqual(stills.readSize(atSourceUs: 1_000_000), half, "the still is read at that size")
+    }
+
+    /// The preview keeps its composition when a zoom changes (ZoomState.update), so a 2x zoom added over a fade must
+    /// make the stills read at the new size, not keep the 1x stills drawn twice as large.
+    func testTransitionStillsGrowWhenTheLargestZoomGrows() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("fx-stills-grow-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("screen.mp4")
+        try await makeMovie(at: movie)
+        var project = EditProject.whole(video: movie.path, durationUs: 10_000_000, width: Self.size.width, height: Self.size.height,
+                                        cursor: nil, recording: nil)
+        let zoom = ZoomState(project: project, cursor: nil)
+        let source = CGSize(width: Self.size.width, height: Self.size.height), picture = CGSize(width: 80, height: 45)
+        let stills = TransitionStills(asset: AVURLAsset(url: movie),
+                                      maximumSize: TransitionStills.maximumSize(source: source, picture: picture, zoomScale: zoom.largestZoomScale))
+        let extent = CGRect(origin: .zero, size: source)
+        func read() -> CGSize? {
+            _ = stills.image(atSourceUs: 1_000_000, extent: extent,
+                             maximumSize: TransitionStills.maximumSize(source: source, picture: picture, zoomScale: zoom.largestZoomScale))
+            return stills.readSize(atSourceUs: 1_000_000)
+        }
+        XCTAssertEqual(read(), picture, "no zoom: the output's size")
+        project.zooms = [EditProject.Zoom(id: "z", startUs: 0, endUs: 2_000_000, scale: 2)]
+        zoom.update(project)
+        XCTAssertEqual(zoom.largestZoomScale, 2)
+        XCTAssertEqual(read(), CGSize(width: 160, height: 90), "the 2x zoom reads the still again at twice the size")
+        XCTAssertEqual(stills.maximumSize, CGSize(width: 160, height: 90))
     }
 
     func testNoTransitionShowsACutOrRedactedSecretInTheExport() async throws {
