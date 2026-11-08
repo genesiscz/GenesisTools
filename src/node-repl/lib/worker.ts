@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Console } from "node:console";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -121,6 +122,11 @@ declare global {
  * that did, and the CLI printed both console lines twice.
  */
 function writeLine(text: string): void {
+    if (!fromCurrentTurn()) {
+        noteLateOutput(text);
+        return;
+    }
+
     output.push(text);
 
     if (streaming) {
@@ -159,6 +165,12 @@ function pushImage(image: { bytes: Uint8Array; mimeType: string }): void {
     const extension = image.mimeType.split("/")[1]?.split("+")[0] ?? "bin";
     const path = join(imageDir, `image-${++imageCounter}.${extension}`);
     writeFileSync(path, bytes);
+
+    if (!fromCurrentTurn()) {
+        noteLateOutput(`an image: ${path}`);
+        return;
+    }
+
     images.push({ mimeType: image.mimeType, data: bytes.toString("base64"), path });
 }
 
@@ -242,13 +254,60 @@ function noteLateError(error: unknown, promise?: Promise<unknown>): void {
 }
 
 /**
- * Set while a turn runs. A callback that throws then fails that turn with its own error at once: the turn often awaits
- * the promise the callback was to settle, and it waited until its deadline, without the cause (REPL-F2).
+ * Lines that a turn which already answered still wrote (a failed turn whose code kept running, a timer of an earlier
+ * turn), and lines no turn owns written between turns. The next turn's text starts with them, never mixes them into its
+ * own output. The last few are kept.
+ */
+const LATE_OUTPUT_KEPT = 20;
+const lateOutput: string[] = [];
+let lateOutputDropped = 0;
+
+function noteLateOutput(text: string): void {
+    lateOutput.push(text);
+
+    if (lateOutput.length > LATE_OUTPUT_KEPT) {
+        lateOutput.shift();
+        lateOutputDropped++;
+    }
+}
+
+/**
+ * Each turn runs under its own generation, and every timer, callback and promise its code schedules carries that
+ * generation (AsyncLocalStorage follows them). A failed turn's code keeps running after the turn answered, and an
+ * interval of turn 3 still fires in turn 4: their output, results and throws must not land in the turn that runs now.
+ */
+const turnGeneration = new AsyncLocalStorage<number>();
+let lastGeneration = 0;
+/** The generation of the turn that runs now; undefined between turns. */
+let activeGeneration: number | undefined;
+/** Set for a preload, so a toolset's lines while it loads (no generation) go into the preload's answer. */
+let preloading = false;
+
+/**
+ * Whether a line belongs to the turn that runs now. A line with no generation (a toolset's own listener set up at
+ * preload) goes to the running turn, as before; between turns it is late output.
+ */
+function fromCurrentTurn(): boolean {
+    const origin = turnGeneration.getStore();
+
+    if (origin !== undefined) {
+        return origin === activeGeneration;
+    }
+
+    return activeGeneration !== undefined || preloading;
+}
+
+/**
+ * Set while a turn runs. A callback of that turn's own generation that throws then fails the turn with its own error at
+ * once: the turn often awaits the promise the callback was to settle, and it waited until its deadline, without the
+ * cause (REPL-F2). A throw of an earlier generation, or of no known generation, is a late error and fails nothing.
  */
 let failTurn: ((error: unknown) => void) | undefined;
 
 process.on("uncaughtException", (error) => {
-    if (failTurn) {
+    const origin = turnGeneration.getStore();
+
+    if (failTurn && origin !== undefined && origin === activeGeneration) {
         failTurn(error);
         return;
     }
@@ -412,7 +471,7 @@ for (const name of turnMethods) {
     }
 }
 
-async function runTurn(code: string): Promise<Response["text"]> {
+async function runTurn(code: string, generation: number): Promise<Response["text"]> {
     const script = new vm.Script(rewriteTurn(code), {
         filename: "repl-turn.js",
         importModuleDynamically: (async (specifier: string) => {
@@ -432,14 +491,16 @@ async function runTurn(code: string): Promise<Response["text"]> {
         }) as never,
     });
     const result = await script.runInThisContext();
+    // A turn that failed while its code still ran answered already: its result belongs to the late output.
+    const keep = generation === activeGeneration ? (line: string) => output.push(line) : noteLateOutput;
 
     if (result !== undefined) {
         const text = typeof result === "string" ? result : Bun.inspect(result);
-        output.push(text);
+        keep(text);
 
         // A call that returns a Promise inside an object or array prints as `Promise { … }`, which reads as a value.
         if (typeof result !== "string" && /\bPromise \{/.test(text)) {
-            output.push("note: the result holds a Promise; `await` the call that made it to see its value");
+            keep("note: the result holds a Promise; `await` the call that made it to see its value");
         }
     }
 
@@ -524,12 +585,16 @@ async function handle(request: Request): Promise<Response> {
         output = [];
         images = [];
 
+        preloading = true;
+
         try {
             const loaded = await preload(request);
             return { id: request.id, ok: true, text: loaded.text, images, failed: loaded.failed };
         } catch (error) {
             const { message, stack } = describeError(error);
             return { id: request.id, ok: false, text: output.join("\n"), images, error: message, stack };
+        } finally {
+            preloading = false;
         }
     }
 
@@ -555,8 +620,11 @@ async function handle(request: Request): Promise<Response> {
     output = [];
     images = [];
 
-    // Set first: the late-error note is the first line of the turn text, so it streams first too.
+    // Set first: the late-error note is the first line of the turn text, so it streams first too. The turn's generation
+    // is active from here, so both notes below count as this turn's own lines.
     streaming = request.stream === true;
+    const generation = ++lastGeneration;
+    activeGeneration = generation;
 
     if (lateErrors.length > 0) {
         writeLine(
@@ -567,17 +635,33 @@ async function handle(request: Request): Promise<Response> {
         );
     }
 
+    if (lateOutput.length > 0) {
+        const dropped = lateOutputDropped > 0 ? ` (the first ${lateOutputDropped} lines are not kept)` : "";
+        writeLine(
+            `note: output of an earlier turn that kept running after it answered${dropped}:\n${lateOutput.splice(0).join("\n")}`
+        );
+        lateOutputDropped = 0;
+    }
+
     try {
         const thrown = new Promise<never>((_resolve, reject) => {
             failTurn = reject;
         });
-        const text = await Promise.race([runTurn(request.code), thrown]);
+        const turn = turnGeneration.run(generation, () => runTurn(request.code, generation));
+        // A turn that already failed and then throws on its own: no one awaits it any more, so its error is late.
+        turn.catch((error: unknown) => {
+            if (generation !== activeGeneration) {
+                noteLateError(error);
+            }
+        });
+        const text = await Promise.race([turn, thrown]);
         return { id: request.id, ok: true, text, images };
     } catch (error) {
         const { message, stack, fullStack } = describeError(error);
         return { id: request.id, ok: false, text: output.join("\n"), images, error: message, stack, fullStack };
     } finally {
         failTurn = undefined;
+        activeGeneration = undefined;
         streaming = false;
     }
 }
