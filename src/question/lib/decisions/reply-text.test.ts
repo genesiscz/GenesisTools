@@ -141,4 +141,26 @@ describe("parseDecisionBlocks with context, rationale and recommended", () => {
         expect(block?.recommended).toBe("a");
         expect(block?.notes).toContain("Recommended: a)");
     });
+
+    test("a rationale or label that advises against an option never recommends it", () => {
+        const reply = [
+            "❓ DECISION 4: Which logs stay?",
+            "- a) Keep the day log (recommended)",
+            "- b) Keep failures",
+            "  - not recommended: duplicates the day log",
+            "- c) Keep profiling (recommended)",
+            "- d) Keep traces (not recommended)",
+            "  - I don't recommend it, it is huge",
+        ].join("\n");
+        const [block] = parseDecisionBlocks(reply);
+
+        expect(block?.recommended).toBe("ac");
+        expect(block?.options).toEqual([
+            "Keep the day log",
+            "Keep failures",
+            "Keep profiling",
+            "Keep traces (not recommended)",
+        ]);
+        expect(stripRecommendation("Keep traces (not recommended)").recommended).toBe(false);
+    });
 });

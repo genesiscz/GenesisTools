@@ -63,6 +63,13 @@ const IN_LABEL =
     /\s*\(\s*(?:this is\s+)?(?:my\s+)?(?:recommend(?:ed|ation)|i\s+recommend(?:\s+this)?)(?:\s*[,:;.-]\s*|\s+)?([^)]*)\)\s*/i;
 const TRAILING_TAG = /\s*[*_]*\(?\b(?:recommended|my recommendation)\b\)?[*_]*\s*[.]?\s*$/i;
 const LEADING_TAG = /^\s*[*_]*(?:recommended)[*_]*\s*[:\-–—]\s*/i;
+/** "not recommended", "I don't recommend it", "never recommended": words that advise against an option. */
+const ADVISES_AGAINST = /(?:\bnot|n't|\bnever)\s+(?:\w+\s+)?recommend/i;
+
+/** Whether `text` advises against its option ("not recommended: duplicates"), so it must never mark it recommended. */
+export function advisesAgainst(text: string): boolean {
+    return ADVISES_AGAINST.test(text);
+}
 
 export interface RecommendationMark {
     label: string;
@@ -88,7 +95,7 @@ export function stripRecommendation(label: string): RecommendationMark {
 
     const trailing = TRAILING_TAG.exec(label);
 
-    if (trailing && trailing.index > 0) {
+    if (trailing && trailing.index > 0 && !advisesAgainst(label)) {
         return { label: label.slice(0, trailing.index).trim(), recommended: true, rationale: null };
     }
 
