@@ -401,6 +401,7 @@ export function signalProcessTree(
         includeSelf = false,
         descendants = descendantPids,
         kill = (target: number, sent: NodeJS.Signals) => {
+            // pid-verified: a descendant of the caller's own pid, read from the live process table in this call.
             process.kill(target, sent);
         },
     }: {

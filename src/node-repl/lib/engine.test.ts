@@ -7,6 +7,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { describeMethod, searchMethods } from "@genesiscz/utils/repl/discovery";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { jsDescription, jsResetDescription, parseJsArguments } from "../mcp/server";
@@ -216,14 +217,7 @@ describe("ReplEngine", () => {
         const stuck = await engine.run("await new Promise(() => {})", 400);
         expect(stuck.ok).toBe(false);
         expect(stuck.error).toContain("exceeded 400 ms");
-        const alive = () => {
-            try {
-                process.kill(pid, 0);
-                return true;
-            } catch {
-                return false;
-            }
-        };
+        const alive = () => isProcessAlive(pid);
         const deadline = Date.now() + 3000;
 
         while (alive() && Date.now() < deadline) {
