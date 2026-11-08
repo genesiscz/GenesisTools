@@ -390,8 +390,8 @@ final class MeetingDetailModel {
         change("rename.\(label)", ["speakers", "rename", id, label, trimmed],
                done: trimmed == label ? "\(label) has its own name again" : "\(label) is \(trimmed) in this meeting",
                reloadTranscript: true)
-        speakers = .idle
-        if tab == .speakers { loadSpeakers() }
+        // The speaker stats count the source's own labels, so a rename leaves them as they are. Reading them again here
+        // blanked the list and dropped the next field the reader had moved to.
     }
 
     func addContext(paths: [String]) {
