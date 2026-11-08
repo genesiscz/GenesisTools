@@ -763,6 +763,7 @@ describe("projects rename and remove", () => {
                         state: "asked",
                         since: "2026-11-02T15:00:00.000Z",
                         folder: "Inbox",
+                        formId: "meetings-folder-test",
                     },
                 };
             });
@@ -771,14 +772,22 @@ describe("projects rename and remove", () => {
         await renameProject({ config, store: meetings, from: "wrok", to: "work" });
         expect(meetings.read(used)?.assign?.folder?.project).toBe("work");
 
+        const withdrawn: string[] = [];
         await removeProject({
             config,
             store: meetings,
             name: "work",
             unassign: true,
             backupRoot: join(meetings.root, "..", "backups"),
+            inbox: {
+                async cancel(id) {
+                    withdrawn.push(id);
+                    return true;
+                },
+            },
         });
         expect(meetings.read(used)?.assign?.folder).toBeUndefined();
+        expect(withdrawn).toEqual(["meetings-folder-test"]);
         await expect(config.addSourceFolder("wisprflow", "work", "Inbox")).rejects.toThrow("No project work");
         expect((await config.read()).projects.work).toBeUndefined();
     });

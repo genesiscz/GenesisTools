@@ -5,6 +5,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { type MeetingsConfigStore, projectNameSchema } from "@genesiscz/utils/meetings/config";
 import type { MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { type AssignInbox, decisionInbox } from "./assign-inbox";
 import { localStamp } from "./shared";
 
 const { log } = logger.scoped("meetings-projects");
@@ -111,8 +112,11 @@ export async function removeProject(options: {
     unassign?: boolean;
     backupRoot?: string;
     now?: Date;
+    /** Where a waiting folder question is withdrawn; the decision inbox unless a test passes its own. */
+    inbox?: Pick<AssignInbox, "cancel">;
 }): Promise<ProjectRemoval> {
     const { config, store, name } = options;
+    const inbox = options.inbox ?? decisionInbox;
     const current = await config.read();
 
     if (!current.projects[name]) {
@@ -158,15 +162,25 @@ export async function removeProject(options: {
     const unassigned: string[] = [];
 
     for (const record of store.list().filter((one) => one.project === name || folderStepNames(one, name))) {
+        let withdrawn: string | undefined;
         await store.update(record.id, { command: "projects remove", change: `project ${name} removed` }, (next) => {
             if (next.project === name) {
                 next.project = undefined;
             }
 
             if (next.assign?.folder?.project === name) {
+                withdrawn = next.assign.folder.formId;
                 delete next.assign.folder;
             }
         });
+
+        // The posted folder question names a project that is gone, and its answer would do nothing: withdraw it.
+        if (withdrawn) {
+            const formId = withdrawn;
+            await inbox.cancel(formId).catch((err: unknown) => {
+                log.warn({ err, meeting: record.id, formId }, "the folder question could not be withdrawn");
+            });
+        }
 
         if (record.project === name) {
             unassigned.push(record.id);
