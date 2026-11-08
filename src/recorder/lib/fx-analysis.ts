@@ -1,14 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-    existsSync,
-    mkdirSync,
-    mkdtempSync,
-    readdirSync,
-    readFileSync,
-    rmSync,
-    statSync,
-    writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -77,6 +68,7 @@ import {
     waitStretches,
 } from "@genesiscz/utils/recording-editor/waits";
 import { readRecordingManifest } from "@genesiscz/utils/screen-recorder/library";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { probeVideo } from "@genesiscz/utils/video/probe";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
@@ -226,8 +218,13 @@ export function exportFrameCache(movie: string): FrameCache & { flush(): void } 
     let lines: Record<string, ScreenTextFrame["lines"]> = {};
 
     if (existsSync(path)) {
-        const parsed = frameLinesSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
-        lines = parsed.success ? parsed.data : {};
+        // CLI-F5: a file torn by a killed run or a full disk starts the cache empty, as a cache that is not there.
+        try {
+            const parsed = frameLinesSchema.safeParse(SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }));
+            lines = parsed.success ? parsed.data : {};
+        } catch (error) {
+            log.debug({ error, path }, "verifyHidden: the kept frame reads could not be read; they are read again");
+        }
     }
 
     let unsaved = 0;
@@ -238,7 +235,8 @@ export function exportFrameCache(movie: string): FrameCache & { flush(): void } 
 
         try {
             mkdirSync(dirname(path), { recursive: true });
-            writeFileSync(path, SafeJSON.stringify(lines));
+            // A whole file or the one before: two editors that verify one export at once never tear it.
+            atomicWriteFileSync(path, SafeJSON.stringify(lines));
             unsaved = 0;
         } catch (error) {
             log.warn({ error, path }, "verifyHidden: its frame reads could not be kept; the next run reads them again");
