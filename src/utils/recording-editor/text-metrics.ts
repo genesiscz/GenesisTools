@@ -4,7 +4,8 @@ import metrics from "./text-metrics.json";
 /**
  * How the renderer sets a text (Captions.swift TextPlates.render: NSAttributedString.boundingRect in the semibold
  * system font), from that font's measured widths, kerning and line height in text-metrics.json, which
- * scripts/recorder/text-metrics.swift writes. RecorderTextMetricsTests checks the same estimate against the renderer.
+ * scripts/recorder/text-metrics.swift writes. recording-editor.test.ts holds the estimate to the plates in
+ * text-metrics.cases.json, and RecorderTextMetricsTests holds the renderer to the same file.
  */
 export interface TextLayout {
     /** The width of the box the lines are drawn in (boundingRect's), in pixels. */
@@ -12,6 +13,13 @@ export interface TextLayout {
     /** Every line's height together, in pixels. */
     height: number;
     lines: number;
+    /**
+     * Where the letters are, in pixels: the widest line's letters (the spaces that end a line left out), and the band
+     * from the top of the first line with a letter to the bottom of the last one, from the box's top. Each line is
+     * aligned inside the box, so the letters sit against its left or right edge or in its middle. Undefined when no
+     * line has a letter.
+     */
+    letters?: { width: number; top: number; height: number };
 }
 
 const INDEX = new Map(Array.from(metrics.chars).map((char, index) => [char, index]));
@@ -99,7 +107,9 @@ const NO_BREAK_AFTER = new Set([
  * `text` set at `px` and wrapped at `wrapPx` pixels, as NSAttributedString.boundingRect with usesLineFragmentOrigin
  * does: "\n" starts a line, a line breaks at its last break that fits (after a space, a hyphen, a slash, a dash, ...),
  * and a word longer than a line breaks between two letters. The width is TextKit's box around the lines: each line is
- * aligned by its letters, and the spaces it ends with reach on past them.
+ * aligned by its letters, and the spaces it ends with reach on past them. An empty line starts at the box's left edge
+ * whatever the alignment, so a blank line in a centred or right-aligned text widens the box to the left (TextPlates
+ * draws that wide plate); the empty line after a final "\n" adds its height only.
  */
 export function layoutText(
     text: string,
@@ -185,16 +195,36 @@ export function layoutText(
     // TextKit's box runs from the leftmost line's start to the rightmost line's end, and is never wider than the wrap.
     let leftmost = Number.POSITIVE_INFINITY;
     let rightmost = Number.NEGATIVE_INFINITY;
+    let widest = 0;
+    let first = -1;
+    let last = -1;
 
-    for (const { letters, spaces } of lines) {
-        const left = align === "left" ? 0 : align === "right" ? wrapPx - letters : (wrapPx - letters) / 2;
+    for (const [index, { letters, spaces }] of lines.entries()) {
+        const empty = letters + spaces === 0;
+
+        if (empty && index > 0 && index === lines.length - 1) {
+            continue;
+        }
+
+        const left = empty ? 0 : align === "left" ? 0 : align === "right" ? wrapPx - letters : (wrapPx - letters) / 2;
         leftmost = Math.min(leftmost, left);
         rightmost = Math.max(rightmost, left + letters + spaces);
+
+        if (letters > 0) {
+            widest = Math.max(widest, letters);
+            first = first === -1 ? index : first;
+            last = index;
+        }
     }
 
+    const lineHeight = lineHeightPx(px);
     return {
         width: Math.min(wrapPx, Math.max(0, rightmost - leftmost)),
-        height: lines.length * lineHeightPx(px),
+        height: lines.length * lineHeight,
         lines: lines.length,
+        letters:
+            first === -1
+                ? undefined
+                : { width: Math.min(wrapPx, widest), top: first * lineHeight, height: (last - first + 1) * lineHeight },
     };
 }

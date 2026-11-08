@@ -50,6 +50,7 @@ import {
     replaceWordsInLines,
     shortcutsOf,
     sourceTimeOf,
+    TEXT_ALIGNS,
     transcriptLines,
     voiceoverExportSpans,
     wholeProject,
@@ -74,6 +75,7 @@ import { parseEditPlan, timeToUs } from "./plan";
 import * as projectOps from "./project";
 import { locateSource } from "./source";
 import { formatSubtitles, subtitleCues } from "./subtitles";
+import textCases from "./text-metrics.cases.json";
 import { cutRanges, fillerCuts, fillerList, transcriptSegmentSchema, wordCuts, wordSpans } from "./transcript-cuts";
 
 function workspace(): string {
@@ -1191,6 +1193,82 @@ describe("edit project (edit.json)", () => {
         const close = { ...subtitle, y: 0.49 };
         expect(overlaps(pair(title, close))).toEqual([]);
         expect(overlaps(pair({ ...title, style: "plate" }, { ...close, style: "plate" }))).toHaveLength(1);
+    });
+
+    // The plates the renderer draws, which RecorderTextMetricsTests records into text-metrics.cases.json and holds the
+    // app to, so one set of numbers pins both sides. 2026-11-09: a blank line in a centred or right-aligned text starts
+    // at the left edge of TextKit's box and widens the plate, and check() kept it as narrow as the letters.
+    test("textBox estimates every plate the renderer drew for text-metrics.cases.json within 2 px", () => {
+        // check() lays texts out at a 1080 px short side, the canvas the cases were drawn on.
+        expect(textCases.canvas.height).toBe(1080);
+        const canvas = { width: textCases.canvas.width / textCases.canvas.height, height: 1 };
+        const misses: string[] = [];
+
+        for (const { text, size, block, plate } of textCases.cases) {
+            const align = TEXT_ALIGNS.find((value) => value === block?.align);
+            const box = textBox({ text, size, x: 0.5, y: 0.5, block: block && { width: block.width, align } }, canvas);
+            const width = Math.round((box.right - box.left) * 1080);
+            const height = Math.round((box.bottom - box.top) * 1080);
+
+            if (Math.abs(width - plate.width) > 2 || Math.abs(height - plate.height) > 2) {
+                misses.push(
+                    `${SafeJSON.stringify(text)}: ${width} x ${height}, drawn ${plate.width} x ${plate.height}`
+                );
+            }
+        }
+
+        expect(misses).toEqual([]);
+        expect(textCases.cases.length).toBeGreaterThan(10);
+    });
+
+    // A blank line widens a plate past its letters (683 px of plate round 521 px of letters below), and a leading one
+    // adds a line with no letters. A plate text shows that plate; a plain text shows only its letters.
+    test("check judges a plate text with a blank line by its wide plate and a plain one by its letters", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        type Place = { x: number; y: number; size: number; width: number; align: "left" | "center" | "right" };
+        const text = (body: string, { x, y, size, width, align }: Place) => ({
+            body,
+            x,
+            y,
+            size,
+            block: { width, align },
+        });
+        const overlaps = (style: "plain" | "plate", notes: Array<ReturnType<typeof text>>) => {
+            const project = notes.reduce(
+                (next, { body, ...at }) => applyOp(next, { op: "text", from: 1, to: 6, text: body, style, ...at }),
+                wholeProject(source)
+            );
+            // applyOp trims a text; an edit.json the editor or a hand wrote keeps a leading "\n".
+            const texts = project.texts?.map((note) => ({
+                ...note,
+                text: notes.find(({ body }) => body.trim() === note.text)?.body ?? note.text,
+            }));
+            return checkProject({ ...project, texts }, facts).filter((issue) => issue.kind === "text-overlap");
+        };
+
+        // Beside it: the label's plate starts inside the title's plate and its letters right of the title's letters.
+        const title = text("Nový účet\n\nPřihlášení trvá minutu", {
+            x: 0.5,
+            y: 0.5,
+            size: 0.05,
+            width: 0.4,
+            align: "center",
+        });
+        const label = text("Hotovo", { x: 0.73125, y: 0.5, size: 0.03, width: 0.15, align: "left" });
+        expect(overlaps("plate", [title, label])).toHaveLength(1);
+        expect(overlaps("plain", [title, label])).toEqual([]);
+
+        // Above it: the note's letters end above the confirmation's letters, in the band of its empty first line.
+        const confirmation = text("\nPotvrzení přijde e-mailem", {
+            x: 0.5,
+            y: 0.5,
+            size: 0.03,
+            width: 0.3,
+            align: "right",
+        });
+        const note = text("Objednávka", { x: 0.5, y: 0.46, size: 0.03, width: 0.3, align: "right" });
+        expect(overlaps("plate", [confirmation, note])).toHaveLength(1);
+        expect(overlaps("plain", [confirmation, note])).toEqual([]);
     });
 
     // R7 10: a 1.2x zoom on a phone cut the side labels in half, and check() said nothing.
