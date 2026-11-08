@@ -210,12 +210,12 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
                     action: { label: "Remove", ops: [{ op: "unvoiceover", id: clip.id }] },
                 });
             }
-        } else if (keptUs(project, clip.atUs, clip.atUs + 1) === 0) {
+        } else if (!voiceoverPlays(project, clip.atUs)) {
             issues.push({
                 severity: "fix",
                 kind: "voiceover-in-cut",
                 item: name,
-                message: `The voiceover at ${tenths(clip.atUs)} s starts in a cut part, so it does not play`,
+                message: `The voiceover at ${tenths(clip.atUs)} s starts in a cut part or at the movie's end, so it does not play`,
                 fix: `movie.voiceover({ id: "${clip.id}", at: <a kept second> })`,
                 at: tenths(clip.atUs),
             });
@@ -667,6 +667,12 @@ function keptUs(project: EditProject, startUs: number, endUs: number): number {
         (sum, clip) => sum + Math.max(0, Math.min(clip.toUs, endUs) - Math.max(clip.fromUs, startUs)),
         0
     );
+}
+
+/** Whether a movie voiceover that starts at `atUs` plays: the same test as the export (voiceoverExportSpans). */
+function voiceoverPlays(project: EditProject, atUs: number): boolean {
+    const outUs = outputTimeOf(project, atUs);
+    return outUs !== undefined && outUs < outputDurationUs(project);
 }
 
 /** Whether a moment plays: it sits in a kept clip, its ends included. */
