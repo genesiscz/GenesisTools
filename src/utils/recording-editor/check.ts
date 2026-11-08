@@ -452,8 +452,8 @@ function cutEdgesOf(project: EditProject): { ends: number[]; starts: number[] } 
 }
 
 /**
- * A zoom that runs into a cut but starts its ease out before it: the renderer's ease out leaves fast (ZoomCurve), so
- * the frames between the start of the ease out and the cut show the view snapping out. Ending the zoom one ease out
+ * A zoom that runs into a cut but starts its ease out before it: the frames between the start of the ease out and the
+ * cut show the view starting to leave, and the cut then jumps from that half-way view. Ending the zoom one ease out
  * after the cut puts the whole ease out inside the cut.
  */
 function zoomEaseAtCutIssues(project: EditProject): EditIssue[] {
@@ -474,7 +474,7 @@ function zoomEaseAtCutIssues(project: EditProject): EditIssue[] {
             severity: "check",
             kind: "zoom-eases-out-at-cut",
             item: `zoom ${zoom.id}`,
-            message: `The zoom at ${tenths(zoom.startUs)} s starts its ease out ${seconds(cut - (zoom.endUs - easeUs))} s before the cut at ${seconds(cut)} s, so its last frames before the cut snap out`,
+            message: `The zoom at ${tenths(zoom.startUs)} s starts its ease out ${seconds(cut - (zoom.endUs - easeUs))} s before the cut at ${seconds(cut)} s, so its last frames before the cut start to zoom out and the cut jumps from there`,
             fix: `movie.retime({ id: "${zoom.id}", to: ${to} })`,
             at: tenths(cut),
             target: { list: "zooms", id: zoom.id },

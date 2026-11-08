@@ -160,9 +160,12 @@ enum ZoomCurve {
         let left = Double(zoom.endUs - sourceUs) / 1000
         let inProgress = linkedIn || zoom.easeInMs <= 0 ? 1 : min(1, into / Double(zoom.easeInMs))
         let outProgress = linkedOut || zoom.easeOutMs <= 0 ? 1 : min(1, left / Double(zoom.easeOutMs))
-        // In: fast, then a soft landing on the zoomed view. Out: the mirror, leaving fast and landing softly on the
-        // whole frame. `easeOut(outProgress)` held the zoom until its last few milliseconds and then snapped out.
-        let amount = min(easeOut(inProgress), 1 - easeOut(1 - outProgress))
+        // In: fast, then a soft landing on the zoomed view. Out: a soft start and a soft landing on the whole frame
+        // (smoothstep). `easeOut(outProgress)` held the zoom until its last few milliseconds and then snapped out; the
+        // mirror of the zoom in, `1 - easeOut(1 - outProgress)`, left at full speed, which read as a snap at 300 to
+        // 500 ms (round 3, 2026-11-08).
+        let release = 1 - outProgress
+        let amount = min(easeOut(inProgress), 1 - release * release * (3 - 2 * release))
         return shown(zoom, amount: amount, atSource: sourceUs, cursor: cursor)
     }
 

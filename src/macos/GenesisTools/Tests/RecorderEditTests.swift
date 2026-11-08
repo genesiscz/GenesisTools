@@ -730,20 +730,29 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(ZoomCurve.easeOut(1), 1, accuracy: 0.0001)
     }
 
-    func testTheZoomLeavesFastAndLandsSoftlyOnTheWholeFrame() {
-        let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: 3_000_000, scale: 2, easeInMs: 500, easeOutMs: 500)
-        // 50 ms before the end the view is nearly whole again, not still zoomed and about to snap.
-        let late = ZoomCurve.view(atSource: 2_950_000, zooms: [zoom], cursor: nil)
-        XCTAssertLessThan(late.scale, 1.05)
-        // 100 ms into the release it has already moved a good part of the way out.
-        let early = ZoomCurve.view(atSource: 2_600_000, zooms: [zoom], cursor: nil)
-        XCTAssertLessThan(early.scale, 1.7)
-        // The release starts fast like the zoom in (about a fifth of the scale in its first 60 fps frame), never more.
-        var previous = ZoomCurve.view(atSource: 2_400_000, zooms: [zoom], cursor: nil).scale
-        for us in stride(from: 2_416_667, through: 3_000_000, by: 16_667) {
-            let scale = ZoomCurve.view(atSource: Int64(us), zooms: [zoom], cursor: nil).scale
-            XCTAssertLessThan(abs(scale - previous), 0.25, "at \(us) µs")
-            previous = scale
+    /// Round 3 (2026-11-08): the release starts and lands softly. It used to leave at full speed (about a fifth of the
+    /// scale in its first 60 fps frame), which read as a snap at 300 to 500 ms; the snap before that (held, then out in
+    /// the last milliseconds) must not come back either.
+    func testTheZoomLeavesSoftlyAndLandsSoftlyOnTheWholeFrame() {
+        for easeMs in [300, 500] {
+            let endUs: Int64 = 3_000_000
+            let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: endUs, scale: 2, easeInMs: 500, easeOutMs: easeMs)
+            let releaseUs = endUs - Int64(easeMs) * 1000
+            let scale = { (us: Int64) in ZoomCurve.view(atSource: us, zooms: [zoom], cursor: nil).scale }
+            // 50 ms before the end the view is nearly whole again, not still zoomed and about to snap.
+            XCTAssertLessThan(scale(endUs - 50_000), 1.08, "\(easeMs) ms")
+            // Half way through the release it is half way out.
+            XCTAssertEqual(scale(releaseUs + Int64(easeMs) * 500), 1.5, accuracy: 0.05, "\(easeMs) ms")
+            // The first and the last 60 fps frame of the release move the view a little; no frame moves it much.
+            XCTAssertLessThan(abs(scale(releaseUs + 16_667) - scale(releaseUs)), 0.03, "\(easeMs) ms: a soft start")
+            XCTAssertLessThan(abs(scale(endUs - 16_667) - scale(endUs - 1)), 0.03, "\(easeMs) ms: a soft landing")
+            var previous = scale(releaseUs)
+            for us in stride(from: releaseUs + 16_667, to: endUs, by: 16_667) {
+                let now = scale(Int64(us))
+                XCTAssertLessThan(abs(now - previous), 0.1, "\(easeMs) ms at \(us) µs")
+                XCTAssertLessThanOrEqual(now, previous + 0.0001, "\(easeMs) ms at \(us) µs: the release only goes out")
+                previous = now
+            }
         }
     }
 
