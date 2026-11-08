@@ -1299,7 +1299,7 @@ const movieMethods = [
                 excludeFixed: z.boolean().optional(),
             })
             .strict(),
-        'Hides the private data privateData() lists (pass the same names, exclude and excludeFixed): one blurred part per hit that starts and ends when the value shows and follows it through a scroll or a slide (style "pixelate" or "black" instead); hiding in the answer says how sure it is, as for hideText(). ids picks hits (absent: all), kinds picks kinds; a hit hidden before is skipped. Check the result with verifyHidden({ private: true }). One undo() puts it back.'
+        'Hides the private data privateData() lists (pass the same names, exclude and excludeFixed): one blurred part per hit that starts and ends when the value shows and follows it through a scroll or a slide (style "pixelate" or "black" instead); hiding in the answer says how sure it is, as for hideText(). ids picks hits (absent: all), kinds picks kinds; a hit hidden before is skipped. A name no screen text matched is named in warnings (it hid nothing). Check the result with verifyHidden({ private: true }). One undo() puts it back.'
     ),
     defineMethod({
         name: "findText",

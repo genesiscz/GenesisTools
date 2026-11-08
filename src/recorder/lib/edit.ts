@@ -324,7 +324,8 @@ export async function computeEdit({
             const before = next;
             next = applyOp(next, op, measured);
             warnings.push(...opPlacementWarnings(op, before, next));
-            // A text or pattern of a hideText that no screen text matched hid nothing: said in the answer, not a log.
+            // A text or pattern of a hideText, or a name of a hidePrivate, that no screen text matched hid nothing:
+            // said in the answer, not a log.
             warnings.push(...(measured.textMisses ?? []).map((miss) => `${op.op}: ${miss}`));
             facts.push(measured);
             removedIdleUs.push(...(measured.idleUs ?? []).map(([from, to]): [number, number] => [from, to]));
@@ -654,14 +655,14 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
     }
 
     // fx B (round 4): the screen text's private data, and the typing and waiting stretches (both cached).
+    // CLI-F4: a text, a pattern or a name no screen text matched is a warning of the edit, not a stderr line.
     if (op.op === "hidePrivate") {
-        return {
-            privateHits: await privateHitsOf(project, {
-                names: op.names,
-                exclude: op.exclude,
-                excludeFixed: op.excludeFixed,
-            }),
-        };
+        const { hits, warnings } = await privateHitsOf(project, {
+            names: op.names,
+            exclude: op.exclude,
+            excludeFixed: op.excludeFixed,
+        });
+        return { privateHits: hits, ...(warnings.length > 0 ? { textMisses: warnings } : {}) };
     }
 
     if (op.op === "hideText") {

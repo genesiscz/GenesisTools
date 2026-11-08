@@ -2314,7 +2314,7 @@ export interface OpFacts {
     privateHits?: readonly PrivateHit[];
     /** The places of a text on the screen (`hideText`), tracked over time. */
     textHits?: readonly PrivateHit[];
-    /** One sentence per text or pattern of a `hideText` that no screen text matched (it hid nothing). */
+    /** One sentence per text or pattern of a `hideText`, or name of a `hidePrivate`, that no screen text matched (it hid nothing). */
     textMisses?: readonly string[];
     /** The typing and waiting stretches (`speedUpWaits`), from the picture's change steps. */
     waits?: readonly WaitStretch[];
