@@ -24,7 +24,14 @@ package final class MeetingsSettingsPlugin: FeatureSettingsPlugin {
     }
 
     package func settingsReopened() {
-        model?.load()
+        model?.reloadRead()
+    }
+}
+
+/// A language code as its English name ("cs" is "Czech"), for the sentences that name the meeting language.
+enum MeetingsLanguage {
+    static func name(_ code: String) -> String {
+        Locale(identifier: "en").localizedString(forLanguageCode: code) ?? code
     }
 }
 
@@ -34,6 +41,8 @@ enum MeetingsSettingsPages {
     static let projectsPage = "meetings.projects"
     static let dictionaryPage = "meetings.dictionary"
     static let windowPage = "meetings.window"
+    /// The card on the Window page that picks where a transcript time plays.
+    static let playbackAnchor = "playback"
 
     static func section(model: MeetingsSettingsModel, defaults: UserDefaults) -> NativeSettingsSection {
         NativeSettingsSection(id: "meetings", title: "Meetings", pages: [
@@ -60,6 +69,8 @@ enum MeetingsSettingsPages {
 /// The page's read state, the last action's note, and the content once the settings are there.
 struct MeetingsSettingsFrame<Content: View>: View {
     @Bindable var model: MeetingsSettingsModel
+    /// What the page shows beside the settings; only these read when it appears.
+    var reads: MeetingsSettingsModel.Reads = []
     @ViewBuilder let content: (MeetingsSettings) -> Content
     @Environment(\.nativeSettingsIndexing) private var indexing
 
@@ -74,7 +85,7 @@ struct MeetingsSettingsFrame<Content: View>: View {
             }
             if let failure = model.settings.failure {
                 NoticePill(text: failure.sentence, more: failure.detail, tone: .error,
-                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.load() }])
+                           fixes: [.button("Retry", symbol: "arrow.clockwise") { model.load(reads) }])
             }
             if let settings = model.settings.value {
                 content(settings)
@@ -87,7 +98,7 @@ struct MeetingsSettingsFrame<Content: View>: View {
                 }
             }
         }
-        .onAppear { if model.settings == .idle { model.load() } }
+        .onAppear { model.ensure(reads) }
     }
 }
 
@@ -97,7 +108,7 @@ struct MeetingsRecordingPage: View {
     @Bindable var model: MeetingsSettingsModel
 
     var body: some View {
-        MeetingsSettingsFrame(model: model) { settings in
+        MeetingsSettingsFrame(model: model, reads: .cost) { settings in
             let auto = settings.wispr?.autoRecord
             let capture = settings.global.capture
             let cost = model.cost.value
@@ -203,7 +214,7 @@ private struct OcrLanguagesCard: View {
     private static let known = ["cs-CZ", "sk-SK", "en-US", "en-GB", "de-DE", "pl-PL", "fr-FR", "es-ES", "it-IT", "uk-UA"]
 
     var body: some View {
-        NativeSettingsCard("OCR languages", subtitle: "What Vision reads on the screen frames of a meeting held in \(language), first one first.") {
+        NativeSettingsCard("OCR languages", subtitle: "What Vision reads on the screen frames of a meeting held in \(MeetingsLanguage.name(language)), first one first.") {
             ForEach(Array(languages.enumerated()), id: \.element) { index, code in
                 HStack {
                     Text(verbatim: "\(index + 1). \(code)").font(.system(size: 12.5).monospacedDigit())
@@ -252,6 +263,7 @@ struct MeetingsWindowPage: View {
     @State private var afterExport: String
     @State private var undoSeconds: Int
     @State private var typedAnswer: String
+    @State private var player: String
 
     /// The first frame shows the saved choices, never a default that snaps to them.
     init(defaults: UserDefaults) {
@@ -262,9 +274,17 @@ struct MeetingsWindowPage: View {
         _afterExport = State(initialValue: MeetingsPreferences.afterExport(defaults).rawValue)
         _undoSeconds = State(initialValue: MeetingsPreferences.undoSeconds(defaults))
         _typedAnswer = State(initialValue: MeetingsPreferences.typedAnswer(defaults).rawValue)
+        _player = State(initialValue: MeetingsPreferences.player(defaults).rawValue)
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            windowCard
+            audioCard
+        }
+    }
+
+    private var windowCard: some View {
         NativeSettingsCard("The Meetings window") {
             NativeSettingsSegmented("Open on", identifier: "meetings.window.openOn", options: [
                 NativeSettingsOption(MeetingsPreferences.OpenOn.needs.rawValue, "Needs you", detail: "The meetings that wait for you: no project, questions, suggestions."),
@@ -298,6 +318,18 @@ struct MeetingsWindowPage: View {
                 NativeSettingsOption(MeetingsPreferences.TypedAnswer.noChoices.rawValue, "Without choices", detail: "Only a question with no choices gets the field."),
             ], selection: binding($typedAnswer, key: MeetingsPreferences.typedAnswerKey))
         }
+    }
+
+    private var audioCard: some View {
+        NativeSettingsCard("Audio") {
+            NativeSettingsSegmented("Play a transcript time", identifier: "meetings.window.player", options: [
+                NativeSettingsOption(MeetingsPreferences.Player.window.rawValue, "In this window",
+                                     detail: "ffplay plays with no window of its own; the bar under the Meetings window pauses and stops it."),
+                NativeSettingsOption(MeetingsPreferences.Player.app.rawValue, "In the meetings player",
+                                     detail: "The player the meetings config names (VLC first) plays in its own window; the bar stops it."),
+            ], selection: binding($player, key: MeetingsPreferences.playerKey))
+        }
+        .nativeSettingsAnchor(MeetingsSettingsPages.playbackAnchor)
     }
 
     private func binding(_ state: Binding<String>, key: String) -> Binding<String> {

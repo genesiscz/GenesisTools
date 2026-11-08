@@ -11,8 +11,9 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { suggestDictionary } from "../lib/dictionary-suggest";
 import { testPhrase } from "../lib/dictionary-test";
-import { errorText, fail, resolveEnum } from "../lib/shared";
+import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
 import { isMeetingSourceId, meetingSource } from "../lib/sources";
+import { dictionaryShowRead, windowJson } from "../lib/window-reads";
 
 const ENTRY_TYPES = ["fix", "abbr", "term", "keep"] as const;
 
@@ -20,39 +21,16 @@ async function show(opts: { project?: string; json?: boolean }): Promise<void> {
     const store = new MeetingsConfigStore();
 
     try {
-        const config = await store.read();
-
-        if (opts.project && !config.projects[opts.project]) {
-            const known = Object.keys(config.projects).join(", ") || "none yet";
-            fail(
-                `Unknown project ${opts.project}. Known: ${known}. Add it: ${toolCommand("meetings", "projects", "add", opts.project)}`
-            );
-            return;
-        }
-
-        const merged = resolveDictionary(config, { project: opts.project });
-        const projectValues = new Set(
-            (opts.project ? config.projects[opts.project]?.dictionary?.entries : [])?.map((entry) => entry.value)
-        );
-        const rows = merged.entries.map((entry) => ({
-            ...entry,
-            level: projectValues.has(entry.value) ? `project ${opts.project}` : "global",
-        }));
+        const view = dictionaryShowRead(await store.read(), opts.project);
 
         if (opts.json) {
-            out.result(
-                SafeJSON.stringify(
-                    { project: opts.project ?? null, abbrExpansion: merged.abbrExpansion, entries: rows },
-                    null,
-                    2
-                )
-            );
+            out.result(windowJson(view));
             return;
         }
 
         const table = createBoxTable(["TYPE", "VALUE", "SUBSTITUTION", "LEVEL"]);
 
-        for (const row of rows) {
+        for (const row of view.entries) {
             const substitution =
                 "substitution" in row
                     ? row.substitution
@@ -63,7 +41,7 @@ async function show(opts: { project?: string; json?: boolean }): Promise<void> {
         }
 
         out.println(table.toString());
-        ui.dim(`abbreviations expand: ${merged.abbrExpansion} · config: ${store.path}`);
+        ui.dim(`abbreviations expand: ${view.abbrExpansion} · config: ${store.path}`);
     } catch (err) {
         fail(errorText(err));
     }
@@ -155,6 +133,16 @@ async function remove(value: string, opts: { project?: string }): Promise<void> 
 }
 
 async function expansion(mode: string | undefined, opts: { project?: string }): Promise<void> {
+    // Without a mode it answers what applies now, as `expansion [mode]` promises (MC24).
+    if (mode === undefined) {
+        const config = await new MeetingsConfigStore().read();
+        const shown = resolveDictionary(config, { project: opts.project }).abbrExpansion;
+        ui.info(
+            `Abbreviations${opts.project ? ` in the project ${opts.project}` : ""} expand: ${shown}. Change it: ${TOOL} dictionary expansion every|first|off`
+        );
+        return;
+    }
+
     const picked = await resolveEnum({
         value: mode,
         values: ABBR_EXPANSIONS,
@@ -273,7 +261,7 @@ async function test(phrase: string, opts: { project?: string; json?: boolean }):
         });
 
         if (opts.json) {
-            out.result(SafeJSON.stringify(result, null, 2));
+            out.result(windowJson(result));
             return;
         }
 

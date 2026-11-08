@@ -11,6 +11,7 @@ import {
     liveLocalMeeting,
     localAvailable,
     localMeetingFolders,
+    localMeetingRevision,
     localSelfName,
     WISPR_DIR,
 } from "./local";
@@ -89,6 +90,11 @@ export const wisprflowSource: TranscriptSource = {
         const loaded = await loadMeeting(sourceMeetingId, { source: "auto", transcript: true });
         log.debug({ id: sourceMeetingId, source: loaded.source, notes: loaded.notes }, "wisprflow meeting loaded");
         return toSourceMeeting(loaded.data);
+    },
+
+    async revision(sourceMeetingId) {
+        // Only the local copy has a cheap revision; a meeting the MCP answers is read again each time.
+        return (localAvailable() ? localMeetingRevision(sourceMeetingId) : undefined) ?? null;
     },
 
     describe(meeting) {

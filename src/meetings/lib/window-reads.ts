@@ -1,0 +1,263 @@
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { fileIdentity } from "@genesiscz/utils/fs/identity-cache";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { type MeetingsConfig, MeetingsConfigStore, resolveDictionary } from "@genesiscz/utils/meetings/config";
+import { MEETING_FILE, type MeetingRecord, MeetingStore } from "@genesiscz/utils/meetings/record";
+import type { TranscriptFormat } from "@genesiscz/utils/transcribe/render";
+import { type SpeakerStats, speakerStats } from "@genesiscz/utils/transcribe/speakers";
+import { type AssignDeps, type AssignView, skipReason, viewProposals } from "./assign";
+import { captureCost } from "./capture-cost";
+import { configValueAt, parseConfigPath } from "./config-edit";
+import { transcriptMarkdown } from "./export";
+import { type MatchDraft, type MatchPreviewRow, matchDraftSchema, matchPreview } from "./match-preview";
+import { OpenedMeeting } from "./opened-meeting";
+import { type MeetingsOverview, meetingsOverview } from "./overview";
+import { meetingSource, sourceRefOf } from "./sources";
+import { type CorrectedTranscript, correctTranscript } from "./transcript-corrections";
+
+const { log } = logger.scoped("meetings-window-reads");
+
+/**
+ * The reads the Meetings window makes, each as the value its command prints with `--json`. The CLI commands and the
+ * hub server doors both serialize these with `windowJson`, so a door's answer is byte-identical to the command's.
+ * The values hold no comments, so the native writer gives the same bytes as comment-json at a tenth of its CPU
+ * (the screen timeline: 11.7 to 1.1 ms a call, 2026-11-07).
+ */
+export function windowJson(value: unknown): string {
+    return SafeJSON.stringify(value, { strict: true }, 2);
+}
+
+/** `meetings overview --days <n>`: the meetings of the last `days`, with what needs the user. */
+export async function overviewRead(options: { days: number; now: Date }): Promise<MeetingsOverview> {
+    const { days, now } = options;
+    const bounded = new MeetingStore().listBounded({ since: new Date(now.getTime() - days * 86_400_000) });
+    const view = meetingsOverview({
+        records: bounded.records,
+        config: await new MeetingsConfigStore().read(),
+        now,
+        days,
+    });
+    view.olderMeetings += bounded.olderMeetings;
+    return view;
+}
+
+/** Per part of the Meetings window, a token of what it reads: an equal token means the part would read the same. */
+export interface WindowRevisions {
+    meeting: string;
+    show: string;
+    /** Null when the meeting's source cannot tell (it would ask a remote service): the window reads it again. */
+    transcript: string | null;
+    speakers: string | null;
+    /** Null as well when the source cannot tell: the timeline's clock comes from the source. */
+    timeline: string | null;
+}
+
+/** What each part reads, already reduced to identities; `source` is null when the source cannot tell. */
+export interface RevisionFacts {
+    meeting: string;
+    recordFile: unknown;
+    config: unknown;
+    source: string | null;
+    screen: unknown[];
+}
+
+/**
+ * The tokens of `revisionsRead`. The timeline holds the source's revision too: its times count from the source's
+ * recording clock (`CallTimeline.forRecord`), so a source that changed its clock changes the Screen tab's times.
+ */
+export function revisionTokens(facts: RevisionFacts): WindowRevisions {
+    const { meeting, recordFile, config, source, screen } = facts;
+    const stamp = (...parts: unknown[]) => Bun.hash(SafeJSON.stringify(parts, { strict: true })).toString(36);
+    return {
+        meeting,
+        show: stamp(recordFile),
+        transcript: source === null ? null : stamp(recordFile, config, source),
+        speakers: source === null ? null : stamp(recordFile, source),
+        timeline: source === null ? null : stamp(recordFile, screen, source),
+    };
+}
+
+/**
+ * `meetings revisions <id>`: one token per window part, from the identities (inode, size, mtime, ctime) of the files
+ * the part reads and its source's revision. Reads no transcript and no frame, so the window can ask it on every
+ * return and read again only the parts whose token changed.
+ */
+export async function revisionsRead(options: { store: MeetingStore; record: MeetingRecord }): Promise<WindowRevisions> {
+    const { store, record } = options;
+    const folder = store.folder(record.id);
+    const recordFile = fileIdentity(join(folder, MEETING_FILE));
+    const config = fileIdentity(new MeetingsConfigStore().path);
+    const ref = sourceRefOf(record);
+    let source: string | null = "no source";
+
+    if (ref) {
+        try {
+            source = await (await meetingSource(ref.sourceId)).revision(ref.sourceMeetingId);
+        } catch (error) {
+            log.debug({ error, meeting: record.id }, "the source gave no revision; the window reads it again");
+            source = null;
+        }
+    }
+
+    // The timeline reads ocr.jsonl and checks each frame file; a frame added or removed changes its folder's identity.
+    const screen = [
+        fileIdentity(join(folder, "ocr.jsonl")),
+        fileIdentity(folder),
+        ...readdirSync(folder, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => [entry.name, fileIdentity(join(folder, entry.name))]),
+    ];
+    return revisionTokens({ meeting: record.id, recordFile, config, source, screen });
+}
+
+/** `meetings record cost`: what a kept frame and each capture choice cost, from the recordings so far. */
+export async function captureCostRead(): Promise<ReturnType<typeof captureCost>> {
+    const store = new MeetingStore();
+    return captureCost({ store, records: store.list(), config: await new MeetingsConfigStore().read() });
+}
+
+/** `meetings config show [path]`: the config file's path and the value at `path` (the whole config without one). */
+export async function configShowRead(path?: string): Promise<{ path: string; value: unknown }> {
+    const store = new MeetingsConfigStore();
+    const config = await store.read();
+    const value = path ? configValueAt(config, parseConfigPath(path)) : config;
+    return { path: store.path, value: value ?? null };
+}
+
+export interface DictionaryShowView {
+    project: string | null;
+    abbrExpansion: ReturnType<typeof resolveDictionary>["abbrExpansion"];
+    entries: Array<ReturnType<typeof resolveDictionary>["entries"][number] & { level: string }>;
+}
+
+/**
+ * `meetings projects preview [--draft <json>] [--limit n]`: the newest meetings against the saved project rules and
+ * the draft. `draft` is the parsed draft (undefined without one), which the table view needs.
+ */
+export async function matchPreviewRead(flags: {
+    draft?: string;
+    limit?: string;
+}): Promise<{ draft: MatchDraft | undefined; rows: MatchPreviewRow[] }> {
+    const draft = flags.draft ? matchDraftSchema.parse(SafeJSON.parse(flags.draft, { strict: true })) : undefined;
+    const limit = Number(flags.limit ?? "20");
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+        throw new Error("--limit must be a positive integer");
+    }
+
+    const rows = matchPreview({
+        records: new MeetingStore().listBounded({ limit }).records,
+        config: await new MeetingsConfigStore().read(),
+        ...(draft ? { draft } : {}),
+        limit,
+    });
+    return { draft, rows };
+}
+
+/** `meetings dictionary show [--project p]`: the merged dictionary, each entry with the level it comes from. */
+export function dictionaryShowRead(config: MeetingsConfig, project?: string): DictionaryShowView {
+    if (project && !config.projects[project]) {
+        const known = Object.keys(config.projects).join(", ") || "none yet";
+        throw new Error(
+            `Unknown project ${project}. Known: ${known}. Add it: ${toolCommand("meetings", "projects", "add", project)}`
+        );
+    }
+
+    const merged = resolveDictionary(config, { project });
+    const projectValues = new Set(
+        (project ? config.projects[project]?.dictionary?.entries : [])?.map((entry) => entry.value)
+    );
+    const rows = merged.entries.map((entry) => ({
+        ...entry,
+        level: projectValues.has(entry.value) ? `project ${project}` : "global",
+    }));
+    return { project: project ?? null, abbrExpansion: merged.abbrExpansion, entries: rows };
+}
+
+export type SpeakerStatsView = { meeting: string; gapSec: number } & SpeakerStats;
+
+/** `meetings speakers stats <id>`: per label its turns, spoken time and spans, on the stays the record keeps. */
+export async function speakerStatsRead(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    gapSec: number;
+    attendance?: string;
+}): Promise<SpeakerStatsView> {
+    const { store, record, gapSec } = options;
+    const opened = OpenedMeeting.of(store, record);
+    const meeting = await opened.meeting();
+    const stats = speakerStats(meeting.transcript, {
+        gapSec,
+        participants: meeting.speakers,
+        presence: await opened.presence(options.attendance),
+    });
+    return { meeting: record.id, gapSec, ...stats };
+}
+
+/** The transcript flags that change what `meetings transcript` applies or prints. */
+export interface TranscriptReadOptions {
+    withSuggested?: boolean;
+    dictionary?: boolean;
+    frontmatter?: boolean;
+    timestamps?: boolean;
+    playLinks?: boolean;
+}
+
+/**
+ * `meetings transcript <id> --format <f>`: the source's transcript with the record's corrections applied, and for
+ * `md` the whole document. `applied` carries what each correction did, which the command reports on stderr.
+ */
+export async function correctedTranscriptRead(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    format: TranscriptFormat;
+    flags: TranscriptReadOptions;
+}): Promise<{ markdown?: ReturnType<typeof transcriptMarkdown>; applied: CorrectedTranscript }> {
+    const { store, record, format, flags } = options;
+    const meeting = await OpenedMeeting.of(store, record).meeting();
+    const config = await new MeetingsConfigStore().read();
+    const markdown =
+        format === "md"
+            ? transcriptMarkdown({
+                  record,
+                  transcript: meeting.transcript,
+                  config,
+                  ...(flags.withSuggested !== undefined ? { withSuggested: flags.withSuggested } : {}),
+                  ...(flags.dictionary !== undefined ? { dictionary: flags.dictionary } : {}),
+                  frontmatter: flags.frontmatter !== false,
+                  timestamps: flags.timestamps === true,
+                  playLinks: flags.playLinks === true,
+              })
+            : undefined;
+    const applied =
+        markdown?.applied ?? correctTranscript({ ...flags, record, transcript: meeting.transcript, config, format });
+    return { ...(markdown ? { markdown } : {}), applied };
+}
+
+/** `meetings transcript <id> --format json`: the corrected lines. */
+export function transcriptJsonView(
+    record: MeetingRecord,
+    applied: CorrectedTranscript
+): { meeting: string; entries: CorrectedTranscript["entries"] } {
+    return { meeting: record.id, entries: applied.entries };
+}
+
+/** `meetings assign proposals <id>`: the ranked projects with their facts, and why the sweep would not ask. */
+export async function proposalsRead(options: {
+    store: MeetingStore;
+    record: MeetingRecord;
+    deps: AssignDeps;
+}): Promise<{ view: AssignView; skipped: string | undefined }> {
+    const { store, record, deps } = options;
+    const view = await viewProposals(store, record, deps);
+    const { assign } = (await deps.config.read()).global;
+    const skipped = skipReason({ record, store, now: deps.now(), retryFailedMin: assign.retryFailedMin });
+    return { view, skipped };
+}
+
+/** The JSON of `meetings assign proposals <id> --json`: the view without its record. */
+export function proposalsJsonView(record: MeetingRecord, read: { view: AssignView; skipped: string | undefined }) {
+    return { meeting: record.id, skipped: read.skipped, ...read.view, record: undefined };
+}

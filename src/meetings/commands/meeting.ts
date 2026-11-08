@@ -4,7 +4,7 @@ import { isInteractive } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { MeetingsConfigStore, mergeLabels } from "@genesiscz/utils/meetings/config";
+import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import { type MeetingRecord, MeetingStore, nextId } from "@genesiscz/utils/meetings/record";
 import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
@@ -13,9 +13,13 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { collectAndReport } from "../lib/collect";
 import { linkSource } from "../lib/link";
+import { meetingListRow, selectMeetings } from "../lib/list-rows";
+import { setMeetingFields } from "../lib/meeting-fields";
+import { mergeMeetings } from "../lib/merge";
 import { resolveProject } from "../lib/project";
 import { errorText, fail, TOOL } from "../lib/shared";
 import { showText } from "../lib/show-text";
+import { revisionsRead, windowJson } from "../lib/window-reads";
 import { askProjectAtEnd } from "./watch";
 
 /** The record a command names, or a message saying how to find one. */
@@ -99,11 +103,18 @@ async function create(
     }
 }
 
-async function list(opts: { project?: string; json?: boolean }): Promise<void> {
-    const records = new MeetingStore().list().filter((record) => !opts.project || record.project === opts.project);
+async function list(opts: { project?: string; json?: boolean; full?: boolean; limit?: string }): Promise<void> {
+    const limit = opts.limit === undefined ? undefined : Number(opts.limit);
+
+    if (limit !== undefined && !(Number.isInteger(limit) && limit > 0)) {
+        fail(`--limit ${opts.limit} is not a count of meetings (try 5).`);
+        return;
+    }
+
+    const records = selectMeetings(new MeetingStore().list(), { project: opts.project, limit });
 
     if (opts.json) {
-        out.result(SafeJSON.stringify(records, null, 2));
+        out.result(SafeJSON.stringify(opts.full ? records : records.map(meetingListRow), null, 2));
         return;
     }
 
@@ -136,6 +147,35 @@ async function list(opts: { project?: string; json?: boolean }): Promise<void> {
     out.println(table.toString());
 }
 
+/** `meetings revisions <id>`: what each part of the Meetings window reads, as one token per part. */
+async function revisions(ref: string, opts: { json?: boolean }): Promise<void> {
+    const store = new MeetingStore();
+    const record = requireMeeting(store, ref);
+
+    if (!record) {
+        return;
+    }
+
+    try {
+        const view = await revisionsRead({ store, record });
+
+        if (opts.json) {
+            out.result(windowJson(view));
+            return;
+        }
+
+        for (const [part, token] of Object.entries(view)) {
+            if (part !== "meeting") {
+                out.println(
+                    `${part.padEnd(11)} ${token ?? "unknown: the source cannot tell, so the window reads it again"}`
+                );
+            }
+        }
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
 async function show(ref: string, opts: { json?: boolean }): Promise<void> {
     const record = requireMeeting(new MeetingStore(), ref);
 
@@ -144,7 +184,7 @@ async function show(ref: string, opts: { json?: boolean }): Promise<void> {
     }
 
     if (opts.json) {
-        out.result(SafeJSON.stringify(record, null, 2));
+        out.result(windowJson(record));
         return;
     }
 
@@ -171,25 +211,11 @@ async function set(
     }
 
     try {
-        const config = new MeetingsConfigStore();
-        const project = opts.project ? (await resolveProject({ config, flag: opts.project })).project : undefined;
-        const target = project ?? record.project;
-
-        if (target && labels.length > 0) {
-            await config.setProjectLabels(target, { add: labels });
-        }
-
-        const changes = [
-            project ? `project ${project}` : "",
-            opts.title ? `title "${opts.title}"` : "",
-            labels.length > 0 ? `labels + ${labels.join(", ")}` : "",
-            unlabel.length > 0 ? `labels - ${unlabel.join(", ")}` : "",
-        ].filter(Boolean);
-        const removed = new Set(unlabel.map((label) => label.toLowerCase()));
-        const updated = await store.update(record.id, { command: "set", change: changes.join(", ") }, (current) => {
-            current.project = project ?? current.project;
-            current.title = opts.title ?? current.title;
-            current.labels = mergeLabels(current.labels, labels).filter((label) => !removed.has(label.toLowerCase()));
+        const { record: updated, changes } = await setMeetingFields({
+            store,
+            config: new MeetingsConfigStore(),
+            record,
+            change: { project: opts.project, title: opts.title, labels, unlabel },
         });
         ui.ok(
             `${record.id}: ${changes.join(", ")}${updated.labels.length > 0 ? ` (labels: ${updated.labels.join(", ")})` : ""}`
@@ -216,6 +242,49 @@ async function link(ref: string, sourceRef: string, opts: { project?: string }):
 
         if (record.end) {
             await askProjectAtEnd(store, record.id);
+        }
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
+async function merge(fromRef: string, opts: { into: string; dryRun?: boolean; json?: boolean }): Promise<void> {
+    try {
+        const result = await mergeMeetings({
+            store: new MeetingStore(),
+            fromId: fromRef,
+            intoId: opts.into,
+            dryRun: opts.dryRun,
+        });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            return;
+        }
+
+        const { moved } = result;
+        const what = `${moved.frames} frames, ${moved.audio} sound files, ${moved.rows} OCR and sound rows, ${moved.context} context items, ${moved.history} history lines`;
+        ui.ok(`${result.dryRun ? "Would merge" : "Merged"} ${result.from} into ${result.into}: ${what}.`);
+        ui.dim(`  start ${localTime(result.start)}${result.end ? `, end ${localTime(result.end)}` : ""}`);
+
+        if (result.derived.length > 0) {
+            ui.dim(`  editor files made again on the next open: ${result.derived.join(", ")}`);
+        }
+
+        if (result.withdrawn) {
+            ui.dim(
+                `  the project question of ${result.from} is ${result.dryRun ? "to be withdrawn if it is still open" : "withdrawn"}: ${result.withdrawn}`
+            );
+        }
+
+        if (result.notOpen) {
+            ui.dim(
+                `  the project question of ${result.from} was not open in the inbox, so nothing was withdrawn: ${result.notOpen}`
+            );
+        }
+
+        if (result.backup) {
+            ui.dim(`  backup and restore steps: ${result.backup}/README.md`);
         }
     } catch (err) {
         fail(errorText(err));
@@ -345,7 +414,12 @@ export function registerMeetingCommands(program: Command): void {
         .alias("ls")
         .description("The meeting records, newest first")
         .option("--project <name>", "only this project's")
-        .option("--json", "print JSON")
+        .option("--limit <n>", "only the newest n (after --project)")
+        .option(
+            "--json",
+            "print one row per meeting: id, title, start, end, project, labels, sources, context, items, recording"
+        )
+        .option("--full", "with --json: the whole records, as show --json prints each")
         .action(list);
 
     program
@@ -354,6 +428,13 @@ export function registerMeetingCommands(program: Command): void {
         .description("One meeting record")
         .option("--json", "print the record")
         .action(show);
+
+    program
+        .command("revisions")
+        .argument("<meeting>", MEETING_REF)
+        .description("One token per part of the Meetings window: an equal token means that part would read the same")
+        .option("--json", "print JSON")
+        .action(revisions);
 
     program
         .command("set")
@@ -372,6 +453,17 @@ export function registerMeetingCommands(program: Command): void {
         .description("Attach a source's meeting: its transcript, people, times and calendar entry")
         .option("--project <name>", "its project, when it has none yet")
         .action(link);
+
+    program
+        .command("merge")
+        .argument("<meeting>", "the record that goes away: an id, a unique prefix or last")
+        .description(
+            "Make two records of one call one: frames, sound, rows, context and history move, with a backup first"
+        )
+        .requiredOption("--into <meeting>", "the record that stays")
+        .option("--dry-run", "say what would move, change nothing")
+        .option("--json", "print the result as JSON")
+        .action(merge);
 
     const context = program.command("context").description("Reference material for a meeting: notes, files, links");
 

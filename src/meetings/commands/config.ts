@@ -3,32 +3,47 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { MeetingsConfigStore } from "@genesiscz/utils/meetings/config";
 import type { Command } from "commander";
-import { z } from "zod";
 import {
     applyConfigEdits,
-    type ConfigEdit,
     configValueAt,
+    missingMapKey,
+    parseConfigEdits,
     parseConfigPath,
     parseConfigValue,
     setConfigValue,
+    unknownConfigPath,
     unsetConfigValue,
 } from "../lib/config-edit";
 import { errorText, fail } from "../lib/shared";
+import { configShowRead, windowJson } from "../lib/window-reads";
 
 async function show(path: string | undefined, opts: { json?: boolean }): Promise<void> {
-    const store = new MeetingsConfigStore();
-
     try {
-        const config = await store.read();
-        const value = path ? configValueAt(config, parseConfigPath(path)) : config;
+        const unknown = path ? unknownConfigPath(parseConfigPath(path)) : undefined;
 
-        if (opts.json) {
-            out.result(SafeJSON.stringify({ path: store.path, value: value ?? null }, null, 2));
+        if (unknown) {
+            fail(`${unknown.reason} Its settings: ${unknown.settings}`);
             return;
         }
 
-        out.println(SafeJSON.stringify(value ?? null, null, 2));
-        ui.dim(`config: ${store.path}`);
+        const view = await configShowRead(path);
+        const missing =
+            path && (view.value === null || view.value === undefined)
+                ? missingMapKey(await new MeetingsConfigStore().read(), parseConfigPath(path))
+                : undefined;
+
+        if (missing) {
+            fail(`${missing.reason} Its settings: ${missing.settings}`);
+            return;
+        }
+
+        if (opts.json) {
+            out.result(windowJson(view));
+            return;
+        }
+
+        out.println(SafeJSON.stringify(view.value, null, 2));
+        ui.dim(`config: ${view.path}`);
     } catch (err) {
         fail(errorText(err));
     }
@@ -76,32 +91,18 @@ async function unset(path: string, opts: { expect?: string; json?: boolean }): P
     }
 }
 
-const configEditSchema = z.union([
-    z.object({ path: z.string().min(1), value: z.unknown(), expect: z.unknown().optional() }).strict(),
-    z.object({ path: z.string().min(1), unset: z.literal(true), expect: z.unknown().optional() }).strict(),
-]);
-
 async function edit(text: string, opts: { json?: boolean }): Promise<void> {
     const store = new MeetingsConfigStore();
 
     try {
-        const parsed = z
-            .array(configEditSchema)
-            .min(1)
-            .safeParse(SafeJSON.parse(text, { strict: true }));
+        const parsed = parseConfigEdits(text);
 
-        if (!parsed.success) {
-            fail(
-                "config edit takes a JSON array of { path, value, expect? } or { path, unset: true, expect? } (expect: the value the change replaces)"
-            );
+        if ("error" in parsed) {
+            fail(parsed.error);
             return;
         }
 
-        const edits: ConfigEdit[] = parsed.data.map((one) =>
-            "unset" in one
-                ? { path: one.path, unset: true, ...("expect" in one ? { expect: one.expect } : {}) }
-                : { path: one.path, value: one.value, ...("expect" in one ? { expect: one.expect } : {}) }
-        );
+        const { edits } = parsed;
         const config = await applyConfigEdits(store, edits);
         const values = edits.map((one) => {
             const segments = parseConfigPath(one.path);
@@ -132,6 +133,7 @@ export function registerConfigCommand(program: Command): void {
         .description("Read and change the meetings settings: every write is checked against the whole schema first");
     config
         .command("show")
+        .alias("get")
         .argument("[path]", PATH_HELP)
         .description("The settings with their defaults, or the value at one path")
         .option("--json", "print { path, value } as JSON")

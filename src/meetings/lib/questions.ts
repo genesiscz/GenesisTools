@@ -96,12 +96,36 @@ function impactOf(text: string, label: string, context: QuestionContext): { impa
     return { impact: Math.round(impact * 100) / 100, decision: importance.decision || cited.length > 0 };
 }
 
+/** Where a capital needs no name to explain it: the start of a line, or after a sentence ends. */
+const SENTENCE_END = /[.!?…:]["“”„»]?$/u;
+
+/**
+ * A capital that no sentence start explains: the word is a name or a product, so its spelling is worth a person's
+ * time. A lowercase word that no layer knows is speech (a colloquial form, slang), and asking it spent the budget and
+ * marked ordinary words as unclear in the transcript (R2-MC1).
+ */
+function capitalMidSentence(heard: string, transcript: readonly TranscriptEntry[]): boolean {
+    if (!/^\p{Lu}/u.test(heard)) {
+        return false;
+    }
+
+    const escaped = heard.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "gu");
+    return transcript.some((entry) =>
+        [...entry.text.matchAll(pattern)].some((match) => {
+            const before = entry.text.slice(0, match.index).trimEnd();
+            return before.length > 0 && !SENTENCE_END.test(before);
+        })
+    );
+}
+
 /**
  * The question a suggested item needs before anyone confirms it, or nothing when it is not worth a person's time
  * (Martin, 2026-11-02: "just on those which are really important and not sure of"):
  * - a speaker range under `listenBelow` with more than 5 words that are not all fillers, and 15 words or a decision;
  * - a term under `listenBelow` whose time is known and that is seen twice, looks like an identifier, is a person's
- *   name from the summary, or sits in a line with a decision.
+ *   name from the summary, or sits in a line with a decision; an unknown word with nothing proposed only when shaped
+ *   like an identifier, or seen twice with a capital that no sentence start explains (a name).
  * The question carries its impact and signature in `evidence`; `selectQuestions` clusters and ranks them.
  */
 export function questionFor(item: MeetingItem, context: QuestionContext): NewQuestion | undefined {
@@ -162,7 +186,12 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
         const decision = atLine ? importanceOf(atLine.text).decision : false;
         const personName = item.rules.includes(MeetingRule.SummaryName);
 
-        if (occurrences < 2 && !identifier && !decision && !personName) {
+        // A word no layer knows and nothing resembles is asked only as a code name, or as a name heard twice: a lone
+        // colloquial form ("běžejí") in a decision line is speech (MC3), and so is a lowercase one heard often (R2-MC1).
+        const unknownWord = item.rules.includes(MeetingRule.UnknownWord) && !item.proposed;
+        const named = unknownWord && occurrences >= 2 && capitalMidSentence(item.heard, context.transcript);
+
+        if (unknownWord ? !identifier && !named : occurrences < 2 && !identifier && !decision && !personName) {
             return undefined;
         }
 
@@ -204,6 +233,23 @@ export function questionFor(item: MeetingItem, context: QuestionContext): NewQue
 /** Two questions are the same when they ask about the same range for the same items. */
 export function questionKey(item: Pick<QuestionItem, "about" | "fromSec" | "toSec" | "decides">): string {
     return `question|${item.about}|${Math.round(item.fromSec)}|${Math.round(item.toSec)}|${item.decides.join(",")}`;
+}
+
+/**
+ * What a suggestion needs from a person before a confirm can take it: a speaker for a range nobody named, a spelling for
+ * a term with no proposal, meaning or quote. `confirm` skips these, the window's bulk bar leaves them out
+ * (`MeetingDetailModel.confirmable`), and the overview's count must agree with both (R2-MC13).
+ */
+export function inputNeeded(item: MeetingItem): "speaker" | "proposed" | undefined {
+    if (item.kind === "speaker-range" && !item.speaker) {
+        return "speaker";
+    }
+
+    if (item.kind === "term" && !item.proposed && !item.meaning && !item.quote) {
+        return "proposed";
+    }
+
+    return undefined;
 }
 
 /** The open questions, the most valuable first (priority), then in transcript order. */

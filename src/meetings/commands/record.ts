@@ -6,7 +6,7 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes, parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { OCR_BOX_LEVELS, type OcrBoxLevel } from "@genesiscz/utils/macos/ocr-boxes";
+import { foldText, OCR_BOX_LEVELS, type OcrBoxLevel } from "@genesiscz/utils/macos/ocr-boxes";
 import { calendarAround } from "@genesiscz/utils/meetings/calendar";
 import {
     DISPLAY_POLICIES,
@@ -25,7 +25,6 @@ import {
 import { callRecorder, RecorderClient } from "@genesiscz/utils/screen-recorder/live";
 import { formatClock, localTime, parseClock } from "@genesiscz/utils/transcribe/render";
 import type { Command } from "commander";
-import { captureCost } from "../lib/capture-cost";
 import { collectAndReport } from "../lib/collect";
 import { ensureScreenRecording } from "../lib/grants";
 import { linkSource } from "../lib/link";
@@ -42,6 +41,7 @@ import { meetingScreen, type ScreenBoxFrame } from "../lib/screen-boxes";
 import { screenTimeline } from "../lib/screen-timeline";
 import { type SetSettingsFlags, settingsPatchFromFlags } from "../lib/settings-flags";
 import { errorText, fail, TOOL } from "../lib/shared";
+import { captureCostRead, windowJson } from "../lib/window-reads";
 import { askProjectAtEnd } from "./watch";
 
 const { log } = logger.scoped("meetings-record-cmd");
@@ -211,12 +211,16 @@ async function start(opts: {
     }
 }
 
-/** The running meeting recorder's live recording id, or undefined (with a message) when nothing records. */
+/**
+ * The running meeting recorder's live recording id, or undefined when nothing records: then the asked change (a mark,
+ * a pause, a setting) was not made, so the command exits 1 (MC14).
+ */
 function runningRecorder(store: MeetingStore): { id: string; meetingId: string; pid: number } | undefined {
     const current = readRecorderState(store);
 
     if (!current.running || !current.state) {
         ui.info("Nothing is recording.");
+        process.exitCode = 1;
         return undefined;
     }
 
@@ -387,6 +391,13 @@ async function displayMode(raw: string): Promise<void> {
 async function stop(opts: { meeting?: string; startedAt?: string }): Promise<void> {
     const store = new MeetingStore();
     const current = readRecorderState(store);
+
+    // Nothing to stop is the state a stop asks for: one line and exit 0, no "Stopping" before it (MC18).
+    if (!current.running || !current.state) {
+        ui.info("Nothing is recording.");
+        return;
+    }
+
     ui.dim("Stopping; the recorder converts its last frames, writes the summary and collects first.");
     const answer = await callRunning(store, async (recorder) =>
         requestRecorderStop(store, opts, () => recorder.stop())
@@ -535,7 +546,7 @@ async function timeline(store: MeetingStore, record: MeetingRecord, opts: Screen
         const view = await screenTimeline({ store, record, all: opts.all === true });
 
         if (opts.json) {
-            out.result(SafeJSON.stringify(view, null, 2));
+            out.result(windowJson(view));
             return;
         }
 
@@ -553,32 +564,32 @@ async function timeline(store: MeetingStore, record: MeetingRecord, opts: Screen
 
 async function cost(opts: { json?: boolean }): Promise<void> {
     try {
-        const store = new MeetingStore();
-        const view = captureCost({ store, records: store.list(), config: await new MeetingsConfigStore().read() });
+        const view = await captureCostRead();
 
         if (opts.json) {
-            out.result(SafeJSON.stringify(view, null, 2));
+            out.result(windowJson(view));
             return;
         }
 
-        ui.info(`one kept frame: ${view.keptFrameCpuMs} ms CPU (${view.source})`);
+        // The report is the command's result, so it goes to stdout like show and overview (MC19).
+        out.println(`one kept frame: ${view.keptFrameCpuMs} ms CPU (${view.source})`);
 
         if (view.observed) {
-            ui.info(
+            out.println(
                 `last recording ${view.observed.meeting}: ${view.observed.framesPerMin} frames/min on ${view.observed.displays} displays, about ${view.observed.cpuSecPerMin} s CPU per minute`
             );
         }
 
         for (const choice of view.activeFps) {
-            ui.dim(`  ${choice.value} fps while changing: at most ${choice.maxCpuSecPerMin} s CPU per minute`);
+            out.println(`  ${choice.value} fps while changing: at most ${choice.maxCpuSecPerMin} s CPU per minute`);
         }
 
         for (const choice of view.displays) {
-            ui.dim(`  displays ${choice.value}: at most ${choice.maxCpuSecPerMin} s CPU per minute`);
+            out.println(`  displays ${choice.value}: at most ${choice.maxCpuSecPerMin} s CPU per minute`);
         }
 
         if (view.thresholdNote) {
-            ui.dim(`  threshold: ${view.thresholdNote}`);
+            out.println(`  threshold: ${view.thresholdNote}`);
         }
     } catch (err) {
         fail(errorText(err));
@@ -684,6 +695,13 @@ async function screen(ref: string, opts: ScreenOptions): Promise<void> {
     }
 }
 
+/** The line of a box to print: the one that holds the match (a block's first line may not, MC21), else the first. */
+function shownLine(text: string, match: string | undefined): string {
+    const lines = text.split("\n");
+    const wanted = match ? foldText(match) : undefined;
+    return (wanted ? lines.find((line) => foldText(line).includes(wanted)) : undefined) ?? lines[0] ?? "";
+}
+
 /** `screen --boxes`: each frame's matching or changed boxes, the drawn frame and the crop of each box. */
 function printScreenBoxes(results: ScreenBoxFrame[], opts: ScreenOptions, clockOf: (ms: number) => string): void {
     if (opts.json) {
@@ -702,7 +720,7 @@ function printScreenBoxes(results: ScreenBoxFrame[], opts: ScreenOptions, clockO
         for (const [index, box] of frame.boxes.entries()) {
             const crop = frame.crops.find((path) => path.endsWith(`.${index + 1}.png`));
             out.println(
-                `   ${index + 1}. ${box.x},${box.y} ${box.width}x${box.height}  ${box.text.split("\n")[0]}${crop ? `  ${crop}` : ""}`
+                `   ${index + 1}. ${box.x},${box.y} ${box.width}x${box.height}  ${shownLine(box.text, opts.match)}${crop ? `  ${crop}` : ""}`
             );
         }
     }

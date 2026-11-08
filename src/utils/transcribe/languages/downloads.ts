@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { UrlSource } from "@genesiscz/utils/ai/local/artifacts/sources/url";
+import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
@@ -27,7 +28,10 @@ export async function ensureDownload(download: Download): Promise<string> {
     const file = downloadPath(download);
 
     if (!existsSync(file)) {
-        log.info({ url: download.url, license: download.license, file }, "downloading a transcript check file");
+        // One short line, so a first run that waits for the download says why; the URL and the path go to the day log
+        // only (a block of them per file filled the console of a first suggest, R2-MC2).
+        ui.dim(`Downloading ${basename(file)} for the word check (${download.license}); only this once.`);
+        log.debug({ url: download.url, license: download.license, file }, "downloading a transcript check file");
     }
 
     source ??= new UrlSource();

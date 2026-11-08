@@ -15,8 +15,8 @@ export interface AssignInbox {
     post(input: CreateAskFormInput): Promise<{ id: string }>;
     /** The question's state and answers; null when no question has the id. */
     read(id: string): Promise<InboxAnswer | null>;
-    /** Withdraws a question nobody needs to answer any more. */
-    cancel(id: string): Promise<void>;
+    /** Withdraws a question nobody needs to answer any more: true when it was open, false when the inbox has no open one. */
+    cancel(id: string): Promise<boolean>;
 }
 
 /** The decision inbox, reached through the question tool's exported functions only. */
@@ -30,7 +30,7 @@ export const decisionInbox: AssignInbox = {
         return form ? { status: form.status, answers: form.answers ?? {} } : null;
     },
     async cancel(id) {
-        cancelAskForm(id);
+        return cancelAskForm(id) !== null;
     },
 };
 

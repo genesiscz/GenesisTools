@@ -104,13 +104,18 @@ export async function loadMeeting(
         notes.push("The meeting is not on this Mac; asked the MCP.");
     }
 
+    const notLocal = options.source !== "mcp" && localAvailable();
+
     try {
         const remote = await getMcpMeeting(id, { transcript: options.transcript });
         log.debug({ id }, "meeting answered by MCP");
         return { source: "mcp", data: remote, notes };
     } catch (err) {
         if (err instanceof McpUnavailableError) {
-            throw new Error(`${err.message}. Check '${toolCommand("mcp-manager gateway status")}'.`);
+            // The local miss comes first: on a Mac without the MCP, "not reachable" alone hid that the id is unknown.
+            const lead = notLocal ? `meeting ${id} is not in the local Wispr Flow database, and ` : "";
+            const reason = err.message.replace(/\.$/, "");
+            throw new Error(`${lead}${reason}. Check '${toolCommand("mcp-manager gateway status")}'.`);
         }
 
         throw err;

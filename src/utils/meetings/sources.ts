@@ -74,6 +74,12 @@ export interface TranscriptSource {
     readonly label: string;
     /** The source's meeting with its transcript. Throws when it does not exist. */
     load(sourceMeetingId: string): Promise<SourceMeeting>;
+    /**
+     * A token that changes whenever what `load` and `recordingClock` return for this meeting can change, read without
+     * the transcript. Null when the source cannot tell (a meeting it would ask a remote service for): the caller then
+     * reads the meeting again.
+     */
+    revision(sourceMeetingId: string): Promise<string | null>;
     /** The block this source writes under `meeting.sources.<id>`. Only this source reads it. */
     describe(meeting: SourceMeeting): Record<string, unknown>;
     /** The source's own word list. */

@@ -9,14 +9,26 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { createCanvas } from "@napi-rs/canvas";
 import type { z } from "zod";
 import { captureCost } from "./capture-cost";
-import { applyConfigEdits, configValueAt, parseConfigPath, setConfigValue, unsetConfigValue } from "./config-edit";
+import {
+    applyConfigEdits,
+    configValueAt,
+    missingMapKey,
+    parseConfigEdits,
+    parseConfigPath,
+    setConfigValue,
+    unknownConfigPath,
+    unsetConfigValue,
+} from "./config-edit";
 import { decideItems, reopenItems } from "./decide";
 import { testPhrase } from "./dictionary-test";
 import { exportMeeting } from "./export";
 import { matchPreview } from "./match-preview";
-import { meetingsOverview } from "./overview";
+import { projectLabels, setMeetingFields } from "./meeting-fields";
+import { meetingBadges, meetingsOverview } from "./overview";
+import { removeProject, renameProject } from "./project-admin";
 import { screenTimeline } from "./screen-timeline";
 import { openMeetingsWindow, windowOpenArgs } from "./window";
+import { revisionsRead, revisionTokens } from "./window-reads";
 
 let n = 0;
 
@@ -42,6 +54,39 @@ function record(fields: RecordInput): MeetingRecord {
 const suggestedAt = "2026-11-04T10:00:00.000Z";
 
 describe("config set and unset", () => {
+    test("show names the projects the config holds when a path names one it does not (R2-MC6)", () => {
+        const config = meetingsConfigSchema.parse({ projects: { work: {} } });
+
+        expect(missingMapKey(config, parseConfigPath("projects.side"))).toEqual({
+            reason: 'projects has no "side"; it holds work.',
+            settings: "tools meetings config show projects",
+        });
+        expect(missingMapKey(config, parseConfigPath("projects.work.labels"))).toBeUndefined();
+        expect(missingMapKey(config, parseConfigPath("global.capture.activeFps"))).toBeUndefined();
+    });
+
+    test("edits that are not JSON get the shape the command takes, with the parser's reason (R2-MC6)", () => {
+        expect(parseConfigEdits("not json")).toEqual({
+            error: 'config edit takes a JSON array of { path, value, expect? } or { path, unset: true, expect? } (expect: the value the change replaces); this text is not JSON: JSON Parse error: Unexpected identifier "not"',
+        });
+        expect(parseConfigEdits('[{"path":"global.language","value":"cs"}]')).toEqual({
+            edits: [{ path: "global.language", value: "cs" }],
+        });
+    });
+
+    test("a misspelled key is refused with the closest setting, and an unset may still remove it (MC6)", async () => {
+        const { config } = stores();
+
+        await expect(setConfigValue(config, "global.capture.activFps", 5)).rejects.toThrow(
+            'global.capture has no setting "activFps"; did you mean "activeFps"? Nothing was written.'
+        );
+        expect(unknownConfigPath(parseConfigPath("global.capture.activeFps"))).toBeUndefined();
+        expect(unknownConfigPath(parseConfigPath('["projects","a.b","labels"]'))).toBeUndefined();
+        expect(unknownConfigPath(parseConfigPath("languages.de.ocr"))).toBeUndefined();
+        expect(unknownConfigPath(parseConfigPath("global.nosuch"))?.reason).toBe('global has no setting "nosuch".');
+        await expect(unsetConfigValue(config, "global.capture.activFps")).resolves.toBeDefined();
+    });
+
     test("a write that names the value it replaces is refused when another editor changed it first", async () => {
         const { config } = stores();
         const path = '["languages","cs","ocr"]';
@@ -118,6 +163,7 @@ describe("overview", () => {
                         label: "S1",
                         fromSec: 0,
                         toSec: 9,
+                        speaker: "Alice Example",
                         confidence: 0.9,
                         suggestedAt,
                     },
@@ -251,6 +297,53 @@ describe("screen timeline", () => {
             ["Item two"],
         ]);
         expect(view.frames[1]).toMatchObject({ meetingSec: 20, width: 400, height: 200, lineCount: 2 });
+    });
+});
+
+describe("window revisions", () => {
+    test("a token changes only when what its part reads changed", async () => {
+        const { meetings } = stores();
+        const created = await meetings.create(
+            { title: "Demo", start: "2026-11-05T08:00:00.000Z", createdBy: "record" },
+            { command: "test", change: "fixture" }
+        );
+        const folder = meetings.folder(created.id);
+        const first = await revisionsRead({ store: meetings, record: created });
+
+        expect(await revisionsRead({ store: meetings, record: created })).toEqual(first);
+        // No source: the transcript read only says so, which the record alone decides, so the token is known.
+        expect(first.transcript).not.toBeNull();
+
+        mkdirSync(join(folder, "frames"), { recursive: true });
+        writeFileSync(join(folder, "ocr.jsonl"), "{}\n");
+        const framed = await revisionsRead({ store: meetings, record: created });
+
+        expect(framed.timeline).not.toBe(first.timeline);
+        expect({ ...framed, timeline: first.timeline }).toEqual(first);
+
+        writeFileSync(join(folder, "frames", "a-d1.png"), "x");
+        const added = await revisionsRead({ store: meetings, record: created });
+
+        expect(added.timeline).not.toBe(framed.timeline);
+
+        const updated = await meetings.update(created.id, { command: "test", change: "label" }, (record) => {
+            record.labels = ["demo"];
+        });
+        const changed = await revisionsRead({ store: meetings, record: updated });
+
+        expect(changed.show).not.toBe(added.show);
+        expect(changed.transcript).not.toBe(added.transcript);
+        expect(changed.speakers).not.toBe(added.speakers);
+    });
+
+    test("the timeline token holds the source's revision, which sets the timeline's clock", () => {
+        const facts = { meeting: "m1", recordFile: { ino: 1 }, config: { ino: 2 }, source: "r1", screen: [{ ino: 3 }] };
+        const first = revisionTokens(facts);
+
+        expect(revisionTokens({ ...facts }).timeline).toBe(first.timeline);
+        expect(revisionTokens({ ...facts, source: "r2" }).timeline).not.toBe(first.timeline);
+        expect(revisionTokens({ ...facts, source: null }).timeline).toBeNull();
+        expect(revisionTokens({ ...facts, config: { ino: 9 } }).timeline).toBe(first.timeline);
     });
 });
 
@@ -456,6 +549,22 @@ describe("undo of a decision", () => {
         return { meetings, created };
     }
 
+    test("confirming a confirmed item again changes nothing, so the first Undo still works (MC16)", async () => {
+        const { meetings, created } = await meetingWith([
+            { kind: "term", id: "i1", status: "suggested", heard: "Viky", proposed: "wiki", rules: [], suggestedAt },
+        ]);
+        const first = await decideItems({ store: meetings, record: created, status: "confirmed", ids: ["i1"] });
+        const again = await decideItems({ store: meetings, record: created, status: "confirmed", ids: ["i1"] });
+
+        expect(again).toEqual({
+            decided: [],
+            skipped: [{ id: "i1", reason: "it is confirmed already", needs: "nothing" }],
+        });
+        expect(
+            (await reopenItems({ store: meetings, record: created, ids: ["i1"], token: first.token })).reopened
+        ).toEqual(["i1"]);
+    });
+
     test("an Undo names its decision, and is refused once another decision changed the item", async () => {
         const { meetings, created } = await meetingWith([
             { kind: "term", id: "i1", status: "suggested", heard: "Viky", proposed: "wiki", rules: [], suggestedAt },
@@ -593,5 +702,140 @@ describe("window", () => {
             "--meetings",
             "--no-focus",
         ]);
+    });
+});
+
+/** MU11: a project can be renamed everywhere it is named, and removed with a backup. */
+describe("projects rename and remove", () => {
+    async function withProject() {
+        const { config, meetings } = stores();
+        await config.addProject("wrok");
+        await config.setProjectLabels("wrok", { add: ["Checkout 2.0"] });
+        await config.addSourceFolder("wisprflow", "wrok", "Work");
+        const used = await meetings.create(
+            { title: "Planning", start: "2026-11-02T14:00:00.000Z", createdBy: "new", project: "wrok" },
+            { command: "test", change: "created" }
+        );
+        return { config, meetings, used: used.id };
+    }
+
+    test("a rename moves the block, the folder pairing and the meetings' project", async () => {
+        const { config, meetings, used } = await withProject();
+        const result = await renameProject({ config, store: meetings, from: "wrok", to: "work" });
+        const read = await config.read();
+
+        expect(result.meetings).toEqual([used]);
+        expect(read.projects.wrok).toBeUndefined();
+        expect(read.projects.work?.labels).toEqual(["Checkout 2.0"]);
+        expect(read.sources.wisprflow.match.work?.folders).toEqual(["Work"]);
+        expect(meetings.read(used)?.project).toBe("work");
+        await expect(renameProject({ config, store: meetings, from: "work", to: "work" })).rejects.toThrow(
+            "exists already"
+        );
+    });
+
+    test("a project meetings use is refused unless --unassign, and the removed block is kept", async () => {
+        const { config, meetings, used } = await withProject();
+        const backupRoot = join(meetings.root, "..", "backups");
+
+        await expect(removeProject({ config, store: meetings, name: "wrok", backupRoot })).rejects.toThrow(used);
+
+        const result = await removeProject({ config, store: meetings, name: "wrok", unassign: true, backupRoot });
+        const kept = SafeJSON.parse(readFileSync(result.backup, "utf8"));
+
+        expect((await config.read()).projects.wrok).toBeUndefined();
+        expect(meetings.read(used)?.project).toBeUndefined();
+        expect(kept).toMatchObject({
+            project: "wrok",
+            block: { labels: ["Checkout 2.0"] },
+            sources: { wisprflow: { folders: ["Work"] } },
+        });
+    });
+});
+
+describe("set and project labels for every door (R2-MC7)", () => {
+    async function meeting() {
+        const { config, meetings } = stores();
+        await config.addProject("work");
+        const created = await meetings.create(
+            { title: "Planning", start: "2026-11-02T14:00:00.000Z", createdBy: "new", project: "work", labels: ["Q4"] },
+            { command: "test", change: "created" }
+        );
+        return { config, meetings, record: created };
+    }
+
+    test("a label the meeting does not carry is refused before anything is written, project labels included", async () => {
+        const { config, meetings, record: created } = await meeting();
+
+        await expect(
+            setMeetingFields({
+                store: meetings,
+                config,
+                record: created,
+                change: { labels: ["Checkout"], unlabel: ["Nosuch"] },
+                quiet: true,
+            })
+        ).rejects.toThrow(`${created.id} has no label "Nosuch". Its labels: Q4`);
+        expect(meetings.read(created.id)?.history).toHaveLength(created.history.length);
+        expect((await config.read()).projects.work?.labels ?? []).toEqual([]);
+        await expect(
+            setMeetingFields({ store: meetings, config, record: created, change: {}, quiet: true })
+        ).rejects.toThrow("Nothing to set");
+    });
+
+    test("a real change still writes the fields, the project labels and one history line", async () => {
+        const { config, meetings, record: created } = await meeting();
+        const { record: updated, changes } = await setMeetingFields({
+            store: meetings,
+            config,
+            record: created,
+            change: { title: "Retro", labels: ["Checkout"], unlabel: ["Q4"] },
+            quiet: true,
+        });
+
+        expect(updated).toMatchObject({ title: "Retro", labels: ["Checkout"] });
+        expect(changes).toEqual(['title "Retro"', "labels + Checkout", "labels - Q4"]);
+        expect((await config.read()).projects.work?.labels).toEqual(["Checkout"]);
+        expect(updated.history).toHaveLength(created.history.length + 1);
+    });
+
+    test("project labels: reading or removing needs a known project; adding may add it", async () => {
+        const { config } = await meeting();
+
+        await expect(projectLabels({ config, project: "wrok" })).rejects.toThrow(
+            "No project wrok. The known ones: work"
+        );
+        await expect(projectLabels({ config, project: "wrok", remove: ["x"] })).rejects.toThrow("No project wrok");
+        expect(await projectLabels({ config, project: "work" })).toEqual([]);
+        expect(await projectLabels({ config, project: "side", add: ["Launch"] })).toEqual(["Launch"]);
+    });
+});
+
+describe("the suggestions badge counts what a bulk confirm can take (R2-MC13)", () => {
+    test("a range with no speaker and a term with no spelling stay out of it, as the bulk bar and confirm leave them", () => {
+        const at = "2026-11-05T10:00:00.000Z";
+        const base = { status: "suggested" as const, suggestedAt: at, rules: [] };
+        const meeting = record({
+            id: "a",
+            start: at,
+            items: [
+                { ...base, id: "i1", kind: "speaker-range", label: "Speaker 1", fromSec: 0, toSec: 5, confidence: 0.9 },
+                {
+                    ...base,
+                    id: "i2",
+                    kind: "speaker-range",
+                    label: "Speaker 1",
+                    fromSec: 9,
+                    toSec: 12,
+                    speaker: "Alice Example",
+                    confidence: 0.9,
+                },
+                { ...base, id: "i3", kind: "term", atSec: 20, heard: "zzqx", confidence: 0.9 },
+                { ...base, id: "i4", kind: "term", atSec: 30, heard: "pentagon", proposed: "Pentaho", confidence: 0.9 },
+                { ...base, id: "i5", kind: "term", atSec: 40, heard: "pentagon", proposed: "Pentaho", confidence: 0.3 },
+            ],
+        });
+
+        expect(meetingBadges(meeting, 0.5)).toMatchObject({ suggestedAboveApply: 2, suggested: 5 });
     });
 });

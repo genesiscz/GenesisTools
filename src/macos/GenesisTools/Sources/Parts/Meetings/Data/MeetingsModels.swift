@@ -46,7 +46,7 @@ struct MeetingsOverview: Decodable, Equatable {
         let total: Int
     }
 
-    let generatedAt: String
+    // No `generatedAt`: it changes on every read, so an unchanged list would never compare equal and would redraw.
     let days: Int
     let applyAbove: Double
     let meetings: [OverviewMeeting]
@@ -54,6 +54,15 @@ struct MeetingsOverview: Decodable, Equatable {
     let olderMeetings: Int?
     let projects: [ProjectCount]
     let needsYou: NeedsYou
+}
+
+/// `tools meetings revisions <id> --json`: one token per part of the detail pane. An equal token means the part
+/// would read the same; nil means the source cannot tell, so the part reads again.
+struct MeetingRevisions: Decodable, Equatable {
+    let show: String?
+    let transcript: String?
+    let speakers: String?
+    let timeline: String?
 }
 
 // MARK: - One record (`tools meetings show <id> --json`)
@@ -111,6 +120,8 @@ struct MeetingRecordView: Decodable, Equatable {
         let frames: Int?
         let status: String?
         let displays: [Display]?
+        /// Why a stopped recording stopped: "requested", "paused", "failed" or "error".
+        let stopReason: String?
     }
 
     let id: String
@@ -159,6 +170,37 @@ struct SpeakerStat: Decodable, Equatable, Hashable, Identifiable {
 
 struct SpeakerStats: Decodable, Equatable {
     let speakers: [SpeakerStat]
+    /// Signs about single labels (`several-people`, `label-drift`); nil from a CLI older than them.
+    let hints: [SpeakerHint]?
+}
+
+/// A sign about one label from `speakers stats`, with how strong it is ("weak", "normal", "strong"). The fields after
+/// `strength` belong to some kinds only (`SpeakerHint` in src/utils/transcribe/speakers.ts).
+struct SpeakerHint: Decodable, Equatable, Hashable {
+    /// Lines in a row that break an attendance rule (`absent-speaker`, `sole-attendee`).
+    struct Range: Decodable, Equatable, Hashable { let lines: Int }
+    /// A goodbye after which the label speaks again (`leave-then-continues`).
+    struct Leave: Decodable, Equatable, Hashable { let atSec: Double }
+
+    let kind: String
+    let label: String?
+    let share: Double?
+    let strength: String?
+    /// The person a `label-drift` or `sole-attendee` hint names, and whether that person is the recording user.
+    let person: String?
+    let isSelf: Bool?
+    /// Where a `label-drift` label stayed silent while its person was in the call.
+    let fromSec: Double?
+    let toSec: Double?
+    let ranges: [Range]?
+    let leaves: [Leave]?
+    /// The label beside a `split-voice` turn.
+    let neighbour: String?
+
+    enum CodingKeys: String, CodingKey {
+        case kind, label, share, strength, person, fromSec, toSec, ranges, leaves, neighbour
+        case isSelf = "self"
+    }
 }
 
 // MARK: - Screen timeline (`tools meetings screen <id> --timeline --json`)

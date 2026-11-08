@@ -113,7 +113,9 @@ export class OpenedMeeting {
         const attendance = this.current.attendance;
 
         if (attendance) {
-            ui.dim(`attendance: ${attendance.people.length} stays stored in the meeting (${attendance.from})`);
+            ui.dim(
+                `attendance: ${attendance.people.length} stays, as the meeting record keeps them (${attendance.from})`
+            );
             return (await this.timeline()).named(attendance.people);
         }
 
@@ -250,7 +252,8 @@ export class OpenedMeeting {
                 this.current = await timeline.store(this.store, loaded, platform.id);
                 notes.push({ ok: true, text: `${loaded.note}, ${this.current.sections?.length ?? 0} sections` });
             } catch (err) {
-                log.warn({ err, meeting: this.current.id, platform: platform.id }, "attendance not collected");
+                // The note below tells the user; the day log keeps the stack.
+                log.debug({ err, meeting: this.current.id, platform: platform.id }, "attendance not collected");
                 notes.push({
                     ok: false,
                     text: `attendance not collected: ${err instanceof Error ? err.message : String(err)}`,
@@ -265,7 +268,7 @@ export class OpenedMeeting {
             notes.push({ ok: layout !== "unknown", text: `audio channels: ${layout}${reason ? ` (${reason})` : ""}` });
         }
 
-        log.info({ meeting: this.current.id, notes }, "collected");
+        log.debug({ meeting: this.current.id, notes }, "collected");
         return { record: this.current, notes };
     }
 

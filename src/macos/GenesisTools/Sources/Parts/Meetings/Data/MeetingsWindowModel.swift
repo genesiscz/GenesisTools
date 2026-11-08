@@ -82,15 +82,24 @@ final class MeetingsWindowModel {
     var place: Place
     var selectedMeetingID: String?
     private(set) var overview: Loadable<MeetingsOverview> = .idle
+    /// How often an answer replaced the list. Each set redraws every view of it, so an unchanged answer must not set it
+    /// (the perf tests read this).
+    @ObservationIgnored private(set) var overviewSets = 0
     private(set) var settings: Loadable<MeetingsSettings> = .idle
     private(set) var detail: MeetingDetailModel?
     var notice: MeetingsNotice?
     var days: Int
+    /// The meeting audio that plays from a transcript time, shown and stopped by the bar under the window.
+    var playback = MeetingsPlayback()
     private var overviewGeneration = 0
     private let loadDetail: @MainActor (MeetingDetailModel) -> Void
+    private let refreshLive: @MainActor (MeetingDetailModel) -> Void
 
-    init(defaults: UserDefaults = .standard, loadDetail: @escaping @MainActor (MeetingDetailModel) -> Void = { $0.load() }) {
+    init(defaults: UserDefaults = .standard,
+         loadDetail: @escaping @MainActor (MeetingDetailModel) -> Void = { $0.load() },
+         refreshLive: @escaping @MainActor (MeetingDetailModel) -> Void = { $0.refreshLoaded(proposals: false) }) {
         self.loadDetail = loadDetail
+        self.refreshLive = refreshLive
         place = MeetingsPreferences.openOn(defaults) == .needs ? .needs : .all
         days = MeetingsPreferences.days(defaults)
     }
@@ -129,10 +138,11 @@ final class MeetingsWindowModel {
         loadSettings()
     }
 
-    func loadOverview() {
+    /// `quiet` (a return to the window): the list keeps what it shows until the answer lands.
+    func loadOverview(quiet: Bool = false) {
         overviewGeneration += 1
         let generation = overviewGeneration
-        overview = .loading(previous: overview.value)
+        if !quiet { overview = .loading(previous: overview.value) }
         let days = days
         Task {
             do {
@@ -149,24 +159,34 @@ final class MeetingsWindowModel {
     /// A read failed: the list keeps the meetings it showed, and the pane says why with a Retry.
     func receive(failure: MeetingsCLI.Failure) {
         overview = .failed(failure, previous: overview.value)
+        detail?.listResolved()
     }
 
-    /// A read overview lands: the list shows it, and a selection it no longer holds moves to the first row.
+    /// A read overview lands: the list shows it, and a selection it no longer holds moves to the first row. An answer
+    /// equal to the shown one is not set again, so an unchanged list redraws nothing.
     func receive(_ value: MeetingsOverview) {
-        overview = .loaded(value)
+        if overview != .loaded(value) {
+            overview = .loaded(value)
+            overviewSets += 1
+            HubMainBusy.measure("meetings.overview.render")
+        }
         if selectedMeetingID == nil {
             select(visibleMeetings.first?.id)
         }
+        detail?.listResolved()
+        updateLiveRefresh()
     }
 
-    func loadSettings() {
-        settings = .loading(previous: settings.value)
+    func loadSettings(quiet: Bool = false) {
+        if !quiet { settings = .loading(previous: settings.value) }
         Task {
+            let next: Loadable<MeetingsSettings>
             do {
-                settings = .loaded(try await MeetingsCLI.json(ConfigShow.self, ["config", "show", "--json"]).value)
+                next = .loaded(try await MeetingsCLI.json(ConfigShow.self, ["config", "show", "--json"]).value)
             } catch {
-                settings = .failed(asFailure(error), previous: settings.value)
+                next = .failed(asFailure(error), previous: settings.value)
             }
+            if settings != next { settings = next }
         }
     }
 
@@ -181,18 +201,29 @@ final class MeetingsWindowModel {
         select(visibleMeetings.first?.id)
     }
 
-    func select(_ id: String?) {
+    /// Opens a meeting, on `tab` when given: the tab is set before the first read, so only its data loads. The meeting
+    /// it replaces stops its reads in flight.
+    func select(_ id: String?, tab: MeetingDetailModel.Tab? = nil) {
         selectedMeetingID = id
         if place == .needs, id.map({ needsSelection?.hasSuffix($0) != true }) ?? true {
             needsSelection = id
         }
+        defer { updateLiveRefresh() }
         guard let id else {
+            detail?.cancelReads()
             detail = nil
             return
         }
         if detail?.id != id {
-            detail = MeetingDetailModel(id: id, window: self)
-            if let detail { loadDetail(detail) }
+            detail?.cancelReads()
+            let next = MeetingDetailModel(id: id, window: self)
+            next.tab = tab ?? MeetingDetailModel.firstTab(for: meeting(id))
+            next.tabIsDefault = tab == nil
+            detail = next
+            HubMainBusy.measure("meetings.detail.open")
+            loadDetail(next)
+        } else if let tab {
+            detail?.show(tab)
         }
     }
 
@@ -204,8 +235,7 @@ final class MeetingsWindowModel {
         needsSelection = tag
         guard let tag else { return }
         if tag.hasPrefix("q:") || tag.hasPrefix("s:") {
-            select(String(tag.dropFirst(2)))
-            detail?.show(.items)
+            select(String(tag.dropFirst(2)), tab: .items)
         } else {
             select(tag)
         }
@@ -219,10 +249,70 @@ final class MeetingsWindowModel {
         select(ids[min(max(index + offset, 0), ids.count - 1)])
     }
 
-    /// The window became key again: what changed outside it (a confirm in a terminal, a new meeting) shows.
+    /// The window became key again: what changed outside it (a confirm in a terminal, a new meeting) shows. The reads
+    /// are quiet: what is on screen stays until an answer differs.
     func refreshAfterReturn() {
-        loadOverview()
-        loadSettings()
+        HubMainBusy.measure("meetings.refresh", window: 1.5)
+        loadOverview(quiet: true)
+        loadSettings(quiet: true)
         detail?.refreshLoaded()
+    }
+
+    // MARK: A live meeting
+
+    /// While the open meeting records and the window can be seen, its parts refresh every few seconds: a window kept in
+    /// front showed a live meeting as it was when the window last became key. A round asks the revisions (one server
+    /// call of a few ms) and reads again only the parts whose token changed. It skips the proposals (a process of about
+    /// 400 ms that reads the Calendar) and the list (its render costs 120 to 180 ms of main thread); the list reads
+    /// again once the recording ends.
+    static let liveRefreshInterval: Duration = .seconds(5)
+    @ObservationIgnored private var liveRefresh: Task<Void, Never>?
+
+    /// Set by the face: the window is on screen and not covered, hidden or minimized.
+    @ObservationIgnored var windowVisible = true {
+        didSet {
+            guard windowVisible != oldValue else { return }
+            updateLiveRefresh()
+            if windowVisible, liveRefreshRuns { liveRound() }
+        }
+    }
+
+    var liveRefreshRuns: Bool { liveRefresh != nil }
+
+    static func isLiveStatus(_ status: String?) -> Bool { status == "recording" || status == "paused" }
+
+    /// The open record decides once it is read, so a refresh sees the recording end; before that, its list row.
+    private var selectedMeetingIsLive: Bool {
+        guard let id = selectedMeetingID else { return false }
+        if detail?.id == id, let recording = detail?.record.value?.recording {
+            return Self.isLiveStatus(recording.status)
+        }
+        return meeting(id)?.live == true
+    }
+
+    private func updateLiveRefresh() {
+        guard selectedMeetingIsLive, windowVisible else {
+            liveRefresh?.cancel()
+            liveRefresh = nil
+            return
+        }
+        guard liveRefresh == nil else { return }
+        liveRefresh = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.liveRefreshInterval)
+                guard !Task.isCancelled, let self else { return }
+                self.liveRound()
+            }
+        }
+    }
+
+    private func liveRound() {
+        guard selectedMeetingIsLive else {
+            liveRefresh?.cancel()
+            liveRefresh = nil
+            loadOverview(quiet: true)
+            return
+        }
+        if let detail { refreshLive(detail) }
     }
 }

@@ -8,8 +8,10 @@ import { MeetingStore } from "@genesiscz/utils/meetings/record";
 import { createBoxTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { matchDraftSchema, matchPreview } from "../lib/match-preview";
+import { projectLabels } from "../lib/meeting-fields";
+import { removeProject, renameProject } from "../lib/project-admin";
 import { errorText, fail } from "../lib/shared";
+import { matchPreviewRead, windowJson } from "../lib/window-reads";
 
 function matchSummary(config: MeetingsConfig, name: string): string {
     const project = config.projects[name];
@@ -67,14 +69,56 @@ async function addProject(name: string): Promise<void> {
     }
 }
 
+function plural(count: number, noun: string): string {
+    return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+async function rename(name: string, to: string, opts: { json?: boolean }): Promise<void> {
+    try {
+        const result = await renameProject({
+            config: new MeetingsConfigStore(),
+            store: new MeetingStore(),
+            from: name,
+            to,
+        });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            return;
+        }
+
+        ui.ok(`Renamed the project ${name} to ${to}, with ${plural(result.meetings.length, "meeting")}.`);
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
+async function remove(name: string, opts: { unassign?: boolean; json?: boolean }): Promise<void> {
+    try {
+        const result = await removeProject({
+            config: new MeetingsConfigStore(),
+            store: new MeetingStore(),
+            name,
+            unassign: opts.unassign,
+        });
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify(result, null, 2));
+            return;
+        }
+
+        ui.ok(
+            `Removed the project ${name}${result.unassigned.length ? `; ${plural(result.unassigned.length, "meeting")} without a project now` : ""}.`
+        );
+        ui.dim(`  its settings, dictionary and pairings: ${result.backup}`);
+    } catch (err) {
+        fail(errorText(err));
+    }
+}
+
 async function labels(name: string, opts: { add?: string[]; remove?: string[] }): Promise<void> {
     try {
-        const store = new MeetingsConfigStore();
-        const changes = (opts.add?.length ?? 0) + (opts.remove?.length ?? 0) > 0;
-        // Without a change this only reads, so a typo never adds a project.
-        const known = changes
-            ? await store.setProjectLabels(name, opts)
-            : ((await store.read()).projects[name]?.labels ?? []);
+        const known = await projectLabels({ config: new MeetingsConfigStore(), project: name, ...opts });
         ui.ok(`${name} labels: ${known.length > 0 ? known.join(", ") : "none"}`);
     } catch (err) {
         fail(errorText(err));
@@ -171,20 +215,10 @@ async function people(name: string | undefined, opts: { json?: boolean }): Promi
 
 async function preview(opts: { draft?: string; limit?: string; json?: boolean }): Promise<void> {
     try {
-        const draft = opts.draft ? matchDraftSchema.parse(SafeJSON.parse(opts.draft, { strict: true })) : undefined;
-        const limit = Number(opts.limit ?? "20");
-        if (!Number.isSafeInteger(limit) || limit < 1) {
-            throw new Error("--limit must be a positive integer");
-        }
-        const rows = matchPreview({
-            records: new MeetingStore().listBounded({ limit }).records,
-            config: await new MeetingsConfigStore().read(),
-            ...(draft ? { draft } : {}),
-            limit,
-        });
+        const { draft, rows } = await matchPreviewRead(opts);
 
         if (opts.json) {
-            out.result(SafeJSON.stringify(rows, null, 2));
+            out.result(windowJson(rows));
             return;
         }
 
@@ -192,7 +226,7 @@ async function preview(opts: { draft?: string; limit?: string; json?: boolean })
 
         for (const row of rows) {
             table.push([
-                row.title,
+                row.title || pc.dim(row.id),
                 row.project ?? pc.dim("—"),
                 row.now.join(", ") || pc.dim("—"),
                 ...(draft ? [(row.changed ? pc.yellow : pc.dim)(row.draft.join(", ") || "—")] : []),
@@ -219,6 +253,21 @@ export function registerProjectsCommand(program: Command): void {
         .argument("<name>", "the project name")
         .description("Add a known project")
         .action(addProject);
+    projects
+        .command("rename")
+        .argument("<name>", "the project name")
+        .argument("<new-name>", "its new name")
+        .description("Rename a project everywhere: its settings, dictionary, folder pairings and its meetings")
+        .option("--json", "print { from, to, meetings } as JSON")
+        .action(rename);
+    projects
+        .command("remove")
+        .alias("rm")
+        .argument("<name>", "the project name")
+        .description("Remove a project, kept in a backup file first; refused while meetings have it")
+        .option("--unassign", "leave the meetings that have it without a project")
+        .option("--json", "print { name, unassigned, backup } as JSON")
+        .action(remove);
     projects
         .command("labels")
         .argument("<name>", "the project name")

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { itemWhat } from "@app/meetings/lib/item-text";
+import { appliedLine, itemWhat } from "@app/meetings/lib/item-text";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { parseDuration } from "@genesiscz/utils/format";
@@ -25,22 +25,23 @@ import {
     TRANSCRIPT_FORMATS,
     transcriptTextLines,
 } from "@genesiscz/utils/transcribe/render";
-import { DEFAULT_SPAN_GAP_SEC, speakerStats } from "@genesiscz/utils/transcribe/speakers";
+import { DEFAULT_SPAN_GAP_SEC } from "@genesiscz/utils/transcribe/speakers";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { z } from "zod";
 import { prepareFindings } from "../lib/add-findings";
 import { decideItems, reopenItems } from "../lib/decide";
-import { transcriptMarkdown } from "../lib/export";
 import { FINDING_KINDS, findingProblems, findingSchema, findingsFileSchema } from "../lib/findings";
 import { OpenedMeeting } from "../lib/opened-meeting";
 import { MEETING_PLATFORMS } from "../lib/platforms";
 import { questionLabel, questionWarnings } from "../lib/questions";
-import { errorText, fail, resolveEnum, TOOL } from "../lib/shared";
+import { errorText, fail, formatFlag, resolveEnum, TOOL } from "../lib/shared";
+import { meetingTranscript } from "../lib/sources";
 import { printSpeakerStats } from "../lib/speakers-view";
 import { isSuggestRule, SUGGEST_RULES } from "../lib/suggest";
 import { runSuggest } from "../lib/suggest-run";
 import { correctTranscript, outcomeText } from "../lib/transcript-corrections";
+import { correctedTranscriptRead, speakerStatsRead, transcriptJsonView, windowJson } from "../lib/window-reads";
 import { DEFAULT_WORD_CHECK, WORD_CHECKS } from "../lib/word-check";
 
 const { log } = logger.scoped("meetings-items");
@@ -126,7 +127,7 @@ async function suggest(
     }
 
     try {
-        const { fresh, warnings } = await runSuggest({
+        const { fresh, retired, warnings } = await runSuggest({
             store,
             record,
             rules,
@@ -141,6 +142,12 @@ async function suggest(
         if (opts.json) {
             out.result(SafeJSON.stringify(fresh, null, 2));
             return;
+        }
+
+        if (retired.length > 0) {
+            ui.info(
+                `Retired ${retired.length} suggestions the dictionary or the slang rule settles now: ${retired.join(" ")}`
+            );
         }
 
         if (fresh.length === 0) {
@@ -171,9 +178,16 @@ async function items(ref: string, opts: { status?: string | boolean; kind?: stri
         return;
     }
 
-    const listed = record.items.filter(
-        (item) => (!status || item.status === status) && (!opts.kind || item.kind === opts.kind)
-    );
+    const kind =
+        opts.kind === undefined
+            ? undefined
+            : await resolveEnum({ value: opts.kind, values: FINDING_KINDS, flag: "--kind", subcommand: ["items"] });
+
+    if (opts.kind !== undefined && !kind) {
+        return;
+    }
+
+    const listed = record.items.filter((item) => (!status || item.status === status) && (!kind || item.kind === kind));
 
     if (opts.json) {
         out.result(SafeJSON.stringify(listed, null, 2));
@@ -367,11 +381,20 @@ async function decide(
     }
 
     const minConfidence = opts.minConfidence === undefined ? undefined : Number(opts.minConfidence);
+
+    if (minConfidence !== undefined && Number.isNaN(minConfidence)) {
+        fail(`--min-confidence ${opts.minConfidence} is not a number between 0 and 1 (0.8 = 80 %)`);
+        return;
+    }
+
     const flagOf = {
         speaker: " Confirm it with --speaker <name>.",
         proposed: " Confirm it with --proposed <text>.",
         listen: "",
+        nothing: "",
     };
+    // An item decided that way already is no failure; one that needs a value or an answer is.
+    const failed = (skipped: Array<{ needs: string }>) => skipped.some((skip) => skip.needs !== "nothing");
 
     try {
         const result = await decideItems({
@@ -386,16 +409,18 @@ async function decide(
 
         if (opts.json) {
             out.result(SafeJSON.stringify(result, null, 2));
-            process.exitCode = result.decided.length === 0 && result.skipped.length > 0 ? 1 : 0;
+            process.exitCode = result.decided.length === 0 && failed(result.skipped) ? 1 : 0;
             return;
         }
 
         for (const skip of result.skipped) {
-            ui.warn(`${skip.id}: ${skip.reason}${flagOf[skip.needs]}`);
+            skip.needs === "nothing"
+                ? ui.info(`${skip.id}: ${skip.reason}`)
+                : ui.warn(`${skip.id}: ${skip.reason}${flagOf[skip.needs]}`);
         }
 
         if (result.decided.length === 0) {
-            process.exitCode = result.skipped.length > 0 ? 1 : 0;
+            process.exitCode = failed(result.skipped) ? 1 : 0;
             return;
         }
 
@@ -451,22 +476,19 @@ async function speakersStats(ref: string, opts: { gap?: string; attendance?: str
     }
 
     try {
-        const opened = OpenedMeeting.of(store, record);
-        const meeting = await opened.meeting();
-        const stats = speakerStats(meeting.transcript, {
-            gapSec,
-            participants: meeting.speakers,
-            presence: await opened.presence(opts.attendance),
-        });
+        const stats = await speakerStatsRead({ store, record, gapSec, attendance: opts.attendance });
 
         if (opts.json) {
-            out.result(SafeJSON.stringify({ meeting: record.id, gapSec, ...stats }, null, 2));
+            out.result(windowJson(stats));
             return;
         }
 
         const from = opts.attendance ?? record.attendance?.from;
         const platform = from && isMeetingPlatformId(from) ? MEETING_PLATFORMS[from].label : undefined;
-        printSpeakerStats(stats, platform ? { attendance: `${platform} attendance` } : {});
+        printSpeakerStats(stats, {
+            renames: record.speakers.labels,
+            ...(platform ? { attendance: `${platform} attendance` } : {}),
+        });
     } catch (err) {
         fail(errorText(err));
     }
@@ -481,6 +503,14 @@ async function speakersRename(ref: string, label: string, name: string): Promise
     }
 
     try {
+        // A label the transcript does not have would rename nothing and say it did (MC11): name the labels instead.
+        const labels = [...new Set((await meetingTranscript(record)).map((entry) => entry.speaker))];
+
+        if (!labels.includes(label) && record.speakers.labels[label] === undefined) {
+            fail(`${record.id} has no label "${label}". Its labels: ${labels.map((one) => `"${one}"`).join(", ")}`);
+            return;
+        }
+
         await store.renameSpeaker(record.id, label, name);
         ui.ok(
             name.trim() === label
@@ -507,6 +537,7 @@ async function transcript(
     ref: string,
     opts: {
         format?: string | boolean;
+        json?: boolean;
         withSuggested?: boolean;
         dictionary?: boolean;
         timestamps?: boolean;
@@ -516,8 +547,14 @@ async function transcript(
 ): Promise<void> {
     const store = new MeetingStore();
     const record = requireMeeting(store, ref);
+    const flag = formatFlag(opts);
+
+    if (!flag) {
+        return;
+    }
+
     const format = await resolveEnum({
-        value: opts.format,
+        value: flag.format,
         fallback: "md",
         values: TRANSCRIPT_FORMATS,
         flag: "--format",
@@ -529,27 +566,9 @@ async function transcript(
     }
 
     try {
-        const meeting = await loadTranscript(store, record);
-        const config = await new MeetingsConfigStore().read();
-        const markdown =
-            format === "md"
-                ? transcriptMarkdown({
-                      record,
-                      transcript: meeting.transcript,
-                      config,
-                      ...(opts.withSuggested !== undefined ? { withSuggested: opts.withSuggested } : {}),
-                      ...(opts.dictionary !== undefined ? { dictionary: opts.dictionary } : {}),
-                      frontmatter: opts.frontmatter !== false,
-                      timestamps: opts.timestamps === true,
-                      playLinks: opts.playLinks === true,
-                  })
-                : undefined;
-        const applied =
-            markdown?.applied ?? correctTranscript({ ...opts, record, transcript: meeting.transcript, config, format });
+        const { markdown, applied } = await correctedTranscriptRead({ store, record, format, flags: opts });
         reportOutcomes(applied.outcomes);
-        ui.dim(
-            `applied: ${applied.labels} renamed lines, ${applied.ranges} re-attributed, ${applied.joins} joins, ${applied.terms} term fixes, ${applied.fixes} dictionary fixes, ${applied.spoken} spoken forms, ${applied.fuzzy} fuzzy, ${applied.expansions} expansions, ${applied.meanings} meanings, ${applied.marks} quotes and meanings of spoken words, ${applied.unclear} unclear marks`
-        );
+        ui.dim(appliedLine(applied));
 
         if (markdown) {
             if (markdown.warning) {
@@ -561,7 +580,7 @@ async function transcript(
         }
 
         if (format === "json") {
-            out.result(SafeJSON.stringify({ meeting: record.id, entries: applied.entries }, null, 2));
+            out.result(windowJson(transcriptJsonView(record, applied)));
             return;
         }
 
@@ -645,7 +664,7 @@ export function registerItemCommands(program: Command): void {
         ["confirm", "confirmed"],
         ["reject", "rejected"],
     ] as const) {
-        program
+        const command = program
             .command(name)
             .argument("<meeting>", MEETING_REF)
             .argument("[items...]", "item ids: i1 i2 …, or a question's number: Q12")
@@ -654,9 +673,16 @@ export function registerItemCommands(program: Command): void {
                     ? "Confirm items: transcripts apply confirmed items"
                     : "Reject items: they are never suggested again"
             )
-            .option("--min-confidence <0..1>", "every suggested item at or above this confidence")
-            .option("--speaker <name>", "confirm: whose voice a speaker range is")
-            .option("--proposed <text>", "confirm: the right spelling of a term, when the proposal is wrong")
+            .option("--min-confidence <0..1>", "every suggested item at or above this confidence");
+
+        // Only a confirm takes a value: a reject keeps nothing of the item.
+        if (status === "confirmed") {
+            command
+                .option("--speaker <name>", "whose voice a speaker range is")
+                .option("--proposed <text>", "the right spelling of a term, when the proposal is wrong");
+        }
+
+        command
             .option("--json", "print { decided, token, skipped } as JSON (the token is what reopen --token takes)")
             .action(
                 (
@@ -679,7 +705,11 @@ export function registerItemCommands(program: Command): void {
         .option("--json", "print { reopened, skipped } as JSON")
         .action(reopen);
 
-    const speakers = program.command("speakers").description("The meeting's speakers: statistics, hints and renames");
+    const speakers = program
+        .command("speakers")
+        .description(
+            "The meeting's speakers: statistics (with hints about labels that hold several voices) and renames"
+        );
 
     speakers
         .command("stats")
@@ -706,6 +736,7 @@ export function registerItemCommands(program: Command): void {
         .argument("<meeting>", MEETING_REF)
         .description("The transcript with renames, confirmed items and the dictionary applied")
         .option("--format [format]", `${TRANSCRIPT_FORMATS.join(" | ")} (default md)`)
+        .option("--json", "the same as --format json")
         .option("--with-suggested", "also apply the suggested items")
         .option("--no-dictionary", "do not apply the dictionary")
         .option("--no-frontmatter", "md: omit the frontmatter")
