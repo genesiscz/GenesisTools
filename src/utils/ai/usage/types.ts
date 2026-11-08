@@ -1,5 +1,5 @@
-import type { LegacyFlatUsage } from "@genesiscz/utils/ask/usage-tokens";
 import type { LanguageModelUsage } from "ai";
+import type { LegacyFlatUsage } from "../../ask/usage-tokens";
 
 /**
  * One usage record, written by whoever spent the tokens.
