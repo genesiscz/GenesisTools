@@ -217,21 +217,45 @@ globalThis.sleep = (ms: number) => Bun.sleep(ms);
 /**
  * Errors no turn caught: a timer that threw after its turn answered, a promise nobody awaited. The worker keeps running,
  * and the next turn's output starts with them, so they are not lost without a word (NR18). The last few are kept.
+ * A rejection keeps its promise: when the code handles it later (it awaits the promise after a sleep), Node emits
+ * rejectionHandled and the entry goes, so only a rejection that stays unhandled is reported (REPL-F3).
  */
 const LATE_ERRORS_KEPT = 5;
-const lateErrors: string[] = [];
+const lateErrors: Array<{ text: string; promise?: Promise<unknown> }> = [];
 
-function noteLateError(error: unknown): void {
+function noteLateError(error: unknown, promise?: Promise<unknown>): void {
     const { message, stack } = describeError(error);
-    lateErrors.push(stack ?? message);
+    lateErrors.push({ text: stack ?? message, promise });
 
     if (lateErrors.length > LATE_ERRORS_KEPT) {
         lateErrors.shift();
     }
 }
 
-process.on("uncaughtException", noteLateError);
-process.on("unhandledRejection", noteLateError);
+/**
+ * Set while a turn runs. A callback that throws then fails that turn with its own error at once: the turn often awaits
+ * the promise the callback was to settle, and it waited until its deadline, without the cause (REPL-F2).
+ */
+let failTurn: ((error: unknown) => void) | undefined;
+
+process.on("uncaughtException", (error) => {
+    if (failTurn) {
+        failTurn(error);
+        return;
+    }
+
+    // One stderr line as well: when the worker dies before the next turn, the parent quotes stderr.
+    process.stderr.write(`node-repl: an error no turn caught: ${describeError(error).message.split("\n")[0]}\n`);
+    noteLateError(error);
+});
+process.on("unhandledRejection", (reason, promise) => noteLateError(reason, promise));
+process.on("rejectionHandled", (promise) => {
+    const at = lateErrors.findIndex((entry) => entry.promise === promise);
+
+    if (at >= 0) {
+        lateErrors.splice(at, 1);
+    }
+});
 
 let recordingRequestId = 0;
 const recordingRequests = new Map<number, { resolve(id: string): void; reject(error: Error): void }>();
@@ -524,17 +548,24 @@ async function handle(request: Request): Promise<Response> {
 
     if (lateErrors.length > 0) {
         writeLine(
-            `note: an error no turn caught (a timer, a callback or a promise nobody awaited):\n${lateErrors.splice(0).join("\n")}`
+            `note: an error no turn caught (a timer, a callback or a promise nobody awaited):\n${lateErrors
+                .splice(0)
+                .map((entry) => entry.text)
+                .join("\n")}`
         );
     }
 
     try {
-        const text = await runTurn(request.code);
+        const thrown = new Promise<never>((_resolve, reject) => {
+            failTurn = reject;
+        });
+        const text = await Promise.race([runTurn(request.code), thrown]);
         return { id: request.id, ok: true, text, images };
     } catch (error) {
         const { message, stack, fullStack } = describeError(error);
         return { id: request.id, ok: false, text: output.join("\n"), images, error: message, stack, fullStack };
     } finally {
+        failTurn = undefined;
         streaming = false;
     }
 }

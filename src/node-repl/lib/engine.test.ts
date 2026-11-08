@@ -868,3 +868,35 @@ it("run refuses a turn with no code, from stdin or an empty --file, and runs cod
     const piped = await run([], "1 + 2");
     expect(piped).toMatchObject({ stdout: "3\n", code: 0 });
 });
+
+// REPL-F2: a callback that threw while the turn waited left the turn hanging until its deadline, without the cause.
+it("a callback that throws while the turn waits fails the turn at once with its error, and keeps the bindings", async () => {
+    const engine = new ReplEngine();
+    try {
+        await engine.run("globalThis.keptAfterThrow = 1");
+        const thrown = await engine.run(
+            "await new Promise((resolve) => setTimeout(() => { throw new Error('boom-late'); }, 10))",
+            3000
+        );
+        expect(thrown.ok).toBe(false);
+        expect(thrown.durationMs).toBeLessThan(2000);
+        expect(thrown.error).toContain("boom-late");
+        expect((await engine.run("globalThis.keptAfterThrow")).text).toBe("1");
+    } finally {
+        await engine.shutdown();
+    }
+}, 20_000);
+
+// REPL-F3: a rejection the turn caught later was reported at the next turn as an error no turn caught.
+it("a rejection that the turn handles later is not reported as uncaught", async () => {
+    const engine = new ReplEngine();
+    try {
+        const caught = await engine.run(
+            "const b = Promise.reject(new Error('handled-later')); await sleep(20); try { await b } catch (error) { 'caught' }"
+        );
+        expect(caught.text).toBe("caught");
+        expect((await engine.run("1")).text).toBe("1");
+    } finally {
+        await engine.shutdown();
+    }
+});
