@@ -27,6 +27,18 @@ describe("rewriteTurn", () => {
         expect(rewriteTurn("try { 1 } finally { 2 }")).not.toContain("return (2)");
     });
 
+    // R6 11: describe()/help()/search() return a string, so a bare call in the middle of a script printed nothing.
+    it("prints a bare describe, help or search call whose value nothing uses", () => {
+        const out = rewriteTurn('describe("movies.Movie.cut");\nhelp();\nconst x = search("cut");\n1');
+        expect(out).toContain('console.log(describe("movies.Movie.cut"));');
+        expect(out).toContain("console.log(help());");
+        expect(out).not.toContain('console.log(search("cut"))');
+        expect(out).toContain("return (1)");
+        // The last statement is the turn's result, printed once already.
+        expect(rewriteTurn('describe("movies")')).toContain('return (describe("movies"))');
+        expect(rewriteTurn("other.describe(1);\n2")).not.toContain("console.log");
+    });
+
     it("gives a declaration without an initialiser an explicit undefined", () => {
         // Dropping the keyword alone leaves the bare expression `keep;`, which reads a binding
         // nothing created and throws ReferenceError instead of declaring anything.
@@ -68,5 +80,35 @@ describe("rewriteTurn", () => {
         expect(rewriteTurn("typeof marker")).toContain("return (typeof marker)");
         // constant folding is fine: the value is the same
         expect(rewriteTurn("1 + 1")).toContain("return (2)");
+    });
+});
+
+// NR8: the transpiler throws "AggregateError: Parse error" with no line, column or excerpt.
+describe("a syntax error in a turn", () => {
+    function thrown(source: string): Error {
+        try {
+            rewriteTurn(source);
+        } catch (error) {
+            return error as Error;
+        }
+
+        throw new Error(`rewriteTurn accepted ${source}`);
+    }
+
+    it("is one SyntaxError at the turn's line and column, with the line and a caret", () => {
+        const error = thrown("let x = 1;\nconst a = ;");
+        expect(error).toBeInstanceOf(SyntaxError);
+        expect(error.message).toBe("Unexpected ; at turn:2:11\nconst a = ;\n          ^");
+        expect(error.stack).not.toContain("rewrite.ts");
+    });
+
+    it("names the first error when the transpiler reports several", () => {
+        expect(thrown("syntax error here (((").message).toStartWith('Expected ";" but found "error" at turn:1:8');
+    });
+
+    it("counts lines as written when the turn also has a top-level return", () => {
+        expect(thrown("const s = await work(1);\nconst a = ;\nreturn s;").message).toStartWith(
+            "Unexpected ; at turn:2:11"
+        );
     });
 });

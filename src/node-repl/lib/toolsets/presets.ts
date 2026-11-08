@@ -4,6 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { ReplToolset } from "@genesiscz/utils/repl/toolset";
 import { z } from "zod";
 import {
+    AsyncFunction,
     listPresets,
     noteRun,
     presetNameSchema,
@@ -63,10 +64,6 @@ const remove = defineMethod({
     doc: "Moves a preset to the presets folder's .trash/, from where it can be moved back.",
 });
 
-type AsyncBody = (params: Record<string, unknown>) => Promise<unknown>;
-/** The constructor of async functions, which the language does not name as a global. */
-const AsyncFunction: new (...args: string[]) => AsyncBody = Object.getPrototypeOf(async () => undefined).constructor;
-
 /**
  * Runs a preset's script as the body of an async function in the REPL's own global scope, so it sees every loaded
  * toolset (movies, computer, …) as a turn would. Throws naming the toolsets it needs that are not loaded.
@@ -87,7 +84,8 @@ export async function runPresetHere(
     }
 
     log.info({ name, params: Object.keys(params), toolsets: preset.meta.toolsets }, "preset run");
-    const body = new AsyncFunction("params", preset.script);
+    // The sourceURL names the script's frames `preset:<name>`, which the worker shows as `preset <name>:<line>`.
+    const body = new AsyncFunction("params", `${preset.script}\n//# sourceURL=preset:${name}`);
     const result = await body(params);
     noteRun(name, root);
     return result;

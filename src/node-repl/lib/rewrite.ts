@@ -24,7 +24,7 @@ interface Node {
     end: number;
     kind?: string;
     id?: { name: string } | null;
-    expression?: { start: number; end: number };
+    expression?: { start: number; end: number; type?: string; callee?: { type: string; name?: string } };
     declarations?: Array<{ start: number; end: number; id: { type: string }; init?: unknown }>;
     body?: Node[] | Node;
     block?: Node;
@@ -57,6 +57,27 @@ function returnLast(node: Node | null | undefined, code: string, edits: Edit[]):
     }
 }
 
+// R6 11 bare describe
+/** The discovery calls that return their text: a bare call whose value nothing uses printed nothing. */
+const PRINTED_WHEN_BARE = new Set(["describe", "help", "search"]);
+
+/** `describe("x");` in the middle of a turn becomes `console.log(describe("x"));`, so it prints as the author meant. */
+function printBareDiscovery(node: Node, edits: Edit[]): void {
+    const expression = node.expression;
+
+    if (
+        node.type !== "ExpressionStatement" ||
+        expression?.type !== "CallExpression" ||
+        expression.callee?.type !== "Identifier" ||
+        !PRINTED_WHEN_BARE.has(expression.callee.name ?? "")
+    ) {
+        return;
+    }
+
+    edits.push({ start: expression.start, end: expression.start, text: "console.log(" });
+    edits.push({ start: expression.end, end: expression.end, text: ")" });
+}
+
 // Dead-code elimination stays off: the transpiler would drop a side-effect-free last
 // expression such as `typeof marker`, and that expression is the turn's result.
 // A turn runs inside an async function, so a top-level `return` is its result. The transpiler refuses one only
@@ -67,13 +88,53 @@ function stripTypes(source: string): string {
     try {
         return transpiler.transformSync(source);
     } catch (error) {
-        if (!String(error).includes("Top-level return")) {
+        const problems = parseProblems(error);
+
+        if (problems.length === 0) {
             throw error;
         }
 
+        const first = problems.find((problem) => !problem.message.includes("Top-level return"));
+
+        if (first) {
+            throw turnSyntaxError(first, 0);
+        }
+    }
+
+    try {
         const wrapped = transpiler.transformSync(`async function __turn__() {\n${source}\n}`);
         return wrapped.slice(wrapped.indexOf("{") + 1, wrapped.lastIndexOf("}"));
+    } catch (error) {
+        const [first] = parseProblems(error);
+
+        if (!first) {
+            throw error;
+        }
+
+        throw turnSyntaxError(first, 1);
     }
+}
+
+/** The transpiler throws one BuildMessage, or an AggregateError of them; only those with a position are kept. */
+function parseProblems(error: unknown): BuildMessage[] {
+    const all: unknown[] = error instanceof AggregateError ? error.errors : [error];
+    return all.filter((entry): entry is BuildMessage => entry instanceof BuildMessage && entry.position !== null);
+}
+
+/**
+ * A parse failure as one SyntaxError at the turn's line and column, with the line and a caret (NR8). The transpiler's own
+ * error reads "AggregateError: Parse error" with no position, and its frames are this file's. `lineOffset` is the
+ * number of lines a wrapper put before the turn.
+ */
+function turnSyntaxError(problem: BuildMessage, lineOffset: number): SyntaxError {
+    const position = problem.position;
+    const line = (position?.line ?? 1) - lineOffset;
+    const column = position?.column ?? 1;
+    const caret = `${" ".repeat(Math.max(0, column - 1))}^`;
+    const message = `${problem.message} at turn:${line}:${column}\n${position?.lineText ?? ""}\n${caret}`;
+    const error = new SyntaxError(message);
+    error.stack = `SyntaxError: ${message}`;
+    return error;
 }
 
 export function rewriteTurn(source: string): string {
@@ -126,6 +187,8 @@ export function rewriteTurn(source: string): string {
 
         if (isLast) {
             returnLast(node, code, edits);
+        } else {
+            printBareDiscovery(node, edits);
         }
     });
 

@@ -300,7 +300,12 @@ const ITEM_SCHEMA = {
                 ],
             },
         },
-        allowMultiple: { type: "boolean", description: "more than one choice may be picked (default false)" },
+        allowMultiple: {
+            type: "boolean",
+            description:
+                "question: more than one choice may be picked. decision: the user may pick any set of the options " +
+                '(letters like "ac"); every inbox shows check boxes and one Send (default false)',
+        },
         allowFreeText: { type: "boolean", description: "offer a free-text box (default true)" },
         allowFileTags: { type: "boolean", description: "allow @file tags relative to the form cwd (default false)" },
         allowImagePaste: { type: "boolean", description: "allow pasted images (default false)" },
@@ -323,7 +328,10 @@ const ITEM_SCHEMA = {
         },
         title: { type: "string", description: "decision/todo: short title shown after the number" },
         proposal: { type: "string", description: "decision: what you would do" },
-        recommended: { type: "string", description: 'decision: the recommended option letter, e.g. "b"' },
+        recommended: {
+            type: "string",
+            description: 'decision: the recommended option letter, e.g. "b", or a set ("ac") with allowMultiple',
+        },
         reasoning: { type: "string", description: "decision: markdown reasoning" },
         confidence: { type: "string", enum: ["high", "medium", "low"] },
         refs: {
@@ -503,6 +511,7 @@ export function questionPostDescription({
         "(numbers are session-wide and never reused) and the result is the markdown ❓ DECISION / TODO section to " +
         `paste into your reply. ${nudge}${answeredIn} reach you in a later prompt or through ` +
         `question_poll, and you record progress with question_update. ${DECISION_RECORD_RULE} ` +
+        'A decision where the user may pick several options takes allowMultiple: true; its answer is a set ("ac"). ' +
         "To correct an item nobody answered yet, " +
         "post it again with supersedes: <its id>; it keeps its number and the old text is kept as a version.\n" +
         'SCREENSHOTS: any item may carry attachments: [{type: "image", path: "/abs/shot.png", label?}]; they are ' +

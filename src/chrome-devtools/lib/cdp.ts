@@ -227,14 +227,30 @@ export interface RecordedNetworkEvent {
 
 const LEADING_COMMENTS = /^(\s*(\/\*[\s\S]*?\*\/|\/\/[^\n]*))*\s*/;
 
+/** `() => …` or `(a, b) => …`: an arrow function whose parameters hold no parenthesis. */
+const PLAIN_ARROW = /^\([^()]*\)\s*=>/;
+
 /**
  * The expression that runs `source`: a function source is called, anything else is evaluated as it
  * is. A payload file opens with a doc comment and ends with `;`, so both are skipped before the
  * test; without that, `eval --file` evaluated the file to the function and never ran it.
+ *
+ * A source that opens with `(` is only sometimes a function: `(1 + 2) * 3`, `(el).textContent` and an
+ * immediately called `(async () => …)()` are values, and calling them threw "9 is not a function"
+ * (NR3, 2026-11-06). Such a source is evaluated first and called only when its value is a function.
  */
 export function evaluationExpression(source: string): string {
     const body = source.replace(LEADING_COMMENTS, "").replace(/;\s*$/, "");
-    return /^(\(|async\b|function\b)/.test(body) ? `(${body})()` : source;
+
+    if (/^(async\b|function\b)/.test(body) || PLAIN_ARROW.test(body)) {
+        return `(${body})()`;
+    }
+
+    if (body.startsWith("(")) {
+        return `(() => { const value = (${body}); return typeof value === "function" ? value() : value; })()`;
+    }
+
+    return source;
 }
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
