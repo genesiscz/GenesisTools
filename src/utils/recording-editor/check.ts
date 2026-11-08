@@ -72,13 +72,21 @@ export function checkProject(project: EditProject, facts: EditFacts): EditIssue[
         const target = { list: entry.list, id: entry.id };
         const shortest = entry.kind === "zoom" ? SHORTEST_ZOOM_US : SHORTEST_READABLE_US;
 
-        if (entry.kind !== "hidden part" && entry.endUs - entry.startUs < shortest) {
-            const longer = lengthened(entry, shortest, project.source.durationUs);
+        // What the viewer sees is the played time: a sped-up stretch shows an item for less, a slowed one for more.
+        const played = playedUs(project, entry.startUs, entry.endUs);
+
+        if (entry.kind !== "hidden part" && played < shortest) {
+            const longer = lengthened(project, entry, shortest);
+            const sourceUs = keptUs(project, entry.startUs, entry.endUs);
+            const speedNote =
+                Math.abs(played - sourceUs) >= 50_000
+                    ? ` (the movie plays ${played < sourceUs ? "faster" : "slower"} there: ${seconds(sourceUs)} s of the movie)`
+                    : "";
             issues.push({
                 severity: "check",
                 kind: "too-short",
                 item: name,
-                message: `The ${entry.said} shows for ${seconds(entry.endUs - entry.startUs)} s, too short to ${entry.kind === "zoom" ? "follow" : "read"}`,
+                message: `The ${entry.said} shows for ${seconds(played)} s${speedNote}, too short to ${entry.kind === "zoom" ? "follow" : "read"}`,
                 at: seconds(entry.startUs),
                 target,
                 // No fix when the movie itself is too short to show it longer.
@@ -259,18 +267,22 @@ const tenths = (us: number) => Math.round(us / 100_000) / 10;
 const LENGTHENED_US = 1_500_000;
 
 /**
- * The retime that makes a too-short item 1.5 s long: a later end, or an earlier start when the movie ends first. Times
- * in milliseconds, the end rounded down so it never passes the source's end. Undefined when the movie has no room.
+ * The retime that makes a too-short item play for 1.5 s: a later end, or an earlier start when the movie ends first.
+ * The length is played time, so the clips' speeds set how far in source time the item reaches. Times in seconds to
+ * the millisecond, the end rounded down so it never passes the source's end. Undefined when the movie has no room.
  */
 function lengthened(
+    project: EditProject,
     item: { startUs: number; endUs: number },
-    shortest: number,
-    sourceUs: number
+    shortest: number
 ): { from?: number; to: number } | undefined {
-    const toUs = Math.min(sourceUs, item.startUs + LENGTHENED_US);
-    const fromUs = toUs - item.startUs < shortest ? Math.max(0, toUs - LENGTHENED_US) : item.startUs;
+    const toUs = sourceAfterPlayed(project, item.startUs, LENGTHENED_US);
+    const fromUs =
+        playedUs(project, item.startUs, toUs) < shortest
+            ? sourceBeforePlayed(project, toUs, LENGTHENED_US)
+            : item.startUs;
 
-    if (toUs - fromUs <= item.endUs - item.startUs) {
+    if (playedUs(project, fromUs, toUs) <= playedUs(project, item.startUs, item.endUs)) {
         return undefined;
     }
 
@@ -451,6 +463,44 @@ function playedUs(project: EditProject, startUs: number, endUs: number): number 
             sum + Math.max(0, Math.min(clip.toUs, endUs) - Math.max(clip.fromUs, startUs)) / (clip.speed || 1),
         0
     );
+}
+
+/** The source time where `playUs` of output has played from `startUs` on, through the clips at their speeds. */
+function sourceAfterPlayed(project: EditProject, startUs: number, playUs: number): number {
+    let leftUs = playUs;
+
+    for (const clip of project.clips) {
+        const fromUs = Math.max(clip.fromUs, startUs);
+        const speed = clip.speed || 1;
+        const availableUs = Math.max(0, clip.toUs - fromUs) / speed;
+
+        if (availableUs >= leftUs) {
+            return Math.min(project.source.durationUs, Math.round(fromUs + leftUs * speed));
+        }
+
+        leftUs -= availableUs;
+    }
+
+    return project.source.durationUs;
+}
+
+/** The source time from which `playUs` of output plays up to `endUs`, through the clips at their speeds. */
+function sourceBeforePlayed(project: EditProject, endUs: number, playUs: number): number {
+    let leftUs = playUs;
+
+    for (const clip of [...project.clips].reverse()) {
+        const toUs = Math.min(clip.toUs, endUs);
+        const speed = clip.speed || 1;
+        const availableUs = Math.max(0, toUs - clip.fromUs) / speed;
+
+        if (availableUs >= leftUs) {
+            return Math.max(0, Math.round(toUs - leftUs * speed));
+        }
+
+        leftUs -= availableUs;
+    }
+
+    return 0;
 }
 
 /** The source times where a kept clip ends before a cut (or the movie's end), and where one starts after a cut. */
