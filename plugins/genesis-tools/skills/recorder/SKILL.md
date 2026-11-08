@@ -16,7 +16,7 @@ the order to use them in.
 | The same demo again with other values | a preset: `presets.save(name, …)`, then `presets.run(name, values)` or `tools node-repl preset run` (node-repl skill) |
 | A recording the person makes by hand | the capture picker: ⌘7 (or the menu bar item → Capture Picker…) |
 | Edit an existing recording | `movies.open(id)` in the REPL, or `tools recorder apply <recording> '<ops>'` |
-| Edit a movie that was not recorded here (a render, an export, a movie from another app) | `movies.import(path, { title, markers })` in the REPL, or `tools recorder import <movie> --title T --marker 0:12=Label`: a library recording (an APFS clone, the file untouched) that every call above then takes. Never write a library folder by hand |
+| Edit a movie that was not recorded here (a render, an export, a movie from another app) | `movies.import(path, { title, markers })` in the REPL, or `tools recorder import <movie> --title T --marker 0:12=Label`: a library recording (an APFS clone where the disk can make one, the file untouched) that every call above then takes; a movie the editor does not play (vp9, HEVC tagged hev1, HDR) is refused with a way to convert it. Never write a library folder by hand |
 
 🛑 Before you edit a recording into a cut for someone (effects, privacy, voiceover, music), read
 `references/editing-playbook.md` in full: work on a copy, survey first, place effects on screen events, hide text and
