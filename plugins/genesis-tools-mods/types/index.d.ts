@@ -15,6 +15,8 @@ export interface OpenDecision {
     n: number;
     title: string;
     options: DecisionOption[];
+    /** The ask takes any set of its options (set only when true). */
+    multiple?: boolean;
 }
 
 /** The open decisions `/decisions` lists, as last read from the session's messages. */

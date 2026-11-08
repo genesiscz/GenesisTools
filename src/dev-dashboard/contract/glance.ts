@@ -31,6 +31,8 @@ export interface GlanceDecisionDto {
     title: string;
     project: string | null;
     recommended: string | null;
+    /** The user may pick several letters of this decision. */
+    multiple: boolean;
     letters: GlanceLetterDto[];
     at: string;
 }

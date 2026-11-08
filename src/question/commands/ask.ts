@@ -100,7 +100,10 @@ const ASK_JSON_HELP = `
                    number; the old text stays as a version: ${toolCommand("question show", "<id>", "--versions")})
   attachments      any item: screenshots, [{ "type": "image", "path": "/abs/shot.png", "label"?: "After" }];
                    copied into the question store and shown as previews on the inbox card
-  id, allowMultiple, allowFreeText, allowFileTags, allowImagePaste, required   question items only
+  allowMultiple    question: several choices may be ticked. decision: the user may pick any set of the
+                   options (letters like "ac"); every inbox shows check boxes and one Send, and
+                   recommended may name the set ("ac")
+  id, allowFreeText, allowFileTags, allowImagePaste, required   question items only
 
 Example:
   echo '[{"type":"decision","title":"Cache","promptMarkdown":"Keep the cache?","choices":["Keep it","Drop it"],"recommended":"a","blocking":true}]' \\

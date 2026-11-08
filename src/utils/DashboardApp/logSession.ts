@@ -1,12 +1,16 @@
-import { closeSync, existsSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync, writeFileSync } from "node:fs";
 import { out } from "@genesiscz/utils/logger";
 import { getLocalIpv4 } from "@genesiscz/utils/network";
 import { stripAnsi } from "@genesiscz/utils/string";
 import pc from "picocolors";
+import { LOG_SESSION_MARKER } from "./log-cap";
 import { ensureLogFile } from "./pidFile";
 import type { DashboardBindHost } from "./types";
 
-export const LOG_SESSION_MARKER = "--- DashboardApp session ";
+export { LOG_SESSION_MARKER };
+
+/** The most a tail reader loads: the session marker and the requested lines are looked for in the last 2 MiB. */
+export const LOG_TAIL_WINDOW_BYTES = 2 * 1024 * 1024;
 
 export function resetLogFile(key: string): string {
     const file = ensureLogFile(key);
@@ -15,42 +19,31 @@ export function resetLogFile(key: string): string {
     return file;
 }
 
-/** Byte offset of the most recent session marker, or 0 when none. */
-export function currentLogSessionOffset(logFile: string): number {
-    if (!existsSync(logFile)) {
-        return 0;
-    }
-
-    const content = readFileSync(logFile, "utf-8");
-    const markerIndex = content.lastIndexOf(LOG_SESSION_MARKER);
-
-    if (markerIndex < 0) {
-        return 0;
-    }
-
-    return markerIndex;
-}
-
+/**
+ * The last `lines` lines of the log, read from its last 2 MiB only (a runaway log can be gigabytes). With
+ * `sessionOnly`, the text starts at the last session marker in that window.
+ */
 export function readLogTail(logFile: string, lines: number, sessionOnly = true): string {
     if (!existsSync(logFile)) {
         return "";
     }
 
     const lineCount = Number.isFinite(lines) && lines > 0 ? Math.floor(lines) : 50;
-    const start = sessionOnly ? currentLogSessionOffset(logFile) : 0;
-    const size = statSync(logFile).size;
-
-    if (size <= start) {
-        return "";
-    }
-
     const fd = openSync(logFile, "r");
     try {
+        const size = fstatSync(fd).size;
+        const start = Math.max(0, size - LOG_TAIL_WINDOW_BYTES);
         const buf = Buffer.alloc(size - start);
-        const read = readSync(fd, buf, 0, buf.length, start);
-        const text = buf.subarray(0, read).toString();
-        const allLines = text.split("\n");
-        return allLines.slice(-lineCount).join("\n");
+        let window = buf.subarray(0, readSync(fd, buf, 0, buf.length, start));
+        const marker = sessionOnly ? window.lastIndexOf(LOG_SESSION_MARKER) : -1;
+
+        if (marker >= 0) {
+            window = window.subarray(marker);
+        } else if (start > 0) {
+            window = window.subarray(window.indexOf("\n") + 1);
+        }
+
+        return window.toString().split("\n").slice(-lineCount).join("\n");
     } finally {
         closeSync(fd);
     }

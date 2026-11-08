@@ -42,6 +42,14 @@ export function spawnEnv(config: DashboardAppConfig): Record<string, string | un
     };
 }
 
+/**
+ * The environment of a child whose output goes to `logFile` (a detached or launchd start). The child learns the path
+ * from `DASHBOARD_LOG_FILE` and caps the file itself (`log-cap.ts`); a foreground child writes to the terminal.
+ */
+export function logFileSpawnEnv(config: DashboardAppConfig, logFile: string): Record<string, string | undefined> {
+    return { ...spawnEnv(config), DASHBOARD_LOG_FILE: logFile };
+}
+
 export function shouldOpenBrowser(config: DashboardAppConfig, opts: UpOptions): boolean {
     if (config.type !== "ui") {
         return false;

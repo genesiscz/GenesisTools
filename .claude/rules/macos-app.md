@@ -118,7 +118,7 @@ Never put a view over the title bar without these. A window with a standard (not
 pointer, and a flexible-width one (a path `Text` with `.lineLimit(1)`) kills the double-click along the whole row (Genesis
 Markdown, 2026-10-01). Full rules and the check: `.claude/docs/swift-headers.md` (local-only here, tracked in GenesisPlayground).
 Check it: the `--hub` and `--review` snapshots print `titlebar …; ok` or the problem (`WindowTitlebar.audit`), and
-`swift test --filter WindowTitlebarTests` covers the behaviour.
+`swift test --filter WindowTitlebarTests` in `../GenesisKit` covers the behaviour.
 
 ## 🛑 Never block the main thread inside a view body
 
@@ -237,7 +237,8 @@ committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for 
   and the way to profile one off screen (`sample` the bench process while it runs). 🛑 Measure clicks with
   `GENESIS_HUB_BENCH_AX=1`: the live hub always has an accessibility client (dictation, `tools control`), and with
   one SwiftUI walks every responder per changed accessibility node; a click that costs 90 ms without it costs 1.6 s.
-- Logic tests: `swift test` in this folder (Tests/), and in `../GenesisKit` for the shared code (its SessionTranscriptScrollTests
+- Logic tests: `bun run app:test [-- --filter <name>]` for this folder (Tests/; it runs `swift test` in the app build's
+  own tree, `.claude/rules/macos.md`), and `swift test` in `../GenesisKit` for the shared code (its SessionTranscriptScrollTests
   and WindowTitlebarTests open windows the same way). Here only LiveTimeTests
   open a window, alpha 0 below the desktop and never activated; `SESSION_SCROLL_PERF=1` adds the transcript's scroll and idle cost lines.
 - Read the PNG. The web diff is composited from WKWebView's own snapshot, so it needs no Screen Recording grant.

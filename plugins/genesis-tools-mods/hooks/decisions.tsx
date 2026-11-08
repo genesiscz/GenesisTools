@@ -25,6 +25,7 @@ import {
     sendStaged,
     stageAnswer,
     startAnswers,
+    takesSeveral,
 } from "./answers";
 import { liveAgo } from "./live";
 import { type Feature, type Host, logMod, settingsOf } from "./shared";
@@ -58,6 +59,37 @@ const marked = new Set<number>();
 const MARK = "\u2060";
 /** What each answer field holds before Enter stages it, so a redraw or a press elsewhere keeps the typed text. */
 const typed = new Map<number, string>();
+/** The set picked on a several-letter decision the log does not have: no store holds it, so the sidebar does. */
+const localPick = new Map<number, string>();
+
+/** A press on `letter` of a several-letter decision the log does not have: it only ticks, nothing reaches the prompt. */
+export function tickLocal(decision: Pick<ShownDecision, "n" | "options">, letter: string): string {
+    return setLocal(
+        decision.n,
+        pickAfterPress({ ...decision, multiple: true, draftOption: localPick.get(decision.n) }, letter)
+    );
+}
+
+function setLocal(n: number, letters: string): string {
+    if (letters) {
+        localPick.set(n, letters);
+    } else {
+        localPick.delete(n);
+    }
+
+    return letters;
+}
+
+/** The one line per ticked decision (`D16: ac)`), and the ticks forgotten: they leave in the prompt exactly once. */
+function takeLocalLines(): string[] {
+    const lines = [...localPick]
+        .sort(([a], [b]) => a - b)
+        .map(([n, letters]) => stagedMessage({ [String(n)]: `${letters})` }));
+
+    localPick.clear();
+
+    return lines;
+}
 
 /** The answer field's local text, including edits not yet staged in the store. */
 export function typedAnswer(number: number): string | undefined {
@@ -96,6 +128,8 @@ export function asksIn(text: string): OpenDecision[] {
 
         let title = clean(match[3] ?? "");
         const options: DecisionOption[] = [];
+        // The ask's own words, for the rule that finds a decision taking any set of letters.
+        const words: string[] = [clean(match[3] ?? "")];
         let j = i + 1;
 
         for (; j < lines.length && j <= i + 14; j++) {
@@ -112,6 +146,8 @@ export function asksIn(text: string): OpenDecision[] {
                 continue;
             }
 
+            words.push(clean(line));
+
             if (!title && line.trim()) {
                 title = clean(line);
                 continue;
@@ -122,7 +158,9 @@ export function asksIn(text: string): OpenDecision[] {
             }
         }
 
-        found.push({ n: Number(match[2]), title, options });
+        const multiple = takesSeveral({ prompt: words.join("\n"), options });
+
+        found.push({ n: Number(match[2]), title, options, ...(multiple ? { multiple } : {}) });
         i = j - 1;
     }
 
@@ -194,17 +232,47 @@ export interface ShownDecision {
     answer?: string;
     /** Who stored the answer: `agent` and `automatic_heuristic` mean the user answered in the chat. */
     answeredVia?: string;
+    /** The decision takes any set of its options: a press toggles a letter in the staged set. */
+    multiple?: boolean;
     /** The staged answer the store holds (state `drafted`): picked letters and a note. */
     draftOption?: string;
     draft?: string;
     at?: number;
 }
 
-/** A staged answer in words: `b)`, `my words`, `b) my words`. */
+/** A staged answer in words: `b)`, `ac)` for a set (the form the chat reader takes), `my words`, `b) my words`. */
 export function stagedText(decision: Pick<ShownDecision, "draftOption" | "draft">): string {
-    const letters = [...(decision.draftOption ?? "")].map((letter) => `${letter})`).join(" ");
+    const letters = decision.draftOption ? `${decision.draftOption})` : "";
 
     return [letters, decision.draft?.trim() ?? ""].filter(Boolean).join(" ");
+}
+
+/**
+ * The letters staged after a press on `letter`, in option order. A single-choice decision stages the letter, or
+ * clears when it is the staged one. A decision that takes a set toggles the letter in the staged set.
+ */
+export function pickAfterPress(
+    decision: Pick<ShownDecision, "options" | "multiple" | "draftOption">,
+    letter: string
+): string {
+    const staged = decision.draftOption ?? "";
+
+    if (!decision.multiple) {
+        return staged.includes(letter) ? "" : letter;
+    }
+
+    const set = new Set(staged);
+
+    if (set.has(letter)) {
+        set.delete(letter);
+    } else {
+        set.add(letter);
+    }
+
+    return decision.options
+        .map((option) => option.letter)
+        .filter((one) => set.has(one))
+        .join("");
 }
 
 /** Whether the user answered this decision in the chat, as the decision log records it. */
@@ -382,12 +450,16 @@ export async function sendDecisionAnswers(
     host: Host,
     request: { outgoing: string; how: "send" | "fill" }
 ): Promise<void> {
-    if (!request.outgoing) {
+    const ticked = localPick.size > 0;
+
+    if (!request.outgoing && !ticked) {
         return;
     }
 
     if (request.how === "fill") {
-        await host.fill({ text: request.outgoing, mode: "replace" });
+        const lines = takeLocalLines();
+
+        await host.fill({ text: [request.outgoing, ...lines].filter(Boolean).join("\n"), mode: "replace" });
         await pressed(host, "decisions-fill", "In the prompt; the answers stay staged until the agent records them.");
         return;
     }
@@ -398,6 +470,18 @@ export async function sendDecisionAnswers(
             return text === (decision?.draft ?? decision?.answer);
         })
     );
+    // Ticks on a decision the log does not have go to the prompt as one line each; the store's answers follow.
+    const lines = takeLocalLines();
+
+    if (lines.length > 0) {
+        await host.fill({ text: `${lines.join("\n")}\n`, mode: "append" });
+
+        if (!request.outgoing) {
+            await pressed(host, "decisions-send", "The ticked answers are in the prompt; send it to answer.");
+            return;
+        }
+    }
+
     await pressed(host, "decisions-send", "Sending…", "busy");
     const sent = await sendStaged(host);
 
@@ -453,11 +537,20 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
         const words = answer.option ? `${answer.option})` : (answer.text ?? "");
 
         if (!done.error) {
+            localPick.delete(decision.n);
             await pressed(host, key, words ? `Staged ${words}; the widget shows it too.` : "Unstaged.");
             return;
         }
 
         if (/not waiting/.test(done.error) && words) {
+            if (answer.option !== undefined && decision.multiple) {
+                // Only tick: the one `D<n>: ac)` line is written when the person sends or puts it in the prompt.
+                const ticked = setLocal(decision.n, answer.option);
+
+                await pressed(host, key, ticked ? `Ticked ${ticked})` : "Unticked.");
+                return;
+            }
+
             await host.fill({ text: `D${decision.n}: ${words}\n`, mode: "append" });
             await pressed(
                 host,
@@ -611,10 +704,17 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
                             </Text>
                         )
                     )}
+                    {isWaiting(decision) && decision.multiple ? (
+                        <Text key={`${key}-multi`} dimColor wrap="truncate-end">
+                            Pick any set: press each option to tick it, then [send].
+                        </Text>
+                    ) : null}
                     {decision.options.map((option) => {
-                        const isStaged = (decision.draftOption ?? "").includes(option.letter);
+                        const stagedSet = decision.draftOption ?? localPick.get(decision.n) ?? "";
+                        const isStaged = stagedSet.includes(option.letter);
                         const isPicked = picked.includes(option.letter);
-                        const mark = isStaged ? "● " : isPicked ? "✓ " : "  ";
+                        const several = isWaiting(decision) && decision.multiple === true;
+                        const mark = several ? (isStaged ? "[x] " : "[ ] ") : isStaged ? "● " : isPicked ? "✓ " : "  ";
                         const star = decision.recommended === option.letter ? " (recommended)" : "";
                         const label = `${mark}${option.letter}) ${option.text}${star}`;
 
@@ -638,11 +738,15 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
                             ...(isStaged ? { color: "cyan" } : {}),
                             hint: isStaged
                                 ? `Unstages ${option.letter}) for DECISION ${decision.n}.`
-                                : `Stages ${option.letter}) as the answer to DECISION ${decision.n}; [send] sends every staged answer.`,
+                                : several
+                                  ? `Ticks ${option.letter}) with the other staged options of DECISION ${decision.n}; [send] sends every staged answer.`
+                                  : `Stages ${option.letter}) as the answer to DECISION ${decision.n}; [send] sends every staged answer.`,
                             onPress: () =>
                                 void stage(
                                     decision,
-                                    { option: isStaged ? "" : option.letter },
+                                    {
+                                        option: pickAfterPress({ ...decision, draftOption: stagedSet }, option.letter),
+                                    },
                                     `d${decision.n}-${option.letter}`
                                 ),
                         });
@@ -788,6 +892,7 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
                                     }
 
                                     await refreshAnswers(host, "clear", true);
+                                    localPick.clear();
                                     await pressed(host, "decisions-clear", "Unstaged every answer.");
                                 })();
                             },

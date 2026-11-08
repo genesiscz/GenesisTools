@@ -213,6 +213,8 @@ export function decisionPayload(items: QuestionItemInput[], hint: DecisionSessio
             ...(item.confidence ? { confidence: item.confidence } : {}),
             ...(item.refs ? { refs: item.refs } : {}),
             ...(item.blocking === undefined ? {} : { blocking: item.blocking }),
+            // The form field `allowMultiple` is the decision's `multiple`: the user may pick any set of letters.
+            ...(item.allowMultiple ? { multiple: true } : {}),
             ...(item.for ? { for: item.for } : {}),
             ...(item.reevaluateWhen ? { reevaluateWhen: item.reevaluateWhen } : {}),
             ...(item.supersedes ? { supersedes: item.supersedes } : {}),

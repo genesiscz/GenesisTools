@@ -16,7 +16,8 @@ import { type InboxCommandDeps, registerInboxCommand } from "../../commands/inbo
 import { paneMiss } from "../decisions/deliver";
 import { livePaneTargets, noNativeReceivers } from "../decisions/deliver.fixtures";
 import { RELAYED_ANSWER_HEAD } from "../decisions/delivery-text";
-import { decisionOptionLabels, recommendedLetters, shownDecisionText } from "../decisions/option-labels";
+import { decisionPayload } from "../decisions/items";
+import { decisionOptionLabels, recommendedLetters, shownDecisionText, takesSeveral } from "../decisions/option-labels";
 import { decisionFiles } from "../decisions/paths";
 import { decisionLine, parseDecisionBlocks } from "../decisions/read";
 import {
@@ -246,6 +247,21 @@ describe("decision option labels", () => {
         const item = fromRecord(storedRow({ prompt, options: [], recommended: "abd" }));
         expect(item.choices.map((choice) => choice.label)).toEqual(words);
         expect(item.choices.map((choice) => choice.recommended)).toEqual([true, true, false, true]);
+        // It takes a set of letters, so every surface shows check boxes; the posted flag says so for a new row.
+        expect(item.multiple).toBe(true);
+        expect(fromRecord(storedRow({ prompt: "Which one?", options: ["x", "y"], recommended: "b" })).multiple).toBe(
+            false
+        );
+        expect(fromRecord(storedRow({ prompt: "Which?", options: ["x", "y"], multiple: true })).multiple).toBe(true);
+        expect(takesSeveral({ prompt: "Tick all that apply.", options: ["x", "y"] })).toBe(true);
+        // One option is never a set, whatever the post says.
+        expect(takesSeveral({ multiple: true, options: ["x"] })).toBe(false);
+        // question_post names it allowMultiple, the form field; the log stores it as multiple.
+        const payload = decisionPayload(
+            [{ type: "decision", promptMarkdown: "Which?", choices: ["x", "y"], allowMultiple: true }],
+            {}
+        ) as { decisions: { multiple?: boolean }[] };
+        expect(payload.decisions[0]?.multiple).toBe(true);
         // Several letters in any written form name a set; a word's letters do not rise, so it never does.
         expect([...recommendedLetters("a + b + d")]).toEqual(["a", "b", "d"]);
         expect([...recommendedLetters(" A, C ")]).toEqual(["a", "c"]);

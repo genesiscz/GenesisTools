@@ -1,5 +1,6 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, spyOn, test } from "bun:test";
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -55,6 +56,7 @@ import {
     awaitsDelivery,
     createTodo,
     type DecisionRecord,
+    decisionAskedIn,
     harvestDecisions,
     markNotified,
     moveDecisions,
@@ -95,6 +97,49 @@ test("a decision post asks git only through the stub and starts no process", asy
         git.refuseOthers = false;
         spawn.mockRestore();
     }
+});
+
+test("a decision posted in a T3 sub-agent thread saves its thread and lead, and every reader outside names both", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-decision-host-"));
+    const home = join(dir, "t3");
+    mkdirSync(join(home, "userdata"), { recursive: true });
+    const db = new Database(join(home, "userdata", "statev2.sqlite"));
+    db.exec(`CREATE TABLE orchestration_v2_projection_threads (
+        thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, payload_json TEXT NOT NULL, provider_instance_id TEXT)`);
+    db.exec("CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, workspace_root TEXT NOT NULL)");
+    const thread = (id: string, payload: object) =>
+        db
+            .query("INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, ?, ?)")
+            .run(id, "p", SafeJSON.stringify(payload), null);
+    thread("mcp:launch:lead", { title: "Overnight lead" });
+    thread("thread:delegated-task:review", {
+        title: "Review of the cache PR",
+        lineage: { parentThreadId: "mcp:launch:lead", relationshipToParent: "subagent" },
+    });
+    db.close();
+
+    const post = (threadId: string, sessionId: string) =>
+        postDecisions(
+            join(dir, "decisions.jsonl"),
+            join(dir, "events.jsonl"),
+            { sessionId, decisions: [{ prompt: "Ship it?", options: ["yes", "no"] }] },
+            { env: { T3CODE_THREAD_ID: threadId, T3CODE_HOME: home } }
+        );
+    const [sub] = await post("thread:delegated-task:review", "s-review");
+    const [lead] = await post("mcp:launch:lead", "s-lead");
+
+    expect(sub?.host).toEqual({
+        app: "t3code",
+        threadId: "thread:delegated-task:review",
+        title: "Review of the cache PR",
+        parent: { threadId: "mcp:launch:lead", title: "Overnight lead", relationship: "subagent" },
+    });
+    // Both are DECISION 1 of their own session; only the sub-agent's needs a name outside it.
+    expect([sub?.number, lead?.number]).toEqual([1, 1]);
+    expect(sub && decisionAskedIn(sub)).toBe("Review of the cache PR, a sub-agent of Overnight lead");
+    expect(lead && decisionAskedIn(lead)).toBeNull();
+    expect(sub && decisionsMarkdown([sub])).toContain("asked in Review of the cache PR, a sub-agent of Overnight lead");
+    expect(lead && decisionsMarkdown([lead])).not.toContain("asked in");
 });
 
 /** A row another process wrote, appended while the test holds the decisions lock. */
@@ -2076,6 +2121,31 @@ describe("chatAnswers", () => {
             [15, "a", ""],
             [16, "b", ""],
         ]);
+    });
+
+    test("reads a set of letters in the forms people type, and leaves words and prose alone", () => {
+        const six = ["a", "b", "c", "d", "e", "f"];
+        const answerTo = (text: string) =>
+            chatAnswers(
+                [entry("assistant", "❓ DECISION 15 — Which cleanup steps may run now?", 1), entry("user", text, 2)],
+                [{ number: 15, letters: six, askedAt: at(1) }]
+            );
+        const options = (text: string) => answerTo(text).unambiguous.map((answer) => answer.option ?? null);
+
+        expect(options("15 a, b, c")).toEqual(["abc"]);
+        expect(options("15 a+c")).toEqual(["ac"]);
+        expect(options("15 a c d")).toEqual(["acd"]);
+        expect(options("15 a, b and f")).toEqual(["abf"]);
+        expect(options("15 abcdef")).toEqual(["abcdef"]);
+        expect(options("D15: a, d")).toEqual(["ad"]);
+        expect(options("(a, c)")).toEqual(["ac"]);
+        expect(answerTo("D15 a, c - the rest later").unambiguous[0]?.answer).toBe("the rest later");
+        // Own words after a colon stay words; a long run of letters that does not rise is a word, not a set.
+        expect(answerTo("D15: ok").unambiguous.map((answer) => [answer.option ?? null, answer.answer])).toEqual([
+            [null, "ok"],
+        ]);
+        expect(options("15 a but not c")).toEqual([]);
+        expect(options("15 abcfed")).toEqual([]);
     });
 
     test("calls two answers, a letter past the options, or a bare mention ambiguous", () => {

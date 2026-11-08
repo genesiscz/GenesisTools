@@ -32,11 +32,13 @@ function decision({
     prompt,
     labels,
     recommended,
+    multiple = false,
 }: {
     number: number;
     prompt: string;
     labels: string[];
     recommended: string | null;
+    multiple?: boolean;
 }): WaitingDecisionDto {
     return {
         kind: "decision",
@@ -46,6 +48,7 @@ function decision({
         prompt,
         choices: choices(labels, recommended),
         recommended,
+        multiple,
         blocking: true,
         status: "waiting",
         context: null,

@@ -78,7 +78,17 @@ export const postedDecisionSchema = z.object({
     excerpt: z.string().optional().describe("Context text. Defaults to up to 40 lines of the first ref."),
     title: z.string().optional(),
     proposal: z.string().optional().describe("The option you would pick."),
-    recommended: z.string().optional().describe('The recommended option letter, e.g. "b".'),
+    recommended: z
+        .string()
+        .optional()
+        .describe('The recommended option letter, e.g. "b", or the letters of a set ("ac") when multiple is true.'),
+    multiple: z
+        .boolean()
+        .optional()
+        .describe(
+            "True when the user may pick any set of the options (several letters, e.g. ac). Every surface then shows " +
+                "check boxes and one Send. A question_post item sets it with allowMultiple."
+        ),
     reasoning: z.string().optional(),
     confidence: z.enum(["high", "medium", "low"]).optional(),
     refs: z.array(refSchema).optional(),

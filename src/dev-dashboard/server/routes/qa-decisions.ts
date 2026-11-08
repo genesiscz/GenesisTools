@@ -48,7 +48,7 @@ async function widgetClearedAt(): Promise<number> {
 const CALLER_MISTAKES = [
     /^nothing to send$/,
     /^no answers to send$/,
-    /^the option is one letter/,
+    /^the option is one or more letters/,
     /^DECISION \d+: pass an option letter/,
     /^DECISION \d+ is not waiting/,
     /^DECISION \d+ has options/,

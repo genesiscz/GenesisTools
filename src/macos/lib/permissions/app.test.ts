@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as apfs from "@genesiscz/utils/macos/apfs";
 import { getCloneId } from "@genesiscz/utils/macos/apfs";
@@ -24,9 +25,12 @@ import * as commands from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
 import * as prompts from "@genesiscz/utils/prompts/p";
 import { withFileLock } from "@genesiscz/utils/storage";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { skip } from "@genesiscz/utils/test/skip";
 import { ClickyLibraryUnavailableError, ensureClickyLibrary, unpackClickyLibrary } from "../clicky-library";
 import {
+    appStatus,
+    buildApp,
     bundleClickyLibrary,
     downloadClickyLibrary,
     offerCodesignTrust,
@@ -1679,5 +1683,41 @@ describe.skipIf(skip.unlessMac)("retiredBundlesSummary", () => {
             rmSync(retiredRoot, { recursive: true, force: true });
             rmSync(installed, { recursive: true, force: true });
         }
+    });
+});
+
+describe("a GENESIS_TOOLS_HOME sandbox and the installed app", () => {
+    // R2-MP11: a window launched on a sandbox home read the manifest from the sandbox, found no app, and built one.
+    it("reads the installed app's manifest beside the bundle, so a sandbox sees the app and builds none", async () => {
+        const sandbox = mkdtempSync(join(tmpdir(), "gt-app-sandbox-"));
+        const appHome = mkdtempSync(join(tmpdir(), "gt-app-home-"));
+        const launcher = join(appHome, "Applications", "GenesisTools.app", "Contents", "MacOS", "GenesisTools");
+        mkdirSync(dirname(launcher), { recursive: true });
+        writeFileSync(launcher, "");
+        mkdirSync(genesisToolsDirIn(appHome, "app"), { recursive: true });
+        writeFileSync(
+            genesisToolsDirIn(appHome, "app", "manifest.json"),
+            SafeJSON.stringify({ builtAt: "2026-11-07T00:00:00.000Z", sourceHash: "x", parts: ["meetings"] })
+        );
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: sandbox, GENESIS_TOOLS_APP_HOME: appHome }, () => {
+            const status = appStatus();
+            expect(status.bundlePath).toBe(join(appHome, "Applications", "GenesisTools.app"));
+            expect(status.built).toBe(true);
+            expect(status.parts).toContain("meetings");
+        });
+        expect(existsSync(join(sandbox, "Applications"))).toBe(false);
+        expect(existsSync(genesisToolsDirIn(sandbox, "app"))).toBe(false);
+    });
+
+    it("never builds in a test process or on a sandbox home, and writes nothing first", async () => {
+        const sandbox = mkdtempSync(join(tmpdir(), "gt-app-build-"));
+        const appHome = mkdtempSync(join(tmpdir(), "gt-app-build-home-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: sandbox, GENESIS_TOOLS_APP_HOME: appHome }, async () => {
+            await expect(buildApp()).rejects.toThrow("GenesisTools.app is not built here");
+        });
+        expect(readdirSync(sandbox)).toEqual([]);
+        expect(readdirSync(appHome)).toEqual([]);
     });
 });

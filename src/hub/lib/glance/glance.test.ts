@@ -27,6 +27,7 @@ const QUEUE: WaitingQueue = {
                         { id: "b", label: "Disk", rationale: null, recommended: false },
                     ],
                     recommended: "a",
+                    multiple: true,
                     at: "2026-11-04T14:50:00.000Z",
                 },
                 {
@@ -175,6 +176,7 @@ describe("glance", () => {
                 title: "Which cache?",
                 project: "shop",
                 recommended: "a",
+                multiple: true,
                 letters: [
                     { letter: "a", label: "Memory" },
                     { letter: "b", label: "Disk" },

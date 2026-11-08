@@ -1,18 +1,21 @@
 import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { skip } from "@genesiscz/utils/test/skip";
 import {
     GENESIS_APP_BUNDLE_ID,
+    genesisAppBundlePath,
+    genesisAppInstallMarkerPath,
     genesisAppLauncher,
     launchdPlistNeedsGenesisApp,
     launchdProgramArgumentsXml,
     wrapWithGenesisApp,
 } from "./genesis-app";
 
-/** A fake home with a built launcher, so wrapWithGenesisApp() has something to prepend. */
+/** A fake app home (GENESIS_TOOLS_APP_HOME) with a built launcher, so wrapWithGenesisApp() has something to prepend. */
 function homeWithLauncher(): { home: string; launcher: string } {
     const home = mkdtempSync(join(tmpdir(), "gt-launchd-home-"));
     const dir = join(home, "Applications", "GenesisTools.app", "Contents", "MacOS");
@@ -24,6 +27,18 @@ function homeWithLauncher(): { home: string; launcher: string } {
 
 const clean = { GENESIS_TOOLS_APP_BUNDLE_ID: undefined, GENESIS_TOOLS_NO_APP: undefined };
 
+describe("the installed app's place", () => {
+    // R2-MP11: the bundle path followed GENESIS_TOOLS_HOME, so a window launched on a sandbox home found no app there,
+    // built a second GenesisTools.app inside the sandbox, Launch Services registered it, and it ran a link relay.
+    it("is the real home's, also when GENESIS_TOOLS_HOME is a sandbox", async () => {
+        const sandbox = mkdtempSync(join(tmpdir(), "gt-app-place-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: sandbox, GENESIS_TOOLS_APP_HOME: undefined }, () => {
+            expect(genesisAppBundlePath()).toBe(join(homedir(), "Applications", "GenesisTools.app"));
+            expect(genesisAppInstallMarkerPath()).toBe(genesisToolsDirIn(homedir(), "app", "install.lock"));
+        });
+    });
+});
+
 // macOS only, and all of it: installedGenesisAppLauncher() returns null on any other platform
 // (genesis-app.ts:56), so every case below — including the ones that expect NO launcher — would
 // pass for the platform check rather than for the behaviour they name. A vacuous pass is worse
@@ -31,7 +46,7 @@ const clean = { GENESIS_TOOLS_APP_BUNDLE_ID: undefined, GENESIS_TOOLS_NO_APP: un
 describe.skipIf(skip.unlessMac)("launchdProgramArgumentsXml", () => {
     it("prepends the launcher when it exists and escapes XML", async () => {
         const { home, launcher } = homeWithLauncher();
-        await env.testing.withOverrides({ ...clean, GENESIS_TOOLS_HOME: home }, () => {
+        await env.testing.withOverrides({ ...clean, GENESIS_TOOLS_APP_HOME: home }, () => {
             const xml = launchdProgramArgumentsXml(["/usr/bin/bun", "run", "/x/a&b.ts"]);
             expect(xml.split("\n")).toEqual([
                 "  <array>",
@@ -45,7 +60,7 @@ describe.skipIf(skip.unlessMac)("launchdProgramArgumentsXml", () => {
     });
 
     it("emits the bare command when no launcher is installed", async () => {
-        await env.testing.withOverrides({ ...clean, GENESIS_TOOLS_HOME: "/nonexistent" }, () => {
+        await env.testing.withOverrides({ ...clean, GENESIS_TOOLS_APP_HOME: "/nonexistent" }, () => {
             expect(launchdProgramArgumentsXml(["/usr/bin/bun", "run", "x.ts"])).not.toContain(
                 "GenesisTools.app/Contents/MacOS"
             );
@@ -61,7 +76,7 @@ describe.skipIf(skip.unlessMac)("launchdPlistNeedsGenesisApp", () => {
         writeFileSync(bare, "<string>/usr/bin/bun</string>");
         writeFileSync(wrapped, `<string>${launcher}</string><string>/usr/bin/bun</string>`);
 
-        await env.testing.withOverrides({ ...clean, GENESIS_TOOLS_HOME: home }, () => {
+        await env.testing.withOverrides({ ...clean, GENESIS_TOOLS_APP_HOME: home }, () => {
             expect(launchdPlistNeedsGenesisApp(bare)).toBe(true);
             expect(launchdPlistNeedsGenesisApp(wrapped)).toBe(false);
             expect(launchdPlistNeedsGenesisApp(join(home, "missing.plist"))).toBe(false);
@@ -73,10 +88,10 @@ describe.skipIf(skip.unlessMac)("launchdPlistNeedsGenesisApp", () => {
         const bare = join(home, "bare.plist");
         writeFileSync(bare, "<string>/usr/bin/bun</string>");
 
-        await env.testing.withOverrides({ ...clean, GENESIS_TOOLS_HOME: "/nonexistent" }, () => {
+        await env.testing.withOverrides({ ...clean, GENESIS_TOOLS_APP_HOME: "/nonexistent" }, () => {
             expect(launchdPlistNeedsGenesisApp(bare)).toBe(false);
         });
-        await env.testing.withOverrides({ ...clean, GENESIS_TOOLS_HOME: home, GENESIS_TOOLS_NO_APP: "1" }, () => {
+        await env.testing.withOverrides({ ...clean, GENESIS_TOOLS_APP_HOME: home, GENESIS_TOOLS_NO_APP: "1" }, () => {
             expect(launchdPlistNeedsGenesisApp(bare)).toBe(false);
         });
     });
@@ -91,7 +106,7 @@ describe.skipIf(skip.unlessMac)("writing a plist while running under the app", (
 
     it("still puts the launcher into ProgramArguments", async () => {
         const { home, launcher } = homeWithLauncher();
-        await env.testing.withOverrides({ ...underApp, GENESIS_TOOLS_HOME: home }, () => {
+        await env.testing.withOverrides({ ...underApp, GENESIS_TOOLS_APP_HOME: home }, () => {
             expect(wrapWithGenesisApp(["/usr/bin/bun", "run", "x.ts"])[0]).toBe(launcher);
             expect(launchdProgramArgumentsXml(["/usr/bin/bun"])).toContain(launcher);
         });
@@ -101,7 +116,7 @@ describe.skipIf(skip.unlessMac)("writing a plist while running under the app", (
         const { home } = homeWithLauncher();
         const bare = join(home, "bare.plist");
         writeFileSync(bare, "<string>/usr/bin/bun</string>");
-        await env.testing.withOverrides({ ...underApp, GENESIS_TOOLS_HOME: home }, () => {
+        await env.testing.withOverrides({ ...underApp, GENESIS_TOOLS_APP_HOME: home }, () => {
             expect(launchdPlistNeedsGenesisApp(bare)).toBe(true);
         });
     });
@@ -110,7 +125,7 @@ describe.skipIf(skip.unlessMac)("writing a plist while running under the app", (
         const { home, launcher } = homeWithLauncher();
         const inode = String(statSync(launcher).ino);
         await env.testing.withOverrides(
-            { ...underApp, GENESIS_TOOLS_HOME: home, GENESIS_TOOLS_APP_INODE: inode },
+            { ...underApp, GENESIS_TOOLS_APP_HOME: home, GENESIS_TOOLS_APP_INODE: inode },
             () => {
                 // The dispatcher question stays "no": the tree is already covered.
                 expect(genesisAppLauncher()).toBeNull();
@@ -122,7 +137,7 @@ describe.skipIf(skip.unlessMac)("writing a plist while running under the app", (
         const { home, launcher } = homeWithLauncher();
         const stale = String(statSync(launcher).ino + 1);
         await env.testing.withOverrides(
-            { ...underApp, GENESIS_TOOLS_HOME: home, GENESIS_TOOLS_APP_INODE: stale },
+            { ...underApp, GENESIS_TOOLS_APP_HOME: home, GENESIS_TOOLS_APP_INODE: stale },
             () => {
                 expect(genesisAppLauncher()).toBe(launcher);
             }
@@ -132,7 +147,7 @@ describe.skipIf(skip.unlessMac)("writing a plist while running under the app", (
     it("re-enters the launcher from a tree whose launcher predates the inode record", async () => {
         const { home, launcher } = homeWithLauncher();
         await env.testing.withOverrides(
-            { ...underApp, GENESIS_TOOLS_HOME: home, GENESIS_TOOLS_APP_INODE: undefined },
+            { ...underApp, GENESIS_TOOLS_APP_HOME: home, GENESIS_TOOLS_APP_INODE: undefined },
             () => {
                 expect(genesisAppLauncher()).toBe(launcher);
             }

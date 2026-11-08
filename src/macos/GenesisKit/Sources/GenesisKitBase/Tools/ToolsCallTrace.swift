@@ -2,7 +2,10 @@ import Foundation
 
 /// One line per `tools` call in app-perf.log, whichever way it ran, so any call can be traced later:
 ///
-///     mark call t=5f3a9c1e via=server ms=14 exit=0 out=282B start=02:51:07.311 argv=hub agents counts --session 1b4001ba …
+///     mark call t=5f3a9c1e via=server pid=4242 ms=14 exit=0 out=282B start=02:51:07.311 argv=hub agents counts --session 1b4001ba …
+///
+/// `pid` is the app process that made the call, so the calls of one face (the Meetings window, the hub, a snapshot run)
+/// can be told apart; `app/lifecycle.jsonl` names the face of each pid.
 ///
 /// The trace id goes to the CLI too (`GENESIS_TOOLS_TRACE_ID` for a process, `traceId` in a server request), where
 /// the day log records and the profiling lines carry it (src/utils/trace.ts). The line is written by PerfLog's own
@@ -63,7 +66,7 @@ public enum ToolsCallTrace {
         guard PerfLog.enabled else { return }
         let ms = Int(Date().timeIntervalSince(started) * 1000)
         let start = stampLock.withLock { stamp.string(from: started) }
-        var line = "call t=\(traceId) via=\(via) ms=\(ms) exit=\(exit) out=\(outBytes)B start=\(start) argv="
+        var line = "call t=\(traceId) via=\(via) pid=\(ProcessInfo.processInfo.processIdentifier) ms=\(ms) exit=\(exit) out=\(outBytes)B start=\(start) argv="
         line += String(redacted(argv).joined(separator: " ").prefix(300))
         // Only the size of a failed child's stderr: its text can echo a credential, and argv redaction
         // does not reach it.
