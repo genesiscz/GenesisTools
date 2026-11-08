@@ -53,6 +53,48 @@ final class RecorderFxTests: XCTestCase {
         XCTAssertTrue(TransitionLook.joins(in: cutProject(own)).isEmpty)
     }
 
+    /// The Style tab changes a copy of the edit; each transition, tilt and lens change must become ops, or the service
+    /// answers the old edit and the control flips back.
+    func testTheStyleTabsTransitionTiltAndLensChangesBecomeOps() {
+        let plain = cutProject(nil)
+        var fade = plain
+        fade.transitions = EditProject.Transitions(default: .init(kind: .crossfade, ms: 300))
+        XCTAssertEqual(EditOpDiff.ops(from: plain, to: fade), [.transition(EditOp.Transition(kind: .crossfade, ms: 300))])
+        var longer = fade
+        longer.transitions?.default.ms = 600
+        XCTAssertEqual(EditOpDiff.ops(from: fade, to: longer), [.transition(EditOp.Transition(kind: .crossfade, ms: 600))])
+        XCTAssertEqual(EditOpDiff.ops(from: fade, to: plain), [.transition(EditOp.Transition(kind: EditOp.TransitionChoice.none, ms: 300))])
+        var own = fade
+        own.transitions?.joins = ["c2": .init(kind: .blur, ms: 500)]
+        XCTAssertEqual(EditOpDiff.ops(from: fade, to: own), [.transition(EditOp.Transition(kind: .blur, ms: 500, clip: "c2"))])
+        XCTAssertEqual(EditOpDiff.ops(from: own, to: fade), [.transition(EditOp.Transition(kind: .default, clip: "c2"))])
+
+        var tilted = plain
+        tilted.tilt = EditProject.Tilt()
+        XCTAssertEqual(EditOpDiff.ops(from: plain, to: tilted),
+                       [.tilt(EditOp.Tilt(enabled: true, strength: 0.5, drift: true, tiltIn: true, tiltOut: true, inMs: 1200, outMs: 1200))])
+        var stronger = tilted
+        stronger.tilt?.strength = 0.8
+        XCTAssertEqual(EditOpDiff.ops(from: tilted, to: stronger),
+                       [.tilt(EditOp.Tilt(enabled: true, strength: 0.8, drift: true, tiltIn: true, tiltOut: true, inMs: 1200, outMs: 1200))])
+        XCTAssertEqual(EditOpDiff.ops(from: tilted, to: plain), [.tilt(EditOp.Tilt(enabled: false))])
+
+        let item = EditProject.LensItem(id: "l1", startUs: 1_000_000, endUs: 3_000_000, follow: false)
+        var lensed = plain
+        lensed.lens = EditProject.Lens(items: [item])
+        XCTAssertEqual(EditOpDiff.ops(from: plain, to: lensed),
+                       [.lens(EditOp.Lens(from: 1, to: 3, radius: 0.12, magnification: 2, follow: false,
+                                          at: EditOp.Point(x: 0.5, y: 0.5), ring: "#FFFFFF"))])
+        var bigger = lensed
+        bigger.lens?.items[0].magnification = 3
+        bigger.lens?.items[0].radius = 0.2
+        XCTAssertEqual(EditOpDiff.ops(from: lensed, to: bigger), [.setLens(EditOp.SetLens(id: "l1", radius: 0.2, magnification: 3))])
+        var following = lensed
+        following.lens?.items[0].follow = true
+        XCTAssertEqual(EditOpDiff.ops(from: lensed, to: following), [.setLens(EditOp.SetLens(id: "l1", follow: true))])
+        XCTAssertEqual(EditOpDiff.ops(from: lensed, to: plain), [.unlens(EditOp.Unlens(id: "l1"))])
+    }
+
     /// R7 5: a blended frame hides what the other side's still shows, by the parts as they are drawn there. A part that
     /// ends 200 ms before the cut, or starts 150 ms after the incoming clip's start, is drawn up to the cut (snapMs), so
     /// the still of that side must be covered by it too.

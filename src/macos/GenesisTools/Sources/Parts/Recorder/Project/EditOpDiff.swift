@@ -66,6 +66,73 @@ enum EditOpDiff {
         if old.redactionJoins != new.redactionJoins {
             ops.append(.redactionJoins(EditOp.RedactionJoins(snapMs: (new.redactionJoins ?? .init()).snapMs)))
         }
+        // Round 4 fx-render: the Style tab's transitions, 3D tilt and lenses.
+        if old.transitions != new.transitions { ops += transitions(old.transitions, new.transitions) }
+        if old.tilt != new.tilt { ops.append(.tilt(tilt(new.tilt))) }
+        if old.lens != new.lens { ops += lenses(old.lens?.items ?? [], new.lens?.items ?? []) }
+        return ops
+    }
+
+    /// The edit-wide transition, then each join's own; a join that lost its own entry goes back to the default.
+    private static func transitions(_ a: EditProject.Transitions?, _ b: EditProject.Transitions?) -> [EditOp] {
+        let before = a ?? EditProject.Transitions(), after = b ?? EditProject.Transitions()
+        var ops: [EditOp] = []
+        if before.default != after.default {
+            ops.append(.transition(EditOp.Transition(kind: choice(after.default.kind), ms: after.default.ms)))
+        }
+        let own = before.joins ?? [:], next = after.joins ?? [:]
+        for clip in Set(own.keys).union(next.keys).sorted() where own[clip] != next[clip] {
+            if let join = next[clip] {
+                ops.append(.transition(EditOp.Transition(kind: choice(join.kind), ms: join.ms, clip: clip)))
+            } else {
+                ops.append(.transition(EditOp.Transition(kind: .default, clip: clip)))
+            }
+        }
+        return ops
+    }
+
+    private static func choice(_ kind: EditProject.TransitionKind) -> EditOp.TransitionChoice {
+        switch kind {
+        case .none: .none
+        case .crossfade: .crossfade
+        case .zoom: .zoom
+        case .blur: .blur
+        }
+    }
+
+    /// Every field, so the service's tilt is the window's; nil removes it.
+    private static func tilt(_ tilt: EditProject.Tilt?) -> EditOp.Tilt {
+        guard let tilt else { return EditOp.Tilt(enabled: false) }
+        return EditOp.Tilt(enabled: true, strength: tilt.strength, drift: tilt.drift, tiltIn: tilt.tiltIn, tiltOut: tilt.tiltOut,
+                           inMs: tilt.inMs, outMs: tilt.outMs)
+    }
+
+    /// The lenses by id: one removed is `unlens`, one added is `lens` (the service gives it its own id), one changed
+    /// is `setLens` with the fields that changed.
+    private static func lenses(_ a: [EditProject.LensItem], _ b: [EditProject.LensItem]) -> [EditOp] {
+        var ops: [EditOp] = a.filter { lens in !b.contains { $0.id == lens.id } }.map { .unlens(EditOp.Unlens(id: $0.id)) }
+        for lens in b {
+            guard let old = a.first(where: { $0.id == lens.id }) else {
+                ops.append(.lens(EditOp.Lens(from: seconds(lens.startUs), to: seconds(lens.endUs), radius: lens.radius,
+                                             magnification: lens.magnification, follow: lens.follow,
+                                             at: EditOp.Point(x: lens.x, y: lens.y), ring: lens.ring)))
+                continue
+            }
+            guard old != lens else { continue }
+            var op = EditOp.SetLens(id: lens.id)
+            if old.startUs != lens.startUs { op.from = seconds(lens.startUs) }
+            if old.endUs != lens.endUs { op.to = seconds(lens.endUs) }
+            if old.radius != lens.radius { op.radius = lens.radius }
+            if old.magnification != lens.magnification { op.magnification = lens.magnification }
+            // `at` alone also stops the lens following the cursor, so a moved lens names its follow too.
+            if (old.x, old.y) != (lens.x, lens.y) {
+                op.at = EditOp.Point(x: lens.x, y: lens.y)
+                op.follow = lens.follow
+            }
+            if old.follow != lens.follow { op.follow = lens.follow }
+            if old.ring != lens.ring { op.ring = lens.ring }
+            ops.append(.setLens(op))
+        }
         return ops
     }
 
