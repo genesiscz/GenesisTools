@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import type { Block } from "@genesiscz/utils/json2md";
 import { logger } from "@genesiscz/utils/logger";
@@ -274,7 +275,7 @@ export function registerDepthCommands(program: Command): void {
         )
         .option(
             "--split <dir>",
-            "Group one level deeper inside this folder, as in `tools ts areas`; repeatable",
+            `Group one level deeper inside this folder, as in \`${toolCommand("ts areas")}\`; repeatable`,
             collect,
             [] as string[]
         )
@@ -308,9 +309,9 @@ export function registerDepthCommands(program: Command): void {
             "Modules whose every export is a type or an interface are left out of the shallow ranking.",
             "",
             "Examples:",
-            "  tools ts depth src/utils",
-            "  tools ts depth src/utils --within src --json",
-            "  tools ts depth src/utils/ai --by file --limit 40",
+            `  ${toolCommand("ts depth", "src/utils")}`,
+            `  ${toolCommand("ts depth", "src/utils", "--within", "src", "--json")}`,
+            `  ${toolCommand("ts depth", "src/utils/ai", "--by", "file", "--limit", "40")}`,
         ].join("\n")
     );
 

@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import type { Block } from "@genesiscz/utils/json2md";
 import { formatTable } from "@genesiscz/utils/table";
@@ -312,16 +313,16 @@ export function registerStartupCommand(imports: Command): void {
         "after",
         [
             "",
-            "Each entry is measured like `tools ts imports analyze`: a fresh process imports every module",
+            `Each entry is measured like \`${toolCommand("ts imports analyze")}\`: a fresh process imports every module`,
             "with its children cached, so a module's self time is its own evaluation. A package counts as",
             "one module (`pkg:<name>`). The second table is the point: a dependency whose self time shows",
             "up in many entries leaks its cost into every tool that loads it.",
             "Exit 1 when an entry failed (a module threw, imported a missing file or never settled) or timed out.",
             "",
             "Examples:",
-            "  tools ts imports startup --tools src",
-            "  tools ts imports startup src/hub src/question/index.ts --runs 2 --json",
-            "  tools ts imports startup --tools src --min-ms 50 --md",
+            `  ${toolCommand("ts imports startup", "--tools", "src")}`,
+            `  ${toolCommand("ts imports startup", "src/hub", "src/question/index.ts", "--runs", "2", "--json")}`,
+            `  ${toolCommand("ts imports startup", "--tools", "src", "--min-ms", "50", "--md")}`,
         ].join("\n")
     );
 
