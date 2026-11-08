@@ -1494,7 +1494,7 @@ const recordingMethods = [
         positional: ["label"],
         result: z.unknown(),
         resultName: "{ atMs, label }",
-        doc: 'Marks this moment with a label ("login done"); after stop(), movie.markers() lists it at its movie time, so you can cut or zoom by what you did.',
+        doc: 'Marks this moment with a label ("login done"); after stop(), movie.markers() lists it at its movie time (from the movie\'s first frame, without paused time; a mark made before the first frame is at 0), so you can cut or zoom by what you did.',
         effect: "reversible",
     }),
     defineMethod({

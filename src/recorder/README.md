@@ -152,6 +152,11 @@ Every time is in microseconds of the SOURCE movie, so a cut never moves a zoom.
   and the `range` op's action `marker` (at the range's start), which the editor's range popover sends as Add Marker.
   `markers()` and `tools recorder markers` list both kinds (an edit marker with its `id`); the chapters and the marks
   lane show both.
+  - A recording's own markers (`settings.markers` in recording.json, `{ atMs, label }`) are in movie time: seconds of
+    screen.mp4 from its first frame, with the paused time left out. A mark made before the first frame is at 0 (at
+    a piece's start after a resume). A movie recording since 2026-11-08 says so with `settings.markerClock: "movie"`.
+    An older one has no such key: its markers counted from when the recorder reported its first frame, about 1 s
+    later, so they sit up to 1.4 s early. Readers take both as they are.
 - `texts` (optional): lines of text over the picture (a title, a step's name) from `startUs` to `endUs`: `text`,
   `x`/`y` its centre (the centre of its block) as 0 to 1 of the CANVAS (so it stays put through a zoom; 0.5, 0.12 by
   default), `size` 0.02 to 0.15 of the short side (0.055), `style` `plate` or `plain`. Each fades in and out over
