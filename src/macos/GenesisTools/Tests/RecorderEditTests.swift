@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import GenesisKit
 import SwiftUI
 import Vision
 import XCTest
@@ -215,6 +216,8 @@ final class RecorderScreenFindViewTests: XCTestCase {
     }
 
     func testTheFindTabListsEachMomentWithItsDisplayAndAClickGoesThere() throws {
+        // A frames recording: its manifest lists frames, so the tab offers the search (R3-RX2).
+        try Data(#"{"frames":[{"file":"frames/0001.jpg","t":0}]}"#.utf8).write(to: folder.appendingPathComponent("recording.json"))
         let model = model()
         let hits = try Self.hits()
         model.displayPlan = DisplayPlan(policy: "most-change", windowSec: 10,
@@ -289,14 +292,74 @@ final class RecorderScreenFindViewTests: XCTestCase {
         String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
     }
 
+    // Regression test: deep test 2026-11-07 R2-RE5 — a window movie (no cursor track) offered a Click rings switch that
+    // could draw nothing, right above the note that says so.
+    func testAMovieWithoutACursorTrackOffersNoClickRingsSwitch() throws {
+        let model = model()
+        XCTAssertNil(model.cursor)
+        let image = try EditorShots.write(CursorInspector(model: model).padding(18), name: "cursor-no-track", width: 300)
+        let text = try EditorShots.text(image).lowercased()
+        XCTAssertTrue(text.contains("no cursor track"), text)
+        XCTAssertFalse(text.contains("click rings"), "a switch that cannot draw anything: \(text)")
+    }
+
+    // Regression test: deep test 2026-11-07 R3-RX5. With one clip, Delete Clip was greyed with no word of why.
+    func testTheOnlyClipSaysWhyItCannotBeDeleted() throws {
+        let model = model()
+        model.selection = .clip(try XCTUnwrap(model.project.clips.first?.id))
+        let image = try EditorShots.write(ClipInspector(model: model).padding(18), name: "clip-only-one", width: 300)
+        let text = try EditorShots.text(image).lowercased()
+        XCTAssertTrue(text.contains("the only clip stays"), text)
+    }
+
+    // Regression test: deep test 2026-11-07 R3-RX6. A selected shape's row read "Starts 00:08.0 to 00:09.2" (a range under
+    // the name of its start) beside a button cut to "Start at Playh…", over a native segmented control.
+    func testASelectedShapeNamesItsRangeAndItsWholeButton() throws {
+        let model = model()
+        let shape = EditProject.Shape(id: "s1", startUs: 1_000_000, endUs: 2_200_000, kind: .circle, x1: 0.2, y1: 0.2, x2: 0.4, y2: 0.4)
+        model.change { $0.shapes = [shape] }
+        model.gesture?.commit?.cancel()
+        model.selectedShape = "s1"
+        let image = try EditorShots.write(ShapeRow(model: model, shape: shape).padding(18), name: "shape-selected", width: 300)
+        let text = try EditorShots.text(image).lowercased()
+        for word in ["shows", "start at playhead", "draws on", "fades in", "at once"] {
+            XCTAssertTrue(text.contains(word), "\(word) missing from: \(text)")
+        }
+        XCTAssertFalse(text.contains("starts"), text)
+    }
+
     func testAMovieWithoutARecordingSaysWhyItHasNoScreenText() throws {
         let model = model()
         model.screenQuery = "token"
         model.screenSearchFailure = EditorModel.screenSearchProblem(stderr: "/x has no recording.json; make the proxy first\n", status: 1)
         XCTAssertTrue(model.screenSearchFailure?.hasPrefix("This movie has no screen text.") == true)
         XCTAssertEqual(EditorModel.screenSearchProblem(stderr: "boom\nthe last line\n", status: 2), "The search did not run: the last line")
+        // Regression test: deep test 2026-11-07 R2-RE6 — a movie recording's refusal reads as the plain sentence too.
+        XCTAssertEqual(EditorModel.screenSearchProblem(stderr: "/x has no screen text: only a frames recording …\n", status: 1),
+                       "This movie has no screen text. Only a frames recording or a meeting keeps the text it read off its screens.")
         let image = try EditorShots.write(ScreenFindInspector(model: model).padding(18), name: "find-on-screen-no-text", width: 300)
         XCTAssertTrue(try EditorShots.text(image).lowercased().contains("no screen text"))
+    }
+
+    // Regression test: deep test 2026-11-07 R3-RX2. On a movie recording the Find tab offered a search box and "Type a
+    // word you saw on the screen", though a movie keeps no screen text: every search could only fail. The tab now says so
+    // at once, with no box.
+    func testAMovieRecordingSaysItHasNoScreenTextBeforeAnySearch() throws {
+        let manifest = folder.appendingPathComponent("recording.json")
+        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder), false, "no recording.json: find-screen refuses it")
+        try Data(#"{"settings":{"kind":"video"},"frames":[]}"#.utf8).write(to: manifest)
+        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder), false, "a movie recording lists no frames")
+        try Data(#"{"frames":[{"file":"frames/0001.jpg","t":0}]}"#.utf8).write(to: manifest)
+        XCTAssertEqual(EditorModel.hasScreenText(recordingFolder: folder), true)
+        try Data("not json".utf8).write(to: manifest)
+        XCTAssertNil(EditorModel.hasScreenText(recordingFolder: folder), "unreadable: keep the box and let the door answer")
+
+        let model = model()
+        model.screenTextKnown = false
+        let image = try EditorShots.write(ScreenFindInspector(model: model).padding(18), name: "find-on-screen-movie", width: 300)
+        let text = try EditorShots.text(image).lowercased()
+        XCTAssertTrue(text.contains("no screen text"), text)
+        XCTAssertFalse(text.contains("a name, an error"), "no search box that can only fail: \(text)")
     }
 }
 
@@ -349,6 +412,57 @@ final class RecorderEditTests: XCTestCase {
             XCTAssertEqual(RecordingMovie.own(in: folder)?.lastPathComponent, item["movie"] as? String, name)
             XCTAssertEqual(RecordingMovie.shareable(in: folder)?.lastPathComponent, item["shareable"] as? String, name)
         }
+    }
+
+    /// The defect: a search hit showed "00:17 marker one" under the card, but VoiceOver read only "title, 00:31, not
+    /// edited", so it never said why the card matched (review 2026-11-06).
+    func testALibraryCardSaysItsSearchHitToVoiceOver() {
+        let folder = URL(fileURLWithPath: "/tmp/library/video-1")
+        var item = RecorderMenu.Recent(folder: folder, title: "Demo", started: .distantPast, thumbnail: nil, hasMovie: true)
+        item.durationMs = 31_000
+        let hit = LibraryModel.SpokenHit(at: 17, text: "marker one", marker: true, more: [21, 25])
+        XCTAssertEqual(LibraryCard.accessibilityLabel(item, spoken: nil), "Demo, 00:31, not edited")
+        XCTAssertEqual(LibraryCard.accessibilityLabel(item, spoken: hit),
+                       "Demo, 00:31, not edited, marker at 00:17: marker one, 2 more matches")
+        item.failure = "cannot record the window"
+        XCTAssertEqual(LibraryCard.accessibilityLabel(item, spoken: nil), "Demo, did not record: cannot record the window")
+    }
+
+    /// The defect: a recording that still ran showed in Recent and in the library as a finished frames recording, with
+    /// Open in Editor, Rename and Move to Trash (round 2, 2026-11-07). Until it ends it offers Show in Finder only.
+    @MainActor
+    func testARecordingThatStillRunsOffersShowInFinderOnly() throws {
+        let library = FileManager.default.temporaryDirectory.appendingPathComponent("library-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: library) }
+        let running = library.appendingPathComponent("video-2026-11-07_00-40-24-85c04043")
+        try FileManager.default.createDirectory(at: running, withIntermediateDirectories: true)
+        try Data(#"{"title":"Running","startedAt":"2026-11-06T23:40:24.000Z","frames":[],"settings":{"kind":"video"}}"#.utf8)
+            .write(to: running.appendingPathComponent("recording.json"))
+
+        let item = try XCTUnwrap(RecorderMenu.readRecents(library, liveFolders: [running.standardizedFileURL.path]).first)
+        XCTAssertTrue(item.recording)
+        XCTAssertEqual(RecordingAction.offered(for: item), [.reveal])
+        XCTAssertEqual(LibraryCard.accessibilityLabel(item, spoken: nil), "Running, recording now")
+        XCTAssertFalse(try XCTUnwrap(RecorderMenu.readRecents(library).first).recording, "no live entry: it ended")
+    }
+
+    /// The defect: a start that failed left a card with a "Frames" badge and no reason; it now says it failed and why.
+    func testAFailedRecordingWithNoMovieReadsAsFailedWithItsFirstWarning() throws {
+        let library = FileManager.default.temporaryDirectory.appendingPathComponent("library-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: library) }
+        let failed = library.appendingPathComponent("video-2026-11-06_20-55-16-57cdab2d")
+        let frames = library.appendingPathComponent("frames-2026-11-06_20-56-00-1a2b3c4d")
+        for folder in [failed, frames] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        try Data(#"{"title":"Window","startedAt":"2026-11-06T19:55:16.000Z","frames":[],"settings":{"kind":"video","outcome":"failed"},"warnings":["cannot record the window"]}"#.utf8)
+            .write(to: failed.appendingPathComponent("recording.json"))
+        try Data(#"{"title":"Frames","startedAt":"2026-11-06T19:56:00.000Z","frames":[],"settings":{"kind":"frames"},"warnings":[]}"#.utf8)
+            .write(to: frames.appendingPathComponent("recording.json"))
+
+        let items = RecorderMenu.readRecents(library)
+        XCTAssertEqual(items.first { $0.title == "Window" }?.failure, "cannot record the window")
+        XCTAssertNil(items.first { $0.title == "Frames" }?.failure)
     }
 
     /// The defect: a meeting recording with only proxy.mp4 was offered Copy Movie and the click found no movie.
@@ -616,6 +730,72 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(ZoomCurve.easeOut(1), 1, accuracy: 0.0001)
     }
 
+    /// Round 3 (2026-11-08): the release starts and lands softly. It used to leave at full speed (about a fifth of the
+    /// scale in its first 60 fps frame), which read as a snap at 300 to 500 ms; the snap before that (held, then out in
+    /// the last milliseconds) must not come back either.
+    /// Round 3 (2026-11-08): a voiceover on the intro or the end card plays over that card in the export, `atUs` from
+    /// the card's first frame; the shared golden file (card-voiceovers.json) holds the places TypeScript computes too.
+    func testCardVoiceoversPlayOverTheirCardsWhereTheGoldenFileSays() throws {
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: SharedEditorFixture.url("card-voiceovers.json"))) as? [String: Any])
+        let edit = try JSONSerialization.data(withJSONObject: try XCTUnwrap(root["edit"]))
+        let project = try JSONDecoder().decode(EditProject.self, from: edit)
+        XCTAssertEqual(project.audio.voiceovers?.map(\.card), [.intro, nil, nil, .end])
+        let spans = try XCTUnwrap(root["spans"] as? [[String: Any]])
+        let expected = spans.map { span in
+            "\(span["id"] ?? "") \(span["startUs"] ?? "") \(span["playUs"] ?? "")"
+        }
+        let placed = VoiceoverMix.exportPlacements(project, cards: CardSpans(project: project, enabled: true))
+        XCTAssertEqual(placed.map { "\($0.clip.id) \($0.outUs) \($0.playUs)" }, expected)
+        // The preview has no cards: only the movie's own lines play there, at their output times.
+        XCTAssertEqual(VoiceoverMix.placements(project).map(\.clip.id), ["vmovie", "vlate"])
+        let preview = VoiceoverMix.exportPlacements(project, cards: CardSpans(project: project, enabled: false))
+        XCTAssertEqual(preview.map { "\($0.clip.id) \($0.outUs)" }, ["vmovie 1000000", "vlate 7500000"])
+    }
+
+    func testTheZoomLeavesSoftlyAndLandsSoftlyOnTheWholeFrame() {
+        for easeMs in [300, 500] {
+            let endUs: Int64 = 3_000_000
+            let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: endUs, scale: 2, easeInMs: 500, easeOutMs: easeMs)
+            let releaseUs = endUs - Int64(easeMs) * 1000
+            let scale = { (us: Int64) in ZoomCurve.view(atSource: us, zooms: [zoom], cursor: nil).scale }
+            // 50 ms before the end the view is nearly whole again, not still zoomed and about to snap.
+            XCTAssertLessThan(scale(endUs - 50_000), 1.08, "\(easeMs) ms")
+            // Half way through the release it is half way out.
+            XCTAssertEqual(scale(releaseUs + Int64(easeMs) * 500), 1.5, accuracy: 0.05, "\(easeMs) ms")
+            // The first and the last 60 fps frame of the release move the view a little; no frame moves it much.
+            XCTAssertLessThan(abs(scale(releaseUs + 16_667) - scale(releaseUs)), 0.03, "\(easeMs) ms: a soft start")
+            XCTAssertLessThan(abs(scale(endUs - 16_667) - scale(endUs - 1)), 0.03, "\(easeMs) ms: a soft landing")
+            var previous = scale(releaseUs)
+            for us in stride(from: releaseUs + 16_667, to: endUs, by: 16_667) {
+                let now = scale(Int64(us))
+                XCTAssertLessThan(abs(now - previous), 0.1, "\(easeMs) ms at \(us) µs")
+                XCTAssertLessThanOrEqual(now, previous + 0.0001, "\(easeMs) ms at \(us) µs: the release only goes out")
+                previous = now
+            }
+        }
+    }
+
+    func testTouchingZoomsNeverShowTheWholeFrameBetweenThem() {
+        // Two zooms that touch, as a recording's edit had at 5.30 s: the picture blinked out for one frame.
+        let first = EditProject.Zoom(id: "a", startUs: 3_302_578, endUs: 5_302_578, scale: 1.5, easeInMs: 450, easeOutMs: 450)
+        let second = EditProject.Zoom(id: "b", startUs: 5_302_578, endUs: 7_302_578, scale: 1.5, easeInMs: 450, easeOutMs: 450)
+        for us in stride(from: 4_000_000, through: 6_500_000, by: 16_667) {
+            let view = ZoomCurve.view(atSource: Int64(us), zooms: [second, first], cursor: nil)
+            XCTAssertEqual(view.scale, 1.5, accuracy: 0.0001, "at \(us) µs")
+        }
+        // A short gap glides too: from one focus to the other, smoothly, without going back to the whole frame.
+        let left = EditProject.Zoom(id: "l", startUs: 0, endUs: 2_000_000, scale: 2, focusX: 0.25, focusY: 0.5)
+        let right = EditProject.Zoom(id: "r", startUs: 2_300_000, endUs: 4_000_000, scale: 2, focusX: 0.75, focusY: 0.5)
+        var previous = ZoomCurve.view(atSource: 1_400_000, zooms: [left, right], cursor: nil)
+        for us in stride(from: 1_416_667, through: 2_900_000, by: 16_667) {
+            let view = ZoomCurve.view(atSource: Int64(us), zooms: [left, right], cursor: nil)
+            XCTAssertEqual(view.scale, 2, accuracy: 0.0001, "at \(us) µs")
+            XCTAssertLessThan(abs(view.centerX - previous.centerX), 0.05, "at \(us) µs")
+            previous = view
+        }
+        XCTAssertEqual(ZoomCurve.view(atSource: 3_000_000, zooms: [left, right], cursor: nil).centerX, 0.75, accuracy: 0.0001)
+    }
+
     func testAFollowZoomTracksTheSmoothedCursor() {
         let track = CursorTrack(samples: (0...40).map { CursorTrack.Sample(ms: Double($0) * 50, x: 0.3, y: 0.6, click: nil) })
         let zoom = EditProject.Zoom(id: "z", startUs: 0, endUs: 2_000_000, scale: 2, mode: .follow, easeInMs: 0, easeOutMs: 0)
@@ -705,6 +885,11 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(EditRenderer.exportFps(nominal: 29.97), 30)
         XCTAssertEqual(EditRenderer.exportFps(nominal: 23.976), 24)
         XCTAssertEqual(EditRenderer.exportFps(nominal: 0), 30)
+        // A meeting's frames proxy (185 frames in 37 minutes) and a mostly still recording export at 30, never at 0.
+        XCTAssertEqual(EditRenderer.exportFps(nominal: 0.083), 30)
+        XCTAssertEqual(EditRenderer.exportFps(nominal: 0.4), 30)
+        XCTAssertEqual(EditRenderer.exportFps(nominal: 8), 30)
+        XCTAssertEqual(EditRenderer.exportFps(nominal: 25), 25)
     }
 
     func testH264SizeFitsLevelLimitsAtTheExportRate() {
@@ -864,9 +1049,9 @@ final class RecorderEditTests: XCTestCase {
             return pixel[0]
         }
         XCTAssertGreaterThan(gray(100, 10), 240, "inside the spotlight stays as it was")
-        XCTAssertLessThan(gray(20, 10), 160, "outside it is dimmed")
+        XCTAssertLessThan(gray(20, 10), 215, "outside it is dimmed (R8 11: the default dim is 0.5)")
         XCTAssertGreaterThan(gray(20, 10), 60, "dimmed, not black")
-        XCTAssertLessThan(gray(100, 80), 160)
+        XCTAssertLessThan(gray(100, 80), 215)
     }
 
     func testTwoSpotlightsBothStayLitAndTheRestDimsOnce() {
@@ -986,6 +1171,61 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(EditorModel.issues(fromCheck: Data("not json".utf8)))
     }
 
+    // Regression test: deep test 2026-11-06 RE5 — Fix All said "Fixed" and Lengthen said "done" for edits that changed nothing.
+    func testFixAndLengthenSayNothingChangedWhenTheEditStayedTheSame() {
+        XCTAssertEqual(EditorModel.fixAllNotice(fixed: 0), "Nothing to fix: no fix the check offers changes the edit.")
+        XCTAssertEqual(EditorModel.fixAllNotice(fixed: 2), "Fixed 2 things. ⌘Z undoes them all.")
+        XCTAssertEqual(EditorModel.fixAllNotice(fixed: nil), "Fixed. ⌘Z undoes it.")
+        XCTAssertEqual(EditorModel.actionNotice(label: "Lengthen", changed: false), "Lengthen changed nothing.")
+        XCTAssertEqual(EditorModel.actionNotice(label: "Lengthen", changed: true), "Lengthen: done. ⌘Z undoes it.")
+    }
+
+    // Regression test: deep test 2026-11-06 RE12 — an accessibility write put the words into "Find words", but the
+    // field's binding never saw them, so Replace All stayed disabled for an agent.
+    func testAnAccessibilityWriteIntoTheFindFieldReachesItsBinding() throws {
+        var text = ""
+        let host = NSHostingView(rootView: AgentTextField("Find words", text: Binding(get: { text }, set: { text = $0 })))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 30), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        func field(in view: NSView) -> NSTextField? {
+            if let field = view as? NSTextField { return field }
+            return view.subviews.lazy.compactMap { field(in: $0) }.first
+        }
+        let found = try XCTUnwrap(field(in: host), "the control is an AppKit text field")
+        found.setAccessibilityValue("misheard")
+        XCTAssertEqual(text, "misheard", "the write reaches the binding, so Replace All can enable")
+        XCTAssertEqual(found.accessibilityLabel(), "Find words", "VoiceOver reads its placeholder as its name")
+    }
+
+    // Regression test: deep test 2026-11-07 R2-RE4 — an agent's write into Find on Screen never searched, because the
+    // SwiftUI field's binding never saw it. Its AgentTextField also has to take the keyboard when the tab opens and clear
+    // on Esc, as the SwiftUI field did.
+    func testAnAgentTextFieldTakesTheKeyboardWhenAskedAndRunsItsCancelOnEsc() throws {
+        var text = "old"
+        var cancelled = 0
+        let host = NSHostingView(rootView: AgentTextField("A name", text: Binding(get: { text }, set: { text = $0 }),
+                                                          focusOnAppear: true, onCancel: { cancelled += 1 }))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 30), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        func field(in view: NSView) -> NSTextField? {
+            if let field = view as? NSTextField { return field }
+            return view.subviews.lazy.compactMap { field(in: $0) }.first
+        }
+        let found = try XCTUnwrap(field(in: host))
+        let editor = window.firstResponder as? NSTextView
+        XCTAssertTrue(window.firstResponder === found || editor?.delegate === found, "the field has the keyboard")
+
+        let delegate = try XCTUnwrap(found.delegate)
+        let handled = delegate.control?(found, textView: NSTextView(), doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+        XCTAssertEqual(handled, true, "Esc is the field's")
+        XCTAssertEqual(cancelled, 1)
+    }
+
     func testAnOutsideEditIsSaidInWordsWithWhatToFlashAndWhere() throws {
         let before = project([.init(id: "c", fromUs: 0, toUs: 10_000_000)])
         var after = before
@@ -1003,13 +1243,81 @@ final class RecorderEditTests: XCTestCase {
         var moved = after
         moved.texts = [EditProject.TextNote(id: "t1", startUs: 1_200_000, endUs: 4_200_000, text: "Hello")]
         let move = try XCTUnwrap(EditDiff.describe(old: after, new: moved, by: "agent", at: Date()))
-        XCTAssertEqual(move.lines.map(\.text), ["Moved the text “Hello” to 00:01.2 to 00:04.2"])
+        // Regression test: deep test 2026-11-06 RE14 (live re-check) — "Trimmed a circle to 00:19.9 to 00:20.0" read as
+        // two targets once a range said "to".
+        XCTAssertEqual(move.lines.map(\.text), ["Moved the text “Hello”, now 00:01.2 to 00:04.2"])
         XCTAssertFalse(move.touchesPicture)
+        var trimmed = moved
+        trimmed.texts = [EditProject.TextNote(id: "t1", startUs: 1_200_000, endUs: 2_000_000, text: "Hello")]
+        XCTAssertEqual(EditDiff.describe(old: moved, new: trimmed, by: "agent", at: Date())?.lines.map(\.text),
+                       ["Trimmed the text “Hello”, now 00:01.2 to 00:02.0"])
 
         var removed = moved
         removed.texts = []
         XCTAssertEqual(EditDiff.describe(old: moved, new: removed, by: "agent", at: Date())?.lines.map(\.text), ["Removed the text “Hello”"])
         XCTAssertNil(EditDiff.describe(old: removed, new: removed, by: "agent", at: Date()))
+    }
+
+    // Regression test: deep test 2026-11-06 RE10 — an outside undo read "Added a spotlight" twice, the captions and the
+    // cursor shown again read "Changed", an agent's marker read "Changed the edit", and nothing said it was an undo.
+    func testAnOutsideChangeNamesMarkersRepeatsWhatItShowedAndAnUndo() throws {
+        var before = project([.init(id: "c", fromUs: 0, toUs: 10_000_000)])
+        before.captions = EditProject.Captions()
+        before.captions?.show = false
+        before.cursor = EditProject.Cursor()
+        before.cursor?.show = false
+        var after = before
+        after.redactions = ["r1", "r2"].map {
+            EditProject.Redaction(id: $0, startUs: 1_000_000, endUs: 2_000_000, x: 0.4, y: 0.4, width: 0.2, height: 0.2,
+                                  style: .spotlight, lane: nil)
+        }
+        after.markers = [EditProject.Marker(id: "m1", atUs: 5_000_000, label: "Intro")]
+        after.captions?.show = true
+        after.cursor?.show = true
+
+        let undone = try XCTUnwrap(EditDiff.describe(old: before, new: after, by: "agent", at: Date(), action: "undo"))
+        XCTAssertEqual(undone.lines.map(\.text),
+                       ["Added 2 spotlights", "Added the marker “Intro” at 00:05.0", "Showed the captions", "Showed the cursor"])
+        XCTAssertEqual(undone.title, "Undo by agent")
+        XCTAssertEqual(undone.hint, "⇧⌘Z in this window does it again")
+
+        let edited = try XCTUnwrap(EditDiff.describe(old: after, new: before, by: "agent", at: Date()))
+        XCTAssertEqual(edited.lines.map(\.text),
+                       ["Removed 2 spotlights", "Removed the marker “Intro”", "Hid the captions", "Hid the cursor"])
+        XCTAssertEqual(edited.title, "agent")
+        XCTAssertEqual(edited.hint, "⌘Z puts it back")
+    }
+
+    // Regression test: deep test 2026-11-07 R2-RE3 — an undo of Replace All (three caption lines fixed) said "Turned
+    // the transcript fixes off", as if a switch had changed.
+    func testCaptionLineFixesAreCountedAndNamedByWhatHappenedToEachLine() throws {
+        let before = project([.init(id: "c", fromUs: 0, toUs: 10_000_000)])
+        var after = before
+        after.transcript = EditProject.TranscriptSettings(fixes: ["1000": "Welcome", "4000": "The tour", "8000": ""])
+
+        let fixed = try XCTUnwrap(EditDiff.describe(old: before, new: after, by: "agent", at: Date()))
+        XCTAssertEqual(fixed.lines.map(\.text), ["Fixed 2 caption lines", "Hid 1 caption line"])
+
+        let undone = try XCTUnwrap(EditDiff.describe(old: after, new: before, by: "agent", at: Date(), action: "undo"))
+        XCTAssertEqual(undone.lines.map(\.text), ["Took back the fixes of 3 caption lines"])
+
+        var changed = after
+        changed.transcript?.fixes["1000"] = "Hello"
+        XCTAssertEqual(EditDiff.describe(old: after, new: changed, by: "agent", at: Date())?.lines.map(\.text),
+                       ["Fixed 1 caption line"])
+    }
+
+    // Regression test: deep test 2026-11-06 RE13 — the subtitle segments' identifiers read
+    // "recorder.export.subtitles.optional(GenesisToolsRecorder-EditProject-SubtitleFormat-srt)".
+    func testAnOptionalSegmentIdIsSpelledAsItsValueAndNilAsNone() {
+        XCTAssertEqual(GenAccessibilityID.suffix(Optional(EditProject.SubtitleFormat.srt)), "srt")
+        XCTAssertEqual(GenAccessibilityID.suffix(Optional<EditProject.SubtitleFormat>.none), "none")
+    }
+
+    // Regression test: deep test 2026-11-06 RE14 — "WEBM" beside "WebVTT", and en dashes in the time ranges.
+    func testFormatNamesAndTimeRangesReadAsWords() {
+        XCTAssertEqual(EditProject.ExportFormat.allCases.map(\.title), ["MP4", "GIF", "WebM"])
+        XCTAssertEqual(formatClockRange(3_000_000, 8_000_000), "00:03.0 to 00:08.0")
     }
 
     func testSelectNextAndPreviousWalkTheItemsInTimeOrder() {
@@ -1029,6 +1337,13 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertNil(EditorModel.adjacent(in: items, current: .zoom("z1"), playheadUs: 0, forward: false))
     }
 
+
+    // Regression test: deep test 2026-11-06 RE9 — with "Include audio" off the export still carried the click ticks.
+    func testNoClickTicksWhileTheMoviesAudioIsLeftOut() {
+        var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 100, height: 100, cursor: nil, recording: nil)
+        project.audio.include = false
+        XCTAssertEqual(ClickSound.times(clicks: [1_000_000, 5_000_000], project: project), [])
+    }
 
     func testClickTicksPlayAtTheirOutputTimesOneTickApart() {
         var project = EditProject.whole(video: "/tmp/x.mp4", durationUs: 10_000_000, width: 100, height: 100, cursor: nil, recording: nil)
@@ -1112,6 +1427,54 @@ final class RecorderEditTests: XCTestCase {
         XCTAssertEqual(part.clips.map { [$0.fromUs, $0.toUs] }, [[1_000_000, 2_000_000], [3_000_000, 6_000_000], [6_000_000, 7_000_000]])
         XCTAssertEqual(part.outputDurationUs, 4_500_000)
         XCTAssertNil(TimelineMap.part(project, fromOut: 7_000_000, toOut: 9_000_000))
+    }
+
+    // Regression test: deep test 2026-11-07 R3-RX1. A movie the renderer could not open left the preview black with a
+    // pill that read "The preview could not be built: Cannot Open": no cause, no next step. Each cause now has its own
+    // sentence, and AVFoundation's own words go to Details only.
+    func testAPreviewThatCannotReadItsMovieSaysWhyInWords() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("preview-problem-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("screen.mp4")
+        try Data(repeating: 7, count: 4096).write(to: movie)
+        let project = EditProject(source: .init(video: movie.path, durationUs: 1_000_000, width: 100, height: 100),
+                                  clips: [.init(id: "c", fromUs: 0, toUs: 1_000_000)])
+        var thrown: Error?
+        do {
+            _ = try await EditRenderer.render(project: project, asset: AVURLAsset(url: movie), zoom: ZoomState(project: project, cursor: nil),
+                                              maxHeight: 720)
+        } catch { thrown = error }
+        let error = try XCTUnwrap(thrown, "a file of junk bytes is no movie")
+        let problem = EditorModel.previewProblem(error, video: movie.path, fileExists: true)
+        XCTAssertEqual(problem.title, "This movie cannot be read")
+        XCTAssertTrue(problem.advice.contains("screen.mp4 may be cut short"), problem.advice)
+        XCTAssertFalse(problem.title.contains(error.localizedDescription), "the system's words stay in Details")
+        XCTAssertTrue(problem.detail.contains(error.localizedDescription) && problem.detail.contains(movie.path), problem.detail)
+
+        XCTAssertEqual(EditorModel.previewProblem(error, video: movie.path, fileExists: false).title, "The movie file is missing")
+        XCTAssertEqual(EditorModel.previewProblem(EditRenderer.RenderError.emptyEdit, video: movie.path, fileExists: true).title,
+                       "The edit keeps nothing of the movie")
+        XCTAssertEqual(EditorModel.previewProblem(EditRenderer.RenderError.noVideoTrack(movie.path), video: movie.path, fileExists: true).title,
+                       "This movie has no picture")
+        XCTAssertEqual(EditorModel.previewProblem(EditRenderer.RenderError.badComposition("frame duration inf s"), video: movie.path,
+                                                  fileExists: true).title, "The preview cannot show this movie")
+    }
+
+    // Regression test: deep test 2026-11-07 R3-RX3. VoiceOver read the clock as three texts ("00:00.0", "/", "00:44.8"),
+    // and the playhead as "Playhead at 00:00.0" with no way to move it; its knob took presses on 13 × 16 pt only.
+    func testThePlayheadAndTheClockReadAsOneTimeOfTheLength() {
+        XCTAssertEqual(PlayheadView.spoken(12_500_000, of: 44_800_000), "00:12.5 of 00:44.8")
+        XCTAssertGreaterThanOrEqual(PlayheadView.grip.width, 22)
+        XCTAssertGreaterThanOrEqual(PlayheadView.grip.height, 22)
+    }
+
+    // Regression test: deep test 2026-11-07 R3-RX7. VoiceOver read the marks lane as "Marks: 0 markers, 0 comments, 4
+    // caption lines, 0 shortcuts".
+    func testTheMarksLaneNamesOnlyWhatItHolds() {
+        XCTAssertEqual(TimelineView.marksLabel(markers: 0, comments: 0, captions: 4, shortcuts: 0), "Marks: 4 caption lines")
+        XCTAssertEqual(TimelineView.marksLabel(markers: 1, comments: 2, captions: 0, shortcuts: 1), "Marks: 1 marker, 2 comments, 1 shortcut")
+        XCTAssertEqual(TimelineView.marksLabel(markers: 0, comments: 0, captions: 0, shortcuts: 0), "Marks: none")
     }
 
     func testRenderSizeIsEvenAndCapped() {

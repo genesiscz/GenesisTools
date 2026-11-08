@@ -20,6 +20,8 @@ export interface OcrOptions {
      * which may hold no text turns it off, so an empty crop costs one read, not two.
      */
     fastFallback?: boolean;
+    /** How long one Vision request may take (darwinkit's own deadline, 60 s, when absent); a frame read, not tiles. */
+    timeoutMs?: number;
 }
 
 /**
@@ -51,12 +53,20 @@ function isEmptyOcrResult(result: OcrResult): boolean {
     return result.blocks.length === 0;
 }
 
-async function callVisionOcr(imagePath: string, languages: string[], level: OcrLevel): Promise<OcrResult> {
-    return getDarwinKit().vision.ocr({
-        path: imagePath,
-        languages,
-        level,
-    });
+async function callVisionOcr(
+    imagePath: string,
+    languages: string[],
+    level: OcrLevel,
+    timeoutMs?: number
+): Promise<OcrResult> {
+    return getDarwinKit().vision.ocr(
+        {
+            path: imagePath,
+            languages,
+            level,
+        },
+        timeoutMs ? { timeout: timeoutMs } : undefined
+    );
 }
 
 async function getImageDimensions(imagePath: string): Promise<ImageDimensions | null> {
@@ -299,11 +309,11 @@ export async function recognizeText(imagePath: string, options: OcrOptions = {})
         }
     }
 
-    const result = await callVisionOcr(imagePath, languages, level);
+    const result = await callVisionOcr(imagePath, languages, level, options.timeoutMs);
 
     if (level === "accurate" && options.fastFallback !== false && isEmptyOcrResult(result)) {
         logger.debug({ imagePath }, "darwin-ocr: accurate empty, falling back to fast");
-        return callVisionOcr(imagePath, languages, "fast");
+        return callVisionOcr(imagePath, languages, "fast", options.timeoutMs);
     }
 
     return result;

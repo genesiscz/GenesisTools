@@ -20,12 +20,16 @@ final class ProjectStore {
     enum OpenError: LocalizedError {
         case missing(String)
         case noMovie(String)
+        case unplayable(String, String)
+        case lostMovie(String)
 
         var errorDescription: String? {
             switch self {
             case let .missing(path): "nothing at \(path)"
             case let .noMovie(path):
                 "\(path) has no movie (screen.mp4). A frames-only recording opens after `tools recorder proxy \(path)` makes one."
+            case let .unplayable(path, why): "\(path) is not a movie the editor can play (\(why))"
+            case let .lostMovie(path): "\(path) is missing: recording.json names it, but the file was moved or removed"
             }
         }
     }
@@ -48,7 +52,10 @@ final class ProjectStore {
         }
         let video: URL
         if isFolder.boolValue {
-            guard let movie = RecordingMovie.own(in: target) else { throw OpenError.noMovie(target.path) }
+            guard let movie = RecordingMovie.own(in: target) else {
+                if let lost = recordedMovieName(in: target) { throw OpenError.lostMovie(target.appendingPathComponent(lost).path) }
+                throw OpenError.noMovie(target.path)
+            }
             video = movie
         } else {
             video = target
@@ -60,13 +67,37 @@ final class ProjectStore {
         return (projectURL, try await newProject(video: video), false)
     }
 
+    /// The movie a movie recording's recording.json names (`settings.video.file`); nil for a frames recording. A proxy
+    /// cannot help such a folder, so the error must not offer one (the TypeScript side reads the same key).
+    nonisolated static func recordedMovieName(in folder: URL) -> String? {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("recording.json")),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let file = ((root["settings"] as? [String: Any])?["video"] as? [String: Any])?["file"] as? String,
+              !file.isEmpty else { return nil }
+        return URL(fileURLWithPath: file).lastPathComponent
+    }
+
     nonisolated static func newProject(video: URL) async throws -> EditProject {
+        let bytes = (try? FileManager.default.attributesOfItem(atPath: video.path)[.size] as? Int) ?? nil
+        guard let bytes, bytes > 0 else { throw OpenError.unplayable(video.path, "the file is empty") }
         let asset = AVURLAsset(url: video)
-        let duration = try await asset.load(.duration)
+        let duration: CMTime
+        do {
+            duration = try await asset.load(.duration)
+        } catch {
+            throw OpenError.unplayable(video.path, "AVFoundation cannot read it: \(error.localizedDescription); a recording that did not finish has no index")
+        }
+        // An unfinished file can report an indefinite duration, whose seconds are NaN: Int64(NaN) traps.
+        guard duration.isNumeric, duration.seconds.isFinite, duration.seconds > 0 else {
+            throw OpenError.unplayable(video.path, "its length is unknown or 0")
+        }
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw EditRenderer.RenderError.noVideoTrack(video.path)
         }
         let size = try await track.load(.naturalSize)
+        guard size.width.isFinite, size.height.isFinite, abs(size.width) >= 2, abs(size.height) >= 2 else {
+            throw OpenError.unplayable(video.path, "its picture is \(size.width)×\(size.height)")
+        }
         let folder = video.deletingLastPathComponent()
         let cursor = folder.appendingPathComponent("cursor.jsonl")
         let isRecording = FileManager.default.fileExists(atPath: folder.appendingPathComponent("recording.json").path)

@@ -272,15 +272,17 @@ export const recorderApi = defineApi({
     id: "recorder",
     global: "recorder",
     title: "Screen recorder",
-    summary: "Start, attach to and control screen recordings over the live recording socket.",
+    summary:
+        "Start, attach to and control frames recordings (PNG frames for editor) over the live recording socket; for a movie to cut and export, use movies.record.",
     methods: [
         defineMethod({
             name: "start",
             params: recorderStartSchema,
             result: z.unknown(),
             resultName: "Recording",
-            doc: 'Starts a library recording (frames of the chosen displays, sound when asked) and returns its handle. Frames default to the recorder\'s files moved at the stop; frames: { format: "jpeg", naming: "wall-clock", flush: "piece" } with ocr: { enabled: true } and ocrSink: "jsonl" records the way a meeting does (each piece\'s JPEGs and ocr.jsonl rows exist while it records).',
+            doc: 'Starts a library recording (frames of the chosen displays, sound when asked) and returns its handle. Frames default to the recorder\'s files moved at the stop; frames: { format: "jpeg", naming: "wall-clock", flush: "piece" } with ocr: { enabled: true } and ocrSink: "jsonl" records the way a meeting does (each piece\'s JPEGs and ocr.jsonl rows exist while it records). It records what the user\'s screen shows, and a first microphone use can raise the system\'s permission prompt.',
             effect: "reversible",
+            reaches: ["user"],
         }),
         defineMethod({
             name: "list",
@@ -310,13 +312,41 @@ export const recorderApi = defineApi({
     notes: ["A method the recorder kind does not offer throws an error that names the methods it has."],
 });
 
+/** How long a refusal waits for the display list it names; a recorder that does not answer names none. */
+const DISPLAY_LIST_TIMEOUT_MS = 2000;
+
+/**
+ * An error's message, and for a refused display the displays that are there: "no display 99999" and "no display -5"
+ * named none, so an agent had to call displays.list() to try again (NR42). `list` runs only for that refusal.
+ */
+export async function displayRefusal(
+    error: unknown,
+    list: () => Promise<ReadonlyArray<{ id: number }>>
+): Promise<string> {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (!(error instanceof RpcError) || error.code !== RPC_ERRORS.unknownDisplay) {
+        return message;
+    }
+
+    const displays = await withTimeout(list(), DISPLAY_LIST_TIMEOUT_MS).catch((listError: unknown) => {
+        log.debug({ error: listError }, "no display list to name in a refusal");
+        return [];
+    });
+    return displays.length > 0
+        ? `${message}; the displays: ${displays.map((display) => display.id).join(", ")}`
+        : message;
+}
+
 /** One running recording, the same for every recorder kind: a RecorderClient on its socket. */
 export class RecordingHandle {
     readonly displays = {
         list: () => this.check("displays.list", () => this.client.listDisplays()),
-        add: (displayId: number) => this.check("displays.add", () => this.client.addDisplay(displayId)),
-        remove: (displayId: number) => this.check("displays.remove", () => this.client.removeDisplay(displayId)),
-        switch: (displayId: number) => this.check("displays.switch", () => this.client.switchDisplay(displayId)),
+        add: (displayId: number) => this.namingDisplays("displays.add", () => this.client.addDisplay(displayId)),
+        remove: (displayId: number) =>
+            this.namingDisplays("displays.remove", () => this.client.removeDisplay(displayId)),
+        switch: (displayId: number) =>
+            this.namingDisplays("displays.switch", () => this.client.switchDisplay(displayId)),
         mode: (mode: z.infer<typeof displayModeSchema>) =>
             this.check("displays.mode", () => this.client.setDisplayMode(mode)),
     };
@@ -377,6 +407,21 @@ export class RecordingHandle {
             }
 
             throw error;
+        }
+    }
+
+    /** `check`, and a refused display id names the displays the recording has. */
+    private async namingDisplays<T>(method: RecorderMethod, call: () => Promise<T>): Promise<T> {
+        try {
+            return await this.check(method, call);
+        } catch (error) {
+            const message = await displayRefusal(error, () => this.client.listDisplays());
+
+            if (message === (error instanceof Error ? error.message : String(error))) {
+                throw error;
+            }
+
+            throw new Error(message);
         }
     }
 

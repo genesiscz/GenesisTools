@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -52,7 +53,7 @@ export interface ScreenHit {
 }
 
 /** Each frame's OCR text: a meeting's (or a jsonl-sink recording's) `ocr.jsonl`, else the `<frame>.ocr.json` sidecars. */
-function frameTexts(folder: string, files: string[], wanted: string, limit: number): Map<string, FrameText> {
+export function frameTexts(folder: string, files: string[], wanted: string, limit: number): Map<string, FrameText> {
     const texts = new Map<string, FrameText>();
     const keep = (file: string, text: FrameText) => {
         if (foldText(text.text).includes(wanted)) {
@@ -99,7 +100,7 @@ function micro(value: number): number {
 }
 
 /** The pixel size of each display's first frame (one display's frames share a size); a missing file is left out. */
-function displaySizes(folder: string, frames: ReadonlyArray<{ file: string; displayId?: number }>) {
+export function displaySizes(folder: string, frames: ReadonlyArray<{ file: string; displayId?: number }>) {
     const sizes = new Map<number | undefined, { width: number; height: number }>();
 
     for (const frame of frames) {
@@ -124,7 +125,7 @@ function displaySizes(folder: string, frames: ReadonlyArray<{ file: string; disp
  * frame begins (the last at `endUs`). A frame the movie never shows has no entry. A frame can show more than once,
  * because the plan may leave its display and come back before the display's next frame.
  */
-function visibleSpans(
+export function visibleSpans(
     frames: ReadonlyArray<{ file: string; atMs: number; displayId?: number }>,
     ranges: readonly DisplayRange[],
     endUs: number
@@ -156,6 +157,13 @@ export function findOnScreen(folder: string, query: string, { limit = 50 }: { li
 
     if (!manifest) {
         throw new Error(`${folder} has no recording.json; make the proxy first (it writes one for a meeting)`);
+    }
+
+    // A movie keeps no frames, so "no frame shows it" would read as "it was never on the screen".
+    if (manifest.frames.length === 0) {
+        throw new Error(
+            `${folder} has no screen text: only a frames recording (${toolCommand("recorder start", "--frames")}) or a meeting keeps the text it read off its screens`
+        );
     }
 
     const wanted = foldText(query);

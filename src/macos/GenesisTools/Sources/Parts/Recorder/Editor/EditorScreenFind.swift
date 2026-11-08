@@ -52,6 +52,26 @@ extension EditorModel {
     /// The folder find-screen reads: the movie's own folder (a meeting's, or a library recording's).
     var recordingFolder: URL { URL(fileURLWithPath: project.source.video).deletingLastPathComponent() }
 
+    /// The sentence for a recording that kept no screen text; the tab shows it at once, and a refused search says it too.
+    nonisolated static let noScreenText = "This movie has no screen text. Only a frames recording or a meeting keeps the text it read off its screens."
+
+    /// Whether the recording kept text off its screens: a frames recording or a meeting lists its frames in
+    /// recording.json; a movie recording lists none, and a movie with no recording.json has none either (find-screen
+    /// refuses both). Nil when recording.json cannot be read as JSON, so the search box stays and the door answers.
+    nonisolated static func hasScreenText(recordingFolder: URL) -> Bool? {
+        guard let data = try? Data(contentsOf: recordingFolder.appendingPathComponent("recording.json")) else { return false }
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return (root["frames"] as? [Any]).map { !$0.isEmpty } ?? false
+    }
+
+    /// Reads `hasScreenText` once, off the main thread (a meeting's recording.json lists every frame).
+    func learnScreenText() async {
+        guard screenTextKnown == nil else { return }
+        let folder = recordingFolder
+        let known = await Task.detached(priority: .userInitiated) { Self.hasScreenText(recordingFolder: folder) }.value
+        screenTextKnown = known ?? true
+    }
+
     /// Searches the screen text; an older answer that arrives after a newer search is dropped.
     func findOnScreen(_ query: String) {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -88,8 +108,9 @@ extension EditorModel {
 
     /// The failure in words: a movie without a recording has no screen text, anything else is the door's own line.
     nonisolated static func screenSearchProblem(stderr: String, status: Int32) -> String {
-        if stderr.contains("has no recording.json") {
-            return "This movie has no screen text. Only a frames recording or a meeting keeps the text it read off its screens."
+        // A movie without recording.json, and a movie recording, which keeps no frames: neither has text to search.
+        if stderr.contains("has no recording.json") || stderr.contains("has no screen text") {
+            return noScreenText
         }
         return "The search did not run: \(stderr.split(separator: "\n").last.map(String.init) ?? "exit \(status)")"
     }
@@ -160,7 +181,6 @@ extension EditorModel {
 /// The Find tab's content.
 struct ScreenFindInspector: View {
     @Bindable var model: EditorModel
-    @FocusState private var focused: Bool
     @State private var pending: Task<Void, Never>?
 
     var body: some View {
@@ -171,20 +191,22 @@ struct ScreenFindInspector: View {
                     .font(.system(size: 11.5)).foregroundStyle(RecorderPalette.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 6) {
-                TextField("A name, an error, a link…", text: $model.screenQuery)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($focused)
-                    .onSubmit { model.goToScreenHit(0) }
-                    .onExitCommand { model.screenQuery = "" }
-                    .accessibilityIdentifier("recorder.find.query")
-                if !model.screenQuery.isEmpty {
-                    IconButton(systemName: "xmark.circle.fill", tooltip: "Clear the search (Esc)", size: 11) { model.screenQuery = "" }
+            if model.screenTextKnown == false {
+                // A movie recording kept no screen text: no search box that can only ever answer "nothing".
+                Label {
+                    Text(verbatim: EditorModel.noScreenText).fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "text.viewfinder").foregroundStyle(RecorderPalette.dim)
                 }
+                .font(.system(size: 12.5)).foregroundStyle(RecorderPalette.dim)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("recorder.find.noText")
+            } else {
+                searchBox
+                results
             }
-            results
         }
-        .onAppear { focused = true }
+        .task { await model.learnScreenText() }
         // Searches as you type, once the typing rests: each search is one tools process. Opening the tab again keeps
         // the last answer instead of searching again.
         .onChange(of: model.screenQuery) { _, query in
@@ -196,6 +218,20 @@ struct ScreenFindInspector: View {
             }
         }
         .onDisappear { pending?.cancel() }
+    }
+
+    private var searchBox: some View {
+            HStack(spacing: 6) {
+                // An AppKit field: an agent's accessibility write reaches the query and searches, as typing does.
+                AgentTextField("A name, an error, a link…", text: $model.screenQuery, identifier: "recorder.find.query",
+                               focusOnAppear: true, onCancel: { model.screenQuery = "" }) {
+                    model.goToScreenHit(0)
+                }
+                .frame(height: 22)
+                if !model.screenQuery.isEmpty {
+                    IconButton(systemName: "xmark.circle.fill", tooltip: "Clear the search (Esc)", size: 11) { model.screenQuery = "" }
+                }
+            }
     }
 
     @ViewBuilder private var results: some View {

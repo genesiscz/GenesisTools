@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import CoreImage
 import Foundation
@@ -16,12 +17,50 @@ final class ZoomState: @unchecked Sendable {
         self.project = project
         self.cursor = cursor
         captions = CaptionTrack.load(video: project.source.video)
+        // R4 10 progress bar: the chapters the recording marked (the edit's own come with each project).
+        recordedMarkers = EditorModel.readMarkers(video: project.source.video)
+        refreshRedactions(project, frames: nil)
     }
+
+    // R4 10 progress bar
+    private let recordedMarkers: [(us: Int64, label: String)]
 
     func update(_ project: EditProject) {
         lock.lock()
         self.project = project
+        let frames = sourceFrames
         lock.unlock()
+        refreshRedactions(project, frames: frames)
+    }
+
+    // R5 5 redaction edges
+    private var sourceFrames: SourceFrames?
+    /// The hidden parts as drawn (RedactionEdges), for the project they were made from.
+    private var drawnRedactions: (key: RedactionEdges.Key, parts: [EditProject.Redaction])?
+
+    /// The source movie's frame times, read by the renderer once it has the movie.
+    func setSourceFrames(_ frames: SourceFrames?) {
+        lock.lock()
+        sourceFrames = frames
+        let project = project
+        lock.unlock()
+        refreshRedactions(project, frames: frames)
+    }
+
+    private func refreshRedactions(_ project: EditProject, frames: SourceFrames?) {
+        let parts = RedactionEdges.effective(project, frames: frames)
+        lock.lock()
+        drawnRedactions = (RedactionEdges.Key(project), parts)
+        lock.unlock()
+    }
+
+    private func redactions(for project: EditProject) -> [EditProject.Redaction] {
+        lock.lock()
+        let cached = drawnRedactions
+        let frames = sourceFrames
+        lock.unlock()
+        if let cached, cached.key == RedactionEdges.Key(project) { return cached.parts }
+        return RedactionEdges.effective(project, frames: frames)
     }
 
     /// The camera bubble as the window has it now, so a moved or hidden bubble shows at the next frame.
@@ -59,6 +98,8 @@ final class ZoomState: @unchecked Sendable {
         var line: CaptionTrack.Line
         var track: CaptionTrack
         var settings: EditProject.Captions
+        // R4 6 karaoke captions: the characters said so far and their colour; nil draws the line plain.
+        var highlight: (characters: Int, color: NSColor)?
     }
 
     /// The shortcut to draw over the output.
@@ -91,6 +132,22 @@ final class ZoomState: @unchecked Sendable {
         /// The zoom one output frame earlier, for the motion blur; nil at the start and across a cut.
         var previousView: ZoomCurve.View?
         var motionBlur = 0.0
+        // R4 overlays (fx-overlay): the frame's times, for the texts' animations and the progress bar.
+        var sourceUs: Int64 = 0
+        var outUs: Int64 = 0
+        // R4 10 progress bar
+        var progress: ProgressMark?
+        // Round 4 fx-render (RenderFx.swift).
+        /// The transition this frame sits in; nil outside one.
+        var transition: TransitionLook.Mark?
+        var lenses: [LensLook.Mark] = []
+        var tilt: TiltLook.Pose?
+        // fx B (round 4)
+        /// The speed of the part playing, when the speed badge is on and it plays at 1.5x or faster.
+        var speedBadge: SpeedBadge.Mark?
+        // R5 4 canvas zoom
+        /// The whole framed canvas's zoom; `.whole` without a canvas zoom.
+        var canvasView = ZoomCurve.View.whole
     }
 
     /// Every frame the renderer drew; the editor compares it with the frames a playback should have shown.
@@ -115,6 +172,7 @@ final class ZoomState: @unchecked Sendable {
             marks = Looks.marks(atSourceMs: Double(sourceUs) / 1000, clicks: cursor.clicks, durationMs: clicks.durationMs)
         }
         let view = ZoomCurve.view(atSource: sourceUs, zooms: project.zooms, cursor: cursor)
+        let drawn = redactions(for: project)
         let motionBlur = (project.motion ?? .init()).blur
         var previousView: ZoomCurve.View?
         if motionBlur > 0, outUs >= Self.frameUs, !project.zooms.isEmpty {
@@ -127,29 +185,45 @@ final class ZoomState: @unchecked Sendable {
         var look = FrameLook(view: view,
                          marks: marks, clicks: project.clicks,
                          cursor: Self.cursorMark(atSourceUs: sourceUs, track: cursor, settings: project.cursor ?? .init(),
-                                                 videoWidth: Double(project.source.width)),
+                                                 videoWidth: Double(project.source.width), smooth: project.cursorSmooth,
+                                                 aspect: Double(project.source.height) / Double(max(1, project.source.width))),
                          coverFocus: Self.coverFocus(atSourceUs: sourceUs, project: project, track: cursor, view: view),
                          frame: project.frame,
                          caption: project.captions.flatMap { settings in
                              guard settings.show, let captions, let raw = captions.line(atSourceUs: sourceUs) else { return nil }
                              // A fix with no words hides the line.
                              guard let line = project.transcript.map({ $0.apply(raw) }) ?? raw else { return nil }
-                             return CaptionMark(line: line, track: captions, settings: settings)
+                             // R4 6 karaoke captions
+                             let highlight = project.captionsStyle.flatMap { style -> (characters: Int, color: NSColor)? in
+                                 guard style.kind == .karaoke else { return nil }
+                                 return (Karaoke.spokenCharacters(line: line, atSourceUs: sourceUs), NSColor(ciColor: Looks.color(style.color)))
+                             }
+                             return CaptionMark(line: line, track: captions, settings: settings, highlight: highlight)
                          },
                          key: project.keys.flatMap { settings in
                              guard settings.show, let shown = cursor?.key(atMs: Double(sourceUs) / 1000, durationMs: settings.durationMs) else { return nil }
                              return KeyMark(label: shown.label, opacity: shown.opacity, settings: settings)
                          },
-                         redactions: (project.redactions ?? []).filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
+                         redactions: drawn.filter { sourceUs >= $0.startUs && sourceUs < $0.endUs }
                              .map { Self.placed($0, atSourceUs: sourceUs, track: cursor) },
                          texts: Self.texts(atSourceUs: sourceUs, project: project))
         look.previousView = previousView
         look.motionBlur = motionBlur
+        // R4 overlays (fx-overlay)
+        look.sourceUs = sourceUs
+        look.outUs = outUs
+        look.progress = project.progress.flatMap { ProgressMark.at(outUs: outUs, project: project, recorded: recordedMarkers, settings: $0) }
         look.shapes = Self.shapes(atSourceUs: sourceUs, project: project)
+        look.speedBadge = SpeedBadge.badge(atOutput: outUs, project: project)
         look.spotlightFade = look.redactions.filter { $0.style == .spotlight }.map { spot in
-            let fade = Double(min(200_000, max(1, (spot.endUs - spot.startUs) / 3)))
-            return min(1, Double(sourceUs - spot.startUs) / fade, Double(spot.endUs - sourceUs) / fade)
+            Self.spotlightFade(spot, atSourceUs: sourceUs)
         }.max() ?? 1
+        // Round 4 fx-render.
+        look.transition = TransitionLook.mark(atOutputUs: outUs, project: project, track: cursor, drawn: drawn)
+        look.lenses = LensLook.marks(atSourceUs: sourceUs, project: project, track: cursor)
+        look.tilt = project.tilt.flatMap { TiltLook.pose(atOutputUs: outUs, lengthUs: project.outputDurationUs, tilt: $0) }
+        // R5 4 canvas zoom
+        look.canvasView = ZoomCurve.canvasView(atSource: sourceUs, zooms: project.zooms)
         return look
     }
 
@@ -172,12 +246,24 @@ final class ZoomState: @unchecked Sendable {
         }
     }
 
+    // R5 5 redaction edges
+    /// How far a spotlight's dim has come in (0...1): over its `fadeMs` (200 ms unless set, at most a third of its
+    /// length) after its start and before its end; `fadeMs` 0 dims fully from its first frame to its last.
+    static func spotlightFade(_ spot: EditProject.Redaction, atSourceUs us: Int64) -> Double {
+        let asked = Int64(max(0, spot.fadeMs ?? 200)) * 1000
+        guard asked > 0 else { return 1 }
+        let fade = Double(min(asked, max(1, (spot.endUs - spot.startUs) / 3)))
+        return max(0, min(1, Double(us - spot.startUs) / fade, Double(spot.endUs - us) / fade))
+    }
+
     /// One output frame at 60 fps.
     static let frameUs: Int64 = 16_667
 
     /// A redaction that follows the cursor, centred on it (averaged over ±150 ms, so it glides) and kept inside the
     /// picture; any other one as it is.
     static func placed(_ redaction: EditProject.Redaction, atSourceUs us: Int64, track: CursorTrack?) -> EditProject.Redaction {
+        // fx B (round 4): a part with keyframes follows its text.
+        if redaction.track?.isEmpty == false { return RedactionTrack.placed(redaction, atSourceUs: us) }
         guard redaction.follow == true, let track,
               let point = track.averagedPoint(atMs: Double(us) / 1000, halfMs: 150) else { return redaction }
         var moved = redaction
@@ -186,11 +272,14 @@ final class ZoomState: @unchecked Sendable {
         return moved
     }
 
-    /// The texts showing at a source time, each fading in and out over 0.2 s (less for a short one).
+    /// How long a text of `lengthUs` fades in and out: 0.2 s, less for a short one.
+    static func textFadeUs(lengthUs: Int64) -> Int64 { min(200_000, max(1, lengthUs / 3)) }
+
+    /// The texts showing at a source time, each fading in and out over `textFadeUs`.
     static func texts(atSourceUs us: Int64, project: EditProject) -> [(note: EditProject.TextNote, opacity: Double)] {
         (project.texts ?? []).compactMap { note in
             guard us >= note.startUs, us < note.endUs else { return nil }
-            let fade = Double(min(200_000, max(1, (note.endUs - note.startUs) / 3)))
+            let fade = Double(textFadeUs(lengthUs: note.endUs - note.startUs))
             let opacity = min(1, Double(us - note.startUs) / fade, Double(note.endUs - us) / fade)
             return (note, max(0, opacity))
         }
@@ -204,13 +293,24 @@ final class ZoomState: @unchecked Sendable {
         return CGPoint(x: (point.x - rect.minX) / rect.width, y: (point.y - rect.minY) / rect.height)
     }
 
-    static func cursorMark(atSourceUs us: Int64, track: CursorTrack?, settings: EditProject.Cursor, videoWidth: Double) -> Looks.CursorMark? {
+    static func cursorMark(atSourceUs us: Int64, track: CursorTrack?, settings: EditProject.Cursor, videoWidth: Double,
+                           smooth: EditProject.CursorSmooth? = nil, aspect: Double = 9.0 / 16) -> Looks.CursorMark? {
         guard settings.show, let track, track.drawsCursor else { return nil }
         let ms = Double(us) / 1000
-        guard let shape = track.shape(atMs: ms), let point = track.drawnPoint(atMs: ms, smoothing: settings.smoothing) else { return nil }
+        // fx B (round 4): the smooth cursor, when on, takes the place of the cursor's own smoothing and hiding.
+        let placed: (x: Double, y: Double, opacity: Double)?
+        if let smooth {
+            placed = track.smoothMark(atMs: ms, settings: smooth, aspect: aspect)
+        } else {
+            placed = track.drawnPoint(atMs: ms, smoothing: settings.smoothing).map {
+                (x: $0.x, y: $0.y, opacity: track.visibility(atMs: ms, hideAfterMs: settings.hideAfterMs ?? 0))
+            }
+        }
+        guard let shape = track.shape(atMs: ms), let placed else { return nil }
+        let point = (x: placed.x, y: placed.y)
         // A recording without the width in points is taken as a Retina display.
         let perPoint = track.pointWidth.map { videoWidth / $0 } ?? 2
-        let opacity = track.visibility(atMs: ms, hideAfterMs: settings.hideAfterMs ?? 0)
+        let opacity = placed.opacity
         guard opacity > 0.001 else { return nil }
         return Looks.CursorMark(shape: shape, x: point.x, y: point.y, pixelsPerPoint: perPoint * max(0.5, min(3, settings.size)),
                                 opacity: opacity)
@@ -226,6 +326,8 @@ enum ClickSound {
 
     /// The output times of the clicks that play, at least one tick apart, in order.
     static func times(clicks: [Int64], project: EditProject) -> [Int64] {
+        // The ticks are sound: "Include audio" off leaves them out with the rest of it.
+        guard project.audio.include else { return [] }
         var times: [Int64] = []
         for us in clicks.compactMap({ TimelineMap.outputTime(ofSource: $0, in: project) }).sorted()
         where times.last.map({ us - $0 >= lengthUs }) ?? true {
@@ -234,7 +336,7 @@ enum ClickSound {
         return times
     }
 
-    static func add(to composition: AVMutableComposition, project: EditProject) async throws -> AVMutableAudioMixInputParameters? {
+    static func add(to composition: AVMutableComposition, project: EditProject, offsetUs: Int64 = 0) async throws -> AVMutableAudioMixInputParameters? {
         let clicks = (CursorTrack.load(project.source.cursor)?.clicks ?? []).map { Int64(($0.ms * 1000).rounded()) }
         let times = times(clicks: clicks, project: project)
         let movieUs = project.outputDurationUs
@@ -246,7 +348,7 @@ enum ClickSound {
               let out = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { return nil }
         let available = try await source.load(.timeRange)
         try out.insertTimeRange(CMTimeRange(start: available.start, duration: CMTimeMinimum(available.duration, EditRenderer.us(movieUs))),
-                                of: source, at: .zero)
+                                of: source, at: EditRenderer.us(offsetUs))
         let parameters = AVMutableAudioMixInputParameters(track: out)
         parameters.setVolume(0.3, at: .zero)
         HubPerf.log("recorder.clickSound: \(times.count) ticks in \(asset.url.lastPathComponent)")
@@ -322,15 +424,26 @@ enum Declick {
     }
 
     /// Each cut as a ramp down to silence over the 25 ms before it and back up over the 25 ms after; cuts closer than
-    /// that share their silence. Volumes are factors of the track's own volume. Measured on a 440 Hz tone: a 10 ms
-    /// ramp left the cut at 65 % (the mix applies ramps coarsely), 25 ms brings it to 6 %.
+    /// 50 ms share one silence from the first to the last. Volumes are factors of the track's own volume. Measured on a
+    /// 440 Hz tone: a 10 ms ramp left the cut at 65 % (the mix applies ramps coarsely), 25 ms brings it to 6 %.
+    /// The ramps never overlap: AVFoundation raises an Objective-C exception for an overlapping ramp, which crashed the
+    /// editor on two cuts 10 ms apart (or a clip so short it plays for 0 µs, whose two cuts fall on one time).
     static func ramps(at cuts: [Int64], lengthUs: Int64) -> [(startUs: Int64, endUs: Int64, from: Double, to: Double)] {
+        var groups: [(start: Int64, end: Int64)] = []
+        for cut in Set(cuts.map { min(max(0, $0), lengthUs) }).sorted() {
+            if let last = groups.last, cut - last.end < halfUs * 2 {
+                groups[groups.count - 1].end = cut
+            } else {
+                groups.append((cut, cut))
+            }
+        }
         var ramps: [(startUs: Int64, endUs: Int64, from: Double, to: Double)] = []
-        for cut in cuts {
-            let down = max(ramps.last?.endUs ?? 0, cut - halfUs)
-            if cut > down { ramps.append((down, cut, 1, 0)) }
-            let up = min(lengthUs, cut + halfUs)
-            if up > cut { ramps.append((cut, up, 0, 1)) }
+        for group in groups {
+            let down = max(ramps.last?.endUs ?? 0, group.start - halfUs)
+            if group.start > down { ramps.append((down, group.start, 1, 0)) }
+            if group.end > group.start { ramps.append((group.start, group.end, 0, 0)) }
+            let up = min(lengthUs, group.end + halfUs)
+            if up > group.end { ramps.append((group.end, up, 0, 1)) }
         }
         return ramps
     }
@@ -341,15 +454,42 @@ enum MusicMix {
     /// How long the music takes to dip under a line and come back.
     static let rampUs: Int64 = 300_000
 
-    /// The spoken parts in output time, from the cached transcript; lines closer than two ramps merge.
+    // R4 8 music ducking
+    /// How far the music drops under speech (`drop` 0.6 leaves 40 %) and how long the dip takes: the edit's `ducking`
+    /// in dB when it has one, else the music's older `duck` share over `rampUs`.
+    struct Duck: Equatable {
+        var drop: Double
+        var rampUs: Int64
+
+        static func of(_ project: EditProject) -> Duck {
+            guard let ducking = project.audio.ducking else {
+                return Duck(drop: project.audio.music?.duck ?? 0, rampUs: MusicMix.rampUs)
+            }
+            // A 0 ms fade still ramps over 10 ms: two keyframes on one time made no ramp at all.
+            return Duck(drop: 1 - pow(10, -ducking.db / 20), rampUs: max(10_000, Int64(ducking.fadeMs) * 1000))
+        }
+    }
+
+    /// The spoken parts in output time: the cached transcript's lines and the voiceover clips (each as the edit's
+    /// `ducking` allows); parts closer than two ramps merge.
     static func speech(lines: [CaptionTrack.Line], project: EditProject) -> [(fromUs: Int64, toUs: Int64)] {
-        let spans = lines.compactMap { line -> (fromUs: Int64, toUs: Int64)? in
+        let ducking = project.audio.ducking
+        let rampUs = Duck.of(project).rampUs
+        var spans = ((ducking?.transcript ?? true) ? lines : []).compactMap { line -> (fromUs: Int64, toUs: Int64)? in
             guard let from = TimelineMap.outputTime(ofSource: line.fromUs, in: project),
                   let to = TimelineMap.outputTime(ofSource: line.toUs, in: project), to > from else { return nil }
             return (from, to)
-        }.sorted { $0.fromUs < $1.fromUs }
+        }
+        if ducking?.voiceovers ?? true {
+            spans += VoiceoverMix.placements(project).map { ($0.outUs, $0.outUs + $0.playUs) }
+        }
+        return merged(spans, rampUs: rampUs)
+    }
+
+    /// Spoken parts in time order, those closer than two ramps joined into one.
+    static func merged(_ spans: [(fromUs: Int64, toUs: Int64)], rampUs: Int64) -> [(fromUs: Int64, toUs: Int64)] {
         var merged: [(fromUs: Int64, toUs: Int64)] = []
-        for span in spans {
+        for span in spans.sorted(by: { $0.fromUs < $1.fromUs }) {
             if let last = merged.last, span.fromUs - last.toUs < rampUs * 2 {
                 merged[merged.count - 1].toUs = max(last.toUs, span.toUs)
             } else {
@@ -360,7 +500,10 @@ enum MusicMix {
     }
 
     /// The music's volume at `us`: its level, times the fades at both ends, times the duck under a spoken part.
-    static func gain(atUs us: Int64, music: EditProject.Music, speech: [(fromUs: Int64, toUs: Int64)], lengthUs: Int64) -> Double {
+    /// `duck` nil is the music's own share over `rampUs`.
+    static func gain(atUs us: Int64, music: EditProject.Music, speech: [(fromUs: Int64, toUs: Int64)], lengthUs: Int64,
+                     duck: Duck? = nil) -> Double {
+        let duck = duck ?? Duck(drop: music.duck, rampUs: rampUs)
         let fadeUs = Double(max(1, Int64(music.fadeMs) * 1000))
         let fade = music.fadeMs == 0 ? 1 : max(0, min(1, Double(us) / fadeUs, Double(lengthUs - us) / fadeUs))
         var level = 1.0
@@ -368,32 +511,36 @@ enum MusicMix {
             let into: Double
             if us >= span.fromUs && us <= span.toUs {
                 into = 1
-            } else if us < span.fromUs && us > span.fromUs - rampUs {
-                into = 1 - Double(span.fromUs - us) / Double(rampUs)
-            } else if us > span.toUs && us < span.toUs + rampUs {
-                into = 1 - Double(us - span.toUs) / Double(rampUs)
+            } else if us < span.fromUs && us > span.fromUs - duck.rampUs {
+                into = 1 - Double(span.fromUs - us) / Double(duck.rampUs)
+            } else if us > span.toUs && us < span.toUs + duck.rampUs {
+                into = 1 - Double(us - span.toUs) / Double(duck.rampUs)
             } else {
                 into = 0
             }
-            level = min(level, 1 - music.duck * into)
+            level = min(level, 1 - duck.drop * into)
         }
         return music.volume * fade * level
     }
 
     /// The times where the volume changes its slope, with the volume there; a ramp runs between each pair.
-    static func keyframes(music: EditProject.Music, speech: [(fromUs: Int64, toUs: Int64)], lengthUs: Int64) -> [(us: Int64, volume: Double)] {
+    static func keyframes(music: EditProject.Music, speech: [(fromUs: Int64, toUs: Int64)], lengthUs: Int64,
+                          duck: Duck? = nil) -> [(us: Int64, volume: Double)] {
+        let rampUs = duck?.rampUs ?? rampUs
         let fadeUs = Int64(music.fadeMs) * 1000
         var times: Set<Int64> = [0, lengthUs, min(lengthUs, fadeUs), max(0, lengthUs - fadeUs)]
         for span in speech {
             times.formUnion([span.fromUs - rampUs, span.fromUs, span.toUs, span.toUs + rampUs])
         }
         return times.filter { $0 >= 0 && $0 <= lengthUs }.sorted()
-            .map { ($0, gain(atUs: $0, music: music, speech: speech, lengthUs: lengthUs)) }
+            .map { ($0, gain(atUs: $0, music: music, speech: speech, lengthUs: lengthUs, duck: duck)) }
     }
 
     /// Lays the music under the movie and returns its mix parameters; nil (logged) when the file has no sound.
+    /// `offsetUs`: where the movie starts in the composition (after an intro card); the speech moves by it.
     static func add(_ music: EditProject.Music, to composition: AVMutableComposition, lengthUs: Int64,
-                    project: EditProject) async throws -> AVMutableAudioMixInputParameters? {
+                    project: EditProject, offsetUs: Int64 = 0, cards: CardSpans? = nil,
+                    movieUs: Int64? = nil) async throws -> AVMutableAudioMixInputParameters? {
         let asset = AVURLAsset(url: URL(fileURLWithPath: music.file))
         guard let source = try? await asset.loadTracks(withMediaType: .audio).first,
               let out = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
@@ -417,8 +564,17 @@ enum MusicMix {
         }
         // Played once, the music fades out at its own end.
         let playedUs = min(lengthUs, Int64((at.seconds * 1_000_000).rounded()))
-        let speech = speech(lines: CaptionTrack.load(video: project.source.video)?.lines ?? [], project: project)
-        let frames = keyframes(music: music, speech: speech, lengthUs: playedUs)
+        var speech = speech(lines: CaptionTrack.load(video: project.source.video)?.lines ?? [], project: project)
+            .map { (fromUs: $0.fromUs + offsetUs, toUs: $0.toUs + offsetUs) }
+        // Round 3 (2026-11-08): a card's voiceover ducks the music over its card too (in the file's time already).
+        if let cards, project.audio.ducking?.voiceovers ?? true {
+            let onCards = VoiceoverMix.exportPlacements(project, cards: cards, movieUs: movieUs).filter { $0.clip.card != nil }
+            if !onCards.isEmpty {
+                speech = Self.merged(speech + onCards.map { (fromUs: $0.outUs, toUs: $0.outUs + $0.playUs) },
+                                     rampUs: Duck.of(project).rampUs)
+            }
+        }
+        let frames = keyframes(music: music, speech: speech, lengthUs: playedUs, duck: Duck.of(project))
         let parameters = AVMutableAudioMixInputParameters(track: out)
         for (start, end) in zip(frames, frames.dropFirst()) where end.us > start.us {
             parameters.setVolumeRamp(fromStartVolume: Float(start.volume), toEndVolume: Float(end.volume),
@@ -442,11 +598,13 @@ struct EditRenderer {
     enum RenderError: LocalizedError {
         case noVideoTrack(String)
         case emptyEdit
+        case badComposition(String)
 
         var errorDescription: String? {
             switch self {
             case let .noVideoTrack(path): "\(path) has no video track"
             case .emptyEdit: "the edit keeps nothing of the movie"
+            case let .badComposition(detail): "the movie's picture settings are not valid (\(detail))"
             }
         }
     }
@@ -466,13 +624,25 @@ struct EditRenderer {
 
     /// The movie's picture and the canvas it sits on (the same size without an aspect). The canvas's short side is
     /// the picture's height; the H.264 budget applies to the canvas, which is what the encoder gets.
-    static func outputSizes(source: CGSize, maxHeight: Int, aspect: EditProject.CanvasAspect?, h264Fps: Double? = nil)
-        -> (picture: CGSize, canvas: CGSize) {
+    static func outputSizes(source: CGSize, maxHeight: Int, aspect: EditProject.CanvasAspect?, h264Fps: Double? = nil,
+                            fixed: EditProject.OutputSize? = nil) -> (picture: CGSize, canvas: CGSize) {
         var scale = maxHeight > 0 && source.height > CGFloat(maxHeight) ? CGFloat(maxHeight) / source.height : 1
         let ratio = aspect?.ratio
         func canvas(_ height: CGFloat) -> CGSize {
             guard let ratio else { return CGSize(width: source.width / source.height * height, height: height) }
             return ratio >= 1 ? CGSize(width: height * ratio, height: height) : CGSize(width: height, height: height / ratio)
+        }
+        // R5 3 export size: the asked side exactly (to even pixels), the other from the canvas's shape; no budget.
+        if let fixed, fixed.width != nil || fixed.height != nil {
+            func nearestEven(_ value: CGFloat) -> CGFloat { max(2, (value / 2).rounded() * 2) }
+            let shape = canvas(source.height)
+            let factor = fixed.height.map { CGFloat($0) / shape.height } ?? CGFloat(fixed.width ?? 0) / shape.width
+            let made = canvas(source.height * factor)
+            let size = CGSize(width: nearestEven(fixed.width.map { CGFloat($0) } ?? made.width),
+                              height: nearestEven(fixed.height.map { CGFloat($0) } ?? made.height))
+            // Without a canvas shape of its own the picture is the canvas, so no edge is left empty by rounding.
+            guard ratio != nil else { return (size, size) }
+            return (CGSize(width: nearestEven(source.width * factor), height: nearestEven(source.height * factor)), size)
         }
         if let h264Fps, h264Fps > 0 {
             let full = canvas(source.height * scale)
@@ -489,17 +659,44 @@ struct EditRenderer {
     /// The output's constant frame rate. A screen recording writes frames only while something moves, so its average
     /// (nominal) rate sits below the rate of its motion (45 for a 60 fps recording); above film rates it exports at
     /// 60. A film rate (24, 25, 30) is kept. `minFrameDuration` is no help: it read 1/15 on such a movie.
+    /// Below film rates it exports at 30: a mostly still recording (8 fps) and a meeting's frames proxy (185 frames in
+    /// 37 minutes, 0.08 fps) still animate their zooms and captions smoothly, and 0.08 rounded to 0 made a frame
+    /// duration of 1/0 that AVPlayerItem refused with an Objective-C exception, which crashed the editor (2026-11-07).
     static func exportFps(nominal: Double) -> Double {
-        guard nominal > 0 else { return 30 }
-        return nominal > 31 ? 60 : nominal.rounded()
+        if nominal > 31 { return 60 }
+        if nominal >= 23.5 { return nominal.rounded() }
+        return 30
     }
 
-    static func render(project: EditProject, asset: AVURLAsset, zoom: ZoomState, maxHeight: Int) async throws -> Rendered {
+    /// `cards` (the export only) plays the intro card before the movie and the end card after it; every output time
+    /// of the movie then sits `leadUs` later in the composition. The preview leaves them out, so its time is the edit's.
+    /// R5 3 export size: both sides asked must keep the canvas's shape (within 1 %), or the picture would be stretched.
+    static func checkSize(_ fixed: EditProject.OutputSize?, source: CGSize, aspect: EditProject.CanvasAspect?) throws {
+        guard let width = fixed?.width, let height = fixed?.height else { return }
+        let shape = aspect?.ratio ?? source.width / max(1, source.height)
+        let asked = CGFloat(width) / CGFloat(max(1, height))
+        guard abs(asked - shape) / shape <= 0.01 else {
+            throw RenderError.badComposition(
+                "the size \(width)×\(height) is not the canvas's shape (\(String(format: "%.3f", shape)) wide per high); "
+                    + "give one side, or set frame({ aspect }) to the shape you want")
+        }
+    }
+
+    static func render(project: EditProject, asset: AVURLAsset, zoom: ZoomState, maxHeight: Int,
+                       cards: Bool = false, size fixed: EditProject.OutputSize? = nil) async throws -> Rendered {
         guard let video = try await asset.loadTracks(withMediaType: .video).first else {
             throw RenderError.noVideoTrack(asset.url.path)
         }
         let audio = project.audio.include ? try await asset.loadTracks(withMediaType: .audio) : []
         let (natural, nominalFps) = try await video.load(.naturalSize, .nominalFrameRate)
+        // A picture of 0 pixels made the output scale infinite (every frame's transform), so refuse it with its size.
+        guard natural.width.isFinite, natural.height.isFinite, natural.width >= 1, natural.height >= 1 else {
+            throw RenderError.badComposition("the movie's picture is \(natural.width)×\(natural.height)")
+        }
+        // R5 5 redaction edges: a hidden part stays on while a frame from its time stays on screen.
+        if project.redactions?.isEmpty == false, (try? await video.load(.canProvideSampleCursors)) == true {
+            zoom.setSourceFrames(SourceFrames(track: video, durationUs: project.source.durationUs))
+        }
         let composition = AVMutableComposition()
         guard let videoOut = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
             throw RenderError.emptyEdit
@@ -508,6 +705,14 @@ struct EditRenderer {
             composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
         }
         var cursor = CMTime.zero
+        // R4 9 intro and end cards: the first frame held for the intro's length under it, so the compositor runs.
+        let cardSpans = CardSpans(project: project, enabled: cards)
+        if cardSpans.leadUs > 0, let first = project.clips.first(where: { $0.sourceDurationUs > 0 }) {
+            let still = CMTimeRange(start: us(first.fromUs), duration: us(min(first.sourceDurationUs, 33_333)))
+            try videoOut.insertTimeRange(still, of: video, at: .zero)
+            composition.scaleTimeRange(CMTimeRange(start: .zero, duration: still.duration), toDuration: us(cardSpans.leadUs))
+            cursor = us(cardSpans.leadUs)
+        }
         for clip in project.clips where clip.sourceDurationUs > 0 {
             let range = CMTimeRange(start: us(clip.fromUs), duration: us(clip.sourceDurationUs))
             try videoOut.insertTimeRange(range, of: video, at: cursor)
@@ -526,20 +731,46 @@ struct EditRenderer {
             }
             cursor = cursor + played
         }
-        guard cursor > .zero else { throw RenderError.emptyEdit }
+        guard cursor > us(cardSpans.leadUs) else { throw RenderError.emptyEdit }
+        // R4 9 end card: the last frame held for its length.
+        let movieUs = Int64(((cursor - us(cardSpans.leadUs)).seconds * 1_000_000).rounded())
+        if cardSpans.tailUs > 0, let last = project.clips.last(where: { $0.sourceDurationUs > 0 }) {
+            let held = min(last.sourceDurationUs, 33_333)
+            let still = CMTimeRange(start: us(last.toUs - held), duration: us(held))
+            try videoOut.insertTimeRange(still, of: video, at: cursor)
+            composition.scaleTimeRange(CMTimeRange(start: cursor, duration: still.duration), toDuration: us(cardSpans.tailUs))
+            cursor = cursor + us(cardSpans.tailUs)
+        }
 
         let fps = Self.exportFps(nominal: Double(nominalFps))
+        try checkSize(fixed, source: natural, aspect: project.frame?.aspect)
         let (picture, size) = outputSizes(source: natural, maxHeight: maxHeight, aspect: project.frame?.aspect,
-                                          h264Fps: project.export.codec == .h264 ? fps : nil)
+                                          h264Fps: project.export.codec == .h264 ? fps : nil, fixed: fixed)
         let outputScale = picture.height / natural.height
         let cameraFeed = await CameraFeed.make(project: project)
+        // Round 4 fx-render: the frames a transition blends with, read when a frame first needs them.
+        let stills = TransitionStills(asset: asset)
         let videoComposition = AVMutableVideoComposition(asset: composition) { request in
-            let image = request.sourceImage
+            var image = request.sourceImage
             let extent = image.extent
-            let outUs = Int64((request.compositionTime.seconds * 1_000_000).rounded())
+            // R4 9 intro and end cards: the composition's time less the intro is the movie's output time.
+            let outUs = Int64((request.compositionTime.seconds * 1_000_000).rounded()) - cardSpans.leadUs
+            if let card = cardSpans.card(atOutput: outUs, movieUs: movieUs) {
+                request.finish(with: Looks.drawCard(card, project: project, plates: zoom.keyPlates, size: size), context: nil)
+                return
+            }
             let look = zoom.look(atOutput: outUs)
             let view = look.view
-            var result = Looks.redact(look.redactions, on: image, spotlightFade: look.spotlightFade).cropped(to: extent)
+            var result: CIImage
+            if let mark = look.transition, let still = stills.image(atSourceUs: mark.otherSourceUs, extent: extent) {
+                // Each side is hidden by its own parts before the blend; only the spotlights dim the blended frame.
+                image = TransitionLook.compose(live: image, liveRedactions: look.redactions, still: still, mark: mark, liveView: view)
+                result = Looks.redact(look.redactions.filter { $0.style == .spotlight }, on: image,
+                                      spotlightFade: look.spotlightFade).cropped(to: extent)
+            } else {
+                result = Looks.redact(look.redactions, on: image, spotlightFade: look.spotlightFade).cropped(to: extent)
+                result = RedactionTrack.leaveVisible(look.redactions, original: image, on: result).cropped(to: extent) // fx B
+            }
             for drawn in look.shapes {
                 result = Looks.drawShape(drawn.shape, drawn: drawn.drawn, opacity: drawn.opacity, on: result).cropped(to: extent)
             }
@@ -568,15 +799,46 @@ struct EditRenderer {
             if let previous = look.previousView {
                 result = Looks.motionBlur(from: previous, to: view, amount: look.motionBlur, on: result)
             }
+            if !look.lenses.isEmpty {
+                result = LensLook.draw(look.lenses, view: view, on: result)
+            }
             cursor = cursor.map(toPicture)
+            // R6 8 chapter label place: where the movie sits on the canvas, so the chapter's name goes beside it.
+            var movieRect: CGRect?
             if let frame = look.frame {
                 let placement = Looks.framePlacement(frame, picture: picture, canvas: size, focus: look.coverFocus)
-                result = Looks.applyFrame(frame, to: result, canvas: size, placement: placement)
-                cursor = cursor.map { placement.place($0).cropped(to: placement.inner) }
+                movieRect = placement.inner
+                if let pose = look.tilt {
+                    // The picture and its shadow turn as one; the background stays, the cursor turns with the picture.
+                    let layers = Looks.frameLayers(frame, to: result, canvas: size, placement: placement)
+                    result = TiltLook.apply(layers.picture, rect: layers.rect, pose: pose, canvas: size)
+                        .composited(over: layers.background).cropped(to: CGRect(origin: .zero, size: size))
+                    cursor = cursor.map {
+                        TiltLook.apply(TiltLook.pin(placement.place($0).cropped(to: placement.inner), to: layers.rect), rect: layers.rect,
+                                       pose: pose, canvas: size)
+                    }
+                } else {
+                    result = Looks.applyFrame(frame, to: result, canvas: size, placement: placement)
+                    cursor = cursor.map { placement.place($0).cropped(to: placement.inner) }
+                }
+            } else if let pose = look.tilt {
+                // No frame: the picture tilts over black.
+                let bounds = CGRect(origin: .zero, size: size)
+                result = TiltLook.apply(TiltLook.pin(result, to: bounds), rect: bounds, pose: pose, canvas: size)
+                    .composited(over: CIImage(color: .black).cropped(to: bounds)).cropped(to: bounds)
+                cursor = cursor.map { TiltLook.apply(TiltLook.pin($0, to: bounds), rect: bounds, pose: pose, canvas: size) }
+            }
+            // R5 4 canvas zoom: the framed canvas (picture, frame, background) and the cursor on it, before the
+            // captions, keys and texts, which stay where they are on the export.
+            if look.canvasView.scale > 1.0005 {
+                movieRect = movieRect.map { Looks.zoomCanvasRect($0, view: look.canvasView, size: size) }
+                result = Looks.zoomCanvas(result, view: look.canvasView, size: size)
+                cursor = cursor.map { Looks.zoomCanvas($0, view: look.canvasView, size: size) }
             }
             var captionUsed: CGFloat = 0
             if let caption = look.caption {
-                let drawn = Looks.drawCaption(caption.line, track: caption.track, settings: caption.settings, on: result, size: size)
+                let drawn = Looks.drawCaption(caption.line, track: caption.track, settings: caption.settings, on: result, size: size,
+                                              highlight: caption.highlight)
                 result = drawn.image.cropped(to: CGRect(origin: .zero, size: size))
                 captionUsed = drawn.used
             }
@@ -587,7 +849,13 @@ struct EditRenderer {
                     .cropped(to: CGRect(origin: .zero, size: size))
             }
             for text in look.texts {
-                result = Looks.drawText(text.note, opacity: text.opacity, plates: zoom.keyPlates, on: result, size: size)
+                result = Looks.drawText(text.note, opacity: text.opacity, plates: zoom.keyPlates, on: result, size: size,
+                                        sinceUs: look.sourceUs - text.note.startUs)
+                    .cropped(to: CGRect(origin: .zero, size: size))
+            }
+            // fx B (round 4)
+            if let badge = look.speedBadge {
+                result = SpeedBadge.draw(badge, plates: zoom.keyPlates, on: result, size: size)
                     .cropped(to: CGRect(origin: .zero, size: size))
             }
             if let cameraFeed, let camera = zoom.camera {
@@ -597,10 +865,21 @@ struct EditRenderer {
             if let cursor {
                 result = cursor.composited(over: result).cropped(to: CGRect(origin: .zero, size: size))
             }
+            // R4 10 progress bar: over everything, as the player's own chrome would be.
+            if let progress = look.progress {
+                result = Looks.drawProgress(progress, plates: zoom.keyPlates, on: result, size: size, movie: movieRect)
+                    .cropped(to: CGRect(origin: .zero, size: size))
+            }
             request.finish(with: result, context: nil)
         }
         videoComposition.renderSize = size
         videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps.rounded()))
+        // AVPlayerItem and the export session raise an Objective-C exception for an invalid frame duration or size,
+        // which Swift cannot catch and which leaves the main thread's executor state broken: refuse it here instead.
+        guard videoComposition.frameDuration.isValid, videoComposition.frameDuration > .zero,
+              size.width >= 2, size.height >= 2 else {
+            throw RenderError.badComposition("frame duration \(videoComposition.frameDuration.seconds) s, size \(Int(size.width))×\(Int(size.height))")
+        }
         // The CI-filter initializer times frames by the source track; a screen recording has a variable rate, and a
         // sped-up clip packs its frames closer (2× gave 74 fps). Without a timing track `frameDuration` decides.
         videoComposition.sourceTrackIDForFrameTiming = kCMPersistentTrackID_Invalid
@@ -614,17 +893,23 @@ struct EditRenderer {
             if volume > 0 {
                 for ramp in Declick.ramps(at: Declick.cuts(in: project), lengthUs: project.outputDurationUs) {
                     parameters.setVolumeRamp(fromStartVolume: volume * Float(ramp.from), toEndVolume: volume * Float(ramp.to),
-                                             timeRange: CMTimeRange(start: us(ramp.startUs), duration: us(ramp.endUs - ramp.startUs)))
+                                             timeRange: CMTimeRange(start: us(ramp.startUs + cardSpans.leadUs),
+                                                                    duration: us(ramp.endUs - ramp.startUs)))
                 }
             }
             return parameters
         }
-        if let music = project.audio.music, let parameters = try await MusicMix.add(music, to: composition, lengthUs: Int64((cursor.seconds * 1_000_000).rounded()), project: project) {
+        // R4 9 intro and end cards: the music runs under the cards too; everything the movie times moves by the intro.
+        if let music = project.audio.music, let parameters = try await MusicMix.add(music, to: composition, lengthUs: Int64((cursor.seconds * 1_000_000).rounded()),
+                                                                                    project: project, offsetUs: cardSpans.leadUs,
+                                                                                    cards: cardSpans, movieUs: movieUs) {
             inputs.append(parameters)
         }
-        if project.clicks?.sound == true, let parameters = try await ClickSound.add(to: composition, project: project) {
+        if project.clicks?.sound == true, let parameters = try await ClickSound.add(to: composition, project: project, offsetUs: cardSpans.leadUs) {
             inputs.append(parameters)
         }
+        // R4 voiceover clips
+        inputs += await VoiceoverMix.add(to: composition, project: project, movieUs: movieUs, cards: cardSpans)
         var audioMix: AVAudioMix?
         if !inputs.isEmpty {
             let mix = AVMutableAudioMix()
@@ -697,7 +982,9 @@ final class EditExporter {
         }
         let asset = AVURLAsset(url: URL(fileURLWithPath: project.source.video))
         let zoom = ZoomState(project: project, cursor: CursorTrack.load(project.source.cursor))
-        let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: project.export.maxHeight)
+        // R4 9 intro and end cards: only the export plays them.
+        let rendered = try await EditRenderer.render(project: project, asset: asset, zoom: zoom, maxHeight: project.export.maxHeight,
+                                                     cards: true, size: project.export.size)
         let preset = project.export.codec == .hevc ? AVAssetExportPresetHEVCHighestQuality : AVAssetExportPresetHighestQuality
         guard let session = AVAssetExportSession(asset: rendered.composition, presetName: preset) else {
             throw ExportError.noSession(preset)

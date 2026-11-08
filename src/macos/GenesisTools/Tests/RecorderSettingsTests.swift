@@ -19,6 +19,84 @@ final class RecorderSettingsTests: XCTestCase {
         RecorderNotice.outlets = .live
     }
 
+    /// The defect: the recorder's menu bar item was not on screen (no window for it at all) while `isVisible` said
+    /// true, so its menu was out of reach and nothing said so (review 2026-11-06).
+    func testTheMenuBarItemIsCalledOffScreenWhenItsWindowIsMissingHiddenOrOffEveryScreen() {
+        let screens = [CGRect(x: 0, y: 0, width: 1512, height: 982)]
+        let bar = CGRect(x: 1200, y: 950, width: 24, height: 24)
+        XCTAssertEqual(RecorderMenu.placement(itemVisible: true, window: bar, windowShown: true, screens: screens), .shown)
+        XCTAssertEqual(RecorderMenu.placement(itemVisible: false, window: nil, windowShown: false, screens: screens), .hiddenByChoice)
+        XCTAssertEqual(RecorderMenu.placement(itemVisible: true, window: nil, windowShown: false, screens: screens), .offScreen)
+        XCTAssertEqual(RecorderMenu.placement(itemVisible: true, window: bar, windowShown: false, screens: screens), .offScreen)
+        XCTAssertEqual(RecorderMenu.placement(itemVisible: true, window: CGRect(x: -400, y: 950, width: 24, height: 24),
+                                              windowShown: true, screens: screens), .offScreen)
+    }
+
+    /// The defect: a failed `tools` command's note showed the last six lines of the CLI's help, which named nothing
+    /// (review 2026-11-06). The note says the line that names the problem, and Details keeps the whole output.
+    func testAFailureNoteNamesTheProblemLineNotTheHelpDump() {
+        let dump = """
+        error: unknown command 'open'
+        (Did you mean opened?)
+        Usage: tools recorder [options] [command]
+
+        Commands:
+          serve [options]            Run the recorder service
+          help [command]             display help for command
+        """
+        XCTAssertEqual(ToolsRunner.problem(in: dump), "unknown command 'open'")
+        XCTAssertEqual(ToolsRunner.problem(in: "recording\nwindow 1 cannot record: it is gone\n"),
+                       "window 1 cannot record: it is gone")
+        XCTAssertEqual(ToolsRunner.problem(in: "Usage: tools recorder [options] [command]\n\nOptions:\n  -h, --help"),
+                       "it printed its usage instead of running")
+        XCTAssertNil(ToolsRunner.problem(in: "  \n"))
+
+        var calls: [String] = []
+        RecorderNotice.outlets = recordingOutlets { calls.append($0) }
+        defer { RecorderNotice.outlets = .live }
+        RecorderNotice.failure("“Demo” did not open (exit 1)", output: dump, defaults: defaults)
+        XCTAssertEqual(calls.first, "notice: “Demo” did not open (exit 1): unknown command 'open'. | \(dump)")
+    }
+
+    /// The defect: the pill takes its text's width, but its dark backing filled all 340 pt, so a short note showed a
+    /// second, darker shape at its right end (review 2026-11-06). The backing follows the pill now.
+    @MainActor
+    func testAShortNoteHasNoBackingBeyondItsPill() throws {
+        let renderer = ImageRenderer(content: RecorderNoticeContent(text: "Short.", more: nil, dismiss: {})
+            .environment(\.colorScheme, .dark))
+        renderer.scale = 1
+        let image = try XCTUnwrap(renderer.cgImage)
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        let middle = image.height / 2
+        XCTAssertGreaterThan(bitmap.colorAt(x: 4, y: middle)?.alphaComponent ?? 0, 0.5, "the pill's own left end")
+        XCTAssertLessThan(bitmap.colorAt(x: image.width - 3, y: middle)?.alphaComponent ?? 1, 0.05, "clear past the pill")
+    }
+
+    /// The defect: the note measured its own host with no sizing options (0 x 0), so every failure note opened as an
+    /// invisible 0 x 0 window (review 2026-11-06).
+    @MainActor
+    func testAFailureNoteIsMeasuredAtItsRealSizeBeforeItShows() {
+        let short = RecorderNoticePanel.measure(text: "The recording did not start.", more: nil)
+        XCTAssertEqual(short.width, RecorderNoticePanel.width)
+        XCTAssertGreaterThan(short.height, 24)
+        let long = RecorderNoticePanel.measure(text: String(repeating: "The recording did not start. ", count: 8),
+                                               more: "exit 2")
+        XCTAssertGreaterThan(long.height, short.height, "a longer message wraps onto more lines")
+    }
+
+    /// The defect: the prompt's content ignored the hidden title bar's safe area, but the panel took the hosting
+    /// view's fitting size, which still counted that bar, so the empty band moved from above the heading to under
+    /// the buttons (live check 2026-11-07). The panel is exactly as tall as its content now.
+    @MainActor
+    func testTheRenamePromptIsAsTallAsItsContent() {
+        let request = RecorderTitleRequest(heading: "Rename “Demo”", detail: "The library and the editor show this title.",
+                                           current: "Demo")
+        let prompt = RecorderTitlePrompt(request) { _ in }
+        let bare = NSHostingView(rootView: RecorderTitlePromptView(request: request) { _ in })
+        XCTAssertEqual(prompt.panel.frame.width, 360, accuracy: 1)
+        XCTAssertEqual(prompt.panel.frame.height, bare.fittingSize.height, accuracy: 1)
+    }
+
     func testNothingStoredGivesTheDefaultsAndADamagedValueFallsBackToThem() {
         XCTAssertEqual(RecorderFailureStyle.load(defaults), .notice)
         XCTAssertEqual(CameraPreviewPolicy.load(defaults), .everyCameraRecording)

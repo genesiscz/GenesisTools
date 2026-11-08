@@ -27,6 +27,9 @@ export const FIRST_FRAME_MESSAGE =
     "Still waiting for the first frame. macOS sends none while the screen is locked or the window is hidden or minimized. Discard cancels it.";
 
 const SLOW_START_MS = 8000;
+/** A rest of the limit shorter than this starts no new segment: a capture's start costs about as long, and the
+ * recorder's deadline runs from its own launch, so such a refill ran past the limit (10.31 s for 10, 25.35 s for 20). */
+const MIN_REFILL_MS = 1000;
 
 export const recordingCommandSchema = z.discriminatedUnion("cmd", [
     z.object({ cmd: z.literal("pause") }),
@@ -70,8 +73,24 @@ export type RecordingSessionEvent =
           limitMs: number;
       }
     | { event: "elapsed"; elapsedMs: number; limitMs: number }
-    | { event: "segment"; index: number; path: string; durationMs: number; target: RecordingTarget }
-    | { event: "done"; path: string; durationMs: number; segments: number }
+    | {
+          event: "segment";
+          index: number;
+          path: string;
+          durationMs: number;
+          target: RecordingTarget;
+          frames?: number;
+      }
+    | {
+          event: "done";
+          path: string;
+          durationMs: number;
+          segments: number;
+          /** Frames the movie holds, when every run reported them. */
+          frames?: number;
+          /** Frames per second over the movie: under the asked rate when frames were dropped or the screen was still. */
+          averageFps?: number;
+      }
     | { event: "discarded" }
     /** The recorder is not running yet for a known slow reason (it compiles after an update); `starting` stays. */
     | { event: "preparing"; message: string }
@@ -96,6 +115,8 @@ export interface SegmentResult {
     endedBy: SegmentEnd;
     /** The recorder's own measure of the movie, when it reported one. */
     durationMs?: number;
+    /** Frames written into the movie, when the recorder reported them. */
+    frames?: number;
     error?: string;
     /** A stable code for a refusal a host handles itself (`screen-recording-denied`). */
     code?: string;
@@ -125,6 +146,21 @@ export interface FinishedSegment {
     path: string;
     durationMs: number;
     target: RecordingTarget;
+    frames?: number;
+}
+
+/** The frames of the whole movie and its average rate: undefined unless every segment reported its frames. */
+export function movieFrameStats(
+    segments: FinishedSegment[],
+    durationMs: number
+): { frames: number; averageFps: number } | undefined {
+    if (segments.length === 0 || segments.some((segment) => segment.frames === undefined)) {
+        return undefined;
+    }
+
+    const frames = segments.reduce((sum, segment) => sum + (segment.frames ?? 0), 0);
+    const averageFps = durationMs > 0 ? Math.round((frames / (durationMs / 1000)) * 10) / 10 : 0;
+    return { frames, averageFps };
 }
 
 /** Joins finished segments into `output`, one H.264 MP4, and returns the joined movie's length. */
@@ -310,7 +346,7 @@ export class RecordingSession {
     }
 
     private async apply(command: RecordingCommand): Promise<void> {
-        log.info({ command: command.cmd, state: this.state, segments: this.segments.length }, "recording command");
+        log.debug({ command: command.cmd, state: this.state, segments: this.segments.length }, "recording command");
         if (this.state === "finishing") {
             this.options.emit({ event: "error", message: "The recording is already being saved.", fatal: false });
             return;
@@ -355,8 +391,13 @@ export class RecordingSession {
         }
     }
 
+    /** What is left of the limit is too short for another segment. */
+    private limitReached(): boolean {
+        return this.limitMs - this.recordedMs < MIN_REFILL_MS;
+    }
+
     private resumeOrRefuse(target: RecordingTarget): void {
-        if (this.recordedMs >= this.limitMs) {
+        if (this.limitReached()) {
             this.setState("paused", "limit");
             this.options.emit({
                 event: "error",
@@ -389,7 +430,7 @@ export class RecordingSession {
             result: Promise.resolve({ ok: false, endedBy: "failure" }),
         };
         this.current = run;
-        log.info({ index, target, maxSeconds }, "recording segment requested");
+        log.debug({ index, target, maxSeconds }, "recording segment requested");
         this.setState("starting", reason);
         run.result = this.options.recorder
             .record({
@@ -430,7 +471,7 @@ export class RecordingSession {
 
         run.startedAt = this.now();
         clearTimeout(run.slowStart);
-        log.info({ index: run.index }, "recording segment started");
+        log.debug({ index: run.index }, "recording segment started");
         this.setState("recording", run.reason);
     }
 
@@ -471,9 +512,12 @@ export class RecordingSession {
             path: run.path,
             durationMs: result.durationMs ?? wallMs,
             target: run.target,
+            ...(result.frames === undefined ? {} : { frames: result.frames }),
         };
         this.segments.push(segment);
-        this.recordedMs += wallMs;
+        // The longer of the movie and the wall time this session saw: the recorder's deadline runs from its own launch,
+        // so its movie can be longer, and the limit must count what the movie holds.
+        this.recordedMs += Math.max(wallMs, segment.durationMs);
         this.options.emit({ event: "segment", ...segment });
     }
 
@@ -485,7 +529,7 @@ export class RecordingSession {
         this.current = undefined;
         this.record(run, result);
         if (result.endedBy === "deadline" && result.ok) {
-            if (this.recordedMs >= this.limitMs) {
+            if (this.limitReached()) {
                 log.info({ recordedMs: this.recordedMs }, "recording reached its limit");
                 this.setState("paused", "limit");
                 return;
@@ -539,7 +583,13 @@ export class RecordingSession {
 
         await this.removeDirectory();
         log.info({ output: this.options.output, segments: ordered.length, durationMs }, "recording saved");
-        this.options.emit({ event: "done", path: this.options.output, durationMs, segments: ordered.length });
+        this.options.emit({
+            event: "done",
+            path: this.options.output,
+            durationMs,
+            segments: ordered.length,
+            ...movieFrameStats(ordered, durationMs),
+        });
         this.end("done");
     }
 
@@ -673,7 +723,26 @@ export function cursorTrackPath(movie: string): string {
  * copies every stream (the audio tracks included), so a long recording joins in seconds at the recorder's quality.
  * `list` is a concat list file (`file '<path>'` per line).
  */
-export function concatCopyArgv({ list, output }: { list: string; output: string }): string[] {
+/** `-metadata` for each audio track: its title and handler name, so a player lists "Microphone", not "Track 2". */
+export function audioTitleArgs(titles: string[] = []): string[] {
+    return titles.flatMap((title, index) => [
+        `-metadata:s:a:${index}`,
+        `title=${title}`,
+        `-metadata:s:a:${index}`,
+        `handler_name=${title}`,
+    ]);
+}
+
+export function concatCopyArgv({
+    list,
+    output,
+    audioTitles,
+}: {
+    list: string;
+    output: string;
+    /** One per audio track, in track order. */
+    audioTitles?: string[];
+}): string[] {
     return [
         "ffmpeg",
         "-hide_banner",
@@ -691,6 +760,7 @@ export function concatCopyArgv({ list, output }: { list: string; output: string 
         "0",
         "-c",
         "copy",
+        ...audioTitleArgs(audioTitles),
         "-movflags",
         "+faststart",
         output,
@@ -734,6 +804,7 @@ export function joinSegmentsArgv({
     output,
     audio = false,
     audioTracks = audio ? 1 : 0,
+    audioTitles,
 }: {
     inputs: string[];
     width: number;
@@ -742,6 +813,8 @@ export function joinSegmentsArgv({
     /** Every input has one audio track: it is joined too (resampled across the cuts), as AAC. */
     audio?: boolean;
     audioTracks?: number;
+    /** One per audio track, in track order. */
+    audioTitles?: string[];
 }): string[] {
     const w = Math.max(2, Math.floor(width / 2) * 2);
     const h = Math.max(2, Math.floor(height / 2) * 2);
@@ -788,6 +861,7 @@ export function joinSegmentsArgv({
             "aac",
             "-b:a",
             "192k",
+            ...audioTitleArgs(audioTitles?.slice(0, audioTracks)),
             "-fps_mode",
             "vfr",
             "-movflags",

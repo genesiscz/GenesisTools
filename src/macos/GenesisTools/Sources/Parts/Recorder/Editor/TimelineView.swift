@@ -202,13 +202,18 @@ func formatClock(_ us: Int64, tenths: Bool = false) -> String {
     return String(format: "%02d:%02d", minutes, seconds)
 }
 
-/// A source range as the edit plays it, the time the ruler shows ("00:00.5 – 00:03.0", or "Cut from the edit" when
+/// A time range in words, "00:03.0 to 00:08.0", as the change banner says it (no dash between the two times).
+func formatClockRange(_ fromUs: Int64, _ toUs: Int64) -> String {
+    "\(formatClock(fromUs, tenths: true)) to \(formatClock(toUs, tenths: true))"
+}
+
+/// A source range as the edit plays it, the time the ruler shows ("00:00.5 to 00:03.0", or "Cut from the edit" when
 /// none of it plays), and the range in the recording when the edit moved it (nil when the two read the same).
 func editRange(_ project: EditProject, fromUs: Int64, toUs: Int64) -> (edit: String, recording: String?) {
-    let source = "\(formatClock(fromUs, tenths: true)) – \(formatClock(toUs, tenths: true))"
+    let source = formatClockRange(fromUs, toUs)
     let spans = TimelineMap.outputSpans(fromUs: fromUs, toUs: toUs, in: project)
     guard let first = spans.first, let last = spans.last else { return ("Cut from the edit", "\(source) in the recording") }
-    let edit = "\(formatClock(first.fromUs, tenths: true)) – \(formatClock(last.toUs, tenths: true))"
+    let edit = formatClockRange(first.fromUs, last.toUs)
     return (edit, edit == source ? nil : "\(source) in the recording")
 }
 
@@ -489,7 +494,8 @@ private struct MarksLaneView: View {
         .onTapGesture { location in select(atX: location.x) }
         .instantTooltip("Markers (purple flags), review comments (yellow), caption lines (blue) and shortcuts (white lines). Click a marker or a comment to go to it.")
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Marks: \(Plural.count(markers.count, "marker")), \(Plural.count(model.reviewComments.count, "comment")), \(Plural.count(captions.count, "caption line")), \(Plural.count(keys.count, "shortcut"))")
+        .accessibilityLabel(TimelineView.marksLabel(markers: markers.count, comments: model.reviewComments.count, captions: captions.count,
+                                            shortcuts: keys.count))
         .overlay(alignment: .topLeading) {
             ZStack(alignment: .topLeading) {
                 ForEach(model.reviewComments) { comment in
@@ -564,7 +570,7 @@ private struct MusicLaneView: View {
             ? min(lengthUs, max(0, (fileUs ?? lengthUs) - Int64(music.startMs ?? 0) * 1000))
             : lengthUs
         let speech = MusicMix.speech(lines: model.zoom.captionLines, project: model.project)
-        let frames = MusicMix.keyframes(music: music, speech: speech, lengthUs: playedUs)
+        let frames = MusicMix.keyframes(music: music, speech: speech, lengthUs: playedUs, duck: .of(model.project))
         let tint = missing ? Color.red : Color(red: 0.55, green: 0.6, blue: 1)
         Canvas { context, size in
             let x0 = scale.x(0) + 1.5
@@ -604,24 +610,36 @@ private struct EditMarkerFlag: View {
     let model: EditorModel
     let marker: EditProject.Marker
     let scale: TimelineScale
+    @State private var hovered = false
 
     var body: some View {
         if let out = TimelineMap.outputTime(ofSource: marker.atUs, in: model.project) {
-            Color.clear
-                .frame(width: 14, height: TimelineView.marksLaneHeight)
-                .contentShape(Rectangle())
-                .onTapGesture { model.selectMarker(id: marker.id, atUs: marker.atUs) }
-                .contextMenu {
-                    Button("Go to “\(marker.label)”") { model.seek(out) }
-                    Button("Delete Marker", role: .destructive) { model.deleteMarker(marker.id) }
-                }
-                .accessibilityElement()
-                .accessibilityLabel("Marker \(marker.label) at \(formatClock(out, tenths: true))")
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAction { model.selectMarker(id: marker.id, atUs: marker.atUs) }
-                .accessibilityAction(named: "Delete Marker") { model.deleteMarker(marker.id) }
-                .liveRow()
-                .offset(x: scale.x(out) - 2)
+            // The flag (7 pt) and its label as the lane draws them (the label 9 pt right of the line), the label laid
+            // out unseen here: a click on either selects the marker.
+            HStack(spacing: 2) {
+                Color.clear.frame(width: 7)
+                Text(verbatim: marker.label).font(.system(size: 9, weight: .semibold)).hidden()
+            }
+            .padding(.horizontal, 4)
+            .frame(height: TimelineView.marksLaneHeight)
+            .background(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(Color.white.opacity(hovered ? 0.12 : 0)))
+            .contentShape(Rectangle())
+            .onHover { inside in
+                hovered = inside
+                (inside ? NSCursor.pointingHand : NSCursor.arrow).set()
+            }
+            .onTapGesture { model.selectMarker(id: marker.id, atUs: marker.atUs) }
+            .contextMenu {
+                Button("Go to “\(marker.label)”") { model.seek(out) }
+                Button("Delete Marker", role: .destructive) { model.deleteMarker(marker.id) }
+            }
+            .accessibilityElement()
+            .accessibilityLabel("Marker \(marker.label) at \(formatClock(out, tenths: true))")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { model.selectMarker(id: marker.id, atUs: marker.atUs) }
+            .accessibilityAction(named: "Delete Marker") { model.deleteMarker(marker.id) }
+            .liveRow()
+            .offset(x: scale.x(out) - 4)
         }
     }
 }
@@ -650,6 +668,7 @@ private struct CommentMarker: View {
                 }
             }
             .contentShape(Rectangle())
+            .onHover { inside in (inside ? NSCursor.pointingHand : NSCursor.arrow).set() }
             .onTapGesture { model.goToComment(comment) }
             .instantTooltip(comment.text.isEmpty ? "A comment" : comment.text)
             .accessibilityElement()
@@ -776,9 +795,19 @@ private struct DisplayBand: View {
     }
 }
 
+extension TimelineView {
+    /// What the marks lane holds, without the kinds it has none of: "Marks: 4 caption lines", not "0 markers, 0
+    /// comments, 4 caption lines, 0 shortcuts".
+    nonisolated static func marksLabel(markers: Int, comments: Int, captions: Int, shortcuts: Int) -> String {
+        let parts = [(markers, "marker"), (comments, "comment"), (captions, "caption line"), (shortcuts, "shortcut")]
+            .filter { $0.0 > 0 }.map { Plural.count($0.0, $0.1) }
+        return parts.isEmpty ? "Marks: none" : "Marks: " + parts.joined(separator: ", ")
+    }
+}
+
 // MARK: - Playhead
 
-private struct PlayheadView: View {
+struct PlayheadView: View {
     let clock: PlayheadClock
     let scale: TimelineScale
     let model: EditorModel
@@ -793,15 +822,30 @@ private struct PlayheadView: View {
                 .frame(width: 1.5, height: layout.lanesBottom - TimelineView.rulerHeight + 8)
                 .offset(x: x - 0.75, y: TimelineView.rulerHeight - 4)
                 .allowsHitTesting(false)
+            // The knob draws 13 × 16 pt; its grip is 23 × 22 pt round it, so a press beside the knob still takes it.
             PlayheadKnob()
                 .fill(RecorderPalette.playhead)
                 .frame(width: 13, height: 16)
-                .offset(x: x - 6.5, y: TimelineView.rulerHeight - 10)
+                .frame(width: PlayheadView.grip.width, height: PlayheadView.grip.height, alignment: .top)
+                .contentShape(Rectangle())
+                .offset(x: x - PlayheadView.grip.width / 2, y: TimelineView.rulerHeight - 10)
                 .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("timeline")).onChanged { value in
                     model.player.pause()
                     model.seek(scale.us(value.location.x))
                 })
-                .accessibilityLabel("Playhead at \(formatClock(clock.outUs, tenths: true))")
+                // VoiceOver moves it too: a swipe up or down steps one second, as the arrow keys step the time.
+                .accessibilityElement()
+                .accessibilityLabel("Playhead")
+                .accessibilityValue(PlayheadView.spoken(clock.outUs, of: model.durationUs))
+                .accessibilityAdjustableAction { direction in
+                    model.player.pause()
+                    switch direction {
+                    case .increment: model.seek(min(model.durationUs, clock.outUs + 1_000_000))
+                    case .decrement: model.seek(max(0, clock.outUs - 1_000_000))
+                    @unknown default: break
+                    }
+                }
+                .accessibilityIdentifier("recorder.playhead")
             // On the clip lane's top edge beside the playhead, where the cut lands; greyed at a clip edge.
             IconButton(systemName: "scissors", tooltip: canSplit ? "Split the clip at the playhead (S)" : "No cut here: the playhead is at a clip edge",
                        size: 11) {
@@ -816,6 +860,14 @@ private struct PlayheadView: View {
             .accessibilityIdentifier("recorder.split")
         }
         .coordinateSpace(name: "timeline")
+    }
+
+    /// The knob's hit area: at least 22 pt each way.
+    nonisolated static let grip = CGSize(width: 23, height: 22)
+
+    /// "00:12.5 of 00:44.8", as the clock reads.
+    nonisolated static func spoken(_ atUs: Int64, of durationUs: Int64) -> String {
+        "\(formatClock(atUs, tenths: true)) of \(formatClock(durationUs, tenths: true))"
     }
 }
 

@@ -28,6 +28,14 @@ enum CaptureChoice: Equatable {
         }
     }
 
+    /// A display, an area or the screen in use; not a window or an app, whose movie has no audio track.
+    var recordsAudio: Bool {
+        switch self {
+        case .target(.window), .target(.app): false
+        case .target(.display), .area, .followPointer: true
+        }
+    }
+
     /// Cocoa screen rect (bottom-left origin) to CoreGraphics global points, given the primary display's height.
     static func coreGraphicsRect(cocoa rect: CGRect, primaryHeight: CGFloat) -> CGRect {
         CGRect(x: rect.minX, y: primaryHeight - rect.maxY, width: rect.width, height: rect.height)
@@ -37,6 +45,16 @@ enum CaptureChoice: Equatable {
 /// The capture picker's options, each its own key in the app's defaults so the menu's toggles and the picker share
 /// them. Every value applies to the next recording.
 struct CaptureOptions: Equatable {
+    /// What a choice on `tab` does not record, said beside the options; nil on the Displays tab. "Select an area…"
+    /// sits on every tab and records all of them, so the rows stay usable and only this line explains.
+    static func notRecorded(on tab: RecordingPickerTab) -> String? {
+        switch tab {
+        case .windows: "A window movie has no audio, no cursor track and no shortcuts. Choose a display or an area for those."
+        case .apps: "An app movie has no audio, no cursor track and no shortcuts. Choose a display or an area for those."
+        case .displays: nil
+        }
+    }
+
     static let frameRates = [15, 24, 30, 60]
     /// 0 is "the same as the frame rate" (a movie keeps one rate).
     static let idleRates: [Double] = [0, 0.5, 1, 2, 5]
@@ -110,7 +128,8 @@ struct CaptureOptions: Equatable {
         args += ["--fps", String(fps)]
         if idleFps > 0 { args += ["--idle-fps", Self.number(idleFps)] }
         if threshold != 0.5 { args += ["--threshold", Self.number(threshold)] }
-        if !audioSources.isEmpty { args += ["--audio", audioSources.joined(separator: ",")] }
+        // A window or app movie is made from those windows alone and has no audio track; `start` refuses --audio there.
+        if !audioSources.isEmpty, choice.recordsAudio { args += ["--audio", audioSources.joined(separator: ",")] }
         if !drawCursor { args.append("--system-cursor") }
         if !shortcutsOverlay { args.append("--no-shortcuts") }
         if camera { args.append("--camera") }

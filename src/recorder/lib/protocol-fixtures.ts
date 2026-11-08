@@ -207,6 +207,114 @@ const EXAMPLE_OPS: readonly unknown[] = [
     { op: "range", from: 1, to: 3, action: "spotlight" },
     { op: "range", from: 2, to: 4, action: "speed", factor: 2 },
     { op: "range", from: 2, to: 3, action: "text", text: "Step 1", lane: "lane3" },
+    // R4 voiceover clips
+    { op: "voiceover", at: 2.5, file: "/voice/intro.mp3", volume: 1.2, label: "Intro" },
+    { op: "voiceover", id: "v1", at: 3 },
+    { op: "unvoiceover", id: "v1" },
+    // R4 8 music ducking
+    { op: "ducking", db: 12, fadeMs: 300, transcript: true, voiceovers: false },
+    { op: "ducking", enabled: false },
+    // R4 6 animated captions and texts
+    { op: "captionsStyle", kind: "karaoke", color: "#FF9F0A" },
+    { op: "captionsStyle", enabled: false },
+    { op: "text", from: 1, to: 3, text: "Typed", animate: { kind: "typewriter", ms: 800 } },
+    { op: "setText", id: "t1", animate: { kind: "slideUp" } },
+    // R4 10 progress bar and chapter strip
+    { op: "progress", show: true, color: "#FF375F", height: 0.01, chapters: true, chapterMs: 2500 },
+    { op: "progress", enabled: false },
+    // R4 9 intro and end cards
+    {
+        op: "introCard",
+        title: "Demo",
+        subtitle: "A short tour",
+        logo: "/pictures/logo.png",
+        date: "7 November 2026",
+        seconds: 2.5,
+    },
+    { op: "introCard", enabled: false },
+    { op: "endCard", text: "Thanks for watching", link: "https://example.com/demo", qr: true, seconds: 4 },
+    { op: "endCard", enabled: false },
+    // Round 4 fx-render: transitions, lens, tilt.
+    { op: "transition", kind: "crossfade", ms: 400 },
+    { op: "transition", clip: "c2", kind: "blur" },
+    { op: "transition", clip: "c2", kind: "default" },
+    {
+        op: "lens",
+        from: 1,
+        to: 3,
+        radius: 0.15,
+        magnification: 2.5,
+        follow: false,
+        at: { x: 0.3, y: 0.6 },
+        ring: "#FFCC00",
+    },
+    {
+        op: "setLens",
+        id: "l1",
+        from: 1.5,
+        to: 4,
+        radius: 0.1,
+        magnification: 3,
+        follow: true,
+        at: { x: 0.5, y: 0.5 },
+        ring: "#FFFFFF",
+    },
+    { op: "unlens", id: "l1" },
+    { op: "tilt", enabled: true, strength: 0.6, drift: false, tiltIn: true, tiltOut: false, inMs: 900, outMs: 1500 },
+    // fx B (round 4)
+    { op: "hidePrivate", ids: ["p1a2b3c4d"], kinds: ["email", "token"], style: "pixelate" },
+    {
+        op: "hidePrivate",
+        names: ["Alice Example"],
+        exclude: [{ x: 0.4, y: 0.8, width: 0.2, height: 0.08 }],
+        excludeFixed: true,
+    },
+    {
+        op: "hideText",
+        text: "alice@example.com",
+        from: 2,
+        to: 9,
+        style: "black",
+        exclude: [{ x: 0.4, y: 0.8, width: 0.2, height: 0.08 }],
+        excludeFixed: true,
+        label: "Contact",
+    },
+    { op: "hideText", pattern: "sk-[a-z0-9]+" },
+    { op: "cursorSmooth", strength: 0.8, jitterPx: 4, idleFadeSeconds: 2.5 },
+    { op: "cursorSmooth", enabled: false },
+    { op: "speedUpWaits", ids: ["w1a2b3c4d"], minSeconds: 5, maxArea: 0.08, speed: 6 },
+    { op: "autoSpeed", badge: true, position: "bottom-left" },
+    // R5 5 redaction edges
+    { op: "redact", from: 1, to: 2, rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.1 }, style: "pixelate", cell: 24 },
+    { op: "spotlight", from: 2, to: 3, rect: { x: 0.3, y: 0.3, width: 0.2, height: 0.2 }, fadeMs: 0 },
+    { op: "setRedaction", id: "r1", fadeMs: -1, cell: 12 },
+    { op: "redactionJoins", snapMs: 120 },
+    // R5 4 frame layouts and canvas zoom
+    { op: "frame", preset: "phone-left", layout: { scale: 1.1 } },
+    { op: "frame", layout: { align: "right", scale: 1 } },
+    { op: "zoom", from: 1, to: 3, scale: 2, focus: { x: 0.2, y: 0.5 }, target: "canvas" },
+    // R5 10 multi-line texts
+    { op: "text", from: 1, to: 3, text: "Step 1\nOpen the inbox", x: 0.62, block: { width: 0.35, align: "left" } },
+    { op: "setText", id: "t1", block: { align: "right" } },
+    // R6 2 a match's whole OCR line
+    { op: "hideText", text: "Orla Fictive", unit: "line" },
+    // R6 3 several texts and patterns in one scan
+    { op: "hideText", texts: ["Orla Fictive", "Bram Sample"], patterns: ["\\d{3} \\d{3} \\d{3}"] },
+    // R6 6 unhide
+    { op: "unhide", text: "Orla Fictive" },
+    { op: "unhide", ids: ["r12", "p5e6f7a8b"] },
+    { op: "unhide", all: true },
+    // R8 4 a redaction with keys (verifyHidden's fixOps)
+    {
+        op: "redact",
+        from: 1,
+        to: 2,
+        rect: { x: 0.1, y: 0.6, width: 0.3, height: 0.05 },
+        track: [
+            { at: 1, x: 0.1, y: 0.6, width: 0.3, height: 0.05 },
+            { at: 2, x: 0.1, y: 0.4, width: 0.3, height: 0.05 },
+        ],
+    },
 ];
 
 /** Every method a live service's `hello` lists, in its order (the list service.ts builds; service.test.ts checks it). */
@@ -244,6 +352,8 @@ function stableIds(project: EditProject): EditProject {
         ...(project.shapes ? { shapes: renumber(project.shapes, "s") } : {}),
         ...(project.markers ? { markers: renumber(project.markers, "m") } : {}),
         ...(camera ? { camera } : {}),
+        // Round 4 fx-render.
+        ...(project.lens ? { lens: { items: renumber(project.lens.items, "l") ?? [] } } : {}),
     };
 }
 
@@ -308,11 +418,175 @@ function goldenProjects(): Array<{ name: string; project: EditProject }> {
         ],
         withCamera
     );
+    // Round 4 fx-render: a cut with a default and an own transition, a placed lens, and a tilt.
+    const fx = apply([
+        { op: "frame", padding: 0.08 },
+        { op: "cut", from: 4, to: 5 },
+        { op: "transition", kind: "crossfade" },
+        { op: "lens", from: 1, to: 3, magnification: 2.5, at: { x: 0.3, y: 0.6 } },
+        { op: "tilt", strength: 0.6 },
+    ]);
+    const fxJoin = fx.clips[1]?.id ?? "";
+    const fxWithJoin = apply([{ op: "transition", clip: fxJoin, kind: "zoom", ms: 500 }], fx);
     return [
         { name: "every item, a split and a speed-up", project: items },
+        { name: "transitions, a lens and a tilt", project: fxWithJoin },
         { name: "the looks, the export and the sound", project: looks },
         { name: "the looks a recorded track turns on, and music", project: stableIds(tracked) },
         { name: "a camera with two hidden parts and lanes", project: camera },
+        // R4 voiceover clips, 8 music ducking
+        {
+            name: "voiceover clips and music ducking",
+            project: editProjectSchema.parse({
+                ...wholeProject(source),
+                audio: {
+                    include: true,
+                    volume: 1,
+                    mutedTracks: [],
+                    music: { file: "/music/bed.mp3", volume: 0.3 },
+                    voiceovers: [
+                        { id: "v1", atUs: 1_000_000, file: "/voice/intro.mp3", durationUs: 2_500_000, label: "Intro" },
+                        { id: "v2", atUs: 6_000_000, file: "/voice/outro.wav", durationUs: 1_200_000, volume: 1.4 },
+                    ],
+                    ducking: { db: 15, fadeMs: 250, transcript: false },
+                },
+            }),
+        },
+        // R4 6 animated captions and texts
+        {
+            name: "karaoke captions and animated texts",
+            project: stableIds(
+                apply(
+                    [
+                        { op: "text", from: 1, to: 3, text: "Typed", animate: { kind: "typewriter", ms: 900 } },
+                        { op: "text", from: 4, to: 6, text: "Risen", animate: { kind: "slideUp" } },
+                        { op: "captionsStyle", kind: "karaoke" },
+                        // R4 10 progress bar and chapter strip
+                        { op: "marker", at: 4, label: "Second step" },
+                        { op: "progress", color: "#0A84FF", chapterMs: 1500 },
+                        // R4 9 intro and end cards
+                        { op: "introCard", title: "Demo", subtitle: "A short tour", date: "7 November 2026" },
+                        { op: "endCard", text: "Thanks for watching", link: "https://example.com/demo", qr: true },
+                    ],
+                    editProjectSchema.parse({ ...wholeProject(source), captions: { show: true } })
+                )
+            ),
+        },
+        // fx B (round 4): the three objects as the ops write them.
+        {
+            name: "private data hidden, a smooth cursor and a speed badge",
+            project: editProjectSchema.parse({
+                ...items,
+                privacy: { applied: ["p1a2b3c4d"] },
+                redactions: [
+                    ...(items.redactions ?? []),
+                    {
+                        id: "r9",
+                        startUs: 3_500_000,
+                        endUs: 7_400_000,
+                        x: 0.16,
+                        y: 0.9,
+                        width: 0.3,
+                        height: 0.05,
+                        style: "blur",
+                        label: "Text (auto)",
+                        track: [
+                            { atUs: 3_600_000, x: 0.16, y: 0.9, width: 0.3, height: 0.05 },
+                            { atUs: 7_200_000, x: 0.16, y: 0.02, width: 0.3, height: 0.05 },
+                        ],
+                        exclude: [{ x: 0.38, y: 0.79, width: 0.08, height: 0.08 }],
+                    },
+                ],
+                cursorSmooth: { strength: 0.8, jitterPx: 4, idleFadeSeconds: 2.5 },
+                autoSpeed: { badge: true, position: "bottom-left" },
+            }),
+        },
+        // R5 5 redaction edges: a pixelate cell, a hard spotlight and the join setting.
+        {
+            name: "redaction edges",
+            project: editProjectSchema.parse({
+                ...items,
+                redactions: [
+                    ...(items.redactions ?? []),
+                    {
+                        id: "r10",
+                        startUs: 1_000_000,
+                        endUs: 2_000_000,
+                        x: 0.1,
+                        y: 0.1,
+                        width: 0.2,
+                        height: 0.1,
+                        style: "pixelate",
+                        cell: 24,
+                    },
+                    {
+                        id: "r11",
+                        startUs: 2_000_000,
+                        endUs: 3_000_000,
+                        x: 0.3,
+                        y: 0.3,
+                        width: 0.2,
+                        height: 0.2,
+                        style: "spotlight",
+                        fadeMs: 0,
+                    },
+                ],
+                redactionJoins: { snapMs: 120 },
+            }),
+        },
+        // R5 4 frame layouts and canvas zoom: a phone on the left of a 16:9 frame, zoomed into by a canvas zoom.
+        {
+            name: "a phone frame with a canvas zoom",
+            project: apply([
+                { op: "frame", preset: "phone-left", layout: { scale: 1.1 } },
+                { op: "zoom", from: 1, to: 3, scale: 2, focus: { x: 0.2, y: 0.5 }, target: "canvas" },
+            ]),
+        },
+        // R6 1 and 7: a part that follows a scrolled text, and the band where it could not, with the request.
+        {
+            name: "moving text hidden, with an uncertain band",
+            project: editProjectSchema.parse({
+                ...items,
+                privacy: { applied: ["p5e6f7a8b"] },
+                redactions: [
+                    ...(items.redactions ?? []),
+                    {
+                        id: "r12",
+                        startUs: 1_000_000,
+                        endUs: 3_000_000,
+                        x: 0.3,
+                        y: 0.8,
+                        width: 0.2,
+                        height: 0.05,
+                        style: "blur",
+                        label: "Text (auto)",
+                        track: [
+                            { atUs: 1_000_000, x: 0.3, y: 0.8, width: 0.2, height: 0.05 },
+                            { atUs: 1_500_000, x: 0.3, y: 0.4, width: 0.2, height: 0.05 },
+                        ],
+                        hide: {
+                            by: "hideText",
+                            hit: "p5e6f7a8b",
+                            movingSeconds: 0.6,
+                            keysPerSecond: 30,
+                            request: { texts: ["Orla Fictive"], unit: "line" },
+                        },
+                    },
+                    {
+                        id: "r13",
+                        startUs: 1_100_000,
+                        endUs: 1_400_000,
+                        x: 0.29,
+                        y: 0,
+                        width: 0.22,
+                        height: 0.86,
+                        style: "blur",
+                        label: "Text (auto) (uncertain)",
+                        hide: { by: "hideText", hit: "p5e6f7a8b", uncertain: true, request: { text: "Orla Fictive" } },
+                    },
+                ],
+            }),
+        },
     ];
 }
 

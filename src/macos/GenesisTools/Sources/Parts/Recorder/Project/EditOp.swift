@@ -63,6 +63,34 @@ enum EditOp: Equatable {
     case duplicate(Duplicate)
     case removeClickCircles(RemoveClickCircles)
     case renameLane(RenameLane)
+    // R4 voiceover clips
+    case voiceover(Voiceover)
+    case unvoiceover(Unvoiceover)
+    // R4 8 music ducking
+    case ducking(Ducking)
+    // R4 6 animated captions
+    case captionsStyle(CaptionsStyle)
+    // R4 10 progress bar
+    case progress(ProgressBar)
+    // R4 9 intro and end cards
+    case introCard(IntroCard)
+    case endCard(EndCard)
+    // Round 4 fx-render (src/utils/recording-editor/fx.ts).
+    case transition(Transition)
+    case lens(Lens)
+    case setLens(SetLens)
+    case unlens(Unlens)
+    case tilt(Tilt)
+    // fx B (round 4): private data, smooth cursor, typing and waiting speed-ups.
+    case hidePrivate(HidePrivate)
+    case cursorSmooth(CursorSmooth)
+    case speedUpWaits(SpeedUpWaits)
+    case autoSpeed(AutoSpeed)
+    case hideText(HideText)
+    // R5 5 redaction edges
+    case redactionJoins(RedactionJoins)
+    // R6 6 unhide
+    case unhide(Unhide)
 
     /// Every payload type, so the decoder finds one by its tag and the tag test lists them.
     static let payloads: [any EditOpPayload.Type] = [
@@ -74,6 +102,17 @@ enum EditOp: Equatable {
         Normalize.self, Lanes.self, AddLane.self, RemoveLane.self, MoveLane.self, MoveToLane.self, RangeAction.self,
         SetZoom.self, SetRedaction.self, SetText.self, SetShape.self, Trim.self, DeleteClip.self, ClipSpeed.self,
         Duplicate.self, RemoveClickCircles.self, RenameLane.self,
+        // R4 voiceover clips, 8 music ducking
+        Voiceover.self, Unvoiceover.self, Ducking.self, CaptionsStyle.self, ProgressBar.self,
+        IntroCard.self, EndCard.self,
+        // Round 4 fx-render.
+        Transition.self, Lens.self, SetLens.self, Unlens.self, Tilt.self,
+        // fx B (round 4)
+        HidePrivate.self, CursorSmooth.self, SpeedUpWaits.self, AutoSpeed.self, HideText.self,
+        // R5 5 redaction edges
+        RedactionJoins.self,
+        // R6 6 unhide
+        Unhide.self,
     ]
 
     static var tags: [String] { payloads.map { $0.tag } }
@@ -136,6 +175,26 @@ enum EditOp: Equatable {
         case let .duplicate(op): op
         case let .removeClickCircles(op): op
         case let .renameLane(op): op
+        // R4 voiceover clips, 8 music ducking
+        case let .voiceover(op): op
+        case let .unvoiceover(op): op
+        case let .ducking(op): op
+        case let .captionsStyle(op): op
+        case let .progress(op): op
+        case let .introCard(op): op
+        case let .endCard(op): op
+        case let .transition(op): op
+        case let .lens(op): op
+        case let .setLens(op): op
+        case let .unlens(op): op
+        case let .tilt(op): op
+        case let .hidePrivate(op): op
+        case let .cursorSmooth(op): op
+        case let .speedUpWaits(op): op
+        case let .autoSpeed(op): op
+        case let .hideText(op): op
+        case let .redactionJoins(op): op
+        case let .unhide(op): op
         }
     }
 
@@ -244,6 +303,8 @@ extension EditOp {
         var focus: Point?
         var follow: Bool?
         var lane: String?
+        // R5 4 canvas zoom
+        var target: EditProject.ZoomTarget?
         var op: EditOp { .zoom(self) }
     }
 
@@ -264,7 +325,20 @@ extension EditOp {
         var dim: Double?
         var cutout: EditProject.SpotlightCutout?
         var lane: String?
+        // R5 5 redaction edges
+        var cell: Double?
+        // R8 4 fixOps: keyframes
+        var track: [Key]?
         var op: EditOp { .redact(self) }
+
+        /// Its place at a source time (`at`, seconds); between two keys it moves straight from one to the next.
+        struct Key: Codable, Equatable {
+            var at: Double
+            var x: Double
+            var y: Double
+            var width: Double
+            var height: Double
+        }
     }
 
     struct Spotlight: EditOpPayload {
@@ -277,6 +351,10 @@ extension EditOp {
         var dim: Double?
         var cutout: EditProject.SpotlightCutout?
         var lane: String?
+        // R5 5 redaction edges
+        var fadeMs: Int?
+        // R8 11
+        var dimAround: Double?
         var op: EditOp { .spotlight(self) }
     }
 
@@ -296,6 +374,10 @@ extension EditOp {
         var size: Double?
         var style: EditProject.TextStyle?
         var lane: String?
+        // R4 6 animated texts
+        var animate: Animate?
+        // R5 10 multi-line texts
+        var block: EditProject.TextBlock?
         var op: EditOp { .text(self) }
     }
 
@@ -421,6 +503,8 @@ extension EditOp {
         /// "srt", "vtt" or "none".
         var subtitles: String?
         var chapters: Bool?
+        // R5 3 export size: an empty object (no width, no height) goes back to `maxHeight`.
+        var size: EditProject.OutputSize?
         var op: EditOp { .exportSettings(self) }
     }
 
@@ -480,7 +564,18 @@ extension EditOp {
         var padding: Double?
         var cornerRadius: Double?
         var shadow: Bool?
+        // R5 4 frame layouts
+        var layout: Layout?
+        /// "phone-left", "phone-right" or "phone-portrait" (src/utils/recording-editor/project.ts FRAME_PRESETS).
+        var preset: String?
         var op: EditOp { .frame(self) }
+
+        struct Layout: Codable, Equatable {
+            var align: EditProject.FrameAlign?
+            var scale: Double?
+            // R7 9 phone layouts
+            var focus: EditProject.FocusPoint?
+        }
 
         struct Background: Codable, Equatable {
             var kind: EditProject.BackgroundKind?
@@ -641,6 +736,11 @@ extension EditOp {
         var follow: Bool?
         var dim: Double?
         var cutout: EditProject.SpotlightCutout?
+        // R5 5 redaction edges: fadeMs -1 and cell 0 go back to the defaults.
+        var fadeMs: Int?
+        var cell: Double?
+        // R8 11: 0 makes the edge sharp again.
+        var dimAround: Double?
         var op: EditOp { .setRedaction(self) }
     }
 
@@ -652,6 +752,10 @@ extension EditOp {
         var y: Double?
         var size: Double?
         var style: EditProject.TextStyle?
+        // R4 6 animated texts
+        var animate: Animate?
+        // R5 10 multi-line texts: merged into the text's block.
+        var block: EditProject.TextBlock?
         var op: EditOp { .setText(self) }
     }
 
@@ -705,5 +809,233 @@ extension EditOp {
         var id: String
         var name: String
         var op: EditOp { .renameLane(self) }
+    }
+
+    // R4 voiceover clips
+    /// Adds a clip at SOURCE seconds `at`, or with `id` changes that clip.
+    struct Voiceover: EditOpPayload {
+        static let tag = "voiceover"
+        var id: String?
+        var at: Double?
+        /// "intro" or "end": `at` counts from that card's first frame, and the clip plays over the card.
+        var card: EditProject.Voiceover.Card?
+        var file: String?
+        var volume: Double?
+        var label: String?
+        var op: EditOp { .voiceover(self) }
+    }
+
+    struct Unvoiceover: EditOpPayload {
+        static let tag = "unvoiceover"
+        var id: String
+        var op: EditOp { .unvoiceover(self) }
+    }
+
+    // R4 6 animated captions and texts
+    /// A text's way in; `ms` nil is the default length (600).
+    struct Animate: Codable, Equatable {
+        var kind: EditProject.TextAnimation
+        var ms: Int?
+    }
+
+    struct CaptionsStyle: EditOpPayload {
+        static let tag = "captionsStyle"
+        var kind: EditProject.CaptionKind?
+        var color: String?
+        var enabled: Bool?
+        var op: EditOp { .captionsStyle(self) }
+    }
+
+    // R4 10 progress bar and chapter strip
+    struct ProgressBar: EditOpPayload {
+        static let tag = "progress"
+        var show: Bool?
+        var color: String?
+        var height: Double?
+        var chapters: Bool?
+        var chapterMs: Int?
+        var enabled: Bool?
+        // R6 8 chapter label place
+        var chapterPlace: EditProject.ChapterPlace?
+        var op: EditOp { .progress(self) }
+    }
+
+    // R4 9 intro and end cards
+    /// Changes merge into the card; `logo` "" removes the logo; `enabled` false removes the card.
+    struct IntroCard: EditOpPayload {
+        static let tag = "introCard"
+        var title: String?
+        var subtitle: String?
+        var logo: String?
+        var date: String?
+        var seconds: Double?
+        var enabled: Bool?
+        var op: EditOp { .introCard(self) }
+    }
+
+    struct EndCard: EditOpPayload {
+        static let tag = "endCard"
+        var text: String?
+        var link: String?
+        var qr: Bool?
+        var seconds: Double?
+        var enabled: Bool?
+        var op: EditOp { .endCard(self) }
+    }
+
+    // R4 8 music ducking
+    struct Ducking: EditOpPayload {
+        static let tag = "ducking"
+        var db: Double?
+        var fadeMs: Int?
+        var transcript: Bool?
+        var voiceovers: Bool?
+        var enabled: Bool?
+        var op: EditOp { .ducking(self) }
+    }
+
+    // MARK: Round 4 fx-render: transitions, lens, tilt
+
+    /// A transition kind, or `default` to give one join the edit-wide transition back.
+    enum TransitionChoice: String, Codable, CaseIterable {
+        case none, crossfade, zoom, blur
+        case `default`
+    }
+
+    /// Without `clip` the edit-wide default; with `clip` the join where that clip starts.
+    struct Transition: EditOpPayload {
+        static let tag = "transition"
+        var kind: TransitionChoice?
+        var ms: Int?
+        var clip: String?
+        var op: EditOp { .transition(self) }
+    }
+
+    /// A magnifier lens over SOURCE seconds; `at` holds it still.
+    struct Lens: EditOpPayload {
+        static let tag = "lens"
+        var from: Double
+        var to: Double
+        var radius: Double?
+        var magnification: Double?
+        var follow: Bool?
+        var at: Point?
+        var ring: String?
+        var op: EditOp { .lens(self) }
+    }
+
+    struct SetLens: EditOpPayload {
+        static let tag = "setLens"
+        var id: String
+        var from: Double?
+        var to: Double?
+        var radius: Double?
+        var magnification: Double?
+        var follow: Bool?
+        var at: Point?
+        var ring: String?
+        var op: EditOp { .setLens(self) }
+    }
+
+    struct Unlens: EditOpPayload {
+        static let tag = "unlens"
+        var id: String
+        var op: EditOp { .unlens(self) }
+    }
+
+    struct Tilt: EditOpPayload {
+        static let tag = "tilt"
+        var enabled: Bool?
+        var strength: Double?
+        var drift: Bool?
+        var tiltIn: Bool?
+        var tiltOut: Bool?
+        var inMs: Int?
+        var outMs: Int?
+        var op: EditOp { .tilt(self) }
+    }
+}
+
+// fx B (round 4): the ops of private data, the smooth cursor and the typing and waiting speed-ups
+// (src/utils/recording-editor/project.ts). The TypeScript side finds the hits and stretches; these only name them.
+extension EditOp {
+    /// Hides the private data on the screen; `ids` from `tools recorder private-data` (nil: all).
+    struct HidePrivate: EditOpPayload {
+        static let tag = "hidePrivate"
+        var ids: [String]?
+        var kinds: [String]?
+        var style: EditProject.RedactionStyle?
+        var names: [String]?
+        var exclude: [EditProject.Box]?
+        var excludeFixed: Bool?
+        var op: EditOp { .hidePrivate(self) }
+    }
+
+    /// Hides every place a text (or a pattern) shows, found by OCR; each part follows its text.
+    struct HideText: EditOpPayload {
+        static let tag = "hideText"
+        var text: String?
+        var pattern: String?
+        var from: Double?
+        var to: Double?
+        var style: EditProject.RedactionStyle?
+        var exclude: [EditProject.Box]?
+        var excludeFixed: Bool?
+        var label: String?
+        // R6 2: "line" hides the whole OCR line of a match; nil is "match".
+        var unit: String?
+        // R6 3: several texts and patterns in one scan.
+        var texts: [String]?
+        var patterns: [String]?
+        var op: EditOp { .hideText(self) }
+    }
+
+    struct CursorSmooth: EditOpPayload {
+        static let tag = "cursorSmooth"
+        var enabled: Bool?
+        var strength: Double?
+        var jitterPx: Double?
+        var idleFadeSeconds: Double?
+        var op: EditOp { .cursorSmooth(self) }
+    }
+
+    /// Speeds up the typing and waiting stretches `tools recorder waits` lists; `ids` nil is all of them.
+    struct SpeedUpWaits: EditOpPayload {
+        static let tag = "speedUpWaits"
+        var ids: [String]?
+        var minSeconds: Double?
+        var maxArea: Double?
+        var speed: Double?
+        var op: EditOp { .speedUpWaits(self) }
+    }
+
+    struct AutoSpeed: EditOpPayload {
+        static let tag = "autoSpeed"
+        var badge: Bool?
+        var position: EditProject.SpeedBadgePosition?
+        var op: EditOp { .autoSpeed(self) }
+    }
+}
+
+// R5 5 redaction edges
+extension EditOp {
+    /// How the export closes small holes around the hiding parts (Render/RedactionEdges.swift); 0 draws them as placed.
+    struct RedactionJoins: EditOpPayload {
+        static let tag = "redactionJoins"
+        var snapMs: Int
+        var op: EditOp { .redactionJoins(self) }
+    }
+}
+
+// R6 6 unhide
+extension EditOp {
+    /// Takes back what hideText or hidePrivate hid, and forgets it: by the request's text or pattern, by ids, or all.
+    struct Unhide: EditOpPayload {
+        static let tag = "unhide"
+        var text: String?
+        var pattern: String?
+        var ids: [String]?
+        var all: Bool?
+        var op: EditOp { .unhide(self) }
     }
 }

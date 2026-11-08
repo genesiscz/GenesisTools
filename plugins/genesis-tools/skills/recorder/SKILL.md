@@ -17,6 +17,25 @@ the order to use them in.
 | A recording the person makes by hand | the capture picker: ⌘7 (or the menu bar item → Capture Picker…) |
 | Edit an existing recording | `movies.open(id)` in the REPL, or `tools recorder apply <recording> '<ops>'` |
 
+🛑 Before you edit a recording into a cut for someone (effects, privacy, voiceover, music), read
+`references/editing-playbook.md` in full: work on a copy, survey first, place effects on screen events, hide text and
+not boxes of the screen, check every effect boundary (on `sheet({ source: true, effects: true })`, which draws source
+seconds through the edit and marks cut ones), read `check()`'s `summary` lines, and score the cut before you hand it
+over. Run an edit script with `tools node-repl run --toolset movies --file edit.js`: its `console.log` lines print as
+they happen. Write that output to a file (`> edit.log 2>&1`) or run it as a background task; never pipe it into
+`head` or `tail`, which hold it until the end. Its section 2 is the
+table of the calls that exist today, one example each; section 3 is the recipe for a privacy-safe cut.
+
+## Editing at a glance
+
+- Run an edit as a script: `tools node-repl run --toolset movies --file edit.js` (10 minutes by default with
+  `movies`; `--timeout <ms>` for more). `help("movies")` lists the methods, `describe("movies.Movie.<name>")` prints
+  one in full.
+- One time base: ops take SOURCE seconds. Survey with `m.sheet({ source: true, every: 0.5, from, to })`,
+  `m.still({ at, source: true, full: true })`, `m.events()` and `m.findText()`, never with ffmpeg frame numbers.
+- Every edit call answers `summary` (the edit after it) and `changed` (what it did); `check()` before `export()`,
+  `verifyHidden()` after it.
+
 ## Demo mode (one call, a finished demo)
 
 1. Write the steps as `{ caption, run, holdSeconds? }`. `run` does the step (a `computer.*` call, a click, a page

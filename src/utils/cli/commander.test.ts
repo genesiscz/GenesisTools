@@ -16,6 +16,7 @@ import {
     reportUnhandledToolError,
     runTool,
 } from "./commander";
+import { acceptJsonEverywhere, suggestOnlySafeCommands } from "./commander-hints";
 
 const BOUNDARY_FIXTURE = join(import.meta.dir, "__fixtures__/run-tool-boundary.ts");
 
@@ -280,5 +281,49 @@ describe("reportUnhandledToolError", () => {
             setConsoleLevel("info");
             process.exitCode = previous;
         }
+    });
+});
+
+describe("subcommand hints that never point at a write", () => {
+    const program = (): { program: Command; errors: string[] } => {
+        const errors: string[] = [];
+        const built = new Command()
+            .exitOverride()
+            .configureOutput({ writeErr: (text) => errors.push(text), writeOut: () => {} });
+        for (const name of ["start", "stop", "status", "list", "undo", "project"]) {
+            built.command(name).action(() => {});
+        }
+
+        built
+            .command("search")
+            .option("--json", "its own")
+            .action(() => {});
+        return { program: built, errors };
+    };
+
+    it("an unknown command is hinted only with a command that changes nothing, or not at all", () => {
+        for (const [typed, hint] of [
+            ["show", undefined],
+            ["info", undefined],
+            ["stat", "status"],
+            ["lst", "list"],
+        ] as const) {
+            const { program: built, errors } = program();
+            suggestOnlySafeCommands(built, ["status", "list", "search", "project"]);
+            expect(() => built.parse(["node", "tool", typed])).toThrow(`unknown command '${typed}'`);
+            const said = errors.join("");
+            expect(said).not.toMatch(/Did you mean (stop|start|undo)/);
+            expect(said.includes(`Did you mean ${hint}?`)).toBe(hint !== undefined);
+        }
+    });
+
+    it("--json is accepted by every subcommand, and a command's own --json keeps its description", () => {
+        const { program: built } = program();
+        acceptJsonEverywhere(built, "accepted for scripts");
+        expect(() => built.parse(["node", "tool", "undo", "--json"])).not.toThrow();
+        const search = built.commands.find((command) => command.name() === "search");
+        expect(
+            search?.options.filter((option) => option.long === "--json").map((option) => option.description)
+        ).toEqual(["its own"]);
     });
 });

@@ -1,7 +1,8 @@
 import { cameraHiddenId } from "./camera";
 import { denoiseSchema } from "./denoise";
+import { textAnimateOf } from "./overlays";
 import type { CursorSample, EditOp, EditProject } from "./project";
-import { MINIMUM_CLIP_US, newId, placeZoom } from "./project";
+import { MINIMUM_CLIP_US, newId, placeZoom, TEXT_MAX_CHARS } from "./project";
 
 /**
  * The ops that change an item that exists (a zoom, hidden part, text, shape, clip or lane) by its id, as the editor
@@ -14,7 +15,7 @@ type Op<K extends EditOp["op"]> = Extract<EditOp, { op: K }>;
 const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
 
 /** A spotlight's dim that equals the default is not written (the window's rule). */
-const SPOTLIGHT_DIM = 0.7;
+const SPOTLIGHT_DIM = 0.5;
 
 /** The shortest a hidden part, text, shape or camera part may last. */
 const MINIMUM_ITEM_US = 100_000;
@@ -63,12 +64,26 @@ export function setRedaction(project: EditProject, op: Op<"setRedaction">): Edit
     const rect = op.rect ?? { x: item.x, y: item.y, width: item.width, height: item.height };
     const width = clamp(rect.width, 0.01, 1);
     const height = clamp(rect.height, 0.01, 1);
-    const { label: oldLabel, follow: oldFollow, dim: oldDim, cutout: oldCutout, ...rest } = item;
+    const {
+        label: oldLabel,
+        follow: oldFollow,
+        dim: oldDim,
+        cutout: oldCutout,
+        fadeMs: oldFadeMs,
+        cell: oldCell,
+        dimAround: oldDimAround,
+        ...rest
+    } = item;
+    // R5 5 redaction edges: -1 and 0 go back to the defaults.
+    const fadeMs = op.fadeMs === undefined ? oldFadeMs : op.fadeMs < 0 ? undefined : op.fadeMs;
+    const cell = op.cell === undefined ? oldCell : op.cell < 2 ? undefined : op.cell;
     const label = op.label === undefined ? oldLabel : op.label.trim().slice(0, 60) || undefined;
     const follow = op.follow === undefined ? oldFollow : op.follow || undefined;
     const dim =
         op.dim === undefined ? oldDim : Math.abs(op.dim - SPOTLIGHT_DIM) < 0.005 ? undefined : clamp(op.dim, 0.2, 0.95);
     const cutout = op.cutout ?? oldCutout;
+    // R8 11: 0 makes the edge sharp again.
+    const dimAround = op.dimAround === undefined ? oldDimAround : op.dimAround || undefined;
     const next = {
         ...rest,
         x: clamp(rect.x, 0, 1 - width),
@@ -80,6 +95,9 @@ export function setRedaction(project: EditProject, op: Op<"setRedaction">): Edit
         ...(follow === undefined ? {} : { follow }),
         ...(dim === undefined ? {} : { dim }),
         ...(cutout === undefined ? {} : { cutout }),
+        ...(fadeMs === undefined ? {} : { fadeMs }),
+        ...(cell === undefined ? {} : { cell }),
+        ...(dimAround === undefined ? {} : { dimAround }),
     };
     return { ...project, redactions: list.map((redaction) => (redaction.id === op.id ? next : redaction)) };
 }
@@ -96,12 +114,20 @@ export function setText(project: EditProject, op: Op<"setText">): EditProject {
         );
     }
 
-    const text = op.text === undefined ? item.text : op.text.trim().slice(0, 200);
+    const text = op.text === undefined ? item.text : op.text.trim();
 
     if (!text) {
         throw new RangeError("a text needs words; delete it with untext instead");
     }
 
+    // R5 10: said aloud, never cut without a word (a long callout lost its end that way).
+    if (text.length > TEXT_MAX_CHARS) {
+        throw new RangeError(
+            `a text holds at most ${TEXT_MAX_CHARS} characters (this one has ${text.length}); split it into two texts`
+        );
+    }
+
+    const block = op.block ? { ...item.block, ...op.block } : item.block;
     const next = {
         ...item,
         text,
@@ -109,7 +135,20 @@ export function setText(project: EditProject, op: Op<"setText">): EditProject {
         ...(op.y === undefined ? {} : { y: clamp(op.y, 0, 1) }),
         ...(op.size === undefined ? {} : { size: clamp(op.size, 0.02, 0.15) }),
         ...(op.style ? { style: op.style } : {}),
+        // R5 10 multi-line texts
+        ...(block && Object.keys(block).length > 0 ? { block } : {}),
     };
+
+    // R4 6 animated texts: "fade" with no length goes back to the default (no key).
+    if (op.animate) {
+        const animate = textAnimateOf(op.animate);
+        const { animate: _animate, ...rest } = next;
+        return {
+            ...project,
+            texts: list.map((note) => (note.id === op.id ? (animate ? { ...rest, animate } : rest) : note)),
+        };
+    }
+
     return { ...project, texts: list.map((note) => (note.id === op.id ? next : note)) };
 }
 
@@ -197,7 +236,7 @@ export function duplicateItem(project: EditProject, id: string): EditProject {
     const zoom = project.zooms.find((item) => item.id === id);
 
     if (zoom) {
-        const span = placeZoom(project, zoom.endUs, zoom.endUs + (zoom.endUs - zoom.startUs));
+        const span = placeZoom(project, zoom.endUs, zoom.endUs + (zoom.endUs - zoom.startUs), zoom.target);
 
         if (!span) {
             throw new RangeError("no room after this zoom for a copy; zooms cannot overlap");

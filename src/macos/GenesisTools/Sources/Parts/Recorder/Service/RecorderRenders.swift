@@ -20,25 +20,29 @@ enum RecorderRenders {
     }
 
     /// `--sheet`: those frames of the edit on one picture, each with its output time.
-    static func sheet(source: String, times: [Double], out: String?) async throws -> [String: Any] {
+    static func sheet(source: String, times: [Double], out: String?, columns: Int? = nil, cut: Set<Int> = []) async throws -> [String: Any] {
         guard !times.isEmpty else {
             throw NSError(domain: "recorder", code: 64, userInfo: [NSLocalizedDescriptionKey: "--sheet needs --times with at least one time"])
         }
         let project = try await openProject(source)
         let zoom = ZoomState(project: project, cursor: CursorTrack.load(project.source.cursor))
         let frames = try await stillFrames(project: project, atOutput: times.map { Int64(($0 * 1_000_000).rounded()) }, zoom: zoom)
-        let sheet = ContactSheet.draw(frames: zip(times, frames).map { ($0, $1) })
+        let sheet = ContactSheet.draw(frames: zip(times, frames).map { ($0, $1) }, columns: columns, cut: cut)
         let url = URL(fileURLWithPath: out ?? NSTemporaryDirectory() + "recorder-sheet-\(UUID().uuidString.prefix(8)).png")
         try writePNG(sheet, to: url, what: "the sheet")
-        return ["ok": true, "path": url.path, "width": sheet.width, "height": sheet.height, "times": times]
+        let grid = ContactSheet.columns(count: frames.count, frameWidth: frames[0].width, frameHeight: frames[0].height, requested: columns)
+        return ["ok": true, "path": url.path, "width": sheet.width, "height": sheet.height, "times": times, "columns": grid]
     }
 
     /// `--export`: the movie, written by the editor's exporter. `onProgress` runs on the main actor every 0.25 s;
     /// `isCancelled` true stops the export, removes its partial file and throws a CancellationError.
-    static func export(source: String, out: String?, isCancelled: @escaping @MainActor () -> Bool = { false },
+    static func export(source: String, out: String?, size: EditProject.OutputSize? = nil,
+                       isCancelled: @escaping @MainActor () -> Bool = { false },
                        onProgress: @escaping @MainActor (Double) -> Void) async throws -> EditExporter.Result {
         var project = try await ProjectStore.load(path: source).project
         if let out { project.export.output = out }
+        // R5 3 export size: this export's own size, not saved in the edit.
+        if let size { project.export.size = size }
         return try await EditExporter.export(project: project, to: EditExporter.outputURL(for: project),
                                              isCancelled: isCancelled, onProgress: onProgress)
     }
@@ -101,7 +105,8 @@ enum RecorderRenders {
         }
         // After the player item landed, which resets the clock to its own start.
         model.seek(at)
-        let still = try await stillFrame(project: project, atOutput: at, zoom: model.zoom)
+        // A movie the preview cannot read draws the editor's own error state in the picture's place.
+        let still = try? await stillFrame(project: project, atOutput: at, zoom: model.zoom)
         let window = EditorWindows.makeWindow(model: model, size: NSSize(width: request.width, height: request.height))
         window.contentView = NSHostingView(rootView: EditorView(model: model, stillPreview: still))
         window.orderInForSnapshot()

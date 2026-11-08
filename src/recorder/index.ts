@@ -1,7 +1,10 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { ensureBinaryAsync } from "@app/control/lib/runner";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { acceptJsonEverywhere, suggestOnlySafeCommands } from "@genesiscz/utils/cli/commander-hints";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -11,18 +14,22 @@ import { SUBTITLE_FORMATS, type SubtitleFormat } from "@genesiscz/utils/recordin
 import { FILLER_WORDS } from "@genesiscz/utils/recording-editor/transcript-cuts";
 import { FRAME_NAMINGS, OCR_SINK_KINDS } from "@genesiscz/utils/screen-recorder/frame-output";
 import { renameRecording } from "@genesiscz/utils/screen-recorder/library";
-import { callRecorder, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
+import { callRecorder, type LiveEntry, listLiveRecordings } from "@genesiscz/utils/screen-recorder/live";
 import { FRAME_FLUSHES } from "@genesiscz/utils/screen-recorder/start";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { Command } from "commander";
+import { registerDuplicateCommand } from "./commands/duplicate";
+import { registerFxAnalysisCommands, registerHideTextCommands } from "./commands/fx-analysis";
 import { registerServeCommand } from "./commands/serve";
 import { demoScriptSchema, runDemo, scriptSteps } from "./lib/demo";
 import {
     EXPORT_FORMATS,
     type ExportFormat,
     exportAs,
+    exportProgressPrinter,
     finishExport,
     openProject,
+    parseExportSize,
     transcriptWords,
     writeSubtitles,
 } from "./lib/edit";
@@ -33,36 +40,46 @@ import {
     restoreDisplayPlan,
     stepDisplaySwitch,
 } from "./lib/frames-movie";
-import { framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "./lib/frames-recording";
+import { framesDoneLine, framesStartOf, recordFrames, refuseOtherKindFlags, wantsFrames } from "./lib/frames-recording";
 import {
+    alreadyInState,
+    describeLiveEntries,
     EDITOR_TABS,
     type EditorTab,
     ensureRecorderPart,
+    findLiveEntry,
+    framesCell,
+    libraryRow,
     listLibrary,
+    liveRecordingRef,
+    markerLabelProblem,
     movieOf,
     openEditor,
     openLibraryWindow,
     readEditorOpenState,
     resolveRecording,
+    shortRecordingId,
     waitForEditorOpen,
 } from "./lib/library";
 import { chaptersOf, clickGroupsOf, markersOf, searchLibrary } from "./lib/moments";
-import { applyEdit, undoLastEdit } from "./lib/movie-client";
+import { applyEdit, redoLastEdit, undoLastEdit } from "./lib/movie-client";
 import { type DisplayRange, PROXY_DISPLAY_POLICIES, type ProxyDisplay, parseDisplayPlan } from "./lib/proxy";
-import { copyRecording, revealRecording, trashRecording } from "./lib/quick-actions";
+import { copyRecording, revealRecording, trashRecordings } from "./lib/quick-actions";
 import { commentOn, commentsOf, importBoardComments, resolveComment, uncomment } from "./lib/review";
 import { screenHitsWithOps } from "./lib/screen-ops";
 import { findOnScreen } from "./lib/screen-search";
 import { hostCloseEditor, hostOpenEditor } from "./lib/service-client";
 import {
+    checkTargetOnScreen,
     countdownSecondsOf,
     defaultStartTarget,
+    otherRecordingsWarning,
     parseStartFlags,
     type StartFlags,
     withStartOptions,
 } from "./lib/start-options";
 import { Movie, movieDemoDriver } from "./lib/toolset";
-import { recordVideo } from "./lib/video-recording";
+import { announcedCountdown, recordVideo, tracksPointer, videoDoneLine } from "./lib/video-recording";
 
 const { log } = logger.scoped("recorder");
 
@@ -126,20 +143,25 @@ function editorTab(raw: string | boolean): EditorTab | null {
     return found ?? null;
 }
 
+const LIVE_ID_HELP = `a live recording id or its end (${toolCommand("recorder list --live")}), or the recording's library id as start and list print it`;
+const JSON_ANSWER_HELP = "the answer is JSON either way; the flag is accepted for scripts";
+
 /** The live recording a control command means: the one named, else the only one, else the newest. */
 function liveId(id: string | undefined): string {
+    return liveEntry(id).id;
+}
+
+function liveEntry(id: string | undefined): LiveEntry {
     const entries = listLiveRecordings();
 
     if (id) {
-        const found = entries.find((entry) => entry.id === id || entry.id.endsWith(id));
+        const found = findLiveEntry(entries, id);
 
         if (!found) {
-            throw new Error(
-                `No live recording "${id}". Running: ${entries.map((entry) => entry.id).join(", ") || "none"}`
-            );
+            throw new Error(`No live recording "${id}". Running: ${describeLiveEntries(entries) || "none"}`);
         }
 
-        return found.id;
+        return found;
     }
 
     const newest = entries.at(-1);
@@ -148,7 +170,7 @@ function liveId(id: string | undefined): string {
         throw new Error(`No recording is running. Start one with ${toolCommand("recorder start")}.`);
     }
 
-    return newest.id;
+    return newest;
 }
 
 function parseFormat(raw: string): ExportFormat {
@@ -235,6 +257,11 @@ async function settleFramesEnumFlags(flags: StartFlags): Promise<boolean> {
     return true;
 }
 
+/** `start --json`: the countdown's length before it runs, so nothing on stdout for those seconds is explained. */
+function printCountdownEvent(seconds: number): void {
+    out.print(`${SafeJSON.stringify({ event: "countdown", seconds })}\n`);
+}
+
 /** `tools recorder start --frames`: the REPL's `recorder.start()` from the command line. */
 async function startFrames(flags: StartFlags): Promise<void> {
     if (!(await settleFramesEnumFlags(flags))) {
@@ -245,6 +272,7 @@ async function startFrames(flags: StartFlags): Promise<void> {
     const result = await recordFrames({
         start,
         countdownSeconds: countdownSecondsOf(flags.countdown),
+        ...(flags.json ? { countdown: announcedCountdown(printCountdownEvent) } : {}),
         onStart: (recording) => {
             if (flags.json) {
                 out.print(`${SafeJSON.stringify({ event: "started", id: recording.id, folder: recording.folder })}\n`);
@@ -257,7 +285,7 @@ async function startFrames(flags: StartFlags): Promise<void> {
     if (flags.json) {
         out.print(`${SafeJSON.stringify({ event: "result", ...result })}\n`);
     } else {
-        out.println(`${result.outcome ?? result.state}: ${result.folder} (${result.frames ?? 0} frames)`);
+        out.println(framesDoneLine(result));
 
         for (const note of result.notes ?? []) {
             out.printlnErr(`note: ${note}`);
@@ -284,9 +312,53 @@ withStartOptions(
 
         refuseOtherKindFlags(flags);
         const request = parseStartFlags(flags);
+        // A fresh checkout compiles the native recorder first (up to a minute): say so before the silence.
+        await ensureBinaryAsync({
+            onBuild: () => {
+                const message =
+                    "building the native recorder (ax-tool) once; the first start in a checkout waits for it";
+                if (flags.json) {
+                    out.print(`${SafeJSON.stringify({ event: "preparing", message })}\n`);
+                } else {
+                    out.printlnErr(message);
+                }
+            },
+        });
+        if (request.target) {
+            await checkTargetOnScreen(request.target);
+        }
+
+        const alongside = otherRecordingsWarning(listLiveRecordings());
+
+        if (alongside) {
+            if (flags.json) {
+                out.print(
+                    `${SafeJSON.stringify({ event: "warning", code: "another-recording", message: alongside })}\n`
+                );
+            } else {
+                out.printlnErr(`note: ${alongside}`);
+            }
+        }
+
+        const target = request.target ?? (await defaultStartTarget());
+
+        if (!tracksPointer(target)) {
+            out.printlnErr(
+                "note: a window or app movie has no cursor track, so the editor draws no pointer, clicks or shortcuts; record --display or --region for those"
+            );
+        }
+
         const result = await recordVideo({
             ...request,
-            target: request.target ?? (await defaultStartTarget()),
+            target,
+            ...(flags.json ? { countdown: announcedCountdown(printCountdownEvent) } : {}),
+            onStarted: (recording) => {
+                if (flags.json) {
+                    out.print(`${SafeJSON.stringify({ event: "started", ...recording })}\n`);
+                } else {
+                    out.printlnErr(`recording into ${recording.folder} (live id ${recording.liveId})`);
+                }
+            },
             emit: (event) => {
                 if (flags.json) {
                     out.print(`${SafeJSON.stringify(event)}\n`);
@@ -301,10 +373,10 @@ withStartOptions(
         if (flags.json) {
             out.print(`${SafeJSON.stringify({ event: "result", ...result })}\n`);
         } else {
-            out.println(result.movie ? `${result.outcome}: ${result.movie}` : `${result.outcome}: ${result.folder}`);
+            out.println(videoDoneLine(result));
         }
 
-        if (result.outcome === "failed") {
+        if (result.outcome === "failed" || result.cameraMissing) {
             process.exitCode = 1;
         }
 
@@ -327,16 +399,33 @@ for (const method of ["stop", "pause", "resume", "status"] as const) {
                 ? "Print the live recording's state (the newest one, or the id given)"
                 : `${method[0].toUpperCase()}${method.slice(1)} the live recording (the newest one, or the id given)`
         )
-        .argument("[id]", `a live recording id, or its end (${toolCommand("recorder list --live")})`)
+        .argument("[id]", LIVE_ID_HELP)
+        .option("--json", JSON_ANSWER_HELP)
         .action(async (id: string | undefined) => {
             try {
-                const target = liveId(id);
+                const entry = liveEntry(id);
+
+                if (method === "pause" || method === "resume") {
+                    const status = await callRecorder({ id: entry.id, method: "status" });
+                    const state =
+                        status !== null && typeof status === "object" ? Reflect.get(status, "state") : undefined;
+                    const already = alreadyInState(method, typeof state === "string" ? state : undefined);
+
+                    if (already) {
+                        out.printlnErr(already);
+                        out.result({ already: true, state, ...liveRecordingRef(entry) });
+                        return;
+                    }
+                }
+
                 const answer = await callRecorder({
-                    id: target,
+                    id: entry.id,
                     method,
                     params: method === "stop" ? { wait: true } : undefined,
                 });
-                out.result(answer);
+                // The live id controls it; the library id and folder are what every later command takes.
+                const reply = answer !== null && typeof answer === "object" ? answer : { answer };
+                out.result({ ...reply, ...liveRecordingRef(entry, { stopped: method === "stop" }) });
             } catch (error) {
                 out.printlnErr(error instanceof Error ? error.message : String(error));
                 process.exitCode = 1;
@@ -348,8 +437,17 @@ program
     .command("mark")
     .description("Mark this moment of the live recording with a label; the editor and movie.markers() show it")
     .argument("<label>", "what happened (1 to 80 characters)")
-    .argument("[id]", `a live recording id, or its end (${toolCommand("recorder list --live")})`)
+    .argument("[id]", LIVE_ID_HELP)
+    .option("--json", JSON_ANSWER_HELP)
     .action(async (label: string, id: string | undefined) => {
+        const problem = markerLabelProblem(label);
+
+        if (problem) {
+            out.printlnErr(problem);
+            process.exitCode = 1;
+            return;
+        }
+
         try {
             out.result(await callRecorder({ id: liveId(id), method: "marker.add", params: { label } }));
         } catch (error) {
@@ -361,13 +459,27 @@ program
 program
     .command("undo")
     .description(
-        "Put an edit back as it was before its last change made with apply or the REPL (30 steps, across runs)"
+        "Put an edit back as it was before its last change, made with apply, the REPL or the editor window (30 steps, across runs); redo makes it again"
     )
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
     .action(async (value: string) => {
         try {
             const undone = await undoLastEdit(value);
             out.result({ undone: undone.undone ?? [], ...describeProject(undone.project, undone.path) });
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("redo")
+    .description("Make the last change that undo took back again, while the edit has not changed since that undo")
+    .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+    .action(async (value: string) => {
+        try {
+            const redone = await redoLastEdit(value);
+            out.result({ redone: redone.redone ?? [], ...describeProject(redone.project, redone.path) });
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
@@ -423,12 +535,15 @@ program
 program
     .command("trash")
     .description(
-        "Move a library recording to the Trash (Finder's Put Back restores it); a meeting's screen recording is refused"
+        `Move library recordings through the removal policy, all in one call (${toolCommand("rm trash")} lists the restore command). Run by an agent, or for a recording the policy does not allow, it asks the user: every such recording goes into ONE request they confirm with ${toolCommand("rm approve")} <id>. A meeting's screen recording is refused, and then nothing is moved`
     )
-    .argument("<recording>", "a library id, `last` or a recording folder")
-    .action(async (value: string) => {
+    .argument("<recording...>", "library ids, `last` or recording folders")
+    .option("--no-aside", "keep the folders in the library while a request waits, instead of moving them aside")
+    .action(async (values: string[], opts: { aside: boolean }) => {
         try {
-            out.result(await trashRecording(resolveRecording(value)));
+            const folders = values.map((value) => resolveRecording(value));
+            // RC24: one call per recording made one request each; one tools rm call makes at most one.
+            out.result(await trashRecordings(folders, { askUser: true, ...(opts.aside ? {} : { aside: false }) }));
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
@@ -707,10 +822,9 @@ program
         try {
             const answer = await new Movie(value).check();
 
-            for (const issue of answer.issues) {
-                out.printlnErr(
-                    `${issue.severity === "fix" ? "fix  " : "check"}  ${issue.message}${issue.fix ? `  (${issue.fix})` : ""}`
-                );
+            // R6 9: one line per kind of issue with its count; --json (the result) keeps every issue.
+            for (const line of answer.summary) {
+                out.printlnErr(line);
             }
 
             if (!answer.issues.length) {
@@ -786,29 +900,79 @@ program
 
 program
     .command("sheet")
-    .description("Several frames of the edit as it exports on one PNG, in rows of three, each labelled with its time")
+    .description(
+        "Several frames on one PNG grid, each labelled with its time: the edit as it exports (OUTPUT seconds) or, with --source, the recording as it was recorded (SOURCE seconds, the seconds ops take)"
+    )
     .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
-    .option("--count <n>", "frames spread over the range (default 6, at most 12)")
-    .option("--from <time>", "the range's start in OUTPUT seconds or m:ss (default 0)")
-    .option("--to <time>", "the range's end (default the end of the edit)")
-    .option("--at <times>", "these OUTPUT times instead, comma-separated (2,5.5,0:12)")
+    .option("--count <n>", "frames spread over the range (default 6, at most 48)")
+    .option("--every <seconds>", "a frame every this many seconds over the range instead (a dense survey: 0.5)")
+    .option("--from <time>", "the range's start in seconds or m:ss (default 0)")
+    .option("--to <time>", "the range's end (default the end)")
+    .option("--at <times>", "these times instead, comma-separated (2,5.5,0:12)")
+    .option("--source", "times are SOURCE seconds of the recording as recorded (cut parts too, no effects)")
+    .option("--columns <n>", "the grid's columns (default by the frames' shape, a near 16:9 sheet)")
     .option("--out <png>", "where the picture goes (default a temporary file)")
-    .action(async (value: string, flags: { count?: string; from?: string; to?: string; at?: string; out?: string }) => {
-        try {
-            await ensureRecorderPart((line) => out.printlnErr(line));
-            const answer = await new Movie(value).sheet({
-                count: flags.count === undefined ? undefined : Number(flags.count),
-                from: flags.from === undefined ? undefined : parseTime(flags.from, "--from"),
-                to: flags.to === undefined ? undefined : parseTime(flags.to, "--to"),
-                at: flags.at?.split(",").map((time) => parseTime(time.trim(), "--at")),
-                out: flags.out === undefined ? undefined : resolve(flags.out),
-            });
-            out.result(answer);
-        } catch (error) {
-            out.printlnErr(error instanceof Error ? error.message : String(error));
-            process.exitCode = 1;
+    .action(
+        async (
+            value: string,
+            flags: {
+                count?: string;
+                every?: string;
+                from?: string;
+                to?: string;
+                at?: string;
+                source?: boolean;
+                columns?: string;
+                out?: string;
+            }
+        ) => {
+            try {
+                await ensureRecorderPart((line) => out.printlnErr(line));
+                const answer = await new Movie(value).sheet({
+                    count: flags.count === undefined ? undefined : Number(flags.count),
+                    every: flags.every === undefined ? undefined : Number(flags.every),
+                    from: flags.from === undefined ? undefined : parseTime(flags.from, "--from"),
+                    to: flags.to === undefined ? undefined : parseTime(flags.to, "--to"),
+                    at: flags.at?.split(",").map((time) => parseTime(time.trim(), "--at")),
+                    source: flags.source,
+                    columns: flags.columns === undefined ? undefined : Number(flags.columns),
+                    out: flags.out === undefined ? undefined : resolve(flags.out),
+                });
+                out.result(answer);
+            } catch (error) {
+                out.printlnErr(error instanceof Error ? error.message : String(error));
+                process.exitCode = 1;
+            }
         }
-    });
+    );
+
+program
+    .command("still")
+    .description(
+        "One frame on a PNG: the edit as it exports at an OUTPUT time, or with --source the recording as recorded at a SOURCE time"
+    )
+    .argument("<recording>", "a library id, `last`, a recording folder, a movie or an edit.json")
+    .argument("[at]", "the time in seconds or m:ss (default 0)")
+    .option("--source", "at is SOURCE seconds of the recording as recorded (no effects)")
+    .option("--full", "render at the export's size (the source's own pixels when the export keeps them), not 1080 tall")
+    .option("--out <png>", "where the picture goes (default a temporary file)")
+    .action(
+        async (value: string, at: string | undefined, flags: { source?: boolean; full?: boolean; out?: string }) => {
+            try {
+                await ensureRecorderPart((line) => out.printlnErr(line));
+                const answer = await new Movie(value).still(
+                    at === undefined ? 0 : parseTime(at, "at"),
+                    flags.out === undefined ? undefined : resolve(flags.out),
+                    flags.full,
+                    flags.source
+                );
+                out.result(answer);
+            } catch (error) {
+                out.printlnErr(error instanceof Error ? error.message : String(error));
+                process.exitCode = 1;
+            }
+        }
+    );
 
 program
     .command("search")
@@ -854,7 +1018,7 @@ program
 
             const table = createBoxTable(["ID", "KIND", "STATE", "TITLE", "STARTED"]);
             for (const entry of entries) {
-                table.push([entry.id, entry.kind, entry.state, entry.title, entry.startedAt]);
+                table.push([entry.id, entry.kind, entry.state, entry.title, formatLocalDateTimeStamp(entry.startedAt)]);
             }
 
             out.println(entries.length ? table.toString() : "No recording is running.");
@@ -868,19 +1032,49 @@ program
         }
 
         renderCliHeader("Recordings", `${rows.length} newest`);
-        const table = createBoxTable(["ID", "TITLE", "STARTED", "MOVIE", "FRAMES", "EDITED"]);
+        const table = createBoxTable(["ID", "TITLE", "STARTED", "LENGTH", "OUTCOME", "FRAMES", "EDITED"]);
+        const clock = (ms: number) => {
+            const seconds = Math.round(ms / 1000);
+            return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+        };
         for (const row of rows) {
             table.push([
-                row.id,
+                shortRecordingId(row.id),
                 row.title,
-                row.startedAt.replace("T", " ").slice(0, 19),
-                row.movie ? "yes" : "—",
-                String(row.frames),
+                formatLocalDateTimeStamp(row.startedAt),
+                row.durationMs === undefined ? (row.movie ? "movie" : "—") : clock(row.durationMs),
+                row.outcome ?? "—",
+                framesCell(row),
                 row.edited ? "yes" : "",
             ]);
         }
 
         out.println(table.toString());
+        out.println("Every command takes the short id; --json has the full ids, folders and why a failed one failed.");
+    });
+
+program
+    .command("show")
+    .alias("info")
+    .description(
+        "One recording's facts as JSON, as a row of list --json: its id, title, folder, start, length, how it ended, frames, movie and whether it was edited"
+    )
+    .argument("<recording>", "a library id (short or whole), `last`, `open`, a recording folder or a movie")
+    .action((value: string) => {
+        try {
+            const path = resolveRecording(value);
+            const folder = statSync(path).isDirectory() ? path : dirname(path);
+            const row = libraryRow(folder);
+
+            if (!row) {
+                throw new Error(`${folder} holds no readable recording.json`);
+            }
+
+            out.result(row);
+        } catch (error) {
+            out.printlnErr(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
     });
 
 program
@@ -958,7 +1152,8 @@ program
             }
 
             await ensureRecorderPart((line) => out.printlnErr(line));
-            await hostOpenEditor(path, { focus: flags.focus !== false, atSeconds, tab });
+            // What opened, so an agent needs no second call (`tools recorder opened`) to know it worked.
+            out.result({ ...(await hostOpenEditor(path, { focus: flags.focus !== false, atSeconds, tab })), path });
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
             process.exitCode = 1;
@@ -1039,7 +1234,18 @@ program
     .action(async (value: string, text: string) => {
         try {
             const raw = text === "-" ? await Bun.stdin.text() : text;
-            const ops = parseEditOps(SafeJSON.parse(raw, { strict: true }));
+            let parsed: unknown;
+            try {
+                parsed = SafeJSON.parse(raw, { strict: true });
+            } catch (error) {
+                // A bare "JSON Parse error: Unexpected identifier" did not say which argument was wrong.
+                const why = error instanceof Error ? error.message : String(error);
+                throw new Error(
+                    `the ops are not JSON (${why}); give one op or an array of them, e.g. '{"op":"cut","from":4,"to":"0:09"}'`
+                );
+            }
+
+            const ops = parseEditOps(parsed);
             const edited = await applyEdit(value, ops);
             // A normalize op also answers the loudness it measured, which the editor shows beside its button.
             out.result({
@@ -1071,11 +1277,23 @@ program
     .option("--from <time>", "export only the part from this OUTPUT time (seconds or m:ss; what plays)")
     .option("--to <time>", "export only the part up to this OUTPUT time")
     .option("--subtitles <format>", "also write the transcript beside the movie: srt or vtt")
+    // R5 3 export overwrite, size, progress
+    .option("--overwrite", "replace the file at --out (or the usual name) instead of refusing it")
+    .option("--size <WxH>", "the picture's exact pixels: 1920x1080, 1920x (width) or x1080 (height)")
     .option("--json", "the result as JSON")
     .action(
         async (
             value: string,
-            flags: { out?: string; format?: string; from?: string; to?: string; subtitles?: string; json?: boolean }
+            flags: {
+                out?: string;
+                format?: string;
+                from?: string;
+                to?: string;
+                subtitles?: string;
+                json?: boolean;
+                overwrite?: boolean;
+                size?: string;
+            }
         ) => {
             try {
                 await ensureRecorderPart((line) => out.printlnErr(line));
@@ -1094,6 +1312,10 @@ program
                     format: flags.format === undefined ? undefined : parseFormat(flags.format),
                     part,
                     subtitles: flags.subtitles === undefined ? undefined : parseSubtitleFormat(flags.subtitles),
+                    overwrite: flags.overwrite,
+                    size: flags.size === undefined ? undefined : parseExportSize(flags.size),
+                    // Progress on stderr every 10 %, so a long export shows it is alive (stdout stays the result).
+                    onProgress: exportProgressPrinter((line) => out.printlnErr(line)),
                 });
 
                 if (flags.json) {
@@ -1101,7 +1323,7 @@ program
                 } else {
                     out.println(
                         answer.ok
-                            ? `${answer.path} (${answer.bytes} bytes, ${answer.seconds} s${answer.chapters ? `, ${answer.chapters} chapters` : ""})${answer.subtitles ? `\n${answer.subtitles}` : ""}`
+                            ? `${answer.path} (${answer.bytes} bytes, ${answer.seconds} s${answer.chapters ? `, ${answer.chapters} chapters` : ""}${answer.replaced ? ", replaced the old file" : ""})${answer.subtitles ? `\n${answer.subtitles}` : ""}`
                             : `error: ${answer.error}`
                     );
 
@@ -1144,6 +1366,13 @@ program
 
             for (const warning of answer.warnings ?? []) {
                 out.printlnErr(warning);
+            }
+
+            // A skipped step is said too: a subtitle file only when the edit asks for one.
+            if (!answer.subtitles && !answer.warnings?.some((warning) => warning.startsWith("no subtitles"))) {
+                out.printlnErr(
+                    `no subtitles: the edit asks for none (${toolCommand("recorder export", value, "--subtitles", "srt")} writes them)`
+                );
             }
         } catch (error) {
             out.printlnErr(error instanceof Error ? error.message : String(error));
@@ -1400,6 +1629,30 @@ program
         }
     });
 
+registerDuplicateCommand(program);
+registerFxAnalysisCommands(program);
+registerHideTextCommands(program);
 registerServeCommand(program);
+
+/** The commands an unknown one may be told it meant: they change nothing (no stop, start or undo). */
+const READ_ONLY_COMMANDS = [
+    "status",
+    "list",
+    "show",
+    "info",
+    "search",
+    "markers",
+    "comments",
+    "check",
+    "items-at",
+    "project",
+    "words",
+    "opened",
+    "click-groups",
+    "library",
+    "help",
+];
+acceptJsonEverywhere(program, "accepted for scripts; the output is the same with or without it");
+suggestOnlySafeCommands(program, READ_ONLY_COMMANDS);
 
 await runTool(program, { tool: "recorder" });

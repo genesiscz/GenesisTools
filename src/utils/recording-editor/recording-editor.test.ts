@@ -14,7 +14,15 @@ import {
     cameraBubbleSchema,
     readCameraSidecar,
 } from "@genesiscz/utils/recording-editor/camera";
-import { checkProject, fixOps } from "@genesiscz/utils/recording-editor/check";
+import {
+    canvasShape,
+    checkProject,
+    fixOps,
+    groupIssues,
+    issueSummary,
+    textBox,
+    zoomView,
+} from "@genesiscz/utils/recording-editor/check";
 import {
     addComment,
     commentsPathFor,
@@ -43,6 +51,7 @@ import {
     shortcutsOf,
     sourceTimeOf,
     transcriptLines,
+    voiceoverExportSpans,
     wholeProject,
     writeProject,
 } from "@genesiscz/utils/recording-editor/project";
@@ -54,12 +63,13 @@ import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { createCanvas } from "@napi-rs/canvas";
 import { ZodError } from "zod";
 import cameraOps from "./__fixtures__/camera-ops.json";
+import cardVoiceovers from "./__fixtures__/card-voiceovers.json";
 import editMarkers from "./__fixtures__/edit-markers.json";
 import legacyEvidence from "./__fixtures__/legacy-evidence.json";
 import transcriptCuts from "./__fixtures__/transcript-cuts.json";
 import { denoisedSourceArgv, denoisedSourcePath, denoiseSchema } from "./denoise";
 import { MAX_SAMPLE_TIMES, RecordingEditor, sampleTimes } from "./editor";
-import { atempoChain, concatList, exportVideoArgv, speedArgv, trimArgv } from "./ffmpeg";
+import { atempoChain, concatList, exportVideoArgv, sampleFpsFilter, speedArgv, trimArgv } from "./ffmpeg";
 import { parseEditPlan, timeToUs } from "./plan";
 import * as projectOps from "./project";
 import { locateSource } from "./source";
@@ -142,6 +152,9 @@ describe("edit plans", () => {
         expect(timeToUs("1:02:03.5")).toBe(3_723_500_000);
         expect(timeToUs(0.25)).toBe(250_000);
         expect(timeToUs("12s")).toBe(12_000_000);
+        expect(() => timeToUs("nope")).toThrow('"nope" is not a time');
+        expect(() => timeToUs("1::2")).toThrow("is not a time");
+        expect(() => timeToUs(Number.NaN)).toThrow("is not a time");
         expect(atempoChain(4)).toBe("atempo=2,atempo=2");
         expect(atempoChain(0.3)).toBe("atempo=0.5,atempo=0.6");
         expect(
@@ -386,6 +399,83 @@ test("trimmed stills sample through the transformed endpoint", async () => {
 });
 
 describe.skipIf(skip.integration)("the editor on a video, and the frame review over it", () => {
+    test("a survey's sampled frame at t is the frame the editor shows at t on a variable-frame-rate movie", async () => {
+        const root = workspace();
+        const movie = join(root, "vfr.mp4");
+        // Frame N is grey level N*4; frames 0..19 at N*0.1 s, then a gap to 2 s and 0.37 s steps (variable rate).
+        await runVideoCommand({
+            command: [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=32x32:r=10:d=4",
+                "-vf",
+                "geq=lum='min(250,N*4)':cb=128:cr=128,setpts='if(lt(N,20),N*0.1,2+(N-20)*0.37)/TB'",
+                "-fps_mode",
+                "vfr",
+                "-c:v",
+                "libx264",
+                "-qp",
+                "0",
+                "-pix_fmt",
+                "yuv444p",
+                movie,
+            ],
+        });
+        const sampled = async (filter: string) => {
+            const stdout = await runVideoCommand({
+                command: [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-i",
+                    movie,
+                    "-vf",
+                    `${filter},signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-`,
+                    "-f",
+                    "null",
+                    "-",
+                ],
+            });
+            return [...stdout.matchAll(/pts_time:([0-9.]+)[\s\S]*?YAVG=([0-9.]+)/g)].map(
+                (match) => [Number(match[1]), Math.round(Number(match[2]) / 4)] as const
+            );
+        };
+        // The frames as stored (the stream rounds each time to its time base).
+        const times = (
+            await runVideoCommand({
+                command: [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v",
+                    "-show_entries",
+                    "frame=pts_time",
+                    "-of",
+                    "csv=p=0",
+                    movie,
+                ],
+            })
+        )
+            .trim()
+            .split("\n")
+            .map((line) => Number.parseFloat(line) || 0);
+        // The editor shows the latest frame whose time is at or before t (AVFoundation, zero tolerance).
+        const shownAt = (t: number) => times.findLastIndex((time) => time <= t + 1e-6);
+        const editorFrames = await sampled(sampleFpsFilter(2));
+        expect(editorFrames.length).toBeGreaterThan(8);
+        expect(editorFrames.filter(([t, frame]) => frame !== shownAt(t))).toEqual([]);
+        // ffmpeg's default rounding picks the nearest frame, up to half a step LATER than the editor shows.
+        const plain = await sampled("fps=2");
+        expect(plain.some(([t, frame]) => frame !== shownAt(t))).toBe(true);
+    });
+
     test("expanded extraction filenames cannot overwrite a video input", async () => {
         const root = workspace();
         const source = join(root, "source-00000.png");
@@ -551,6 +641,32 @@ describe("edit project (edit.json)", () => {
         expect(outputTimeOf(project, 1_500_000)).toBeUndefined();
         expect(outputTimeOf(project, 6_000_000)).toBe(4_000_000);
         expect(project.zooms[0]).toMatchObject({ startUs: 3_000_000, endUs: 5_000_000, scale: 2, focusX: 0.3 });
+    });
+
+    test("a new edit's clip has the same id every time, so an id printed before the first save still names it", () => {
+        expect(wholeProject(source).clips[0].id).toBe(wholeProject(source).clips[0].id);
+        const split = applyOp(wholeProject(source), { op: "split", at: 4 });
+        expect(new Set(split.clips.map((clip) => clip.id)).size).toBe(2);
+        const faster = applyOp(wholeProject(source), {
+            op: "clipSpeed",
+            clip: wholeProject(source).clips[0].id,
+            factor: 2,
+        });
+        expect(outputDurationUs(faster)).toBe(5_000_000);
+    });
+
+    test("a zoom op takes its ease times, so a slow push over a still screen needs no second setZoom op", () => {
+        const project = applyOp(wholeProject(source), {
+            op: "zoom",
+            from: 1,
+            to: 6,
+            scale: 1.2,
+            easeInMs: 4500,
+            easeOutMs: 300,
+        });
+        expect(project.zooms.map((zoom) => [zoom.easeInMs, zoom.easeOutMs])).toEqual([[4500, 300]]);
+        const plain = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 6 });
+        expect(plain.zooms.map((zoom) => [zoom.easeInMs, zoom.easeOutMs])).toEqual([[450, 450]]);
     });
 
     test("effect lanes: items find their lane, new lanes save in order, and a removed lane hands its items on", () => {
@@ -729,6 +845,91 @@ describe("edit project (edit.json)", () => {
         expect(() => autoZoom(manual, [{ ms: 1, x: 0, y: 0 }])).toThrow("no clicks");
     });
 
+    test("check names a zoom whose ease out starts before a cut, so its last frames before the cut snap out", () => {
+        // The zoom runs into the cut at 5 s, but its 450 ms ease out starts at 4.75 s: the 0.25 s before the cut
+        // show the fast start of the ease out, a snap. Ending it at 5.5 s puts the whole ease out in the cut.
+        let project = applyOp(wholeProject(source), { op: "cut", from: 5, to: 7 });
+        project = applyOp(project, { op: "zoom", from: 2, to: 5.2, scale: 1.5 });
+        project = applyOp(project, { op: "zoom", from: 7.5, to: 9, scale: 1.5 });
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const snaps = checkProject(project, facts).filter((issue) => issue.kind === "zoom-eases-out-at-cut");
+        expect(snaps).toHaveLength(1);
+        expect(snaps[0]).toMatchObject({ severity: "check", at: 5 });
+        expect(snaps[0]?.message).toContain("0.25 s");
+        expect(snaps[0]?.action?.ops).toEqual([{ op: "retime", id: project.zooms[0]?.id, to: 5.5 }]);
+        const fixed = applyOp(project, { op: "retime", id: project.zooms[0]?.id ?? "", to: 5.5 });
+        expect(checkProject(fixed, facts).filter((issue) => issue.kind === "zoom-eases-out-at-cut")).toEqual([]);
+    });
+
+    test("a voiceover on the intro or end card plays from the card's start, and the export lays each clip as the golden file says", () => {
+        // The shared golden file: the Swift export lays the same clips at the same places (RecorderEditTests).
+        const golden = editProjectSchema.parse(cardVoiceovers.edit);
+        expect(voiceoverExportSpans(golden)).toEqual(cardVoiceovers.spans);
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        expect(checkProject(golden, facts).filter((issue) => issue.kind?.startsWith("voiceover"))).toEqual([
+            expect.objectContaining({ kind: "voiceover-cut-at-end", item: "voiceover vlate" }),
+        ]);
+        const info = describeProject(golden, "/x").voiceovers;
+        expect(info.map((clip) => [clip.id, clip.card ?? null, clip.plays, clip.exportPlays])).toEqual([
+            ["vintro", "intro", null, 0.4],
+            ["vmovie", null, 1, 4],
+            ["vlate", null, 7.5, 10.5],
+            ["vend", "end", null, 11.5],
+        ]);
+
+        // The op: `card` anchors `at` to the card; the card must exist and `at` must fall inside it.
+        const folder = mkdtempSync(join(tmpdir(), "card-voice-"));
+        const voice = join(folder, "voice.mp3");
+        writeFileSync(voice, "");
+        const bare = wholeProject(source);
+        expect(() =>
+            applyOp(bare, { op: "voiceover", card: "intro", at: 0.4, file: voice }, { voiceoverDurationUs: 1_000_000 })
+        ).toThrow("no intro card");
+        const carded = applyOp(bare, { op: "introCard", title: "Demo", seconds: 3 });
+        expect(() =>
+            applyOp(
+                carded,
+                { op: "voiceover", card: "intro", at: 3.2, file: voice },
+                { voiceoverDurationUs: 1_000_000 }
+            )
+        ).toThrow("past the intro card's 3 s");
+        const voiced = applyOp(
+            carded,
+            { op: "voiceover", card: "intro", at: 0.4, file: voice, label: "Hello" },
+            { voiceoverDurationUs: 1_000_000 }
+        );
+        expect(voiced.audio.voiceovers?.map((clip) => [clip.card, clip.atUs, clip.durationUs])).toEqual([
+            ["intro", 400_000, 1_000_000],
+        ]);
+        // A card that goes away leaves its voiceover with nothing to play over: check() says so.
+        const gone = applyOp(voiced, { op: "introCard", enabled: false });
+        expect(checkProject(gone, facts).map((issue) => issue.kind)).toContain("voiceover-card-missing");
+    });
+
+    test("check names a voiceover that runs past the movie's end, where the export cuts it off", () => {
+        // The renderer mixes a voice clip into the movie only: an end card does not carry it, so the words after the
+        // movie's last frame are lost. A clip that ends inside the movie is no issue.
+        const whole = wholeProject(source);
+        const voiced = applyOp(
+            {
+                ...whole,
+                audio: {
+                    ...whole.audio,
+                    voiceovers: [
+                        { id: "v1", atUs: 1_000_000, file: "/voice/one.mp3", durationUs: 1_500_000, volume: 1 },
+                        { id: "v2", atUs: 8_000_000, file: "/voice/two.mp3", durationUs: 3_000_000, volume: 1 },
+                    ],
+                },
+            },
+            { op: "cut", from: 3, to: 5 }
+        );
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const late = checkProject(voiced, facts).filter((issue) => issue.kind === "voiceover-cut-at-end");
+        expect(late).toHaveLength(1);
+        expect(late[0]).toMatchObject({ severity: "fix", item: "voiceover v2", at: 8 });
+        expect(late[0]?.message).toContain("1 s");
+    });
+
     test("check finds what never shows, what is missing and what flashes past, fixes first", () => {
         let project = applyOp(wholeProject(source), { op: "zoom", from: 1, to: 2, scale: 2 });
         project = applyOp(project, { op: "text", from: 3, to: 5, text: "Step one" });
@@ -784,6 +985,237 @@ describe("edit project (edit.json)", () => {
         expect(checkProject(wholeProject(source), facts)).toEqual([]);
     });
 
+    // R5 5 redaction edges: check() said clean for each of these, and the export showed the picture there.
+    test("check names the holes around hidden parts: a short part, an early end before a cut, a gap between two", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const rect = { x: 0.1, y: 0.1, width: 0.2, height: 0.1 };
+        let project = applyOp(wholeProject(source), { op: "cut", from: 9, to: 9.5 });
+        project = applyOp(project, { op: "redact", from: 2, to: 3.9, rect, style: "black" });
+        project = applyOp(project, { op: "redact", from: 4, to: 6, rect: { ...rect, x: 0.3 }, style: "black" });
+        project = applyOp(project, { op: "redact", from: 6.5, to: 6.6, rect: { ...rect, x: 0.7, y: 0.7 } });
+        project = applyOp(project, { op: "redact", from: 7, to: 8.4, rect: { ...rect, x: 0.7 }, style: "pixelate" });
+        const [join, , flash, tail] = project.redactions ?? [];
+        const issues = checkProject(project, facts).filter((issue) => issue.target?.list === "redactions");
+        const about = (id: string | undefined) => issues.filter((issue) => issue.target?.id === id);
+        expect(about(join?.id).map((issue) => issue.message)).toEqual([
+            "The hidden part at 2 s ends 0.1 s before the hidden part at 4 s starts; the export covers the 0.1 s between by itself (redactionJoins snapMs 250)",
+        ]);
+        expect(about(join?.id)[0]?.action).toEqual({
+            label: "Join",
+            ops: [{ op: "retime", id: join?.id ?? "", to: 4 }],
+        });
+        expect(about(flash?.id)[0]?.message).toContain("covers only 100 ms of the export");
+        expect(about(tail?.id)[0]?.message).toBe(
+            "The hidden part at 7 s ends 0.6 s before the cut at 9 s; the 0.6 s between show the picture unhidden"
+        );
+        expect(about(tail?.id)[0]?.action?.ops).toEqual([{ op: "retime", id: tail?.id ?? "", to: 9 }]);
+        // A spotlight is not a hiding part; a part that ends at the cut leaves nothing open.
+        const covered = fixOps(project, facts).ops.reduce((next, op) => applyOp(next, op), project);
+        expect(
+            checkProject(covered, facts).filter((issue) => issue.target?.list === "redactions" && issue.action)
+        ).toEqual([]);
+        // snapMs 0: the same 0.1 s gap is no longer closed by the export, and the message says so.
+        const exact = applyOp(project, { op: "redactionJoins", snapMs: 0 });
+        expect(checkProject(exact, facts).find((issue) => issue.target?.id === join?.id)?.message).toContain(
+            "the 0.1 s between show the picture unhidden"
+        );
+        expect(describeProject(exact, "/x/edit.json").redactionJoins).toEqual({ snapMs: 0 });
+        // A pixelate cell and a hard spotlight are kept by the ops and read back.
+        let looks = applyOp(wholeProject(source), { op: "redact", from: 1, to: 2, rect, style: "pixelate", cell: 32 });
+        looks = applyOp(looks, { op: "spotlight", from: 2, to: 3, rect, fadeMs: 0 });
+        expect(looks.redactions?.map((part) => [part.cell, part.fadeMs])).toEqual([
+            [32, undefined],
+            [undefined, 0],
+        ]);
+        const pixelId = looks.redactions?.[0]?.id ?? "";
+        // A cell under the default (19 px at 1080p) may leave text readable; check() says so.
+        const small = applyOp(looks, { op: "setRedaction", id: pixelId, cell: 6 });
+        expect(
+            checkProject(small, facts).find((issue) => issue.target?.id === pixelId && issue.message.includes("6 px"))
+        ).toBeDefined();
+        looks = applyOp(looks, { op: "setRedaction", id: pixelId, cell: 0 });
+        expect(looks.redactions?.[0]?.cell).toBeUndefined();
+    });
+
+    // R6 9: check() gave 19 to 58 lines, mostly one "starts 0.3 s after a cut" per tracked part, and "same time, same
+    // place" for texts side by side.
+    test("check groups repeated issues per kind with a count and a severity, and texts overlap by their plates", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        let project = applyOp(wholeProject(source), { op: "cut", from: 2, to: 2.5 });
+
+        for (const x of [0.1, 0.3, 0.5, 0.7]) {
+            project = applyOp(project, {
+                op: "redact",
+                from: 2.8,
+                to: 3.8,
+                rect: { x, y: 0.4, width: 0.1, height: 0.05 },
+                style: "black",
+            });
+        }
+
+        // One part 0.1 s after the cut: the export closes that by itself, a note.
+        project = applyOp(project, {
+            op: "redact",
+            from: 2.6,
+            to: 3.8,
+            rect: { x: 0.1, y: 0.8, width: 0.1, height: 0.05 },
+            style: "black",
+        });
+        const issues = checkProject(project, facts);
+        const groups = groupIssues(issues);
+        expect(groups.map((group) => [group.kind, group.severity, group.count])).toEqual([
+            ["hiding-starts-after-cut", "check", 4],
+            ["hiding-starts-after-cut", "note", 1],
+        ]);
+        expect(groups[0]?.at).toEqual([2.5, 2.5, 2.5, 2.5]);
+        expect(groups[0]?.fixable).toBe(4);
+        const { counts, lines } = issueSummary(issues);
+        expect(counts).toEqual({ fix: 0, check: 4, note: 1 });
+        expect(lines[0]).toStartWith("check ×4 hiding-starts-after-cut: The hidden part at 2.8 s starts 0.3 s after");
+        expect(lines[0]).toEndWith("(and 3 more like it)");
+        expect(lines).toHaveLength(2);
+
+        // Side by side on one line: the old rule (anchors 0.25 apart) called them "same place"; the plates do not meet.
+        let side = applyOp(wholeProject(source), { op: "text", from: 1, to: 4, text: "Hi", x: 0.35, y: 0.5 });
+        side = applyOp(side, { op: "text", from: 1, to: 4, text: "Ok", x: 0.6, y: 0.5 });
+        expect(checkProject(side, facts).filter((issue) => issue.kind === "text-overlap")).toEqual([]);
+        // Long lines at the same anchors do meet.
+        let wide = applyOp(wholeProject(source), {
+            op: "text",
+            from: 1,
+            to: 4,
+            text: "Open the settings page",
+            x: 0.35,
+            y: 0.5,
+        });
+        wide = applyOp(wide, { op: "text", from: 1, to: 4, text: "Pick the account", x: 0.6, y: 0.5 });
+        expect(checkProject(wide, facts).filter((issue) => issue.kind === "text-overlap")).toHaveLength(1);
+        // The canvas's shape counts: 0.3 apart across a 9:16 canvas is less room than across 16:9.
+        const box = textBox({ text: "Hello", size: 0.05, x: 0.5, y: 0.5 }, canvasShape(wholeProject(source)));
+        expect(box.right - box.left).toBeCloseTo(5 * 0.58 * 0.05 + 2 * 0.7 * 0.05, 5);
+        expect(canvasShape(applyOp(wholeProject(source), { op: "frame", aspect: "9:16" }))).toEqual({
+            width: 1,
+            height: 16 / 9,
+        });
+    });
+
+    // R7 10: a 1.2x zoom on a phone cut the side labels in half, and check() said nothing.
+    test("check names a zoom whose view cuts screen text at its edge, with a smaller zoom that keeps it whole", () => {
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const zoomed = applyOp(wholeProject(source), { op: "zoom", from: 2, to: 4, scale: 1.2 });
+        const zoomId = zoomed.zooms[0]?.id ?? "";
+        const screenText = [
+            {
+                atUs: 1_500_000,
+                untilUs: 3_000_000,
+                lines: [
+                    { text: "Invoices", x: 0.05, y: 0.5, width: 0.25, height: 0.03 },
+                    { text: "Total 120", x: 0.4, y: 0.6, width: 0.2, height: 0.03 },
+                ],
+            },
+            { atUs: 6_000_000, untilUs: 7_000_000, lines: [{ text: "Later", x: 0, y: 0, width: 0.2, height: 0.03 }] },
+        ];
+        const issues = checkProject(zoomed, { ...facts, screenText }).filter(
+            (issue) => issue.kind === "zoom-cuts-text"
+        );
+        expect(issues).toHaveLength(1);
+        expect(issues[0]?.message).toContain('cuts 1 line of screen text at its edge ("Invoices")');
+        expect(issues[0]?.action?.ops).toEqual([
+            { op: "setZoom", id: zoomId, scale: 1.12, focus: { x: 0.483, y: 0.5 } },
+        ]);
+        const fitted = (issues[0]?.action?.ops ?? []).reduce((next, op) => applyOp(next, op), zoomed);
+        expect(
+            checkProject(fitted, { ...facts, screenText }).filter((issue) => issue.kind === "zoom-cuts-text")
+        ).toEqual([]);
+        // Nothing read, nothing said; a follow zoom moves with the cursor and is not judged.
+        expect(checkProject(zoomed, facts).some((issue) => issue.kind === "zoom-cuts-text")).toBe(false);
+        const follow = applyOp(wholeProject(source), { op: "zoom", from: 2, to: 4, scale: 1.2, follow: true });
+        expect(checkProject(follow, { ...facts, screenText }).some((issue) => issue.kind === "zoom-cuts-text")).toBe(
+            false
+        );
+        expect(zoomView({ scale: 2, focusX: 0.9, focusY: 0.1 })).toEqual({ x: 0.5, y: 0, width: 0.5, height: 0.5 });
+    });
+
+    // R5 4: a phone in 16:9 filled a quarter of the width, with no way to move it aside or zoom the whole canvas.
+    test("a frame preset places a phone against one side, its own fields win, and a canvas zoom may overlap", () => {
+        const phone = applyOp(wholeProject(source), { op: "frame", preset: "phone-left", layout: { scale: 1.1 } });
+        expect(phone.frame).toMatchObject({ aspect: "16:9", padding: 0.04, layout: { align: "left", scale: 1.1 } });
+        const portrait = applyOp(phone, { op: "frame", preset: "phone-portrait" });
+        expect(portrait.frame?.aspect).toBe("9:16");
+        expect(portrait.frame?.layout).toEqual({ align: "top", scale: 0.88 });
+        const right = applyOp(phone, { op: "frame", layout: { align: "right" } });
+        expect(right.frame?.layout).toEqual({ align: "right", scale: 1.1 });
+        // R7 9: a grown phone keeps the part the focus names in view; a centred unscaled picture with a focus keeps it.
+        const bottom = applyOp(phone, { op: "frame", layout: { scale: 1.5, focus: { x: 0.5, y: 1 } } });
+        expect(bottom.frame?.layout).toEqual({ align: "left", scale: 1.5, focus: { x: 0.5, y: 1 } });
+        const centred = applyOp(wholeProject(source), { op: "frame", layout: { focus: { x: 0.5, y: 0.2 } } });
+        expect(centred.frame?.layout?.focus).toEqual({ x: 0.5, y: 0.2 });
+        expect(() => applyOp(phone, { op: "frame", layout: { focus: { x: 2, y: 0 } } })).toThrow();
+        let zoomed = applyOp(phone, { op: "zoom", from: 1, to: 3, scale: 2 });
+        zoomed = applyOp(zoomed, {
+            op: "zoom",
+            from: 1,
+            to: 3,
+            scale: 2.5,
+            focus: { x: 0.2, y: 0.5 },
+            target: "canvas",
+        });
+        expect(zoomed.zooms.map((zoom) => [zoom.startUs, zoom.target])).toEqual([
+            [1_000_000, undefined],
+            [1_000_000, "canvas"],
+        ]);
+        expect(describeProject(zoomed, "/x/edit.json").zooms[1]).toMatchObject({ scale: 2.5, target: "canvas" });
+        // A second canvas zoom over the first moves past it, as a picture zoom moves past a picture zoom.
+        const second = applyOp(zoomed, { op: "zoom", from: 1.5, to: 2.5, target: "canvas" }).zooms.at(-1);
+        expect([second?.startUs, second?.target]).toEqual([3_000_000, "canvas"]);
+    });
+
+    // R5 10: a long callout was cut (setText cut it to 200 characters without a word) and "\n" was undocumented.
+    test("a text keeps its line breaks, takes a callout of 500 characters and refuses a longer one aloud", () => {
+        const callout = `Step one\n${"word ".repeat(60).trim()}`;
+        let project = applyOp(wholeProject(source), {
+            op: "text",
+            from: 1,
+            to: 4,
+            text: callout,
+            x: 0.7,
+            block: { width: 0.4, align: "left" },
+        });
+        const note = project.texts?.[0];
+        expect(note?.text).toBe(callout);
+        expect(note?.block).toEqual({ width: 0.4, align: "left" });
+        expect(describeProject(project, "/x/edit.json").texts[0]).toMatchObject({ lines: 2 });
+        project = applyOp(project, { op: "setText", id: note?.id ?? "", block: { align: "center" } });
+        expect(project.texts?.[0]?.block).toEqual({ width: 0.4, align: "center" });
+        expect(() => applyOp(project, { op: "setText", id: note?.id ?? "", text: "x".repeat(501) })).toThrow(
+            "at most 500 characters"
+        );
+        // Two two-line texts 0.1 apart overlap, which two one-liners would not.
+        let stacked = applyOp(wholeProject(source), { op: "text", from: 1, to: 4, text: "One\nTwo", y: 0.3 });
+        stacked = applyOp(stacked, { op: "text", from: 1, to: 4, text: "Three\nFour", y: 0.4 });
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        expect(
+            checkProject(stacked, facts).some((issue) => issue.message.includes("same time in the same place"))
+        ).toBe(true);
+    });
+
+    // Regression test: deep test 2026-11-06 RE5 — Lengthen on a circle that ends at the movie's end changed nothing.
+    test("a too-short item at the movie's end is lengthened by starting earlier", () => {
+        const project = applyOp(wholeProject(source), { op: "shape", kind: "circle", from: 9.83, to: 10 });
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        const [issue] = checkProject(project, facts);
+        const lengthened = (issue?.action?.ops ?? []).reduce((next, op) => applyOp(next, op), project);
+        expect([lengthened.shapes?.[0]?.startUs, lengthened.shapes?.[0]?.endUs]).toEqual([8_500_000, 10_000_000]);
+    });
+
+    // Regression test: deep test 2026-11-06 RE5 — `tools recorder fix` printed "fixed" four times for an op that changed nothing.
+    test("fix reports nothing fixed for an item that already spans the whole movie", () => {
+        const short = { ...source, durationUs: 300_000 };
+        const project = applyOp(wholeProject(short), { op: "text", from: 0, to: 0.3, text: "Hi" });
+        const facts = { hasTranscript: true, hasCursorTrack: true, musicFileExists: true };
+        expect(fixOps(project, facts).fixed).toEqual([]);
+    });
+
     test("check names a marker a cut hides (with a move to the nearest kept moment) and a text a cut shortens", () => {
         let project = applyOp(wholeProject(source), { op: "text", from: 1, to: 4, text: "Title" });
         project = applyOp(project, { op: "marker", at: 6.2, label: "Step two" });
@@ -807,6 +1239,7 @@ describe("edit project (edit.json)", () => {
         expect(checkProject(project, facts)).toEqual([
             {
                 severity: "fix",
+                kind: "marker-in-cut",
                 item: `marker ${marker}`,
                 message: 'The marker "Step two" at 6.2 s never plays: that time is cut, so it is no chapter',
                 fix: `movie.apply([{"op":"unmarker","id":"${marker}"},{"op":"marker","at":6.5,"label":"Step two"}])`,
@@ -816,6 +1249,7 @@ describe("edit project (edit.json)", () => {
             },
             {
                 severity: "check",
+                kind: "cut-shortens-text",
                 item: `text ${text}`,
                 message: 'The text "Title" (1 to 4 s) loses 1 s of its 3 s to a cut',
                 at: 1,
@@ -823,12 +1257,19 @@ describe("edit project (edit.json)", () => {
             },
             {
                 severity: "check",
+                kind: "marker-in-cut",
                 item: 'recorded marker "Recorded"',
                 message: 'The recorded marker "Recorded" at 5 s never plays: that time is cut, so it is no chapter',
                 fix: 'movie.marker(6.5, "Recorded")',
                 at: 5,
             },
         ]);
+
+        // A recorded marker the movie never had (a recording.json written by hand) is named as outside, not as cut.
+        const outside = checkProject(project, { ...facts, recordedMarkers: [{ atMs: 99_000, label: "Late" }] });
+        expect(outside.at(-1)?.message).toBe(
+            'The recorded marker "Late" at 99 s never plays: that time is outside the 10 s movie, so it is no chapter'
+        );
 
         // fix() moves the edit marker onto the kept movie once; the recorded one has no fix it could make twice.
         const fixed = fixOps(project, facts).ops.reduce((next, op) => applyOp(next, op), project);
@@ -1031,6 +1472,115 @@ describe("edit project (edit.json)", () => {
             loop: false,
             duck: 0,
         });
+        // R4 voiceover clips: added at a source time with the measured length, kept in source order; an id changes
+        // that clip; unvoiceover removes it and the last one removes the key. A file that is not a sound is refused.
+        const voice = join(dirname(song), "voice.mp3");
+        writeFileSync(voice, "");
+        expect(() => applyOp(project, { op: "voiceover", at: 2, file: voice })).toThrow("was not measured");
+        expect(() => applyOp(project, { op: "voiceover", at: 2, file: song.replace(".m4a", ".txt") })).toThrow(
+            "does not exist"
+        );
+        expect(() => applyOp(project, { op: "voiceover", file: voice }, { voiceoverDurationUs: 1 })).toThrow(
+            "needs `at`"
+        );
+        const voiced = applyOp(
+            applyOp(
+                project,
+                { op: "voiceover", at: 4, file: voice, label: "Second" },
+                { voiceoverDurationUs: 1_500_000 }
+            ),
+            { op: "voiceover", at: "0:01", file: voice, volume: 1.5 },
+            { voiceoverDurationUs: 2_000_000 }
+        );
+        const clips = voiced.audio.voiceovers ?? [];
+        expect(clips.map((clip) => [clip.atUs, clip.durationUs, clip.volume])).toEqual([
+            [1_000_000, 2_000_000, 1.5],
+            [4_000_000, 1_500_000, 1],
+        ]);
+        expect(clips[0]?.id).toMatch(/^v/);
+        const moved = applyOp(voiced, { op: "voiceover", id: clips[1]?.id, at: 0.5, volume: 0.5 });
+        expect(moved.audio.voiceovers?.map((clip) => [clip.label, clip.atUs, clip.volume])).toEqual([
+            ["Second", 500_000, 0.5],
+            [undefined, 1_000_000, 1.5],
+        ]);
+        expect(() => applyOp(voiced, { op: "unvoiceover", id: "v0" })).toThrow("voiceovers: ");
+        const once = applyOp(voiced, { op: "unvoiceover", id: clips[0]?.id ?? "" });
+        expect(applyOp(once, { op: "unvoiceover", id: clips[1]?.id ?? "" }).audio.voiceovers).toBeUndefined();
+        expect(describeProject(voiced, "/x/edit.json").voiceovers[0]).toMatchObject({ at: 1, seconds: 2, plays: 1 });
+        // R5 7: with an intro card the export plays the movie later; the export's own time is in the answer.
+        const exportCarded = {
+            ...voiced,
+            cards: { intro: { title: "Demo", seconds: 3 }, end: { text: "Bye", qr: false, seconds: 2 } },
+        };
+        const described = describeProject(exportCarded, "/x/edit.json");
+        expect(described.voiceovers[0]).toMatchObject({ plays: 1, exportPlays: 4 });
+        expect(described.exportTime).toEqual({
+            introSeconds: 3,
+            endSeconds: 2,
+            exportSeconds: described.outputSeconds + 5,
+        });
+        expect(describeProject(voiced, "/x/edit.json").exportTime).toEqual({
+            introSeconds: 0,
+            endSeconds: 0,
+            exportSeconds: describeProject(voiced, "/x/edit.json").outputSeconds,
+        });
+        // R4 8 music ducking: the dB object with its defaults, merged by later ops, removed by enabled: false.
+        const ducked = applyOp(project, { op: "ducking", voiceovers: false });
+        expect(ducked.audio.ducking).toEqual({ db: 12, fadeMs: 300, transcript: true, voiceovers: false });
+        expect(applyOp(ducked, { op: "ducking", db: 18 }).audio.ducking).toMatchObject({ db: 18, voiceovers: false });
+        expect(applyOp(ducked, { op: "ducking", enabled: false }).audio.ducking).toBeUndefined();
+        // R4 6 animated captions and texts: karaoke by default once set; a text's animate with its default length;
+        // "fade" with no length is the default and leaves no key; setText changes it.
+        const karaoke = applyOp(project, { op: "captionsStyle" });
+        expect(karaoke.captionsStyle).toEqual({ kind: "karaoke", color: "#FFD60A" });
+        expect(applyOp(karaoke, { op: "captionsStyle", enabled: false }).captionsStyle).toBeUndefined();
+        const typed = applyOp(project, { op: "text", from: 1, to: 3, text: "Hi", animate: { kind: "typewriter" } });
+        const typedNote = typed.texts?.[0];
+        expect(typedNote?.animate).toEqual({ kind: "typewriter", ms: 600 });
+        const faded = applyOp(typed, { op: "setText", id: typedNote?.id ?? "", animate: { kind: "fade" } });
+        expect(faded.texts?.[0] && "animate" in faded.texts[0]).toBe(false);
+        expect(
+            applyOp(typed, { op: "setText", id: typedNote?.id ?? "", animate: { kind: "slideUp", ms: 900 } }).texts?.[0]
+                ?.animate
+        ).toEqual({ kind: "slideUp", ms: 900 });
+        // R4 10 progress bar: the defaults, merged by later ops, removed by enabled: false.
+        const barred = applyOp(project, { op: "progress", color: "#FF375F" });
+        expect(barred.progress).toEqual({
+            show: true,
+            color: "#FF375F",
+            height: 0.008,
+            chapters: true,
+            chapterMs: 2000,
+        });
+        expect(applyOp(barred, { op: "progress", show: false }).progress?.color).toBe("#FF375F");
+        expect(applyOp(barred, { op: "progress", enabled: false }).progress).toBeUndefined();
+        expect(() => applyOp(project, { op: "progress", color: "red" })).toThrow();
+        // R6 8: the chapter label's place; absent is "auto" (the frame's free area).
+        expect(applyOp(barred, { op: "progress", chapterPlace: "topRight" }).progress?.chapterPlace).toBe("topRight");
+        // R4 9 intro and end cards: a title (or text) the first time, then changes merge; a logo must be a picture
+        // that exists; a QR code needs a link; the last card gone removes the key.
+        expect(() => applyOp(project, { op: "introCard", subtitle: "x" })).toThrow("needs a title");
+        expect(() => applyOp(project, { op: "introCard", title: "T", logo: `${song}.png` })).toThrow("does not exist");
+        expect(() => applyOp(project, { op: "introCard", title: "T", logo: song })).toThrow("a logo is a picture");
+        expect(() => applyOp(project, { op: "endCard", text: "Bye", qr: true })).toThrow("needs a link");
+        const carded = applyOp(applyOp(project, { op: "introCard", title: "Demo" }), {
+            op: "endCard",
+            text: "Bye",
+            link: "https://example.com",
+            qr: true,
+        });
+        expect(carded.cards).toEqual({
+            intro: { title: "Demo", seconds: 3 },
+            end: { text: "Bye", link: "https://example.com", qr: true, seconds: 3 },
+        });
+        expect(applyOp(carded, { op: "introCard", subtitle: "Tour" }).cards?.intro).toEqual({
+            title: "Demo",
+            subtitle: "Tour",
+            seconds: 3,
+        });
+        const noIntro = applyOp(carded, { op: "introCard", enabled: false });
+        expect(noIntro.cards).toEqual({ end: carded.cards?.end });
+        expect(applyOp(noIntro, { op: "endCard", enabled: false }).cards).toBeUndefined();
         // Shapes: an arrow in source space with its defaults, a point-sized one refused, unshape removes it.
         const pointed = applyOp(project, {
             op: "shape",
@@ -1088,7 +1638,22 @@ describe("edit project (edit.json)", () => {
             rect: { x: 0, y: 0, width: 0.2, height: 0.2 },
         });
         expect(lit.redactions?.[0]?.style).toBe("spotlight");
-        expect(describeProject(lit, "/p/edit.json").redactions[0]).toMatchObject({ dim: 0.7, cutout: "rounded" });
+        // R8 11: the default dim is 0.5 (0.7 greyed the whole screen), and dimAround gives it a soft edge.
+        expect(describeProject(lit, "/p/edit.json").redactions[0]).toMatchObject({ dim: 0.5, cutout: "rounded" });
+        const soft = applyOp(project, {
+            op: "spotlight",
+            from: 1,
+            to: 3,
+            rect: { x: 0, y: 0, width: 0.2, height: 0.2 },
+            dimAround: 0.1,
+        });
+        expect(soft.redactions?.[0]).toMatchObject({ dimAround: 0.1 });
+        expect(describeProject(soft, "/p/edit.json").redactions[0]).toMatchObject({ dimAround: 0.1 });
+        const softId = soft.redactions?.[0]?.id ?? "";
+        expect(applyOp(soft, { op: "setRedaction", id: softId, dimAround: 0.2 }).redactions?.[0]?.dimAround).toBe(0.2);
+        expect(applyOp(soft, { op: "setRedaction", id: softId, dimAround: 0 }).redactions?.[0]).not.toHaveProperty(
+            "dimAround"
+        );
         const circle = applyOp(project, {
             op: "spotlight",
             from: 1,
@@ -1315,12 +1880,12 @@ describe("the editor window's item ops", () => {
             op: "setRedaction",
             id,
             label: "token",
-            dim: 0.5,
+            dim: 0.6,
             cutout: "circle",
             follow: true,
         });
-        expect(project.redactions?.[0]).toMatchObject({ label: "token", dim: 0.5, cutout: "circle", follow: true });
-        project = applyOp(project, { op: "setRedaction", id, label: " ", dim: 0.702, follow: false });
+        expect(project.redactions?.[0]).toMatchObject({ label: "token", dim: 0.6, cutout: "circle", follow: true });
+        project = applyOp(project, { op: "setRedaction", id, label: " ", dim: 0.502, follow: false });
         expect(project.redactions?.[0]).not.toHaveProperty("label");
         expect(project.redactions?.[0]).not.toHaveProperty("dim");
         expect(project.redactions?.[0]).not.toHaveProperty("follow");
@@ -1420,6 +1985,33 @@ describe("the editor window's item ops", () => {
         project = applyOp(project, { op: "cameraShow", id: part.id });
         expect(project.camera?.hidden.map((item) => item.startUs)).toEqual([5_000_000]);
         expect(() => applyOp(project, { op: "cameraShow", id: part.id, from: 1, to: 2 })).toThrow("not both");
+    });
+
+    // Regression test: deep test 2026-11-06 RE6 — fixLine at a time inside a line saved a fix no line starts at.
+    test("fixLine at any time inside a line fixes that line, and a time between lines is refused", () => {
+        const transcript = [
+            { text: "Hello.", start: 0.4, end: 2.0 },
+            { text: "What are you doing?", start: 2.281, end: 4.6 },
+        ];
+        const fixed = applyOp(
+            wholeProject(source),
+            { op: "fixLine", from: 2.5, text: "What are you doing now?" },
+            { transcript }
+        );
+
+        expect(fixed.transcript?.fixes).toEqual({ "2281": "What are you doing now?" });
+        expect(() => applyOp(wholeProject(source), { op: "fixLine", from: 9, text: "x" }, { transcript })).toThrow(
+            "no line is spoken at 9 s, nothing was saved; the nearest lines start at 2.281, 0.4 s"
+        );
+    });
+
+    // Regression test: deep test 2026-11-06 NR36 — denoise on a movie with no sound saved, and every export then failed.
+    test("denoise refuses a movie with no audio track, as normalize does, and turning it off still works", () => {
+        const project = wholeProject(source);
+
+        expect(() => applyOp(project, { op: "denoise" }, { audioTracks: 0 })).toThrow("no sound to clean");
+        expect(applyOp(project, { op: "denoise" }, { audioTracks: 1 }).audio.denoise?.method).toBe("afftdn");
+        expect(applyOp(project, { op: "denoise", enabled: false }, { audioTracks: 0 }).audio.denoise).toBeUndefined();
     });
 
     // The Audio tab's rules, which the window kept in EditorDenoise.swift before the service owned them.
@@ -1863,6 +2455,14 @@ test("editor commands replace guarded outputs and force the requested container"
     }
 });
 
+// Regression test: deep test 2026-11-06 RE8 — a 20 s WebM took 121 s: libvpx ran one row at a time at its slowest
+// speed. Measured on 10 s of 1440p60: these flags cost a third less CPU at an SSIM no lower (0.99911 against 0.99900).
+test("a WebM encodes rows in parallel at speed 3, with the CRF that keeps its quality", () => {
+    const args = exportVideoArgv({ input: "in.mp4", output: "out.webm", format: "webm" }).join(" ");
+
+    expect(args).toContain("-c:v libvpx-vp9 -b:v 0 -crf 32 -row-mt 1 -deadline good -cpu-used 3");
+});
+
 test("manifest duration preserves static recordings and the unchanged tail", async () => {
     for (const staticScreen of [true, false]) {
         const source = recordingFolder();
@@ -1911,6 +2511,23 @@ test("video evidence rejects directories before hashing", async () => {
             settings: { fps: 1, framesPerImage: 1, minimumDifferencePct: 0 },
         })
     ).rejects.toThrow("Choose a local video file up to 1 GiB");
+});
+
+test("an empty or unfinished movie is named as such, not as a file over the size limit", async () => {
+    const folder = workspace();
+    const empty = join(folder, "empty.mp4");
+    writeFileSync(empty, "");
+    await expect(probeVideo({ input: empty })).rejects.toThrow("is empty (0 bytes)");
+    // The first bytes of an MP4 whose recorder died before it wrote the index.
+    const unfinished = join(folder, "unfinished.mp4");
+    writeFileSync(
+        unfinished,
+        Buffer.concat([Buffer.from([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70]), Buffer.alloc(4096, 7)])
+    );
+    const error = await probeVideo({ input: unfinished }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error)).toContain("is not a movie ffprobe can read");
+    expect(String(error).split("\n")).toHaveLength(1);
 });
 
 test("a still trim keeps the image already on screen for each display", async () => {

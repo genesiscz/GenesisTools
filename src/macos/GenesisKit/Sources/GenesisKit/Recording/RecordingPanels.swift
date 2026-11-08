@@ -30,6 +30,27 @@ enum RecordingPanelLayout {
     static let margin: CGFloat = 16
     static let gap: CGFloat = 12
 
+    /// The picker under `anchor` (a Cocoa point, the pointer or the menu bar item): its top centred 8 pt below, above
+    /// the anchor when there is no room below, inside the visible screen.
+    static func picker(size: CGSize, anchor: CGPoint, visible: CGRect) -> CGRect {
+        var origin = CGPoint(x: anchor.x - size.width / 2, y: anchor.y - 8 - size.height)
+        if origin.y < visible.minY + 8 { origin.y = anchor.y + 8 }
+        return inside(CGRect(origin: origin, size: size), visible: visible)
+    }
+
+    /// The picker after its content changed size (a tab with more rows): the top edge stays while the screen has room
+    /// below, then it moves up. It grew below the screen before (review 2026-11-06).
+    static func resized(_ frame: CGRect, to size: CGSize, visible: CGRect) -> CGRect {
+        inside(CGRect(x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height), visible: visible)
+    }
+
+    /// Moved inside `visible` with an 8 pt edge; one taller than the screen keeps its top on screen.
+    private static func inside(_ rect: CGRect, visible: CGRect) -> CGRect {
+        let x = min(max(rect.minX, visible.minX + 8), visible.maxX - 8 - rect.width)
+        let y = min(max(rect.minY, visible.minY + 8), visible.maxY - 8 - rect.height)
+        return CGRect(x: x, y: y, width: rect.width, height: rect.height).integral
+    }
+
     /// `targetCG` is what is recorded in CoreGraphics points (top-left origin of the primary display), nil for a
     /// display; `displayIndex` names the recorded display in `screens` order (NSScreen order).
     static func frame(size: CGSize, placement: RecordingPanelPlacement, targetCG: CGRect?, displayIndex: Int?,
@@ -328,27 +349,29 @@ public final class RecordingPickerPanel: NSObject, NSWindowDelegate {
         let hosting = FirstMouseHostingView(rootView: AnyView(view.fixedSize().onGeometryChange(for: CGSize.self, of: { $0.size }) { [weak self] size in
             DispatchQueue.main.async { self?.resize(to: size) }
         }))
-        hosting.sizingOptions = []
+        let size = Self.measure(hosting)
         window.contentView = hosting
-        hosting.layoutSubtreeIfNeeded()
-        let size = hosting.fittingSize
         let screen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.screens.first
         let visible = screen?.visibleFrame ?? CGRect(origin: .zero, size: size)
-        var origin = CGPoint(x: anchor.x - size.width / 2, y: anchor.y - 8 - size.height)
-        if origin.y < visible.minY + 8 { origin.y = anchor.y + 8 }
-        origin.x = min(max(origin.x, visible.minX + 8), visible.maxX - 8 - size.width)
-        origin.y = min(max(origin.y, visible.minY + 8), visible.maxY - 8 - size.height)
-        window.setFrame(CGRect(origin: origin, size: size).integral, display: true)
+        window.setFrame(RecordingPanelLayout.picker(size: size, anchor: anchor, visible: visible), display: true)
         window.makeKeyAndOrderFront(nil)
     }
 
-    /// Follows the content (a tab that lists more or fewer rows), keeping the top edge.
+    /// The content's size, read before the sizing options are cleared: with none, `fittingSize` is 0 x 0. From then
+    /// on the panel sets the window's size itself, so it keeps its top edge when the content grows.
+    static func measure<Content: View>(_ hosting: NSHostingView<Content>) -> CGSize {
+        hosting.layoutSubtreeIfNeeded()
+        let size = hosting.fittingSize
+        hosting.sizingOptions = []
+        return CGSize(width: size.width.rounded(.up), height: size.height.rounded(.up))
+    }
+
+    /// Follows the content (a tab that lists more or fewer rows), keeping the top edge inside its screen.
     private func resize(to size: CGSize) {
         let size = CGSize(width: size.width.rounded(.up), height: size.height.rounded(.up))
         guard window.isVisible, size.width > 0, size.height > 0, size != window.frame.size else { return }
-        let frame = window.frame
-        window.setFrame(CGRect(x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height),
-                        display: true)
+        let visible = (window.screen ?? NSScreen.main)?.visibleFrame ?? window.frame
+        window.setFrame(RecordingPanelLayout.resized(window.frame, to: size, visible: visible), display: true)
     }
 
     public func dismiss() {

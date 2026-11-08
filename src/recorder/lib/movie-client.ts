@@ -1,10 +1,14 @@
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { MethodDescriptor } from "@genesiscz/utils/api-descriptor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { EditOp } from "@genesiscz/utils/recording-editor/project";
-import { editPathOf, editProject, type OpenedProject, undoEdit } from "./edit";
-import { withServiceClient } from "./service-client";
-import { readLiveService } from "./service-protocol";
+import { readProject } from "@genesiscz/utils/recording-editor/project";
+import { editPathOf, editProject, type OpenedProject, redoEdit, undoEdit } from "./edit";
+import { resolveRecording } from "./library";
+import { ServiceConnectionLost, withServiceClient } from "./service-client";
+import { readLiveService, type ServiceEntry } from "./service-protocol";
 
 /**
  * The CLI's and the REPL's edits, through the recorder service when one runs, so an edit the window holds open takes
@@ -16,7 +20,12 @@ const { log } = logger.scoped("recorder-service-client");
 /** A `movie.*` call through the service may run a long step (removeIdle over a meeting, a transcription). */
 const MOVIE_CALL_TIMEOUT_MS = 60 * 60_000;
 const EDIT_CALL_TIMEOUT_MS = 10 * 60_000;
-const callerPath = (value: string): string => (value === "last" || value === "open" ? value : resolve(value));
+/**
+ * What the caller names, resolved here by the rules the in-process edit uses (a path against this cwd, a full or short
+ * library id, "last", "open"): the service runs in another folder. `resolve(value)` sent "<cwd>/<id>" for an id, and
+ * the service refused every edit by id while it ran (round 2, from recorder-capture).
+ */
+const callerPath = (value: string): string => resolveRecording(value);
 
 interface ServiceEditAnswer {
     project: OpenedProject["project"];
@@ -24,6 +33,70 @@ interface ServiceEditAnswer {
     removedIdleUs?: Array<[number, number]>;
     loudness?: { measuredLufs: number | null; volume: number };
     undone?: string[];
+    redone?: string[];
+}
+
+/** The edit's revision on its file now; null when it has no file yet or cannot be read. */
+function revisionOnDisk(recording: string): number | null {
+    try {
+        const path = editPathOf(recording);
+        return existsSync(path) ? readProject(path).revision : null;
+    } catch (error) {
+        log.debug({ error, recording }, "the edit's revision could not be read");
+        return null;
+    }
+}
+
+/**
+ * Sends a call that changes the edit through the service, and when the connection closes under it (the service exits
+ * when its code changes, and an editor saw "the connection closed" twice in one script, round 5 item 9), once more: on
+ * the service that runs now, or in this process when none does. It is sent again only when it cannot apply twice: it
+ * never left, or the edit's file is at the revision it had before the call. Otherwise it throws a clear error that
+ * says the edit moved, so the caller reads info() instead of guessing.
+ */
+export async function sendOnce<T>(options: {
+    what: string;
+    recording: string;
+    dir?: string;
+    entry: ServiceEntry;
+    send: (entry: ServiceEntry) => Promise<T>;
+    local: () => Promise<T>;
+}): Promise<T> {
+    const before = revisionOnDisk(options.recording);
+
+    try {
+        return await options.send(options.entry);
+    } catch (error) {
+        if (!(error instanceof ServiceConnectionLost)) {
+            throw error;
+        }
+
+        const after = revisionOnDisk(options.recording);
+
+        if (error.sent && after !== before) {
+            throw new Error(
+                `${options.what}: ${error.message}. The edit moved while the call ran (revision ${before ?? "none"} → ${after ?? "none"}), so it was not sent again: info() shows whether it took effect.`
+            );
+        }
+
+        const again = readLiveService(options.dir);
+        log.warn(
+            { what: options.what, sent: error.sent, reason: error.reason, again: again ? "service" : "local" },
+            "the recorder service connection closed; sending the call once more"
+        );
+
+        try {
+            return again ? await options.send(again) : await options.local();
+        } catch (second) {
+            if (second instanceof ServiceConnectionLost) {
+                throw new Error(
+                    `${options.what}: the connection to the recorder service closed twice (${error.reason}; then ${second.reason}). The edit is at revision ${revisionOnDisk(options.recording) ?? "none"}; info() shows it. ${toolCommand("recorder serve --status")} shows the service.`
+                );
+            }
+
+            throw second;
+        }
+    }
 }
 
 function openedOf(value: string, answer: ServiceEditAnswer): OpenedProject {
@@ -35,6 +108,7 @@ function openedOf(value: string, answer: ServiceEditAnswer): OpenedProject {
         ...(answer.removedIdleUs?.length ? { removedIdleUs: answer.removedIdleUs } : {}),
         ...(answer.loudness ? { loudness: answer.loudness } : {}),
         ...(answer.undone ? { undone: answer.undone } : {}),
+        ...(answer.redone ? { redone: answer.redone } : {}),
     };
 }
 
@@ -54,19 +128,29 @@ export async function applyEdit(
     }
 
     log.debug({ value, ops: ops.map((op) => op.op), socket: entry.socket }, "edit through the recorder service");
-    const answer = await withServiceClient(entry, (client) =>
-        client.call<ServiceEditAnswer>(
-            "edit.apply",
-            {
-                path: callerPath(value),
-                ops: ops.map((op) =>
-                    "file" in op && typeof op.file === "string" ? { ...op, file: resolve(op.file) } : op
-                ),
-            },
-            { timeoutMs: EDIT_CALL_TIMEOUT_MS }
-        )
-    );
-    return openedOf(value, answer);
+    return sendOnce({
+        what: "apply",
+        recording: value,
+        dir: options.dir,
+        entry,
+        send: async (live) =>
+            openedOf(
+                value,
+                await withServiceClient(live, (client) =>
+                    client.call<ServiceEditAnswer>(
+                        "edit.apply",
+                        {
+                            path: callerPath(value),
+                            ops: ops.map((op) =>
+                                "file" in op && typeof op.file === "string" ? { ...op, file: resolve(op.file) } : op
+                            ),
+                        },
+                        { timeoutMs: EDIT_CALL_TIMEOUT_MS }
+                    )
+                )
+            ),
+        local: () => editProject(value, ops),
+    });
 }
 
 /** `tools recorder undo`: through the running service (`edit.undo`), else in this process (`undoEdit`). */
@@ -83,8 +167,29 @@ export async function undoLastEdit(value: string, options: { dir?: string } = {}
     return openedOf(value, answer);
 }
 
-/** The Movie methods that stay in the caller's process: they draw, export or write beside the recording. */
+/** `tools recorder redo`: through the running service (`edit.redo`), else in this process (`redoEdit`). */
+export async function redoLastEdit(value: string, options: { dir?: string } = {}): Promise<OpenedProject> {
+    const entry = readLiveService(options.dir);
+
+    if (!entry) {
+        return redoEdit(value);
+    }
+
+    const answer = await withServiceClient(entry, (client) =>
+        client.call<ServiceEditAnswer>("edit.redo", { path: callerPath(value) })
+    );
+    return openedOf(value, answer);
+}
+
+/**
+ * The Movie methods that stay in the caller's process: they draw, export or write beside the recording. transcript,
+ * still, sheet and reveal were read before their effects were declared honestly (NR7); they still run here.
+ */
 const STAYS_LOCAL = new Set([
+    "transcript",
+    "still",
+    "sheet",
+    "reveal",
     "show",
     "export",
     "poster",
@@ -152,13 +257,21 @@ export function serviceRoutedMovie<T extends { recording: string }>(
                     { method: method.name, recording: target.recording },
                     "movie call through the recorder service"
                 );
-                return withServiceClient(entry, (client) =>
-                    client.call(
-                        `movie.${method.name}`,
-                        { recording: callerPath(target.recording), ...params },
-                        { timeoutMs: MOVIE_CALL_TIMEOUT_MS, ...(signal ? { signal } : {}) }
-                    )
-                );
+                return sendOnce({
+                    what: `movie.${method.name}`,
+                    recording: target.recording,
+                    dir: options.dir,
+                    entry,
+                    send: (live) =>
+                        withServiceClient(live, (client) =>
+                            client.call(
+                                `movie.${method.name}`,
+                                { recording: callerPath(target.recording), ...params },
+                                { timeoutMs: MOVIE_CALL_TIMEOUT_MS, ...(signal ? { signal } : {}) }
+                            )
+                        ),
+                    local: () => Reflect.apply(value, target, args),
+                });
             };
         },
     });

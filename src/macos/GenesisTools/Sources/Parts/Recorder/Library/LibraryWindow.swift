@@ -379,6 +379,9 @@ struct LibraryView: View {
                                     Text(verbatim: "\(section.items.count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(RecorderPalette.dim)
                                 }
                                 .padding(.top, 4)
+                                // One heading, "Today, 21 recordings", not two ("Today" and "21").
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("\(section.title), \(Plural.count(section.items.count, "recording"))")
                                 .accessibilityAddTraits(.isHeader)
                             }
                         }
@@ -414,6 +417,20 @@ struct LibraryView: View {
 }
 
 struct LibraryCard: View {
+    /// What VoiceOver reads for a card: the title, the length and the edit state, or why it did not record; with a
+    /// search, the moment that matched, as the card shows it under the title.
+    static func accessibilityLabel(_ item: RecorderMenu.Recent, spoken: LibraryModel.SpokenHit?) -> String {
+        if item.recording { return "\(item.title), recording now" }
+        if let failure = item.failure { return "\(item.title), did not record: \(failure)" }
+        var label = "\(item.title), \(item.durationMs.map { formatClock(Int64($0 * 1000)) } ?? "no length"), "
+            + (item.edited ? "edited" : "not edited")
+        if let spoken {
+            label += ", \(spoken.marker ? "marker" : "said") at \(formatClock(Int64(spoken.at * 1_000_000))): \(spoken.text)"
+            if !spoken.more.isEmpty { label += ", \(Plural.count(spoken.more.count, "more match", "more matches"))" }
+        }
+        return label
+    }
+
     let item: RecorderMenu.Recent
     /// What matched the search in what was said or marked, shown under the title.
     let spoken: LibraryModel.SpokenHit?
@@ -444,7 +461,8 @@ struct LibraryCard: View {
                             Image(nsImage: thumbnail).resizable().aspectRatio(contentMode: .fill)
                         } else {
                             RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.06))
-                                .overlay(Image(systemName: "video").font(.system(size: 22)).foregroundStyle(RecorderPalette.dim))
+                                .overlay(Image(systemName: item.failure == nil ? "video" : "exclamationmark.triangle")
+                                    .font(.system(size: 22)).foregroundStyle(RecorderPalette.dim))
                         }
                     }
                     .frame(height: 155)
@@ -514,12 +532,18 @@ struct LibraryCard: View {
                         Badge(Plural.count(item.openComments, "comment"),
                               tooltip: "Review comments not resolved yet; right-click → Open at First Comment")
                     }
-                    if !item.hasMovie { Badge("Frames", tooltip: "Frames only: the editor makes a movie of them first") }
+                    if item.recording {
+                        Badge("Recording", color: .red, look: .tone, tooltip: "Still recording; it opens once it stops")
+                    } else if let failure = item.failure {
+                        Badge("Failed", color: .orange, look: .tone, tooltip: "Did not record: \(failure)")
+                    } else if !item.hasMovie {
+                        Badge("Frames", tooltip: "Frames only: the editor makes a movie of them first")
+                    }
                 }
             }
             .contentShape(Rectangle())
         }
-        .accessibilityLabel("\(item.title), \(item.durationMs.map { formatClock(Int64($0 * 1000)) } ?? "no length"), \(item.edited ? "edited" : "not edited")")
+        .accessibilityLabel(Self.accessibilityLabel(item, spoken: spoken))
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityAction(named: "Open in Editor", open)
         .simultaneousGesture(TapGesture(count: 2).onEnded { open() })
@@ -574,10 +598,22 @@ final class LibraryWindow: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         model.stopWatching()
-        // Back to a menu bar app when no other titled window of the recorder stays open.
-        let closing = notification.object as? NSWindow
-        if !NSApp.windows.contains(where: { $0 !== closing && $0.isVisible && $0.styleMask.contains(.titled) }) {
-            NSApp.setActivationPolicy(.accessory)
+        RecorderActivation.windowClosed(notification.object as? NSWindow)
+    }
+}
+
+/// The recorder face's activation when one of its titled windows (the library, an editor) closes.
+@MainActor
+enum RecorderActivation {
+    /// Back to a menu bar app when no other titled window stays open, and out of the front: the face stayed the front
+    /// app with no window, so the next keys went nowhere (review 2026-11-06). `deactivate`, not `hide`: hiding would
+    /// take the camera bubble and the notes off the screen too.
+    static func windowClosed(_ closing: NSWindow?) {
+        guard !NSApp.windows.contains(where: { $0 !== closing && $0.isVisible && $0.styleMask.contains(.titled) }) else { return }
+        NSApp.setActivationPolicy(.accessory)
+        if NSApp.isActive {
+            HubPerf.log("recorder: the last window closed; the front goes back to the app before")
+            NSApp.deactivate()
         }
     }
 }

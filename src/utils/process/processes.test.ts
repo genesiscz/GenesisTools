@@ -51,6 +51,7 @@ import {
     readProcessEnvKeys,
     readProcessesWithUsage,
     readProcessUsages,
+    signalProcessTree,
     userName,
 } from "./processes";
 import * as ps from "./ps";
@@ -1351,6 +1352,27 @@ test("Linux open socket names normalize wildcard addresses for port descriptor m
 
 // Moved from src/claude/lib/teams/status.test.ts with the function (2026-11-05): the same three cases, and a reader
 // that throws is now the reader's own failure, since readProcessEnvironment never throws.
+describe("signalProcessTree", () => {
+    test("signals the descendants deepest first, the process itself last when asked, and skips one that ended", () => {
+        const sent: string[] = [];
+        const kill = (pid: number, signal: NodeJS.Signals) => {
+            if (pid === 12) {
+                throw new Error("ESRCH");
+            }
+
+            sent.push(`${pid} ${signal}`);
+        };
+        const descendants = () => [11, 12, 13];
+        expect(signalProcessTree(10, { signal: "SIGKILL", includeSelf: true, descendants, kill })).toEqual([
+            13, 11, 10,
+        ]);
+        expect(sent).toEqual(["13 SIGKILL", "11 SIGKILL", "10 SIGKILL"]);
+        sent.length = 0;
+        expect(signalProcessTree(10, { descendants, kill })).toEqual([13, 11]);
+        expect(sent).toEqual(["13 SIGTERM", "11 SIGTERM"]);
+    });
+});
+
 describe("readProcessEnvKeys falls back rather than inventing an account", () => {
     test("reads the requested key, its trailing newline cut", () => {
         const environment = () => ({ OTHER: "x", TOOLS_CLAUDE_ACCOUNT: "work laptop\n" });

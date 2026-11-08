@@ -45,6 +45,15 @@ enum RecorderNotice {
         }
     }
 
+    /// A failed `tools` command: `text`, then the line of its output that names the problem (`ToolsRunner.problem`),
+    /// never a help dump; Details holds the whole output, or `fallback` when it printed nothing.
+    static func failure(_ text: String, output: String, fallback: String? = nil, defaults: UserDefaults = .standard) {
+        let problem = ToolsRunner.problem(in: output)
+        let headline = problem.map { "\(text): \($0.hasSuffix(".") ? String($0.dropLast()) : $0)." } ?? "\(text)."
+        failure(headline, more: output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : output,
+                defaults: defaults)
+    }
+
     /// A shortcut pressed with nothing to act on (no recording runs).
     static func nothingToActOn(_ title: String, detail: String, defaults: UserDefaults = .standard) {
         let feedback = IdleShortcutFeedback.load(defaults)
@@ -126,7 +135,7 @@ final class RecorderNoticePanel {
             resized: { [weak self] size in self?.fit(size, generation: shown) }))
         let panel = panel ?? makePanel(host: host)
         self.panel = panel
-        let size = host.fittingSize
+        let size = Self.measure(text: text, more: more)
         let anchor = anchor()
         let visible = Self.screen(for: anchor)?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         panel.setFrame(CGRect(origin: Self.origin(size: size, anchor: anchor, visible: visible), size: size), display: true)
@@ -145,6 +154,15 @@ final class RecorderNoticePanel {
         ])
     }
 
+    /// The note's size before it shows. The panel's own host has no sizing options (the panel sets its size), so its
+    /// `fittingSize` is 0 x 0, and every note opened as a 0 x 0 window; a throwaway controller measures the same pill.
+    static func measure(text: String, more: String?) -> CGSize {
+        let probe = NSHostingController(rootView: RecorderNoticeContent(text: text, more: more, dismiss: {})
+            .environment(\.colorScheme, .dark))
+        let size = probe.sizeThatFits(in: CGSize(width: width, height: 10_000))
+        return CGSize(width: width, height: max(size.height.rounded(.up), 1))
+    }
+
     func close() { close(generation) }
 
     private func close(_ shown: Int) {
@@ -154,7 +172,8 @@ final class RecorderNoticePanel {
 
     /// Details opened or closed: the panel keeps its top edge and grows or shrinks downward.
     private func fit(_ size: CGSize, generation shown: Int) {
-        guard shown == generation, let panel, panel.isVisible, size.height > 0 else { return }
+        // Not only while visible: the first report comes during the show, before the panel is ordered in.
+        guard shown == generation, let panel, size.height > 0 else { return }
         let frame = panel.frame
         guard abs(frame.height - size.height) > 0.5 || abs(frame.width - size.width) > 0.5 else { return }
         panel.setFrame(CGRect(x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height), display: true)
@@ -220,11 +239,7 @@ private struct RecorderNoticeView: View {
     let resized: (CGSize) -> Void
 
     var body: some View {
-        // The pill's own translucent fill sits on an opaque backing of the same shape, so it reads over any window.
-        NoticePill(text: text, more: more, tone: .error, dismiss: dismiss)
-            .frame(width: RecorderNoticePanel.width, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color(white: 0.11)))
+        RecorderNoticeContent(text: text, more: more, dismiss: dismiss)
             .background(GeometryReader { proxy in
                 Color.clear
                     .onAppear { resized(proxy.size) }
@@ -236,6 +251,23 @@ private struct RecorderNoticeView: View {
     }
 }
 
+/// The note itself, at its own height: what the panel shows and what `RecorderNoticePanel.measure` measures.
+struct RecorderNoticeContent: View {
+    let text: String
+    let more: String?
+    let dismiss: () -> Void
+
+    var body: some View {
+        // The pill's own translucent fill sits on an opaque backing of the same shape, so it reads over any window.
+        // The backing goes under the pill, at the pill's width: on the panel's full width it showed past a short pill.
+        NoticePill(text: text, more: more, tone: .error, dismiss: dismiss)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color(white: 0.11)))
+            .frame(width: RecorderNoticePanel.width, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 // MARK: - The Rename prompt
 
 /// Rename's question in a small titled panel that takes the typing without activating the recorder, so its other
@@ -244,7 +276,7 @@ private struct RecorderNoticeView: View {
 final class RecorderTitlePrompt: NSObject, NSWindowDelegate {
     private static var current: RecorderTitlePrompt?
 
-    private let panel: RecorderTitlePanel
+    let panel: RecorderTitlePanel
     private var done: ((String?) -> Void)?
 
     static func show(_ request: RecorderTitleRequest, done: @escaping (String?) -> Void) {
@@ -254,7 +286,7 @@ final class RecorderTitlePrompt: NSObject, NSWindowDelegate {
         prompt.present()
     }
 
-    private init(_ request: RecorderTitleRequest, done: @escaping (String?) -> Void) {
+    init(_ request: RecorderTitleRequest, done: @escaping (String?) -> Void) {
         self.done = done
         panel = RecorderTitlePanel(contentRect: .zero, styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel],
                                    backing: .buffered, defer: false)
@@ -262,6 +294,9 @@ final class RecorderTitlePrompt: NSObject, NSWindowDelegate {
         let host = NSHostingView(rootView: RecorderTitlePromptView(request: request) { [weak self] answer in
             self?.finish(answer)
         }.titlebarZone())
+        // The title bar is empty (no title, no buttons), so it is no safe area: the content starts at the panel's top
+        // edge, and the fitting size below is the content's own, with no band above the heading or under the buttons.
+        host.safeAreaRegions = []
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
@@ -312,7 +347,7 @@ final class RecorderTitlePanel: EditingPanel {
     override var canBecomeMain: Bool { false }
 }
 
-private struct RecorderTitlePromptView: View {
+struct RecorderTitlePromptView: View {
     let request: RecorderTitleRequest
     let finish: (String?) -> Void
     @State private var text: String
@@ -351,9 +386,8 @@ private struct RecorderTitlePromptView: View {
                     .accessibilityIdentifier("recorder.rename.confirm")
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 30)
-        .padding(.bottom, 16)
+        // One 18 pt inset all round; the host gives the empty title bar no safe area (review 2026-11-06).
+        .padding(18)
         .frame(width: 360)
         .onAppear { DispatchQueue.main.async { focused = true } }
     }

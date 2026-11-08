@@ -2,6 +2,21 @@ import XCTest
 @testable import GenesisToolsRecorder
 
 final class CapturePickerTests: XCTestCase {
+    /// The defect: on the Windows and Apps tabs the audio, cursor and shortcuts toggles looked live, and only their
+    /// tooltips said that a window or an app movie records none of them (round 2, 2026-11-07). The options say it in
+    /// view now, and only on those tabs.
+    @MainActor
+    func testTheWindowsAndAppsTabsSayInViewWhatTheirMoviesLeaveOut() throws {
+        let model = CapturePickerModel(persist: false)
+        for (tab, shown) in [(RecordingPickerTab.windows, true), (.apps, true), (.displays, false)] {
+            model.tab = tab
+            let image = try EditorShots.write(CaptureOptionsView(model: model, onArea: {}),
+                                              name: "capture-options-\(tab.rawValue)", width: 380)
+            let text = try EditorShots.text(image)
+            XCTAssertEqual(text.contains("no audio"), shown, "\(tab): \(text)")
+        }
+    }
+
     /// The running recorder face draws the picker for `render.snapshot` and then closes the window it ordered in. A
     /// window made in code releases itself on close by default, so the close and ARC released it twice and the face
     /// crashed in the main queue's autorelease pool pop (EXC_BAD_ACCESS in objc_release, 2026-11-05 06:33).
@@ -53,6 +68,19 @@ final class CapturePickerTests: XCTestCase {
             "recorder", "start", "--display", "0", "--fps", "30", "--idle-fps", "0.5", "--threshold", "2.5",
             "--audio", "system,mic", "--system-cursor", "--no-shortcuts", "--camera", "--exclude-window-ids", "77",
         ])
+    }
+
+    /// The defect: with an audio toggle on, a window or app choice passed --audio, which a window movie cannot record,
+    /// so the start was refused. Its audio flags stay out; a display and an area keep them.
+    func testAWindowOrAppChoiceLeavesTheAudioOutAndADisplayOrAreaKeepsIt() {
+        var options = CaptureOptions()
+        options.systemAudio = true
+        options.microphone = true
+        let window = options.startArguments(.target(.window(ids: [501], app: "Editor", title: nil, pid: 4101)))
+        XCTAssertFalse(window.contains("--audio"))
+        XCTAssertFalse(options.startArguments(.target(.app(app: "Editor", name: nil))).contains("--audio"))
+        XCTAssertTrue(options.startArguments(.area(CGRect(x: 0, y: 0, width: 10, height: 10))).contains("--audio"))
+        XCTAssertTrue(options.startArguments(.followPointer).contains("--audio"))
     }
 
     func testOptionsRoundTripThroughDefaultsAndRefuseValuesThePickerDoesNotOffer() throws {

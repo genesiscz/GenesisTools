@@ -4,6 +4,14 @@ import type { z } from "zod";
 export const METHOD_EFFECTS = ["read", "reversible", "destructive"] as const;
 export type MethodEffect = (typeof METHOD_EFFECTS)[number];
 
+/**
+ * Who else a call reaches, on an axis apart from its effect: `user` is something the user meets (a dialog or a
+ * prompt, a window, a focus change, the clipboard, an inbox item), `paid` is a run billed to an account (a
+ * transcription, a model call). A `read` method reaches neither; `assertReach()` refuses an undeclared reach at run time.
+ */
+export const METHOD_REACHES = ["user", "paid"] as const;
+export type MethodReach = (typeof METHOD_REACHES)[number];
+
 /** One callable method, described once for generated REPL help and MCP tool schemas. */
 export interface MethodDescriptor<P extends z.ZodType = z.ZodType, R extends z.ZodType = z.ZodType> {
     /** `start`, or a dotted name for a nested member: `displays.switch`. */
@@ -13,6 +21,8 @@ export interface MethodDescriptor<P extends z.ZodType = z.ZodType, R extends z.Z
     /** One line, present tense. */
     doc: string;
     effect: MethodEffect;
+    /** Who else the call reaches (`METHOD_REACHES`); absent is none. */
+    reaches?: readonly MethodReach[];
     /** The result's type name when the schema cannot spell it (`Recording`, `ComputerState`). */
     resultName?: string;
     /** Takes the params as positional arguments in this order instead of one object (`sleep(ms)`). */
@@ -48,7 +58,19 @@ export interface ApiDescriptor {
 export function defineMethod<P extends z.ZodType, R extends z.ZodType, const N extends string = string>(
     method: MethodDescriptor<P, R> & { name: N }
 ): MethodDescriptor<P, R> & { name: N } {
+    // An agent calls a read method without asking; one that prompts the user or spends money is never read.
+    if (method.effect === "read" && (method.reaches?.length ?? 0) > 0) {
+        throw new Error(
+            `${method.name} is read but reaches ${method.reaches?.join(", ")}; a read method reaches no one`
+        );
+    }
+
     return method;
+}
+
+/** `read`, or `reversible · user · paid`: the effect and the reaches, as help, search and describe print them. */
+export function effectLabel(method: Pick<MethodDescriptor, "effect" | "reaches">): string {
+    return [method.effect, ...(method.reaches ?? [])].join(" · ");
 }
 
 export function defineApi<A extends ApiDescriptor>(api: A): A {

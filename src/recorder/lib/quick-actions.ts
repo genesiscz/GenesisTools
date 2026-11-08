@@ -1,9 +1,12 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { assertReach } from "@genesiscz/utils/api-descriptor";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type RecordingStoreId, recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
+import { z } from "zod";
 import { exportAs } from "./edit";
 import { movieOf, RECORDING_SOURCE_MOVIES } from "./library";
 
@@ -66,6 +69,7 @@ async function run(argv: string[]): Promise<void> {
 /** Puts a file (not its path) on the clipboard, as Finder's Copy does: a paste in Finder, Slack or Mail gets it. */
 export async function copyFileToClipboard(path: string): Promise<void> {
     const escaped = path.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+    assertReach("user", "replace the user's clipboard");
     await run(["osascript", "-e", `set the clipboard to (POSIX file "${escaped}")`]);
 }
 
@@ -108,30 +112,96 @@ export async function revealRecording(folder: string, { meeting = false }: { mee
         throw new Error(`${folder} is not a meeting's recording, so it has no meeting to open`);
     }
 
+    assertReach("user", "bring Finder to the front");
     await run(["open", "-R", target]);
     return { revealed: target };
 }
 
+const removalPlanSchema = z.array(
+    z.object({ path: z.string(), verdict: z.string(), reason: z.string().optional() }).passthrough()
+);
+
 /**
- * Moves a library recording through the shared removal policy. `tools rm trash` lists its restore command. A kept meeting is
- * refused. `roots` replaces a store's root, for a test.
+ * Moves one library recording through the shared removal policy; `trashRecordings` for several at once. `tools rm trash`
+ * lists its restore command. A kept meeting is refused. `roots` replaces a store's root, for a test.
+ *
+ * When the policy would need the user's confirmation, it refuses and asks no one, unless `askUser` (the CLI command a
+ * person runs) lets `tools rm` file the request: an agent's call must never land in the user's inbox (NR40).
  */
 export async function trashRecording(
     folder: string,
-    { roots }: { roots?: Partial<Record<RecordingStoreId, string>> } = {}
+    options: { roots?: Partial<Record<RecordingStoreId, string>>; askUser?: boolean; aside?: boolean } = {}
 ) {
-    const kept = recordingStoreOf(folder, roots)?.kept;
+    await trashRecordings([folder], options);
+    return { trashed: folder };
+}
 
-    if (kept) {
+/**
+ * Moves several library recordings through the removal policy in ONE `tools rm` call, so what needs the user is one
+ * request, never one per recording (RC24: 20 recordings made 20 requests). `aside: false` keeps the folders in the
+ * library while a request waits (`--no-aside`); absent, `tools rm` decides. Every folder is checked before anything
+ * moves: a kept meeting refuses the whole call, and on an agent's call one that would ask refuses all of them.
+ */
+export async function trashRecordings(
+    folders: readonly string[],
+    {
+        roots,
+        askUser = false,
+        aside,
+    }: { roots?: Partial<Record<RecordingStoreId, string>>; askUser?: boolean; aside?: boolean } = {}
+): Promise<{ trashed: string[] }> {
+    const unique = [...new Set(folders)];
+
+    if (unique.length === 0) {
+        throw new Error("name at least one recording to trash");
+    }
+
+    for (const folder of unique) {
+        const kept = recordingStoreOf(folder, roots)?.kept;
+
+        if (kept) {
+            throw new Error(
+                `${folder} is ${kept.what}; ${kept.reason}, so it stays. Remove it with ${toolCommand(kept.tool)}. Nothing was moved.`
+            );
+        }
+    }
+
+    if (askUser) {
+        assertReach("user", "ask the user to confirm a removal");
+    } else {
+        const plan = await execTool(["rm", "--dry-run", "--json", ...unique], { timeout: 30_000 });
+        const verdicts = removalPlanSchema.safeParse(
+            plan.success ? SafeJSON.parse(plan.stdout, { strict: true }) : null
+        );
+        const refused = verdicts.success
+            ? verdicts.data.filter((entry) => entry.verdict !== "allow")
+            : unique.map((path) => ({ path, reason: undefined }));
+
+        if (refused.length > 0) {
+            log.debug(
+                { folders: unique, refused: refused.length, planned: plan.success },
+                "trash refused: the removal policy would ask the user"
+            );
+            const named = refused
+                .map(
+                    (entry) =>
+                        `${entry.path} needs the user's confirmation to remove (${entry.reason ?? "the removal policy did not allow it"})`
+                )
+                .join("; ");
+            throw new Error(
+                `${named}; nothing was moved and no one was asked. The user can run ${toolCommand("recorder trash")} ${unique.join(" ")}`
+            );
+        }
+    }
+
+    const flags = aside === undefined ? [] : [aside ? "--aside" : "--no-aside"];
+    const result = await execTool(["rm", ...flags, ...unique], { timeout: 30_000 });
+    if (!result.success) {
+        // stdout carries the policy's own words (the request id); stderr only its log lines.
         throw new Error(
-            `${folder} is ${kept.what}; ${kept.reason}, so it stays. Remove it with ${toolCommand(kept.tool)}.`
+            result.stdout.trim() || result.stderr.trim() || "removal policy refused the recordings; no file was moved"
         );
     }
-
-    const result = await execTool(["rm", folder], { timeout: 30_000 });
-    if (!result.success) {
-        throw new Error(result.stderr || result.stdout || "removal policy refused the recording; no file was moved");
-    }
-    log.debug({ folder }, "moved a recording through the removal policy");
-    return { trashed: folder };
+    log.debug({ folders: unique }, "moved recordings through the removal policy");
+    return { trashed: unique };
 }

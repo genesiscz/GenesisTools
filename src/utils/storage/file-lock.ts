@@ -255,7 +255,7 @@ function unlinkIfOwned(lockPath: string): void {
  * stealer takes a lock whose holder is this live process, and leaving it would
  * block every other acquirer until this process exits.
  */
-async function releaseLock(lockPath: string): Promise<void> {
+export async function releaseLock(lockPath: string): Promise<void> {
     const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
     while (Date.now() <= deadline) {
         let arbitration: ArbitrationResult<void>;

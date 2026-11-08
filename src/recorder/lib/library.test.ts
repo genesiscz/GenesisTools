@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import * as cli from "@genesiscz/utils/cli";
@@ -8,11 +8,23 @@ import { tryWithPathArbitration } from "@genesiscz/utils/process/path-arbitratio
 import recordingMovies from "@genesiscz/utils/recording-editor/__fixtures__/recording-movies.json";
 import screenSearch from "@genesiscz/utils/recording-editor/__fixtures__/screen-search.json";
 import { applyOp, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
+import { recordingsLibraryDir } from "@genesiscz/utils/screen-recorder/library";
 import { recordingStoreOf } from "@genesiscz/utils/screen-recorder/recording-stores";
-import { withEditCancel } from "./edit";
+import { exportProgressPrinter, parseExportSize, renderInto, withEditCancel } from "./edit";
 import { EditSessions } from "./edit-session";
 import { displaySwitchDepth, keepingSwitchStep, keptPlan, stepDisplaySwitch } from "./frames-movie";
-import { editorOpenStatePath, listLibrary, movieOf, readEditorOpenState, resolveRecording } from "./library";
+import {
+    describeLiveEntries,
+    editorOpenStatePath,
+    findLiveEntry,
+    framesCell,
+    libraryRow,
+    listLibrary,
+    movieOf,
+    readEditorOpenState,
+    resolveRecording,
+    shortRecordingId,
+} from "./library";
 import {
     boxInProxy,
     chosenPlan,
@@ -23,7 +35,7 @@ import {
     proxyCanvas,
     proxyVideoFilter,
 } from "./proxy";
-import { currentGif, shareableMovie, trashRecording } from "./quick-actions";
+import { currentGif, shareableMovie, trashRecording, trashRecordings } from "./quick-actions";
 import { screenHitsWithOps } from "./screen-ops";
 import { findOnScreen } from "./screen-search";
 
@@ -66,6 +78,23 @@ describe("the recording open in the editor", () => {
 
         expect(readEditorOpenState()?.open).toEqual([]);
         expect(() => resolveRecording("open")).toThrow("No recording is open");
+    });
+});
+
+describe("a recording named by an edit file the editor has not written yet", () => {
+    // Regression test: deep test 2026-11-06 RC9 — the service refused session.open of a recording never edited, as
+    // "not a path and not a library id", because its edit.json did not exist yet.
+    it("names the recording folder, or the plain movie beside it", () => {
+        const recording = mkdtempSync(join(tmpdir(), "rc9-recording-"));
+        writeFileSync(join(recording, "recording.json"), "{}");
+        writeFileSync(join(recording, "screen.mp4"), "");
+        const movies = mkdtempSync(join(tmpdir(), "rc9-movies-"));
+        writeFileSync(join(movies, "talk.mov"), "");
+
+        expect(resolveRecording(join(recording, "edit.json"))).toBe(recording);
+        expect(resolveRecording(join(movies, "talk.edit.json"))).toBe(join(movies, "talk.mov"));
+        expect(() => resolveRecording(join(movies, "other.edit.json"))).toThrow("not a path and not a library id");
+        expect(() => resolveRecording(join(movies, "edit.json"))).toThrow("not a path and not a library id");
     });
 });
 
@@ -364,6 +393,18 @@ describe("text on the screen", () => {
         });
     }
 
+    // Regression test: deep test 2026-11-07 R2-RE6 — Find on Screen on a movie recording answered "No frame shows
+    // “Changes”" while the word was on screen: a movie keeps no frames, so there was nothing to search.
+    it("refuses a movie recording, which keeps no screen text, instead of answering that no frame shows the text", () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-screen-movie-"));
+        writeFileSync(
+            join(folder, "recording.json"),
+            SafeJSON.stringify({ ...screenSearch.recording.manifest, frames: [] })
+        );
+
+        expect(() => findOnScreen(folder, "Changes")).toThrow("has no screen text");
+    });
+
     it("finds the shared fixture's hits: accents ignored, each listed where the proxy movie shows it, boxes placed in the letterboxed picture", () => {
         const folder = screenFolder();
 
@@ -560,6 +601,113 @@ it("a library limit leaves older manifests unparsed", () => {
     expect(listLibrary({ root, limit: 1 }).map((row) => row.id)).toEqual(["new"]);
 });
 
+it("a library row says how the recording ended, how long its movie is, and why a failed one made none", () => {
+    const root = mkdtempSync(join(tmpdir(), "library-outcome-"));
+    const manifest = (id: string, extra: Record<string, unknown>) => {
+        mkdirSync(join(root, id));
+        writeFileSync(
+            join(root, id, "recording.json"),
+            SafeJSON.stringify({
+                version: 1,
+                id,
+                title: id,
+                startedAt: "2026-11-06T19:50:38Z",
+                displays: [],
+                frames: [],
+                ...extra,
+            })
+        );
+    };
+    manifest("video-2026-11-06_20-50-38-done", {
+        settings: { outcome: "done", video: { file: "screen.mp4", durationMs: 10_310 } },
+    });
+    manifest("video-2026-11-06_20-50-37-failed", {
+        settings: { outcome: "failed" },
+        warnings: ["cannot record the window"],
+    });
+    manifest("library-2026-11-06_20-50-36-frames", {});
+    const [done, failed, frames] = listLibrary({ root });
+    expect(done).toMatchObject({ outcome: "done", durationMs: 10_310 });
+    expect(done.reason).toBeUndefined();
+    expect(failed).toMatchObject({ outcome: "failed", reason: "cannot record the window" });
+    expect(frames.outcome).toBeUndefined();
+    expect(frames.durationMs).toBeUndefined();
+});
+
+it("a movie's row counts the movie's frames, and the table says — for a movie whose count was never written", () => {
+    const root = mkdtempSync(join(tmpdir(), "library-frames-"));
+    const manifest = (id: string, extra: Record<string, unknown>) => {
+        mkdirSync(join(root, id));
+        writeFileSync(
+            join(root, id, "recording.json"),
+            SafeJSON.stringify({ version: 1, id, title: id, displays: [], frames: [], ...extra })
+        );
+    };
+    manifest("video-2026-11-07_00-45-59-counted", {
+        startedAt: "2026-11-06T23:45:59Z",
+        settings: { outcome: "done", video: { file: "screen.mp4", durationMs: 3054, frames: 127, averageFps: 41.6 } },
+    });
+    manifest("video-2026-11-06_20-50-38-older", {
+        startedAt: "2026-11-06T19:50:38Z",
+        settings: { outcome: "done", video: { file: "screen.mp4", durationMs: 10_310 } },
+    });
+    manifest("library-2026-11-06_20-50-36-frames", { startedAt: "2026-11-06T19:50:36Z" });
+    const [counted, older, stills] = listLibrary({ root });
+    expect(counted.movieFrames).toBe(127);
+    expect(framesCell(counted)).toBe("127");
+    expect(older.movieFrames).toBeUndefined();
+    expect(framesCell(older)).toBe("—");
+    expect(framesCell(stills)).toBe("0");
+    expect(libraryRow(counted.folder)).toEqual(counted);
+    expect(libraryRow(join(root, "missing"))).toBeUndefined();
+});
+
+it("a short id is the stamp and the uuid's first block, and it opens the recording like the full id", () => {
+    const id = "video-2026-11-06_20-50-38-0eb8dd5f-7cec-4561-9379-63bc9cbfa33b";
+    expect(shortRecordingId(id)).toBe("video-2026-11-06_20-50-38-0eb8dd5f");
+    expect(shortRecordingId("library-2026-11-05_10-00-00-new")).toBe("library-2026-11-05_10-00-00-new");
+    const folder = recordingsLibraryDir(id);
+    const twin = recordingsLibraryDir("video-2026-11-06_20-50-38-0eb8dd5f-0000-4561-9379-63bc9cbfa33b");
+    try {
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(
+            join(folder, "recording.json"),
+            SafeJSON.stringify({
+                version: 1,
+                id,
+                title: "short",
+                startedAt: "2026-11-06T19:50:38Z",
+                displays: [],
+                frames: [],
+            })
+        );
+        expect(resolveRecording(shortRecordingId(id))).toBe(folder);
+        mkdirSync(twin, { recursive: true });
+        expect(() => resolveRecording(shortRecordingId(id))).toThrow(/2 recordings start with/);
+    } finally {
+        rmSync(folder, { recursive: true, force: true });
+        rmSync(twin, { recursive: true, force: true });
+    }
+});
+
+it("a live command finds the running recording by its live id, the end of it, or the library id that start and list print", () => {
+    const library = "video-2026-11-07_00-20-20-da0341a9-5f4e-483e-9ad1-04b4681dfcf2";
+    const entries = [
+        { id: "meeting-2026-11-07_09-00-planning" },
+        { id: "recorder-14429-faa72b4a", folder: join("/lib", library) },
+    ];
+    expect(findLiveEntry(entries, "recorder-14429-faa72b4a")).toBe(entries[1]);
+    expect(findLiveEntry(entries, "faa72b4a")).toBe(entries[1]);
+    expect(findLiveEntry(entries, library)).toBe(entries[1]);
+    expect(findLiveEntry(entries, shortRecordingId(library))).toBe(entries[1]);
+    expect(findLiveEntry(entries, "video-2026-11-07_00-20-20")).toBe(entries[1]);
+    expect(findLiveEntry(entries, "video")).toBeUndefined();
+    expect(findLiveEntry(entries, "video-2026-11-07_00-20-21")).toBeUndefined();
+    expect(describeLiveEntries(entries)).toBe(
+        "meeting-2026-11-07_09-00-planning, recorder-14429-faa72b4a (video-2026-11-07_00-20-20-da0341a9)"
+    );
+});
+
 it("replays created text and its subsequent ID edit without changing the returned ID", async () => {
     const folder = mkdtempSync(join(tmpdir(), "edit-replay-"));
     const path = join(folder, "edit.json");
@@ -580,7 +728,7 @@ it("replays created text and its subsequent ID edit without changing the returne
     sessions.release(path);
 });
 
-it("recording trash forwards policy refusal without touching the requested directory", async () => {
+it("recording trash from the CLI forwards policy refusal without touching the requested directory", async () => {
     const folder = mkdtempSync(join(tmpdir(), "recording-trash-policy-"));
     const run = spyOn(cli, "execTool").mockResolvedValue({
         success: false,
@@ -589,9 +737,92 @@ it("recording trash forwards policy refusal without touching the requested direc
         stderr: "policy refused",
     });
     try {
-        await expect(trashRecording(folder)).rejects.toThrow("policy refused");
+        await expect(trashRecording(folder, { askUser: true })).rejects.toThrow("policy refused");
         expect(run).toHaveBeenCalledWith(["rm", folder], { timeout: 30_000 });
         expect(existsSync(folder)).toBe(true);
+    } finally {
+        run.mockRestore();
+    }
+});
+
+// NR40 (deep test 2026-11-06): movie.trash() from the REPL made a tools rm request, which posted to the user's inbox.
+it("recording trash from an agent call asks no one: a policy that would ask refuses before any removal starts", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "recording-trash-agent-"));
+    const plan = (verdict: string) =>
+        SafeJSON.stringify([{ path: folder, verdict, reason: "no rule allows it", bytes: 1, willAside: true }]);
+    const calls: string[][] = [];
+    let verdict = "ask";
+    const run = spyOn(cli, "execTool").mockImplementation(async (args: readonly string[]) => {
+        calls.push([...args]);
+
+        if (args.includes("--dry-run")) {
+            return { success: true, exitCode: 0, stdout: plan(verdict), stderr: "" };
+        }
+
+        return { success: true, exitCode: 0, stdout: "", stderr: "" };
+    });
+    try {
+        await expect(trashRecording(folder)).rejects.toThrow(
+            "needs the user's confirmation to remove (no rule allows it); nothing was moved and no one was asked"
+        );
+        expect(calls).toEqual([["rm", "--dry-run", "--json", folder]]);
+
+        verdict = "allow";
+        expect(await trashRecording(folder)).toEqual({ trashed: folder });
+        expect(calls.slice(1)).toEqual([
+            ["rm", "--dry-run", "--json", folder],
+            ["rm", folder],
+        ]);
+    } finally {
+        run.mockRestore();
+    }
+});
+
+// RC24 (deep test 2026-11-06): 20 recordings trashed by an agent made 20 requests, and each moved its folder to /tmp.
+it("several recordings go through the removal policy in one call: one request, and --no-aside keeps the folders", async () => {
+    const first = mkdtempSync(join(tmpdir(), "recording-trash-many-a-"));
+    const second = mkdtempSync(join(tmpdir(), "recording-trash-many-b-"));
+    const calls: string[][] = [];
+    let verdicts: Record<string, string> = { [first]: "allow", [second]: "ask" };
+    const run = spyOn(cli, "execTool").mockImplementation(async (args: readonly string[]) => {
+        calls.push([...args]);
+
+        if (args.includes("--dry-run")) {
+            const plan = args
+                .filter((arg) => !arg.startsWith("-") && arg !== "rm")
+                .map((path) => ({
+                    path,
+                    verdict: verdicts[path],
+                    reason: "no rule allows it",
+                    bytes: 1,
+                    willAside: true,
+                }));
+            return { success: true, exitCode: 0, stdout: SafeJSON.stringify(plan), stderr: "" };
+        }
+
+        return { success: true, exitCode: 0, stdout: "", stderr: "" };
+    });
+    try {
+        // The CLI a person runs: one tools rm call for both, so at most one request.
+        expect(await trashRecordings([first, second, first], { askUser: true, aside: false })).toEqual({
+            trashed: [first, second],
+        });
+        expect(calls).toEqual([["rm", "--no-aside", first, second]]);
+
+        // An agent's call: one dry run for both, and when one would ask, none is moved and no one is asked.
+        calls.length = 0;
+        await expect(trashRecordings([first, second])).rejects.toThrow(
+            `${second} needs the user's confirmation to remove (no rule allows it); nothing was moved and no one was asked. The user can run tools recorder trash ${first} ${second}`
+        );
+        expect(calls).toEqual([["rm", "--dry-run", "--json", first, second]]);
+
+        verdicts = { [first]: "allow", [second]: "allow" };
+        calls.length = 0;
+        expect(await trashRecordings([first, second])).toEqual({ trashed: [first, second] });
+        expect(calls).toEqual([
+            ["rm", "--dry-run", "--json", first, second],
+            ["rm", first, second],
+        ]);
     } finally {
         run.mockRestore();
     }
@@ -621,4 +852,56 @@ it("cancelled queued undo and redo preserve history and the project", async () =
     expect(session.current.project.audio.volume).toBe(0.4);
     sessions.release(path);
     expect(SafeJSON.parse(readFileSync(path, "utf8")).audio.volume).toBe(0.4);
+});
+
+// R5 3: an export retry needed a move-aside, which left an unredacted plain export in the project.
+describe("an export into a file that exists", () => {
+    const fakeRender = (bytes: string) => async (out: string) => {
+        writeFileSync(out, bytes);
+        return { ok: true, path: out, bytes: bytes.length, seconds: 0.1 };
+    };
+
+    it("is refused before any work without overwrite, and replaced in one step with it", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "r5-export-"));
+        const target = join(folder, "demo.mp4");
+        writeFileSync(target, "old");
+        let rendered = 0;
+        const refused = await renderInto({
+            target,
+            render: async (out) => {
+                rendered++;
+                return fakeRender("new")(out);
+            },
+        });
+        expect(refused.ok).toBe(false);
+        expect(refused.error).toContain("overwrite: true, --overwrite");
+        expect(rendered).toBe(0);
+        const replaced = await renderInto({ target, overwrite: true, render: fakeRender("new") });
+        expect(replaced).toMatchObject({ ok: true, path: target, replaced: true });
+        expect(readFileSync(target, "utf8")).toBe("new");
+        expect(existsSync(join(folder, ".demo.rendering.mp4"))).toBe(false);
+        // A failed render leaves the old file as it was.
+        const failed = await renderInto({
+            target,
+            overwrite: true,
+            render: async () => ({ ok: false, error: "boom" }),
+        });
+        expect(failed.ok).toBe(false);
+        expect(readFileSync(target, "utf8")).toBe("new");
+        rmSync(folder, { recursive: true, force: true });
+    });
+
+    it("reads --size as one side or both, and prints progress once per 10 %", () => {
+        expect(parseExportSize("1920x1080")).toEqual({ width: 1920, height: 1080 });
+        expect(parseExportSize("x1080")).toEqual({ height: 1080 });
+        expect(parseExportSize("1280x")).toEqual({ width: 1280 });
+        expect(() => parseExportSize("big")).toThrow("WIDTHxHEIGHT");
+        expect(() => parseExportSize("4x4")).toThrow("16 to 8192");
+        const lines: string[] = [];
+        const progress = exportProgressPrinter((line) => lines.push(line));
+        for (const fraction of [0, 0.01, 0.05, 0.1, 0.11, 0.5, 0.99, 1]) {
+            progress(fraction);
+        }
+        expect(lines).toEqual(["export 0%", "export 10%", "export 50%", "export 90%", "export 100%"]);
+    });
 });
