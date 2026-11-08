@@ -423,14 +423,27 @@ export function canvasShape(project: EditProject): { width: number; height: numb
  * matters little: the font sets a line about 1.5 % wider in em at 31 px than at 54 px, and the same from 78 px up.
  */
 const CHECK_SHORT_SIDE_PX = 1080;
-/** A plate's left edge before the canvas clamp, from the block's centre and width and the plate's width. */
+/**
+ * A plate's left edge before the canvas clamp, from the block's centre and width, the plate's width and `edge`: how far
+ * inside the plate the edge that lines up lies. A plate text lines up its plate (`edge` 0), a plain text its letters
+ * (`edge` the inset), so a left-aligned one has its letters at the block's left edge and its plate past it.
+ */
 const PLATE_LEFT: Record<
     (typeof TEXT_ALIGNS)[number],
-    (at: { centre: number; block: number; plate: number }) => number
+    (at: { centre: number; block: number; plate: number; edge: number }) => number
 > = {
-    left: ({ centre, block }) => centre - block / 2,
+    left: ({ centre, block, edge }) => centre - block / 2 - edge,
     center: ({ centre, plate }) => centre - plate / 2,
-    right: ({ centre, block, plate }) => centre + block / 2 - plate,
+    right: ({ centre, block, plate, edge }) => centre + block / 2 - plate + edge,
+};
+
+type TextBoxNote = {
+    text: string;
+    size: number;
+    x: number;
+    y: number;
+    style?: EditTextNote["style"];
+    block?: EditTextNote["block"];
 };
 
 type CanvasBox = { left: number; top: number; right: number; bottom: number };
@@ -440,14 +453,12 @@ type CanvasBox = { left: number; top: number; right: number; bottom: number };
  * (Captions.swift drawText, TextPlates.render and textOrigin) on a canvas whose short side is CHECK_SHORT_SIDE_PX:
  * the font is `size` of the short side in whole pixels, the lines are set with the renderer's font (text-metrics.ts)
  * and wrap at the block's width (0.8 of the canvas) less the plate's inset (0.7 × size each side, 0.38 × size above
- * and below), and the plate is kept inside the canvas. x, y is the block's centre: a centred plate is centred on it, a
- * left-aligned plate starts at the block's left edge and a right-aligned one ends at its right edge, so texts with the
- * same x and block line up.
+ * and below). x, y is the block's centre: a centred text is centred on it, and a left- or right-aligned text lines up
+ * at the block's left or right edge what a viewer sees of it, so texts with the same x and block line up. A plate text
+ * lines up its plate and keeps it inside the canvas; a plain text draws no plate, so it lines up its letters and keeps
+ * them inside the canvas, and its plate (the inset around them) may reach past the block's and the canvas's edge.
  */
-export function textBox(
-    note: { text: string; size: number; x: number; y: number; block?: EditTextNote["block"] },
-    canvas: { width: number; height: number }
-): CanvasBox {
+export function textBox(note: TextBoxNote, canvas: { width: number; height: number }): CanvasBox {
     return textBoxes(note, canvas).plate;
 }
 
@@ -456,8 +467,8 @@ export function textBox(
  * lines that hold a letter. A blank line can make a plate much wider than its letters (text-metrics.ts layoutText).
  * No letters when the text has none.
  */
-function textBoxes(
-    note: { text: string; size: number; x: number; y: number; block?: EditTextNote["block"] },
+export function textBoxes(
+    note: TextBoxNote,
     canvas: { width: number; height: number }
 ): { plate: CanvasBox; letters?: CanvasBox } {
     const unit = CHECK_SHORT_SIDE_PX;
@@ -471,8 +482,11 @@ function textBoxes(
     const set = layoutText(note.text, font, Math.max(font * 4, block - 2 * insetX), align);
     const width = Math.ceil(set.width + 2 * insetX);
     const height = Math.ceil(set.height + 2 * insetY);
-    const start = PLATE_LEFT[align]({ centre: note.x * canvasWidth, block, plate: width });
-    const left = Math.min(Math.max(0, start), Math.max(0, canvasWidth - width));
+    // The plate's leftmost left edge: a plain text keeps its letters inside the canvas, and its plate may reach past the
+    // canvas's edge by the inset, which nobody sees.
+    const lowest = note.style === "plain" ? -insetX : 0;
+    const start = PLATE_LEFT[align]({ centre: note.x * canvasWidth, block, plate: width, edge: -lowest });
+    const left = Math.min(Math.max(lowest, start), Math.max(lowest, canvasWidth - width - lowest));
     const top = Math.min(Math.max(0, note.y * canvasHeight - height / 2), Math.max(0, canvasHeight - height));
     const box = (x0: number, y0: number, x1: number, y1: number) => ({
         left: x0 / unit,

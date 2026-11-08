@@ -101,6 +101,12 @@ final class TextPlates: @unchecked Sendable {
         layout(text, fontSize: fontSize, maxWidth: maxWidth, weight: weight, highlight: nil, alignment: alignment)?.size
     }
 
+    /// The margin between a plate's edge and its letters: 0.7 of the font size at each side, 0.38 above and below. A plain
+    /// text draws no plate, so its margin is empty space round its letters (Looks.textOrigin lines up its letters).
+    static func inset(fontSize: CGFloat) -> CGSize {
+        CGSize(width: fontSize * 0.7, height: fontSize * 0.38)
+    }
+
     /// A text set on its plate: the styled string, its margin on the plate, the text's own height and the plate's size
     /// in whole pixels. `render` draws it and `measure` reads its size, so the two cannot disagree.
     private struct Layout {
@@ -126,7 +132,7 @@ final class TextPlates: @unchecked Sendable {
             let end = text.index(text.startIndex, offsetBy: min(highlight.characters, text.count))
             attributed.addAttribute(.foregroundColor, value: highlight.color, range: NSRange(text.startIndex..<end, in: text))
         }
-        let inset = CGSize(width: fontSize * 0.7, height: fontSize * 0.38)
+        let inset = Self.inset(fontSize: fontSize)
         let bounds = attributed.boundingRect(with: CGSize(width: max(fontSize * 4, maxWidth - 2 * inset.width), height: .greatestFiniteMagnitude),
                                              options: [.usesLineFragmentOrigin, .usesFontLeading])
         let size = CGSize(width: ceil(bounds.width + 2 * inset.width), height: ceil(bounds.height + 2 * inset.height))
@@ -224,19 +230,25 @@ extension Looks {
         canvasWidth * CGFloat(min(0.95, max(0.15, note.block?.width ?? 0.8)))
     }
 
-    /// The lower-left corner (Core Image space) of a text's plate of size `plate` on a canvas of `size`, kept inside it.
-    /// `x`, `y` is the centre of the text's block: a centred plate is centred on it, a left-aligned plate starts at the
-    /// block's left edge and a right-aligned one ends at its right edge, so texts with the same x and block line up.
-    /// check.ts `textBox` estimates the same box for `check()`.
+    /// The lower-left corner (Core Image space) of a text's plate of size `plate` on a canvas of `size`. `x`, `y` is the
+    /// centre of the text's block: a centred text is centred on it, and a left- or right-aligned one lines up what a
+    /// viewer sees of it at the block's left or right edge, so texts with the same x and block line up. A plate text
+    /// lines up its plate and keeps it inside the canvas. A plain text draws no plate, only its letters, so it lines up
+    /// its letters (the plate's edge less its inset) and keeps them inside the canvas; its plate reaches past the edge by
+    /// the inset, which nobody sees. Before 2026-11-09 a plain text lined up its plate too, so a 0.06 title and a 0.035
+    /// subtitle in one left-aligned block had their letters 20 px apart at 1080p. check.ts `textBoxes` estimates the
+    /// same boxes for `check()`.
     static func textOrigin(_ note: EditProject.TextNote, plate: CGSize, size: CGSize) -> CGPoint {
         let centre = CGFloat(note.x) * size.width
         let block = textBlockWidth(note, canvasWidth: size.width)
+        // How far inside the plate the edge that lines up lies: the plate's own edge, or a plain text's letters.
+        let edge = note.style == .plain ? TextPlates.inset(fontSize: textPlateStyle(note, size: size).fontSize).width : 0
         let left: CGFloat = switch note.block?.align ?? .center {
-        case .left: centre - block / 2
+        case .left: centre - block / 2 - edge
         case .center: centre - plate.width / 2
-        case .right: centre + block / 2 - plate.width
+        case .right: centre + block / 2 - plate.width + edge
         }
-        let x = min(max(0, left), max(0, size.width - plate.width))
+        let x = min(max(-edge, left), max(-edge, size.width - plate.width + edge))
         // The project counts y from the top; Core Image from the bottom.
         let y = min(max(0, (1 - note.y) * size.height - plate.height / 2), max(0, size.height - plate.height))
         return CGPoint(x: x, y: y)
