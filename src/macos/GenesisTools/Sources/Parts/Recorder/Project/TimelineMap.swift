@@ -139,20 +139,29 @@ enum ZoomCurve {
 
     private static func curve(atSource sourceUs: Int64, zooms: [EditProject.Zoom], cursor: CursorTrack?) -> View {
         let ordered = zooms.sorted { $0.startUs < $1.startUs }
-        for (first, second) in zip(ordered, ordered.dropFirst()) where linked(first, second) {
+        for (index, (first, second)) in zip(ordered, ordered.dropFirst()).enumerated() where linked(first, second) {
             // The glide runs from where the first zoom would start to leave to where the second would have arrived.
-            let start = max(first.startUs + Int64(first.easeInMs) * 1000, first.endUs - Int64(first.easeOutMs) * 1000)
-            let end = min(second.endUs - Int64(second.easeOutMs) * 1000, second.startUs + Int64(second.easeInMs) * 1000)
+            // A zoom shorter than its own ease would leave a gap between the glide and the zoom, which showed the
+            // whole frame: the glide starts no later than the first zoom's end and ends no earlier than the second's
+            // start, and each side is the view its zoom has at the glide's edge, so nothing jumps there.
+            let start = min(first.endUs, max(first.startUs + Int64(first.easeInMs) * 1000, first.endUs - Int64(first.easeOutMs) * 1000))
+            let end = max(second.startUs, min(second.endUs - Int64(second.easeOutMs) * 1000, second.startUs + Int64(second.easeInMs) * 1000))
             guard end > start, sourceUs >= start, sourceUs < end else { continue }
             let t = Double(sourceUs - start) / Double(end - start)
             let progress = t * t * (3 - 2 * t)
-            let from = shown(first, amount: 1, atSource: sourceUs, cursor: cursor)
-            let to = shown(second, amount: 1, atSource: sourceUs, cursor: cursor)
+            let from = shown(first, amount: amount(ordered, index, atSource: min(sourceUs, first.endUs - 1)), atSource: sourceUs, cursor: cursor)
+            let to = shown(second, amount: amount(ordered, index + 1, atSource: max(sourceUs, second.startUs)), atSource: sourceUs,
+                           cursor: cursor)
             return View(scale: from.scale + (to.scale - from.scale) * progress,
                         centerX: from.centerX + (to.centerX - from.centerX) * progress,
                         centerY: from.centerY + (to.centerY - from.centerY) * progress)
         }
         guard let index = ordered.lastIndex(where: { sourceUs >= $0.startUs && sourceUs < $0.endUs }) else { return .whole }
+        return shown(ordered[index], amount: amount(ordered, index, atSource: sourceUs), atSource: sourceUs, cursor: cursor)
+    }
+
+    /// How far a zoom is in at a source time inside it: eased in and out, except toward a zoom it is linked with.
+    private static func amount(_ ordered: [EditProject.Zoom], _ index: Int, atSource sourceUs: Int64) -> Double {
         let zoom = ordered[index]
         let linkedIn = index > 0 && linked(ordered[index - 1], zoom)
         let linkedOut = index + 1 < ordered.count && linked(zoom, ordered[index + 1])
@@ -165,8 +174,7 @@ enum ZoomCurve {
         // mirror of the zoom in, `1 - easeOut(1 - outProgress)`, left at full speed, which read as a snap at 300 to
         // 500 ms (round 3, 2026-11-08).
         let release = 1 - outProgress
-        let amount = min(easeOut(inProgress), 1 - release * release * (3 - 2 * release))
-        return shown(zoom, amount: amount, atSource: sourceUs, cursor: cursor)
+        return min(easeOut(inProgress), 1 - release * release * (3 - 2 * release))
     }
 
     /// The view of one zoom, `amount` of the way from the whole frame to its full scale and focus.
