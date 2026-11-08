@@ -1436,6 +1436,24 @@ describe("edit project (edit.json)", () => {
         ]);
     });
 
+    // Regression test: unified review 2026-11-08 ED-partof-source-range.
+    test("a part over clips that play the same source twice keeps each clip's own overlap", () => {
+        const project = editProjectSchema.parse({
+            ...wholeProject(source),
+            source: { ...source, durationUs: 30_000_000 },
+            clips: [
+                { id: "c1", fromUs: 0, toUs: 10_000_000 },
+                { id: "c2", fromUs: 8_000_000, toUs: 30_000_000 },
+            ],
+        });
+        const part = partOf(project, 9_000_000, 11_000_000);
+        expect(part.clips.map((clip) => [clip.id, clip.fromUs, clip.toUs])).toEqual([
+            ["c1", 9_000_000, 10_000_000],
+            ["c2", 8_000_000, 9_000_000],
+        ]);
+        expect(outputDurationUs(part)).toBe(2_000_000);
+    });
+
     test("a picture background needs a file that exists and sets the kind by itself", () => {
         const dir = workspace();
         const picture = join(dir, "wall.png");
