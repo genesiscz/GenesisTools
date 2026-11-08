@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { copyFile, mkdir, stat } from "node:fs/promises";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type TimeValue, timeSchema, timeToUs } from "@genesiscz/utils/recording-editor/plan";
@@ -11,6 +11,7 @@ import {
     writeRecordingManifest,
 } from "@genesiscz/utils/screen-recorder/library";
 import { trashRecordingFolder } from "@genesiscz/utils/screen-recorder/start";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 import {
     audioStreamCount,
     type MediaFacts,
@@ -19,6 +20,7 @@ import {
     readMediaFacts,
 } from "@genesiscz/utils/video/media-facts";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
+import { secondsToMicroseconds } from "@genesiscz/utils/video/sampling";
 import { z } from "zod";
 import { openProject } from "./edit";
 import { markerLabelProblem } from "./library";
@@ -37,6 +39,27 @@ const IMPORT_MOVIE_NAMES: Readonly<Record<string, "screen.mp4" | "screen.mov">> 
     ".m4v": "screen.mp4",
     ".mov": "screen.mov",
 };
+
+/**
+ * The video codecs the editor (AVFoundation) plays, by ffprobe's name, measured with AVURLAsset isPlayable on an M4 Mac
+ * with macOS 27 (2026-11-09). vp9, vp8, dnxhd, qtrle, png, cinepak, svq1 and msmpeg4v3 did not play. HEVC plays only
+ * under the hvc1 tag: hev1, the tag ffmpeg's libx265 writes into an .mp4 by default, did not play either.
+ */
+const EDITOR_VIDEO_CODECS: ReadonlySet<string> = new Set([
+    "h264",
+    "hevc",
+    "av1",
+    "prores",
+    "mpeg4",
+    "mpeg2video",
+    "mjpeg",
+    "h263",
+    "rawvideo",
+    "v210",
+]);
+
+/** The transfers of an HDR movie, which the editor's probe refuses, by the names people know them by. */
+const HDR_TRANSFERS: Readonly<Record<string, string>> = { smpte2084: "PQ", "arib-std-b67": "HLG" };
 
 /** A moment of the movie: `at` is SOURCE time (seconds, "m:ss" or "h:mm:ss" of the file as it plays). */
 export interface ImportMarker {
@@ -164,6 +187,98 @@ async function movieFacts(source: string): Promise<MediaFacts> {
     return facts;
 }
 
+const videoStreamSchema = z.object({
+    streams: z
+        .array(
+            z.object({
+                codec_name: z.string().optional(),
+                codec_tag_string: z.string().optional(),
+                color_transfer: z.string().optional(),
+                duration: z.string().optional(),
+                side_data_list: z.array(z.object({ rotation: z.number().optional() })).optional(),
+            })
+        )
+        .default([]),
+    format: z.object({ duration: z.string().optional() }).optional(),
+});
+
+/** An ffmpeg line a person pastes to make `<name>-<suffix><ext>` beside the movie. */
+function ffmpegHint(source: string, args: string, suffix: string): string {
+    const copy = join(dirname(source), `${basename(source, extname(source))}-${suffix}${extname(source)}`);
+    return `ffmpeg -i ${shellWord(source)} ${args} ${shellWord(copy)}`;
+}
+
+/**
+ * The length of the movie's video as the editor reads it, or why the editor does not play the movie, in the import's
+ * words. It reads the stream the editor's probe reads (the first video stream) by the same rules: its length first,
+ * the file's when it has none, and HDR and a turn other than a quarter turn refused. The codec is the import's own
+ * check, because the editor's probe does not look at it and AVFoundation then shows nothing.
+ */
+async function editorVideoUs(source: string): Promise<number> {
+    const raw = await runVideoCommand({
+        command: [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=codec_name,codec_tag_string,color_transfer,duration:stream_side_data=rotation:format=duration",
+            "-of",
+            "json",
+            source,
+        ],
+        timeoutMs: 30_000,
+    });
+    const data = videoStreamSchema.parse(SafeJSON.parse(raw, { strict: true }));
+    const video = data.streams[0];
+
+    if (!video) {
+        throw new Error(`${source} is not a movie: it has no video stream`);
+    }
+
+    const codec = video.codec_name ?? "an unknown codec";
+    log.debug({ source, codec, tag: video.codec_tag_string, transfer: video.color_transfer }, "the movie's video");
+
+    if (codec === "hevc" && video.codec_tag_string === "hev1") {
+        throw new Error(
+            `${source} is not a movie the editor plays: its video is HEVC tagged hev1, which the editor (AVFoundation) does not play. Put it under the hvc1 tag first (nothing is encoded again): ${ffmpegHint(source, "-c copy -tag:v hvc1", "hvc1")}`
+        );
+    }
+
+    if (!EDITOR_VIDEO_CODECS.has(codec)) {
+        throw new Error(
+            `${source} is not a movie the editor plays: its video is ${codec}, which the editor (AVFoundation) does not play. Convert it first: ${ffmpegHint(source, "-c:v libx264 -pix_fmt yuv420p -c:a aac", "h264")}`
+        );
+    }
+
+    const hdr = HDR_TRANSFERS[video.color_transfer ?? ""];
+
+    if (hdr) {
+        throw new Error(
+            `${source} is an HDR movie (${hdr}); the editor takes SDR movies only: convert it to an SDR copy first (an app that exports SDR, or ffmpeg with its zscale and tonemap filters)`
+        );
+    }
+
+    const rotation =
+        (((video.side_data_list?.find((entry) => entry.rotation !== undefined)?.rotation ?? 0) % 360) + 360) % 360;
+
+    if (![0, 90, 180, 270].includes(rotation)) {
+        throw new Error(
+            `${source} is turned ${rotation}°; the editor takes a movie turned 0°, 90°, 180° or 270° only: export an upright copy first`
+        );
+    }
+
+    const length = video.duration ?? data.format?.duration;
+    const durationUs = length === undefined ? 0 : secondsToMicroseconds(length);
+
+    if (durationUs <= 0) {
+        throw new Error(`${source} is not a movie that plays: its video has no length`);
+    }
+
+    return durationUs;
+}
+
 const packetsSchema = z.object({ streams: z.array(z.object({ nb_read_packets: z.string().optional() })).default([]) });
 
 /** The frames of the movie's video stream (ffprobe counts its packets: it reads the file, it decodes nothing). */
@@ -205,8 +320,10 @@ function dropFolder(folder: string): void {
 
 /**
  * Imports a movie into the recordings library as a new recording. The file stays as it is: the library gets an APFS
- * clone (no extra disk until one side changes), and the editor's own probe of that copy (its size, length, HDR and
- * rotation limits) decides that it plays before the folder becomes a recording. The markers are movie time
+ * clone where the disk can make one (no extra disk until one side changes), else a whole copy. The file is read first
+ * as the editor reads it (its video codec, HDR, its turn, its video's length for the markers), so a refusal copies
+ * nothing; then the editor's own probe of the copy (its size and length limits) decides that it plays before the
+ * folder becomes a recording. The markers are movie time
  * (`settings.markerClock` "movie"). A movie with sound keeps it: the manifest names the movie as its sound source, so
  * the editor plays, exports and transcribes it like a recording with system audio in its movie.
  */
@@ -214,7 +331,9 @@ export async function importMovie(input: string, options: ImportMovieOptions = {
     const source = resolve(input);
     const facts = await movieFacts(source);
     const title = importTitle(options.title, source);
-    const markers = manifestMarkers(options.markers ?? [], Math.round((facts.durationSec ?? 0) * 1_000_000));
+    // A marker the movie's video does not reach is refused before anything is copied, and again below against the
+    // editor's own length, the one the manifest keeps, so the two can never disagree.
+    manifestMarkers(options.markers ?? [], await editorVideoUs(source));
     const now = options.now ?? new Date();
     const id = newVideoRecordingId(now);
     const folder = recordingsLibraryDir(id);
@@ -232,6 +351,7 @@ export async function importMovie(input: string, options: ImportMovieOptions = {
                     { cause: error }
                 );
             });
+        const markers = manifestMarkers(options.markers ?? [], durationUs);
         const frames = await videoFrameCount(movie);
         const durationMs = Math.round(durationUs / 1000);
         const averageFps = frames && durationMs > 0 ? Math.round((frames / (durationMs / 1000)) * 10) / 10 : undefined;
