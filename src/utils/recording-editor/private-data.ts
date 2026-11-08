@@ -389,7 +389,11 @@ export function compacting(matcher: LineMatcher): LineMatcher {
 /** The private patterns, plus `names` (people, companies) the caller wants hidden too, matched without case. */
 export function privateMatcher(names: readonly string[] = []): LineMatcher {
     const wanted = names.map((name) => name.trim()).filter(Boolean);
-    const namePattern = wanted.length ? new RegExp(wanted.map(escapeRegExp).join("|"), "gi") : undefined;
+    // A name matches with the spaces OCR leaves out or reads in, as textMatcher does, so a name that the "no screen text
+    // matches" warning counts as read is also hidden.
+    const namePattern = wanted.length
+        ? new RegExp(wanted.map((name) => [...name.replace(/\s+/g, "")].map(escapeRegExp).join("\\s*")).join("|"), "gi")
+        : undefined;
     return compacting((text) => {
         const found: TextMatch[] = findPrivateText(text).map((match) => ({ ...match, label: labelOf(match.kind) }));
 
