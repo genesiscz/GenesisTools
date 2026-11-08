@@ -900,3 +900,49 @@ it("a rejection that the turn handles later is not reported as uncaught", async 
         await engine.shutdown();
     }
 });
+
+// REPL-F1: with toolsets loaded, the dispose request waited behind the running turn for 10 s, and the turn was told
+// "disposing the toolsets exceeded 10000 ms" instead of the reset.
+it("reset with toolsets disposes them at once while a turn waits, and the turn hears the reset", async () => {
+    const log = join(mkdtempSync(join(tmpdir(), "node-repl-reset-")), "dispose.log");
+    const engine = new ReplEngine({ toolsets: [`${FIXTURE}#CounterToolset`] });
+    try {
+        await engine.run(`counter.logTo(${SafeJSON.stringify(log)})`);
+        const running = engine.run("await new Promise(() => {})", 60_000);
+        await Bun.sleep(100);
+        const started = performance.now();
+        await engine.reset();
+        expect(performance.now() - started).toBeLessThan(3000);
+        expect((await running).error).toBe("cancelled by js_reset; every binding is gone");
+        expect(readFileSync(log, "utf8")).toBe("disposed\n");
+    } finally {
+        await engine.shutdown();
+    }
+}, 20_000);
+
+// REPL-F4: a registration sent while a long turn ran used its own short timer and killed the turn with every binding.
+it("a module directory added while a turn runs answers at once and leaves the turn running", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "node-repl-dir-"));
+    mkdirSync(join(dir, "node_modules"));
+    const engine = new ReplEngine({ defaultTimeoutMs: 1000 });
+    try {
+        await engine.run("1");
+        const running = engine.run("await sleep(2500); 'done'", 60_000);
+        await Bun.sleep(100);
+        const registered = await engine.addModuleDir(dir);
+        expect(registered.ok).toBe(true);
+        expect(registered.durationMs).toBeLessThan(900);
+        expect((await running).text).toBe("done");
+
+        // A turn that keeps the CPU busy holds the registration; its timer answers without killing the worker.
+        await engine.run("globalThis.keptBehindBusyTurn = 1");
+        const busy = engine.run("const until = Date.now() + 1800; while (Date.now() < until) {} 'busy done'", 60_000);
+        await Bun.sleep(100);
+        const waited = await engine.addModuleDir(join(dir, "."));
+        expect(waited.error).toContain("behind the running turn");
+        expect((await busy).text).toBe("busy done");
+        expect((await engine.run("globalThis.keptBehindBusyTurn")).text).toBe("1");
+    } finally {
+        await engine.shutdown();
+    }
+}, 20_000);

@@ -357,6 +357,8 @@ export class ReplEngine {
     private readonly stderrTails = new WeakMap<ReplWorker, StderrTail>();
     /** What the last stop of the owned recordings left behind; reset() answers it. */
     private readonly stopNotes: string[] = [];
+    /** True while a turn waits for its answer: a registration then must not kill the worker on its own timer. */
+    private turnRunning = false;
 
     constructor(private readonly options: ReplEngineOptions = {}) {
         this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
@@ -696,7 +698,7 @@ export class ReplEngine {
     private request(
         worker: ReplWorker,
         payload: Record<string, unknown>,
-        options: { timeoutMs: number; onTimeout: string }
+        options: { timeoutMs: number; onTimeout: string; killOnTimeout?: boolean }
     ): Promise<WorkerResponse> {
         const id = this.nextId++;
         const tail = this.stderrTails.get(worker);
@@ -706,7 +708,7 @@ export class ReplEngine {
             const timer = setTimeout(() => {
                 const reason = `${options.onTimeout}${tail?.quote("while it ran, the worker wrote to stderr", mark) ?? ""}`;
 
-                if (this.worker === worker) {
+                if (this.worker === worker && options.killOnTimeout !== false) {
                     this.killWorker(reason);
                 } else {
                     this.pending.delete(id);
@@ -769,6 +771,7 @@ export class ReplEngine {
         }
 
         const turnStarted = performance.now();
+        this.turnRunning = true;
         const response = await this.request(
             worker,
             { op: "run", code, ...(this.options.onOutput ? { stream: true } : {}) },
@@ -776,7 +779,9 @@ export class ReplEngine {
                 timeoutMs,
                 onTimeout: `turn exceeded ${timeoutMs} ms; the worker was killed and every binding is gone${this.timeoutHint ? `. ${this.timeoutHint(timeoutMs)}` : ""}`,
             }
-        );
+        ).finally(() => {
+            this.turnRunning = false;
+        });
         const { fullStack, ...answer } = response;
 
         if (fullStack) {
@@ -805,7 +810,10 @@ export class ReplEngine {
             };
         }
 
-        this.moduleDirs.push(dir);
+        if (!this.moduleDirs.includes(dir)) {
+            this.moduleDirs.push(dir);
+        }
+
         const started = performance.now();
         const ready = await this.ensureWorker();
         const worker = this.worker;
@@ -814,13 +822,21 @@ export class ReplEngine {
             return { ...ready, ok: false, durationMs: Math.round(performance.now() - started) };
         }
 
+        // The worker answers a registration beside a turn that waits. A turn that keeps the CPU busy holds it, and then
+        // the turn's own deadline decides: the registration does not kill the worker (REPL-F4).
         const response = await this.request(
             worker,
             { op: "addDir", dir },
-            {
-                timeoutMs: this.defaultTimeoutMs,
-                onTimeout: `registering ${dir} exceeded ${this.defaultTimeoutMs} ms; the worker was killed and every binding is gone`,
-            }
+            this.turnRunning
+                ? {
+                      timeoutMs: this.defaultTimeoutMs,
+                      killOnTimeout: false,
+                      onTimeout: `registering ${dir} waited ${this.defaultTimeoutMs} ms behind the running turn; the worker gets it when that turn ends, and every binding stays`,
+                  }
+                : {
+                      timeoutMs: this.defaultTimeoutMs,
+                      onTimeout: `registering ${dir} exceeded ${this.defaultTimeoutMs} ms; the worker was killed and every binding is gone`,
+                  }
         );
         return { ...response, durationMs: Math.round(performance.now() - started) };
     }
@@ -846,6 +862,11 @@ export class ReplEngine {
         this.generation += 1;
         const stop = (async () => {
             const worker = this.worker;
+            // A running turn hears the reason now. A turn that keeps the CPU busy holds the dispose until its timer,
+            // and that timeout used to become the turn's error (REPL-F1).
+            if (this.turnRunning) {
+                this.settlePending(reason);
+            }
 
             if (worker && worker.exitCode === null && this.toolsets.length > 0) {
                 const response = await this.request(

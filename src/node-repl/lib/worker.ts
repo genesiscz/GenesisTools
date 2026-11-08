@@ -511,10 +511,10 @@ function describeError(error: unknown): { message: string; stack?: string; fullS
 }
 
 async function handle(request: Request): Promise<Response> {
-    output = [];
-    images = [];
-
     if (request.op === "preload") {
+        output = [];
+        images = [];
+
         try {
             const loaded = await preload(request);
             return { id: request.id, ok: true, text: loaded.text, images, failed: loaded.failed };
@@ -542,6 +542,9 @@ async function handle(request: Request): Promise<Response> {
 
         return { id: request.id, ok: true, text: `module directory registered: ${request.dir}`, images: [] };
     }
+
+    output = [];
+    images = [];
 
     // Set first: the late-error note is the first line of the turn text, so it streams first too.
     streaming = request.stream === true;
@@ -616,9 +619,23 @@ function readRequest(line: string): { request: Request } | { failure: Response }
     return { failure: { id, ok: false, text: "", images: [], error: `unsupported request: ${line.slice(0, 200)}` } };
 }
 
+async function respond(request: Request): Promise<void> {
+    const response = await handle(request).catch((error: unknown): Response => {
+        return { id: request.id, ok: false, text: "", images: [], error: describeError(error).message };
+    });
+    process.stdout.write(`${SafeJSON.stringify(response)}\n`);
+}
+
+/**
+ * Turns run one at a time, after the preload. Every other request (a module directory, the dispose of a reset) waits
+ * only for the requests before it that are not turns: a turn that waits for a minute held a js_reset 10 s behind it,
+ * and a js_add_node_module_dir until its own timer killed the turn (REPL-F1, REPL-F4).
+ */
 async function main(): Promise<void> {
     const decoder = new TextDecoder();
     let buffered = "";
+    let turns: Promise<void> = Promise.resolve();
+    let setup: Promise<void> = Promise.resolve();
 
     for await (const chunk of Bun.stdin.stream() as unknown as AsyncIterable<Uint8Array>) {
         buffered += decoder.decode(chunk, { stream: true });
@@ -630,14 +647,28 @@ async function main(): Promise<void> {
 
             if (line) {
                 const read = readRequest(line);
-                const response = "request" in read ? await handle(read.request) : read.failure;
-                process.stdout.write(`${SafeJSON.stringify(response)}\n`);
+
+                if ("failure" in read) {
+                    // In line with the turns, so the answers keep the order of the lines.
+                    const failure = read.failure;
+                    turns = turns.then(() => {
+                        process.stdout.write(`${SafeJSON.stringify(failure)}\n`);
+                    });
+                } else if (read.request.op === "run") {
+                    const request = read.request;
+                    const after = setup;
+                    turns = turns.then(() => after).then(() => respond(request));
+                } else {
+                    const request = read.request;
+                    setup = setup.then(() => respond(request));
+                }
             }
 
             newline = buffered.indexOf("\n");
         }
     }
 
+    await Promise.all([turns, setup]);
     // The parent closed stdin: it is stopping without a dispose request, so release the toolsets here.
     const failures = await disposeToolsets();
 
