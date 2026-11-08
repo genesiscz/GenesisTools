@@ -1416,6 +1416,26 @@ describe("edit project (edit.json)", () => {
         expect(() => partOf(project, 9_000_000, 9_500_000)).toThrow("inside the 8 s edit");
     });
 
+    // Regression test: unified review 2026-11-08 ED-cut-drops-whole-clip.
+    test("a cut that ends within a frame after a clip's start keeps the rest of that clip", () => {
+        const clipsOf = (project: projectOps.EditProject) => project.clips.map((clip) => [clip.fromUs, clip.toUs]);
+        const whole = wholeProject(source);
+        expect(clipsOf(projectOps.cutRange(whole, 5_000_000, 5_010_000))).toEqual([
+            [0, 5_000_000],
+            [5_010_000, 10_000_000],
+        ]);
+        const twoClips = projectOps.cutRange(whole, 4_000_000, 5_000_000);
+        expect(clipsOf(projectOps.cutRange(twoClips, 4_995_000, 5_010_000))).toEqual([
+            [0, 4_000_000],
+            [5_010_000, 10_000_000],
+        ]);
+        const threeClips = projectOps.cutRange(twoClips, 7_000_000, 8_000_000);
+        expect(clipsOf(partOf(threeClips, 4_010_000, 7_000_000))).toEqual([
+            [5_010_000, 7_000_000],
+            [8_000_000, 9_000_000],
+        ]);
+    });
+
     test("a picture background needs a file that exists and sets the kind by itself", () => {
         const dir = workspace();
         const picture = join(dir, "wall.png");
