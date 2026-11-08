@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
+import { movieContentKey } from "@genesiscz/utils/recording-editor/analysis-cache";
 import { framePresentationUs, gridRead } from "@genesiscz/utils/recording-editor/frame-grid";
 import { type FractionBox, redactionBoxAt } from "@genesiscz/utils/recording-editor/private-data";
 import { applyOp, editOpSchema, wholeProject } from "@genesiscz/utils/recording-editor/project";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
 import { exportFrameCache, exportRangeOf, ocrVideo, scanOf, textHitsOf, verifyHidden } from "./fx-analysis";
 
@@ -331,5 +333,25 @@ describe("verifyHidden refuses a read rate it cannot use (review CLI-F1)", () =>
         await expect(ocrVideo({ video: "/nonexistent/movie.mp4", toUs: 1_000_000, fps })).rejects.toThrow(
             /a positive number of frames a second/
         );
+    });
+});
+
+describe("the export frame cache (review CLI-F5)", () => {
+    // A run killed during a flush, two editors at once or a full disk left half a file, and every later verifyHidden
+    // on that export threw a JSON parse error.
+    test("a torn cache file starts empty instead of throwing, and the next flush writes a whole one", () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-torn-cache-"));
+        const movie = join(folder, "export.mp4");
+        writeFileSync(movie, "an export's bytes for the content key");
+        const path = toolDataDir("recorder", "verify-ocr", `${movieContentKey(movie)}.json`);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, '{"0":[{"text":"Orla Fic');
+
+        const cache = exportFrameCache(movie);
+        expect(cache.get(0)).toBeUndefined();
+
+        cache.set(0, [{ text: "Orla Fictive", x: 0.1, y: 0.1, width: 0.3, height: 0.05 }]);
+        cache.flush();
+        expect(exportFrameCache(movie).get(0)?.[0]?.text).toBe("Orla Fictive");
     });
 });
