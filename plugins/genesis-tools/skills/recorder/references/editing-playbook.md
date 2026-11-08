@@ -112,9 +112,12 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
 6. Place every effect on an event from step 2 (section 4) and add the story: an intro card, markers, short callouts.
 7. Sound: voice lines with `say()` at source seconds, music with `ducking()` (section 8).
 8. `check()`, then `fix()` what it offers, then check every boundary (section 9).
-9. Export, then one `verifyHidden({ private: true, texts: [...every name you hid] })`. `ok: false` is a failed edit:
-   apply its `fixOps` (or place your own boxes from each leak's `sourceBox`, never from `box`), handle each line of
-   its `notes` (a leak no op covers), export and verify again. It reads every frame around cuts, transitions and scene changes, so it takes minutes: log before it.
+9. Export, then one `verifyHidden({ movie: (await m.export({ out })).path, private: true, texts: [...every name you
+   hid] })`: given the movie, it reads that export instead of exporting again (without one it exports a copy of its
+   own and removes it after the check). `ok: false` is a failed edit: apply its `fixOps` (or place your own boxes
+   from each leak's `sourceBox`, never from `box`), handle each line of its `notes` (a leak no op covers), export
+   and verify again. It reads every frame around cuts, transitions and scene changes, so it takes minutes: log
+   before it.
 10. Score it (section 10).
 
 ## 4. Place every effect on an event, never on a guess
