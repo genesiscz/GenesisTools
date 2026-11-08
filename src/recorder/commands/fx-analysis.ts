@@ -303,6 +303,7 @@ export function registerHideTextCommands(program: Command): void {
         .option("--names <list>", "with --private: names too, comma-separated")
         .option("--every <seconds>", "seconds between the frames read", "0.25")
         .option("--movie <file>", "an export already made, instead of exporting again")
+        .option("--keep-export", "keep the export it makes for the check (without --movie); it is removed by default")
         .option("--json", "print JSON")
         .action(
             async (
@@ -314,6 +315,7 @@ export function registerHideTextCommands(program: Command): void {
                     names?: string;
                     every?: string;
                     movie?: string;
+                    keepExport?: boolean;
                     json?: boolean;
                 }
             ) => {
@@ -325,12 +327,21 @@ export function registerHideTextCommands(program: Command): void {
                         names: flags.names?.split(",").map((name) => name.trim()),
                         everySeconds: Number(flags.every ?? 0.25),
                         movie: flags.movie,
+                        keepExport: flags.keepExport,
                         onProgress: (line) => out.printlnErr(line),
                     });
+
+                    const movieName = answer.exportRemoved
+                        ? "the edit's export (removed after the check)"
+                        : answer.movie;
 
                     if (flags.json) {
                         out.result(answer);
                     } else {
+                        for (const notice of answer.notes ?? []) {
+                            out.printlnErr(notice);
+                        }
+
                         for (const leak of answer.leaks) {
                             out.println(
                                 `leak  ${clock(leak.at)}-${clock(leak.until)}  ${leak.label.padEnd(13)} ${leak.masked}${leak.source ? `  (source ${clock(leak.source.at)}-${clock(leak.source.until)})` : "  (in a card)"}`
@@ -339,8 +350,8 @@ export function registerHideTextCommands(program: Command): void {
 
                         out.printlnErr(
                             answer.ok
-                                ? `Nothing readable in ${answer.frames} frames of ${answer.movie}.`
-                                : `${answer.leaks.length} leak(s) in ${answer.movie}.`
+                                ? `Nothing readable in ${answer.frames} frames of ${movieName}.`
+                                : `${answer.leaks.length} leak(s) in ${movieName}.`
                         );
                     }
 

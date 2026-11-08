@@ -1064,20 +1064,8 @@ export interface Leak {
  */
 export async function verifyHidden(
     value: string,
-    options: Omit<TextQuery, "unit"> & {
-        private?: boolean;
-        names?: readonly string[];
-        everySeconds?: number;
-        movie?: string;
-        /** R7 4: every frame this close to a cut, a transition, a zoom's or a hidden part's edge or a scene change (0.2). */
-        aroundSeconds?: number;
-        onProgress?: (line: string) => void;
-        /** R8 5: check only this part of the edit, in SOURCE seconds (or output seconds with `timeBase: "output"`). */
-        from?: TimeValue;
-        to?: TimeValue;
-        timeBase?: "source" | "output";
-    }
-): Promise<{ ok: boolean; movie: string; frames: number; leaks: Leak[]; fixOps: EditOp[]; notes?: string[] }> {
+    options: VerifyHiddenOptions
+): Promise<VerifyHiddenAnswer & { exportRemoved?: true }> {
     // The REPL's bounds: 0 or NaN would never advance the frame grid, and a minute between reads checks nothing.
     const everySeconds = options.everySeconds ?? 0.25;
 
@@ -1085,19 +1073,16 @@ export async function verifyHidden(
         throw new Error(`verifyHidden reads a frame every 0.1 to 5 seconds, not every ${options.everySeconds}`);
     }
 
-    const asked = Boolean(options.text || options.pattern || options.texts?.length || options.patterns?.length);
-    // R6 3: every text and pattern (and the private data, when asked or when nothing else is) in one read.
-    const matchers = [
-        ...(asked ? [textMatcher(options)] : []),
-        ...(options.private || !asked ? [privateMatcher(options.names)] : []),
-    ];
-    const matcher: LineMatcher = (text) => matchers.flatMap((one) => one(text));
-    const { project } = await openProject(value);
-    const progress = options.onProgress ?? (() => undefined);
-    let movie = options.movie;
+    if (options.movie) {
+        return verifyExport(value, options, options.movie);
+    }
 
-    if (!movie) {
-        const scratch = mkdtempSync(join(tmpdir(), "gt-verify-hidden-"));
+    // CLI-F8: the export made for the check is removed after it (a 5-minute demo is hundreds of MB, and macOS clears
+    // $TMPDIR only after days), unless keepExport asks to keep it.
+    const progress = options.onProgress ?? (() => undefined);
+    const scratch = mkdtempSync(join(tmpdir(), "gt-verify-hidden-"));
+
+    try {
         const answer = await exportAs(value, {
             out: join(scratch, "verify.mp4"),
             format: "mp4",
@@ -1108,9 +1093,54 @@ export async function verifyHidden(
             throw new Error(`the export to check failed: ${answer.error ?? "no file"}`);
         }
 
-        movie = answer.path;
+        const checked = await verifyExport(value, options, answer.path);
+        return options.keepExport ? checked : { ...checked, exportRemoved: true };
+    } finally {
+        if (!options.keepExport) {
+            rmSync(scratch, { recursive: true, force: true });
+        }
     }
+}
 
+/** What verifyHidden takes. */
+export type VerifyHiddenOptions = Omit<TextQuery, "unit"> & {
+    private?: boolean;
+    names?: readonly string[];
+    everySeconds?: number;
+    movie?: string;
+    /** CLI-F8: keep the export verifyHidden made (without `movie`); absent removes it after the check. */
+    keepExport?: boolean;
+    /** R7 4: every frame this close to a cut, a transition, a zoom's or a hidden part's edge or a scene change (0.2). */
+    aroundSeconds?: number;
+    onProgress?: (line: string) => void;
+    /** R8 5: check only this part of the edit, in SOURCE seconds (or output seconds with `timeBase: "output"`). */
+    from?: TimeValue;
+    to?: TimeValue;
+    timeBase?: "source" | "output";
+};
+
+/** What verifyHidden answers. */
+export interface VerifyHiddenAnswer {
+    ok: boolean;
+    movie: string;
+    frames: number;
+    leaks: Leak[];
+    fixOps: EditOp[];
+    notes?: string[];
+}
+
+/** verifyHidden over `movie`, an export of the edit `value`. */
+async function verifyExport(value: string, options: VerifyHiddenOptions, movie: string): Promise<VerifyHiddenAnswer> {
+    const everySeconds = options.everySeconds ?? 0.25;
+    const asked = Boolean(options.text || options.pattern || options.texts?.length || options.patterns?.length);
+    // R6 3: every text and pattern (and the private data, when asked or when nothing else is) in one read.
+    const matchers = [
+        ...(asked ? [textMatcher(options)] : []),
+        ...(options.private || !asked ? [privateMatcher(options.names)] : []),
+    ];
+    const matcher: LineMatcher = (text) => matchers.flatMap((one) => one(text));
+    const { project } = await openProject(value);
+    const progress = options.onProgress ?? (() => undefined);
     const info = await probeVideo({ input: movie });
     const durationUs = info.durationUs;
     // R8 5: only the asked part of the export, and every frame read once per export (kept by its content).

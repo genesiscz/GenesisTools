@@ -117,11 +117,11 @@ Every call below exists in the `movies` toolset today (`m = await movies.open(id
 9. Export, then one `verifyHidden({ private: true, texts: [...every text you hid], patterns: [...every pattern you
    hid], movie: <the exported file> })`. Pass every text and pattern of step 4, not only the names: it checks only
    what it is given and the built-in private data, so an address or an id you hid by a pattern goes unchecked
-   otherwise. Pass the file you deliver as `movie`: without it, it checks a separate default export, which can differ
-   from yours in size or format. `ok: false` is a failed edit: apply its `fixOps` (or place your own boxes from each
-   leak's `sourceBox`, never from `box`), handle each line of its `notes` (a leak no op covers: a card's text, a box
-   by hand), export again and verify that new file again. It reads every frame around cuts, transitions and scene
-   changes, so it takes minutes: log before it.
+   otherwise. Pass the file you deliver as `movie`: without it, it renders a separate default export of its own
+   (removed after the check), which can differ from yours in size or format. `ok: false` is a failed edit: apply its
+   `fixOps` (or place your own boxes from each leak's `sourceBox`, never from `box`), handle each line of its `notes`
+   (a leak no op covers: a card's text, a box by hand), export again and verify that new file again. It reads every
+   frame around cuts, transitions and scene changes, so it takes minutes: log before it.
 10. Score it (section 10).
 
 ## 4. Place every effect on an event, never on a guess
