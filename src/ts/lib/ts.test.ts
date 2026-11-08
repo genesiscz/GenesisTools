@@ -9,17 +9,23 @@ import { captureOut } from "@genesiscz/utils/test/capture-out";
 import { parsePositive, resolveEntries } from "../commands/imports";
 import { renderSymbol } from "../commands/skeleton";
 import { computeTotals } from "./analyze";
+import { breaksRule, buildAreaReport, createAreaGrouping, parseForbid, renderMermaid } from "./areas";
 import { attribute, isBarrel, nativeSignals } from "./attribute";
 import { type BarrelWaste, findBarrelWaste } from "./barrels";
 import { collectFiles } from "./collect";
 import { findCycles, type ImportCycle } from "./cycles";
+import { measureDepth } from "./depth";
+import { UsageError } from "./format";
 import { buildGraph, isLoadTimeEdge, isMeasuredEdge, labelFor, packageNameOf, postOrder, reachableFrom } from "./graph";
+import { buildImportIndex, importersOf } from "./import-index";
 import { findLazyCandidates, type LazyCandidate } from "./lazy";
+import { loadFiles } from "./load";
 import type { WorkerSample } from "./measure";
-import { parseModule } from "./parse";
+import { parseImports, parseModule } from "./parse";
 import { fanInOf, packByBudget, rankFiles } from "./rank";
 import { fmtMs, renderAnalysis, renderBarrels, renderCycles, renderLazy } from "./render";
 import { exportedOnly, extractSkeleton, parseSource, type SkeletonSymbol } from "./skeleton";
+import { moduleKey, startupEntryFor, summarizeStartup, toolEntriesIn } from "./startup";
 import { collectTypeNames, expandTypes } from "./type-expand";
 import type {
     AnalysisResult,
@@ -1767,5 +1773,294 @@ describe("renderCycles", () => {
         expect(text).toContain("  e11.ts:11 → t.ts");
         expect(text).not.toContain("e12.ts");
         expect(text.match(/ modules\n/g)).toHaveLength(10);
+    });
+});
+
+describe("parseImports", () => {
+    it("reports the same import sites as parseModule, without the module-scope passes", () => {
+        const source = [
+            'import type { A } from "./a";',
+            'import { b } from "./b";',
+            'import "./side";',
+            'export { c } from "./c";',
+            'export * from "./d";',
+            'const e = require("./e");',
+            'export async function later() { return import("./f"); }',
+            "export const v = b + e;",
+        ].join("\n");
+
+        expect(parseImports(source, "probe.ts")).toEqual(parseModule(source, "probe.ts").imports);
+        expect(parseImports(source, "probe.ts").map((site) => [site.specifier, site.kind])).toEqual([
+            ["./a", "static"],
+            ["./b", "static"],
+            ["./side", "side-effect"],
+            ["./c", "reexport"],
+            ["./d", "reexport"],
+            ["./e", "require"],
+            ["./f", "dynamic"],
+        ]);
+    });
+});
+
+/**
+ * A second tree for the whole-tree commands, with a tsconfig `paths` alias so the index proves it
+ * resolves `@lib/*` the way the runtime does:
+ *
+ *   lib/core/index.ts   core(), class Engine          ← lib/util/wrap.ts, app/tool/index.ts (via @lib/core)
+ *   lib/core/extra.ts   imports app/tool              (lib importing app: the forbidden direction)
+ *   lib/helpers.ts      directly in lib               (area lib/(root))
+ *   lib/util/wrap.ts    a thin forwarder and a re-export of core
+ *   lib/types/shapes.ts types only                    ← app/tool/index.ts (import type)
+ *   app/tool/index.ts   import("../web/page")         (dynamic)
+ *   app/tool/index.test.ts                            (skipped unless tests)
+ *   app/web/page.ts     imports app/tool              (app/tool ⇄ app/web, one side dynamic)
+ *   app/empty/          no index                      (skipped by --tools)
+ */
+describe("the import index, areas and depth", () => {
+    let tree: string;
+
+    function put(rel: string, source: string): string {
+        const file = join(tree, rel);
+        mkdirSync(join(file, ".."), { recursive: true });
+        writeFileSync(file, source);
+        return file;
+    }
+
+    beforeAll(() => {
+        tree = realpathSync(mkdtempSync(join(tmpdir(), "gt-ts-areas-")));
+        put("tsconfig.json", '{ "compilerOptions": { "baseUrl": ".", "paths": { "@lib/*": ["lib/*"] } } }');
+        put(
+            "lib/core/index.ts",
+            [
+                "export function core(): number {",
+                "    const a = 1;",
+                "    const b = 2;",
+                "    const c = 3;",
+                "    return a + b + c;",
+                "}",
+                "export class Engine {",
+                "    run(): number { return core(); }",
+                "    private secretWithAVeryLongNameThatWouldShowInTheInterface(): void {}",
+                "}",
+            ].join("\n")
+        );
+        put("lib/core/extra.ts", 'import { tool } from "../../app/tool";\nexport const extra = tool;');
+        put("lib/helpers.ts", "export const h = 1;");
+        put(
+            "lib/util/wrap.ts",
+            'import { core } from "@lib/core";\nexport function wrap() {\n    return core();\n}\nexport { core } from "@lib/core";'
+        );
+        put("lib/types/shapes.ts", "export interface Shape { n: number }\nexport type Id = string;");
+        put(
+            "app/tool/index.ts",
+            [
+                'import { core } from "@lib/core";',
+                'import type { Shape } from "@lib/types/shapes";',
+                'export const tool = () => import("../web/page");',
+                "export function use(shape: Shape) { return core() + shape.n; }",
+            ].join("\n")
+        );
+        put("app/tool/index.test.ts", 'import { tool } from "./index";\nexport const t = tool;');
+        put("app/web/page.ts", 'import { tool } from "../tool";\nexport default tool;');
+        mkdirSync(join(tree, "app", "empty"), { recursive: true });
+    });
+
+    const at = (rel: string): string => join(tree, rel);
+
+    function index(options: { tests?: boolean } = {}) {
+        return buildImportIndex([at("lib"), at("app")], { cwd: tree, ...options });
+    }
+
+    function grouping() {
+        return createAreaGrouping({ roots: [at("lib"), at("app")], cwd: tree });
+    }
+
+    it("resolves a tsconfig paths alias and marks dynamic and type-only edges", () => {
+        const built = index();
+        const wrap = built.files.get(at("lib/util/wrap.ts"));
+        const tool = built.files.get(at("app/tool/index.ts"));
+
+        expect(wrap?.label).toBe("lib/util/wrap.ts");
+        expect(wrap?.imports.map((edge) => [edge.to, edge.kind])).toEqual([
+            [at("lib/core/index.ts"), "static"],
+            [at("lib/core/index.ts"), "static"],
+        ]);
+        expect(tool?.imports.map((edge) => [edge.specifier, edge.kind, edge.typeOnly])).toEqual([
+            ["@lib/core", "static", false],
+            ["@lib/types/shapes", "static", true],
+            ["../web/page", "dynamic", false],
+        ]);
+        expect(built.unresolved).toEqual([]);
+        expect(built.files.has(at("app/tool/index.test.ts"))).toBe(false);
+        expect(index({ tests: true }).files.has(at("app/tool/index.test.ts"))).toBe(true);
+        expect([...(importersOf(built).get(at("lib/core/index.ts")) ?? [])].sort()).toEqual([
+            at("app/tool/index.ts"),
+            at("lib/util/wrap.ts"),
+        ]);
+    });
+
+    it("groups by the first folder, a split folder one level deeper, or a depth", () => {
+        const byRoot = grouping();
+
+        expect(byRoot.areaOf(at("lib/helpers.ts"))).toBe("lib/(root)");
+        expect(byRoot.areaOf(at("lib/core/index.ts"))).toBe("lib/core");
+        expect(byRoot.areaOf("/elsewhere/x.ts")).toBeUndefined();
+
+        const split = createAreaGrouping({ roots: [tree], split: [at("lib")], cwd: tree });
+
+        expect(split.areaOf(at("lib/core/extra.ts"))).toBe("lib/core");
+        expect(split.areaOf(at("app/web/page.ts"))).toBe("app");
+
+        const deeper = createAreaGrouping({ roots: [tree], depth: 2, cwd: tree });
+
+        expect(deeper.areaOf(at("app/web/page.ts"))).toBe("app/web");
+        expect(deeper.areaOf(at("lib/helpers.ts"))).toBe("lib/(root)");
+    });
+
+    it("counts area edges, mutual pairs and forbidden directions", () => {
+        const rules = [parseForbid("lib->app"), parseForbid("lib->lib/")];
+        const report = buildAreaReport(index(), grouping(), { forbid: rules });
+        const edge = (from: string, to: string) => report.edges.find((e) => e.from === from && e.to === to);
+
+        expect(edge("lib/util", "lib/core")).toMatchObject({ count: 2, dynamic: 0, typeOnly: 0 });
+        expect(edge("app/tool", "lib/types")).toMatchObject({ count: 1, typeOnly: 1 });
+        expect(edge("app/tool", "app/web")).toMatchObject({ count: 1, dynamic: 1 });
+        expect(report.mutual).toContainEqual({ a: "app/tool", b: "app/web", ab: 1, ba: 1, abDynamic: 1, baDynamic: 0 });
+        expect(report.mutual).toContainEqual({
+            a: "app/tool",
+            b: "lib/core",
+            ab: 1,
+            ba: 1,
+            abDynamic: 0,
+            baDynamic: 0,
+        });
+        expect(report.areas.find((area) => area.area === "lib/core")).toMatchObject({ files: 2, fanIn: 2, fanOut: 1 });
+        expect(report.violations).toEqual([
+            {
+                rule: "lib->app",
+                from: "lib/core",
+                to: "app/tool",
+                count: 1,
+                dynamic: 0,
+                sites: [
+                    {
+                        file: "lib/core/extra.ts",
+                        line: 1,
+                        specifier: "../../app/tool",
+                        target: "app/tool/index.ts",
+                        dynamic: false,
+                    },
+                ],
+            },
+        ]);
+        expect(breaksRule(rules[1], "lib/util", "lib/core")).toBe(false);
+        expect(() => parseForbid("lib")).toThrow(UsageError);
+    });
+
+    it("draws a Mermaid flowchart with mutual edges red and dynamic-only edges dashed", () => {
+        const flowchart = renderMermaid(buildAreaReport(index(), grouping()), { minEdges: 1 });
+
+        expect(flowchart.split("\n")[0]).toBe("flowchart LR");
+        expect(flowchart).toMatch(/a\d+ -\.->\|1\| a\d+/);
+        expect(flowchart).toContain('["lib/core"]');
+        expect(flowchart).toMatch(/linkStyle [\d,]+ stroke:#d33/);
+        expect(renderMermaid(buildAreaReport(index(), grouping()), { minEdges: 3 })).toBe("flowchart LR");
+    });
+
+    it("measures interface against code, pass-through exports and importers per file and per folder", async () => {
+        const loaded = await loadFiles([at("lib"), at("app")]);
+        const options = { within: ["lib", "app"], moduleGrouping: grouping(), importerGrouping: grouping(), cwd: tree };
+        const byFile = measureDepth(loaded.entries, index(), { ...options, by: "file", minExports: 1 });
+        const row = (module: string) => byFile.modules.find((entry) => entry.module === module);
+
+        expect(row("lib/util/wrap.ts")).toMatchObject({
+            exports: 2,
+            reexports: 1,
+            reexportRatio: 0.5,
+            exportedFunctions: 1,
+            thinExports: 1,
+            importerFiles: 0,
+        });
+        expect(row("lib/core/index.ts")).toMatchObject({ exportedFunctions: 1, thinExports: 0, importerFiles: 2 });
+        expect(row("lib/core/index.ts")?.interfaceChars).toBeLessThan(120);
+        expect(row("lib/types/shapes.ts")?.typesOnly).toBe(true);
+        expect(byFile.shallow.map((entry) => entry.module)).not.toContain("lib/types/shapes.ts");
+        expect(byFile.shallow[0]?.module).toBe("lib/util/wrap.ts");
+        expect(byFile.deep[0]?.module).toBe("lib/core/index.ts");
+
+        const byFolder = measureDepth(loaded.entries, index(), { ...options, by: "folder" });
+
+        expect(byFolder.modules.find((entry) => entry.module === "lib/core")).toMatchObject({
+            files: 2,
+            importerFiles: 2,
+            importerAreas: 2,
+        });
+    });
+
+    it("finds startup entries in folders and sums recurring package cost across entries", () => {
+        expect(startupEntryFor(at("app/tool"))).toBe(at("app/tool/index.ts"));
+        expect(startupEntryFor(at("app/web/page.ts"))).toBe(at("app/web/page.ts"));
+        expect(startupEntryFor(at("app/empty"))).toBeUndefined();
+        expect(toolEntriesIn(at("app"))).toEqual([at("app/tool/index.ts")]);
+        expect(moduleKey({ kind: "package", label: "pkg:@napi-rs/canvas/js-binding.js" })).toBe("pkg:@napi-rs/canvas");
+        expect(moduleKey({ kind: "package", label: "pkg:zod" })).toBe("pkg:zod");
+        expect(moduleKey({ kind: "file", label: "src/a.ts" })).toBe("src/a.ts");
+
+        const result = (entry: string, coldMs: number, modules: Array<[string, NodeKind, number]>): AnalysisResult => ({
+            entry,
+            root: tree,
+            runs: 1,
+            coldMs,
+            sumSelfMs: 0,
+            modules: modules.map(([label, kind, selfMs]) => ({
+                id: label,
+                label,
+                kind,
+                selfMs,
+                totalMs: selfMs,
+                descendants: 0,
+                measured: true,
+                bytes: 0,
+                findings: [],
+            })),
+            edges: [],
+            unresolved: [],
+            workerStderr: "",
+            timedOut: false,
+            unmeasured: 0,
+            planned: modules.length,
+        });
+        const report = summarizeStartup(
+            [
+                {
+                    entry: "a",
+                    result: result("a", 300, [
+                        ["pkg:heavy", "package", 90],
+                        ["pkg:heavy/sub.js", "package", 30],
+                        ["shared.ts", "file", 25],
+                        ["a.ts", "file", 40],
+                    ]),
+                },
+                {
+                    entry: "b",
+                    result: result("b", 500, [
+                        ["pkg:heavy", "package", 100],
+                        ["shared.ts", "file", 10],
+                    ]),
+                },
+                { entry: "c", error: "boom" },
+            ],
+            { minMs: 20, top: 2, runs: 1 }
+        );
+
+        expect(report.entries.map((entry) => entry.entry)).toEqual(["b", "a", "c"]);
+        expect(report.entries[1].top).toEqual([
+            { module: "pkg:heavy", selfMs: 120 },
+            { module: "a.ts", selfMs: 40 },
+        ]);
+        expect(report.entries[2].error).toBe("boom");
+        expect(report.recurring).toEqual([
+            { module: "pkg:heavy", entries: 2, totalMs: 220, maxMs: 120, paidBy: ["a", "b"] },
+        ]);
     });
 });

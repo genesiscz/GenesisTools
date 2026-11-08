@@ -2,7 +2,6 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -11,6 +10,8 @@ import { findBarrelWaste } from "../lib/barrels";
 import { findCycles } from "../lib/cycles";
 import { findLazyCandidates } from "../lib/lazy";
 import { fmtMs, renderAnalysis, renderBarrels, renderCycles, renderLazy } from "../lib/render";
+import { projectRootFor } from "../lib/startup";
+import { registerStartupCommand } from "./startup";
 
 interface SharedOptions {
     json?: boolean;
@@ -101,10 +102,6 @@ export function resolveEntries(input: string): string[] {
         .map((name) => join(target, name));
 }
 
-function rootFor(entry: string): string {
-    return findProjectRoot(dirname(entry)) ?? dirname(entry);
-}
-
 async function sessionsFor(input: string, options: SharedOptions, toolName: string): Promise<AnalysisSession[]> {
     const entries = resolveEntries(input);
 
@@ -129,7 +126,7 @@ async function sessionsFor(input: string, options: SharedOptions, toolName: stri
         sessions.push(
             await analyzeEntry({
                 entry,
-                root: rootFor(entry),
+                root: projectRootFor(entry),
                 runs: Math.max(1, Math.floor(runs)),
                 timeoutMs: timeoutSec * 1000,
                 walkPackages: options.walkPackages === true,
@@ -344,4 +341,6 @@ export function registerImportsCommands(parent: Command): void {
             renderCycles(findCycles(session.graph, session.self), session.result.entry);
         }
     });
+
+    registerStartupCommand(imports);
 }

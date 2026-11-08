@@ -7,6 +7,8 @@ import { stripAnsi } from "@genesiscz/utils/string";
 import { type CapturedOutput, captureOutput } from "@genesiscz/utils/test/capture-out";
 import { Command } from "commander";
 import type { MeasureOptions, MeasureResult, WorkerSample } from "../lib/measure";
+import { registerAreasCommands } from "./areas";
+import { registerDepthCommands } from "./depth";
 import { registerImportsCommands } from "./imports";
 import { registerProgramCommands } from "./program";
 import { registerSkeletonCommands } from "./skeleton";
@@ -910,6 +912,164 @@ describe("tools ts imports, run in process", () => {
 
             expect(run.stderr).toContain("A measure worker was killed at --timeout.");
         }
+    });
+
+    test("startup measures each entry and lists the module several entries pay for", async () => {
+        const run = await runInProcess({
+            register: registerImportsCommands,
+            args: ["imports", "startup", "entry.ts", "--tools", root, "--min-ms", "5", "--json"],
+            cwd: root,
+        });
+        const report = SafeJSON.parse(run.stdout) as {
+            runs: number;
+            entries: { entry: string; coldMs: number; top: { module: string; selfMs: number }[] }[];
+            recurring: { module: string; entries: number; totalMs: number; maxMs: number; paidBy: string[] }[];
+        };
+
+        expect(run.error).toBeUndefined();
+        expect(measureCalls).toHaveLength(2);
+        expect(measureCalls[0]).toMatchObject({ runs: 3, timeoutMs: 60_000 });
+        expect(report.entries.map((entry) => entry.entry).sort()).toEqual(["barrel/index.ts", "entry.ts"]);
+        expect(report.entries.find((entry) => entry.entry === "entry.ts")?.top[0]).toEqual({
+            module: "heavy.ts",
+            selfMs: 10,
+        });
+        expect(report.recurring).toEqual([
+            { module: "heavy.ts", entries: 2, totalMs: 20, maxMs: 10, paidBy: ["entry.ts", "barrel/index.ts"] },
+        ]);
+    });
+
+    test("startup without an entry, or with a folder that has no index, is a usage error before any measurement", async () => {
+        const none = await runInProcess({ register: registerImportsCommands, args: ["imports", "startup"] });
+        const noIndex = await runInProcess({
+            register: registerImportsCommands,
+            args: ["imports", "startup", join(root, "multi")],
+        });
+
+        expect(none.stderr).toContain("Pass at least one entry, or --tools <dir>.");
+        expect(noIndex.stderr).toContain(`No entry at ${join(root, "multi")}.`);
+        expect(none.error).toBeDefined();
+        expect(measureCalls).toHaveLength(0);
+    });
+});
+
+describe("tools ts areas and depth, run in process", () => {
+    const originalExitCode = process.exitCode;
+    let dir: string;
+
+    function put(rel: string, source: string): void {
+        mkdirSync(join(dir, rel, ".."), { recursive: true });
+        writeFileSync(join(dir, rel), source);
+    }
+
+    function run(register: (program: Command) => void, args: string[]): Promise<CommandRun> {
+        return runInProcess({ register, args, cwd: dir });
+    }
+
+    beforeAll(() => {
+        dir = realpathSync(mkdtempSync(join(tmpdir(), "ts-areas-")));
+        put("tsconfig.json", '{ "compilerOptions": { "baseUrl": ".", "paths": { "~/*": ["src/*"] } } }');
+        put(
+            "src/lib/core/index.ts",
+            "export function core(): number {\n    const a = 1;\n    const b = 2;\n    const c = 3;\n    return a + b + c;\n}\n"
+        );
+        put("src/lib/core/leak.ts", 'import { page } from "~/app/page";\nexport const leak = page;\n');
+        put(
+            "src/lib/wrap.ts",
+            'import { core } from "~/lib/core";\nexport function wrap() {\n    return core();\n}\nexport { core } from "~/lib/core";\n'
+        );
+        put("src/app/page.ts", 'import { core } from "~/lib/core";\nexport const page = () => core();\n');
+    });
+
+    afterEach(() => {
+        process.exitCode = originalExitCode;
+    });
+
+    test("areas --json reports the alias edges, the mutual pair and a broken --forbid rule, and exits 1", async () => {
+        const result = await run(registerAreasCommands, [
+            "areas",
+            "src",
+            "--split",
+            "src/lib",
+            "--forbid",
+            "src/lib->src/app",
+            "--json",
+        ]);
+        const report = SafeJSON.parse(result.stdout) as {
+            areas: { area: string }[];
+            mutual: { a: string; b: string; ab: number; ba: number }[];
+            violations: { rule: string; from: string; to: string; sites: { file: string; line: number }[] }[];
+        };
+
+        expect(report.areas.map((area) => area.area).sort()).toEqual(["src/app", "src/lib/(root)", "src/lib/core"]);
+        expect(report.mutual).toEqual([expect.objectContaining({ a: "src/app", b: "src/lib/core", ab: 1, ba: 1 })]);
+        expect(report.violations).toEqual([
+            expect.objectContaining({
+                rule: "src/lib->src/app",
+                from: "src/lib/core",
+                to: "src/app",
+                sites: [expect.objectContaining({ file: "src/lib/core/leak.ts", line: 1 })],
+            }),
+        ]);
+        expect(result.stderr).toContain("1 area edge(s) break a --forbid rule");
+        expect(process.exitCode).toBe(1);
+    });
+
+    test("areas prints the tables as text, and --mermaid prints a flowchart instead", async () => {
+        const text = await run(registerAreasCommands, ["areas", "src", "--split", "src/lib"]);
+        const mermaid = await run(registerAreasCommands, [
+            "areas",
+            "src",
+            "--split",
+            "src/lib",
+            "--mermaid",
+            "--min-edges",
+            "1",
+        ]);
+
+        expect(stripAnsi(text.stdout)).toMatch(/AREA\s+FILES\s+LINES\s+FAN-IN\s+FAN-OUT\s+IN\s+OUT\s+INTERNAL/);
+        expect(stripAnsi(text.stdout)).toContain("src/app <-> src/lib/core  1 / 1");
+        expect(mermaid.stdout.split("\n")[0]).toBe("flowchart LR");
+        expect(mermaid.stdout).toContain("linkStyle");
+    });
+
+    test("areas refuses --mermaid with a JSON format and a malformed --forbid, as one-line usage errors", async () => {
+        const both = await run(registerAreasCommands, ["areas", "src", "--mermaid", "--json"]);
+        const malformed = await run(registerAreasCommands, ["areas", "src", "--forbid", "src/lib"]);
+
+        expect(both.stderr).toContain("--mermaid prints Mermaid source");
+        expect(malformed.stderr).toContain('--forbid wants "<from>-><to>"');
+        expect(both.error).toBeDefined();
+        expect(malformed.error).toBeDefined();
+    });
+
+    test("depth --by file ranks the forwarding file shallow and the imported one deep", async () => {
+        const result = await run(registerDepthCommands, [
+            "depth",
+            "src",
+            "--by",
+            "file",
+            "--min-exports",
+            "1",
+            "--json",
+        ]);
+        const report = SafeJSON.parse(result.stdout) as {
+            by: string;
+            shallow: { module: string; reexports: number; thinExports: number }[];
+            deep: { module: string; importerFiles: number }[];
+        };
+
+        expect(result.error).toBeUndefined();
+        expect(report.by).toBe("file");
+        expect(report.shallow[0]).toMatchObject({ module: "src/lib/wrap.ts", reexports: 1, thinExports: 1 });
+        expect(report.deep[0]).toMatchObject({ module: "src/lib/core/index.ts", importerFiles: 2 });
+    });
+
+    test("depth refuses an unknown --by unit", async () => {
+        const result = await run(registerDepthCommands, ["depth", "src", "--by", "tree"]);
+
+        expect(result.error).toBeDefined();
+        expect(result.stderr).toContain("Allowed choices are folder, file");
     });
 });
 
