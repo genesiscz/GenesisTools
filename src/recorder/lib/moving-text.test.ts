@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { moduleDir } from "@genesiscz/utils/fs/module-dir";
@@ -262,6 +262,46 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         });
         expect(edit.warnings).toEqual(expect.arrayContaining(miss));
     }, 120_000);
+
+    test("ocrVideo keeps one read's frame pictures on disk at a time, not the whole range's (review CLI-F9)", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-ocr-stream-"));
+        const movie = join(folder, "stream.mp4");
+        await runVideoCommand({
+            command: [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=s=160x120:r=10:d=8",
+                "-pix_fmt",
+                "yuv420p",
+                movie,
+            ],
+        });
+        // 5 a second of a 10 fps movie is every other frame: 40 runs of one frame, so two reads (32 and 8 frames).
+        const lines = [{ text: "Orla Fictive", x: 0.1, y: 0.1, width: 0.3, height: 0.05 }];
+        const cache = { get: () => lines, set: () => undefined };
+        const before = new Set(readdirSync(tmpdir()));
+        const onDisk: number[] = [];
+        const frames = await ocrVideo({
+            video: movie,
+            toUs: 8_000_000,
+            fps: 5,
+            cache,
+            onFrame: () => {
+                const folders = readdirSync(tmpdir()).filter(
+                    (name) => name.startsWith("gt-screen-text-") && !before.has(name)
+                );
+                onDisk.push(folders.reduce((all, name) => all + readdirSync(join(tmpdir(), name)).length, 0));
+            },
+        });
+        expect(frames).toHaveLength(40);
+        expect(onDisk).toHaveLength(40);
+        expect(Math.max(...onDisk)).toBeLessThanOrEqual(32);
+    }, 60_000);
 
     test("verifyHidden with from and to reads the source of that range only (review CLI-F7)", async () => {
         const folder = mkdtempSync(join(tmpdir(), "gt-verify-range-"));
