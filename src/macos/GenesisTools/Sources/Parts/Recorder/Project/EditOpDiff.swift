@@ -107,13 +107,13 @@ enum EditOpDiff {
                            inMs: tilt.inMs, outMs: tilt.outMs)
     }
 
-    /// The lenses by id: one removed is `unlens`, one added is `lens` (the service gives it its own id), one changed
-    /// is `setLens` with the fields that changed.
+    /// The lenses by id: one removed is `unlens`, one added is `lens` with the window's id (so a `setLens` sent before
+    /// the service answers names a lens it has), one changed is `setLens` with the fields that changed.
     private static func lenses(_ a: [EditProject.LensItem], _ b: [EditProject.LensItem]) -> [EditOp] {
         var ops: [EditOp] = a.filter { lens in !b.contains { $0.id == lens.id } }.map { .unlens(EditOp.Unlens(id: $0.id)) }
         for lens in b {
             guard let old = a.first(where: { $0.id == lens.id }) else {
-                ops.append(.lens(EditOp.Lens(from: seconds(lens.startUs), to: seconds(lens.endUs), radius: lens.radius,
+                ops.append(.lens(EditOp.Lens(id: lens.id, from: seconds(lens.startUs), to: seconds(lens.endUs), radius: lens.radius,
                                              magnification: lens.magnification, follow: lens.follow,
                                              at: EditOp.Point(x: lens.x, y: lens.y), ring: lens.ring)))
                 continue

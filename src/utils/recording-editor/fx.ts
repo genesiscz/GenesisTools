@@ -76,6 +76,11 @@ export const fxOpSchemas = [
     z
         .object({
             op: z.literal("lens"),
+            /** The new lens's id, so a window that made one keeps its id; absent: the service makes one. */
+            id: z
+                .string()
+                .regex(/^[A-Za-z0-9_-]{1,40}$/)
+                .optional(),
             from: sourceTimeSchema,
             to: sourceTimeSchema,
             radius: z.number().min(0.04).max(0.4).optional(),
@@ -268,9 +273,15 @@ export function applyFxOp<P extends FxProject>(project: P, op: FxOp): P {
             return { ...project, transitions: { default: current.default, joins: { ...others, [op.clip]: next } } };
         }
         case "lens": {
+            const items = project.lens?.items ?? [];
+
+            if (op.id !== undefined && items.some((lens) => lens.id === op.id)) {
+                throw new Error(`a lens ${op.id} exists already; lenses: ${items.map((lens) => lens.id).join(", ")}`);
+            }
+
             const range = lensRange(project, timeToUs(op.from), timeToUs(op.to));
             const lens = lensItemSchema.parse({
-                id: recordingItemId("l"),
+                id: op.id ?? recordingItemId("l"),
                 ...range,
                 ...(op.radius === undefined ? {} : { radius: op.radius }),
                 ...(op.magnification === undefined ? {} : { magnification: op.magnification }),
@@ -278,7 +289,7 @@ export function applyFxOp<P extends FxProject>(project: P, op: FxOp): P {
                 ...(op.at ? { x: op.at.x, y: op.at.y } : {}),
                 ...(op.ring ? { ring: op.ring.toUpperCase() } : {}),
             });
-            return { ...project, lens: { items: [...(project.lens?.items ?? []), lens] } };
+            return { ...project, lens: { items: [...items, lens] } };
         }
         case "setLens": {
             const items = project.lens?.items ?? [];
