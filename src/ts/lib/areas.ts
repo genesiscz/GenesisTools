@@ -46,6 +46,17 @@ function folderOf(input: string): string {
 export function createAreaGrouping(options: AreaGroupingOptions): AreaGrouping {
     const cwd = options.cwd ?? realPath(process.cwd());
     const depth = Math.max(1, Math.floor(options.depth ?? 1));
+
+    // A root may be a file or a glob, so it groups from its nearest folder. A split folder that does not
+    // exist is a typo: grouping from its nearest parent instead split a folder nobody asked for.
+    for (const dir of options.split ?? []) {
+        const absolute = resolve(dir);
+
+        if (!existsSync(absolute) || !statSync(absolute).isDirectory()) {
+            throw new UsageError(`--split ${dir}: no such folder`);
+        }
+    }
+
     const bases = [...new Set([...options.roots, ...(options.split ?? [])].map(folderOf))].sort(
         (a, b) => b.length - a.length
     );
@@ -160,11 +171,17 @@ export interface AreaReport {
     violations: Violation[];
 }
 
+/** Forward slashes, no leading `./`, no trailing `/`: `src/utils/` and `./src/utils` name the same folder. */
 function normalisePrefix(text: string): string {
-    return text.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+    return text.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
 }
 
-/** `"src/utils->src/"`: an edge breaks it when its source area starts with `src/utils`, its target with `src/`, and the target does not start with `src/utils`. */
+/** An area is inside a prefix when it is that folder or below it: `src/utils` holds `src/utils/ai`, never `src/utilsX`. */
+export function isInside(area: string, prefix: string): boolean {
+    return area === prefix || area.startsWith(`${prefix}/`);
+}
+
+/** `"src/utils->src/"`: no area inside `src/utils` may import an area inside `src` outside `src/utils`. */
 export function parseForbid(text: string): ForbidRule {
     const parts = text.split("->");
 
@@ -175,8 +192,23 @@ export function parseForbid(text: string): ForbidRule {
     return { text, from: normalisePrefix(parts[0]), to: normalisePrefix(parts[1]) };
 }
 
+/**
+ * An edge breaks a rule when its source area is inside `from` and its target inside `to`, whole
+ * folder names only. An edge that stays inside `from` is exempt: `src/utils->src` forbids utils
+ * importing a tool, not utils importing utils. A rule whose target is itself inside its source
+ * (`src/utils->src/utils/ai`) forbids exactly such edges, so only the target's own internal edges
+ * are exempt then.
+ */
 export function breaksRule(rule: ForbidRule, from: string, to: string): boolean {
-    return from.startsWith(rule.from) && to.startsWith(rule.to) && !to.startsWith(rule.from);
+    if (!isInside(from, rule.from) || !isInside(to, rule.to)) {
+        return false;
+    }
+
+    if (isInside(rule.to, rule.from)) {
+        return !isInside(from, rule.to);
+    }
+
+    return !isInside(to, rule.from);
 }
 
 function edgeKey(from: string, to: string): string {

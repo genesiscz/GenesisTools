@@ -19,9 +19,12 @@ export interface ModuleDepth {
     /** A folder area (`src/utils/ai`) or a file path, relative to the cwd. */
     module: string;
     files: number;
-    /** Exported names. A re-export statement counts one per name it lists, `export *` counts one. */
+    /**
+     * Exported names. A re-export statement counts one per name it lists, `export *` counts one and
+     * `export {}` none; `export { helper }` counts the declaration `helper` as if it said `export`.
+     */
     exports: number;
-    /** Of `exports`, the names re-exported from another module (`export … from`): pass-through. */
+    /** Of `exports`, the pass-through names: `export … from`, or an imported binding listed in `export { … }`. */
     reexports: number;
     /** `reexports / exports`. */
     reexportRatio: number;
@@ -149,11 +152,82 @@ function isThin(symbol: SkeletonSymbol): boolean {
     return bodyLines <= THIN_BODY_LINES;
 }
 
+/** A top-level declaration with the members listed under it (a class's methods, an interface's fields). */
+interface Declared {
+    symbol: SkeletonSymbol;
+    members: SkeletonSymbol[];
+}
+
+/** The names a re-export statement lists, without the empty one `export {}` leaves; `export *` is one. */
+function listedNames(symbol: SkeletonSymbol): number {
+    if (symbol.name === "*") {
+        return 1;
+    }
+
+    return symbol.name
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean).length;
+}
+
+/** The local names `export { a, type B, c as d }` exports, read from its text: `a`, `B`, `c`. */
+function exportedLocals(head: string): Array<{ local: string; typeOnly: boolean }> {
+    const open = head.indexOf("{");
+    const close = head.lastIndexOf("}");
+
+    if (open === -1 || close < open) {
+        return [];
+    }
+
+    const statementIsType = /^export\s+type\b/.test(head);
+
+    return head
+        .slice(open + 1, close)
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((part) => ({
+            local:
+                part
+                    .replace(/^type\s+/, "")
+                    .split(/\s+as\s+/)[0]
+                    ?.trim() ?? part,
+            typeOnly: statementIsType || /^type\s/.test(part),
+        }));
+}
+
+/** One exported declaration: its head, the members a caller reads with it, and whether it is a type or a forwarder. */
+function countDeclaration(tally: Tally, declared: Declared, typeOnly: boolean): void {
+    const { symbol, members } = declared;
+    tally.exports++;
+    tally.interfaceChars += headOf(symbol).length;
+
+    if (MEMBER_CONTAINERS.has(symbol.kind)) {
+        for (const member of members) {
+            if (!isPrivate(member)) {
+                tally.interfaceChars += headOf(member).length;
+            }
+        }
+    }
+
+    if (typeOnly || TYPE_KINDS.has(symbol.kind)) {
+        tally.typeExports++;
+    }
+
+    if (symbol.kind === "function") {
+        tally.exportedFunctions++;
+
+        if (isThin(symbol)) {
+            tally.thinExports++;
+        }
+    }
+}
+
 function tallyFile(tally: Tally, entry: LoadedFile): void {
     const size = codeSize(entry.text);
     tally.codeChars += size.chars;
     tally.codeLines += size.lines;
-    let top: SkeletonSymbol | undefined;
+    const declared: Declared[] = [];
 
     for (const symbol of entry.symbols) {
         if (symbol.local) {
@@ -161,49 +235,75 @@ function tallyFile(tally: Tally, entry: LoadedFile): void {
         }
 
         if (symbol.depth === 0) {
-            top = symbol;
+            declared.push({ symbol, members: [] });
+        } else {
+            declared.at(-1)?.members.push(symbol);
+        }
+    }
 
-            if (!symbol.exported || symbol.kind === "call") {
-                continue;
-            }
+    // The declarations an `export { … }` list can name. A destructuring declaration is named by its
+    // pattern (`{ a, b }`), so each identifier in it maps to it.
+    const locals = new Map<string, Declared>();
 
-            tally.interfaceChars += headOf(symbol).length;
+    for (const item of declared) {
+        if (item.symbol.exported || item.symbol.kind === "call" || item.symbol.kind === "re-export") {
+            continue;
+        }
 
-            if (symbol.kind === "re-export") {
-                const names = symbol.name === "*" ? 1 : symbol.name.split(",").length;
-                const head = headOf(symbol);
-                tally.exports += names;
+        const names = /^[{[]/.test(item.symbol.name)
+            ? (item.symbol.name.match(/[A-Za-z_$][\w$]*/g) ?? [])
+            : [item.symbol.name];
 
-                if (/\bfrom\s*["']/.test(head)) {
-                    tally.reexports += names;
-                }
+        for (const name of names) {
+            locals.set(name, item);
+        }
+    }
 
-                if (/^export\s+type\b/.test(head)) {
-                    tally.typeExports += names;
-                }
+    for (const item of declared) {
+        const { symbol } = item;
 
-                continue;
-            }
+        if (!symbol.exported || symbol.kind === "call") {
+            continue;
+        }
 
-            tally.exports++;
+        if (symbol.kind !== "re-export") {
+            countDeclaration(tally, item, false);
+            continue;
+        }
 
-            if (TYPE_KINDS.has(symbol.kind)) {
-                tally.typeExports++;
-            }
+        const head = headOf(symbol);
 
-            if (symbol.kind === "function") {
-                tally.exportedFunctions++;
+        if (/\bfrom\s*["']/.test(head)) {
+            const names = listedNames(symbol);
+            tally.exports += names;
+            tally.reexports += names;
+            tally.interfaceChars += names > 0 ? head.length : 0;
 
-                if (isThin(symbol)) {
-                    tally.thinExports++;
-                }
+            if (/^export\s+type\b/.test(head)) {
+                tally.typeExports += names;
             }
 
             continue;
         }
 
-        if (top?.exported && top.depth === 0 && MEMBER_CONTAINERS.has(top.kind) && !isPrivate(symbol)) {
-            tally.interfaceChars += headOf(symbol).length;
+        // `export { helper }` exports a declaration made without `export`: count that declaration,
+        // not the clause. A name with no declaration in the file is an imported binding sent on,
+        // which is a pass-through like `export … from`.
+        for (const { local, typeOnly } of exportedLocals(head)) {
+            const target = locals.get(local);
+
+            if (target) {
+                countDeclaration(tally, target, typeOnly);
+                continue;
+            }
+
+            tally.exports++;
+            tally.reexports++;
+            tally.interfaceChars += local.length;
+
+            if (typeOnly) {
+                tally.typeExports++;
+            }
         }
     }
 }

@@ -178,13 +178,16 @@ the **cross-area edges** heaviest first, and one block per `--forbid` rule.
   and each mutual pair says how many of its sites are dynamic. In `--mermaid`, an edge whose every site is dynamic is
   dashed.
 - **Type-only imports count** as static coupling and are reported apart (`typeOnly`), since nothing loads at run time.
-- `--forbid "<from>-><to>"` (repeatable): an edge breaks the rule when its source area starts with `<from>`, its
-  target starts with `<to>`, and the target does not start with `<from>`. So `"src/utils->src/"` lists every utils
-  area importing a tool, with each site's `file:line`. The command exits 1 when a rule is broken, so it can guard CI.
+- `--forbid "<from>-><to>"` (repeatable): an edge breaks the rule when its source area is inside `<from>` and its
+  target inside `<to>`. "Inside" means the folder itself or one below it, whole names only: `src/utils` holds
+  `src/utils/ai` but not `src/utilsX`, and a trailing `/` changes nothing. An edge that stays inside `<from>` is
+  exempt, so `"src/utils->src"` lists every utils area importing a tool, with each site's `file:line`. When `<to>` is
+  itself inside `<from>` (`"src/utils->src/utils/ai"`), the rule forbids exactly those edges and only the edges
+  inside `<to>` are exempt. The command exits 1 when a rule is broken, so it can guard CI.
 
 | Flag | Effect |
 |------|--------|
-| `--split <dir>` | Group one level deeper inside this folder; repeatable, the deepest one wins |
+| `--split <dir>` | Group one level deeper inside this folder; repeatable, the deepest one wins; a folder that does not exist is a usage error |
 | `--depth <n>` | Folder levels below a scanned path (or a `--split` folder) that make one area (default 1) |
 | `--forbid <rule>` | A direction that must not exist; repeatable |
 | `--limit <n>` | Rows per table in text and markdown (default 40); JSON always has every row |
@@ -211,11 +214,11 @@ tools ts depth src/utils/ai --by file --limit 40
 
 | Column | Meaning |
 |--------|---------|
-| `EXPORTS` | Exported names; a re-export statement counts one per name it lists, `export *` counts one |
+| `EXPORTS` | Exported names; a re-export statement counts one per name it lists, `export *` counts one, `export {}` none; `export { helper }` counts the declaration `helper` as if it were marked `export` |
 | `IFACE` | **Characters** of every exported signature, whitespace collapsed, plus the non-private members of an exported class, interface, enum, namespace or object API |
 | `CODE` | Characters of the module's text with comments removed and whitespace collapsed |
 | `SHARE` | `IFACE / CODE`, at most 1: how much of the module a caller must read to use it |
-| `RE-EXP` | Share of exports re-exported from another module (`export … from`): pass-through |
+| `RE-EXP` | Share of exports that pass through: `export … from`, or an imported binding listed in `export { … }` |
 | `THIN` | Exported functions whose body is at most 3 lines, out of all exported functions: forwarders |
 | `IMPORTERS` | Distinct files outside the module, and inside `--within`, that import it |
 | `AREAS` | Distinct areas those importers sit in |
@@ -491,8 +494,10 @@ tools; one fix to it pays back in each of them.
 
 Entries are measured one after another by default, because parallel measurements slow each other down and inflate
 every number; `--concurrency <n>` trades that accuracy for time. `--runs`, `--timeout`, `--walk-packages` and
-`--include-dynamic` mean what they mean for `analyze`. An entry whose worker timed out is marked `PARTIAL`, and the
-command exits 1 when any entry failed or was partial.
+`--include-dynamic` mean what they mean for `analyze`. An entry whose worker timed out is marked `partial`; an entry
+in which a module threw, imported a missing file or never settled is marked `failed` with the module and its error,
+since its fast cold time is only the time to the failure (an `exit` on `--help` is no failure). Failed and partial
+entries sort first, and the command exits 1 when there is one.
 
 ## Options
 

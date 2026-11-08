@@ -8,6 +8,7 @@ import { emit, resolveFormat, UsageError } from "../lib/format";
 import { labelOf, realPath } from "../lib/import-index";
 import { fmtMs } from "../lib/render";
 import {
+    importFailureOf,
     measureStartup,
     type StartupEntry,
     type StartupReport,
@@ -47,6 +48,15 @@ function noteOf(entry: StartupEntry): string {
     return entry.unmeasured > 0 ? `${entry.unmeasured} module(s) unmeasured` : "";
 }
 
+/** A failed or partial entry shows no cold time: the number it has is the time to the failure. */
+function coldOf(entry: StartupEntry): string {
+    if (entry.error) {
+        return "failed";
+    }
+
+    return entry.timedOut ? "partial" : fmtMs(entry.coldMs);
+}
+
 function topOf(entry: StartupEntry): string {
     return entry.top.map((cost) => `${cost.module} ${Math.round(cost.selfMs)}`).join(" · ");
 }
@@ -65,7 +75,7 @@ function renderText(report: StartupReport): string[] {
         ...formatTable(
             report.entries.map((entry) => [
                 entry.entry,
-                entry.error ? "-" : fmtMs(entry.coldMs),
+                coldOf(entry),
                 String(entry.modules),
                 topOf(entry),
                 noteOf(entry),
@@ -110,7 +120,7 @@ function renderMarkdown(report: StartupReport): Block[] {
             table: {
                 rows: report.entries.map((entry) => ({
                     Entry: entry.entry,
-                    "Cold ms": entry.error ? "-" : entry.coldMs,
+                    "Cold ms": entry.error || entry.timedOut ? coldOf(entry) : entry.coldMs,
                     Modules: entry.modules,
                     "Heaviest self time (ms)": topOf(entry),
                     Note: noteOf(entry),
@@ -229,8 +239,9 @@ async function runStartupCommand(inputs: string[], options: StartupCliOptions): 
         concurrency: options.concurrency,
         onEntry: (entry, outcome) => {
             done++;
-            const status = outcome.error
-                ? pc.red(`error: ${outcome.error}`)
+            const failure = outcome.error ?? (outcome.result ? importFailureOf(outcome.result) : undefined);
+            const status = failure
+                ? pc.red(failure)
                 : `${fmtMs(outcome.result?.coldMs ?? 0)}${outcome.result?.timedOut ? pc.yellow(" (partial)") : ""}`;
             ui.dim(`[${done}/${entries.length}] ${labelOf(entry, cwd)} ${status}`);
         },
@@ -305,7 +316,7 @@ export function registerStartupCommand(imports: Command): void {
             "with its children cached, so a module's self time is its own evaluation. A package counts as",
             "one module (`pkg:<name>`). The second table is the point: a dependency whose self time shows",
             "up in many entries leaks its cost into every tool that loads it.",
-            "Exit 1 when an entry failed or timed out.",
+            "Exit 1 when an entry failed (a module threw, imported a missing file or never settled) or timed out.",
             "",
             "Examples:",
             "  tools ts imports startup --tools src",

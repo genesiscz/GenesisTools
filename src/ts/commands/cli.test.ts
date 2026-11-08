@@ -939,6 +939,21 @@ describe("tools ts imports, run in process", () => {
         ]);
     });
 
+    test("startup marks an entry whose import threw as failed, lists it first and exits 1", async () => {
+        scenario = { samples: { "entry.ts": { ms: 0.5, status: "error", message: "boom" } } };
+        const run = await runInProcess({
+            register: registerImportsCommands,
+            args: ["imports", "startup", "entry.ts", "multi/a.ts", "--json"],
+            cwd: root,
+        });
+        const report = SafeJSON.parse(run.stdout) as { entries: { entry: string; error?: string }[] };
+
+        expect(report.entries[0]).toMatchObject({ entry: "entry.ts", error: "import failed: entry.ts: boom" });
+        expect(report.entries[1].error).toBeUndefined();
+        expect(run.stderr).toContain("1 entry is partial or failed");
+        expect(process.exitCode).toBe(1);
+    });
+
     test("startup without an entry, or with a folder that has no index, is a usage error before any measurement", async () => {
         const none = await runInProcess({ register: registerImportsCommands, args: ["imports", "startup"] });
         const noIndex = await runInProcess({
@@ -1063,6 +1078,17 @@ describe("tools ts areas and depth, run in process", () => {
         expect(report.by).toBe("file");
         expect(report.shallow[0]).toMatchObject({ module: "src/lib/wrap.ts", reexports: 1, thinExports: 1 });
         expect(report.deep[0]).toMatchObject({ module: "src/lib/core/index.ts", importerFiles: 2 });
+    });
+
+    test("areas and depth refuse a --split folder that does not exist", async () => {
+        const areas = await run(registerAreasCommands, ["areas", "src", "--split", "src/typo"]);
+        const depth = await run(registerDepthCommands, ["depth", "src", "--split", "src/lib/typo"]);
+
+        expect(areas.stderr).toContain("--split src/typo: no such folder");
+        expect(depth.stderr).toContain("--split src/lib/typo: no such folder");
+        expect(areas.error).toBeDefined();
+        expect(depth.error).toBeDefined();
+        expect(areas.stdout).toBe("");
     });
 
     test("depth refuses an unknown --by unit", async () => {
