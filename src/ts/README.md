@@ -192,10 +192,14 @@ the **cross-area edges** heaviest first, and one block per `--forbid` rule.
 | `--min-edges <n>` | With `--mermaid`, draw only edges with at least this many sites (default 5) |
 | `--tests`, `--ignore` | As everywhere: tests are skipped unless `--tests` |
 
-Checked on this repository on 2026-11-08 against the regex probe it replaces: `src/utils/agent-sessions` and
+Checked on this repository on 2026-11-08 15:38 against the regex probe it replaces: `src/utils/agent-sessions` and
 `src/utils/ai` import each other 88 and 40 times, and `src/hub` imports `src/question` 61 times, the same counts in
 both. The probe put every import of a folder's `index.ts` (`@genesiscz/utils/env`) into `src/utils/(root)`; the
 resolver puts it into `src/utils/env`, which is why the `(root)` edges are smaller here and some areas gained edges.
+
+Cost, on the same day (2026-11-08 15:52, a Mac at load average 330 to 400): `areas src --split src/utils` over 6593
+files took 6 to 7 s of wall time, most of it the ast-grep parse of every file; `depth src/utils` over 1737 files took
+2 to 3 s.
 
 ## `tools ts depth <paths...>`
 
