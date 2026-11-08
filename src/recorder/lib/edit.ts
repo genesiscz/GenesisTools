@@ -286,7 +286,7 @@ export interface ComputedEdit {
     /** False when the ops left the project as it was (a second annotateClicks); nothing is saved then. */
     changed: boolean;
     /** The facts each op was applied with, in order, so the same ops can be applied again without measuring. */
-    facts: OpFacts[];
+    facts: MeasuredFacts[];
     removedIdleUs: Array<[number, number]>;
     loudness?: { measuredLufs: number | null; volume: number };
     warnings: string[];
@@ -307,13 +307,13 @@ export async function computeEdit({
     ops: readonly EditOp[];
     /** The project has no file yet: it changes, and is saved, even when the ops change nothing. */
     fresh: boolean;
-    facts?: readonly OpFacts[];
+    facts?: readonly MeasuredFacts[];
     /** The markers set while it recorded (recordedMarkersOf), so a cut that hides one says so. */
     recordedMarkers?: ReadonlyArray<{ atMs: number; label: string }>;
 }): Promise<ComputedEdit> {
     let next = project;
     const removedIdleUs: Array<[number, number]> = [];
-    const facts: OpFacts[] = [];
+    const facts: MeasuredFacts[] = [];
     let loudness: { measuredLufs: number | null; volume: number } | undefined;
     const clamped = ops.flatMap((op) => opTimeWarnings(op, project.source.durationUs));
     const warnings = [...clamped];
@@ -323,7 +323,7 @@ export async function computeEdit({
             const measured = known?.[index] ?? (await probeFacts(next, op));
             const before = next;
             next = applyOp(next, op, measured);
-            warnings.push(...opPlacementWarnings(op, before, next));
+            warnings.push(...(measured.warnings ?? []), ...opPlacementWarnings(op, before, next));
             facts.push(measured);
             removedIdleUs.push(...(measured.idleUs ?? []).map(([from, to]): [number, number] => [from, to]));
 
@@ -614,8 +614,11 @@ export async function transcriptWords(value: string, options: { at?: TimeValue }
     });
 }
 
+/** An op's facts and what measuring them found that the caller must hear (a hideText text the screen never shows). */
+type MeasuredFacts = OpFacts & { warnings?: readonly string[] };
+
 /** What an op needs measured on the movie before it applies: idle stretches, the loudness, or the transcript. */
-async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
+async function probeFacts(project: EditProject, op: EditOp): Promise<MeasuredFacts> {
     if (op.op === "removeIdle") {
         return {
             idleUs: await findIdle({
@@ -652,30 +655,29 @@ async function probeFacts(project: EditProject, op: EditOp): Promise<OpFacts> {
     }
 
     // fx B (round 4): the screen text's private data, and the typing and waiting stretches (both cached).
+    // CLI-F4: a text, a pattern or a name no screen text matched is a warning of the edit, not a stderr line.
     if (op.op === "hidePrivate") {
-        return {
-            privateHits: await privateHitsOf(project, {
-                names: op.names,
-                exclude: op.exclude,
-                excludeFixed: op.excludeFixed,
-            }),
-        };
+        const { hits, warnings } = await privateHitsOf(project, {
+            names: op.names,
+            exclude: op.exclude,
+            excludeFixed: op.excludeFixed,
+        });
+        return { privateHits: hits, ...(warnings.length > 0 ? { warnings } : {}) };
     }
 
     if (op.op === "hideText") {
-        return {
-            textHits: await textHitsOf(project, {
-                text: op.text,
-                pattern: op.pattern,
-                unit: op.unit,
-                texts: op.texts,
-                patterns: op.patterns,
-                exclude: op.exclude,
-                excludeFixed: op.excludeFixed,
-                // R8 6: from/to read only that part of the screen.
-                scan: scanOf(op.from, op.to),
-            }),
-        };
+        const { hits, warnings } = await textHitsOf(project, {
+            text: op.text,
+            pattern: op.pattern,
+            unit: op.unit,
+            texts: op.texts,
+            patterns: op.patterns,
+            exclude: op.exclude,
+            excludeFixed: op.excludeFixed,
+            // R8 6: from/to read only that part of the screen.
+            scan: scanOf(op.from, op.to),
+        });
+        return { textHits: hits, ...(warnings.length > 0 ? { warnings } : {}) };
     }
 
     if (op.op === "speedUpWaits") {

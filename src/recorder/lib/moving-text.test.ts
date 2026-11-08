@@ -6,10 +6,11 @@ import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { movieContentKey } from "@genesiscz/utils/recording-editor/analysis-cache";
 import { framePresentationUs, gridRead } from "@genesiscz/utils/recording-editor/frame-grid";
 import { type FractionBox, redactionBoxAt } from "@genesiscz/utils/recording-editor/private-data";
-import { applyOp, editOpSchema, wholeProject } from "@genesiscz/utils/recording-editor/project";
+import { applyOp, editOpSchema, wholeProject, writeProject } from "@genesiscz/utils/recording-editor/project";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { runVideoCommand } from "@genesiscz/utils/video/process";
-import { exportFrameCache, exportRangeOf, ocrVideo, scanOf, textHitsOf, verifyHidden } from "./fx-analysis";
+import { computeEdit } from "./edit";
+import { exportFrameCache, exportRangeOf, findText, ocrVideo, scanOf, textHitsOf, verifyHidden } from "./fx-analysis";
 
 /**
  * Round 6 item 1: hidden text must stay hidden while the screen scrolls or slides. The movie is generated from two
@@ -81,6 +82,33 @@ function covered(box: FractionBox, rects: readonly FractionBox[]): number {
 
 const hasTools = process.platform === "darwin" && Boolean(Bun.which("ffmpeg"));
 
+/** The contact list still over a grey movie of `seconds` at 10 fps; another length is another content key. */
+async function stillListMovie(folder: string, seconds: number): Promise<string> {
+    const movie = join(folder, `still-list-${seconds}.mp4`);
+    await runVideoCommand({
+        command: [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            `color=c=0x5a6070:s=${W}x${H}:r=10:d=${seconds}`,
+            "-loop",
+            "1",
+            "-i",
+            join(moduleDir(import.meta), "__fixtures__", "moving-list.png"),
+            "-filter_complex",
+            `[0][1]overlay=x=${LIST_X}:y=0:shortest=1,format=yuv420p`,
+            "-t",
+            String(seconds),
+            movie,
+        ],
+    });
+    return movie;
+}
+
 describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OCR)", () => {
     // blur: tmix frames, what a frame shows is the mean of this many pictures (1 is a sharp recording).
     test.each([1, 6])(
@@ -121,7 +149,7 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
                 ],
             });
             const project = wholeProject({ video: movie, durationUs: SECONDS * 1_000_000, width: W, height: H });
-            const hits = await textHitsOf(project, { text: "Orla Fictive" });
+            const { hits } = await textHitsOf(project, { text: "Orla Fictive" });
             const hidden = applyOp(project, editOpSchema.parse({ op: "hideText", text: "Orla Fictive" }), {
                 textHits: hits,
             });
@@ -198,8 +226,9 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         });
         const project = wholeProject({ video: movie, durationUs: 8_000_000, width: W, height: H });
         const read: number[] = [];
-        const hits = await textHitsOf(project, {
-            text: "Orla Fictive",
+        const texts = ["Orla Fictive", "Nobody Example"];
+        const { hits, warnings } = await textHitsOf(project, {
+            texts,
             scan: scanOf(4, 5),
             onRead: (frames) => read.push(...frames.map((frame) => frame.atUs)),
         });
@@ -208,6 +237,36 @@ describe.skipIf(!hasTools)("moving text stays hidden (generated movie, Vision OC
         // One second each side of 4 to 5 s, nothing else.
         expect(Math.min(...read)).toBeGreaterThanOrEqual(3_000_000);
         expect(Math.max(...read)).toBeLessThan(6_000_000);
+
+        // Review CLI-F4: a text the screen never shows is in the answer, not only on stderr, which a REPL over MCP or
+        // the service never shows: findText's warnings, and hideText's edit warnings.
+        const miss = [expect.stringContaining('"Nobody Example"')];
+        expect(warnings).toEqual(miss);
+        const found = await findText(project, { texts, from: 4, to: 5 });
+        expect(found.hits.length).toBeGreaterThan(0);
+        expect(found.warnings).toEqual(miss);
+        const edit = await computeEdit({
+            project,
+            ops: [editOpSchema.parse({ op: "hideText", texts, from: 4, to: 5 })],
+            fresh: true,
+        });
+        expect(edit.warnings).toEqual(expect.arrayContaining(miss));
+    }, 120_000);
+
+    test("a leak inside an intro card gets a note, as no fix op reaches it (review CLI-F4)", async () => {
+        const folder = mkdtempSync(join(tmpdir(), "gt-card-leak-"));
+        const movie = await stillListMovie(folder, 6);
+        const project = applyOp(
+            wholeProject({ video: movie, durationUs: 6_000_000, width: W, height: H }),
+            editOpSchema.parse({ op: "introCard", title: "Demo", seconds: 1 })
+        );
+        const path = join(folder, "still-list.edit.json");
+        writeProject(path, project);
+        // The movie stands in for the export: its first second is where the card plays.
+        const answer = await verifyHidden(path, { movie, text: "Orla Fictive" });
+        const inCard = answer.leaks.filter((leak) => leak.source === null);
+        expect(inCard.length).toBeGreaterThan(0);
+        expect(answer.notes).toEqual(expect.arrayContaining([expect.stringContaining("inside an intro or end card")]));
     }, 120_000);
 
     test("verifyHidden keeps each export frame it read by the file's content, and its range is in source time (round 8)", async () => {
