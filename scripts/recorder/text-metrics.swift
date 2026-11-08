@@ -4,8 +4,9 @@
 //
 //     swift scripts/recorder/text-metrics.swift
 //
-// RecorderTextMetricsTests compares the renderer's real plates with an estimate from this file, so a font or renderer
-// change fails a test until the file is written again.
+// RecorderTextMetricsTests holds the renderer to the plates recorded in text-metrics.cases.json, and
+// recording-editor.test.ts holds check()'s estimate from this file to the same plates. After a font or renderer change,
+// write this file, then record the plates (RecorderTextMetricsTests says how), then run the TypeScript test.
 import AppKit
 import CoreText
 
